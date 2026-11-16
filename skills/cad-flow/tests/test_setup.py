@@ -134,15 +134,35 @@ class PlanTests(unittest.TestCase):
     def test_passing_beads_checks_plan_nothing(self) -> None:
         self.assertEqual(setup.plan(self.beads_report("pass", "pass"), self.root, self.home, self.env), [])
 
-    def test_executing_the_beads_items_changes_nothing_and_never_sets_hooks_path(self) -> None:
+    def run_main_yes_with_failing_beads(self) -> tuple[int, str, str]:
+        """`setup --yes` in a fresh git repo whose preflight reports both Beads checks failing."""
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
-        items = setup.plan(self.beads_report("fail", "fail"), self.root, self.home, self.env)
-        with patch("sys.stderr"):
-            failures, _ = setup._execute(items, self.root, self.home, dict(self.env), None)
-        self.assertEqual(failures, [])
+        cad = [setup.preflight.Check("freecad-command", "FreeCAD command", "pass", True, "present", "")]
+        previous = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous)
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict("os.environ", {"HOME": str(self.home)}, clear=True), \
+                patch.object(setup.preflight, "_timed_freecad_checks", return_value=cad), \
+                patch.object(setup.preflight, "run_checks", return_value=self.beads_report("fail", "fail")), \
+                redirect_stdout(out), patch("sys.stderr", err):
+            status = setup.main(["--yes"])
+        return status, out.getvalue(), err.getvalue()
+
+    def test_main_yes_leaves_the_repo_config_alone_and_never_sets_hooks_path(self) -> None:
+        self.run_main_yes_with_failing_beads()
         config = subprocess.run(["git", "config", "--local", "--get", "core.hooksPath"], cwd=self.root,
                                 capture_output=True, text=True)
         self.assertEqual((config.returncode, config.stdout), (1, ""))
+
+    def test_main_yes_prints_the_beads_items_as_manual_steps_and_still_fails_preflight(self) -> None:
+        status, _, errors = self.run_main_yes_with_failing_beads()
+        lines = errors.splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(all(line.startswith("Manual step: ") for line in lines))
+        self.assertIn("Install bd 1.3.1", lines[0])
+        self.assertIn("git config --unset core.hooksPath", lines[1])
+        self.assertEqual(status, 1)  # the re-run preflight still fails: nothing was fixed for the user
 
     def test_setup_imports_subprocess_for_run_and_exception_path(self) -> None:
         self.assertIsNotNone(setup.subprocess)

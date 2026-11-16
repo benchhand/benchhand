@@ -297,7 +297,7 @@ def _execute(items: Sequence[PlanItem], cwd: Path, home: Path, environ: dict[str
         if item.id in {"browser-libraries-manual", "manual-libraries"}:
             print(f"Manual system libraries step: {item.command}", file=sys.stderr)
             continue
-        if item.id in {"git-untrack-manual", "storage-manual"}:
+        if item.id in {"git-untrack-manual", "storage-manual", "beads-bd-manual", "beads-hooks-manual"}:
             print(f"Manual step: {item.command}", file=sys.stderr)
             continue
         try:
