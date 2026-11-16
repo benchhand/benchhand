@@ -148,9 +148,10 @@ jobs:
       - name: Skill tests
         env:
           SHARD: ${{ matrix.shard }}
+          JOB_INDEX: ${{ strategy.job-index }}
           JOBS: ${{ strategy.job-total }}
         run: |
-          planned=$(python3 scripts/ci_shards.py files "$SHARD" "$JOBS")
+          planned=$(python3 scripts/ci_shards.py files "$SHARD" "$JOB_INDEX" "$JOBS")
           mapfile -t files < <(printf '%s\n' "$planned" | grep .)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "::error::shard $SHARD has no test files"

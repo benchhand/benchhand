@@ -35,18 +35,26 @@ class PlanTests(unittest.TestCase):
             ci_shards.files(entries, "rest", TRACKED), ["skills/a/tests/test_a.py"]
         )
         self.assertEqual(
-            ci_shards.files(entries, "rest", TRACKED, jobs=4),
+            ci_shards.files(entries, "rest", TRACKED, job=(3, 4)),
             ["skills/a/tests/test_a.py"],
         )
+        self.assertEqual(
+            ci_shards.order(entries), ["motion", "motion-b", "record", "rest"]
+        )
 
-    def test_a_shard_or_a_job_count_the_plan_does_not_match_is_refused(self) -> None:
+    def test_a_matrix_that_could_skip_or_repeat_a_shard_is_refused(self) -> None:
         entries = ci_shards.parse(PLAN)
-        for shard, jobs in (("nope", None), ("motion", 3), ("motion", 5)):
-            with (
-                self.subTest(shard=shard, jobs=jobs),
-                self.assertRaises(ci_shards.PlanError),
-            ):
-                ci_shards.files(entries, shard, TRACKED, jobs)
+        refused = {
+            "unknown shard": ("nope", None),
+            "too few jobs": ("motion", (0, 3)),
+            "too many jobs": ("motion", (0, 5)),
+            # five jobs naming known shards, motion twice and motion-b never
+            "a repeated shard": ("motion", (1, 4)),
+            "a shard out of order": ("record", (1, 4)),
+        }
+        for case, (shard, job) in refused.items():
+            with self.subTest(case=case), self.assertRaises(ci_shards.PlanError):
+                ci_shards.files(entries, shard, TRACKED, job)
 
     def test_selected_tests_go_to_their_shard_and_the_owner_keeps_the_rest(
         self,
@@ -143,25 +151,32 @@ class RunTests(unittest.TestCase):
             self.assertIn("slow failure", two.stderr)
             self.assertEqual(shard("three").returncode, 1)  # selects no test
 
-    def test_an_import_error_fails_every_shard_of_its_file(self) -> None:
+    def test_an_import_error_fails_every_shard_of_its_file_with_its_own_traceback(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             test_file = Path(tmp) / "test_broken.py"
             test_file.write_text("import not_a_module_anywhere\n", encoding="utf-8")
-            proc = subprocess.run(
-                [
-                    sys.executable,
-                    str(Path(ci_shards.__file__)),
-                    "run",
-                    "one",
-                    str(test_file),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                env={**os.environ, "SHARDS": f"one {test_file}\n"},
-            )
-            self.assertEqual(proc.returncode, 1)
-            self.assertIn("not_a_module_anywhere", proc.stderr)
+            # a split file: the selector would match no test, which must not hide the import error
+            plan = f"one {test_file}\ntwo {test_file} Slow\n"
+            for shard in ("one", "two"):
+                with self.subTest(shard=shard):
+                    proc = subprocess.run(
+                        [
+                            sys.executable,
+                            str(Path(ci_shards.__file__)),
+                            "run",
+                            shard,
+                            str(test_file),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        env={**os.environ, "SHARDS": plan},
+                    )
+                    self.assertEqual(proc.returncode, 1)
+                    self.assertIn("not_a_module_anywhere", proc.stderr)
+                    self.assertNotIn("selectors match no test", proc.stderr)
 
 
 if __name__ == "__main__":

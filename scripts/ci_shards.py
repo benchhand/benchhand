@@ -57,18 +57,33 @@ def parse(text: str) -> list[Entry]:
     return entries
 
 
+def order(entries: list[Entry]) -> list[str]:
+    """The plan's shards in first-mention order, ``rest`` last: the order the CI matrix must list."""
+    shards = list(
+        dict.fromkeys(entry.shard for entry in entries if entry.shard != REST)
+    )
+    return [*shards, REST]
+
+
 def files(
-    entries: list[Entry], shard: str, tracked: Iterable[str], jobs: int | None = None
+    entries: list[Entry],
+    shard: str,
+    tracked: Iterable[str],
+    job: tuple[int, int] | None = None,
 ) -> list[str]:
+    """The test files of ``shard``. ``job`` is (index, total) of this CI job in its matrix."""
     tracked = list(tracked)
-    shards = {entry.shard for entry in entries} | {REST}
+    shards = order(entries)
     if shard not in shards:
         raise PlanError(f"shard {shard} is not in SHARDS")
-    # every job checks that its shard is planned; as many jobs as planned shards then runs every one
-    if jobs is not None and jobs != len(shards):
-        raise PlanError(
-            f"SHARDS plans {len(shards)} shards ({', '.join(sorted(shards))}) but {jobs} jobs run"
-        )
+    # job indexes are unique, so a matrix whose job i runs the plan's shard i runs each shard once
+    if job is not None:
+        index, total = job
+        if total != len(shards) or shards[index] != shard:
+            raise PlanError(
+                f"the matrix must list the shards [{', '.join(shards)}] in that order;"
+                f" job {index} of {total} runs {shard}"
+            )
     named = {entry.path for entry in entries}
     missing = sorted(named - set(tracked))
     if missing:
@@ -128,17 +143,15 @@ def run(entries: list[Entry], shard: str, path: str) -> int:
         )
     )
     prefix = module + "."
-    # an import or load failure is a test of unittest's own: it runs in every shard of the file
-    names = [
-        test.id().removeprefix(prefix) for test in tests if test.id().startswith(prefix)
-    ]
+    # an import or load failure is a test of unittest's own; it names no test of the file, so
+    # run it alone in every shard of the file, before any selector can fail on the missing names
+    broken = [test for test in tests if not test.id().startswith(prefix)]
+    if broken:
+        unittest.TextTestRunner(verbosity=1).run(unittest.TestSuite(broken))
+        return 1
+    names = [test.id().removeprefix(prefix) for test in tests]
     shards = assign(entries, path, names)
-    chosen = [
-        test
-        for test in tests
-        if not test.id().startswith(prefix)
-        or shards[test.id().removeprefix(prefix)] == shard
-    ]
+    chosen = [test for test in tests if shards[test.id().removeprefix(prefix)] == shard]
     if not chosen:
         print(f"{path}: shard {shard} selects no test", file=sys.stderr)
         return 1
@@ -150,20 +163,20 @@ def run(entries: list[Entry], shard: str, path: str) -> int:
 
 def main(argv: list[str]) -> int:
     entries = parse(os.environ.get("SHARDS", ""))
-    if argv[:1] == ["files"] and len(argv) in (2, 3):
+    if argv[:1] == ["files"] and len(argv) in (2, 4):
         tracked = subprocess.run(
             ["git", "ls-files", "skills/*/test_*.py", "skills/*/tests/test_*.py"],
             capture_output=True,
             text=True,
             check=True,
         ).stdout.split()
-        jobs = int(argv[2]) if len(argv) == 3 else None
-        print("\n".join(files(entries, argv[1], tracked, jobs)))
+        job = (int(argv[2]), int(argv[3])) if len(argv) == 4 else None
+        print("\n".join(files(entries, argv[1], tracked, job)))
         return 0
     if argv[:1] == ["run"] and len(argv) == 3:
         return run(entries, argv[1], argv[2])
     print(
-        "usage: ci_shards.py files <shard> [<job count>] | run <shard> <test file>",
+        "usage: ci_shards.py files <shard> [<job index> <job total>] | run <shard> <test file>",
         file=sys.stderr,
     )
     return 2
