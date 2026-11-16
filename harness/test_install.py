@@ -163,7 +163,7 @@ class InstallerTests(unittest.TestCase):
         self.run_ok("--harness", "all", "--project", str(project),
                     "--tier-model", "claude:cheap=haiku", "--tier-model", "opencode:cheap=anthropic/claude-haiku-4-5#low")
         claude = (project / ".claude/agents/cad-clerk.md").read_text(encoding="utf-8")
-        self.assertIn("\nmodel: haiku\n", claude)
+        self.assertIn('\nmodel: "haiku"\n', claude)
         self.assertNotIn("model: inherit", claude)
         opencode = (project / ".opencode/agents/cad-clerk.md").read_text(encoding="utf-8")
         self.assertIn('\nmodel: "anthropic/claude-haiku-4-5#low"\n', opencode)
@@ -185,7 +185,7 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue(all(r.startswith("skill://~/.kiro/skills/") for r in profile["resources"]))
 
     def test_tier_model_rejects_bad_specs_before_writing(self) -> None:
-        for spec, message in (("premium=m", "unknown tier"), ("opencode:cheap=inherit", "inherit"), ("cheap", "TIER=MODEL")):
+        for spec, message in (("premium=m", "unknown tier"), ("claude:cheap=inherit", "inherit"), ("cheap", "TIER=MODEL")):
             with self.subTest(spec=spec):
                 result = self.run_installer("--harness", "all", "--project", str(self.project), "--tier-model", spec)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)

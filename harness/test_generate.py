@@ -70,7 +70,8 @@ class HarnessGeneratorTests(GeneratorCopyCase):
         for path in sorted((self.cad / "agents").glob("*.md")):
             text = path.read_text(encoding="utf-8")
             source = yaml.safe_load(text.split("---", 2)[1])
-            self.assertEqual(set(source), {"name", "description", "capabilities", "skills"})
+            self.assertEqual(set(source) - {"tier"}, {"name", "description", "capabilities", "skills"})
+            self.assertIn(source.get("tier", "standard"), {"cheap", "standard", "strong"})
             self.assertEqual(source["name"], path.stem)
             self.assertIsInstance(source["capabilities"], list)
             self.assertIsInstance(source["skills"], list)
@@ -254,8 +255,10 @@ class TierRenderingTests(unittest.TestCase):
     def test_parse_tier_models_scopes_by_optional_harness_prefix(self) -> None:
         parsed = generate.parse_tier_models(["cheap=m1", "opencode:cheap=a/b#c", "kiro:strong=x:0"])
         self.assertEqual(parsed["claude"], {"cheap": "m1"})
+        self.assertEqual(parsed["codex"], {"cheap": "m1"})
         self.assertEqual(parsed["opencode"], {"cheap": "a/b#c"})
         self.assertEqual(parsed["kiro"], {"cheap": "m1", "strong": "x:0"})
+        self.assertNotEqual(parsed["opencode"].get("cheap"), "m1")  # bare spec skips OpenCode
 
     def test_parse_tier_models_rejects_bad_specs(self) -> None:
         cases = (
@@ -264,7 +267,7 @@ class TierRenderingTests(unittest.TestCase):
             ("vim:cheap=m", "unknown harness"),
             ("cheap=", "TIER=MODEL"),
             ("opencode:cheap=inherit", "inherit"),
-            ("cheap=inherit", "inherit"),
+            ("claude:cheap=inherit", "inherit"),
             ("opencode:cheap=haiku", "provider/model"),
         )
         for spec, message in cases:
