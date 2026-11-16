@@ -8,8 +8,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
-import re
 import subprocess
 import sys
 from collections import Counter
@@ -20,40 +20,79 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = Path(__file__).with_name("complexity-baseline.json")
 RULES = ("C901", "PLR0912", "PLR0915")
-FUNC = re.compile(r"`([^`]+)`")
 
 Finding = dict[str, Any]
 
 
-def run_ruff() -> list[Finding]:
+class RatchetError(Exception):
+    """ruff did not produce a trustworthy result; never treated as zero findings."""
+
+
+def ruff_bin() -> str:
     from ruff.__main__ import find_ruff_bin
 
+    return str(find_ruff_bin())
+
+
+def parse_ruff_output(returncode: int, stdout: str, stderr: str) -> list[Finding]:
+    if returncode not in (0, 1):
+        raise RatchetError(f"ruff exited {returncode}: {stderr.strip()}")
+    if not stdout.strip():
+        raise RatchetError("ruff produced no JSON output (expected at least `[]`)")
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise RatchetError(f"ruff output is not valid JSON: {exc}") from exc
+    if not isinstance(data, list) or not all(
+        isinstance(item, dict) and {"code", "filename", "location"} <= item.keys() for item in data
+    ):
+        raise RatchetError("ruff JSON is not a list of diagnostics")
+    return data
+
+
+def run_ruff() -> list[Finding]:
     cmd = [
-        find_ruff_bin(),
-        "check",
-        "--isolated",
-        "--no-cache",
-        "--select",
-        ",".join(RULES),
-        "--output-format",
-        "json",
-        str(ROOT),
+        ruff_bin(), "check", "--isolated", "--no-cache", "--select", ",".join(RULES),
+        "--output-format", "json", str(ROOT),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if proc.returncode not in (0, 1):
-        raise SystemExit(f"ruff failed: {proc.stderr.strip()}")
-    result: list[Finding] = json.loads(proc.stdout or "[]")
-    return result
+    return parse_ruff_output(proc.returncode, proc.stdout, proc.stderr)
+
+
+def enclosing_function(tree: ast.AST, row: int) -> str:
+    """Dotted name (classes and functions) of the innermost def containing `row`."""
+    best: list[str] = []
+
+    def visit(node: ast.AST, path: list[str]) -> None:
+        nonlocal best
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                inner = [*path, child.name]
+                if child.lineno <= row <= (child.end_lineno or child.lineno):
+                    if not isinstance(child, ast.ClassDef) and len(inner) >= len(best):
+                        best = inner
+                    visit(child, inner)
+            else:
+                visit(child, path)
+
+    visit(tree, [])
+    return ".".join(best) if best else "<module>"
 
 
 def collect(findings: list[Finding], root: Path) -> Counter[str]:
     """Count findings keyed by `RULE path::function`, so moved code is identifiable."""
     keys: Counter[str] = Counter()
+    trees: dict[Path, ast.AST | None] = {}
     for item in findings:
-        match = FUNC.search(item.get("message", ""))
-        name = match.group(1) if match else "?"
-        path = Path(item["filename"]).relative_to(root).as_posix()
-        keys[f"{item['code']} {path}::{name}"] += 1
+        file = Path(item["filename"])
+        if file not in trees:
+            try:
+                trees[file] = ast.parse(file.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeDecodeError):
+                trees[file] = None
+        tree = trees[file]
+        name = enclosing_function(tree, item["location"]["row"]) if tree else "<unresolved>"
+        keys[f"{item['code']} {file.relative_to(root).as_posix()}::{name}"] += 1
     return keys
 
 
@@ -90,7 +129,11 @@ def main(
     )
     args = parser.parse_args(argv)
 
-    current = collect(run_ruff(), root)
+    try:
+        current = collect(run_ruff(), root)
+    except RatchetError as exc:
+        print(f"complexity ratchet cannot trust ruff: {exc}", file=sys.stderr)
+        return 2
     now = totals(current)
     base = totals(load_baseline(args.baseline))
     risen = [rule for rule in RULES if now[rule] > base[rule]]
