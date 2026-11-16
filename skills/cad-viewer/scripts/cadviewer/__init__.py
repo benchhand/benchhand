@@ -12,6 +12,6 @@ class ViewerError(RuntimeError):
 class LimitError(ViewerError):
     """A requested joint value lies outside its assembly.yaml limits; maps to exit 1."""
 
-    def __init__(self, message: str, findings: list[dict]) -> None:
+    def __init__(self, message: str, findings: list[dict[str, object]]) -> None:
         super().__init__(message)
         self.findings = findings

@@ -98,7 +98,7 @@ class Span:
 
 def case_path(hw: Path, case: str, layout: Any) -> Path:
     """hw/motion/cases/<case>/plan.yaml, through cad-record's layout (`record.motion_case`)."""
-    return layout.resolve(hw, "record.motion_case", ID=case) / "plan.yaml"
+    return Path(layout.resolve(hw, "record.motion_case", ID=case)) / "plan.yaml"
 
 
 def read_plan(path: Path) -> Any:

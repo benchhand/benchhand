@@ -68,7 +68,7 @@ def project_root(args: argparse.Namespace) -> Path:
     if hardware is None:
         cwd = Path.cwd().resolve()
         return cwd.parent if cwd.name == "hw" else cwd
-    hw = hardware.expanduser().resolve()
+    hw: Path = hardware.expanduser().resolve()
     return hw.parent if hw.name == "hw" else hw
 
 

@@ -300,7 +300,7 @@ def holes(shape: Any) -> list[dict[str, Any]]:
 
 def bore_walls(shape: Any) -> list[Any]:
     """The concave cylindrical faces `holes` measures: walls on a full-circle slice of some bore."""
-    walls = []
+    walls: list[Any] = []
     for solid in occ.subshapes(shape, "SOLID"):
         for group in _groups(solid):
             ref = group[0]

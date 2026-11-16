@@ -226,7 +226,7 @@ def _detect(track: _Track, joint: Any, members: list[str]) -> PeriodEvidence:
     if not returns:
         return PeriodEvidence(**evidence, status="static", period=None,
                               reason="no member moves along this joint", outside_range=track.outside)
-    rejected = []
+    rejected: list[dict[str, Any]] = []
     for lag in sorted({index for indices in returns.values() for index in indices}):
         failure = _first_mismatch(track, members, lag)
         if failure is None:
