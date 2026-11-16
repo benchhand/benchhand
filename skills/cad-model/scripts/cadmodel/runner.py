@@ -22,6 +22,11 @@ and reads one JSON result from that file once the runner exits, identical in sha
                "LMP-0004": {"ok": false, "error": {"type": "SafeEditError", "message": "...",
                                                    "where": "model.py:42 in build"}}}}
 
+`import_s` is the wall time of the kernel import: in this process for one worker, or, with several
+workers (`build_jobs`; CAD_MODEL_BUILD_JOBS overrides, 1 = serial), the slowest worker's own import,
+as the workers import concurrently. Parts then build in spawned worker processes of the runner's
+process group, and the result lists them in request order.
+
 `sources` hashes every Python file the runner loaded from the plugin or the project, the part models
 themselves excepted: with `tools` and the part's own files they are what a cached build depends on.
 `run_<kernel>.py --tools` prints `cadmodel.provenance.runtime` of the environment instead, without
@@ -61,11 +66,14 @@ import importlib.util
 import json
 import math
 import logging
+import multiprocessing
+import os
 import platform
 import re
 import sys
 import time
 import traceback
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -345,6 +353,67 @@ def _failure(error: BaseException, model: str) -> dict[str, Any]:
     return {"ok": False, "error": {"type": type(error).__name__, "message": str(error), "where": where}}
 
 
+BUILD_JOBS_ENV = "CAD_MODEL_BUILD_JOBS"
+MAX_BUILD_JOBS = 8  # each worker imports the kernel (~1 GB resident for OCP); more rarely pays back
+
+
+def build_jobs(part_count: int, environ: Mapping[str, str], cpus: int | None = None) -> int:
+    """Worker processes for `part_count` parts: min(cpu count, parts, MAX_BUILD_JOBS), or the positive
+    integer in CAD_MODEL_BUILD_JOBS (still capped by the parts). 1 builds in this process."""
+    raw = environ.get(BUILD_JOBS_ENV, "").strip()
+    if raw:
+        if not raw.isdecimal() or int(raw) < 1:
+            raise ValueError(f"{BUILD_JOBS_ENV} must be a positive integer, got {raw!r}")
+        wanted = int(raw)
+    else:
+        wanted = min(cpus or os.cpu_count() or 1, MAX_BUILD_JOBS)
+    return max(1, min(wanted, part_count))
+
+
+def _build_or_fail(kernel: str, part: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        return build_part(kernel, part)
+    except Exception as error:  # noqa: BLE001 - every model failure is reported per part
+        return _failure(error, str(Path(part["model"])))
+
+
+_worker_import_s = 0.0
+
+
+def _init_worker(kernel: str) -> None:
+    """Worker start: no bytecode beside the part models, kernel imported once per worker."""
+    global _worker_import_s
+    sys.dont_write_bytecode = True
+    started = time.perf_counter()
+    importlib.import_module(kernel)
+    _worker_import_s = round(time.perf_counter() - started, 3)
+
+
+def _build_in_worker(kernel: str, part: Mapping[str, Any],
+                     roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
+    """One part in a worker: its result, the plugin and project sources this worker has loaded so far
+    (the parent never loads the models' helper modules), and the worker's kernel import time."""
+    return _build_or_fail(kernel, part), provenance.sources(roots, MODEL_MODULE), _worker_import_s
+
+
+def _build_parallel(kernel: str, parts: list[Mapping[str, Any]], jobs: int,
+                    roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
+    """Build `parts` in `jobs` spawned workers; results in request order. spawn, not fork: OCCT keeps
+    process-global state and threads once imported. Workers stay in the runner's process group and
+    session, so killing that group (build._stop) takes them too."""
+    results: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+    import_s = 0.0
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn"),
+                             initializer=_init_worker, initargs=(kernel,)) as pool:
+        futures = [(part, pool.submit(_build_in_worker, kernel, part, roots)) for part in parts]
+        for part, future in futures:
+            results[part["pn"]], worker_sources, worker_import_s = future.result()
+            sources.update(worker_sources)
+            import_s = max(import_s, worker_import_s)
+    return results, sources, import_s
+
+
 def main(kernel: str, dists: tuple[str, ...]) -> int:
     sys.dont_write_bytecode = True  # never leave __pycache__ beside hw/parts/<PN>/model.py
     if sys.argv[1:] == ["--tools"]:
@@ -354,20 +423,23 @@ def main(kernel: str, dists: tuple[str, ...]) -> int:
         request = json.load(sys.stdin)
         parts = request["parts"]
         result = Path(request["result"])
+        jobs = build_jobs(len(parts), os.environ)
     except (ValueError, KeyError, TypeError) as error:
         print(f"run_{kernel}: bad request on stdin: {error}", file=sys.stderr)
         return 2
-    results: dict[str, Any] = {}
-    started = time.perf_counter()
-    importlib.import_module(kernel)
-    import_s = round(time.perf_counter() - started, 3)
-    for part in parts:
-        try:
-            results[part["pn"]] = build_part(kernel, part)
-        except Exception as error:  # noqa: BLE001 - every model failure is reported per part
-            results[part["pn"]] = _failure(error, str(Path(part["model"])))
     projects = {Path(part["model"]).resolve().parents[2] for part in parts}  # hw/ of hw/parts/<PN>/model.py
+    roots = [provenance.SKILLS, *projects]
+    results: dict[str, Any] = {}
+    if jobs > 1:
+        results, worker_sources, import_s = _build_parallel(kernel, parts, jobs, roots)
+        sources = dict(sorted({**provenance.sources(roots, MODEL_MODULE), **worker_sources}.items()))
+    else:
+        started = time.perf_counter()
+        importlib.import_module(kernel)
+        import_s = round(time.perf_counter() - started, 3)
+        for part in parts:
+            results[part["pn"]] = _build_or_fail(kernel, part)
+        sources = provenance.sources(roots, MODEL_MODULE)
     result.write_text(json.dumps({"kernel": kernel, "tools": tool_versions(dists), "import_s": import_s,
-                                  "sources": provenance.sources([provenance.SKILLS, *projects], MODEL_MODULE),
-                                  "parts": results}) + "\n", encoding="utf-8")
+                                  "sources": sources, "parts": results}) + "\n", encoding="utf-8")
     return 0
