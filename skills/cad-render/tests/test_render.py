@@ -746,6 +746,13 @@ class RendererPage(unittest.TestCase):
             self.assertRegex(sri, r"^sha384-[A-Za-z0-9+/]{64}$")
 
 
+class DefaultJobs(unittest.TestCase):
+    def test_default_is_one_page_per_view_capped_at_four(self) -> None:
+        for views, pages in ((0, 1), (1, 1), (3, 3), (4, 4), (5, 4), (30, 4)):
+            with self.subTest(views=views):
+                self.assertEqual(render.default_jobs(views), pages)
+
+
 class Cli(unittest.TestCase):
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run([sys.executable, str(RENDER_PY), *args], capture_output=True, text=True, timeout=60)

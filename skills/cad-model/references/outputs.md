@@ -319,9 +319,9 @@ pair. Each reading is checked against its own box and mesh bounds; a contradicte
 BRepExtrema 0.0 mm) is a suspect, listed in `suspects`. It is re-evaluated with part b moved 0.01 mm
 both ways, with each independent joint 0.1 off nominal where that moves the pair, and swapped. A
 resolved suspect passes on its bounds (`mesh (exact suspect)`); an unresolved one, or one on an
-always-measured pair, fails its pair. By default (`--jobs 1`), check measures in this process on
-OCCT's thread pool. `--jobs N` measures in N worker processes that die with the check; `auto` is the
-CPU count, at most 8. Results go through cad-motion's pair cache, `hw/.cad/pairs-v2.sqlite`
+always-measured pair, fails its pair. By default (`--jobs auto`), check measures in worker processes that die with the check: the
+CPU count, at most 8. `--jobs N` picks the count; `--jobs 1` measures in this process on
+OCCT's thread pool. Results go through cad-motion's pair cache, `hw/.cad/pairs-v2.sqlite`
 (`--cache DIR` moves it, `--no-cache` skips it), shared with the sweep. It is keyed by both parts'
 geometry, the exact placement and the rule. A check of v2 after v1 measures only the pairs whose
 part or placement changed, and a hit is the value a measurement gives.

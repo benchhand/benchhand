@@ -12,6 +12,8 @@ import json
 import os
 import re
 import uuid
+
+import threading
 import zlib
 from datetime import datetime, timezone
 from collections.abc import Iterator, Sequence
@@ -341,6 +343,30 @@ def pin_pdf_dates(data: bytes, epoch: int) -> bytes:
         raise ExportError("export_failed", "pinning the PDF dates changed its length")
     return pinned
 
+# Which codepoints the bundled lettering font covers, per (freecadcmd, font): the font file ships with
+# FreeCAD, so one probe job answers for every sheet that FreeCAD exports.
+LETTERING_KEY = "osifont"
+_FONT_SUPPORT: dict[tuple[str, str], dict[int, bool]] = {}
+_FONT_SUPPORT_LOCK = threading.Lock()
+
+
+def supported_codepoints(freecadcmd: Path, job: dict[str, Any], workdir: Path, timeout: float) -> frozenset[int]:
+    """The requested codepoints that the lettering font covers; probe FreeCAD only for ones not seen yet."""
+    key = (str(freecadcmd), LETTERING_KEY)
+    with _FONT_SUPPORT_LOCK:
+        known = dict(_FONT_SUPPORT.get(key, {}))
+    unknown = sorted(set(job["codepoints"]) - known.keys())
+    if unknown:
+        result, message = freecad_runtime.run_job(freecadcmd, EXPORT_JOB, {**job, "codepoints": unknown}, workdir, timeout)
+        if result is None:
+            raise ExportError("export_failed", message)
+        covered = set(result["supported_codepoints"])
+        found = {codepoint: codepoint in covered for codepoint in unknown}
+        with _FONT_SUPPORT_LOCK:
+            _FONT_SUPPORT.setdefault(key, {}).update(found)
+        known.update(found)
+    return frozenset(codepoint for codepoint in job["codepoints"] if known[codepoint])
+
 
 def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_text: Sequence[str],
                  timeout: float) -> dict[str, Any]:
@@ -351,7 +377,7 @@ def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_tex
     epoch = pdf_timestamp()   # a bad SOURCE_DATE_EPOCH fails here, before any FreeCAD job runs
     try:
         root = SafeET.parse(str(svg), forbid_dtd=True).getroot()
-    except Exception as exc:
+    except (OSError, ValueError, ET.ParseError) as exc:   # unreadable, malformed, or a defusedxml refusal (ValueError)
         raise ExportError("export_failed", f"invalid or unsafe SVG output: {exc}") from exc
     width, height = sheet_size_mm(root)
     codepoints = frozenset(map(ord, "".join("".join(element.itertext()) for element in root.iter(TEXT))))
@@ -360,10 +386,8 @@ def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_tex
                            "vector_advance": VECTOR_ADVANCE}
     for stale in (pdf, png):
         stale.unlink(missing_ok=True)
-    result, message = freecad_runtime.run_job(freecadcmd, EXPORT_JOB, job, svg.parent, timeout)
-    if result is None:
-        raise ExportError("export_failed", message)
-    job["texts"] = split_text(root, frozenset(result["supported_codepoints"]))
+    supported = supported_codepoints(freecadcmd, job, svg.parent, timeout)
+    job["texts"] = split_text(root, supported)
     job["svg_markup"] = ET.tostring(root, encoding="unicode")
     job.update(dpi=PREVIEW_DPI, pdf=str(pdf), png=str(png),
                document_id=document_id(json.dumps([job["svg_markup"], job["texts"]], sort_keys=True).encode("utf-8"),

@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import zlib
@@ -201,6 +202,65 @@ class FreeCADConcurrency(unittest.TestCase):
             result = freecad_runtime.map_jobs((0.06, 0.0, 0.03), 3,
                                               lambda delay: (time.sleep(delay), delay)[1], executor)
         self.assertEqual(result, [0.06, 0.0, 0.03])
+
+    def test_first_failure_cancels_items_that_have_not_started(self) -> None:
+        started: list[int] = []
+
+        def worker(item: int) -> int:
+            started.append(item)
+            if item == 0:
+                raise RuntimeError("item 0 failed")
+            return item
+
+        with self.assertRaisesRegex(RuntimeError, "item 0 failed"):
+            freecad_runtime.map_jobs((0, 1), 1, worker)
+        self.assertEqual(started, [0])
+
+    def test_an_interrupt_propagates_at_once_and_cancels_unstarted_items(self) -> None:
+        for interrupt in (KeyboardInterrupt(), freecad_runtime.JobInterrupted(signal.SIGTERM)):
+            with self.subTest(interrupt=type(interrupt).__name__):
+                started: list[int] = []
+
+                def worker(item: int) -> int:
+                    started.append(item)
+                    if item == 0:
+                        raise interrupt
+                    if item == 2:
+                        raise RuntimeError("later failure must not mask the interrupt")
+                    return item
+
+                with self.assertRaises(type(interrupt)):
+                    freecad_runtime.map_jobs((0, 1, 2), 1, worker)
+                self.assertEqual(started, [0])
+
+    def test_an_interrupt_does_not_wait_for_running_items(self) -> None:
+        release = threading.Event()
+        running = threading.Event()
+
+        def worker(item: int) -> int:
+            if item == 0:
+                running.wait(5)
+                raise KeyboardInterrupt
+            running.set()
+            release.wait(5)
+            return item
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            started = time.monotonic()
+            try:
+                with self.assertRaises(KeyboardInterrupt):
+                    freecad_runtime.map_jobs((0, 1), 2, worker, executor)
+                self.assertLess(time.monotonic() - started, 2.0)
+            finally:
+                release.set()
+
+    def test_failure_still_returns_the_first_error_in_input_order(self) -> None:
+        def worker(item: int) -> int:
+            raise ValueError(f"item {item}")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            with self.assertRaisesRegex(ValueError, "item 0"):
+                freecad_runtime.map_jobs((0, 1), 2, worker, executor)
 
     def test_freecad_job_environment_is_isolated_and_stdout_is_not_the_summary(self) -> None:
         command = self.root / "fake-freecad"
@@ -654,6 +714,46 @@ class SheetExportParts(unittest.TestCase):
             sheet_export.export_sheet(command, svg, root / "d.pdf", root / "d.png", ["Bb 0123"], 300)
             ids = [re.search(rb"/ID \[ <([0-9a-f]+)>", data).group(1) for data in (outputs[0], (root / "d.pdf").read_bytes())]
             self.assertNotEqual(ids[0], ids[1])
+
+    def test_font_probe_runs_once_per_freecad_and_font_and_output_is_unchanged(self) -> None:
+        sheet_export._FONT_SUPPORT.clear()
+        calls: list[str] = []
+
+        def fake_run_job(command, script, job, workdir, timeout):
+            calls.append("write" if "texts" in job else "probe")
+            supported = [c for c in job["codepoints"] if c != 0x2603]
+            if "texts" in job:
+                return {"supported_codepoints": supported, "png": {"dark_pixels": 10_000}}, ""
+            return {"supported_codepoints": supported}, ""
+
+        content = sheet_export.PdfContent([(567.0, 425.0)], ["osifont"], "Aa")
+        with tempfile.TemporaryDirectory(prefix="cad-probe-") as tmp, \
+                patch.object(freecad_runtime, "run_job", fake_run_job), \
+                patch.object(sheet_export, "read_pdf", return_value=content):
+            svg = Path(tmp) / "s.svg"
+            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="150mm">'
+                           '<text font-size="5">Aa</text></svg>', encoding="utf-8")
+            first = sheet_export.export_sheet(Path("fc-a"), svg, Path(tmp) / "a.pdf", Path(tmp) / "a.png", ["Aa"], 5)
+            second = sheet_export.export_sheet(Path("fc-a"), svg, Path(tmp) / "b.pdf", Path(tmp) / "b.png", ["Aa"], 5)
+            self.assertEqual(calls, ["probe", "write", "write"])
+            self.assertEqual(first, second)
+            sheet_export.export_sheet(Path("fc-b"), svg, Path(tmp) / "c.pdf", Path(tmp) / "c.png", ["Aa"], 5)
+            self.assertEqual(calls, ["probe", "write", "write", "probe", "write"])
+
+    def test_font_probe_asks_only_about_codepoints_it_has_not_seen(self) -> None:
+        sheet_export._FONT_SUPPORT.clear()
+        asked: list[list[int]] = []
+
+        def fake_run_job(command, script, job, workdir, timeout):
+            asked.append(list(job["codepoints"]))
+            return {"supported_codepoints": [c for c in job["codepoints"] if c != ord("Z")]}, ""
+
+        fc = Path("fc")
+        with patch.object(freecad_runtime, "run_job", fake_run_job):
+            first = sheet_export.supported_codepoints(fc, {"codepoints": [65, 90]}, Path("."), 5)
+            second = sheet_export.supported_codepoints(fc, {"codepoints": [65, 90, 66]}, Path("."), 5)
+        self.assertEqual(asked, [[65, 90], [66]])
+        self.assertEqual((first, second), (frozenset({65}), frozenset({65, 66})))
 
     def test_svg_unknown_glyph_is_rejected(self) -> None:
         root = SafeET.fromstring('<svg xmlns="http://www.w3.org/2000/svg"><text font-family="serif" font-size="10">☃</text></svg>')

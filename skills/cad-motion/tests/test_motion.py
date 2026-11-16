@@ -523,6 +523,14 @@ class PairRequirementTests(unittest.TestCase):
 
 
 
+class SweepJobsDefaultTests(unittest.TestCase):
+    def test_sweep_defaults_to_auto_workers_and_an_explicit_count_wins(self) -> None:
+        parser = sweep.build_parser()
+        self.assertEqual(parser.get_default("jobs"), "auto")
+        action = next(a for a in parser._actions if a.dest == "jobs")
+        self.assertEqual(action.type(parser.get_default("jobs")), sweep.pair_measure.jobs_argument("auto"))
+
+
 class JobsArgumentTests(unittest.TestCase):
     """`--jobs`: auto is the CPU count capped at AUTO_JOBS_MAX; needs no OCP."""
 

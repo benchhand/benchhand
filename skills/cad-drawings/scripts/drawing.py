@@ -637,6 +637,8 @@ def compose_and_publish(context: drawing_contract.DrawingContext, part: drawing_
         return fail(getattr(exc, "code", "layout_check_failed"), str(exc), pn=part.pn), 1
     package = drawing_document.publish_package(context, pages, report, output_dir, freecadcmd, timeout,
                                                completeness.release_blockers(record),
+                                               jobs=freecad_runtime.jobs_for(None, len(pages),
+                                                                             freecad_runtime.FREECAD_JOB_PEAK_RSS_BYTES),
                                                bundle_path=bundle_path if report.status == "pass" else output_dir)
     retained_dir = package.output_dir if package.exit_code != 0 else output_dir
     previews = sorted(str(retained_dir / p.name) for p in retained_dir.glob("*.png"))

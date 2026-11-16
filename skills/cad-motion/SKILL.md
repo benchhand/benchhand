@@ -60,7 +60,7 @@ Verify coupled motion with `pose.py` and `sweep.py`.
    With scratch geometry (`--step` or `--parts-dir`), pass `--out .cad-work/<unit>/posed.step`.
 2. Sweep: `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-motion/scripts/sweep.py --hw hw --version vN
    [--case ID] [--replace] [--steps 19] [--grid 3] [--min-clearance MM] [--pair-clearance REF:REF=MM]
-   [--include-pair REF:REF] [--end-effector REF] [--jobs 1|N|auto] [--cache DIR | --no-cache]
+   [--include-pair REF:REF] [--end-effector REF] [--jobs auto|N|1] [--cache DIR | --no-cache]
    [--exact | --mesh-band 2 [--spot-check | --no-spot-check]] [--subsystem NAME ...]
    [--no-continuous | --continuous-grid-deg 0.25 --continuous-grid-mm 0.25 --continuous-safety 1.5
    --continuous-depth 6] [--smoke] [--changed-only [--since-version vN]]`
@@ -68,10 +68,9 @@ Verify coupled motion with `pose.py` and `sweep.py`.
    statistics under `evidence/`; also reports collisions, clearances, `warnings`, `continuous`,
    `subsystems`, `reach_envelope`, and `timings_s`. With scratch geometry, `--worst-step` must be a
    new path under `.cad-work/`.
-   `--jobs 1`, the default, measures in this process on OCCT's thread pool. `--jobs N` measures
-   pairs in N worker processes (forkserver; spawn on macOS), each about 110 MB; `auto` is the CPU
-   count, at most 8. Workers pay off for many small parts and on a busy host. The result is the
-   same either way. Workers die with the sweep, mid-measurement too. A sweep records its run under
+   `--jobs auto`, the default, measures pairs in worker processes (forkserver; spawn on macOS), each
+   about 110 MB: the CPU count, at most 8. `--jobs N` picks the count; `--jobs 1` measures in this
+   process on OCCT's thread pool. The result is the same either way. Workers die with the sweep, mid-measurement too. A sweep records its run under
    `hw/.cad/runs/` (cad-flow `process_lifecycle.py`) and refuses to start while another sweep, or a
    run that left processes behind, is recorded for the hw tree; stop it with the printed command.
    Fast mode is the default; see [Sweep checks](#sweep-checks). `--exact` measures every request that

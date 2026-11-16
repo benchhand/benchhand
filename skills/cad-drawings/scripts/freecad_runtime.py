@@ -130,11 +130,18 @@ def jobs_for(requested: int | None, item_count: int, peak_rss_bytes: int) -> int
 def _map_jobs(items: list[_T], executor: Executor, worker: Callable[[_T], _R]) -> list[_R]:
     futures: list[Future[_R]] = [executor.submit(worker, item) for item in items]
     results: list[_R | None] = [None] * len(futures)
-    failures: list[BaseException] = []
+    failures: list[Exception] = []
     for index, future in enumerate(futures):
         try:
             results[index] = future.result()
-        except BaseException as exc:
+        except (KeyboardInterrupt, JobInterrupted):
+            for pending in futures[index + 1:]:   # stop at once; the caller's signal handling ends running jobs
+                pending.cancel()
+            raise
+        except Exception as exc:
+            if not failures:   # items that have not started are dropped; running ones finish
+                for pending in futures[index + 1:]:
+                    pending.cancel()
             failures.append(exc)
     if failures:
         raise failures[0]

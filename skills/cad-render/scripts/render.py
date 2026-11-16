@@ -119,7 +119,7 @@ DIR_TOKEN = re.compile(rf"^(?P<direction>{_DIRECTION})(?:-(?P<kind>closeup|part)
 VIEW_NAME = re.compile(r"^(?:iso|front|side|exploded|(?:closeup|part)-" + _REFERENCE + r"|" + _DIRECTION + r"(?:-(?:closeup|part)-" + _REFERENCE + r")?)$")
 SIZE = re.compile(r"^([1-9][0-9]{2,3})x([1-9][0-9]{2,3})$")
 DEFAULT_VIEWS = ["iso", "front", "side", "exploded"]
-DEFAULT_JOBS = 1
+DEFAULT_JOBS_CAP = 4  # pages when --jobs is not given: one per view, at most this many
 MAX_JOBS = 8
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                  ".css": "text/css; charset=utf-8", ".json": "application/json", ".glb": "model/gltf-binary"}
@@ -1196,7 +1196,12 @@ async def _capture_page_views(page: Any, names: list[str], checks: list[dict[str
     return results, timings, measured
 
 
-def capture_views(url: str, views: list[str], size: tuple[int, int], jobs: int = DEFAULT_JOBS,
+def default_jobs(view_count: int) -> int:
+    """Pages for a run without --jobs: one per view, at most DEFAULT_JOBS_CAP, at least one."""
+    return max(1, min(DEFAULT_JOBS_CAP, view_count))
+
+
+def capture_views(url: str, views: list[str], size: tuple[int, int], jobs: int = 1,
                   checks: list[dict[str, Any]] | None = None
                   ) -> tuple[dict[str, Any], dict[str, Any], dict[str, float], list[dict[str, Any]]]:
     """(page info, capture per view, timings, the pixel counts per visibility check). The first page
@@ -1440,7 +1445,7 @@ def motion_parity(spec: dict[str, Any], worlds: dict[int, dict[str, Any]]) -> di
 def run_motion(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     """`--motion SPEC`: scratch frames, contact sheet and motion-render.json for cad-motion motion.py."""
     wall = time.monotonic()
-    if args.views is not None or args.subject != "assembly" or args.replace or args.jobs != DEFAULT_JOBS:
+    if args.views is not None or args.subject != "assembly" or args.replace or args.jobs is not None:
         raise InfraError("--motion renders scratch frames: it takes --version, --size, --out-dir and --cache-dir, "
                          "not --views, --subject, --replace or --jobs")
     hw = args.hw.resolve()
@@ -1514,7 +1519,7 @@ def default_cache_dir() -> Path:
 
 def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     wall = time.monotonic()
-    if not 1 <= args.jobs <= MAX_JOBS:
+    if args.jobs is not None and not 1 <= args.jobs <= MAX_JOBS:
         raise InfraError(f"--jobs must be between 1 and {MAX_JOBS}")
     hw = args.hw.resolve()
     size = parse_size(args.size)
@@ -1560,7 +1565,8 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     thread.start()
     port = server.server_address[1]
     try:
-        info, results, timings, measured = capture_views(f"http://127.0.0.1:{port}/", rendered, size, args.jobs, checks)
+        info, results, timings, measured = capture_views(f"http://127.0.0.1:{port}/", rendered, size,
+                                                                  args.jobs or default_jobs(len(rendered)), checks)
     finally:
         server.shutdown()
         server.server_close()
@@ -1636,8 +1642,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="iso front side exploded dir-X-Y-Z[-closeup-<PN>|-part-<PN>] closeup-<PN> part-<PN> (default: iso front side exploded)")
     parser.add_argument("--size", default="1600x1200", help="frame size WIDTHxHEIGHT")
     parser.add_argument("--subject", default="assembly", help="bundle subject (default: assembly)")
-    parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
-                        help=f"parallel Chromium pages (1-{MAX_JOBS}; default: {DEFAULT_JOBS})")
+    parser.add_argument("--jobs", type=int, default=None,
+                        help=f"parallel Chromium pages (1-{MAX_JOBS}; default: one per view, at most {DEFAULT_JOBS_CAP})")
     parser.add_argument("--out-dir", type=Path, help="write scratch output under .cad-work only")
     parser.add_argument("--replace", action="store_true", help="retain and replace a conflicting bundle")
     parser.add_argument("--cache-dir", type=Path, help="pinned three.js module cache (default: cad-concept's)")

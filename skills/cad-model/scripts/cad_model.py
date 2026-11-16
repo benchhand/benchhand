@@ -202,10 +202,10 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--jobs",
         type=_jobs,
-        default="1",
+        default="auto",
         metavar="N|auto",
-        help="worker processes measuring pairs (1, the default: this process, on OCCT's thread pool; "
-        "auto: the CPU count, at most 8)",
+        help="worker processes measuring pairs (auto, the default: the CPU count, at most 8; "
+        "1: this process, on OCCT's thread pool)",
     )
     caching = check.add_mutually_exclusive_group()
     caching.add_argument(
