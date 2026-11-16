@@ -15,13 +15,15 @@ jsonschema; everything else is stdlib.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from collections.abc import Iterable, Mapping
-from functools import cache
 from pathlib import Path
 from typing import Any
 
-SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
+SCRIPTS = Path(__file__).resolve().parent
+SCHEMAS = SCRIPTS.parent / "schemas"
 SCHEMA_ID = "https://srobroek.com/cad/schemas/manufacturing-check-result.schema.json"
 
 
@@ -45,15 +47,20 @@ def build(record: Any, expected: Iterable[Any], producer: str, version: str | No
             "dependencies": dict(sorted(dependencies.items())), "complete": complete, "result": result}
 
 
-@cache
 def _validator() -> Any:
-    """A Draft 2020-12 validator of manufacturing-check-result.schema.json, offline: every bundled schema resolves by $id."""
-    from jsonschema import Draft202012Validator  # noqa: PLC0415 - only publishing needs it
-    from referencing import Registry, Resource  # noqa: PLC0415
-
-    resources = [(contents["$id"], Resource.from_contents(contents))
-                 for contents in (json.loads(p.read_text(encoding="utf-8")) for p in sorted(SCHEMAS.glob("*.schema.json")))]
-    return Draft202012Validator({"$ref": SCHEMA_ID}, registry=Registry().with_resources(resources))
+    """A Draft 2020-12 validator of manufacturing-check-result.schema.json from the shared schema registry."""
+    if "cad_record_schema_registry" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("cad_record_schema_registry", SCRIPTS / "schema_registry.py")
+        if spec is None or spec.loader is None:
+            raise ImportError(f"schema_registry.py not found in {SCRIPTS}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cad_record_schema_registry"] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules["cad_record_schema_registry"]
+            raise
+    return sys.modules["cad_record_schema_registry"].ref_validator(SCHEMAS, SCHEMA_ID)
 
 
 def validate(packet: Mapping[str, Any]) -> None:

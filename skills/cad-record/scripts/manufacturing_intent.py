@@ -21,7 +21,6 @@ enumerated before any producer runs. The field contracts are schemas/manufacturi
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 import types
@@ -837,19 +836,13 @@ def schema_for(rel: str) -> str | None:
 
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """JSON-schema problems of every document (needs jsonschema), offline: every bundled schema resolves by $id."""
-    from jsonschema import Draft202012Validator  # noqa: PLC0415 - optional dependency
-    from referencing import Registry, Resource  # noqa: PLC0415
-
-    resources = [(contents["$id"], Resource.from_contents(contents))
-                 for contents in (json.loads(p.read_text(encoding="utf-8")) for p in sorted(SCHEMAS.glob("*.schema.json")))]
-    registry = Registry().with_resources(resources)
+    schemas = _sibling("cad_record_schema_registry", "schema_registry.py")
     problems = []
     for rel, document in sorted(documents.items()):
         name = schema_for(rel)
         if name is None:
             continue
-        schema = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
-        validator = Draft202012Validator(schema, registry=registry)
+        validator = schemas.document_validator(SCHEMAS, name)
         for error in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
             pointer = "/".join(str(part) for part in error.absolute_path)
             problems.append(Problem("intent.schema", f"hw/{rel}", pointer, f"{pointer + ': ' if pointer else ''}{error.message}"))

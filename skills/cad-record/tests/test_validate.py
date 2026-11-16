@@ -358,7 +358,7 @@ class ValidateProject(unittest.TestCase):
         shutil.copy2(VALIDATOR, validator_copy)
         for sibling in ("assembly_data.py", "assembly_operations.py", "design_rules.py", "layout.py",
                         "manufacturing_intent.py", "evidence.py", "impact.py", "selection.py",
-                        "yaml_loader.py"):
+                        "schema_registry.py", "yaml_loader.py"):
             shutil.copy2(VALIDATOR.with_name(sibling), validator_copy.with_name(sibling))
         shutil.copytree(SKILL / "schemas", self.project / "skill" / "schemas")
         shutil.copy2(SKILL / "layout.json", self.project / "skill" / "layout.json")
