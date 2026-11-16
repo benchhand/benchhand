@@ -1,0 +1,10 @@
+{
+ "argv": [
+  "heartbeat",
+  "<A>",
+  "--json"
+ ],
+ "rc": 1,
+ "stdout": "{\n  \"error\": \"heartbeat cad-9n4: issue already claimed by cad/A\",\n  \"schema_version\": 1\n}\n",
+ "stderr": ""
+}

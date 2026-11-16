@@ -74,7 +74,9 @@ listed files and nothing else.
 | `cache.part_records` | `hw/.cad/builds/{SHA}.json` | generated | (data) | cad-model cad_model.py run (cadmodel/store.py) | layout | scratch | what one part build or manufacturing make produced, keyed by the sha256 of its inputs: the stored objects and the runner or check facts; run reuses it only while every object still hashes to its name; git-ignored; store gc drops it once no manifest references its outputs |
 | `control.run` | `hw/.cad/runs/{RUN}.json` | generated | (control) | cad-flow process_lifecycle.py claim_run (cad-motion sweep.py, cad-model check, cad-analysis fea_static.py) | any | scratch | the process groups of one running sweep, check or FEA run, removed when it ends; a live one refuses an overlapping run; git-ignored |
 | `control.run_lock` | `hw/.cad/runs/.lock` | generated | (control) | cad-flow process_lifecycle.py claim_run | any | scratch | lock held only while a run claims its record; disposable |
-| `scratch` | `.cad-work/` | scratch | `**` (scratch) | cad-flow scratch.py, scoped workers, layout.py publication staging | any | scratch | drafts, jobs, logs, publication staging and replaced bundles, beside hw/ |
+| `control.work_ledger` | `hw/.cad/work/ledger.json` | generated | (control) | cad-flow work.py (file backend, used when the project has no .beads) | any | regenerated | work ledger: units, dependencies, evidence comments and human gate mirrors; a unit's lease lives in .cad-work/<unit>/status.json; not a gate authority (flow.gates and the decision records are) |
+| `control.work_lock` | `hw/.cad/work/.lock` | generated | (control) | cad-flow work.py | any | scratch | lock held only while the file ledger is written; disposable |
+| `scratch` | `.cad-work/` | scratch | `**` (scratch) | cad-flow scratch.py, scoped workers, layout.py publication staging | any | scratch | drafts, jobs, logs, publication staging and replaced bundles, beside hw/; <unit>/status.json holds one unit's lease for the file work ledger |
 
 ## Kinds
 
@@ -128,6 +130,7 @@ reported with the action below; `vcs` paths are accepted.
 | `hw/renders/.{V}.old-{STAMP}`/ | transient | cad-render render.py | An interrupted render left the set it was replacing. Delete it once no render is in progress. |
 | `hw/.cad/.recheck.json.tmp` | transient | cad-recheck stamp.py | An interrupted stamp left this temporary file. Delete it once no stamp is in progress. |
 | `hw/.cad/runs/.{RUN}.json.{PID}.tmp` | transient | cad-flow process_lifecycle.py claim_run | An interrupted run claim left this temporary record. Delete it once no sweep, check or FEA run is in progress. |
+| `hw/.cad/work/.ledger.json.{NAME}.tmp` | transient | cad-flow work.py | An interrupted work.py write left this temporary ledger. Delete it once no work.py command is running. |
 | `hw/motion/{V}/.sweep-{S}.json` | transient | cad-motion sweep.py of an earlier release | An earlier sweep's process-group record. Stop its group if it still runs (`kill -TERM -- -PGID` with the pgid it names), then delete it; current sweeps record runs under hw/.cad/runs/. |
 | `hw/**/.DS_Store` | metadata | macOS Finder | Operating-system metadata, not a CAD file. Delete it and ignore it in git. |
 | `hw/**/Thumbs.db` | metadata | Windows Explorer | Operating-system metadata, not a CAD file. Delete it and ignore it in git. |

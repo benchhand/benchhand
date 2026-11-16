@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "update",
+  "<A>",
+  "--claim",
+  "--actor",
+  "cad/A",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "[\n  {\n    \"id\": \"cad-9n4\",\n    \"title\": \"unit A\",\n    \"status\": \"in_progress\",\n    \"priority\": 2,\n    \"issue_type\": \"task\",\n    \"assignee\": \"cad/A\",\n    \"owner\": \"test@example.com\",\n    \"created_at\": \"2026-11-16T20:12:07Z\",\n    \"created_by\": \"Test User\",\n    \"updated_at\": \"2026-11-16T20:12:20Z\",\n    \"started_at\": \"2026-11-16T20:12:20Z\",\n    \"lease_expires_at\": \"2026-11-16T20:17:20Z\",\n    \"heartbeat_at\": \"2026-11-16T20:12:20Z\",\n    \"labels\": [\n      \"cad\",\n      \"cad:stage=layout\",\n      \"cad:unit=A\"\n    ]\n  }\n]\n",
+ "stderr": ""
+}

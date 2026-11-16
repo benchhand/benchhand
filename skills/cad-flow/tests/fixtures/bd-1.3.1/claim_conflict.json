@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "update",
+  "<A>",
+  "--claim",
+  "--actor",
+  "cad/Z",
+  "--json"
+ ],
+ "rc": 1,
+ "stdout": "",
+ "stderr": "Error updating cad-9n4: issue already claimed by cad/A\n{\"error\":\"1 of 1 issues failed to update\",\"failed\":[{\"id\":\"cad-9n4\",\"error\":\"updating issue: issue already claimed by cad/A\"}],\"schema_version\":1}\n"
+}

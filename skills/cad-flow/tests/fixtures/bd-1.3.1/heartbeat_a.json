@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "heartbeat",
+  "<A>",
+  "--actor",
+  "cad/A",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "{\n  \"id\": \"cad-9n4\",\n  \"owner\": \"cad/A\",\n  \"schema_version\": 1,\n  \"status\": \"heartbeat\"\n}\n",
+ "stderr": ""
+}

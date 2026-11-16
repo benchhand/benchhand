@@ -1,0 +1,14 @@
+{
+ "argv": [
+  "unclaim",
+  "<A>",
+  "--if-assignee",
+  "cad/Z",
+  "--reason",
+  "release",
+  "--json"
+ ],
+ "rc": 1,
+ "stdout": "",
+ "stderr": "Error unclaiming cad-9n4: assignee mismatch: cad-9n4 is held by \"cad/A\", expected \"cad/Z\"\n"
+}

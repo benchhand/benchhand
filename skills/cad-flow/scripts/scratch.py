@@ -19,7 +19,8 @@ init    copies HW into <workspace>/hw/ without versions/, renders/, releases/, .
         records the unit's PNs and the sha256 of every copied file in <workspace>/baseline.json.
         It seeds the scratch part store with hard links to HW's stored objects and build records,
         so the scratch build reuses every unchanged part. An existing workspace is kept unless
-        --reset replaces it.
+        --reset replaces it. A directory holding only status.json, the lease work.py wrote when the
+        unit was claimed, is not a workspace yet; init and --reset keep that lease.
 build   runs cad-model `run` on the scratch hw/ under the next scratch label, cad-model `check`
         on that version, and cad-design form_check at --fidelity. HW itself is never passed to
         any of them, so HW/versions/ is neither created nor changed. Form findings are split
@@ -142,6 +143,22 @@ def load_baseline(work: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
+LEASE_FILE = "status.json"  # the unit's lease, written by work.py; it outlives the workspace around it
+
+
+def clear_workspace(work: Path) -> None:
+    """Remove everything in the unit's directory but its lease."""
+    if work.exists() and not work.is_dir():
+        work.unlink()
+    for child in sorted(work.iterdir()) if work.is_dir() else []:
+        if child.name == LEASE_FILE:
+            continue
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+
+
 def seed_store(hw: Path, scratch_hw: Path) -> int:
     """Hard-link HW's part store (cad-record layout cache.part_objects, cache.part_records) into the
     scratch copy and return how many files were linked. The store's writers only rename onto a name and
@@ -170,11 +187,11 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
     if not parts or bad:
         raise UsageError(f"--part needs one or more PNs matching {PN.pattern}; got {bad or 'none'}")
     work = workspace(hw, unit)
-    if work.exists() and not reset:
+    if (work / "baseline.json").is_file() and not reset:  # a claim alone leaves just the lease
         baseline = load_baseline(work)
         return 0, {"status": "exists", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
                    "parts": baseline["parts"], "note": "kept the existing workspace; --reset replaces it"}
-    shutil.rmtree(work, ignore_errors=True)
+    clear_workspace(work)
     work.parent.mkdir(parents=True, exist_ok=True)
     gitignore = work.parent / ".gitignore"
     if not gitignore.exists():

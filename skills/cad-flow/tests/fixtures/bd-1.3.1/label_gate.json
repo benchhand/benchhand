@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "label",
+  "add",
+  "<G>",
+  "cad:gate=S.provisional",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "[\n  {\n    \"issue_id\": \"cad-qvu\",\n    \"label\": \"cad:gate=S.provisional\",\n    \"status\": \"added\"\n  }\n]\n",
+ "stderr": ""
+}

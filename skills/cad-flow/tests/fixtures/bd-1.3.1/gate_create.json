@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "gate",
+  "create",
+  "--type=human",
+  "--blocks",
+  "<B>",
+  "--reason",
+  "S.provisional",
+  "--title",
+  "gate:S.provisional",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "{\n  \"await_type\": \"human\",\n  \"created_at\": \"2026-11-16T20:12:34.011111Z\",\n  \"created_by\": \"Test User\",\n  \"description\": \"Ad-hoc gate blocking cad-0f2\\n\\nReason: S.provisional\",\n  \"id\": \"cad-qvu\",\n  \"issue_type\": \"gate\",\n  \"owner\": \"test@example.com\",\n  \"priority\": 2,\n  \"schema_version\": 1,\n  \"status\": \"open\",\n  \"title\": \"gate:S.provisional\",\n  \"updated_at\": \"2026-11-16T20:12:34.011111Z\"\n}\n",
+ "stderr": ""
+}

@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "gate",
+  "add-waiter",
+  "<G>",
+  "cad/B"
+ ],
+ "rc": 0,
+ "stdout": "\u2713 Added waiter to gate cad-qvu: cad/B\n",
+ "stderr": ""
+}

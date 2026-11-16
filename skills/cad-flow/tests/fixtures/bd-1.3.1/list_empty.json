@@ -1,0 +1,14 @@
+{
+ "argv": [
+  "list",
+  "--label",
+  "cad:unit=NOPE",
+  "--all",
+  "--limit",
+  "0",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "[]\n",
+ "stderr": ""
+}

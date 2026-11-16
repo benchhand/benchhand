@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "dep",
+  "add",
+  "<A>",
+  "<G>",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "{\n  \"depends_on_id\": \"cad-qvu\",\n  \"issue_id\": \"cad-9n4\",\n  \"schema_version\": 1,\n  \"status\": \"added\",\n  \"type\": \"blocks\"\n}\n",
+ "stderr": ""
+}

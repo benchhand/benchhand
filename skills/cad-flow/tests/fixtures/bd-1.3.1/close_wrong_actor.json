@@ -1,0 +1,14 @@
+{
+ "argv": [
+  "close",
+  "<A>",
+  "--reason",
+  "done",
+  "--actor",
+  "cad/Z",
+  "--json"
+ ],
+ "rc": 1,
+ "stdout": "",
+ "stderr": "cannot close cad-9n4: assignee is \"cad/A\", actor is \"cad/Z\"; reclaim or use --force to override\n"
+}

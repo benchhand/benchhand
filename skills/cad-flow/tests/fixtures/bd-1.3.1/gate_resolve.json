@@ -1,0 +1,13 @@
+{
+ "argv": [
+  "gate",
+  "resolve",
+  "<G>",
+  "--reason",
+  "DR-001 v1",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "\u2713 Gate resolved: cad-qvu\n  Reason: DR-001 v1\n",
+ "stderr": ""
+}

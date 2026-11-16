@@ -1,0 +1,14 @@
+{
+ "argv": [
+  "comments",
+  "add",
+  "<A>",
+  "/abs/evidence.json sha256:abababababababababababababababababababababababababababababababab",
+  "--actor",
+  "cad/A",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "{\n  \"author\": \"cad/A\",\n  \"created_at\": \"2026-11-16T20:12:27Z\",\n  \"id\": \"d269b0ca-e930-5520-9325-f5501a2afcff\",\n  \"issue_id\": \"cad-9n4\",\n  \"schema_version\": 1,\n  \"text\": \"/abs/evidence.json sha256:abababababababababababababababababababababababababababababababab\"\n}\n",
+ "stderr": ""
+}

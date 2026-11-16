@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "reopen",
+  "<A>",
+  "--reason",
+  "again",
+  "--json"
+ ],
+ "rc": 0,
+ "stdout": "",
+ "stderr": "cad-9n4 is already open\n"
+}
