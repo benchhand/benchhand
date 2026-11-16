@@ -289,9 +289,12 @@ def _mutable(rel: str) -> None:
         raise Refused(f"hw/{rel} is not a mutable record file; the migration never writes it")
 
 
-def plan(hw: Path, today: date | None = None) -> Plan:
-    """The migration of the record at `hw`: every change it would make, nothing written. Raises Refused."""
-    hw, today = Path(hw), today or date.today()
+def _unknown_fact(question: str, reason: str = REASON) -> dict[str, Any]:
+    return {"status": "unknown", "reason": reason, "question": question}
+
+
+def _load_product(hw: Path) -> tuple[tuple[str, str], Mapping[str, Any], int]:
+    """product.yaml as (text, newline), its data and its record version; Refused unless it is a readable mapping."""
     product_text = _read(hw, "product.yaml")
     if product_text is None:
         raise Refused(f"{hw} has no product.yaml; this is not a CAD record")
@@ -302,13 +305,19 @@ def plan(hw: Path, today: date | None = None) -> Plan:
         version = intent.record_version(product)
     except intent.UnsupportedRecordVersion as error:
         raise Refused(str(error)) from None
-    if version == TARGET_VERSION:
-        return Plan(hw, "current", version, [], [], [], [])
+    return product_text, product, version
+
+
+def _refuse_frozen(product: Mapping[str, Any]) -> None:
     flow_data = product.get("flow")
     flow = flow_data if isinstance(flow_data, Mapping) else {}
     if flow.get("frozen") and not flow.get("change"):
         raise Refused(f"the record is frozen at {flow['frozen'].get('version')}; migrating changes controlled records, so "
                       "open an approved change (product.yaml flow.change with its decision) first")
+
+
+def _load_documents(hw: Path) -> tuple[dict[str, tuple[str, str]], list[str], dict[str, Any]]:
+    """The texts, the part.yaml paths and the parsed mappings of every file the migration edits."""
     texts: dict[str, tuple[str, str]] = {}
     part_rels = sorted(path.relative_to(hw).as_posix() for path in hw.glob("parts/*/part.yaml") if path.is_file())
     for rel in ("requirements.yaml", "interfaces.yaml", "assembly.yaml", *part_rels):
@@ -320,181 +329,204 @@ def plan(hw: Path, today: date | None = None) -> Plan:
     for rel, document in data.items():
         if not isinstance(document, Mapping):
             raise Refused(f"hw/{rel} is not a mapping")
+    return texts, part_rels, data
 
-    requirements = data["requirements.yaml"]
-    assembly = data["assembly.yaml"]
-    drawing = assembly.get("drawing") if isinstance(assembly.get("drawing"), Mapping) else {}
-    move_operations = "operations" not in assembly and "operations" in drawing
-    interfaces = [item for item in data["interfaces.yaml"].get("interfaces") or () if isinstance(item, Mapping)]
 
-    # Questions: the use case, then assembly operations, then each part and interface, in record order.
-    questions, use_case_paths = intent.use_case_questions(1)
-    number = len(questions) + 1
+class _Migration:
+    """The planning of one record: the questions, the per-file changes and the unknowns, filled in record order."""
 
-    def ask(text: str, subjects: list[dict[str, Any]]) -> str:
-        nonlocal number
-        ident = f"Q-{number:03d}"
-        number += 1
-        questions.append({"id": ident, "question": text, "subjects": subjects, "owner": "lead", "material_to_choice": True,
-                          "safety_relevant": True, "status": "open"})
+    def __init__(self, hw: Path, stamp: str, product_text: tuple[str, str], product: Mapping[str, Any]) -> None:
+        self.hw, self.stamp, self.product_text, self.product = hw, stamp, product_text, product
+        self.texts, self.part_rels, self.data = _load_documents(hw)
+        self.assembly = self.data["assembly.yaml"]
+        drawing = self.assembly.get("drawing") if isinstance(self.assembly.get("drawing"), Mapping) else {}
+        self.move_operations = "operations" not in self.assembly and "operations" in drawing
+        self.questions, self.use_case_paths = intent.use_case_questions(1)
+        self.changes: list[Change] = []
+        self.unknown: list[str] = []
+        self.operations_question: str | None = None
+        self.part_questions: dict[str, str] = {}
+        self.interface_questions: dict[str, str] = {}
+
+    def ask(self, text: str, subjects: list[dict[str, Any]]) -> str:
+        ident = f"Q-{len(self.questions) + 1:03d}"
+        self.questions.append({"id": ident, "question": text, "subjects": subjects, "owner": "lead", "material_to_choice": True,
+                               "safety_relevant": True, "status": "open"})
         return ident
 
-    operations_question = None
-    if "operations" not in assembly and not move_operations:
-        operations_question = ask("How is the assembly installed: which operations, in which order, with which tools, "
-                                  "access and closure?", [{"product": True}])
-    part_questions = {}
-    for rel in part_rels:
-        part = data[rel]
-        part_questions[rel] = ask(
-            f"{part.get('PN')} ({part.get('title')}): which functions does it serve, which loads and service conditions does it "
-            "see, which material profile (family or exact grade) and which complete route (operations, capability, "
-            "orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy "
-            f"record declares material {part.get('material')} and process {part.get('process')}; they stay declarations, "
-            "not evidence.", [{"PN": part.get("PN")}])
-    interface_questions: dict[str, str] = {}
-    for item in interfaces:
-        question = ask(
-            f"{item.get('id')} ({item.get('type')}, {item.get('from')} to {item.get('to')}): is it critical, which functions "
-            "does it serve, and which acceptance criteria, stack and contact evidence verify it?", [{"interface": item.get("id")}])
-        if isinstance(item.get("id"), str):
-            interface_questions[item["id"]] = question
+    def modify(self, rel: str, after: str, summary: list[str], expected: Any) -> None:
+        """Record the edit of `rel` to `after` and adopt `expected` as its data."""
+        text, newline = self.texts[rel] if rel in self.texts else self.product_text
+        self.changes.append(Change(f"hw/{rel}", "modify", text, after, summary, newline))
+        self.data[rel] = expected
 
-    changes: list[Change] = []
-    unknown: list[str] = []
-    stamp = today.isoformat()
+    def ask_questions(self) -> None:
+        """Questions: the use case (already asked), then assembly operations, then each part and interface, in record order."""
+        if "operations" not in self.assembly and not self.move_operations:
+            self.operations_question = self.ask("How is the assembly installed: which operations, in which order, with which "
+                                                "tools, access and closure?", [{"product": True}])
+        for rel in self.part_rels:
+            part = self.data[rel]
+            self.part_questions[rel] = self.ask(
+                f"{part.get('PN')} ({part.get('title')}): which functions does it serve, which loads and service conditions "
+                "does it see, which material profile (family or exact grade) and which complete route (operations, capability, "
+                "orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy "
+                f"record declares material {part.get('material')} and process {part.get('process')}; they stay declarations, "
+                "not evidence.", [{"PN": part.get("PN")}])
+        interfaces = [item for item in self.data["interfaces.yaml"].get("interfaces") or () if isinstance(item, Mapping)]
+        for item in interfaces:
+            question = self.ask(
+                f"{item.get('id')} ({item.get('type')}, {item.get('from')} to {item.get('to')}): is it critical, which "
+                "functions does it serve, and which acceptance criteria, stack and contact evidence verify it?",
+                [{"interface": item.get("id")}])
+            if isinstance(item.get("id"), str):
+                self.interface_questions[item["id"]] = question
 
-    # requirements.yaml: the three classified-statement lists.
-    rel = "requirements.yaml"
-    text, newline = texts[rel]
-    present = [key for key in ("preferences", "assumptions", "open_questions") if key in requirements]
-    if "open_questions" in requirements:
-        existing = {q.get("id") for q in requirements.get("open_questions") or () if isinstance(q, Mapping)}
-        missing = sorted({q["id"] for q in questions} - existing)
-        if missing:
-            raise Refused(f"hw/requirements.yaml already has open_questions without {', '.join(missing)}, which the migrated "
-                          "blocks name; finish the earlier migration by hand or restore the file from version control")
-    block: dict[str, Any] = {key: value for key, value in (("preferences", []), ("assumptions", []), ("open_questions", questions))
-             if key not in present}
-    if block:
-        expected = {**copy.deepcopy(requirements), **block}
-        after = _checked(rel, _append(text, dump(block)), expected)
-        changes.append(Change(f"hw/{rel}", "modify", text, after,
-                              [f"adds {', '.join(block)}" + (f" ({len(questions)} open questions)" if "open_questions" in block else "")],
-                              newline))
-        data[rel] = expected
+    def plan_requirements(self) -> None:
+        """requirements.yaml: the three classified-statement lists."""
+        rel = "requirements.yaml"
+        text = self.texts[rel][0]
+        requirements = self.data[rel]
+        present = [key for key in ("preferences", "assumptions", "open_questions") if key in requirements]
+        if "open_questions" in requirements:
+            existing = {q.get("id") for q in requirements.get("open_questions") or () if isinstance(q, Mapping)}
+            missing = sorted({q["id"] for q in self.questions} - existing)
+            if missing:
+                raise Refused(f"hw/requirements.yaml already has open_questions without {', '.join(missing)}, which the "
+                              "migrated blocks name; finish the earlier migration by hand or restore the file from version "
+                              "control")
+        block: dict[str, Any] = {key: value for key, value in
+                                 (("preferences", []), ("assumptions", []), ("open_questions", self.questions))
+                                 if key not in present}
+        if block:
+            expected = {**copy.deepcopy(requirements), **block}
+            after = _checked(rel, _append(text, dump(block)), expected)
+            count = f" ({len(self.questions)} open questions)" if "open_questions" in block else ""
+            self.modify(rel, after, [f"adds {', '.join(block)}{count}"], expected)
 
-    # parts: one intent block each.
-    for rel in part_rels:
-        part = data[rel]
-        if "intent" in part:
-            continue
-        text, newline = texts[rel]
-        question = part_questions[rel]
+    def plan_parts(self) -> None:
+        """parts: one intent block each."""
+        for rel in self.part_rels:
+            part = self.data[rel]
+            if "intent" in part:
+                continue
+            question = self.part_questions[rel]
+            block = {"intent": {
+                "functions": _unknown_fact(question),
+                "material_profile": _unknown_fact(question, f"{REASON}; the legacy material {part.get('material')} is a "
+                                                            "declaration, not a sourced grade"),
+                "service": _unknown_fact(question),
+                "critical_surfaces": _unknown_fact(question),
+                "route": _unknown_fact(question, f"{REASON}; the legacy process label {part.get('process')} names no "
+                                                 "operations, capability, orientation, supports or inspection"),
+            }}
+            expected = {**copy.deepcopy(part), **block}
+            after = _checked(rel, _append(self.texts[rel][0], dump(block)), expected)
+            self.modify(rel, after, [f"adds intent: functions, material_profile, service, critical_surfaces and route "
+                                     f"unknown ({question})"], expected)
+            self.unknown.append(f"{part.get('PN')}: functions, material profile, service, critical surfaces and route "
+                                f"({question})")
 
-        def unknown_fact(reason: str = REASON) -> dict[str, Any]:
-            return {"status": "unknown", "reason": reason, "question": question}
+    def plan_interfaces(self) -> None:
+        """interfaces.yaml: one functional block per interface."""
+        rel = "interfaces.yaml"
+        payloads: dict[str, str] = {}
+        expected = copy.deepcopy(self.data[rel])
+        for item in expected.get("interfaces") or ():
+            if isinstance(item, dict) and "functional" not in item:
+                ident = item.get("id")
+                if not isinstance(ident, str):
+                    raise Refused("hw/interfaces.yaml has an interface without an id; give it one, then migrate")
+                question = self.interface_questions[ident]
+                functional = {"critical": _unknown_fact(question), "functions": _unknown_fact(question)}
+                item["functional"] = functional
+                payloads[ident] = dump({"functional": functional})
+                self.unknown.append(f"{ident}: criticality and functions ({question})")
+        if payloads:
+            after = _checked(rel, insert_into_items(self.texts[rel][0], "interfaces", payloads), expected)
+            self.modify(rel, after, [f"adds functional (critical and functions unknown) to {', '.join(payloads)}"], expected)
 
-        block = {"intent": {
-            "functions": unknown_fact(),
-            "material_profile": unknown_fact(f"{REASON}; the legacy material {part.get('material')} is a declaration, "
-                                             "not a sourced grade"),
-            "service": unknown_fact(),
-            "critical_surfaces": unknown_fact(),
-            "route": unknown_fact(f"{REASON}; the legacy process label {part.get('process')} names no operations, capability, "
-                                  "orientation, supports or inspection"),
-        }}
-        expected = {**copy.deepcopy(part), **block}
-        after = _checked(rel, _append(text, dump(block)), expected)
-        changes.append(Change(f"hw/{rel}", "modify", text, after,
-                              [f"adds intent: functions, material_profile, service, critical_surfaces and route unknown ({question})"],
-                              newline))
-        unknown.append(f"{part.get('PN')}: functions, material profile, service, critical surfaces and route ({question})")
-        data[rel] = expected
+    def plan_assembly(self) -> None:
+        """assembly.yaml: one authority for installation operations."""
+        rel, assembly, text = "assembly.yaml", self.assembly, self.texts["assembly.yaml"][0]
+        if self.move_operations:
+            expected = copy.deepcopy(assembly)
+            expected["operations"] = expected["drawing"].pop("operations")
+            after = _checked(rel, move_child_to_top(text, "drawing", "operations"), expected)
+            self.modify(rel, after, [f"moves drawing.operations ({len(expected['operations'] or [])} operations) to "
+                                     "top-level operations, unchanged"], expected)
+        elif "operations" not in assembly:
+            block = {"operations": _unknown_fact(self.operations_question)}  # type: ignore[arg-type]  # asked above
+            expected = {**copy.deepcopy(assembly), **block}
+            after = _checked(rel, _append(text, dump(block)), expected)
+            self.modify(rel, after, [f"adds operations unknown ({self.operations_question})"], expected)
+            self.unknown.append(f"assembly operations ({self.operations_question})")
 
-    # interfaces.yaml: one functional block per interface.
-    rel = "interfaces.yaml"
-    text, newline = texts[rel]
-    payloads: dict[str, str] = {}
-    expected = copy.deepcopy(data[rel])
-    for item in expected.get("interfaces") or ():
-        if isinstance(item, dict) and "functional" not in item:
-            ident = item.get("id")
-            if not isinstance(ident, str):
-                raise Refused("hw/interfaces.yaml has an interface without an id; give it one, then migrate")
-            question = interface_questions[ident]
-            functional = {"critical": {"status": "unknown", "reason": REASON, "question": question},
-                          "functions": {"status": "unknown", "reason": REASON, "question": question}}
-            item["functional"] = functional
-            payloads[ident] = dump({"functional": functional})
-            unknown.append(f"{ident}: criticality and functions ({question})")
-    if payloads:
-        after = _checked(rel, insert_into_items(text, "interfaces", payloads), expected)
-        changes.append(Change(f"hw/{rel}", "modify", text, after,
-                              [f"adds functional (critical and functions unknown) to {', '.join(payloads)}"], newline))
-        data[rel] = expected
+    def plan_new_files(self) -> None:
+        """hw/manufacturing/: capability, material and selection records with nothing recorded."""
+        for rel, content in NEW_FILES.items():
+            if not (self.hw / rel).exists():
+                self.changes.append(Change(f"hw/{rel}", "create", None, content, ["creates it with nothing recorded"]))
+                self.data[rel] = yaml.safe_load(content)
+        self.unknown.insert(0, "capabilities, material profiles and selection: none recorded (hw/manufacturing/)")
 
-    # assembly.yaml: one authority for installation operations.
-    rel = "assembly.yaml"
-    text, newline = texts[rel]
-    if move_operations:
-        expected = copy.deepcopy(assembly)
-        expected["operations"] = expected["drawing"].pop("operations")
-        after = _checked(rel, move_child_to_top(text, "drawing", "operations"), expected)
-        changes.append(Change(f"hw/{rel}", "modify", text, after,
-                              [f"moves drawing.operations ({len(expected['operations'] or [])} operations) to top-level "
-                               "operations, unchanged"], newline))
-        data[rel] = expected
-    elif "operations" not in assembly:
-        block = {"operations": {"status": "unknown", "reason": REASON, "question": operations_question}}
-        expected = {**copy.deepcopy(assembly), **block}
-        after = _checked(rel, _append(text, dump(block)), expected)
-        changes.append(Change(f"hw/{rel}", "modify", text, after, [f"adds operations unknown ({operations_question})"], newline))
-        unknown.append(f"assembly operations ({operations_question})")
-        data[rel] = expected
+    def plan_product(self) -> None:
+        """product.yaml last: the version bump and the use case."""
+        rel, product = "product.yaml", self.product
+        block = {"record_version": TARGET_VERSION}
+        if "use_case" not in product:
+            block["use_case"] = intent.blank_use_case(REASON, self.use_case_paths)
+        expected = {**copy.deepcopy(product), **block}
+        comment = (f"# Record version {TARGET_VERSION} (cad-record migrate.py, {self.stamp}): every use-case field stays "
+                   "unknown\n# until the open questions in requirements.yaml are answered.\n")
+        after = _checked(rel, _append(self.product_text[0], comment + dump(block)), expected)
+        last = f"Q-{len(intent.USE_CASE_QUESTIONS):03d}"
+        self.modify(rel, after, [f"sets record_version {TARGET_VERSION}", f"adds use_case: every field unknown (Q-001 to {last})"],
+                    expected)
+        self.unknown.insert(0, f"use case: service class, purpose, users, environment, loads, motion, accuracy, consequences, "
+                               f"logistics, capability, release scope and evidence policy (Q-001 to {last})")
 
-    # hw/manufacturing/: capability, material and selection records with nothing recorded.
-    for rel, content in NEW_FILES.items():
-        if not (hw / rel).exists():
-            changes.append(Change(f"hw/{rel}", "create", None, content, ["creates it with nothing recorded"]))
-            data[rel] = yaml.safe_load(content)
-    unknown.insert(0, "capabilities, material profiles and selection: none recorded (hw/manufacturing/)")
+    def add_note(self) -> None:
+        """The dated migration note, listed just before product.yaml."""
+        note_rel = f"docs/record-migration-v{TARGET_VERSION}-{self.stamp}.md"
+        existing_note = _read(self.hw, note_rel)
+        self.changes.insert(len(self.changes) - 1, Change(
+            f"hw/{note_rel}", "create" if existing_note is None else "modify", None if existing_note is None else existing_note[0],
+            _note(self.stamp, self.changes, self.unknown, self.questions), ["the migration note"]))
 
-    # product.yaml last: the version bump and the use case.
-    rel = "product.yaml"
-    text, newline = product_text
-    block = {"record_version": TARGET_VERSION}
-    if "use_case" not in product:
-        block["use_case"] = intent.blank_use_case(REASON, use_case_paths)
-    expected = {**copy.deepcopy(product), **block}
-    comment = (f"# Record version {TARGET_VERSION} (cad-record migrate.py, {stamp}): every use-case field stays unknown\n"
-               "# until the open questions in requirements.yaml are answered.\n")
-    after = _checked(rel, _append(text, comment + dump(block)), expected)
-    changes.append(Change(f"hw/{rel}", "modify", text, after,
-                          [f"sets record_version {TARGET_VERSION}", "adds use_case: every field unknown (Q-001 to "
-                           f"Q-{len(intent.USE_CASE_QUESTIONS):03d})"], newline))
-    unknown.insert(0, f"use case: service class, purpose, users, environment, loads, motion, accuracy, consequences, "
-                      f"logistics, capability, release scope and evidence policy (Q-001 to Q-{len(intent.USE_CASE_QUESTIONS):03d})")
-    data[rel] = expected
+    def validated_plan(self, version: int) -> Plan:
+        """The plan, once every changed file is mutable and the migrated record passes its schemas."""
+        for change in self.changes:
+            _mutable(change.path[len("hw/"):])
+        documents, _problems = intent.read_documents(self.hw)
+        documents.update({rel: value for rel, value in self.data.items() if intent.schema_for(rel)})
+        changed = {c.path[len("hw/"):] for c in self.changes}
+        schema = [p for p in intent.schema_problems(documents) if p.path[len("hw/"):] in changed]
+        if schema:
+            raise Refused("the migrated record would not validate; fix these first: " +
+                          "; ".join(f"{p.path}: {p.message}" for p in schema))
+        record = intent.normalize_record(documents, hw=self.hw)
+        findings = [p.finding() for p in record.problems if p.code != intent.MIGRATION_REQUIRED]
+        return Plan(self.hw, "pending", version, self.changes, self.questions, self.unknown, findings)
 
-    note_rel = f"docs/record-migration-v{TARGET_VERSION}-{stamp}.md"
-    existing_note = _read(hw, note_rel)
-    changes.insert(len(changes) - 1, Change(f"hw/{note_rel}", "create" if existing_note is None else "modify",
-                                            None if existing_note is None else existing_note[0],
-                                            _note(stamp, changes, unknown, questions), ["the migration note"]))
 
-    for change in changes:
-        _mutable(change.path[len("hw/"):])
-    documents, _problems = intent.read_documents(hw)
-    documents.update({rel: value for rel, value in data.items() if intent.schema_for(rel)})
-    changed = {c.path[len("hw/"):] for c in changes}
-    schema = [p for p in intent.schema_problems(documents) if p.path[len("hw/"):] in changed]
-    if schema:
-        raise Refused("the migrated record would not validate; fix these first: " +
-                      "; ".join(f"{p.path}: {p.message}" for p in schema))
-    record = intent.normalize_record(documents, hw=hw)
-    findings = [p.finding() for p in record.problems if p.code != intent.MIGRATION_REQUIRED]
-    return Plan(hw, "pending", version, changes, questions, unknown, findings)
+def plan(hw: Path, today: date | None = None) -> Plan:
+    """The migration of the record at `hw`: every change it would make, nothing written. Raises Refused."""
+    hw, today = Path(hw), today or date.today()
+    product_text, product, version = _load_product(hw)
+    if version == TARGET_VERSION:
+        return Plan(hw, "current", version, [], [], [], [])
+    _refuse_frozen(product)
+    migration = _Migration(hw, today.isoformat(), product_text, product)
+    migration.ask_questions()
+    migration.plan_requirements()
+    migration.plan_parts()
+    migration.plan_interfaces()
+    migration.plan_assembly()
+    migration.plan_new_files()
+    migration.plan_product()
+    migration.add_note()
+    return migration.validated_plan(version)
 
 
 def _note(stamp: str, changes: list[Change], unknown: list[str], questions: list[dict[str, Any]]) -> str:
