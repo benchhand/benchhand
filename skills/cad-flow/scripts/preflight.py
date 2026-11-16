@@ -71,6 +71,7 @@ CAD_TOOL = CadTool(
     version_pattern=r"FreeCAD\s+(\d+\.\d+\.\d+)",
     download_url="https://github.com/FreeCAD/FreeCAD/releases/tag/1.1.4",
 )
+REQUIRE_FREECAD = "CAD_REQUIRE_FREECAD"  # "1" makes a missing FreeCAD an error, not None
 
 # Load every sibling-skill module before any check runs: a cold first run spends minutes in the
 # runtime checks, and an uninstall, reinstall or plugin update meanwhile must not surface as an
@@ -270,7 +271,11 @@ def _chromium_check(uv: str, install: bool = False) -> Check:
 def _find_freecadcmd(environ: Mapping[str, str], home: Path | None = None,
                      platform_name: str | None = None,
                      macos_command: Path | None = None) -> Path | None:
-    """Resolve FreeCAD using CAD_TOOL's ordered authoritative candidate list."""
+    """Resolve FreeCAD using CAD_TOOL's ordered authoritative candidate list.
+
+    With CAD_REQUIRE_FREECAD set to 1 in `environ`, finding no candidate raises RuntimeError instead
+    of returning None, so a lane that must test against FreeCAD fails rather than skips.
+    """
     home_dir = home or Path(environ.get("HOME", str(Path.home())))
     for kind, value in CAD_TOOL.lookup_candidates:
         if kind == "environment":
@@ -289,6 +294,9 @@ def _find_freecadcmd(environ: Mapping[str, str], home: Path | None = None,
             command = home_dir / value
             if command.is_file() and os.access(command, os.X_OK):
                 return command
+    if environ.get(REQUIRE_FREECAD) == "1":
+        raise RuntimeError(f"{REQUIRE_FREECAD}=1 but no {CAD_TOOL.name} {CAD_TOOL.required_version} freecadcmd "
+                           "was found through FREECADCMD, PATH, the macOS app or ~/.local/bin")
     return None
 
 

@@ -473,6 +473,17 @@ class CadToolLookupTests(unittest.TestCase):
                 found = preflight.find_freecadcmd({"PATH": ""}, root, "linux")
         self.assertEqual(found, command)
 
+    def test_required_freecad_that_is_missing_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(preflight.shutil, "which", return_value=None):
+                with self.assertRaisesRegex(RuntimeError, "CAD_REQUIRE_FREECAD=1 .*freecadcmd"):
+                    preflight.find_freecadcmd({"PATH": "", "CAD_REQUIRE_FREECAD": "1"}, Path(temporary), "linux")
+
+    def test_required_freecad_that_is_present_is_returned(self) -> None:
+        with patch.object(preflight.shutil, "which", return_value="/path/freecadcmd"):
+            found = preflight.find_freecadcmd({"PATH": "/path", "CAD_REQUIRE_FREECAD": "1"}, Path("/home"), "linux")
+        self.assertEqual(found, Path("/path/freecadcmd"))
+
     def test_installer_managed_appimage_location_is_not_searched(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -135,13 +135,13 @@ for test in skills/*/test_*.py skills/*/tests/test_*.py; do
   uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 \
     python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")"
 done
-python3 -m unittest discover -s harness -p 'test_*.py'
+uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
 python3 harness/generate.py --check
 uv run --no-project --locked --script scripts/typecheck.py
 uvx slopvac <changed-prose-files>
 ```
 
-The mypy command is development-only. Its PEP 723 lock pins the current verified stable version. `mypy.ini` enumerates all feature-changed/new production modules using an incremental baseline and makes the new pure contracts/handlers strict; type findings are reported in `cad-mfg-intent/U8F-notes.md`. Tests that use FreeCAD skip when FreeCAD 1.1.4 is unavailable. Check changed Markdown with `uvx slopvac`.
+The mypy command is development-only. Its PEP 723 lock pins the current verified stable version. `mypy.ini` enumerates all feature-changed/new production modules using an incremental baseline and makes the new pure contracts/handlers strict; type findings are reported in `cad-mfg-intent/U8F-notes.md`. Tests that use FreeCAD skip when FreeCAD 1.1.4 is unavailable. Set `CAD_REQUIRE_FREECAD=1` to make them fail instead, as CI does. Check changed Markdown with `uvx slopvac`.
 
 ## Skills and agents
 
