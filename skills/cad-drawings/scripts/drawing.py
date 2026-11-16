@@ -43,6 +43,7 @@ import feature_recognition  # noqa: E402
 import freecad_runtime  # noqa: E402
 import part_views  # noqa: E402
 import sheet  # noqa: E402
+import sheet_export  # noqa: E402
 from drawing_document import CompositionError, SheetMetadata, SvgAnnotation, SvgNote, SvgTable  # noqa: E402
 from freecad_views import ViewGeometry  # noqa: E402
 from layout_check import Box  # noqa: E402
@@ -454,6 +455,11 @@ def sourcing_note(record: Mapping[str, Any]) -> SvgNote | None:
 
 # --- one part -------------------------------------------------------------------------------------------
 
+def part_recipe(context: drawing_contract.DrawingContext, pn: str) -> dict[str, Any]:
+    """The bundle recipe: the part's provenance and the PDF date epoch, which changes the sealed PDF bytes."""
+    return {"part": pn, "provenance": context.provenance(pn), "pdf_epoch": sheet_export.pdf_timestamp()}
+
+
 def run_part(context: drawing_contract.DrawingContext, pn: str, output_dir: Path, freecadcmd: Path,
              timeout: float, bundle_path: Path | None = None) -> tuple[dict[str, Any], int]:
     part = context.part(pn)
@@ -677,6 +683,11 @@ def main(argv: list[str] | None = None) -> int:
     if freecadcmd is None or not freecadcmd.is_file():
         print(json.dumps(fail("freecad_unavailable", "freecadcmd not found; set FREECADCMD or put freecadcmd on PATH")))
         return 2
+    try:
+        sheet_export.pdf_timestamp()   # the recipes name this epoch; a bad SOURCE_DATE_EPOCH stops the run here
+    except sheet_export.ExportError as exc:
+        print(json.dumps(fail("invalid_source_date_epoch", str(exc))))
+        return 2
     if output_root is not None and len(args.part) > 1:
         try:
             output_root.mkdir(parents=True, exist_ok=False)
@@ -687,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def draw_part(pn: str) -> tuple[dict[str, Any], int]:
         subject = pn
-        recipe = {"part": pn, "provenance": context.provenance(pn)}
+        recipe = part_recipe(context, pn)
         try:
             if output_root is None:
                 existing = api.reusable(hw, "bundle.drawings", {"V": label, "S": subject}, recipe,

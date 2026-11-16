@@ -15,6 +15,7 @@ import unittest
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from defusedxml import ElementTree as SafeET
@@ -452,10 +453,52 @@ class SheetExportParts(unittest.TestCase):
             os.environ.pop("SOURCE_DATE_EPOCH", None)
             with patch.object(time, "time", return_value=1_999_999_999.0):
                 self.assertEqual(sheet_export.pdf_timestamp(), sheet_export.DEFAULT_PDF_EPOCH)
-        for bad in ("", "yesterday", "-1"):
+        for bad in ("", "yesterday", "-1", "+5", " 5", "1.5", "²", "١٢٣"):
             with self.subTest(value=bad), patch.dict(os.environ, {"SOURCE_DATE_EPOCH": bad}):
                 with self.assertRaisesRegex(sheet_export.ExportError, "SOURCE_DATE_EPOCH"):
                     sheet_export.pdf_timestamp()
+
+    def test_source_date_epoch_is_accepted_up_to_the_last_four_digit_year_and_refused_beyond(self) -> None:
+        last = 253_402_300_799   # 9999-12-31T23:59:59Z: the PDF date has a four-digit year
+        for value, accepted in ((str(last), True), ("0", True), (str(last + 1), False), ("9" * 40, False),
+                                ("9" * 5000, False)):
+            with self.subTest(digits=len(value), value=value[:14]), patch.dict(os.environ, {"SOURCE_DATE_EPOCH": value}):
+                if accepted:
+                    self.assertEqual(sheet_export.pdf_timestamp(), int(value))
+                else:
+                    with self.assertRaisesRegex(sheet_export.ExportError, "SOURCE_DATE_EPOCH"):
+                        sheet_export.pdf_timestamp()
+        pinned = sheet_export.pin_pdf_dates(self.qt_style_pdf(), last)
+        self.assertIn(b"D:99991231235959+00'00'", pinned)
+        self.assertEqual(len(pinned), len(self.qt_style_pdf()))
+        with self.assertRaisesRegex(sheet_export.ExportError, "epoch"):
+            sheet_export.pin_pdf_dates(self.qt_style_pdf(), last + 1)
+
+    def test_a_bad_source_date_epoch_stops_the_export_before_freecad_starts(self) -> None:
+        launched: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="cad-epoch-") as tmp, \
+                patch.object(freecad_runtime, "run_job", lambda *a, **k: launched.append("job") or (None, "")), \
+                patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "9" * 40}):
+            svg = Path(tmp) / "s.svg"
+            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="150mm">'
+                           '<text font-size="5">Aa</text></svg>', encoding="utf-8")
+            with self.assertRaisesRegex(sheet_export.ExportError, "SOURCE_DATE_EPOCH"):
+                sheet_export.export_sheet(Path("fc"), svg, Path(tmp) / "a.pdf", Path(tmp) / "a.png", ["Aa"], 5)
+        self.assertEqual(launched, [])
+
+    def test_part_recipe_names_the_pdf_epoch_so_another_epoch_is_another_recipe(self) -> None:
+        import drawing
+        context = SimpleNamespace(provenance=lambda pn: {"pn": pn})
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000000"}):
+            first = drawing.part_recipe(context, "LMP-0005")
+            self.assertEqual(first, drawing.part_recipe(context, "LMP-0005"))
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700003600"}):
+            second = drawing.part_recipe(context, "LMP-0005")
+        os.environ.pop("SOURCE_DATE_EPOCH", None)
+        default = drawing.part_recipe(context, "LMP-0005")
+        self.assertEqual(first["pdf_epoch"], 1_700_000_000)
+        self.assertEqual(default["pdf_epoch"], sheet_export.DEFAULT_PDF_EPOCH)
+        self.assertEqual(len({json.dumps(r, sort_keys=True) for r in (first, second, default)}), 3)
 
     def test_document_id_follows_the_sheet_and_is_a_uuid(self) -> None:
         one = sheet_export.document_id(b"<svg>one</svg>", [10.0, 20.0])

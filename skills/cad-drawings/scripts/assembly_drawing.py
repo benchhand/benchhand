@@ -51,6 +51,7 @@ import assembly_sheet  # noqa: E402
 import drawing_contract  # noqa: E402
 import drawing_document  # noqa: E402
 import freecad_runtime  # noqa: E402
+import sheet_export  # noqa: E402
 from assembly_check import DIRECTIONS, AssemblyPlan, SheetPlan
 from drawing_document import ComposedSheet, CompositionError, CoverageReport, SheetMetadata
 from assembly_sheet import BalloonTarget, MeasuredView
@@ -326,9 +327,11 @@ def reject(output_dir: Path, findings: Sequence[Mapping[str, Any]], status: int)
 
 def drawing_recipe(context: drawing_contract.DrawingContext) -> dict[str, Any]:
     """The bundle recipe: the drawing's provenance, the BOM, and the normalized assembly operations it
-    presents, so a change of their meaning, whichever list holds them, is a new recipe."""
+    presents, so a change of their meaning, whichever list holds them, is a new recipe. The PDF date epoch
+    is part of it: it changes the sealed PDF bytes."""
     return {"drawing": context.provenance("assembly"), "bom": list(context.bom),
-            "operations": assembly_check.operations_summary(context.assembly)}
+            "operations": assembly_check.operations_summary(context.assembly),
+            "pdf_epoch": sheet_export.pdf_timestamp()}
 
 @contextmanager
 def _ignore_publish_signals() -> Iterator[None]:
@@ -399,6 +402,11 @@ def main(argv: list[str] | None = None) -> int:
     if freecadcmd is None or not freecadcmd.is_file():
         print(json.dumps({"status": "error", "findings": [assembly_check.finding(
             "freecad_unavailable", f"FreeCAD not found ({freecadcmd}); set FREECADCMD or put freecadcmd on PATH")]}))
+        return 2
+    try:
+        sheet_export.pdf_timestamp()   # the recipe names this epoch; a bad SOURCE_DATE_EPOCH stops the run here
+    except sheet_export.ExportError as exc:
+        print(json.dumps({"status": "error", "findings": [assembly_check.finding("invalid_source_date_epoch", str(exc))]}))
         return 2
     try:
         hw = args.hw.resolve()

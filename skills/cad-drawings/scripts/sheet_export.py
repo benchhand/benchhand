@@ -252,14 +252,25 @@ _INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()D:\d{14}(?:[+-]\d\d'\d\
 _XMP_DATE = re.compile(rb'(xmp:(?:CreateDate|ModifyDate|MetadataDate)=")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d([+-]\d\d:\d\d|Z)(")')
 
 
+MAX_PDF_EPOCH = 253_402_300_799   # 9999-12-31T23:59:59Z: the last second a four-digit year can write
+
+
 def pdf_timestamp() -> int:
-    """Seconds since the epoch for the PDF dates: SOURCE_DATE_EPOCH, else a fixed date; never the clock."""
+    """Seconds since the epoch for the PDF dates: SOURCE_DATE_EPOCH, else a fixed date; never the clock.
+
+    The value is ASCII digits no later than the last four-digit year, so the dates it writes keep their length.
+    """
     value = os.environ.get("SOURCE_DATE_EPOCH")
     if value is None:
         return DEFAULT_PDF_EPOCH
-    if not value.isdigit():
-        raise ExportError("export_failed", f"SOURCE_DATE_EPOCH must be whole seconds, got {value!r}")
-    return int(value)
+    try:
+        epoch = int(value) if value.isascii() and value.isdigit() else -1
+    except ValueError:   # more digits than int() converts
+        epoch = -1
+    if not 0 <= epoch <= MAX_PDF_EPOCH:
+        raise ExportError("export_failed", f"SOURCE_DATE_EPOCH must be whole seconds from 0 to {MAX_PDF_EPOCH}, "
+                                           f"got {value[:40]!r}")
+    return epoch
 
 
 def document_id(content: bytes, page_mm: Sequence[float]) -> str:
@@ -274,6 +285,8 @@ def pin_pdf_dates(data: bytes, epoch: int) -> bytes:
     Qt's QPdfWriter has no date setter. Each replacement keeps the length of the text it replaces,
     so every xref offset stays valid. A PDF without a /CreationDate is refused: Qt changed its output.
     """
+    if not 0 <= epoch <= MAX_PDF_EPOCH:
+        raise ExportError("export_failed", f"PDF date epoch {epoch} is outside 0 to {MAX_PDF_EPOCH}")
     when = datetime.fromtimestamp(epoch, timezone.utc)
     info = f"D:{when:%Y%m%d%H%M%S}+00'00'".encode("ascii")
     xmp = f"{when:%Y-%m-%dT%H:%M:%S}".encode("ascii")
@@ -298,6 +311,7 @@ def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_tex
 
     Returns the preview size and dark pixel count, the page size in mm, and the PDF's fonts.
     """
+    epoch = pdf_timestamp()   # a bad SOURCE_DATE_EPOCH fails here, before any FreeCAD job runs
     try:
         root = SafeET.parse(str(svg), forbid_dtd=True).getroot()
     except Exception as exc:
@@ -323,7 +337,7 @@ def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_tex
     if result["png"]["dark_pixels"] < MIN_DARK_PIXELS:
         raise ExportError("empty_drawing", f"PNG preview appears blank: {result['png']['dark_pixels']} dark pixels")
     try:
-        pdf.write_bytes(pin_pdf_dates(pdf.read_bytes(), pdf_timestamp()))
+        pdf.write_bytes(pin_pdf_dates(pdf.read_bytes(), epoch))
         content = read_pdf(pdf)
     except (OSError, ValueError, zlib.error) as exc:
         raise ExportError("export_failed", f"cannot read the written PDF: {exc}") from exc
