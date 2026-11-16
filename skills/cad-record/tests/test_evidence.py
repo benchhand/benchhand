@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -394,6 +395,48 @@ class PacketFiles(unittest.TestCase):
         self.assertIn("cannot read result.json", found["hw/checks/v1/broken"])
         self.assertIn("no expected and outcomes", found["hw/checks/v1/legacy"])
         self.assertIn("no manifest.json", found["hw/checks/v1/unsealed"])
+
+    def sealed_packet(self, subject: str) -> Path:
+        """A packet sealed for the built v1 with one retained evidence file beside its result."""
+        version = self.hw / "versions" / "v1"
+        version.mkdir(parents=True, exist_ok=True)
+        (version / "manifest.json").write_text(json.dumps({"label": "v1", "files": {}}), encoding="utf-8")
+        staged = acceptance.layout.staging(self.hw, "bundle.checks")
+        (staged / "result.json").write_text(json.dumps(acceptance.producer_packet(self.record, "v1")), encoding="utf-8")
+        (staged / "evidence").mkdir()
+        (staged / "evidence" / "report.txt").write_text("TST report\n", encoding="utf-8")
+        return acceptance.layout.publish(self.hw, "bundle.checks", {"V": "v1", "S": subject}, staged,
+                                         recipe={"subject": subject}, producer="tst", status="pass").path
+
+    def collect(self) -> tuple[list[Any], list[Any]]:
+        manifest = (self.hw / "versions" / "v1" / "manifest.json").read_bytes()
+        return evidence.collect_packets(self.hw, "v1", acceptance.sha(manifest))
+
+    def test_a_packet_missing_a_sealed_member_is_not_counted_and_reported_unknown_not_failed(self) -> None:
+        bundle = self.sealed_packet("tst")
+        (bundle / "evidence" / "report.txt").unlink()
+        packets, findings = self.collect()
+        self.assertEqual(packets, [])
+        self.assertEqual([(f.code, f.path, f.severity) for f in findings],
+                         [("packet.missing", "hw/checks/v1/tst", "warning")])
+        self.assertIn("evidence/report.txt is listed but missing", findings[0].message)
+
+    def test_a_changed_unlisted_linked_or_malformed_packet_seal_is_packet_invalid(self) -> None:
+        cases = {
+            "changed": lambda b: (b / "evidence" / "report.txt").write_text("edited\n", encoding="utf-8"),
+            "unlisted": lambda b: (b / "evidence" / "extra.txt").write_text("x\n", encoding="utf-8"),
+            "link": lambda b: (b / "evidence" / "alias.txt").symlink_to(b / "result.json"),
+            "malformed": lambda b: (b / "manifest.json").write_text("{not json", encoding="utf-8"),
+            "missing beside unlisted": lambda b: ((b / "evidence" / "report.txt").unlink(),
+                                                  (b / "evidence" / "extra.txt").write_text("x\n", encoding="utf-8")),
+        }
+        for label, damage in cases.items():
+            with self.subTest(label):
+                damage(self.sealed_packet(label.replace(" ", "-")))
+                packets, findings = self.collect()
+                self.assertEqual(packets, [])
+                self.assertEqual([(f.code, f.severity) for f in findings], [("packet.invalid", "error")])
+                shutil.rmtree(self.hw / "checks")
 
     def test_emit_refuses_a_packet_that_breaks_its_schema_and_writes_nothing(self) -> None:
         good = acceptance.producer_packet(self.record, "v1")

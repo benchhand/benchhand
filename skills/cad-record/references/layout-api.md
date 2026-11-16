@@ -90,6 +90,20 @@ Before you use a bundle or a version as input, call `verify(directory)`. It retu
 problems against the manifest inventory. An empty list means the folder verifies. It also reads a
 v2 release manifest, whose `files` map each path to its `sha256` and `original`.
 
+Each problem is a `SealProblem`. Its text is the message. It also names its `kind`, the `member` it
+is about and the `manifest` path. The table lists the `PROBLEM_KINDS` values.
+
+| Kind | Meaning | Reading |
+| --- | --- | --- |
+| `missing` | A listed member is gone, or the directory of listed members is now empty. | unknown |
+| `changed` | A member's sha256 differs from the manifest. | fail |
+| `unlisted` | A file or an empty directory that the manifest does not list. | fail |
+| `link` | A link, a special file or an unsafe name. | fail |
+| `malformed` | `verify` cannot read the manifest, or the manifest has no `files` inventory or lists an unsafe path. | fail |
+
+`built_version` raises `SealError`, a `LayoutError` whose `problems` hold these, when the version
+fails its manifest.
+
 `release.py` writes a sealed directory that is not a bundle. Such a writer stages under `.cad-work/`
 and lands with `claim(staged, target, target_rel)`. `claim` takes the target with an exclusive
 `mkdir` and renames the stage onto it. A target that exists raises `PublishConflict`, and the stage

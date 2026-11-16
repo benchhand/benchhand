@@ -1065,9 +1065,10 @@ def _sha256(path: Path) -> str:
 
 def collect_packets(hw: Path, version: str, version_manifest_sha256: str) -> tuple[list[ProducerPacket], list[Finding]]:
     """The producer check packets sealed for `version` (hw/checks/<V>/<S>/result.json, each a
-    manufacturing check result), and a packet.invalid finding for each bundle whose result.json cannot be
-    read or is no required-check packet, that has no manifest, fails its seal or belongs to another build
-    of the version."""
+    manufacturing check result), and a finding for each bundle that is not counted: packet.missing (a
+    warning: what it would show stays unknown) when its seal only lacks listed members, packet.invalid
+    (a failure) when its result.json cannot be read or is no required-check packet, it has no manifest,
+    its seal fails otherwise or it belongs to another build of the version."""
     hw = Path(hw)
     root = layout.locate(hw, f"hw/checks/{version}")
     packets, findings = [], []
@@ -1088,7 +1089,11 @@ def collect_packets(hw: Path, version: str, version_manifest_sha256: str) -> tup
         if not (directory / layout.MANIFEST).is_file():
             problems.append(f"it has no {layout.MANIFEST}")
         elif not problems:
-            problems = layout.verify(directory)  # a sealed bundle's manifest parses
+            sealed = layout.verify(directory)  # a sealed bundle's manifest parses
+            if sealed and all(problem.kind == "missing" for problem in sealed):
+                findings.append(Finding("packet.missing", rel, f"{rel}: " + "; ".join(sealed), "warning"))
+                continue
+            problems = list(sealed)
             manifest = json.loads((directory / layout.MANIFEST).read_text(encoding="utf-8")) if not problems else {}
             if not problems and manifest.get("version_manifest_sha256") != version_manifest_sha256:
                 problems = [f"it is bound to another build of {version}"]

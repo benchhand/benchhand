@@ -289,6 +289,43 @@ class Publication(TempProject):
         with self.assertRaises(layout.PublishConflict):
             publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"})
 
+    def test_verify_names_the_kind_member_and_manifest_of_each_problem(self) -> None:
+        cases = {
+            "missing": (lambda b: (b / "iso.png").unlink(), "iso.png", "iso.png is listed but missing"),
+            "changed": (lambda b: write(b / "iso.png", "edited\n"), "iso.png", "iso.png changed after it was sealed"),
+            "unlisted": (lambda b: write(b / "top.png"), "top.png", "top.png is not in the manifest"),
+            "unlisted directory": (lambda b: (b / "old").mkdir(), "old/", "old/ is an empty directory"),
+            "link": (lambda b: (b / "alias.png").symlink_to(b / "iso.png"), "alias.png",
+                     "alias.png is a link, a special file or an unsafe name"),
+            "malformed": (lambda b: write(b / "manifest.json", "{}\n"), "manifest.json", None),
+        }
+        for label, (damage, member, message) in cases.items():
+            with self.subTest(label):
+                bundle = publish(self.hw, "bundle.renders", {"V": "v1", "S": label.replace(" ", "-")},
+                                 {"iso.png": "png\n"}).path
+                damage(bundle)
+                manifest = str(bundle / "manifest.json")
+                found = [(p.kind, p.member, p.manifest, str(p)) for p in layout.verify(bundle)]
+                self.assertEqual(found, [(label.split()[0], member, manifest,
+                                          message or f"{manifest} has no files inventory")])
+
+    def test_an_empty_directory_left_by_missing_members_is_missing(self) -> None:
+        bundle = publish(self.hw, "bundle.checks", {"V": "v1", "S": "static"},
+                         {"result.json": "{}\n", "evidence/report.txt": "report\n"}).path
+        (bundle / "evidence" / "report.txt").unlink()
+        self.assertEqual([(p.kind, p.member, str(p)) for p in layout.verify(bundle)],
+                         [("missing", "evidence/", "evidence/ is an empty directory"),
+                          ("missing", "evidence/report.txt", "evidence/report.txt is listed but missing")])
+
+    def test_built_version_carries_the_typed_problems_of_a_version_that_fails_its_manifest(self) -> None:
+        write(self.hw / "versions" / "v2" / "record" / "product.yaml")
+        write(self.hw / "versions" / "v2" / "assembly.step")
+        seal_version(self.hw, "v2")
+        (self.hw / "versions" / "v2" / "assembly.step").unlink()
+        with self.assertRaisesRegex(layout.SealError, "v2 fails its manifest: assembly.step is listed but missing") as caught:
+            layout.built_version(self.hw, "v2")
+        self.assertEqual([(p.kind, p.member) for p in caught.exception.problems], [("missing", "assembly.step")])
+
     def test_a_sealed_v2_release_verifies_and_a_tampered_copy_is_reported(self) -> None:
         release = self.hw / "releases" / "A"
         write(release / "bom.csv", "level,PN\n")

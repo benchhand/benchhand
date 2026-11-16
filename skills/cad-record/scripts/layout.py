@@ -53,6 +53,49 @@ class UnsupportedProcess(LayoutError):
     installed definition still builds, but its manufacturing coverage is unknown and freeze and release refuse it."""
 
 
+# How a sealed directory fails its manifest. A missing member leaves what it would show unknown;
+# a changed or unlisted member, a link or a malformed manifest is a failure.
+PROBLEM_KINDS = ("missing", "changed", "unlisted", "link", "malformed")
+
+
+class SealProblem(str):
+    """One problem `verify` finds: its `kind` (PROBLEM_KINDS), the `member` it is about (a name
+    relative to the sealed directory) and the `manifest` path. The string value is the message, so
+    callers that join or compare problems as text read them unchanged."""
+
+    kind: str
+    member: str
+    manifest: str
+
+    def __new__(cls, kind: str, member: str, message: str, manifest: Path | str) -> SealProblem:
+        if kind not in PROBLEM_KINDS:
+            raise ValueError(f"unknown seal problem kind {kind!r}")
+        problem = super().__new__(cls, message)
+        problem.__dict__.update(kind=kind, member=member, manifest=str(manifest))
+        return problem
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("a SealProblem is immutable")
+
+    @property
+    def message(self) -> str:
+        return str.__str__(self)
+
+    def __repr__(self) -> str:
+        return f"SealProblem({self.kind!r}, {self.member!r}, {self.message!r}, {self.manifest!r})"
+
+    def __reduce__(self) -> tuple[type[SealProblem], tuple[str, str, str, str]]:
+        return SealProblem, (self.kind, self.member, self.message, self.manifest)
+
+
+class SealError(LayoutError):
+    """A built version that fails its manifest; `problems` are the SealProblems `verify` found."""
+
+    def __init__(self, message: str, problems: Iterable[SealProblem]) -> None:
+        super().__init__(message)
+        self.problems = tuple(problems)
+
+
 @dataclass(frozen=True)
 class FileSpec:
     name: str
@@ -772,30 +815,37 @@ def _tree(directory: Path) -> tuple[set[str], list[str], list[str]]:
     return files, sorted(odd), sorted(empty)
 
 
-def verify(directory: Path) -> list[str]:
-    """Problems with a sealed directory against its manifest.json `files` inventory: unreadable
-    manifest, missing, changed or unlisted files, links. Empty when it verifies."""
+def verify(directory: Path) -> list[SealProblem]:
+    """Problems with a sealed directory against its manifest.json `files` inventory, each typed by
+    PROBLEM_KINDS: an unreadable manifest or inventory (malformed), missing, changed or unlisted files,
+    empty directories (missing when they held listed members, else unlisted), links and special files
+    (link). Empty when it verifies."""
     directory = Path(directory)
+    manifest_path = directory / MANIFEST
     try:
-        manifest = json.loads((directory / MANIFEST).read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        return [f"cannot read {directory / MANIFEST}: {error}"]
+        return [SealProblem("malformed", MANIFEST, f"cannot read {manifest_path}: {error}", manifest_path)]
     inventory = manifest.get("files") if isinstance(manifest, dict) else None
     if not isinstance(inventory, dict):
-        return [f"{directory / MANIFEST} has no files inventory"]
+        return [SealProblem("malformed", MANIFEST, f"{manifest_path} has no files inventory", manifest_path)]
     files, odd, empty = _tree(directory)
-    problems = [f"{name} is a link, a special file or an unsafe name" for name in odd]
-    problems += [f"{name}/ is an empty directory" for name in empty]
+    problems = [SealProblem("link", name, f"{name} is a link, a special file or an unsafe name", manifest_path)
+                for name in odd]
+    for name in empty:  # an empty directory that held listed members is what is left of them
+        kind = "missing" if any(listed.startswith(f"{name}/") for listed in inventory) else "unlisted"
+        problems.append(SealProblem(kind, f"{name}/", f"{name}/ is an empty directory", manifest_path))
     for name, expected in sorted(inventory.items()):
         if isinstance(expected, dict):  # a v2 release manifest lists {sha256, original}
             expected = expected.get("sha256")
         if not _safe_relative(name) or name == MANIFEST:
-            problems.append(f"the manifest lists an unsafe path {name!r}")
+            problems.append(SealProblem("malformed", name, f"the manifest lists an unsafe path {name!r}", manifest_path))
         elif name not in files:
-            problems.append(f"{name} is listed but missing")
+            problems.append(SealProblem("missing", name, f"{name} is listed but missing", manifest_path))
         elif _sha256(directory / name) != expected:
-            problems.append(f"{name} changed after it was sealed")
-    problems += [f"{name} is not in the manifest" for name in sorted(files - set(inventory) - {MANIFEST})]
+            problems.append(SealProblem("changed", name, f"{name} changed after it was sealed", manifest_path))
+    problems += [SealProblem("unlisted", name, f"{name} is not in the manifest", manifest_path)
+                 for name in sorted(files - set(inventory) - {MANIFEST})]
     return problems
 
 
@@ -843,7 +893,8 @@ def _sha_or_none(value: Any) -> str | None:
 
 def built_version(hw: Path, requested: str) -> tuple[str, Path, Path]:
     """(label, version folder, record snapshot folder) of a built version; `requested` is a label or
-    `latest`. LayoutError when it is not built, fails its manifest or has no record snapshot."""
+    `latest`. LayoutError when it is not built or has no record snapshot; SealError, carrying the typed
+    problems, when it fails its manifest."""
     hw = Path(hw)
     label = latest(hw) if requested == "latest" else requested
     if label is None:
@@ -853,7 +904,7 @@ def built_version(hw: Path, requested: str) -> tuple[str, Path, Path]:
         raise LayoutError(f"{label} is not a built version: {folder / MANIFEST} is missing")
     problems = verify(folder)
     if problems:
-        raise LayoutError(f"{label} fails its manifest: {'; '.join(problems)}")
+        raise SealError(f"{label} fails its manifest: {'; '.join(problems)}", problems)
     record = resolve(hw, "version.record", V=label)
     if not record.is_dir():
         raise LayoutError(f"{label} has no record snapshot at {record}; build a new version")
