@@ -66,16 +66,18 @@ A changed-only check or a smoke sweep is fast-check evidence only. Its result re
 
 ## Checks by iteration
 
-Each producer runs at the iteration below and not earlier. "Only when stale" means `impact.py` lists the producer's evidence family as stale or open and due at this stage. Unaffected parts keep their evidence. Every command runs by hand today.
+Each producer runs at the iteration below and not earlier. "Only when stale" means `impact.py` marks the evidence family stale or open, and due at this stage. Unaffected parts keep their evidence. Every command runs by hand today.
 
 <!-- TODO(stage-machine): `evidence.py run --scope inner|commit|provisional|full` will choose these steps from the obligations; until it exists, run the commands the owning skills document. -->
 
 **Inner loop.** A designer iterates in a scratch workspace on the unit's own PNs.
 - Always run:
   - `validate.py`
-  - the scratch build, from L1
-  - static `--changed-only`
-  - the form check on the unit's PNs (F1 at L1, F2 at L2, F3 from L3)
+  - the scratch build (`scratch.py build`), from L1
+  - the form check on the unit's PNs (F1 at L1, F2 at L2, F3 from L3), which the scratch build runs
+  - `evidence.py check --hw .cad-work/<unit>/hw --version <label> --stage <stage>`, with the label from the build report
+- The target static check in the loop is `--changed-only`. Today `scratch.py build` runs the static check over every pair. Accept that run. <!-- TODO(stage-machine): `evidence.py run --scope inner` narrows the static check to the changed pairs. -->
+- The evidence check covers the whole scratch record, including PNs outside the unit. <!-- TODO(stage-machine): `evidence.py run --scope inner` scopes the evidence check to the unit's PNs. -->
 - At L3, also run fits and stack-up. Check drawing completeness for the unit's own PNs.
 - If a moving pair changed, run a smoke sweep.
 - If a requirement binds visibility, render.
@@ -83,8 +85,8 @@ Each producer runs at the iteration below and not earlier. "Only when stale" mea
 - Never run these in the loop:
   - the full sweep
   - the motion render
-  - the all-pairs check
   - the integrated drawings
+  - a separate all-pairs check
 
 **Commit (batch vN).** The lead builds one version and checks it in the [fail-fast order](#fail-fast-check-order).
 - Always run:

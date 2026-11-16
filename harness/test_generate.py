@@ -349,9 +349,45 @@ class ProcessRuleTests(unittest.TestCase):
         for phrase in ("at most 4 PNs", "at most 3 PNs", "cores ÷ solver threads"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
-        for heading in ("Inner loop", "Commit (batch vN)", "Provisional gate", "Full gate (approval)", "Design freeze", "Release"):
-            with self.subTest(heading=heading):
-                self.assertIn(f"**{heading}", text)
+
+    ITERATIONS = {
+        "Inner loop": (
+            "`validate.py`", "scratch build", "form check on the unit's PNs", "`evidence.py check --hw .cad-work/<unit>/hw",
+            "`--changed-only`", "scope inner", "fits and stack-up", "smoke sweep", "coarse-mesh FEA",
+            "Never run these in the loop", "the full sweep", "the motion render", "the integrated drawings",
+        ),
+        "Commit (batch vN)": (
+            "`validate.py`", "static `--changed-only`", "the BOM", "fits and stack-up", "form check", "smoke sweep",
+            "drawings", "recheck stamp", "motion render",
+        ),
+        "Provisional gate": (
+            "`validate.py`", "4-view render", "default motion render", "the BOM", "fits and stack-up",
+            "smoke results", "`evidence.py check`",
+        ),
+        "Full gate (approval)": (
+            "`validate.py`", "static check over every pair", "form check for every due obligation", "motion render",
+            "the BOM", "fits and stack-up", "`evidence.py check`", "recheck stamp", "Run the full sweep",
+            "TODO(stage-machine): carry-forward", "draw the parts and the assembly", "run every FEA case",
+            "sourcing and selection",
+        ),
+        "Design freeze": ("`validate.py`", "the BOM", "fits and stack-up", "`evidence.py check`", "the stamp", "full sweep"),
+        "Release": ("`validate.py`", "the BOM", "`build_guide.py`", "`release.py`"),
+    }
+
+    def iteration_sections(self) -> dict[str, str]:
+        text = self.read(self.FLOW / "references/flow.md")
+        start = text.index("## Checks by iteration")
+        body = text[start : text.index("\n## ", start + 1)]
+        parts = re.split(r"^\*\*(.+?)\.?\*\*", body, flags=re.MULTILINE)
+        return {parts[i].strip(): parts[i + 1] for i in range(1, len(parts) - 1, 2)}
+
+    def test_each_iteration_section_lists_its_required_producers(self) -> None:
+        sections = self.iteration_sections()
+        self.assertEqual(list(self.ITERATIONS), list(sections))
+        for name, required in self.ITERATIONS.items():
+            for producer in required:
+                with self.subTest(section=name, producer=producer):
+                    self.assertIn(producer, sections[name])
 
     def test_unbuilt_tools_are_only_future_work_in_a_todo_marker(self) -> None:
         for path in (self.FLOW / "SKILL.md", self.FLOW / "references/flow.md", *(CAD / "agents").glob("*.md")):
