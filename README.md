@@ -163,4 +163,18 @@ The mypy command is development-only. Its PEP 723 lock pins the current verified
 | `cad-review-dfm` | Evidence-based declared-route and capability-gap critique |
 | `cad-review-mech` | Evidence-based mechanical premise review |
 
-Harness-native agent profiles support concept design, part design, sourcing research, analysis, and mechanical and DFM review. The harness installer and generator use Python's standard library.
+Harness-native agent profiles support concept design, part design, sourcing research, analysis, mechanical and DFM review, and mechanical clerical work (`cad-clerk`). The harness installer and generator use Python's standard library.
+
+### Agent model tiers
+
+An agent source may set `tier: cheap|standard|strong`. Only `cad-clerk` is on the cheap tier. It handles mechanical chores and never issues a verdict, approval or gate decision. `generate.py` rejects `tier: cheap` for any agent outside its `CHEAP_ELIGIBLE` allowlist. Reviewers, analysts and verdict issuers therefore stay off the cheap tier.
+
+The generated profiles name no model. Supply models at install time, repeating `--tier-model` as needed:
+
+```sh
+python3 "$CAD_AGENT/harness/install.py" --harness all --project . \
+  --tier-model claude:cheap=haiku --tier-model codex:cheap=<model> \
+  --tier-model kiro:cheap=<model> --tier-model opencode:cheap=provider/model#variant
+```
+
+A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:` prefix and a `provider/model[#variant]` value, and never gets `model: inherit`. Rendering adds `model: "<m>"` to Claude (instead of `inherit`) and OpenCode, `model = "<m>"` to Codex, and `"model"` to Kiro. A tier with no entry adds no model line, so a default install matches the committed profiles. `--tier-model` needs PyYAML.

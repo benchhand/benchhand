@@ -157,6 +157,71 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(unsafe.returncode, 1)
         self.assertIn("refusing symlink destination directory", unsafe.stderr)
 
+    def test_tier_model_renders_only_the_chosen_harness_and_tier(self) -> None:
+        project = self.root / "tiered"
+        project.mkdir()
+        self.run_ok("--harness", "all", "--project", str(project),
+                    "--tier-model", "claude:cheap=haiku", "--tier-model", "opencode:cheap=anthropic/claude-haiku-4-5#low")
+        claude = (project / ".claude/agents/cad-clerk.md").read_text(encoding="utf-8")
+        self.assertIn('\nmodel: "haiku"\n', claude)
+        self.assertNotIn("model: inherit", claude)
+        opencode = (project / ".opencode/agents/cad-clerk.md").read_text(encoding="utf-8")
+        self.assertIn('\nmodel: "anthropic/claude-haiku-4-5#low"\n', opencode)
+        self.assertNotIn("inherit", opencode)
+        for source in (CAD / "harness/codex/agents").iterdir():  # unmapped harness: byte-identical
+            self.assertEqual((project / ".codex/agents" / source.name).read_bytes(), source.read_bytes())
+        self.assertEqual((project / ".claude/agents/cad-analyst.md").read_bytes(), (CAD / "harness/claude/agents/cad-analyst.md").read_bytes())
+
+    def test_tier_model_without_flag_installs_committed_bytes(self) -> None:
+        self.run_ok("--harness", "all", "--project", str(self.project))
+        for harness, (_skills, agents_relative) in HARNESS_PATHS.items():
+            for source in (CAD / "harness" / harness / "agents").iterdir():
+                self.assertEqual((self.project / agents_relative / source.name).read_bytes(), source.read_bytes())
+
+    def test_tier_model_keeps_kiro_user_skill_uris(self) -> None:
+        self.run_ok("--harness", "kiro", "--user", "--tier-model", "cheap=claude-haiku-4.5")
+        profile = json.loads((self.home / ".kiro/agents/cad-clerk.json").read_text(encoding="utf-8"))
+        self.assertEqual(profile["model"], "claude-haiku-4.5")
+        self.assertTrue(all(r.startswith("skill://~/.kiro/skills/") for r in profile["resources"]))
+
+    def test_tier_model_rejects_bad_specs_before_writing(self) -> None:
+        for spec, message in (("premium=m", "unknown tier"), ("claude:cheap=inherit", "inherit"), ("cheap", "TIER=MODEL")):
+            with self.subTest(spec=spec):
+                result = self.run_installer("--harness", "all", "--project", str(self.project), "--tier-model", spec)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertFalse((self.project / ".claude").exists())
+
+
+class InstallerWithoutPyYamlTests(unittest.TestCase):
+    """Run install.py under `python -E -S`: no site-packages, so PyYAML cannot be imported."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-install-noyaml-")
+        self.addCleanup(temporary.cleanup)
+        self.project = Path(temporary.name)
+
+    def run_bare(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-E", "-S", str(INSTALLER), "--harness", "claude", "--project", str(self.project), *args],
+                              capture_output=True, text=True, timeout=60)
+
+    def test_the_bare_interpreter_has_no_pyyaml(self) -> None:
+        probe = subprocess.run([sys.executable, "-E", "-S", "-c", "import yaml"], capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(probe.returncode, 0, "the isolated interpreter can import yaml; these tests would prove nothing")
+
+    def test_default_install_does_not_need_pyyaml(self) -> None:
+        result = self.run_bare()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.project / ".claude/agents/cad-clerk.md").is_file())
+
+    def test_tier_model_without_pyyaml_fails_cleanly_and_writes_nothing(self) -> None:
+        result = self.run_bare("--tier-model", "claude:cheap=haiku")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("PyYAML", result.stderr)
+        self.assertIn("pip install", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(list(self.project.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()

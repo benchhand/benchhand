@@ -88,6 +88,7 @@ The lead orchestrates; workers do independent stage units. Fan out every unit, d
 | concept | `variant-<id>` | `cad-concept-designer` | `.cad-work/variant-<id>/<id>.scene.json` |
 | parts | `part-<subassembly>` | `cad-part-designer` | `.cad-work/part-<subassembly>/`, then its own `hw/parts/<PN>/` through `scratch.py deliver` |
 | parts | `source-<family>` | `cad-sourcing-researcher` | nothing |
+| bom | `clerk-<chore>` | `cad-clerk` (cheap tier; mechanical rows and summaries only) | `.cad-work/clerk-<chore>/`; the lead applies the rows, and gates cite evidence packets, never the clerk's summary |
 | detail | `detail-<PN>` | `cad-part-designer` | `.cad-work/detail-<PN>/`, then `hw/parts/<PN>/` through `scratch.py deliver` |
 | analysis | `analysis-<case>` | `cad-analyst` | `.cad-work/analysis-<case>/` |
 | analysis full check | `analysis-<case>-<vN>`: the joint sweep, then FEA at its worst pose | `cad-analyst` | `.cad-work/analysis-<case>/` |
