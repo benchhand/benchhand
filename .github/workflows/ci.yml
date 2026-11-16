@@ -132,7 +132,22 @@ jobs:
           ~/.local/bin/freecadcmd --version | tee version.txt
           grep -q 'FreeCAD 1\.1\.4' version.txt
 
-      - name: Skill tests
+      - name: Measure env build (ENVBUILD)
+        run: |
+          envdir="$(uv cache dir)/environments-v2"
+          echo "ENVDIR_COUNT_BEFORE_BUILD $(ls "$envdir" 2>/dev/null | wc -l)"
+          total=0
+          while IFS= read -r -d '' f; do
+            grep -q '^# /// script$' "$f" || continue
+            s=$SECONDS
+            uv sync --script "$f" > /dev/null 2>&1 || echo "ENVBUILD_FAILED $f"
+            e=$((SECONDS - s)); total=$((total + e))
+            echo "ENVBUILD $e $f"
+          done < <(git ls-files -z 'skills/*.py')
+          echo "ENVBUILD_TOTAL $total"
+          echo "ENVDIR_COUNT_AFTER_BUILD $(ls "$envdir" | wc -l)"
+
+      - name: Skill tests (run 1, warm envs)
         env:
           SHARD: ${{ matrix.shard }}
         run: |
@@ -172,4 +187,54 @@ jobs:
             echo "| $result | $elapsed | \`$test\` |" >> "$GITHUB_STEP_SUMMARY"
           done
           echo "$failed of ${#files[@]} test files failed in shard $SHARD"
+          [ "$failed" -eq 0 ]
+          echo "ENVDIR_COUNT_AFTER_WARM_TESTS $(ls "$(uv cache dir)/environments-v2" | wc -l)"
+
+      - name: Wipe envs
+        run: rm -rf -- "$(uv cache dir)/environments-v2"
+
+      - name: Skill tests (run 2, cold envs, warm wheels)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mapfile -t tracked < <(git ls-files 'skills/*/test_*.py' 'skills/*/tests/test_*.py')
+          mapfile -t named < <(awk 'NF { print $2 }' <<< "$SHARDS")
+          for test in "${named[@]}"; do
+            if ! printf '%s\n' "${tracked[@]}" | grep -qxF "$test"; then
+              echo "::error::$test is in SHARDS but is not a tracked test file"
+              exit 1
+            fi
+          done
+          if [ "$SHARD" = rest ]; then
+            mapfile -t files < <(printf '%s\n' "${tracked[@]}" | grep -vxF -f <(printf '%s\n' "${named[@]}"))
+          else
+            mapfile -t files < <(awk -v shard="$SHARD" '$1 == shard { print $2 }' <<< "$SHARDS")
+          fi
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::shard $SHARD has no test files"
+            exit 1
+          fi
+
+          failed=0
+          printf '| Result | Seconds | Test file |\n|---|---:|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          for test in "${files[@]}"; do
+            echo "::group::$test"
+            started=$SECONDS
+            result=pass
+            uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 \
+              python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")" || result=FAIL
+            echo "::endgroup::"
+            elapsed=$((SECONDS - started))
+            if [ "$result" = FAIL ]; then
+              failed=$((failed + 1))
+              echo "::error file=$test::$test failed"
+            fi
+            echo "$result ${elapsed}s $test"
+            echo "| $result | $elapsed | \`$test\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "$failed of ${#files[@]} test files failed in shard $SHARD"
+          echo "ENVS_USED_START"
+          for d in "$(uv cache dir)/environments-v2"/*; do
+            echo "ENVPKGS $(basename "$d") $(ls "$d"/lib/python*/site-packages | grep -E '\.dist-info$' | sed 's/\.dist-info$//' | tr '\n' ' ')"
+          done
           [ "$failed" -eq 0 ]
