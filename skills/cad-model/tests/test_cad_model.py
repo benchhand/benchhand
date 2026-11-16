@@ -24,6 +24,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -166,6 +167,41 @@ def cli(*args: str) -> tuple[subprocess.CompletedProcess[str], dict, float]:
     return proc, (json.loads(proc.stdout) if proc.stdout.strip() else {}), wall
 
 
+_BUILT: dict = {}
+_BUILT_LOCK = threading.Lock()
+
+
+def tree_digest(folder: Path) -> str:
+    """A hash of every file under `folder`: relative path and bytes."""
+    digest = hashlib.sha256()
+    for path in sorted(p for p in folder.rglob("*") if p.is_file()):
+        digest.update(f"{path.relative_to(folder)}\0".encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def cli_run_once(hw: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], dict, float]:
+    """`cli("run", hw, *args)`, built once per test process for a byte-identical project and arguments.
+
+    The first request builds in place and keeps a copy of the project folder, mtimes included. Later
+    requests get a copy of it in place of their own build, so each caller still owns a folder it may edit."""
+    key = (tree_digest(hw), args)
+    with _BUILT_LOCK:
+        if "dir" not in _BUILT:
+            _BUILT["dir"] = tempfile.TemporaryDirectory()
+        entry = _BUILT.get(key)
+        if entry is None:
+            run = cli("run", str(hw), *args)
+            copy = Path(_BUILT["dir"].name) / f"{len(_BUILT)}"
+            shutil.copytree(hw, copy, symlinks=True)
+            _BUILT[key] = (copy, run)
+            return run
+    copy, run = entry
+    shutil.rmtree(hw)
+    shutil.copytree(copy, hw, symlinks=True)
+    return run
+
+
 def kernel_sequence(root: Path, kernel: str) -> dict:
     """Build v1..v4 of the two-part project, the safe-edit project and the flat-strap project in one kernel.
 
@@ -190,7 +226,7 @@ def kernel_sequence(root: Path, kernel: str) -> dict:
     runs["safe"] = cli("run", str(safe_project(root, kernel)), "--label", "v1")
     runs["hw"] = hw
     runs["flat-hw"] = flat_project(root, kernel)
-    runs["flat"] = cli("run", str(runs["flat-hw"]), "--label", "v1")
+    runs["flat"] = cli_run_once(runs["flat-hw"], "--label", "v1")
     runs["flat-check"] = cli("check", "v1", "--hw", str(runs["flat-hw"]))
     return runs
 
@@ -295,6 +331,8 @@ class DeterministicTextTests(unittest.TestCase):
 def tearDownModule() -> None:  # noqa: N802 - unittest hook name
     if "tmp" in _SHARED:
         _SHARED["tmp"].cleanup()
+    if "dir" in _BUILT:
+        _BUILT["dir"].cleanup()
 
 class KernelChecks:
     """The acceptance cases, run once per kernel by the subclasses below."""
@@ -640,7 +678,7 @@ class ManufacturingStateTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
         cls.hw = hw = flat_project(root, "cadquery")
-        cls.runs, cls.states = {"v1": cli("run", str(hw), "--label", "v1")}, {}
+        cls.runs, cls.states = {"v1": cli_run_once(hw, "--label", "v1")}, {}
         base = {"size": 40.0, "height": 20.0, "bore": 6.0}
 
         def attempt(name: str, extra: tuple[str, ...] = ()) -> None:
@@ -833,7 +871,7 @@ class AttachedPartTests(unittest.TestCase):
         set_arm(cls.hw, "cadquery")
         # The arm template at z0 -6: a plate z -6..-1 under the base block (z 0..20), a 1 mm gap.
         set_model(cls.hw, "TST-0003", "cadquery", "arm.py", {**ARM, "z0": -6.0}, "Spacer plate", "PETG")
-        cls.built = cli("run", str(cls.hw), "--label", "v1", "--attach", "TST-0003=TST-0001")
+        cls.built = cli_run_once(cls.hw, "--label", "v1", "--attach", "TST-0003=TST-0001")
         cls.checked = cli("check", "v1", "--hw", str(cls.hw))
 
     @classmethod
@@ -907,7 +945,7 @@ class CheckPairCacheTests(unittest.TestCase):
         cls.hw = two_part_project(Path(cls.tmp.name), "cadquery")
         set_arm(cls.hw, "cadquery")
         set_model(cls.hw, "TST-0003", "cadquery", "arm.py", {**ARM, "z0": -6.0}, "Spacer plate", "PETG")
-        cls.built = [cli("run", str(cls.hw), "--label", "v1", "--attach", "TST-0003=TST-0001")]
+        cls.built = [cli_run_once(cls.hw, "--label", "v1", "--attach", "TST-0003=TST-0001")]
         set_arm(cls.hw, "cadquery", length=80.0)
         cls.built.append(cli("run", str(cls.hw), "--label", "v2", "--attach", "TST-0003=TST-0001"))
         cache = str(Path(cls.tmp.name) / "cache")
