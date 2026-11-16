@@ -180,11 +180,30 @@ def tree_digest(folder: Path) -> str:
     return digest.hexdigest()
 
 
-def cli_run_once(hw: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], dict, float]:
+def copy_tree(source: Path, dest: Path, links: bool = True) -> None:
+    """Copy a project folder with its mtimes and modes. With `links`, files that share an inode in `source`
+    share one in `dest`, as in a fresh build (sealed outputs link into the store); the copy never shares an
+    inode with `source`. Without it, every file is a real copy."""
+    seen: dict[tuple[int, int], str] = {}
+
+    def copy(src: str, dst: str) -> None:
+        info = os.lstat(src)
+        first = seen.setdefault((info.st_dev, info.st_ino), dst)
+        if links and first != dst and info.st_nlink > 1 and not os.path.islink(src):
+            os.link(first, dst)
+        else:
+            shutil.copy2(src, dst, follow_symlinks=False)
+
+    shutil.copytree(source, dest, symlinks=True, copy_function=copy)
+
+
+def cli_run_once(hw: Path, *args: str, links: bool = False) -> tuple[subprocess.CompletedProcess[str], dict, float]:
     """`cli("run", hw, *args)`, built once per test process for a byte-identical project and arguments.
 
-    The first request builds in place and keeps a copy of the project folder, mtimes included. Later
-    requests get a copy of it in place of their own build, so each caller still owns a folder it may edit."""
+    The first request builds in place and keeps a copy of the project folder. Later requests get a real
+    copy of it in place of their own build, so each caller owns a folder it may edit. `links` keeps the
+    hard links of a fresh build inside that copy, for a test that asserts on them. The kept copy is never
+    handed out and tearDownModule checks that its bytes are unchanged."""
     key = (tree_digest(hw), args)
     with _BUILT_LOCK:
         if "dir" not in _BUILT:
@@ -193,12 +212,12 @@ def cli_run_once(hw: Path, *args: str) -> tuple[subprocess.CompletedProcess[str]
         if entry is None:
             run = cli("run", str(hw), *args)
             copy = Path(_BUILT["dir"].name) / f"{len(_BUILT)}"
-            shutil.copytree(hw, copy, symlinks=True)
-            _BUILT[key] = (copy, run)
+            copy_tree(hw, copy)
+            _BUILT[key] = (copy, run, tree_digest(copy))
             return run
-    copy, run = entry
+    copy, run, _ = entry
     shutil.rmtree(hw)
-    shutil.copytree(copy, hw, symlinks=True)
+    copy_tree(copy, hw, links)
     return run
 
 
@@ -332,7 +351,10 @@ def tearDownModule() -> None:  # noqa: N802 - unittest hook name
     if "tmp" in _SHARED:
         _SHARED["tmp"].cleanup()
     if "dir" in _BUILT:
+        changed = [str(copy) for key, entry in _BUILT.items()
+                   if key != "dir" and tree_digest((copy := entry[0])) != entry[2]]
         _BUILT["dir"].cleanup()
+        assert not changed, f"a shared fixture build was modified after it was cached: {changed}"
 
 class KernelChecks:
     """The acceptance cases, run once per kernel by the subclasses below."""
@@ -678,7 +700,7 @@ class ManufacturingStateTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
         cls.hw = hw = flat_project(root, "cadquery")
-        cls.runs, cls.states = {"v1": cli_run_once(hw, "--label", "v1")}, {}
+        cls.runs, cls.states = {"v1": cli_run_once(hw, "--label", "v1", links=True)}, {}
         base = {"size": 40.0, "height": 20.0, "bore": 6.0}
 
         def attempt(name: str, extra: tuple[str, ...] = ()) -> None:
