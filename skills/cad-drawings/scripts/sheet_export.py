@@ -7,8 +7,13 @@ falling back to the host's fonts and producing platform-dependent PDFs.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
+import uuid
 import zlib
+from datetime import datetime, timezone
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -242,6 +247,51 @@ def read_pdf(path: Path) -> PdfContent:
     return PdfContent(page_sizes_pt=sizes, fonts=sorted(set(fonts)), text="\n".join(texts))
 
 
+DEFAULT_PDF_EPOCH = 315_532_800   # 1980-01-01T00:00:00Z: the PDF date when SOURCE_DATE_EPOCH is not set
+_INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()D:\d{14}(?:[+-]\d\d'\d\d'|Z)(\))")
+_XMP_DATE = re.compile(rb'(xmp:(?:CreateDate|ModifyDate|MetadataDate)=")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d([+-]\d\d:\d\d|Z)(")')
+
+
+def pdf_timestamp() -> int:
+    """Seconds since the epoch for the PDF dates: SOURCE_DATE_EPOCH, else a fixed date; never the clock."""
+    value = os.environ.get("SOURCE_DATE_EPOCH")
+    if value is None:
+        return DEFAULT_PDF_EPOCH
+    if not value.isdigit():
+        raise ExportError("export_failed", f"SOURCE_DATE_EPOCH must be whole seconds, got {value!r}")
+    return int(value)
+
+
+def document_id(content: bytes, page_mm: Sequence[float]) -> str:
+    """A UUID derived from what the sheet draws, so one sheet always gets one PDF /ID."""
+    digest = hashlib.sha256(content + json.dumps(list(page_mm)).encode("ascii")).hexdigest()
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, digest))
+
+
+def pin_pdf_dates(data: bytes, epoch: int) -> bytes:
+    """Replace Qt's wall-clock PDF dates (Info dictionary and XMP) with ``epoch`` in UTC.
+
+    Qt's QPdfWriter has no date setter. Each replacement keeps the length of the text it replaces,
+    so every xref offset stays valid. A PDF without a /CreationDate is refused: Qt changed its output.
+    """
+    when = datetime.fromtimestamp(epoch, timezone.utc)
+    info = f"D:{when:%Y%m%d%H%M%S}+00'00'".encode("ascii")
+    xmp = f"{when:%Y-%m-%dT%H:%M:%S}".encode("ascii")
+    if not _INFO_DATE.search(data):
+        raise ExportError("export_failed", "the PDF has no /CreationDate to pin")
+
+    def info_date(match: re.Match[bytes]) -> bytes:
+        return match.group(1) + info + match.group(2)
+
+    def xmp_date(match: re.Match[bytes]) -> bytes:
+        return match.group(1) + xmp + (b"Z" if match.group(2) == b"Z" else b"+00:00") + match.group(3)
+
+    pinned = _XMP_DATE.sub(xmp_date, _INFO_DATE.sub(info_date, data))
+    if len(pinned) != len(data):
+        raise ExportError("export_failed", "pinning the PDF dates changed its length")
+    return pinned
+
+
 def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_text: Sequence[str],
                  timeout: float) -> dict[str, Any]:
     """Write ``pdf`` and the ``png`` preview from a checked drawing ``svg``; raise ExportError on failure.
@@ -264,13 +314,16 @@ def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_tex
         raise ExportError("export_failed", message)
     job["texts"] = split_text(root, frozenset(result["supported_codepoints"]))
     job["svg_markup"] = ET.tostring(root, encoding="unicode")
-    job.update(dpi=PREVIEW_DPI, pdf=str(pdf), png=str(png))
+    job.update(dpi=PREVIEW_DPI, pdf=str(pdf), png=str(png),
+               document_id=document_id(json.dumps([job["svg_markup"], job["texts"]], sort_keys=True).encode("utf-8"),
+                                       job["page_mm"]))
     result, message = freecad_runtime.run_job(freecadcmd, EXPORT_JOB, job, svg.parent, timeout)
     if result is None:
         raise ExportError("export_failed", message)
     if result["png"]["dark_pixels"] < MIN_DARK_PIXELS:
         raise ExportError("empty_drawing", f"PNG preview appears blank: {result['png']['dark_pixels']} dark pixels")
     try:
+        pdf.write_bytes(pin_pdf_dates(pdf.read_bytes(), pdf_timestamp()))
         content = read_pdf(pdf)
     except (OSError, ValueError, zlib.error) as exc:
         raise ExportError("export_failed", f"cannot read the written PDF: {exc}") from exc

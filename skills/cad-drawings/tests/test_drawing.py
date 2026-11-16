@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -392,6 +394,105 @@ class SheetExportParts(unittest.TestCase):
                                               "family", "bold", "fill", "matrix"} for run in runs))
         self.assertEqual(content.text, "Aa 0123")
         self.assertEqual(content.fonts, ["osifont"])
+    @staticmethod
+    def qt_style_pdf(creation: str = "D:20261116203848+04'00'", xmp: str = "2026-11-16T20:38:48+04:00") -> bytes:
+        """A tiny PDF laid out like Qt's: an Info dictionary, plain XMP, an xref table with real offsets."""
+        xmp_body = (f'<x:xmpmeta><rdf:Description xmp:CreatorTool="cad-drawings" xmp:CreateDate="{xmp}" '
+                    f'xmp:ModifyDate="{xmp}" xmp:MetadataDate="{xmp}"/></x:xmpmeta>').encode()
+        bodies = [b"<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>",
+                  b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                  b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>",
+                  b"<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n%s\nendstream" % (len(xmp_body), xmp_body),
+                  f"<< /Creator (cad-drawings) /CreationDate ({creation}) /ModDate ({creation}) >>".encode()]
+        out = bytearray(b"%PDF-1.4\n")
+        offsets = []
+        for number, body in enumerate(bodies, start=1):
+            offsets.append(len(out))
+            out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+        start = len(out)
+        out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(bodies) + 1)
+        out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+        out += b"trailer\n<< /Size %d /Root 1 0 R /Info 5 0 R /ID [<aa> <aa>] >>\nstartxref\n%d\n%%%%EOF\n" % (len(bodies) + 1, start)
+        return bytes(out)
+
+    @staticmethod
+    def assert_xref_intact(test: unittest.TestCase, data: bytes) -> None:
+        """Every classic xref entry points at its own object, as a PDF reader needs."""
+        start = int(re.search(rb"startxref\s+(\d+)", data).group(1))
+        lines = data[start:].split(b"trailer")[0].splitlines()
+        count = int(lines[1].split()[1])
+        entries = [line for line in lines[2:] if line.endswith(b" n ")]
+        test.assertEqual(len(entries), count - 1)
+        for number, line in enumerate(entries, start=1):
+            test.assertTrue(data[int(line[:10]):].startswith(b"%d 0 obj" % number), (number, line))
+
+    def test_pdf_dates_are_pinned_without_moving_a_byte_offset(self) -> None:
+        data = self.qt_style_pdf()
+        pinned = sheet_export.pin_pdf_dates(data, 1_700_000_000)   # 2023-11-14 22:13:20 UTC
+        self.assertEqual(len(pinned), len(data))
+        self.assertEqual(re.findall(rb"/(?:CreationDate|ModDate) \(([^)]*)\)", pinned), [b"D:20231114221320+00'00'"] * 2)
+        self.assertEqual(re.findall(rb'xmp:\w+Date="([^"]*)"', pinned), [b"2023-11-14T22:13:20+00:00"] * 3)
+        self.assert_xref_intact(self, pinned)
+        self.assertEqual(re.sub(rb"20231114221320\+00'00'|2023-11-14T22:13:20\+00:00", b"", pinned).replace(b"D:", b""),
+                         re.sub(rb"20261116203848\+04'00'|2026-11-16T20:38:48\+04:00", b"", data).replace(b"D:", b""))
+
+    def test_pinned_dates_do_not_depend_on_the_original_clock_or_zone(self) -> None:
+        first = sheet_export.pin_pdf_dates(self.qt_style_pdf(), 0)
+        second = sheet_export.pin_pdf_dates(self.qt_style_pdf("D:20300101000000-07'00'", "2030-01-01T00:00:00-07:00"), 0)
+        self.assertEqual(first, second)
+
+    def test_pdf_without_a_creation_date_is_refused(self) -> None:
+        with self.assertRaisesRegex(sheet_export.ExportError, "CreationDate"):
+            sheet_export.pin_pdf_dates(b"%PDF-1.4\n1 0 obj\n<< >>\nendobj\n", 0)
+
+    def test_pdf_timestamp_follows_source_date_epoch_else_a_fixed_date_never_the_clock(self) -> None:
+        with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000000"}):
+            self.assertEqual(sheet_export.pdf_timestamp(), 1_700_000_000)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SOURCE_DATE_EPOCH", None)
+            with patch.object(time, "time", return_value=1_999_999_999.0):
+                self.assertEqual(sheet_export.pdf_timestamp(), sheet_export.DEFAULT_PDF_EPOCH)
+        for bad in ("", "yesterday", "-1"):
+            with self.subTest(value=bad), patch.dict(os.environ, {"SOURCE_DATE_EPOCH": bad}):
+                with self.assertRaisesRegex(sheet_export.ExportError, "SOURCE_DATE_EPOCH"):
+                    sheet_export.pdf_timestamp()
+
+    def test_document_id_follows_the_sheet_and_is_a_uuid(self) -> None:
+        one = sheet_export.document_id(b"<svg>one</svg>", [10.0, 20.0])
+        self.assertEqual(one, sheet_export.document_id(b"<svg>one</svg>", [10.0, 20.0]))
+        self.assertNotEqual(one, sheet_export.document_id(b"<svg>two</svg>", [10.0, 20.0]))
+        self.assertNotEqual(one, sheet_export.document_id(b"<svg>one</svg>", [10.0, 21.0]))
+        self.assertRegex(one, r"^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+    @unittest.skipUnless(FREECAD_PRESENT, "PDF reproducibility needs FreeCAD 1.1.4 freecadcmd")
+    def test_same_sheet_exports_byte_identical_pdfs(self) -> None:
+        command = freecad_runtime.find_freecadcmd()
+        with tempfile.TemporaryDirectory(prefix="cad-pdf-repro-") as tmp:
+            root = Path(tmp)
+            svg = root / "input.svg"
+            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="150mm" viewBox="0 0 200 150">'
+                           '<path d="M 10 10 L 100 10 L 100 60 Z" fill="none" stroke="#000"/>'
+                           '<text x="10" y="20" font-size="10">Aa 0123</text>'
+                           '<text x="10" y="40" font-size="6" font-weight="bold">Bold 456</text>'
+                           '<text x="10" y="55" font-size="5">⟂∥ 12.50 H7</text></svg>', encoding="utf-8")
+            outputs = []
+            for name in ("a", "b"):
+                sheet_export.export_sheet(command, svg, root / f"{name}.pdf", root / f"{name}.png", ["Aa 0123"], 300)
+                if name == "a":
+                    time.sleep(1.1)   # a wall-clock date would differ by a second
+                outputs.append((root / f"{name}.pdf").read_bytes())
+            self.assertEqual(outputs[0], outputs[1])
+            self.assert_xref_intact(self, outputs[0])
+            with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000000"}):
+                sheet_export.export_sheet(command, svg, root / "c.pdf", root / "c.png", ["Aa 0123"], 300)
+            dated = (root / "c.pdf").read_bytes()
+            self.assertIn(b"/CreationDate (D:20231114221320+00'00')", dated)
+            self.assertNotEqual(dated, outputs[0])
+            svg.write_text(svg.read_text(encoding="utf-8").replace("Aa 0123", "Bb 0123"), encoding="utf-8")
+            sheet_export.export_sheet(command, svg, root / "d.pdf", root / "d.png", ["Bb 0123"], 300)
+            ids = [re.search(rb"/ID \[ <([0-9a-f]+)>", data).group(1) for data in (outputs[0], (root / "d.pdf").read_bytes())]
+            self.assertNotEqual(ids[0], ids[1])
+
     def test_svg_unknown_glyph_is_rejected(self) -> None:
         root = SafeET.fromstring('<svg xmlns="http://www.w3.org/2000/svg"><text font-family="serif" font-size="10">☃</text></svg>')
         with self.assertRaisesRegex(sheet_export.ExportError, "unsupported glyph.*U\\+2603"):
