@@ -197,8 +197,17 @@ Tier guard: reviewers, analysts, researchers and any agent that issues a verdict
 A subagent sends no heartbeat. Check each unit that runs past its expected duration.
 
 1. If a unit's lease expired and it has no live run, send it one follow-up asking for status or its final report.
-2. If the unit makes no progress for 10 more minutes, interrupt it, release its claim and dispatch it again with the same brief. Before the new run, reset its scratch workspace with `scratch.py init --reset`.
-3. The new run is a fresh unit. Never merge output from the interrupted run.
+2. If the unit makes no progress for 10 more minutes:
+   - Interrupt it.
+   - Release its claim.
+   - Dispatch it again with the same brief.
+3. Give the new run fresh output. Only a unit that owns PNs (part, detail and rework units) resets with `scratch.py init --reset`, because `init` needs at least one `--part`.
+   - Concept unit: delete `.cad-work/<unit>/<variant-id>.scene.json`.
+   - Analysis unit: delete the files it wrote under `.cad-work/<unit>/`: `plan.yaml`, `render/` and any `--out` file. A published version bundle stays, because the same recipe reuses it.
+   - Clerk unit: delete the `--out` files under `.cad-work/<unit>/`.
+   - Reviewer and sourcing units write nothing, so they need no reset.
+   - Alternative: give the new run a new unit id, such as `analysis-<case>-<vN>`.
+4. The new run is a fresh unit. Never merge output from the interrupted run.
 
 No tool records a lease yet. The lease is the lead's own note of when it dispatched the unit and when it last heard from it.
 
