@@ -27,16 +27,16 @@ TRIGGER
 ## Inputs
 
 - `step`: STEP path, relative to the case YAML or absolute.
-- `part`: optional PN-first identifier; required for ambiguous multi-solid STEP except when `occurrence` or `solid_index` selects one. Omit only for a single-solid STEP; a repeated PN needs an occurrence.
+- `part`: optional PN-first identifier; required for ambiguous multi-solid STEP except when `occurrence` or `solid_index` selects one. Omit only for a single-solid STEP; a repeated PN needs an occurrence. The run refuses a part of two or more solids with `part_multiple_solids` and lists the `solid_index` and volume of each solid. Select one solid with `solid_index` or an `occurrence`, or fix the model so that the part is one solid.
 - `occurrence`: quoted `"@id"` for a repeated part in a versioned assembly STEP.
-- `solid_index`: optional 1-based solid index; mutually exclusive with `part` and `occurrence`, and refused for record v2.
+- `solid_index`: optional 1-based index over the part solids of the STEP, in document order. Containers do not count. It is mutually exclusive with `part` and `occurrence`, and refused for record v2.
 - `pose`: optional joint-value map copied from `worst_case.pose`.
 - `evidence`: optional path to sweep `worst.step.json`; it binds STEP hash, full pose and occurrence.
 - `fixed_faces`: required selector for constrained faces, using the same `indices` or `plane` forms as each `loads[].selector`.
 - `loads`: non-empty list of `{selector, force: [Fx, Fy, Fz]}` in N; `load` optionally identifies its use-case load.
 - `mesh_size`: positive maximum element size in mm.
 - `required_safety_factor`: optional positive check threshold; a completed solve below it fails.
-- `timeout_seconds`: optional positive whole-job limit, default 600.
+- `timeout_seconds`: optional positive whole-job limit, default 600. `null` takes the default.
 
 ## Record-bound material and evidence
 
@@ -44,7 +44,7 @@ For v2, use `material: {profile?, conditions: {conditioning, temperature, orient
 
 Optional case keys: `acceptance: {strength: REQ-###, stiffness: REQ-###}`, `mesh_convergence: {decision: DR-###}`, and `loads[].load`. The referenced requirement needs a structured criterion; convergence needs the approved mesh-study decision. Result blocks include material, evidence, mesh, binding and engineering packet.
 
-Completed results record reproducibility settings in `mesh_settings`: one Gmsh thread, random seed 1, zero 3D random factor, standard and Netgen mesh optimizers disabled, fixed elastic-plus-optimization high-order pass, and CalculiX SPOOLES solver. `mesh_input_hashes` name the normalized `.geo` and BRep inputs. High-order Gmsh optimization can perturb nodes across identical runs; repeat safety factors within 0.5% are this mesh noise, not evidence of a design difference.
+Completed results record reproducibility settings in `mesh_settings`: one Gmsh thread, random seed 1, zero 3D random factor, standard and Netgen mesh optimizers disabled, fixed elastic-plus-optimization high-order pass, and CalculiX SPOOLES solver. The `calculix_environment` setting gives ccx one thread in each of its three parallel stages. Each FreeCAD job uses a private FreeCAD profile, so user FEM and import preferences do not apply. `mesh_input_hashes` name the normalized `.geo` and BRep inputs. High-order Gmsh optimization can perturb nodes across identical runs; repeat safety factors within 0.5% are this mesh noise, not evidence of a design difference.
 
 `fea_static.py` publishes a v2 engineering packet at `hw/checks/<V>/fea-<case>/`; `stdout.check_bundle` names it. Only `engineering.strength`, `engineering.stiffness` and `engineering.anisotropy` are in static solver scope. Creep, fatigue, impact and life remain physical-validation obligations.
 
@@ -56,7 +56,14 @@ Completed results record reproducibility settings in `mesh_settings`: one Gmsh t
 
 ## Solver failures
 
-The job runs the ccx it records in `solver_versions`: beside FreeCAD first, then on PATH. A failed solve names its cause in `error.code`, with evidence in `error.details`:
+FreeCAD finds ccx and Gmsh in its own process, so an AppImage or a `FREECADCMD` wrapper works. It looks in this order:
+
+1. `$CCX` or `$GMSH`, used as given.
+2. FreeCAD's own lookup.
+3. The directory of the resolved `freecadcmd`.
+4. PATH.
+
+A versioned run probes the tools first and records only their versions in the recipe. The job looks them up again. It refuses with `solver_unavailable` when it finds no tool. It refuses with `solver_changed` when a version differs from the recorded one. `preflight.py` reports the same lookup as its `fea-solvers` check. A failed solve names its cause in `error.code`, with evidence in `error.details` and the job's `traceback`:
 
 - `solver_crashed`: ccx died from a signal; details give signal, stage and degrees of freedom. The bundled SPOOLES index limit can fail on very large models; raise `mesh_size`.
 - `solver_failed`: ccx stopped with `*ERROR` messages. A nonpositive Jacobian lists distorted second-order elements; lower `mesh_size`.

@@ -53,10 +53,24 @@ def templates_dir(freecadcmd: Path | None) -> Path:
 
     The macOS app and the Linux AppImage both keep FreeCAD's resources in ``<prefix>/share`` next
     to ``<prefix>/bin``; a symlink to the bundle's freecadcmd resolves to that layout. Without a
-    FreeCAD this is the macOS app's directory, which the caller then reports missing.
+    FreeCAD this is the macOS app's directory, which the caller then reports missing. A wrapper
+    script for ``freecadcmd`` lies outside the bundle: when the bundle layout is not beside it, the
+    directory comes from the resource directory that FreeCAD itself reports (fea_solvers.probe).
     """
     command = (freecadcmd or MACOS_FREECADCMD).resolve()
-    return command.parent.parent / "share" / "Mod" / "TechDraw" / "Templates"
+    beside = command.parent.parent / "share" / "Mod" / "TechDraw" / "Templates"
+    if freecadcmd is None or beside.is_dir() or not command.is_file():
+        return beside
+    flow_scripts = Path(__file__).resolve().parents[2] / "cad-flow" / "scripts"
+    if str(flow_scripts) not in sys.path:
+        sys.path.insert(0, str(flow_scripts))
+    import fea_solvers
+
+    try:
+        resources = fea_solvers.probe(freecadcmd)["resource_dir"]
+    except fea_solvers.ProbeError:
+        return beside
+    return Path(resources) / "Mod" / "TechDraw" / "Templates"
 
 
 class JobInterrupted(Exception):
@@ -182,7 +196,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
     for process in processes:
         try:
             os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
@@ -191,7 +205,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
             try:
                 os.killpg(process.pid, 0)
                 alive = True
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         if not alive:
             break
@@ -199,7 +213,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
     for process in processes:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     for process in processes:
         try:
@@ -208,7 +222,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
             pass
 
 @contextmanager
-def _job_state_environment(workdir: Path):
+def job_state_environment(workdir: Path):
     """Give each FreeCAD invocation an isolated FreeCAD, Qt, config, cache and temp directory."""
     with tempfile.TemporaryDirectory(prefix="freecad-job-", dir=workdir) as name:
         root = Path(name)
@@ -234,30 +248,33 @@ FREECAD_JOB_PEAK_RSS_BYTES = 1_500 * 1024 * 1024
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         process.wait()
         return
     deadline = time.monotonic() + 2
     while process.poll() is None and time.monotonic() < deadline:
         time.sleep(0.05)
-    else:
+    if process.poll() is None:  # once reaped, its pid may name another process
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         process.wait()
 
 
 def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
-            timeout: float) -> tuple[dict[str, Any] | None, str]:
-    """Run one isolated FreeCAD process group and return its passing JSON result, or a reason."""
+            timeout: float, *, environ: Mapping[str, str] | None = None) -> tuple[dict[str, Any] | None, str]:
+    """Run one isolated FreeCAD process group and return its passing JSON result, or a reason.
+
+    The process gets `environ` (default os.environ) with the isolated FreeCAD state directories.
+    """
     run_id = uuid.uuid4().hex
     job_path = workdir / f"{script.stem}_{run_id}.job.json"
     result_path = workdir / f"{script.stem}_{run_id}.result.json"
@@ -266,23 +283,16 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
     try:
         if _CANCEL_JOBS.is_set():
             raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
-        with _job_state_environment(workdir) as isolation:
+        with job_state_environment(workdir) as isolation:
             try:
                 process = subprocess.Popen([str(freecadcmd), str(script)], cwd=workdir, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                            start_new_session=True,
-                                           env={**os.environ, **isolation, JOB_VARIABLE: str(job_path)})
-                with _ACTIVE_LOCK:
-                    if _CANCEL_JOBS.is_set():
-                        cancel = True
-                    else:
-                        _ACTIVE_PROCESSES.add(process)
-                        cancel = False
-                if cancel:
-                    _terminate_process_group(process)
-                    raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
+                                           env={**(os.environ if environ is None else environ), **isolation,
+                                                JOB_VARIABLE: str(job_path)})
+                _register_process(process)
                 try:
-                    _, stderr = process.communicate(timeout=timeout)
+                    stdout, stderr = process.communicate(timeout=timeout)
                 finally:
                     _terminate_process_group(process)
                     _unregister_process(process)
@@ -297,7 +307,8 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
                 raise
             _terminate_process_group(process)
             if not result_path.is_file():
-                return None, f"FreeCAD {script.name} wrote no result marker (exit {process.returncode}): {stderr[-1500:]}"
+                return None, (f"FreeCAD {script.name} wrote no result marker (exit {process.returncode}): "
+                              f"stderr: {stderr[-1500:]} stdout: {stdout[-1500:]}")
             try:
                 result = json.loads(result_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
