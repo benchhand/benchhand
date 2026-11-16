@@ -17,7 +17,7 @@ Keep the source of truth in the hardware project's `hw/` design record. `cad-rec
 | detail | One `cad-part-designer` per group of at most 3 made parts applies fits, fasteners, tolerances, and process rules. Build and check one integrated version, and draw it while its full check runs, for the DETAIL gates. | Part revisions, fit decisions, drawings, and evidence. | `cad-fits`; `cad-design form_check.py` at F3; `cad-drawings` publishes each part drawing for that version. |
 | bom | Reconcile part numbers, revisions, quantities, make/buy, suppliers, and assemblies. | Released-intent EBOM. | `cad-bom`: `bom.py --hw hw` or `bom.py --version vN --hw hw` to reconcile against a version snapshot. |
 | analysis | One `cad-analyst` per case checks interference, clearance, stack-up, kinematics, static FEA, or a motion case. The joint sweep, then FEA at its worst pose, run as the stage's full check; ANALYSIS gates. | Verification tied to requirements/configurations; analysis artifacts and assumptions; accepted motion cases in `hw/motion/cases/<case>/plan.yaml`. | Use `cad-motion`, `cad-analysis` and `cad-fits` on the selected version. Case results publish through cad-record layout; verification links identify the versioned evidence bundle. The lead publishes an accepted motion plan with `motion.py render --hw hw --version vN --case <case> --outputs glb,sheet,video`; a record with coupled joints adds `--crosscheck freecad` and a verification row from `crosscheck.json`, where only `solved` joints count as independent evidence. |
-| critique | Spawn mechanical and DFM reviewers as parallel read-only units; it may start on the provisional ANALYSIS gate, while the full check runs. | Preserve both verdicts and evidence in the workflow record. Neither reviewer waits for the other. | `cad-review-mech`; `cad-review-dfm` |
+| critique | Spawn mechanical and DFM reviewers as parallel read-only units. They may start on the provisional ANALYSIS gate, while the full check runs. | Preserve both verdicts and evidence in the workflow record. Neither reviewer waits for the other. | `cad-review-mech`; `cad-review-dfm` |
 | reconcile | Resolve critique findings. Rerun affected checks. | Updated decisions, verification, revisions, dispositions. | `cad-flow`; `cad-recheck` stamps the exact staged `hw/` tree only after checks pass. |
 | design_freeze | After every stage's human gate, present reconciled design, analyses, and record for approval. | Frozen anchor pins the exact built version and its manifest hash. | `cad-record`: validate project and confirm every custom-made part has complete manufacturing outputs. |
 | RELEASE gate | Show the frozen version, the revision letter to issue, its contents and verification. Get approval before release. | Gate decision, recorded in `decisions/DR-###.md`. | `cad-record`: `validate.py` and the structured checks. |
@@ -66,16 +66,25 @@ A changed-only check or a smoke sweep is fast-check evidence only. Its result re
 
 ## Checks by iteration
 
-Each producer runs at the iteration below and not earlier. "Only when stale" means `impact.py` lists the producer's evidence family as stale or open and due at this stage; unaffected parts keep their evidence. Every command runs by hand today.
+Each producer runs at the iteration below and not earlier. "Only when stale" means `impact.py` lists the producer's evidence family as stale or open and due at this stage. Unaffected parts keep their evidence. Every command runs by hand today.
 
 <!-- TODO(stage-machine): `evidence.py run --scope inner|commit|provisional|full` will choose these steps from the obligations; until it exists, run the commands the owning skills document. -->
 
 **Inner loop.** A designer iterates in a scratch workspace on the unit's own PNs.
-- Always: `validate.py`; from L1 the scratch build; static `--changed-only`; the form check on the unit's PNs (F1 at L1, F2 at L2, F3 from L3).
-- At L3, also fits and stack-up, and a drawing completeness check for the unit's own PNs.
-- A smoke sweep only when a moving pair changed. Renders only when a requirement binds visibility.
+- Always run:
+  - `validate.py`
+  - the scratch build, from L1
+  - static `--changed-only`
+  - the form check on the unit's PNs (F1 at L1, F2 at L2, F3 from L3)
+- At L3, also run fits and stack-up. Check drawing completeness for the unit's own PNs.
+- If a moving pair changed, run a smoke sweep.
+- If a requirement binds visibility, render.
 - An analyst runs a coarse-mesh FEA smoke case before the real case.
-- Never in the loop: the full sweep, the motion render, the all-pairs check and the integrated drawings.
+- Never run these in the loop:
+  - the full sweep
+  - the motion render
+  - the all-pairs check
+  - the integrated drawings
 
 **Commit (batch vN).** The lead builds one version and checks it in the [fail-fast order](#fail-fast-check-order).
 - Always run:
@@ -83,10 +92,11 @@ Each producer runs at the iteration below and not earlier. "Only when stale" mea
   - static `--changed-only`
   - the BOM, from L1
   - fits and stack-up, from L3
-- The form check on the changed PNs, only when stale.
-- The smoke sweep, once a joint exists.
-- Part drawings from L3, only when stale. Sourcing and selection, only when stale.
-- The recheck stamp at each git commit of `hw/`.
+- If the form check of a changed PN is stale, run it on that PN.
+- Once a joint exists, run the smoke sweep.
+- If a part's drawings are stale, draw them from L3.
+- If sourcing and selection are stale, run them.
+- At each git commit of `hw/`, run the recheck stamp.
 - Today the batch also runs the renders and the default motion render, because the provisional gate cites them. <!-- TODO(stage-machine): the motion render moves from the commit to the provisional scope. -->
 
 **Provisional gate.** It reads the commit results and runs no static or sweep check again.
@@ -106,14 +116,28 @@ Each producer runs at the iteration below and not earlier. "Only when stale" mea
   - the motion render
   - the BOM, fits and stack-up
   - `evidence.py check` and the recheck stamp
-- The full sweep at L1 and L4. At L2 and L3 run it too: skipping it needs a hash-proven carry-forward, and no tool proves one yet. <!-- TODO(stage-machine): carry-forward of a passing full sweep at L2 and L3, checked by evidence.py run. -->
-- At L3, the part drawings and the assembly drawing, with `jobs` above 1.
-- At L4, every FEA case; at RECONCILE, only the cases `impact.py` marks stale.
-- Sourcing and selection at INTENT and L2.
+- Run the full sweep at L1 and L4. Also run it at L2 and L3: a skip needs a hash-proven carry-forward, and no tool proves one yet. <!-- TODO(stage-machine): carry-forward of a passing full sweep at L2 and L3, checked by evidence.py run. -->
+- At L3, draw the parts and the assembly with `jobs` above 1.
+- At L4, run every FEA case. At RECONCILE, run only the cases `impact.py` marks stale.
+- At INTENT and L2, run sourcing and selection.
 
-**Design freeze.** Needs `validate.py`, the BOM, fits and stack-up, `evidence.py check` and the stamp. The full sweep, drawings and FEA run again only when stale. `build_guide.py` may preview.
+**Design freeze.**
+- Run:
+  - `validate.py`
+  - the BOM
+  - fits and stack-up
+  - `evidence.py check`
+  - the stamp
+- If the full sweep, drawings or FEA are stale, run them again.
+- `build_guide.py` may preview.
 
-**Release.** `validate.py`, the BOM, `build_guide.py` and `release.py`, which runs the evidence check itself.
+**Release.**
+- Run:
+  - `validate.py`
+  - the BOM
+  - `build_guide.py`
+  - `release.py`
+- `release.py` runs the evidence check itself.
 
 ## Long jobs
 
@@ -135,10 +159,16 @@ A `.gitignore` untracks nothing. When git already tracks results and the answer 
 
 The lead orchestrates; workers do independent stage units. Only the lead builds `hw/versions/`.
 
-- Run at most 3 writer units at once. A writer unit writes files: a variant, part, detail or analysis unit, or a clerk chore. Read-only units (reviewers and sourcing researchers) run alongside them without counting toward the cap.
-- Start the next queued unit when a running one returns. A stage with 4 variants runs 3, then the fourth.
-- Merge each unit when its final report arrives: apply an accepted part delivery, adopt cited sourcing values, or write verification rows. Run the integration build once, after the last unit of the stage is merged.
-- A report that says background work is still running is partial. The unit is not done: merge nothing from it and wait for its final report.
+- Run at most 3 writer units at once.
+- A writer unit writes files. Every unit except a reviewer or a sourcing researcher is one.
+- Read-only units (reviewers and sourcing researchers) run alongside the writers. They do not count toward the cap.
+- When a running unit returns, start the next queued unit. A stage with 4 variants runs 3, then the fourth.
+- When a unit's final report arrives, merge it:
+  - apply an accepted part delivery
+  - adopt cited sourcing values
+  - write verification rows
+- After you merge the last unit of the stage, run the integration build once.
+- A report that says background work is still running is partial. The unit is not done. Merge nothing from it and wait for its final report.
 - If a harness cannot run parallel subagents, run the same briefs in sequence.
 
 <!-- TODO(stage-machine): work.py ready replaces the lead's manual unit list; work.py stale replaces the manual stall check. -->
@@ -162,13 +192,13 @@ Tier guard: reviewers, analysts, researchers and any agent that issues a verdict
 
 ### Stalled units
 
-A subagent has no heartbeat, so the lead checks each unit that has run longer than its expected duration.
+A subagent sends no heartbeat. Check each unit that runs past its expected duration.
 
-1. A unit whose lease has expired and that has no live run gets one follow-up message asking for status or its final report.
-2. If the unit makes no progress for 10 more minutes, interrupt it, release its claim and dispatch it again with the same brief. Reset its scratch workspace with `scratch.py init --reset` before the new run.
-3. A rerun is a fresh unit; never merge output from the interrupted run.
+1. If a unit's lease expired and it has no live run, send it one follow-up asking for status or its final report.
+2. If the unit makes no progress for 10 more minutes, interrupt it, release its claim and dispatch it again with the same brief. Before the new run, reset its scratch workspace with `scratch.py init --reset`.
+3. The new run is a fresh unit. Never merge output from the interrupted run.
 
-No tool records a lease yet: the lease is the lead's own record of when it dispatched the unit and when it last heard from it.
+No tool records a lease yet. The lease is the lead's own note of when it dispatched the unit and when it last heard from it.
 
 <!-- TODO(stage-machine): work.py records the claim and lease; scratch.py heartbeats replace the lead's manual timestamp. -->
 
@@ -192,7 +222,7 @@ The L2 light review runs `cad-mech-reviewer` and `cad-dfm-reviewer` read-only in
 
 Each worker's brief is self-contained. It names the unit id, task, and PNs, variant, or case; a motion case also names the requirements and use cases its plan must show. It gives the absolute-path inputs (record files, version label, frozen interfaces, shared node ids), kernel, fidelity, and write boundary; a part or detail unit also gets each `--attach REF=PARENT_REF` the lead's integrated build passes to `cad-model run`, for its `scratch.py build`. It also gives the report format with absolute paths. A worker asks the user nothing and does not change shared workflow state or make gate decisions.
 
-Read each final report before changing shared files. Accept a part delivery only when its scratch build passed; otherwise dispatch that unit again. Apply accepted proposals to the shared record yourself and record why you declined a proposal. Merge concept variants, adopt cited sourcing values, write verification rows from analysis results, and copy accepted motion plans to `hw/motion/cases/<case>/plan.yaml` before publishing. Then, after the last unit is merged, run the stage's commit batch once on `hw/`: the build and the fast checks in the [fail-fast order](#fail-fast-check-order), and the recheck. Present the stage's gates with the absolute path of every file they show.
+Before you change shared files, read each final report. Accept a part delivery only when its scratch build passed; otherwise dispatch that unit again. Apply accepted proposals to the shared record yourself and record why you declined a proposal. Merge concept variants, adopt cited sourcing values, write verification rows from analysis results, and copy accepted motion plans to `hw/motion/cases/<case>/plan.yaml` before publishing. Then run the stage's commit batch once on `hw/`: the build and the fast checks in the [fail-fast order](#fail-fast-check-order), and the recheck. Present the stage's gates with the absolute path of every file they show.
 
 ### Scratch workspace
 

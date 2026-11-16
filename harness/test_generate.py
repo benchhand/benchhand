@@ -341,7 +341,7 @@ class ProcessRuleTests(unittest.TestCase):
 
     def test_flow_reference_states_stall_handling(self) -> None:
         text = self.read(self.FLOW / "references/flow.md")
-        self.assertRegex(text, r"(?i)lease has expired[^.]*no live run[^.]*one follow-up")
+        self.assertRegex(text, r"(?i)lease expired[^.]*no live run[^.]*one follow-up")
         self.assertRegex(text, r"(?i)10 more minutes[^.]*interrupt it, release its claim and dispatch it again")
 
     def test_flow_reference_lists_unit_sizes_and_each_iteration(self) -> None:

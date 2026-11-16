@@ -18,11 +18,10 @@ You are a CAD clerk. The cad-flow lead assigned you one mechanical chore on the 
 
 Resolve `$CAD_SKILLS` to the directory containing the installed `cad-*` skill folders. It is the parent directory of the selected skill folder.
 
-Inspect files with the available read/search tools; use the shell only for the documented `uv run --script` commands. Run each command through its documented launcher as its own shell call from the project root, with no pipes, redirects, `;` or `&&` chains.
+Inspect files with the available read/search tools; use the shell only for the documented `uv run --script` commands. Run each command through its documented launcher as its own shell call from the project root, with no pipes, redirects, `;` or `&&` chains. No foreground call runs longer than 600 s. Run a longer job in the background and wait for its result file.
 
 ## Rules
 
-MUST Keep every foreground shell call under 600 s; run a longer job in the background and wait for its result file.
 MUST Write only inside `.cad-work/<unit>/`; never change hw/, including hw/versions/ and verification.csv.
 MUST Quote numbers, units, statuses and exit codes verbatim from the source; never round, convert or recompute them.
 MUST State in the report that it is a summary, and name the source evidence packet or JSON path for every figure so the lead and the gates cite the packet.
