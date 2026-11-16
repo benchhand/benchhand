@@ -193,5 +193,35 @@ class InstallerTests(unittest.TestCase):
                 self.assertFalse((self.project / ".claude").exists())
 
 
+class InstallerWithoutPyYamlTests(unittest.TestCase):
+    """Run install.py under `python -E -S`: no site-packages, so PyYAML cannot be imported."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-install-noyaml-")
+        self.addCleanup(temporary.cleanup)
+        self.project = Path(temporary.name)
+
+    def run_bare(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-E", "-S", str(INSTALLER), "--harness", "claude", "--project", str(self.project), *args],
+                              capture_output=True, text=True, timeout=60)
+
+    def test_the_bare_interpreter_has_no_pyyaml(self) -> None:
+        probe = subprocess.run([sys.executable, "-E", "-S", "-c", "import yaml"], capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(probe.returncode, 0, "the isolated interpreter can import yaml; these tests would prove nothing")
+
+    def test_default_install_does_not_need_pyyaml(self) -> None:
+        result = self.run_bare()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.project / ".claude/agents/cad-clerk.md").is_file())
+
+    def test_tier_model_without_pyyaml_fails_cleanly_and_writes_nothing(self) -> None:
+        result = self.run_bare("--tier-model", "claude:cheap=haiku")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("PyYAML", result.stderr)
+        self.assertIn("pip install", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(list(self.project.iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

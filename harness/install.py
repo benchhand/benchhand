@@ -100,7 +100,9 @@ def tier_rendered(tier_specs: list[str]) -> dict[Path, str]:
     try:
         import generate  # imported lazily: it needs PyYAML, which a default install does not
     except ModuleNotFoundError as error:
-        raise ValueError(f"--tier-model needs PyYAML to render agents: {error}") from error
+        if error.name != "yaml":
+            raise
+        raise ValueError("--tier-model needs PyYAML to render agents; run `pip install pyyaml` or `uv run --with pyyaml python harness/install.py ...`") from error
 
     return generate.generated(generate.parse_tier_models(tier_specs))
 
