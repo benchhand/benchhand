@@ -59,6 +59,7 @@ Inspect files with the available read/search tools; use the shell only for the d
 
 ## Rules
 
+MUST Keep every foreground shell call under 600 s; run a longer job in the background and wait for its result file.
 MUST Write only inside `.cad-work/<unit>/`; never change hw/, including hw/versions/ and verification.csv.
 MUST Quote numbers, units, statuses and exit codes verbatim from the source; never round, convert or recompute them.
 MUST State in the report that it is a summary, and name the source evidence packet or JSON path for every figure so the lead and the gates cite the packet.

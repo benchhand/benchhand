@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -304,6 +305,59 @@ class TierSourceTests(GeneratorCopyCase):
         text = (self.cad / "agents/cad-clerk.md").read_text(encoding="utf-8")
         self.assertRegex(text, r"(?i)never issue[^.]*verdicts?")
         self.assertRegex(text, r"(?i)evidence packets?")
+
+
+class ProcessRuleTests(unittest.TestCase):
+    """The cad-flow process rules stay written in the lead and worker prompts."""
+
+    FLOW = CAD / "skills/cad-flow"
+    SHELL_AGENTS = ("cad-analyst", "cad-clerk", "cad-concept-designer", "cad-part-designer")
+
+    def read(self, path: Path) -> str:
+        return path.read_text(encoding="utf-8")
+
+    def test_lead_prompts_state_the_writer_cap_and_merge_on_final_report(self) -> None:
+        for path in (self.FLOW / "SKILL.md", self.FLOW / "references/flow.md"):
+            with self.subTest(path=path.name):
+                text = self.read(path)
+                self.assertRegex(text, r"at most 3 writer units")
+                self.assertRegex(text, r"(?i)final report")
+                self.assertRegex(text, r"(?i)still running[^.]*partial")
+
+    def test_lead_prompts_cap_foreground_commands_at_600_seconds(self) -> None:
+        for path in (self.FLOW / "SKILL.md", self.FLOW / "references/flow.md"):
+            with self.subTest(path=path.name):
+                self.assertRegex(self.read(path), r"no foreground command longer than 600 s")
+
+    def test_shell_workers_cap_foreground_calls_at_600_seconds(self) -> None:
+        for name in self.SHELL_AGENTS:
+            with self.subTest(agent=name):
+                self.assertRegex(self.read(CAD / "agents" / f"{name}.md"), r"(?i)foreground (shell )?call[^.]*600 s")
+
+    def test_no_prompt_still_grants_a_20_minute_foreground_call(self) -> None:
+        for path in (CAD / "agents").glob("*.md"):
+            with self.subTest(agent=path.stem):
+                self.assertNotRegex(self.read(path), r"(?i)20[- ]minute")
+
+    def test_flow_reference_states_stall_handling(self) -> None:
+        text = self.read(self.FLOW / "references/flow.md")
+        self.assertRegex(text, r"(?i)lease has expired[^.]*no live run[^.]*one follow-up")
+        self.assertRegex(text, r"(?i)10 more minutes[^.]*interrupt it, release its claim and dispatch it again")
+
+    def test_flow_reference_lists_unit_sizes_and_each_iteration(self) -> None:
+        text = self.read(self.FLOW / "references/flow.md")
+        for phrase in ("at most 4 PNs", "at most 3 PNs", "cores ÷ solver threads"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        for heading in ("Inner loop", "Commit (batch vN)", "Provisional gate", "Full gate (approval)", "Design freeze", "Release"):
+            with self.subTest(heading=heading):
+                self.assertIn(f"**{heading}", text)
+
+    def test_unbuilt_tools_are_only_future_work_in_a_todo_marker(self) -> None:
+        for path in (self.FLOW / "SKILL.md", self.FLOW / "references/flow.md", *(CAD / "agents").glob("*.md")):
+            text = re.sub(r"<!-- TODO\(stage-machine\):.*?-->", "", self.read(path), flags=re.DOTALL)
+            with self.subTest(path=path.name):
+                self.assertNotRegex(text, r"\b(flow\.py|work\.py|evidence\.py run)\b")
 
 
 if __name__ == "__main__":

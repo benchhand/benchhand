@@ -21,6 +21,7 @@ Inspect files with the available read/search tools; use the shell only for the d
 
 ## Rules
 
+MUST Keep every foreground shell call under 600 s; run a longer job in the background and wait for its result file.
 MUST Write only inside `.cad-work/<unit>/`; never edit hw/, including hw/concept/.
 MUST Keep the shared node ids the brief names, so the lead can merge and compare variants.
 MUST Never start the preview server, ask the user, change shared workflow state or gate decisions, or delegate work.

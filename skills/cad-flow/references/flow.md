@@ -9,15 +9,15 @@ Keep the source of truth in the hardware project's `hw/` design record. `cad-rec
 | GROUND | Inspect needs and existing hardware. Ask focused use-case questions about purpose/users, service class, loads, motion/duty/life, environment, accuracy/finish, failure consequences/standards, quantity/budget/lead time, maintenance/repair and actual equipment/operator/outsourcing. Run the explicit v1 `migrate.py` dry run for an existing record. | Product use case; requirements, preferences, bounded assumptions and open questions kept separately; sources and capability availability distinguished. | `cad-record`; see [manufacturing intent and route selection](manufacturing-selection.md) |
 | INTENT | Compare sourced whole-architecture, per-part material and ordered process routes against the recorded service and mandatory criteria. Unknowns stay conditional; preferences rank only candidates passing every hard constraint. Wait for the existing approval gate before consequential changes. | Candidate comparison, primary and conditional alternatives, costs/lead times as sourced or uncertain estimates, evidence gaps, approved selection decision. | `cad-record` `selection.py`; see [manufacturing intent and route selection](manufacturing-selection.md) |
 | SPECIFY | Turn approved intent into measurable requirements/evidence obligations and functional interfaces, fits, tolerance states, assembly access and release scope. | Requirement criteria, interfaces, per-part function/material/route/capability refs, evidence plan and open questions. | `cad-record`, `cad-fits`; see [manufacturing intent and route selection](manufacturing-selection.md) |
-| concept | One `cad-concept-designer` per variant drafts 2-4 rapid three.js variants in one batch; merge them, then refine, merge, or drop by feedback. | Scene, options and selection in a decision record. Preview is not verified CAD. | `cad-concept`: `concept.py check <scene>`; handoff: `concept.py handoff <scene>` |
+| concept | One `cad-concept-designer` per variant drafts 2-4 rapid three.js variants, 3 at a time; merge them, then refine, merge, or drop by feedback. | Scene, options and selection in a decision record. Preview is not verified CAD. | `cad-concept`: `concept.py check <scene>`; handoff: `concept.py handoff <scene>` |
 | VARIANT gate | Get explicit concept selection. | Selected concept and gate evidence in a decision record. | `cad-concept`: checked handoff |
 | layout | Define subassemblies, interfaces, joints/limits, BOM skeleton. Lay out each clearance at its minimum plus the [clearance margin](#clearance-margin). | Assembly and interfaces; preliminary EBOM. | `cad-record`: validate. Each version runs the [fail-fast checks](#fail-fast-check-order), then the full check. |
 | LAYOUT freeze | Provisional gate after the fast checks; L2 may start. Human gate after the full check: present layout, interfaces, BOM skeleton, and the default motion render for approval. | Provisional and frozen decisions with gate evidence; `flow.recheck_from: layout`. | `cad-viewer`: serve, show version and compare checks; `viewer.py animate --case default` plays the motion. |
-| parts | One `cad-part-designer` per subassembly and one `cad-sourcing-researcher` per purchased family, in one batch; build one integrated version; a light mechanical and DFM review runs beside its full check; PARTS gates. | Part records and models; PN, revision, material, process, finish, mass target, make/buy, supplier; torque paths and axial retainers. | Fail-fast checks with `cad-design form_check.py --hw hw --parts-dir <version parts> --fidelity F2`; `cad-mech-reviewer` and `cad-dfm-reviewer` for the light review. |
-| detail | One `cad-part-designer` per made part applies fits, fasteners, tolerances, and process rules in one batch. Build and check one integrated version, and draw it while its full check runs, for the DETAIL gates. | Part revisions, fit decisions, drawings, and evidence. | `cad-fits`; `cad-design form_check.py` at F3; `cad-drawings` publishes each part drawing for that version. |
+| parts | One `cad-part-designer` per subassembly of at most 4 PNs and one `cad-sourcing-researcher` per purchased family, within the writer cap; build one integrated version; a light mechanical and DFM review runs beside its full check; PARTS gates. | Part records and models; PN, revision, material, process, finish, mass target, make/buy, supplier; torque paths and axial retainers. | Fail-fast checks with `cad-design form_check.py --hw hw --parts-dir <version parts> --fidelity F2`; `cad-mech-reviewer` and `cad-dfm-reviewer` for the light review. |
+| detail | One `cad-part-designer` per group of at most 3 made parts applies fits, fasteners, tolerances, and process rules. Build and check one integrated version, and draw it while its full check runs, for the DETAIL gates. | Part revisions, fit decisions, drawings, and evidence. | `cad-fits`; `cad-design form_check.py` at F3; `cad-drawings` publishes each part drawing for that version. |
 | bom | Reconcile part numbers, revisions, quantities, make/buy, suppliers, and assemblies. | Released-intent EBOM. | `cad-bom`: `bom.py --hw hw` or `bom.py --version vN --hw hw` to reconcile against a version snapshot. |
-| analysis | One `cad-analyst` per case checks interference, clearance, stack-up, kinematics, static FEA, or a motion case, in one batch. The joint sweep, then FEA at its worst pose, run as the stage's full check; ANALYSIS gates. | Verification tied to requirements/configurations; analysis artifacts and assumptions; accepted motion cases in `hw/motion/cases/<case>/plan.yaml`. | Use `cad-motion`, `cad-analysis` and `cad-fits` on the selected version. Case results publish through cad-record layout; verification links identify the versioned evidence bundle. The lead publishes an accepted motion plan with `motion.py render --hw hw --version vN --case <case> --outputs glb,sheet,video`; a record with coupled joints adds `--crosscheck freecad` and a verification row from `crosscheck.json`, where only `solved` joints count as independent evidence. |
-| critique | Spawn mechanical and DFM reviewers in one parallel read-only batch; it may start on the provisional ANALYSIS gate, while the full check runs. | Preserve both verdicts and evidence in the workflow record. Neither reviewer waits for the other. | `cad-review-mech`; `cad-review-dfm` |
+| analysis | One `cad-analyst` per case checks interference, clearance, stack-up, kinematics, static FEA, or a motion case. The joint sweep, then FEA at its worst pose, run as the stage's full check; ANALYSIS gates. | Verification tied to requirements/configurations; analysis artifacts and assumptions; accepted motion cases in `hw/motion/cases/<case>/plan.yaml`. | Use `cad-motion`, `cad-analysis` and `cad-fits` on the selected version. Case results publish through cad-record layout; verification links identify the versioned evidence bundle. The lead publishes an accepted motion plan with `motion.py render --hw hw --version vN --case <case> --outputs glb,sheet,video`; a record with coupled joints adds `--crosscheck freecad` and a verification row from `crosscheck.json`, where only `solved` joints count as independent evidence. |
+| critique | Spawn mechanical and DFM reviewers as parallel read-only units; it may start on the provisional ANALYSIS gate, while the full check runs. | Preserve both verdicts and evidence in the workflow record. Neither reviewer waits for the other. | `cad-review-mech`; `cad-review-dfm` |
 | reconcile | Resolve critique findings. Rerun affected checks. | Updated decisions, verification, revisions, dispositions. | `cad-flow`; `cad-recheck` stamps the exact staged `hw/` tree only after checks pass. |
 | design_freeze | After every stage's human gate, present reconciled design, analyses, and record for approval. | Frozen anchor pins the exact built version and its manifest hash. | `cad-record`: validate project and confirm every custom-made part has complete manufacturing outputs. |
 | RELEASE gate | Show the frozen version, the revision letter to issue, its contents and verification. Get approval before release. | Gate decision, recorded in `decisions/DR-###.md`. | `cad-record`: `validate.py` and the structured checks. |
@@ -64,10 +64,62 @@ Check each version a commit batch builds cheapest first. Steps 1-4 are the fast 
 
 A changed-only check or a smoke sweep is fast-check evidence only. Its result reports an incomplete scope (the static check's `scope.complete: false`) and never counts as a full check, a full assembly pass, or verification evidence. The pair cache makes unchanged pairs cheap in step 5; never skip step 5 because an earlier version passed it.
 
+## Checks by iteration
+
+Each producer runs at the iteration below and not earlier. "Only when stale" means `impact.py` lists the producer's evidence family as stale or open and due at this stage; unaffected parts keep their evidence. Every command runs by hand today.
+
+<!-- TODO(stage-machine): `evidence.py run --scope inner|commit|provisional|full` will choose these steps from the obligations; until it exists, run the commands the owning skills document. -->
+
+**Inner loop.** A designer iterates in a scratch workspace on the unit's own PNs.
+- Always: `validate.py`; from L1 the scratch build; static `--changed-only`; the form check on the unit's PNs (F1 at L1, F2 at L2, F3 from L3).
+- At L3, also fits and stack-up, and a drawing completeness check for the unit's own PNs.
+- A smoke sweep only when a moving pair changed. Renders only when a requirement binds visibility.
+- An analyst runs a coarse-mesh FEA smoke case before the real case.
+- Never in the loop: the full sweep, the motion render, the all-pairs check and the integrated drawings.
+
+**Commit (batch vN).** The lead builds one version and checks it in the [fail-fast order](#fail-fast-check-order).
+- Always run:
+  - `validate.py` and the build
+  - static `--changed-only`
+  - the BOM, from L1
+  - fits and stack-up, from L3
+- The form check on the changed PNs, only when stale.
+- The smoke sweep, once a joint exists.
+- Part drawings from L3, only when stale. Sourcing and selection, only when stale.
+- The recheck stamp at each git commit of `hw/`.
+- Today the batch also runs the renders and the default motion render, because the provisional gate cites them. <!-- TODO(stage-machine): the motion render moves from the commit to the provisional scope. -->
+
+**Provisional gate.** It reads the commit results and runs no static or sweep check again.
+- It needs these results for vN:
+  - `validate.py`
+  - the 4-view render with its visibility check
+  - the default motion render, once a joint moves
+  - the BOM, fits and stack-up
+  - the form, static and smoke results
+- It runs `evidence.py check` for the gate's stage and records them in the provisional decision.
+
+**Full gate (approval).** The full check on the same vN, before the human gate.
+- Always run:
+  - `validate.py`
+  - the static check over every pair
+  - the form check for every due obligation
+  - the motion render
+  - the BOM, fits and stack-up
+  - `evidence.py check` and the recheck stamp
+- The full sweep at L1 and L4. At L2 and L3 run it too: skipping it needs a hash-proven carry-forward, and no tool proves one yet. <!-- TODO(stage-machine): carry-forward of a passing full sweep at L2 and L3, checked by evidence.py run. -->
+- At L3, the part drawings and the assembly drawing, with `jobs` above 1.
+- At L4, every FEA case; at RECONCILE, only the cases `impact.py` marks stale.
+- Sourcing and selection at INTENT and L2.
+
+**Design freeze.** Needs `validate.py`, the BOM, fits and stack-up, `evidence.py check` and the stamp. The full sweep, drawings and FEA run again only when stale. `build_guide.py` may preview.
+
+**Release.** `validate.py`, the BOM, `build_guide.py` and `release.py`, which runs the evidence check itself.
+
 ## Long jobs
 
 The full sweep, a FreeCAD assembly run, an FEA case, and the first run of a new tool are long jobs.
 
+- Run no foreground command longer than 600 s. Start any command that can exceed it as a background job.
 - Smoke first: run the sweep with `--smoke` before the full sweep, a FreeCAD run on its first few frames, and a new tool on a tiny fixture. Start the full run only after its smoke run passed.
 - Before starting, check for stray runs: a sweep refuses while a recorded process group still runs and prints the `kill -TERM -- -PGID` command. Stop a run by its process group, never by its parent PID.
 - Run it as a background job and wait for its result file, such as the sweep's `result.json` in its version bundle or the check's `--out` file, not for its process or shell. A run that ended without its result file produced no result; rerun it.
@@ -81,7 +133,44 @@ A `.gitignore` untracks nothing. When git already tracks results and the answer 
 
 ## Delegation
 
-The lead orchestrates; workers do independent stage units. Fan out every unit, dispatch the full stage in one parallel batch when supported, integrate once all return, build one version, and present the stage's gates. If a harness cannot run parallel subagents, run the same unit briefs in sequence. Only the lead builds `hw/versions/`.
+The lead orchestrates; workers do independent stage units. Only the lead builds `hw/versions/`.
+
+- Run at most 3 writer units at once. A writer unit writes files: a variant, part, detail or analysis unit, or a clerk chore. Read-only units (reviewers and sourcing researchers) run alongside them without counting toward the cap.
+- Start the next queued unit when a running one returns. A stage with 4 variants runs 3, then the fourth.
+- Merge each unit when its final report arrives: apply an accepted part delivery, adopt cited sourcing values, or write verification rows. Run the integration build once, after the last unit of the stage is merged.
+- A report that says background work is still running is partial. The unit is not done: merge nothing from it and wait for its final report.
+- If a harness cannot run parallel subagents, run the same briefs in sequence.
+
+<!-- TODO(stage-machine): work.py ready replaces the lead's manual unit list; work.py stale replaces the manual stall check. -->
+
+### Unit sizes
+
+| Stage | Unit | Width | Tier |
+|---|---|---|---|
+| ground, intent | lead; optional read-only `source-<subject>` researchers | at most 3 | standard |
+| concept | `variant-<id>` | 2-4 variants, 3 at once | standard |
+| layout | lead, in scratch `layout` | 1 | strong |
+| parts | `part-<subassembly>`, at most 4 PNs each; read-only `source-<family>` | 3 writer units at once | strong; standard for research |
+| detail | `detail-<group>`, at most 3 PNs each | 3 writer units at once | strong |
+| bom | `clerk-<chore>` | 1 | cheap |
+| analysis | `analysis-<case>` | cores ÷ solver threads, at most 3 | standard |
+| critique | 2 read-only reviewers | 2 | strong |
+| reconcile | rework units scoped by `impact.py`, sized as parts or detail | 3 writer units at once | as parts or detail |
+| design_freeze, release | lead | 1 | lead |
+
+Tier guard: reviewers, analysts, researchers and any agent that issues a verdict never run on the cheap tier. Gates cite evidence packets, never summaries.
+
+### Stalled units
+
+A subagent has no heartbeat, so the lead checks each unit that has run longer than its expected duration.
+
+1. A unit whose lease has expired and that has no live run gets one follow-up message asking for status or its final report.
+2. If the unit makes no progress for 10 more minutes, interrupt it, release its claim and dispatch it again with the same brief. Reset its scratch workspace with `scratch.py init --reset` before the new run.
+3. A rerun is a fresh unit; never merge output from the interrupted run.
+
+No tool records a lease yet: the lease is the lead's own record of when it dispatched the unit and when it last heard from it.
+
+<!-- TODO(stage-machine): work.py records the claim and lease; scratch.py heartbeats replace the lead's manual timestamp. -->
 
 | Stage | Unit | Agent | Worker writes |
 |---|---|---|---|
@@ -89,7 +178,7 @@ The lead orchestrates; workers do independent stage units. Fan out every unit, d
 | parts | `part-<subassembly>` | `cad-part-designer` | `.cad-work/part-<subassembly>/`, then its own `hw/parts/<PN>/` through `scratch.py deliver` |
 | parts | `source-<family>` | `cad-sourcing-researcher` | nothing |
 | bom | `clerk-<chore>` | `cad-clerk` (cheap tier; mechanical rows and summaries only) | `.cad-work/clerk-<chore>/`; the lead applies the rows, and gates cite evidence packets, never the clerk's summary |
-| detail | `detail-<PN>` | `cad-part-designer` | `.cad-work/detail-<PN>/`, then `hw/parts/<PN>/` through `scratch.py deliver` |
+| detail | `detail-<group>`: at most 3 made parts | `cad-part-designer` | `.cad-work/detail-<group>/`, then each `hw/parts/<PN>/` through `scratch.py deliver` |
 | analysis | `analysis-<case>` | `cad-analyst` | `.cad-work/analysis-<case>/` |
 | analysis full check | `analysis-<case>-<vN>`: the joint sweep, then FEA at its worst pose | `cad-analyst` | `.cad-work/analysis-<case>/` |
 | parts light review | reviewer | `cad-mech-reviewer`, `cad-dfm-reviewer` | nothing |
@@ -99,11 +188,11 @@ List units from the record: subassemblies from `assembly.yaml`, purchased famili
 
 At L4 the joint sweep is the stage's full check. Dispatch it once the provisional ANALYSIS gate is recorded, with the version in its unit id, so that a rerun on a fixed version is a fresh unit. A static FEA case at the worst-case pose needs the sweep's `worst_case`: dispatch those cases as the next batch, once the sweep returns. Every other L4 case runs in the first batch.
 
-The L2 light review runs `cad-mech-reviewer` and `cad-dfm-reviewer` read-only in one parallel batch while the PARTS full check runs. Its scope is the rules a check can miss at L2: every torque path and axial retainer, the anchorage of covers and mounts, and each made part's walls against its process minimum. It is not the final critique.
+The L2 light review runs `cad-mech-reviewer` and `cad-dfm-reviewer` read-only in parallel while the PARTS full check runs. Its scope is the rules a check can miss at L2: every torque path and axial retainer, the anchorage of covers and mounts, and each made part's walls against its process minimum. It is not the final critique.
 
 Each worker's brief is self-contained. It names the unit id, task, and PNs, variant, or case; a motion case also names the requirements and use cases its plan must show. It gives the absolute-path inputs (record files, version label, frozen interfaces, shared node ids), kernel, fidelity, and write boundary; a part or detail unit also gets each `--attach REF=PARENT_REF` the lead's integrated build passes to `cad-model run`, for its `scratch.py build`. It also gives the report format with absolute paths. A worker asks the user nothing and does not change shared workflow state or make gate decisions.
 
-Read every report before changing shared files. Accept a part delivery only when its scratch build passed; otherwise dispatch that unit again. Apply accepted proposals to the shared record yourself and record why you declined a proposal. Merge concept variants, adopt cited sourcing values, write verification rows from analysis results, and copy accepted motion plans to `hw/motion/cases/<case>/plan.yaml` before publishing. Then run the stage's commit batch once on `hw/`: the build and the fast checks in the [fail-fast order](#fail-fast-check-order), and the recheck. Present the stage's gates with the absolute path of every file they show.
+Read each final report before changing shared files. Accept a part delivery only when its scratch build passed; otherwise dispatch that unit again. Apply accepted proposals to the shared record yourself and record why you declined a proposal. Merge concept variants, adopt cited sourcing values, write verification rows from analysis results, and copy accepted motion plans to `hw/motion/cases/<case>/plan.yaml` before publishing. Then, after the last unit is merged, run the stage's commit batch once on `hw/`: the build and the fast checks in the [fail-fast order](#fail-fast-check-order), and the recheck. Present the stage's gates with the absolute path of every file they show.
 
 ### Scratch workspace
 
