@@ -314,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             while not watcher.stopped:
                 with watcher.cond:
-                    watcher.cond.wait_for(lambda: watcher.generation != seen or watcher.stopped, self.heartbeat_s)
+                    watcher.cond.wait_for(lambda seen=seen: watcher.generation != seen or watcher.stopped, self.heartbeat_s)
                     fresh = watcher.generation != seen
                     seen, files = watcher.generation, list(watcher.last_change)
                 if fresh:

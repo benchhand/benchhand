@@ -171,12 +171,6 @@ class Operations:
     items: tuple[AssemblyOperation, ...]
     unknown: str | None = None
 
-    def get(self, ident: str) -> AssemblyOperation:
-        for item in self.items:
-            if item.id == ident:
-                return item
-        raise KeyError(ident)
-
     @property
     def ids(self) -> tuple[str, ...]:
         return tuple(item.id for item in self.items)
