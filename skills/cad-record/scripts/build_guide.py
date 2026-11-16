@@ -64,6 +64,7 @@ import assembly_data  # noqa: E402
 import assembly_check  # noqa: E402
 import assembly_sheet  # noqa: E402
 import generated_docs  # noqa: E402
+import manufacturing_intent as record_intent  # noqa: E402
 
 EVIDENCE_PATH = re.compile(r"hw/[^\s,;()\"'<>]+")  # a cited path in an evidence cell, as release.py reads it
 
@@ -431,6 +432,9 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
         raise GuideError(f"cannot read version manifest {version_manifest}: {exc}") from exc
 
     product = read_yaml(hw / "product.yaml", optional=True)
+    problem = record_intent.migration_problem(product)
+    if problem is not None:
+        raise GuideError(f"{problem.code}: {problem.message}. {problem.action or ''}".strip())
     assembly = read_yaml(hw / "assembly.yaml", optional=True)
     requirements = read_yaml(hw / "requirements.yaml", optional=True)
     interfaces = read_yaml(hw / "interfaces.yaml", optional=True).get("interfaces", [])
