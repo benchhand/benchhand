@@ -344,7 +344,6 @@ def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     files, directories = delivery_tree(scratch_hw)
     authorized = set(baseline["parts"])
     validate_delivery(baseline, authorized, files, directories)
-    owned = [f"parts/{pn}/" for pn in authorized]
     baseline_files: dict[str, str] = baseline["files"]
     conflicts = []
     for pn in sorted(authorized):

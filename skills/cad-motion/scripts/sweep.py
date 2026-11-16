@@ -561,7 +561,6 @@ def accumulate(plan: Plan, outcomes: list[Any], evaluated: int, allowed: set[tup
     the sorted occurrence pairs whose overlap is declared; `effectors` the end effector's row per
     sample index (Geometry.effector_row); `unresolved` the requests of unresolved suspects, which
     answer nothing."""
-    width = len(plan.selected)
     pairs: dict[int, dict[str, Any]] = {index: {"clearance": None, "bound": None, "observed": None}
                                         for index in plan.selected}
     samples, mesh_cleared = [], []
