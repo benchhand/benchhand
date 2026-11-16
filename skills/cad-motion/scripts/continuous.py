@@ -402,7 +402,7 @@ def _agreed(name: str, known: Any, value: Any) -> Any:
     raise ValueError(f"continuous blocks disagree on {name}: {known!r} and {value!r}")
 
 
-def _margin_order(row: Mapping[str, Any]) -> tuple:
+def _margin_order(row: Mapping[str, Any]) -> tuple[Any, ...]:
     return (row["margin_mm"], row["pair"], row["path"], row["interval"])
 
 

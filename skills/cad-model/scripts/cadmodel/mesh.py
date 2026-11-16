@@ -106,7 +106,8 @@ def gltf_json(glb: Path) -> dict[str, Any]:
     chunk_length, chunk_type = struct.unpack_from("<I4s", data, 12)
     if magic != b"glTF" or chunk_type != b"JSON":
         raise occ.GeometryError(f"{glb} is not a binary glTF file")
-    return json.loads(data[20:20 + chunk_length])
+    gltf: dict[str, Any] = json.loads(data[20:20 + chunk_length])
+    return gltf
 
 
 def instance_names(chain: Any, products: Mapping[str, str]) -> dict[str, str]:

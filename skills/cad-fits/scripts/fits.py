@@ -48,7 +48,8 @@ class FitError(ValueError):
 
 @cache
 def table() -> dict[str, Any]:
-    return json.loads(DATA.read_text(encoding="utf-8"))
+    table_data: dict[str, Any] = json.loads(DATA.read_text(encoding="utf-8"))
+    return table_data
 
 
 def _range_index(size: Decimal, bounds: list[int]) -> int:
