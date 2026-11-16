@@ -157,6 +157,41 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(unsafe.returncode, 1)
         self.assertIn("refusing symlink destination directory", unsafe.stderr)
 
+    def test_tier_model_renders_only_the_chosen_harness_and_tier(self) -> None:
+        project = self.root / "tiered"
+        project.mkdir()
+        self.run_ok("--harness", "all", "--project", str(project),
+                    "--tier-model", "claude:cheap=haiku", "--tier-model", "opencode:cheap=anthropic/claude-haiku-4-5#low")
+        claude = (project / ".claude/agents/cad-clerk.md").read_text(encoding="utf-8")
+        self.assertIn("\nmodel: haiku\n", claude)
+        self.assertNotIn("model: inherit", claude)
+        opencode = (project / ".opencode/agents/cad-clerk.md").read_text(encoding="utf-8")
+        self.assertIn('\nmodel: "anthropic/claude-haiku-4-5#low"\n', opencode)
+        self.assertNotIn("inherit", opencode)
+        for source in (CAD / "harness/codex/agents").iterdir():  # unmapped harness: byte-identical
+            self.assertEqual((project / ".codex/agents" / source.name).read_bytes(), source.read_bytes())
+        self.assertEqual((project / ".claude/agents/cad-analyst.md").read_bytes(), (CAD / "harness/claude/agents/cad-analyst.md").read_bytes())
+
+    def test_tier_model_without_flag_installs_committed_bytes(self) -> None:
+        self.run_ok("--harness", "all", "--project", str(self.project))
+        for harness, (_skills, agents_relative) in HARNESS_PATHS.items():
+            for source in (CAD / "harness" / harness / "agents").iterdir():
+                self.assertEqual((self.project / agents_relative / source.name).read_bytes(), source.read_bytes())
+
+    def test_tier_model_keeps_kiro_user_skill_uris(self) -> None:
+        self.run_ok("--harness", "kiro", "--user", "--tier-model", "cheap=claude-haiku-4.5")
+        profile = json.loads((self.home / ".kiro/agents/cad-clerk.json").read_text(encoding="utf-8"))
+        self.assertEqual(profile["model"], "claude-haiku-4.5")
+        self.assertTrue(all(r.startswith("skill://~/.kiro/skills/") for r in profile["resources"]))
+
+    def test_tier_model_rejects_bad_specs_before_writing(self) -> None:
+        for spec, message in (("premium=m", "unknown tier"), ("opencode:cheap=inherit", "inherit"), ("cheap", "TIER=MODEL")):
+            with self.subTest(spec=spec):
+                result = self.run_installer("--harness", "all", "--project", str(self.project), "--tier-model", spec)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertFalse((self.project / ".claude").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
