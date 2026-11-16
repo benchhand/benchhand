@@ -273,9 +273,22 @@ def _find_freecadcmd(environ: Mapping[str, str], home: Path | None = None,
                      macos_command: Path | None = None) -> Path | None:
     """Resolve FreeCAD using CAD_TOOL's ordered authoritative candidate list.
 
-    With CAD_REQUIRE_FREECAD set to 1 in `environ`, finding no candidate raises RuntimeError instead
-    of returning None, so a lane that must test against FreeCAD fails rather than skips.
+    With CAD_REQUIRE_FREECAD set to 1 in `environ`, the selected candidate must be an executable
+    file. Finding none, or selecting an unusable one, raises RuntimeError and never falls back to
+    a later candidate, so a lane that must test against FreeCAD fails rather than skips.
     """
+    command = _select_freecadcmd(environ, home, platform_name, macos_command)
+    if environ.get(REQUIRE_FREECAD) == "1":
+        if command is None:
+            raise RuntimeError(f"{REQUIRE_FREECAD}=1 but no {CAD_TOOL.name} {CAD_TOOL.required_version} freecadcmd "
+                               "was found through FREECADCMD, PATH, the macOS app or ~/.local/bin")
+        if not (command.is_file() and os.access(command, os.X_OK)):
+            raise RuntimeError(f"{REQUIRE_FREECAD}=1 but the selected freecadcmd {command} is not an executable file")
+    return command
+
+
+def _select_freecadcmd(environ: Mapping[str, str], home: Path | None,
+                       platform_name: str | None, macos_command: Path | None) -> Path | None:
     home_dir = home or Path(environ.get("HOME", str(Path.home())))
     for kind, value in CAD_TOOL.lookup_candidates:
         if kind == "environment":
@@ -294,9 +307,6 @@ def _find_freecadcmd(environ: Mapping[str, str], home: Path | None = None,
             command = home_dir / value
             if command.is_file() and os.access(command, os.X_OK):
                 return command
-    if environ.get(REQUIRE_FREECAD) == "1":
-        raise RuntimeError(f"{REQUIRE_FREECAD}=1 but no {CAD_TOOL.name} {CAD_TOOL.required_version} freecadcmd "
-                           "was found through FREECADCMD, PATH, the macOS app or ~/.local/bin")
     return None
 
 
