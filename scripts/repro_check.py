@@ -132,7 +132,7 @@ def _apply(rule: Volatile, data: bytes) -> tuple[bytes, list[Any]] | None:
         return masked, removed
     if rule.kind == "line-regex":
         pattern = re.compile(rule.target)
-        kept = []
+        kept: list[str] = []
         for line in data.decode("latin-1").splitlines(keepends=True):
             (removed if pattern.search(line.rstrip("\r\n")) else kept).append(line)
         return "".join(kept).encode("latin-1"), removed
