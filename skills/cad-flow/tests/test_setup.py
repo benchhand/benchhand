@@ -114,6 +114,36 @@ class PlanTests(unittest.TestCase):
         for library in ("libglvnd-glx", "libX11", "expat"):
             self.assertIn(library, manual.command)
 
+    def beads_report(self, bd: str, hooks: str):
+        bd_check = setup.preflight.Check("bd", "Beads work tracker", bd, bd == "fail", "bd is older than 1.3.1.",
+                                         "Install bd 1.3.1 or newer and put it on PATH, then rerun preflight.")
+        hooks_check = setup.preflight.Check("beads-hooks", "Git hooks path", hooks, True,
+                                            "core.hooksPath is .beads/hooks (local scope).",
+                                            "Run `git config --unset core.hooksPath`. Then delete `.beads/hooks/`.")
+        return setup.preflight.Report((bd_check, hooks_check))
+
+    def test_failing_beads_checks_become_manual_items_with_their_remediation(self) -> None:
+        items = {item.id: item for item in setup.plan(self.beads_report("fail", "fail"), self.root, self.home, self.env)}
+        self.assertEqual(set(items), {"beads-bd-manual", "beads-hooks-manual"})
+        self.assertIn("Install bd 1.3.1", items["beads-bd-manual"].command)
+        self.assertIn("older than 1.3.1", items["beads-bd-manual"].command)
+        self.assertIn("git config --unset core.hooksPath", items["beads-hooks-manual"].command)
+        for item in items.values():
+            self.assertIn("(manual)", item.title)
+
+    def test_passing_beads_checks_plan_nothing(self) -> None:
+        self.assertEqual(setup.plan(self.beads_report("pass", "pass"), self.root, self.home, self.env), [])
+
+    def test_executing_the_beads_items_changes_nothing_and_never_sets_hooks_path(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        items = setup.plan(self.beads_report("fail", "fail"), self.root, self.home, self.env)
+        with patch("sys.stderr"):
+            failures, _ = setup._execute(items, self.root, self.home, dict(self.env), None)
+        self.assertEqual(failures, [])
+        config = subprocess.run(["git", "config", "--local", "--get", "core.hooksPath"], cwd=self.root,
+                                capture_output=True, text=True)
+        self.assertEqual((config.returncode, config.stdout), (1, ""))
+
     def test_setup_imports_subprocess_for_run_and_exception_path(self) -> None:
         self.assertIsNotNone(setup.subprocess)
         with patch.object(setup.subprocess, "run", side_effect=FileNotFoundError("missing")):

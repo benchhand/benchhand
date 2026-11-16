@@ -542,5 +542,258 @@ class FreeCADTests(unittest.TestCase):
         self.assertEqual(len(checks), 2)
         self.assertEqual(checks[1].status, "fail")
 
+class BeadsPreflightTests(unittest.TestCase):
+    """The bd and beads-hooks checks, run through `run_checks` with fake `bd`/`git` executables on PATH."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.project = self.home / "project"
+        self.project.mkdir()
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.git_dir = str(Path(shutil.which("git") or "/usr/bin/git").parent)
+        self.global_config = self.root / "global.gitconfig"
+        self.system_config = self.root / "system.gitconfig"
+        self.global_config.write_text("", encoding="utf-8")
+        self.system_config.write_text("", encoding="utf-8")
+        self.pin_global_config = True
+
+    def environ(self, real_git: bool = True) -> dict[str, str]:
+        path = os.pathsep.join([str(self.bin), *([self.git_dir] if real_git else [])])
+        environ = {"PATH": path, "HOME": str(self.home), "GIT_CONFIG_SYSTEM": str(self.system_config)}
+        if self.pin_global_config:
+            environ["GIT_CONFIG_GLOBAL"] = str(self.global_config)
+        return environ
+
+    def script(self, name: str, body: str, shebang: str = "#!/bin/sh") -> None:
+        path = self.bin / name
+        path.write_text(f"{shebang}\n{body}\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    def fake_bd(self, version_out: str = "bd version 1.3.1 (c1c4b64)", version_rc: int = 0, where_rc: int = 0,
+                hang_on: str = "") -> None:
+        sleep = "/bin/sleep 30;"
+        where_out = 'echo "Error: no beads database found" >&2;' if where_rc else "echo ok;"
+        self.script("bd", "\n".join([
+            'case "$1" in',
+            f'  --version) {sleep if hang_on == "version" else ""} printf %s "$FAKE_VERSION"; exit {version_rc};;',
+            f'  where) {sleep if hang_on == "where" else ""} {where_out} exit {where_rc};;',
+            "esac"]))
+        self.version_out = version_out
+
+    def probe(self, real_git: bool = True) -> tuple[dict[str, "preflight.Check"], int]:
+        """Both checks through run_checks, and the exit code of a report holding just those two."""
+        environ = self.environ(real_git)
+        environ["FAKE_VERSION"] = getattr(self, "version_out", "")
+        passing = preflight.Check("freecad-command", "freecad-command", "pass", True, "", "")
+        with patch("sys.stderr"):
+            report = preflight.run_checks(environ, self.project, self.home, "codex", cad_checks=[passing])
+        found = {check.id: check for check in report.checks}
+        return found, preflight.Report((found["bd"], found["beads-hooks"])).exit_code
+
+    def beads(self, present: bool = True) -> None:
+        if present:
+            (self.project / ".beads").mkdir(exist_ok=True)
+        else:
+            shutil.rmtree(self.project / ".beads", ignore_errors=True)
+
+    def git_init(self, hooks_path: str | None = None, config: str = "--local") -> None:
+        subprocess.run(["git", "init", "-q", str(self.project)], check=True, env=self.environ())
+        if hooks_path is not None:
+            subprocess.run(["git", "config", config, "core.hooksPath", hooks_path], cwd=self.project, check=True,
+                           env=self.environ())
+
+    def test_run_checks_reports_both_after_uv_and_before_the_runtimes(self) -> None:
+        passing = preflight.Check("freecad-command", "freecad-command", "pass", True, "", "")
+        with patch("sys.stderr"):
+            report = preflight.run_checks(self.environ(), self.project, self.home, "codex", cad_checks=[passing])
+        ids = [check.id for check in report.checks]
+        self.assertEqual(ids[:4], ["freecad-command", "uv", "bd", "beads-hooks"])
+        self.assertEqual(ids[4], "cadquery")
+
+    def test_without_bd_and_without_beads_the_file_ledger_is_an_optional_warning(self) -> None:
+        checks, exit_code = self.probe()
+        bd = checks["bd"]
+        self.assertEqual((bd.status, bd.required, exit_code), ("warn", False, 0))
+        self.assertIn("file ledger", bd.detail)
+
+    def test_beads_without_bd_fails(self) -> None:
+        self.beads()
+        checks, exit_code = self.probe()
+        self.assertEqual((checks["bd"].status, checks["bd"].required, exit_code), ("fail", True, 1))
+        self.assertIn("Install bd 1.3.1", checks["bd"].fix)
+
+    def test_bd_versions_follow_semver_order_against_1_3_1(self) -> None:
+        self.beads()
+        for version, status in (("1.2.9", "fail"), ("1.3.0", "fail"), ("1.3.1-rc.1", "fail"),
+                                ("1.3.1-alpha", "fail"), ("1.3.1", "pass"), ("1.3.1+build.5", "pass"),
+                                ("1.3.2-rc.1", "pass"), ("1.4.0", "pass"), ("2.0.0", "pass")):
+            with self.subTest(version):
+                self.fake_bd(f"bd version {version} (abc1234)")
+                checks, exit_code = self.probe()
+                self.assertEqual((checks["bd"].status, checks["bd"].required, exit_code),
+                                 (status, True, 0 if status == "pass" else 1))
+                if status == "fail":
+                    self.assertIn(f"bd {version} is older than 1.3.1", checks["bd"].detail)
+
+    def test_unusable_version_output_fails_when_beads_exists_and_only_warns_without_it(self) -> None:
+        outputs = {"blank": "", "garbage": "command not found", "no version": "bd version", "two parts": "bd version 1.3",
+                   "wrong word": "version 1.3.1", "trailing text": "bd version 1.3.1 (abc) extra",
+                   "two lines": "bd version 1.3.1 (abc)\nbd version 1.2.0 (def)", "v prefix": "bd version v1.3.1 (abc)"}
+        for with_beads in (True, False):
+            for label, output in outputs.items():
+                with self.subTest(beads=with_beads, output=label):
+                    self.beads(with_beads)
+                    self.fake_bd(output)
+                    checks, exit_code = self.probe()
+                    expected = ("fail", True, 1) if with_beads else ("warn", False, 0)
+                    self.assertEqual((checks["bd"].status, checks["bd"].required, exit_code), expected)
+                    self.assertIn("Unrecognised `bd --version` output", checks["bd"].detail)
+
+    def test_a_version_probe_that_exits_non_zero_never_counts_as_a_version(self) -> None:
+        for with_beads in (True, False):
+            with self.subTest(beads=with_beads):
+                self.beads(with_beads)
+                self.fake_bd("bd version 9.9.9 (abc)", version_rc=3)
+                checks, exit_code = self.probe()
+                expected = ("fail", True, 1) if with_beads else ("warn", False, 0)
+                self.assertEqual((checks["bd"].status, checks["bd"].required, exit_code), expected)
+                self.assertIn("exited 3", checks["bd"].detail)
+
+    def test_version_probe_exceptions_fail_with_beads_and_warn_without(self) -> None:
+        cases = {"cannot launch": lambda: self.script("bd", "", shebang="#!/nonexistent/interpreter"),
+                 "times out": lambda: self.fake_bd(hang_on="version")}
+        for with_beads in (True, False):
+            for label, install in cases.items():
+                with self.subTest(beads=with_beads, case=label):
+                    self.beads(with_beads)
+                    install()
+                    with patch.object(preflight, "PROBE_TIMEOUT_S", 0.5):
+                        checks, exit_code = self.probe()
+                    expected = ("fail", True, 1) if with_beads else ("warn", False, 0)
+                    self.assertEqual((checks["bd"].status, checks["bd"].required, exit_code), expected)
+
+    def test_a_store_that_bd_where_cannot_find_fails(self) -> None:
+        self.beads()
+        self.fake_bd(where_rc=1)
+        checks, exit_code = self.probe()
+        self.assertEqual((checks["bd"].status, checks["bd"].required, exit_code), ("fail", True, 1))
+        self.assertIn("`bd where` failed: Error: no beads database found", checks["bd"].detail)
+
+    def test_a_bd_where_that_hangs_fails_instead_of_hanging_preflight(self) -> None:
+        self.beads()
+        self.fake_bd(hang_on="where")
+        with patch.object(preflight, "BD_WHERE_TIMEOUT_S", 0.5):
+            checks, exit_code = self.probe()
+        self.assertEqual((checks["bd"].status, checks["bd"].required, exit_code), ("fail", True, 1))
+        self.assertIn("`bd where` did not run", checks["bd"].detail)
+
+    def test_bd_without_beads_uses_the_file_ledger_and_passes(self) -> None:
+        self.fake_bd()
+        checks, exit_code = self.probe()
+        self.assertEqual((checks["bd"].status, exit_code), ("pass", 0))
+        self.assertIn("file ledger", checks["bd"].detail)
+
+    def test_hooks_path_pointing_at_beads_hooks_fails_for_relative_absolute_and_tilde_values(self) -> None:
+        self.git_init()
+        for value in (".beads/hooks", "./.beads/hooks/", "../project/.beads/hooks", str(self.project / ".beads" / "hooks"),
+                      "~/project/.beads/hooks"):
+            with self.subTest(value):
+                subprocess.run(["git", "config", "core.hooksPath", value], cwd=self.project, check=True,
+                               env=self.environ())
+                checks, exit_code = self.probe()
+                hooks = checks["beads-hooks"]
+                self.assertEqual((hooks.status, hooks.required, exit_code), ("fail", True, 1))
+                self.assertIn("local scope", hooks.detail)
+                self.assertIn(f"`git config --file {self.project / '.git' / 'config'} --unset core.hooksPath`", hooks.fix)
+                self.assertIn("delete `.beads/hooks/`", hooks.fix)
+                self.assertIn(".gitignore", hooks.fix)
+
+    def test_other_hooks_paths_unset_values_and_non_repositories_pass(self) -> None:
+        self.assertEqual(self.probe()[0]["beads-hooks"].status, "pass")  # not a repository, nothing in global config
+        self.git_init()
+        self.assertEqual(self.probe()[0]["beads-hooks"].status, "pass")  # key absent
+        for value in (".githooks", str(self.root / "elsewhere" / ".beads" / "hooks"), "~/other/.beads/hooks"):
+            with self.subTest(value):
+                subprocess.run(["git", "config", "core.hooksPath", value], cwd=self.project, check=True,
+                               env=self.environ())
+                checks, exit_code = self.probe()
+                hooks = checks["beads-hooks"]
+                self.assertEqual((hooks.status, exit_code), ("pass", 0))
+
+    def test_a_global_or_system_hooks_path_fails_with_an_unset_for_that_scope(self) -> None:
+        target = str(self.project / ".beads" / "hooks")
+        for scope, config in (("global", self.global_config), ("system", self.system_config)):
+            with self.subTest(scope):
+                self.git_init()
+                config.write_text(f"[core]\n\thooksPath = {target}\n", encoding="utf-8")
+                checks, exit_code = self.probe()
+                hooks = checks["beads-hooks"]
+                self.assertEqual((hooks.status, hooks.required, exit_code), ("fail", True, 1))
+                self.assertIn(f"{scope} scope", hooks.detail)
+                self.assertIn(str(config), hooks.detail)
+                self.assertIn(f"git config --file {config} --unset core.hooksPath", hooks.fix)
+                config.write_text("", encoding="utf-8")
+
+    def test_an_included_hooks_path_names_the_included_file_in_the_fix(self) -> None:
+        self.git_init()
+        included = self.root / "shared.gitconfig"
+        included.write_text(f"[core]\n\thooksPath = {self.project / '.beads' / 'hooks'}\n", encoding="utf-8")
+        subprocess.run(["git", "config", "include.path", str(included)], cwd=self.project, check=True, env=self.environ())
+        hooks = self.probe()[0]["beads-hooks"]
+        self.assertEqual(hooks.status, "fail")
+        self.assertIn(f"git config --file {included} --unset core.hooksPath", hooks.fix)
+        self.assertNotIn("git config --unset", hooks.fix)
+
+    def test_an_xdg_global_hooks_path_names_the_xdg_file_not_dot_gitconfig(self) -> None:
+        self.git_init()
+        self.pin_global_config = False
+        xdg = self.home / ".config" / "git" / "config"
+        xdg.parent.mkdir(parents=True)
+        xdg.write_text(f"[core]\n\thooksPath = {self.project / '.beads' / 'hooks'}\n", encoding="utf-8")
+        (self.home / ".gitconfig").write_text("[user]\n\tname = Someone\n", encoding="utf-8")
+        hooks = self.probe()[0]["beads-hooks"]
+        self.assertEqual(hooks.status, "fail")
+        self.assertIn("global scope", hooks.detail)
+        self.assertIn(f"git config --file {xdg} --unset core.hooksPath", hooks.fix)
+        self.assertNotIn("--global", hooks.fix)
+
+    def test_a_hooks_path_from_the_command_line_has_no_file_to_edit(self) -> None:
+        self.git_init()
+        environ = self.environ()
+        environ.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath",
+                        "GIT_CONFIG_VALUE_0": str(self.project / ".beads" / "hooks")})
+        with patch.object(self, "environ", return_value=environ):
+            hooks = self.probe()[0]["beads-hooks"]
+        self.assertEqual(hooks.status, "fail")
+        self.assertIn("command scope", hooks.detail)
+        self.assertNotIn("git config --file", hooks.fix)
+        self.assertIn("environment or command line", hooks.fix)
+
+    def test_a_git_probe_failure_is_a_required_failure_not_a_pass(self) -> None:
+        cases = {"exit 128": lambda: self.script("git", 'echo "fatal: bad config line 3" >&2; exit 128'),
+                 "cannot launch": lambda: self.script("git", "", shebang="#!/nonexistent/interpreter"),
+                 "times out": lambda: self.script("git", "/bin/sleep 30"),
+                 "no git on PATH": lambda: None}
+        for label, install in cases.items():
+            with self.subTest(label):
+                install()
+                with patch.object(preflight, "PROBE_TIMEOUT_S", 0.5):
+                    checks, exit_code = self.probe(real_git=False)
+                hooks = checks["beads-hooks"]
+                self.assertEqual((hooks.status, hooks.required, exit_code), ("fail", True, 1))
+                self.assertNotIn("does not point", hooks.detail)
+                (self.bin / "git").unlink(missing_ok=True)
+
+    def test_git_exit_code_1_means_the_key_is_absent(self) -> None:
+        self.script("git", "exit 1")
+        checks, exit_code = self.probe(real_git=False)
+        self.assertEqual((checks["beads-hooks"].status, exit_code), ("pass", 0))
+
+
 if __name__ == "__main__":
     unittest.main()

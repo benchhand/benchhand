@@ -129,6 +129,11 @@ def plan(report, cwd: Path, home: Path, environ: Mapping[str, str], harness: str
     if any(check.id == "uv" and check.status != "pass" for check in report.checks):
         items.append(PlanItem("uv", "Install uv for the current user",
                               f"Official install command: curl -LsSf {UV_INSTALLER} | sh (setup downloads it to a file first)"))
+    manual = {"bd": ("beads-bd-manual", "Resolve the Beads work tracker (manual)"),
+              "beads-hooks": ("beads-hooks-manual", "Fix git core.hooksPath (manual)")}
+    for check in report.checks:  # setup never installs bd or edits git config; it only prints the remediation
+        if check.id in manual and check.status != "pass":
+            items.append(PlanItem(manual[check.id][0], manual[check.id][1], f"{check.detail} {check.fix}".strip()))
     for identifier in (check.id for check in report.checks
                        if check.id in WARM_IDS and check.status != "pass"):
         items.append(PlanItem(f"warm-{identifier}", f"Resolve failed prerequisite: {identifier}",

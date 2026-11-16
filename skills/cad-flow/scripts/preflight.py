@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -267,6 +268,132 @@ def _chromium_check(uv: str, install: bool = False) -> Check:
                   f"Playwright {expected} launches Chromium {found['chromium']} ({found['path']}).", "")
 
 
+BD_MIN_VERSION = "1.3.1"  # 1.3.0 added leases; 1.3.1 fixed `bd ready` fan-in (work.py needs both)
+PROBE_TIMEOUT_S = 30  # one `bd --version` or `git config` probe
+BD_WHERE_TIMEOUT_S = 60
+BEADS_HOOKS = ".beads/hooks"
+BEADS_HOOKS_TAIL = ("Then delete `.beads/hooks/`, add it to `.gitignore`, and create the store with "
+                    "`bd init --skip-hooks --skip-agents`. A plain `bd init` points core.hooksPath at .beads/hooks "
+                    "and bypasses the system Git Defender hooks.")
+_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?")
+_BD_VERSION = re.compile(r"bd version (\S+)(?: \([^()]*\))?")
+
+
+def _semver_key(text: str) -> tuple[Any, ...] | None:
+    """Sort key of a semantic version: a prerelease sorts before its release, numeric identifiers before names."""
+    found = _SEMVER.fullmatch(text)
+    if not found:
+        return None
+    major, minor, patch = (int(part) for part in found.group(1, 2, 3))
+    if found.group(4) is None:
+        return (major, minor, patch, (1,))
+    identifiers = tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in found.group(4).split("."))
+    return (major, minor, patch, (0, identifiers))
+
+
+def _parse_bd_version(output: str) -> tuple[str, tuple[Any, ...]] | None:
+    """The version token and sort key of `bd version X.Y.Z[-pre][+meta] (sha)`; None for anything else."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    line = _BD_VERSION.fullmatch(lines[0]) if len(lines) == 1 else None
+    key = _semver_key(line.group(1)) if line else None
+    return (line.group(1), key) if line and key else None
+
+
+def _first_line(text: str, fallback: str) -> str:
+    return next((line.strip() for line in text.splitlines() if line.strip()), fallback)
+
+
+def _bd_check(environ: Mapping[str, str], cwd: Path) -> Check:
+    """Beads is the work ledger when the project has `.beads`; without it work.py keeps a file ledger.
+
+    A bd that cannot be probed is a required failure with `.beads` and only a warning without it.
+    """
+    name = "Beads work tracker"
+    has_beads = (cwd / ".beads").is_dir()
+    bd = shutil.which("bd", path=environ.get("PATH"))
+    install = f"Install bd {BD_MIN_VERSION} or newer and put it on PATH, then rerun preflight."
+    unreachable = "Check that the Beads store in .beads is reachable, then rerun preflight."
+    if bd is None:
+        if not has_beads:
+            return _check("bd", name, "warn", "bd was not found and the project has no .beads; work.py will use the file ledger.",
+                          f"Optional: install bd {BD_MIN_VERSION} or newer and run `bd init --skip-hooks --skip-agents`.",
+                          required=False)
+        return _check("bd", name, "fail", "The project has .beads but bd was not found on PATH.", install)
+    problem = ""
+    parsed = None
+    try:
+        probe = subprocess.run([bd, "--version"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, check=False,
+                               env=dict(environ))
+    except (OSError, subprocess.SubprocessError) as error:
+        problem = f"Could not run `bd --version`: {error}"
+    else:
+        if probe.returncode != 0:
+            problem = f"`bd --version` exited {probe.returncode}: {_first_line(probe.stderr or probe.stdout, 'no output')}"
+        else:
+            parsed = _parse_bd_version(probe.stdout)
+            if parsed is None:
+                problem = f"Unrecognised `bd --version` output: {probe.stdout.strip()[:80]!r}"
+    if parsed is None:
+        return _check("bd", name, "fail" if has_beads else "warn", problem + ".", install, required=has_beads)
+    token, key = parsed
+    if not has_beads:
+        return _check("bd", name, "pass", f"bd {token} is on PATH; the project has no .beads, so work.py uses the file ledger.", "")
+    if key < _semver_key(BD_MIN_VERSION):  # type: ignore[operator]
+        return _check("bd", name, "fail", f"bd {token} is older than {BD_MIN_VERSION}.", install)
+    try:
+        where = subprocess.run([bd, "where"], capture_output=True, text=True, timeout=BD_WHERE_TIMEOUT_S, check=False,
+                               cwd=cwd, env=dict(environ))
+    except (OSError, subprocess.SubprocessError) as error:
+        return _check("bd", name, "fail", f"`bd where` did not run: {error}.", unreachable)
+    if where.returncode != 0:
+        reason = _first_line(where.stderr or where.stdout, f"exit {where.returncode}")
+        return _check("bd", name, "fail", f"`bd where` failed: {reason}.", unreachable)
+    return _check("bd", name, "pass", f"bd {token} finds the store.", "")
+
+
+def _hooks_fix(scope: str, origin: str, cwd: Path) -> str:
+    """Fix text that edits the file git reported, never a scope's default file (includes and XDG files differ)."""
+    if origin.startswith("file:"):
+        target = shlex.quote(str(cwd / origin[len("file:"):]))
+        admin = " (it needs administrator rights)" if scope == "system" else ""
+        first = f"Run `git config --file {target} --unset core.hooksPath`{admin}."
+    else:
+        first = f"Remove the {scope}-scope core.hooksPath setting where it is defined (environment or command line)."
+    return f"{first} {BEADS_HOOKS_TAIL}"
+
+
+def _hooks_check(environ: Mapping[str, str], cwd: Path) -> Check:
+    """A `core.hooksPath` that resolves to `.beads/hooks` bypasses the system git hooks; it is never acceptable.
+
+    Git exit code 1 means the key is absent. Any other failure to read it is a required failure, never a pass.
+    """
+    name = "Git hooks path"
+
+    def fail(detail: str, fix: str) -> Check:
+        return _check("beads-hooks", name, "fail", detail, fix)
+
+    git = shutil.which("git", path=environ.get("PATH"))
+    if git is None:
+        return fail("git was not found on PATH, so core.hooksPath could not be read.", "Install git, then rerun preflight.")
+    repair = "Repair the git installation (git 2.26 or newer) or its configuration files, then rerun preflight."
+    try:
+        probe = subprocess.run([git, "config", "--show-origin", "--show-scope", "--type=path", "--get", "core.hooksPath"],
+                               capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, check=False,
+                               cwd=cwd if cwd.is_dir() else None, env=dict(environ))
+    except (OSError, subprocess.SubprocessError) as error:
+        return fail(f"Could not read core.hooksPath: {error}.", repair)
+    if probe.returncode == 1 and not probe.stdout.strip():
+        return _check("beads-hooks", name, "pass", "core.hooksPath is not set.", "")
+    fields = probe.stdout.rstrip("\n").split("\t", 2)
+    if probe.returncode != 0 or len(fields) != 3:
+        reason = _first_line(probe.stderr or probe.stdout, "no output")
+        return fail(f"`git config` could not report core.hooksPath (exit {probe.returncode}): {reason}.", repair)
+    scope, origin, value = fields
+    if os.path.realpath(cwd / value) == os.path.realpath(cwd / BEADS_HOOKS):
+        return fail(f"core.hooksPath is {value} ({scope} scope, {origin}), the Beads hook directory.", _hooks_fix(scope, origin, cwd))
+    return _check("beads-hooks", name, "pass", f"core.hooksPath is {value}, not {BEADS_HOOKS}.", "")
+
+
 def _find_freecadcmd(environ: Mapping[str, str], home: Path | None = None,
                      platform_name: str | None = None,
                      macos_command: Path | None = None) -> Path | None:
@@ -493,6 +620,8 @@ def run_checks(environ: Mapping[str, str] | None = None, cwd: Path | None = None
         return Report(tuple(checks))
     uv_check, uv = _run_uv_check(env)
     checks.append(uv_check)
+    checks.append(_run_check("bd", lambda: _bd_check(env, workdir)))
+    checks.append(_run_check("beads-hooks", lambda: _hooks_check(env, workdir)))
     if uv:
         checks.extend(_run_check(runtime.id, lambda runtime=runtime: _runtime_check(uv, runtime))
                       for runtime in RUNTIMES)
