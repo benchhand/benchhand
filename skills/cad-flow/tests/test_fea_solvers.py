@@ -70,17 +70,29 @@ class ResolutionOrder(unittest.TestCase):
             self.assertIn(place, reason)
 
 
+class ProbeFailures(unittest.TestCase):
+    def test_a_freecadcmd_that_cannot_start_is_a_probe_error(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-fea-solvers-") as directory:
+            wrapper = Path(directory) / "freecadcmd"
+            wrapper.write_text("#!/nonexistent/interpreter\n", encoding="utf-8")
+            wrapper.chmod(0o755)
+            with self.assertRaisesRegex(fea_solvers.ProbeError, "cannot start FreeCAD"):
+                fea_solvers.probe(wrapper)
+
+
 @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
 class FreeCADProbe(unittest.TestCase):
     def test_probe_reports_the_solvers_and_resources_of_the_running_freecad(self) -> None:
+        # The probe resolves only executables that exist in the FreeCAD process; an AppImage's paths are gone
+        # once that process exits, so the host checks their form only.
         assert FREECADCMD is not None
         report = fea_solvers.probe(FREECADCMD)
         self.assertEqual(report["freecad"]["version"], "1.1.4")
-        self.assertTrue((Path(report["resource_dir"]) / "Mod" / "TechDraw" / "Templates").is_dir(), report)
+        self.assertTrue(os.path.isabs(report["resource_dir"]), report)
         for tool in ("calculix", "gmsh"):
             with self.subTest(tool=tool):
                 self.assertNotIn("error", report[tool])
-                self.assertTrue(os.access(report[tool]["path"], os.X_OK), report[tool])
+                self.assertTrue(os.path.isabs(report[tool]["path"]), report[tool])
                 self.assertRegex(report[tool]["version"], r"^\d+(\.\d+)+$")
 
 

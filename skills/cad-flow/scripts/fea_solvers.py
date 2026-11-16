@@ -126,9 +126,12 @@ def probe(freecadcmd: Path, *, environ: Mapping[str, str] | None = None,
     """
     runtime = _freecad_runtime()
     with tempfile.TemporaryDirectory(prefix="cad-fea-solvers-") as workdir:
-        result, reason = runtime.run_job(freecadcmd, JOB, {"freecadcmd": str(freecadcmd),
-                                                           "module_dir": str(Path(__file__).resolve().parent)},
-                                         Path(workdir), timeout, environ=environ)
+        try:
+            result, reason = runtime.run_job(freecadcmd, JOB, {"freecadcmd": str(freecadcmd),
+                                                               "module_dir": str(Path(__file__).resolve().parent)},
+                                             Path(workdir), timeout, environ=environ)
+        except OSError as exc:  # FreeCAD did not start, such as a wrapper whose interpreter is missing
+            raise ProbeError(f"cannot start FreeCAD {freecadcmd}: {exc}") from exc
     if result is None:
         raise ProbeError(f"FreeCAD {freecadcmd} could not run the solver probe: {reason}")
     return {key: result[key] for key in ("freecad", "resource_dir", *TOOLS)}

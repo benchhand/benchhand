@@ -654,6 +654,42 @@ if len(sys.argv) > 1:
             self.assertEqual(details["degrees_of_freedom"], 3 * details["node_count"])
             self.assertIn("inside the SPOOLES equation solver", result["error"]["message"])
 
+    @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
+    def test_ccx_starts_with_one_thread_in_each_parallel_stage(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-fea-ccx-threads-") as directory:
+            root = Path(directory)
+            step = self.make_cantilever_step(root)
+            seen = root / "ccx-environment.json"
+            ccx = root / "ccx"  # a ccx that records the environment it solves in, then fails
+            ccx.write_text(f"""#!{sys.executable}
+import json, os, sys
+print("CalculiX Version 2.23", flush=True)
+if len(sys.argv) > 1:
+    json.dump({{key: os.environ.get(key) for key in {sorted(fea_static.CCX_ENVIRONMENT)!r}}}, open({str(seen)!r}, "w"))
+    sys.exit(1)
+""", encoding="utf-8")
+            ccx.chmod(0o755)
+            case_path = root / "case.yaml"
+            case_path.write_text(f"step: {step}\n{CANTILEVER_TAIL}", encoding="utf-8")
+            with patch.dict(os.environ, {"CCX": str(ccx)}):
+                result, status = fea_static.run_job(case_path, load_case(case_path))
+            self.assertEqual(status, 2, result)
+            self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
+                             {"CCX_NPROC_EQUATION_SOLVER": "1", "CCX_NPROC_RESULTS": "1", "CCX_NPROC_STIFFNESS": "1"})
+
+    @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
+    def test_a_solver_whose_version_changed_since_the_probe_is_refused_before_meshing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-fea-solver-changed-") as directory:
+            root = Path(directory)
+            step = self.make_cantilever_step(root)
+            case_path = root / "case.yaml"
+            case_path.write_text(f"step: {step}\n{CANTILEVER_TAIL}", encoding="utf-8")
+            result, status = fea_static.run_job(case_path, load_case(case_path),
+                                                solver_versions={"calculix": {"path": "/elsewhere/ccx", "version": "0.1"}})
+            self.assertEqual((status, result["error"]["code"]), (2, "solver_changed"), result)
+            self.assertIn("not the recorded 0.1", result["error"]["message"])
+            self.assertEqual(list(Path(result["run_directory"]).glob("GmshMesh*")), [])
+
     def test_case_timeout_names_the_phase_its_knob_and_stops_the_jobs_children(self) -> None:
         from fea_static import run_job
         with tempfile.TemporaryDirectory(prefix="cad-fea-timeout-") as directory:
@@ -976,10 +1012,11 @@ class VersionedPublicationTests(unittest.TestCase):
         report = json.loads(run.stdout)
         self.assertLess(abs(report["max_von_mises_mpa"] / 120.0 - 1), 0.05)
         self.assertLess(abs(report["max_displacement_mm"] / 2.31884 - 1), 0.05)
-        bundle = FREECADCMD.resolve().parent
-        for tool in ("gmsh", "calculix"):
+        for tool in ("gmsh", "calculix"):  # the wrapper's directory and PATH hold neither tool
             with self.subTest(tool=tool):
-                self.assertEqual(Path(report["solver_versions"][tool]["path"]).parent, bundle)
+                path = Path(report["solver_versions"][tool]["path"])
+                self.assertTrue(path.is_absolute())
+                self.assertNotEqual(path.parent, wrapper.parent)
         manifest = json.loads((self.hw / "analysis" / "v1" / "cantilever" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(set(manifest["recipe"]["solver_versions"]), {"freecad", "gmsh", "calculix"})
 

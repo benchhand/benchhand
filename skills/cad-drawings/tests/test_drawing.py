@@ -237,8 +237,31 @@ class FreeCADConcurrency(unittest.TestCase):
                                    text=True)
         with patch.object(freecad_runtime.os, "killpg", wraps=os.killpg) as killpg:
             freecad_runtime._terminate_process_group(process)
-        self.assertEqual([call.args for call in killpg.call_args_list], [(process.pid, signal.SIGTERM)])
+        self.assertEqual([call.args for call in killpg.call_args_list if call.args[1] != 0],
+                         [(process.pid, signal.SIGTERM)])
         self.assertIsNotNone(process.poll())
+
+    def test_a_child_that_ignores_sigterm_dies_after_its_leader_exits(self) -> None:
+        import subprocess
+        child = ("import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); "
+                 "time.sleep(60)")
+        leader = (f"import subprocess, sys, time; c = subprocess.Popen([sys.executable, '-c', {child!r}], "
+                  "stdout=subprocess.PIPE, text=True); c.stdout.readline(); print(c.pid, flush=True); time.sleep(60)")
+        process = subprocess.Popen([sys.executable, "-c", leader], start_new_session=True, stdout=subprocess.PIPE,
+                                   text=True)
+        assert process.stdout is not None
+        pid = int(process.stdout.readline())
+        freecad_runtime._terminate_process_group(process)
+        process.stdout.close()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
 
     def test_a_group_owned_by_another_user_is_not_an_error(self) -> None:
         import subprocess

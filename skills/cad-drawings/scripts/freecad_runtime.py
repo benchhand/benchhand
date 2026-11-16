@@ -245,6 +245,15 @@ def job_state_environment(workdir: Path):
 FREECAD_JOB_PEAK_RSS_BYTES = 1_500 * 1024 * 1024
 
 
+def _group_alive(pgid: int) -> bool:
+    """Whether a process group of ours still has members; another user's group of that id is not ours."""
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -252,9 +261,11 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
         process.wait()
         return
     deadline = time.monotonic() + 2
-    while process.poll() is None and time.monotonic() < deadline:
+    while (process.poll() is None or _group_alive(process.pid)) and time.monotonic() < deadline:
         time.sleep(0.05)
-    if process.poll() is None:  # once reaped, its pid may name another process
+    # A group keeps its id while any member lives, even after its leader is reaped, so a live group is
+    # still this one; once the group is gone, its id may name another process and gets no SIGKILL.
+    if process.poll() is None or _group_alive(process.pid):
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
