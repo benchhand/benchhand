@@ -35,7 +35,7 @@ from typing import Any, Iterable, Mapping, cast
 
 from cadmodel import components, mesh, occ, orientation, provenance, stepfile, store
 from cadmodel.motion import load_pose
-from cadmodel.record import Snapshot, load_intent, load_layout
+from cadmodel.record import Snapshot, load_intent, load_layout, load_yaml_loader
 
 SIDECAR = "manufacturing.json"
 SIDECAR_SCHEMA = 2  # 2 adds intent, components, component_outputs and the export pose
@@ -697,11 +697,11 @@ def version_check(folder: Path, manifest: Mapping[str, Any]) -> tuple[dict[str, 
     if not isinstance(entries, Mapping) or not snapshot.is_dir():
         return {"status": "warn", "blocking": False, "complete": False, "blocking_failures": [], "parts": {},
                 "message": "this version was built before manufacturing outputs; build a new version"}, {}
-    layout = load_layout()
+    layout, loader = load_layout(), load_yaml_loader()
     records: dict[str, Any] = {}
     for path in sorted((snapshot / "parts").glob("*/part.yaml")):
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            data = loader.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError):
             data = None
         records[path.parent.name] = data if isinstance(data, dict) else {}

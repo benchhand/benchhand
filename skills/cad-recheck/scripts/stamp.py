@@ -61,6 +61,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 layout = _load_module("cad_record_layout", CAD_RECORD_SCRIPTS / "layout.py")
 validate = _load_module("cad_record_validate", CAD_RECORD_SCRIPTS / "validate.py")
+yaml_loader = validate.yaml_loader  # cad-record's shared YAML reader: yaml.safe_load on libyaml
 intent = validate.intent
 evidence = validate.evidence
 
@@ -93,7 +94,7 @@ def staged_record(root: Path) -> Staged:
         if intent.schema_for(rel) is None:
             continue
         try:
-            documents[rel] = yaml.safe_load(data.decode("utf-8"))
+            documents[rel] = yaml_loader.safe_load(data.decode("utf-8"))
         except (UnicodeError, yaml.YAMLError) as error:
             raise RuntimeError(f"cannot parse staged hw/{rel}: {error}") from error
     return Staged(intent.normalize_record(documents), evidence.record_digest(files),
@@ -109,7 +110,7 @@ def require_migrated(record: Any) -> None:
 def require_threshold_kept(root: Path, threshold: str) -> None:
     """flow.recheck_from may stay or move earlier than HEAD's, never later."""
     try:
-        head = yaml.safe_load(git("show", "HEAD:hw/product.yaml", cwd=root).decode("utf-8"))
+        head = yaml_loader.safe_load(git("show", "HEAD:hw/product.yaml", cwd=root).decode("utf-8"))
     except (RuntimeError, UnicodeError, yaml.YAMLError):
         return  # no commit or no product.yaml yet: nothing to raise it from
     before = (head.get("flow") or {}).get("recheck_from") if isinstance(head, dict) and isinstance(head.get("flow"), dict) else None
@@ -135,7 +136,7 @@ def staged_product(root: Path, stage: str | None = None) -> dict[str, Any]:
     """Read the index version of product.yaml to grade layout paths at the staged stage."""
     try:
         raw = git("show", ":hw/product.yaml", cwd=root).decode("utf-8")
-        product = yaml.safe_load(raw)
+        product = yaml_loader.safe_load(raw)
     except (RuntimeError, UnicodeError, yaml.YAMLError) as error:
         if stage is None:
             raise RuntimeError(f"cannot read staged hw/product.yaml: {error}") from error
@@ -147,7 +148,7 @@ def require_clean_layout(root: Path, product: dict[str, Any]) -> None:
     part_records = {}
     for part_path in sorted((root / "hw" / "parts").glob("*/part.yaml")):
         try:
-            part = yaml.safe_load(part_path.read_text(encoding="utf-8"))
+            part = yaml_loader.safe_load(part_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, yaml.YAMLError) as error:
             raise RuntimeError(f"cannot read {part_path}: {error}") from error
         if isinstance(part, dict) and isinstance(part.get("PN"), str):
@@ -297,7 +298,7 @@ def main() -> int:
             except (RuntimeError, UnicodeError) as error:
                 raise RuntimeError(f"cannot read staged hw/product.yaml: {error}") from error
             try:
-                product = yaml.safe_load(product_data)
+                product = yaml_loader.safe_load(product_data)
             except yaml.YAMLError as error:
                 raise RuntimeError(f"cannot parse staged hw/product.yaml: {error}") from error
             if not isinstance(product, dict):

@@ -41,7 +41,7 @@ from typing import Any, Iterable, Mapping, cast
 
 from cadmodel import build, manufacture, mesh, occ, orientation, stepfile
 from cadmodel.motion import load_incremental, load_mesh_bound, load_pair_measure, load_pair_policy, load_pose
-from cadmodel.record import load_intent, load_layout, read_folder
+from cadmodel.record import load_intent, load_layout, load_yaml_loader, read_folder
 from cadmodel.stepfile import AP242, READBACK_REL
 
 Pair = tuple[str, str]
@@ -589,7 +589,7 @@ def _record_yaml(path: Path, what: str, missing: Any = None) -> Any:
     if missing is not None and not path.is_file():
         return missing
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return load_yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise build.UsageError(f"{path}: cannot read {what}: {error}") from error
 

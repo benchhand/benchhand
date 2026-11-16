@@ -62,7 +62,7 @@ SCREW_COLOR = "#2b2b2b"
 VIEWPORT = (1400, 1000)
 CAD_MODEL_SCRIPTS = SKILL.parent / "cad-model" / "scripts"
 sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
-from cadmodel import scriptenv  # noqa: E402 - standard library helper
+from cadmodel import record as cadmodel_record, scriptenv  # noqa: E402 - standard library helpers
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -96,9 +96,8 @@ def build_parts(kernel: str, out: Path) -> Path:
 
 
 def process_of(hw: Path) -> dict[str, str]:
-    import yaml
-
-    return {r.parent.name: yaml.safe_load(r.read_text(encoding="utf-8")).get("process", "")
+    loader = cadmodel_record.load_yaml_loader()
+    return {r.parent.name: loader.safe_load(r.read_text(encoding="utf-8")).get("process", "")
             for r in sorted((hw / "parts").glob("*/part.yaml"))}
 
 

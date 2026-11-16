@@ -491,10 +491,8 @@ def count_solids(shape: Any) -> int:
 
 def part_form_class(hw: Path, pn: str) -> str:
     """Read the form-class contract through one accessor; absent defaults to solid."""
-    import yaml
-
     path = hw / "parts" / pn / "part.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
+    data = load_yaml_loader().safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
     value = data.get("form_class") if isinstance(data, dict) else None
     return value if value in {"solid", "frame", "plate", "skeleton", "shell"} else "solid"
 
@@ -505,10 +503,8 @@ def minimum_wall_thresholds(hw: Path) -> dict[str, float]:
     The override contract is cad-record's product schema: a non-empty mapping whose keys
     are MIN_WALL_PROCESSES, each a number above 0 mm.
     """
-    import yaml
-
     path = hw / "product.yaml"
-    product = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
+    product = load_yaml_loader().safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
     manufacturing = product.get("manufacturing") if isinstance(product, dict) else None
     thresholds = dict(MIN_WALL_BY_PROCESS)
     if not isinstance(manufacturing, dict) or "min_wall_mm" not in manufacturing:
@@ -1025,11 +1021,10 @@ def probe(shape: Any, *, frame: str, locators: dict[str, Any], plan: dict[str, A
 
 
 def processes(hw: Path) -> dict[str, str]:
-    import yaml
-
+    loader = load_yaml_loader()
     found = {}
     for record in sorted((hw / "parts").glob("*/part.yaml")):
-        data = yaml.safe_load(record.read_text(encoding="utf-8"))
+        data = loader.safe_load(record.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("process"), str):
             bought = data.get("make_buy") == "buy"   # made to drawing or catalogue: checked in its bought form
             found[record.parent.name] = "purchased" if bought else data["process"]
@@ -1156,6 +1151,18 @@ def load_check_packet() -> Any:
         assert spec and spec.loader
         module = importlib.util.module_from_spec(spec)
         sys.modules["cad_record_check_packet"] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+def load_yaml_loader() -> Any:
+    """cad-record yaml_loader.py, the shared YAML reader (yaml.safe_load on libyaml), by its shared name."""
+    module = sys.modules.get("cad_record_yaml_loader")
+    if module is None:
+        spec = importlib.util.spec_from_file_location("cad_record_yaml_loader", LAYOUT_PATH.with_name("yaml_loader.py"))
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cad_record_yaml_loader"] = module
         spec.loader.exec_module(module)
     return module
 

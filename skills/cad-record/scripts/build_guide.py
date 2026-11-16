@@ -60,6 +60,14 @@ if "cad_record_assembly_operations" not in sys.modules:
     _OPERATIONS_SPEC.loader.exec_module(OPERATIONS)
 else:
     OPERATIONS = sys.modules["cad_record_assembly_operations"]
+YAML_LOADER_PATH = SKILL / "scripts" / "yaml_loader.py"
+if "cad_record_yaml_loader" not in sys.modules:  # the shared YAML reader: yaml.safe_load on libyaml
+    _YAML_SPEC = importlib.util.spec_from_file_location("cad_record_yaml_loader", YAML_LOADER_PATH)
+    if _YAML_SPEC is None or _YAML_SPEC.loader is None:
+        raise ImportError(f"{YAML_LOADER_PATH} not found")
+    sys.modules["cad_record_yaml_loader"] = importlib.util.module_from_spec(_YAML_SPEC)
+    _YAML_SPEC.loader.exec_module(sys.modules["cad_record_yaml_loader"])
+YAML_LOADER = sys.modules["cad_record_yaml_loader"]
 import assembly_data  # noqa: E402
 import assembly_check  # noqa: E402
 import assembly_sheet  # noqa: E402
@@ -79,7 +87,7 @@ def read_yaml(path: Path, *, optional: bool = False) -> dict[str, Any]:
             return {}
         raise GuideError(f"required record file is missing: {path}")
     try:
-        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        value = YAML_LOADER.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise GuideError(f"cannot read {path}: {exc}") from exc
     if value is None:

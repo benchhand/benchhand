@@ -152,9 +152,7 @@ def discover(hw: Path, records: Mapping[str, Mapping[str, Any]]) -> tuple[list[P
 
 def load_densities() -> dict[str, float]:
     """The density-only legacy table: record version 1 mass estimates, never a property source."""
-    import yaml
-
-    data = yaml.safe_load(LEGACY_DENSITIES.read_text(encoding="utf-8"))
+    data = record.load_yaml_loader().safe_load(LEGACY_DENSITIES.read_text(encoding="utf-8"))
     return {" ".join(name.lower().split()): float(value) for name, value in data["densities_g_cm3"].items()}
 
 

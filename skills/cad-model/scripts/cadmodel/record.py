@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 RECORD_SCRIPTS = Path(__file__).resolve().parents[3] / "cad-record" / "scripts"
 LAYOUT_SCRIPT = RECORD_SCRIPTS / "layout.py"
 INTENT_SCRIPT = RECORD_SCRIPTS / "manufacturing_intent.py"
+YAML_LOADER_SCRIPT = RECORD_SCRIPTS / "yaml_loader.py"
 
 
 class RecordError(ValueError):
@@ -36,6 +37,11 @@ def load_layout() -> Any:
 def load_intent() -> Any:
     """cad-record `manufacturing_intent.py` under `cad_record_manufacturing_intent`: the record version 2 contract."""
     return _load("cad_record_manufacturing_intent", INTENT_SCRIPT)
+
+
+def load_yaml_loader() -> Any:
+    """cad-record `yaml_loader.py` under `cad_record_yaml_loader`: yaml.safe_load on libyaml. It needs PyYAML."""
+    return _load("cad_record_yaml_loader", YAML_LOADER_SCRIPT)
 
 
 def snapshot(hw: Path, pns: Iterable[str]) -> dict[str, bytes]:
@@ -97,12 +103,13 @@ def read_snapshot(files: Mapping[str, bytes]) -> Snapshot:
     import yaml
 
     intent = load_intent()
+    loader = load_yaml_loader()
     parsed: dict[str, Any] = {}
     for name, data in sorted(files.items()):
         if intent.schema_for(name) is None:
             continue
         try:
-            parsed[name] = yaml.safe_load(data.decode("utf-8"))
+            parsed[name] = loader.safe_load(data.decode("utf-8"))
         except (UnicodeDecodeError, yaml.YAMLError) as error:
             raise RecordError(f"hw/{name}: {error}") from error
     product = parsed.get("product.yaml")

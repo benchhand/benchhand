@@ -48,6 +48,8 @@ layout = _load_module("cad_record_layout", Path(__file__).resolve().parent / "la
 # evidence model on it: waivers, typed verification and the acceptance digest.
 intent = _load_module("cad_record_manufacturing_intent", Path(__file__).resolve().parent / "manufacturing_intent.py")
 evidence = _load_module("cad_record_evidence", Path(__file__).resolve().parent / "evidence.py")
+# The one YAML reader: yaml.safe_load on libyaml when PyYAML has it.
+yaml_loader = _load_module("cad_record_yaml_loader", Path(__file__).resolve().parent / "yaml_loader.py")
 # cad-motion's pose.py and plan.py, loaded only for a record with authored motion cases.
 MOTION_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts"
 
@@ -94,7 +96,7 @@ def blocking(findings: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
 def load_yaml(path: Path, findings: list[dict[str, str]]) -> Any:
     try:
         with path.open(encoding="utf-8") as stream:
-            return yaml.safe_load(stream)
+            return yaml_loader.safe_load(stream)
     except (OSError, yaml.YAMLError) as error:
         findings.append(finding(str(path), f"cannot read YAML: {error}"))
         return None

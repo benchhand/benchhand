@@ -37,6 +37,20 @@ def _layout() -> Any:
     return sys.modules[name]
 
 
+@functools.cache
+def _yaml_loader() -> Any:
+    """cad-record's shared YAML reader (yaml.safe_load on libyaml); it needs PyYAML, so it loads on first use."""
+    name = "cad_record_yaml_loader"
+    if name not in sys.modules:
+        path = LAYOUT_PY.with_name("yaml_loader.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ViewerError(f"cannot load {path}")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
 @dataclass(frozen=True)
 class Part:
     """One displayed occurrence: a placement of the PN definition `pn` (a legacy part's id is its PN)."""
@@ -114,7 +128,7 @@ def read_yaml(path: Path) -> Any:
     import yaml
 
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return _yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise ViewerError(f"cannot read {path}: {error}") from error
 

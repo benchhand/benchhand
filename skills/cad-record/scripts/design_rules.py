@@ -13,7 +13,9 @@ It needs PyYAML and the standard library only.
 
 from __future__ import annotations
 
+import importlib.util
 import math
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +23,14 @@ from types import MappingProxyType
 from typing import Any
 
 import yaml
+
+if "cad_record_yaml_loader" not in sys.modules:  # the shared YAML reader beside this module
+    _SPEC = importlib.util.spec_from_file_location("cad_record_yaml_loader", Path(__file__).resolve().parent / "yaml_loader.py")
+    if _SPEC is None or _SPEC.loader is None:
+        raise ImportError("cannot load yaml_loader.py beside design_rules.py")
+    sys.modules["cad_record_yaml_loader"] = importlib.util.module_from_spec(_SPEC)
+    _SPEC.loader.exec_module(sys.modules["cad_record_yaml_loader"])
+yaml_loader = sys.modules["cad_record_yaml_loader"]
 
 DEFAULT_CLEARANCE_MARGIN_MM = 0.1  # the user's "0.5 required -> 0.6 designed"
 DEFAULT_MIN_VISIBLE_FRACTION = 0.5
@@ -112,7 +122,7 @@ def _read_yaml(path: Path) -> Any:
     if not path.is_file():
         return None
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return yaml_loader.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise ValueError(f"cannot read {path}: {error}") from error
 

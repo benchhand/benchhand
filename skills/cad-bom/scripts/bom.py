@@ -59,6 +59,20 @@ if LAYOUT is None:
     LAYOUT = importlib.util.module_from_spec(_SPEC)
     sys.modules["cad_record_layout"] = LAYOUT
     _SPEC.loader.exec_module(LAYOUT)
+YAML_LOADER_PATH = LAYOUT_PATH.with_name("yaml_loader.py")
+
+
+def yaml_loader() -> Any:
+    """cad-record's shared YAML reader under `cad_record_yaml_loader`, loaded on first use: it needs PyYAML."""
+    module = sys.modules.get("cad_record_yaml_loader")
+    if module is None:
+        spec = importlib.util.spec_from_file_location("cad_record_yaml_loader", YAML_LOADER_PATH)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{YAML_LOADER_PATH} not found")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cad_record_yaml_loader"] = module
+        spec.loader.exec_module(module)
+    return module
 
 COLUMNS = ("level", "PN", "rev", "qty", "title", "material", "process", "make_buy", "supplier", "mass",
            "unit", "designation", "manufacturer", "manufacturer_part_number", "supplier_part_number",
@@ -178,6 +192,7 @@ def load_parts(hw: Path, record_hw: Path | None = None) -> dict[str, dict[str, A
     """Return part.yaml mappings keyed by their parts/<PN> directory name."""
     import yaml
 
+    loader = yaml_loader()
     parts: dict[str, dict[str, Any]] = {}
     root = (record_hw or hw) / "parts"
     if not root.is_dir():
@@ -188,7 +203,7 @@ def load_parts(hw: Path, record_hw: Path | None = None) -> dict[str, dict[str, A
             print(f"bom: skipping {part_yaml}: directory {pn!r} is not a part number", file=sys.stderr)
             continue
         try:
-            data = yaml.safe_load(part_yaml.read_text(encoding="utf-8"))
+            data = loader.safe_load(part_yaml.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as error:
             raise BomError(f"cannot read {part_yaml}: {error}") from error
         if not isinstance(data, dict):

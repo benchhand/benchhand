@@ -66,6 +66,23 @@ def _load_layout():
     return sys.modules[name]
 
 
+def _load_yaml_loader():
+    """cad-record yaml_loader.py, the shared YAML reader (yaml.safe_load on libyaml); it needs PyYAML."""
+    name = "cad_record_yaml_loader"
+    if name not in sys.modules:
+        path = LAYOUT_SCRIPT.with_name("yaml_loader.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Cannot load cad-record yaml_loader: {path}")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(sys.modules[name])
+        except BaseException:
+            del sys.modules[name]
+            raise
+    return sys.modules[name]
+
+
 preflight = _load_preflight()
 
 
@@ -166,7 +183,7 @@ def storage_answer(hw: Path) -> bool | None:
 
     path = hw / "product.yaml"
     try:
-        product = yaml.safe_load(path.read_text(encoding="utf-8"))
+        product = _load_yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise ValueError(f"{path} is not valid YAML: {error}") from error
     storage = product.get("storage") if isinstance(product, dict) else None

@@ -39,6 +39,13 @@ if "cad_record_layout" not in sys.modules:
     sys.modules["cad_record_layout"] = importlib.util.module_from_spec(_SPEC)  # dataclasses look the module up here
     _SPEC.loader.exec_module(sys.modules["cad_record_layout"])
 layout = sys.modules["cad_record_layout"]
+if "cad_record_yaml_loader" not in sys.modules:
+    _SPEC = importlib.util.spec_from_file_location("cad_record_yaml_loader", Path(__file__).resolve().parent / "yaml_loader.py")
+    if _SPEC is None or _SPEC.loader is None:
+        raise ImportError("cannot load yaml_loader.py beside prune.py")
+    sys.modules["cad_record_yaml_loader"] = importlib.util.module_from_spec(_SPEC)
+    _SPEC.loader.exec_module(sys.modules["cad_record_yaml_loader"])
+yaml_loader = sys.modules["cad_record_yaml_loader"]
 
 JOURNAL = "journal.json"
 LEDGERS = ("manufacturing/evidence.yaml", "manufacturing/findings.yaml")  # accepted evidence, never pruned blind
@@ -99,7 +106,7 @@ def milestones(hw: Path) -> dict[str, list[str]]:
     change, or named by a decision record, which is how a gate approval or a design decision is kept."""
     reasons: dict[str, list[str]] = defaultdict(list)
     try:
-        product = yaml.safe_load((hw / "product.yaml").read_text(encoding="utf-8"))
+        product = yaml_loader.safe_load((hw / "product.yaml").read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise layout.LayoutError(f"cannot read hw/product.yaml before pruning: {error}") from error
     flow = product.get("flow") if isinstance(product, dict) else None
@@ -141,7 +148,7 @@ def _documents(hw: Path, skip: set[Path]) -> Iterator[tuple[str, Any]]:
         path = hw / name
         if path.is_file() and not path.is_symlink():
             try:
-                yield f"{layout.HW}/{name}", yaml.safe_load(path.read_text(encoding="utf-8"))
+                yield f"{layout.HW}/{name}", yaml_loader.safe_load(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:  # it might name a version
                 raise layout.LayoutError(f"cannot read hw/{name} before pruning: {error}") from error
     latest = layout.load().path("version.latest", {})

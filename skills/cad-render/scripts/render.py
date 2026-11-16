@@ -92,6 +92,7 @@ MATERIALS_PY = HERE.parent / "materials.py"
 VERSIONS_PY = HERE.parent / "versions.py"  # occurrence normalization only; paths belong to cad-record.
 LAYOUT_PY = SKILL.parent / "cad-record" / "scripts" / "layout.py"
 DESIGN_RULES_PY = SKILL.parent / "cad-record" / "scripts" / "design_rules.py"
+YAML_LOADER_PY = SKILL.parent / "cad-record" / "scripts" / "yaml_loader.py"
 CONCEPT_SERVE = SKILL.parent / "cad-concept" / "scripts" / "serve.py"
 # The page chrome tokens (status line) are cad-concept's; renderer/tokens.css holds the scene's.
 CONCEPT_TOKENS = SKILL.parent / "cad-concept" / "assets" / "viewer" / "tokens.css"
@@ -226,7 +227,7 @@ def load_version(hw: Path, built: tuple[str, Path, Path]) -> Version:
 def record_yaml(path: Path) -> dict[str, Any]:
     import yaml
     try:
-        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        value = _load_record_module("cad_record_yaml_loader", YAML_LOADER_PY).safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise InfraError(f"{path}: {exc}") from exc
     if not isinstance(value, dict):

@@ -136,6 +136,26 @@ def layout_api() -> Any:
     return module
 
 
+@cache
+def yaml_loader() -> Any:
+    """cad-record's shared YAML reader (yaml.safe_load on libyaml), under `cad_record_yaml_loader`."""
+    name = "cad_record_yaml_loader"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = VALIDATOR.with_name("yaml_loader.py")
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load cad-record yaml_loader at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
 def _json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -145,7 +165,7 @@ def _json(path: Path) -> Any:
 
 def _yaml(path: Path) -> Any:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise ContractError("invalid_drawing_intent", f"cannot read {path}: {exc}") from exc
 

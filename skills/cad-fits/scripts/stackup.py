@@ -1065,9 +1065,10 @@ def _positive_semidefinite(ids: list[str], rho: Mapping[frozenset[str], float]) 
 def load_stack(path: Path) -> Any:
     import yaml  # imported here so `compute` stays importable without the script environment
 
+    loader = _shared_module("cad_record_yaml_loader", SKILLS / "cad-record" / "scripts" / "yaml_loader.py")
     with path.open(encoding="utf-8") as handle:
         try:
-            return yaml.safe_load(handle)
+            return loader.safe_load(handle)
         except yaml.YAMLError as error:
             raise StackError(f"invalid YAML: {error}") from error
 

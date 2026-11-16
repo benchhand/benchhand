@@ -404,7 +404,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
 
     assembly_path = record_hw / "assembly.yaml"
     try:
-        assembly_data = yaml.safe_load(assembly_path.read_text(encoding="utf-8")) or {}
+        assembly_data = pose.yaml_loader().safe_load(assembly_path.read_text(encoding="utf-8")) or {}
         operations = operations_module.normalize(assembly_data)
     except (OSError, yaml.YAMLError) as error:
         raise AccessError(f"cannot read {assembly_path}: {error}") from error
