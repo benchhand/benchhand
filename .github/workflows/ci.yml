@@ -29,6 +29,9 @@ jobs:
       - name: Harness tests
         run: uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
 
+      - name: CI shard planner tests
+        run: uv run --no-project --python 3.12 python -B -m unittest discover -s scripts -p 'test_ci_shards.py'
+
       - name: Generated files
         run: uv run --no-project --with pyyaml==6.0.3 python -B harness/generate.py --check
 
@@ -42,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [motion, cad-model, record, freecad-gated, rest]
+        shard: [motion, motion-b, cad-model, freecad-gated, rest]
     env:
       FREECAD_APPIMAGE: FreeCAD_1.1.4-Linux-x86_64-py311.AppImage
       FREECAD_RELEASE: https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4
@@ -53,12 +56,22 @@ jobs:
       UV_PYTHON_PREFERENCE: only-managed
       # Every shard installs FreeCAD, so a FreeCAD test that cannot find it fails instead of skipping.
       CAD_REQUIRE_FREECAD: "1"
-      # A file named here runs only in its shard. The rest shard runs every other test file.
+      # "<shard> <test file> [<selector>...]", read by scripts/ci_shards.py. A file named here runs
+      # only in its shards; the rest shard runs every other test file. A selector (a test class or
+      # Class.test_name) moves those tests to its shard; the file's entry without selectors keeps the rest.
       SHARDS: |
         motion skills/cad-motion/tests/test_motion.py
+        motion-b skills/cad-motion/tests/test_motion.py StepTests.test_a_killed_sweep_resumes_from_its_committed_chunks_and_equals_an_uninterrupted_one
+        motion-b skills/cad-motion/tests/test_motion.py StepTests.test_the_bounds_hold_and_the_broad_phase_containment_skip_and_threads_change_no_measured_value
+        motion-b skills/cad-motion/tests/test_motion.py StepTests.test_the_correctly_timed_v6_passes_and_reports_its_minimum_clearance
+        motion-b skills/cad-motion/tests/test_motion.py StepTests.test_one_crank_sweeps_the_coupled_v6_and_finds_the_misphased_valve_at_its_tdc
         cad-model skills/cad-model/tests/test_cad_model.py
-        record skills/cad-record/tests/test_release.py
-        record skills/cad-record/tests/test_validate.py
+        motion skills/cad-viewer/tests/test_viewer.py
+        motion skills/cad-motion/tests/test_motion_render.py
+        cad-model skills/cad-record/tests/test_design_rules.py
+        cad-model skills/cad-record/tests/test_schema_drawing.py
+        freecad-gated skills/cad-design/tests/test_process_checks.py
+        freecad-gated skills/cad-model/tests/test_drawing_features.py
         freecad-gated skills/cad-analysis/tests/test_fea_static.py
         freecad-gated skills/cad-design/tests/test_design.py
         freecad-gated skills/cad-drawings/tests/test_assembly_end_to_end.py
@@ -135,20 +148,10 @@ jobs:
       - name: Skill tests
         env:
           SHARD: ${{ matrix.shard }}
+          JOBS: ${{ strategy.job-total }}
         run: |
-          mapfile -t tracked < <(git ls-files 'skills/*/test_*.py' 'skills/*/tests/test_*.py')
-          mapfile -t named < <(awk 'NF { print $2 }' <<< "$SHARDS")
-          for test in "${named[@]}"; do
-            if ! printf '%s\n' "${tracked[@]}" | grep -qxF "$test"; then
-              echo "::error::$test is in SHARDS but is not a tracked test file"
-              exit 1
-            fi
-          done
-          if [ "$SHARD" = rest ]; then
-            mapfile -t files < <(printf '%s\n' "${tracked[@]}" | grep -vxF -f <(printf '%s\n' "${named[@]}"))
-          else
-            mapfile -t files < <(awk -v shard="$SHARD" '$1 == shard { print $2 }' <<< "$SHARDS")
-          fi
+          planned=$(python3 scripts/ci_shards.py files "$SHARD" "$JOBS")
+          mapfile -t files < <(printf '%s\n' "$planned" | grep .)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "::error::shard $SHARD has no test files"
             exit 1
@@ -161,7 +164,7 @@ jobs:
             started=$SECONDS
             result=pass
             uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 \
-              python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")" || result=FAIL
+              python -B scripts/ci_shards.py run "$SHARD" "$test" || result=FAIL
             echo "::endgroup::"
             elapsed=$((SECONDS - started))
             if [ "$result" = FAIL ]; then
