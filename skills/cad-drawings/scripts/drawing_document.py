@@ -712,6 +712,80 @@ def _check_identity(sheets: Sequence[ComposedSheet]) -> None:
 PACKAGE_MARKERS = ("package.json", "rejected.json")
 
 
+@dataclass(frozen=True)
+class _ExportSettings:
+    """How the staged sheets are exported: the FreeCAD binary, its per-sheet timeout and the job runner."""
+
+    freecadcmd: Path
+    timeout: float
+    jobs: int = 1
+    executor: Any = None
+
+
+def _prepare_output(output_dir: Path) -> None:
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    if output_dir.exists():
+        if not output_dir.is_dir() or any(output_dir.iterdir()):
+            raise ValueError(f"{output_dir} must be an empty draft folder")
+    else:
+        output_dir.mkdir()
+
+
+def _stage_and_check_layout(sheets: Sequence[ComposedSheet], staging: Path) -> tuple[list[dict[str, Any]], bool]:
+    """Write each sheet's SVG into ``staging``; findings for the sheets whose layout check fails."""
+    findings: list[dict[str, Any]] = []
+    layout_ok = True
+    for sheet in sheets:
+        number = sheet.metadata.sheet_number
+        (staging / f"sheet-{number}.svg").write_text(sheet.svg, encoding="utf-8")
+        violations = check_layout(sheet.svg, sheet.regions, sheet.placeholders)
+        if violations:
+            layout_ok = False
+            findings.append({"code": "layout_check_failed", "sheet": number, "message": "; ".join(violations)})
+    return findings, layout_ok
+
+
+def _export_sheets(sheets: Sequence[ComposedSheet], staging: Path,
+                   settings: _ExportSettings) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Export every staged sheet; return the file records and the findings for sheets that failed."""
+
+    def export(sheet: ComposedSheet) -> tuple[dict[str, Any] | None, sheet_export.ExportError | None]:
+        number = sheet.metadata.sheet_number
+        paths = {kind: staging / f"sheet-{number}.{kind}" for kind in ("svg", "pdf", "png")}
+        try:
+            exported = sheet_export.export_sheet(settings.freecadcmd, paths["svg"], paths["pdf"], paths["png"],
+                                                 sheet.required_text, settings.timeout)
+        except sheet_export.ExportError as exc:
+            return None, exc
+        return {"sheet": number, "size": sheet.spec.size,
+                "files": {k: p.name for k, p in paths.items()},
+                "sha256": {k: sha256(p) for k, p in paths.items()}, "export": exported}, None
+
+    records: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    exported_rows = freecad_runtime.map_jobs(sheets, settings.jobs, export, settings.executor)
+    for sheet, (record, error) in zip(sheets, exported_rows):
+        if error is not None:
+            findings.append({"code": error.code, "sheet": sheet.metadata.sheet_number, "message": str(error)})
+        elif record is not None:
+            records.append(record)
+    return records, findings
+
+
+def _write_records(staging: Path, status: str, report: CoverageReport, result: PackageReport) -> None:
+    """A passing package gets its coverage and package records; a rejected one keeps only marked-up output."""
+    if status == "pass":
+        (staging / "coverage.json").write_text(json.dumps(report.to_dict(), indent=2) + "\n", encoding="utf-8")
+        (staging / "package.json").write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+        return
+    for path in list(staging.iterdir()):
+        if path.suffix == ".pdf":
+            path.unlink()
+        elif path.suffix in (".svg", ".png"):
+            path.rename(path.with_suffix(".rejected" + path.suffix))
+    (staging / "rejected.json").write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+
+
 def publish_package(context: DrawingContext, sheets: Sequence[ComposedSheet], report: CoverageReport,
                     output_dir: Path, freecadcmd: Path, timeout: float,
                     release: Sequence[Mapping[str, Any]] = (), jobs: int = 1, executor: Any = None,
@@ -720,18 +794,14 @@ def publish_package(context: DrawingContext, sheets: Sequence[ComposedSheet], re
     _check_identity(sheets)
     if timeout <= 0:
         raise ValueError("timeout must be positive")
+    settings = _ExportSettings(freecadcmd, timeout, jobs, executor)
     drawing_number = sheets[0].metadata.drawing_number
     provenance = context.provenance(drawing_number)
     if bundle_path is None:
         subject = "assembly" if sheets[0].metadata.document_type in ("Assembly drawing", "ASSEMBLY DRAWING") else drawing_number
         bundle_path = layout_api().bundle_dir(context.hw, "drawings", context.label, subject)
     output_dir = output_dir.resolve()
-    output_dir.parent.mkdir(parents=True, exist_ok=True)
-    if output_dir.exists():
-        if not output_dir.is_dir() or any(output_dir.iterdir()):
-            raise ValueError(f"{output_dir} must be an empty draft folder")
-    else:
-        output_dir.mkdir()
+    _prepare_output(output_dir)
     run_id = uuid.uuid4().hex
     retained = context.hw.parent / ".cad-work" / "rejected-drawings" / run_id
     output_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -739,50 +809,19 @@ def publish_package(context: DrawingContext, sheets: Sequence[ComposedSheet], re
     staging.mkdir(parents=True, exist_ok=False)
     try:
         findings: list[dict[str, Any]] = [dict(f) for f in report.findings]
-        layout_ok = True
-        for sheet in sheets:
-            number = sheet.metadata.sheet_number
-            (staging / f"sheet-{number}.svg").write_text(sheet.svg, encoding="utf-8")
-            violations = check_layout(sheet.svg, sheet.regions, sheet.placeholders)
-            if violations:
-                layout_ok = False
-                findings.append({"code": "layout_check_failed", "sheet": number, "message": "; ".join(violations)})
+        layout_findings, layout_ok = _stage_and_check_layout(sheets, staging)
+        findings.extend(layout_findings)
         records: list[dict[str, Any]] = []
         if layout_ok:
-            def export(sheet: ComposedSheet) -> tuple[dict[str, Any] | None, sheet_export.ExportError | None]:
-                number = sheet.metadata.sheet_number
-                paths = {kind: staging / f"sheet-{number}.{kind}" for kind in ("svg", "pdf", "png")}
-                try:
-                    exported = sheet_export.export_sheet(freecadcmd, paths["svg"], paths["pdf"], paths["png"],
-                                                         sheet.required_text, timeout)
-                except sheet_export.ExportError as exc:
-                    return None, exc
-                return {"sheet": number, "size": sheet.spec.size,
-                        "files": {k: p.name for k, p in paths.items()},
-                        "sha256": {k: sha256(p) for k, p in paths.items()}, "export": exported}, None
-
-            exported_rows = freecad_runtime.map_jobs(sheets, jobs, export, executor)
-            for sheet, (record, error) in zip(sheets, exported_rows):
-                if error is not None:
-                    findings.append({"code": error.code, "sheet": sheet.metadata.sheet_number, "message": str(error)})
-                elif record is not None:
-                    records.append(record)
+            records, export_findings = _export_sheets(sheets, staging, settings)
+            findings.extend(export_findings)
         status = "pass" if not findings else ("error" if any(f["code"] == "export_failed" for f in findings) else "fail")
         reported_output = retained if status != "pass" else (
             bundle_path if bundle_path is not None else output_dir)
         result = PackageReport(hw=context.hw, status=status, run_id=run_id, output_dir=reported_output,
                                provenance=provenance, sheets=tuple(records), coverage=report.to_dict(),
                                findings=tuple(findings), release=tuple(dict(r) for r in release))
-        if status == "pass":
-            (staging / "coverage.json").write_text(json.dumps(report.to_dict(), indent=2) + "\n", encoding="utf-8")
-            (staging / "package.json").write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
-        else:
-            for path in list(staging.iterdir()):
-                if path.suffix == ".pdf":
-                    path.unlink()
-                elif path.suffix in (".svg", ".png"):
-                    path.rename(path.with_suffix(".rejected" + path.suffix))
-            (staging / "rejected.json").write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+        _write_records(staging, status, report, result)
         if not (staging / "rejected.json").is_file():
             for path in staging.iterdir():
                 target = output_dir / path.name

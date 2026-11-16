@@ -494,161 +494,185 @@ def dimension_key(char: Characteristic) -> tuple[Any, ...] | None:
     return (start, char.axis, round(char.value, 6), tolerance, char.reference)
 
 
+@dataclass
+class _Placer:
+    """The state ``build_presentation`` fills in: the presentation, its callouts by (feature, view) and the sheet's
+    features, faces and views."""
+
+    binding: Mapping[str, ResolvedFeature]
+    faces: Mapping[int, Face]
+    views: Mapping[str, ViewData]
+    regime: str
+    result: Presentation = field(default_factory=Presentation)
+    callouts: dict[tuple[str, str], Callout] = field(default_factory=dict)
+    # one dimension per datum coordinate (ISO 129-1, ASME Y14.5 1.4)
+    stated: dict[tuple[Any, ...], Linear] = field(default_factory=dict)
+
+    def callout_for(self, feature: str, view_id: str,
+                    points: Sequence[tuple[Sequence[float], tuple[float, float]]]) -> Callout:
+        key = (feature, view_id)
+        if key not in self.callouts:
+            self.callouts[key] = Callout(id=f"callout-{feature}-{view_id}".replace("_", "-"), view=view_id,
+                                         anchor=_anchor(points, self.views[view_id]), lines=[],
+                                         candidates=[sheet for _, sheet in points])
+        return self.callouts[key]
+
+    def attach(self, feature: str, key: str, operation: str) -> Callout | None:
+        """The feature's first callout, or a new one where the feature shows, now carrying ``key``; None if
+        unplaced."""
+        target = next((c for (f, _), c in self.callouts.items() if f == feature), None)
+        if target is None:
+            for view_id, view in self.views.items():
+                points = visible_points([self.faces[i] for i in self.binding[feature].faces], view)
+                if points:
+                    target = self.callout_for(feature, view_id, points)
+                    break
+        if target is None:
+            self.result.unplaced.append({"characteristic": key, "feature": feature, "operation": operation,
+                                         "presentation": "auto"})
+            return None
+        target.characteristics.append(key)
+        self.result.placed[key] = {"annotation": target.id, "view": target.view, "anchor": list(target.anchor)}
+        return target
+
+    def place_linear(self, char: Characteristic, frame: DatumFrame, plans: Sequence[ViewPlan]) -> bool:
+        same = self.stated.get(dimension_key(char))
+        if same is not None:   # features on one centre line or plane share the dimension that locates it
+            same.characteristics.append(char.id)
+            self.result.placed[char.id] = {"annotation": same.id, "view": same.view, "anchor": list(same.target)}
+            return True
+        own = [self.faces[i] for i in char.faces]
+        # the view that shows the dimensioned faces most: a face hidden in an earlier view whose projected
+        # edge only touches another visible line goes to the view that sees it; ties keep plan order, and
+        # projected views and sections keep their preferred order (presentation: section)
+        best = None
+        for plan in _preferred(char, plans):
+            if best is not None and plan.kind != best[1].kind:
+                break
+            item = _linear(char, frame, self.binding, self.faces, self.views[plan.id], self.regime)
+            if item is None:
+                continue
+            shown = _shown(own, self.views[plan.id])
+            if best is None or shown > best[0] + SHOWN_MARGIN:
+                best = (shown, plan, item)
+        if best is None:
+            return False
+        _, plan, item = best
+        self.result.linears.append(item)
+        self.result.placed[char.id] = {"annotation": item.id, "view": plan.id, "anchor": list(item.target)}
+        if dimension_key(char) is not None:
+            self.stated[dimension_key(char)] = item
+        return True
+
+    def place_callout(self, char: Characteristic, plans: Sequence[ViewPlan]) -> bool:
+        text = _callout_text(char, self.regime)
+        if text is not None and char.reference:   # a reference dimension is bracketed (ISO 129-1, ASME Y14.5)
+            text = f"({text})"
+        own = [self.faces[i] for i in char.faces]
+        choice = None if text is None else _best_view(own, _preferred(char, plans), self.views,
+                                                      {v for (f, v) in self.callouts if f == char.feature})
+        if choice is None:
+            return False
+        plan_id, points = choice
+        existing = self.callouts.get((char.feature, plan_id)) or self.callout_for(char.feature, plan_id, points)
+        for line in text.split("\n"):
+            prefix = count_prefix(char.quantity, self.regime)
+            if existing.lines and char.quantity > 1 and line.startswith(prefix) \
+                    and existing.lines[0].startswith(prefix):
+                line = line[len(prefix):]
+            existing.lines.append(line)
+        existing.characteristics.append(char.id)
+        self.result.placed[char.id] = {"annotation": existing.id, "view": plan_id, "anchor": list(existing.anchor)}
+        return True
+
+    def place_characteristics(self, chars: Sequence[Characteristic], frame: DatumFrame,
+                              plans: Sequence[ViewPlan]) -> None:
+        for char in chars:
+            if char.presentation == GENERAL_NOTE and char.operation in ("radius", "chamfer"):
+                self.result.placed[char.id] = {"annotation": GENERAL_NOTE_ID, "view": None, "anchor": None}
+                continue
+            placed = self.place_linear(char, frame, plans) if is_linear(char) else self.place_callout(char, plans)
+            if not placed and char.operation != "profile":
+                self.result.unplaced.append({"characteristic": char.id, "feature": char.feature,
+                                             "operation": char.operation, "presentation": char.presentation})
+
+    def place_frames(self, chars: Sequence[Characteristic], geometric: Sequence[Mapping[str, Any]]) -> None:
+        """Feature control frames join their feature's callout, or start one."""
+        profiled = {c.feature: c.id for c in chars if c.operation == "profile"}
+        for tolerance in geometric:
+            if tolerance["characteristic"] == "profile_surface" and all(f in profiled for f in tolerance["features"]):
+                continue   # each controlled surface's profile characteristic draws this frame
+            cells = [GDT_SYMBOLS[tolerance["characteristic"]],
+                     ("⌀" if tolerance.get("diameter_zone") else "") + number(tolerance["zone_mm"]),
+                     *tolerance.get("datum_frame", [])]
+            target = self.attach(tolerance["features"][0], f"geometric.{tolerance['id']}", cells[0])
+            if target is not None:
+                target.frames.append(cells)
+        for char in chars:
+            if char.operation == "profile":
+                cells = [GDT_SYMBOLS["profile_surface"], number(char.value), *char.details.get("datum_frame", [])]
+                target = self.attach(char.feature, char.id, cells[0])
+                if target is not None:
+                    target.frames.append(cells)
+        for tolerance in geometric:
+            key, first = f"geometric.{tolerance['id']}", profiled.get(tolerance["features"][0])
+            if key not in self.result.placed and first in self.result.placed:
+                self.result.placed[key] = self.result.placed[first]
+
+    def place_feature_indications(self, intents: Mapping[str, Mapping[str, Any]]) -> None:
+        """A feature's own surface texture symbol and edge sizes, exceptions to the sheet's general indications."""
+        for feature_id, intent in intents.items():
+            if feature_id not in self.binding:
+                continue
+            if "surface_texture" in intent:
+                target = self.attach(feature_id, f"surface_texture.{feature_id}", "surface_texture")
+                if target is not None:
+                    target.textures.append(TextureSymbol.of(intent["surface_texture"]))
+            if "edges" in intent:
+                target = self.attach(feature_id, f"edges.{feature_id}", "edges")
+                if target is not None:
+                    target.lines.extend(edge_lines(intent["edges"], self.regime))
+
+    def place_datums(self, frame: DatumFrame, plans: Sequence[ViewPlan]) -> None:
+        """An axis datum tags its feature's size callout, a plane datum gets its own symbol."""
+        result = self.result
+        for datum in sorted(frame.datums.values(), key=lambda d: d.label):
+            key = f"datum.{datum.label}"
+            sized = next((c for (f, _), c in self.callouts.items() if f == datum.feature and c.lines), None)
+            if datum.role != "plane" and sized is not None:
+                sized.datum_tag = datum.label
+                sized.characteristics.append(key)
+                result.placed[key] = {"annotation": sized.id, "view": sized.view, "anchor": list(sized.anchor)}
+                continue
+            own_faces = [self.faces[i] for i in self.binding[datum.feature].faces]
+            edge_on = [plan for plan in plans if plan.kind != "detail" and datum.direction is not None
+                       and fg.perpendicular(datum.direction, plan.direction)]
+            choice = _best_view(own_faces, edge_on, self.views, set())
+            if choice is None:
+                result.unplaced.append({"characteristic": key, "feature": datum.feature, "operation": "datum",
+                                        "presentation": "edge-on"})
+                continue
+            plan_id, points = choice
+            datum_callout = Callout(id=f"datum-{datum.label.lower()}", view=plan_id,
+                                    anchor=_anchor(points, self.views[plan_id]), lines=[], datum=datum.label,
+                                    characteristics=[key], candidates=[sheet for _, sheet in points])
+            result.callouts.append(datum_callout)
+            result.placed[key] = {"annotation": datum_callout.id, "view": plan_id,
+                                  "anchor": list(datum_callout.anchor)}
+
+
 def build_presentation(chars: Sequence[Characteristic], frame: DatumFrame, binding: Mapping[str, ResolvedFeature],
                        faces: Mapping[int, Face], views: Mapping[str, ViewData], regime: str,
                        geometric: Sequence[Mapping[str, Any]], intents: Mapping[str, Mapping[str, Any]]) -> Presentation:
     """Assign every characteristic to a view and an anchor; group per-feature text into callouts."""
-    result = Presentation()
+    placer = _Placer(binding, faces, views, regime)
     plans = [v.plan for v in views.values()]
-    callouts: dict[tuple[str, str], Callout] = {}
-
-    def callout_for(feature: str, view_id: str, points: Sequence[tuple[Sequence[float], tuple[float, float]]]) -> Callout:
-        key = (feature, view_id)
-        if key not in callouts:
-            callouts[key] = Callout(id=f"callout-{feature}-{view_id}".replace("_", "-"), view=view_id,
-                                    anchor=_anchor(points, views[view_id]), lines=[],
-                                    candidates=[sheet for _, sheet in points])
-        return callouts[key]
-
-    stated: dict[tuple[Any, ...], Linear] = {}   # one dimension per datum coordinate (ISO 129-1, ASME Y14.5 1.4)
-    for char in chars:
-        own = [faces[i] for i in char.faces]
-        placed = False
-        if char.presentation == GENERAL_NOTE and char.operation in ("radius", "chamfer"):
-            result.placed[char.id] = {"annotation": GENERAL_NOTE_ID, "view": None, "anchor": None}
-            continue
-        if is_linear(char):
-            same = stated.get(dimension_key(char))
-            if same is not None:   # features on one centre line or plane share the dimension that locates it
-                same.characteristics.append(char.id)
-                result.placed[char.id] = {"annotation": same.id, "view": same.view, "anchor": list(same.target)}
-                continue
-            # the view that shows the dimensioned faces most: a face hidden in an earlier view whose projected
-            # edge only touches another visible line goes to the view that sees it; ties keep plan order, and
-            # projected views and sections keep their preferred order (presentation: section)
-            best = None
-            for plan in _preferred(char, plans):
-                if best is not None and plan.kind != best[1].kind:
-                    break
-                item = _linear(char, frame, binding, faces, views[plan.id], regime)
-                if item is None:
-                    continue
-                shown = _shown(own, views[plan.id])
-                if best is None or shown > best[0] + SHOWN_MARGIN:
-                    best = (shown, plan, item)
-            if best is not None:
-                _, plan, item = best
-                result.linears.append(item)
-                result.placed[char.id] = {"annotation": item.id, "view": plan.id, "anchor": list(item.target)}
-                if dimension_key(char) is not None:
-                    stated[dimension_key(char)] = item
-                placed = True
-        else:
-            text = _callout_text(char, regime)
-            if text is not None and char.reference:   # a reference dimension is bracketed (ISO 129-1, ASME Y14.5)
-                text = f"({text})"
-            choice = None if text is None else _best_view(own, _preferred(char, plans), views,
-                                                          {v for (f, v) in callouts if f == char.feature})
-            if choice is not None:
-                plan_id, points = choice
-                existing = callouts.get((char.feature, plan_id)) or callout_for(char.feature, plan_id, points)
-                for line in text.split("\n"):
-                    prefix = count_prefix(char.quantity, regime)
-                    if existing.lines and char.quantity > 1 and line.startswith(prefix) \
-                            and existing.lines[0].startswith(prefix):
-                        line = line[len(prefix):]
-                    existing.lines.append(line)
-                existing.characteristics.append(char.id)
-                result.placed[char.id] = {"annotation": existing.id, "view": plan_id, "anchor": list(existing.anchor)}
-                placed = True
-        if not placed and char.operation != "profile":
-            result.unplaced.append({"characteristic": char.id, "feature": char.feature, "operation": char.operation,
-                                    "presentation": char.presentation})
-    # feature control frames join their feature's callout, or start one
-    profiled = {c.feature: c.id for c in chars if c.operation == "profile"}
-    for tolerance in geometric:
-        if tolerance["characteristic"] == "profile_surface" and all(f in profiled for f in tolerance["features"]):
-            continue   # each controlled surface's profile characteristic draws this frame
-        cells = [GDT_SYMBOLS[tolerance["characteristic"]],
-                 ("⌀" if tolerance.get("diameter_zone") else "") + number(tolerance["zone_mm"]),
-                 *tolerance.get("datum_frame", [])]
-        target = _attach(result, callouts, tolerance["features"][0], f"geometric.{tolerance['id']}", cells[0],
-                         binding, faces, views, callout_for)
-        if target is not None:
-            target.frames.append(cells)
-    for char in chars:
-        if char.operation == "profile":
-            cells = [GDT_SYMBOLS["profile_surface"], number(char.value), *char.details.get("datum_frame", [])]
-            target = _attach(result, callouts, char.feature, char.id, cells[0], binding, faces, views, callout_for)
-            if target is not None:
-                target.frames.append(cells)
-    for tolerance in geometric:
-        key, first = f"geometric.{tolerance['id']}", profiled.get(tolerance["features"][0])
-        if key not in result.placed and first in result.placed:
-            result.placed[key] = result.placed[first]
-    # a feature's own surface texture symbol and edge sizes, exceptions to the sheet's general indications
-    for feature_id, intent in intents.items():
-        if feature_id not in binding:
-            continue
-        if "surface_texture" in intent:
-            target = _attach(result, callouts, feature_id, f"surface_texture.{feature_id}", "surface_texture",
-                             binding, faces, views, callout_for)
-            if target is not None:
-                target.textures.append(TextureSymbol.of(intent["surface_texture"]))
-        if "edges" in intent:
-            target = _attach(result, callouts, feature_id, f"edges.{feature_id}", "edges", binding, faces, views,
-                             callout_for)
-            if target is not None:
-                target.lines.extend(edge_lines(intent["edges"], regime))
-    # datum features: an axis datum tags its feature's size callout, a plane datum gets its own symbol
-    for datum in sorted(frame.datums.values(), key=lambda d: d.label):
-        key = f"datum.{datum.label}"
-        sized = next((c for (f, _), c in callouts.items() if f == datum.feature and c.lines), None)
-        if datum.role != "plane" and sized is not None:
-            sized.datum_tag = datum.label
-            sized.characteristics.append(key)
-            result.placed[key] = {"annotation": sized.id, "view": sized.view, "anchor": list(sized.anchor)}
-            continue
-        own_faces = [faces[i] for i in binding[datum.feature].faces]
-        edge_on = [plan for plan in plans if plan.kind != "detail" and datum.direction is not None
-                   and fg.perpendicular(datum.direction, plan.direction)]
-        choice = _best_view(own_faces, edge_on, views, set())
-        if choice is None:
-            result.unplaced.append({"characteristic": key, "feature": datum.feature, "operation": "datum",
-                                    "presentation": "edge-on"})
-            continue
-        plan_id, points = choice
-        datum_callout = Callout(id=f"datum-{datum.label.lower()}", view=plan_id, anchor=_anchor(points, views[plan_id]),
-                                lines=[], datum=datum.label, characteristics=[key],
-                                candidates=[sheet for _, sheet in points])
-        result.callouts.append(datum_callout)
-        result.placed[key] = {"annotation": datum_callout.id, "view": plan_id, "anchor": list(datum_callout.anchor)}
-    result.callouts.extend(c for c in callouts.values() if c.lines or c.frames or c.textures)
-    return result
-
-
-def _attach(result: Presentation, callouts: Mapping[tuple[str, str], Callout], feature: str, key: str, operation: str,
-            binding: Mapping[str, ResolvedFeature], faces: Mapping[int, Face], views: Mapping[str, ViewData],
-            factory: Any) -> Callout | None:
-    """The feature's first callout, or a new one where the feature shows, now carrying ``key``; None if unplaced."""
-    target = next((c for (f, _), c in callouts.items() if f == feature), None)
-    if target is None:
-        target = _new_callout(feature, binding, faces, views, factory)
-    if target is None:
-        result.unplaced.append({"characteristic": key, "feature": feature, "operation": operation, "presentation": "auto"})
-        return None
-    target.characteristics.append(key)
-    result.placed[key] = {"annotation": target.id, "view": target.view, "anchor": list(target.anchor)}
-    return target
-
-
-def _new_callout(feature: str, binding: Mapping[str, ResolvedFeature], faces: Mapping[int, Face],
-                 views: Mapping[str, ViewData], factory: Any) -> Callout | None:
-    for view_id, view in views.items():
-        points = visible_points([faces[i] for i in binding[feature].faces], view)
-        if points:
-            return factory(feature, view_id, points)
-    return None
+    placer.place_characteristics(chars, frame, plans)
+    placer.place_frames(chars, geometric)
+    placer.place_feature_indications(intents)
+    placer.place_datums(frame, plans)
+    placer.result.callouts.extend(c for c in placer.callouts.values() if c.lines or c.frames or c.textures)
+    return placer.result
 
 
 def _callout_text(char: Characteristic, regime: str) -> str | None:
@@ -861,6 +885,17 @@ def _block_size(callout: Callout, size: float) -> tuple[float, float]:
                    + sum(h + TEXTURE_GAP for _, h in textures))
 
 
+@dataclass
+class _Layer:
+    """What a view's layout has gathered so far: markup in drawing order and the box it occupies."""
+
+    footprint: Box
+    annotations: list[SvgAnnotation] = field(default_factory=list)
+
+    def grow(self, box: Box) -> None:
+        self.footprint = self.footprint.union(box)
+
+
 def layout_view(view: ViewData, presentation: Presentation, size: float, regime: str,
                  children: Sequence[ViewPlan] = ()) -> ViewLayout:
     """Place this view's dimensions, callouts and child-view marks around it; return the markup and occupied box.
@@ -869,18 +904,17 @@ def layout_view(view: ViewData, presentation: Presentation, size: float, regime:
     detail circles and reference arrows are drawn here, and callout columns keep clear of their letters.
     """
     box = view.bounds()
-    annotations: list[SvgAnnotation] = []
-    footprint = box
+    layer = _Layer(box)
     pitch = size * LINE_PITCH_FACTOR
     marks: list[Box] = []
     for child in children:
         markup, boxes = (section_marks(view, child, size, regime) if child.kind == "section"
                          else detail_marks(view, child, size) if child.kind == "detail"
                          else view_marks(view, child, size))
-        annotations.append(markup)
+        layer.annotations.append(markup)
         marks.extend(boxes)
         for mark in boxes:
-            footprint = footprint.union(mark)
+            layer.grow(mark)
     # parallel dimensions: horizontal ones stack above the view, vertical ones to its right, both beyond the
     # cutting-plane and detail letters on that side, so no dimension text lands on a letter; a dimension stated
     # at a reference plane on the view's left or bottom edge (``Linear.side``) stacks on that side instead, so
@@ -890,40 +924,73 @@ def layout_view(view: ViewData, presentation: Presentation, size: float, regime:
     right_edge = max([box.x1] + [m.x1 for m in marks if m.x0 > box.x1 - 1.0])
     left_edge = min([box.x0] + [m.x0 for m in marks if m.x1 < box.x0 + 1.0])
     mine_linear = [d for d in presentation.linears if d.view == view.plan.id]
+    _place_horizontal_dimensions(mine_linear, above, below, size, regime, layer)
+    right_edge = _place_right_dimensions(mine_linear, right_edge, size, regime, layer)
+    left_dims = _place_left_dimensions(mine_linear, left_edge, box.x0, size, regime, layer)
+    label = _view_label(view, size, regime)
+    mine = [c for c in presentation.callouts if c.view == view.plan.id]
+    _place_callout_columns(mine, box, marks, label, (left_dims, right_edge), size, pitch, layer)
+    section = (fill_section(view.plan.id, view.cut_regions, view.project, view.geometry.scale)
+               if view.plan.kind == "section" else None)
+    layer.annotations.extend(_view_furniture(view, section))
+    if label is not None:
+        layer.annotations.append(label[0])
+        layer.grow(label[1])
+    return ViewLayout(layer.footprint, layer.annotations, section=section)
+
+
+def _place_horizontal_dimensions(dims: Sequence[Linear], above: float, below: float, size: float, regime: str,
+                                 layer: _Layer) -> None:
     for side in (1, -1):
-        rows = sorted((d for d in mine_linear if d.horizontal and d.side == side),
+        rows = sorted((d for d in dims if d.horizontal and d.side == side),
                       key=lambda d: abs(d.target[0] - d.origin[0]))
         for number_, dim in enumerate(rows):
             y = above - FIRST_ROW - number_ * ROW_PITCH if side > 0 else below + FIRST_ROW + number_ * ROW_PITCH
-            annotations.append(_dimension_markup(dim, y, size, regime))
+            layer.annotations.append(_dimension_markup(dim, y, size, regime))
             # the text above the line; a row below the view also reaches the extension lines' overshoot
-            footprint = footprint.union(Box(min(dim.origin[0], dim.target[0]) - text_width(dim.text, size),
-                                            y - size - 1.5, max(dim.origin[0], dim.target[0]) + text_width(dim.text, size),
-                                            y + (EXT_OVERSHOOT if side < 0 else 0.0)))
+            layer.grow(Box(min(dim.origin[0], dim.target[0]) - text_width(dim.text, size),
+                           y - size - 1.5, max(dim.origin[0], dim.target[0]) + text_width(dim.text, size),
+                           y + (EXT_OVERSHOOT if side < 0 else 0.0)))
+
+
+def _place_right_dimensions(dims: Sequence[Linear], right_edge: float, size: float, regime: str,
+                            layer: _Layer) -> float:
+    """Stack the vertical dimensions right of the view; return the right edge they leave."""
     x = right_edge + FIRST_ROW
-    for dim in sorted((d for d in mine_linear if not d.horizontal and d.side > 0),
+    for dim in sorted((d for d in dims if not d.horizontal and d.side > 0),
                       key=lambda d: abs(d.target[1] - d.origin[1])):
-        annotations.append(_dimension_markup(dim, x, size, regime))
+        layer.annotations.append(_dimension_markup(dim, x, size, regime))
         # ISO 129-1 aligns the text with the line; ASME Y14.5 reads it horizontally, right of the line
         right_edge = x + (size + 1.5 if regime == "iso" else 1.0 + text_width(dim.text, size))
-        footprint = footprint.union(Box(x - 1.0, min(dim.origin[1], dim.target[1]) - text_width(dim.text, size),
-                                        right_edge, max(dim.origin[1], dim.target[1]) + text_width(dim.text, size)))
+        layer.grow(Box(x - 1.0, min(dim.origin[1], dim.target[1]) - text_width(dim.text, size),
+                       right_edge, max(dim.origin[1], dim.target[1]) + text_width(dim.text, size)))
         x = max(x + ROW_PITCH, right_edge + 2.0)
-    x, left_dims = left_edge - FIRST_ROW, box.x0
-    for dim in sorted((d for d in mine_linear if not d.horizontal and d.side < 0),
+    return right_edge
+
+
+def _place_left_dimensions(dims: Sequence[Linear], left_edge: float, view_left: float, size: float, regime: str,
+                           layer: _Layer) -> float:
+    """Stack the vertical dimensions left of the view; return the left edge they leave."""
+    x, left_dims = left_edge - FIRST_ROW, view_left
+    for dim in sorted((d for d in dims if not d.horizontal and d.side < 0),
                       key=lambda d: abs(d.target[1] - d.origin[1])):
-        annotations.append(_dimension_markup(dim, x, size, regime))
+        layer.annotations.append(_dimension_markup(dim, x, size, regime))
         # the text left of the line in both regimes, away from the view
         left_dims = x - (size + 1.5 if regime == "iso" else 1.0 + text_width(dim.text, size))
-        footprint = footprint.union(Box(left_dims, min(dim.origin[1], dim.target[1]) - text_width(dim.text, size),
-                                        x + 1.0, max(dim.origin[1], dim.target[1]) + text_width(dim.text, size)))
+        layer.grow(Box(left_dims, min(dim.origin[1], dim.target[1]) - text_width(dim.text, size),
+                       x + 1.0, max(dim.origin[1], dim.target[1]) + text_width(dim.text, size)))
         x = min(x - ROW_PITCH, left_dims - 2.0)
-    label = _view_label(view, size, regime)
-    # callout columns, left and right of the view
-    mine = [c for c in presentation.callouts if c.view == view.plan.id]
+    return left_dims
+
+
+def _place_callout_columns(callouts: Sequence[Callout], box: Box, marks: Sequence[Box],
+                           label: tuple[SvgAnnotation, Box] | None, edges: tuple[float, float], size: float,
+                           pitch: float, layer: _Layer) -> None:
+    """Callout columns, left and right of the view; ``edges`` are the left and right limits of its dimensions."""
+    left_dims, right_edge = edges
     middle = (box.x0 + box.x1) / 2
     for side in (-1, 1):
-        column = [c for c in mine if (c.anchor[0] > middle + 0.5) == (side > 0)]
+        column = [c for c in callouts if (c.anchor[0] > middle + 0.5) == (side > 0)]
         if not column:
             continue
         edge = (left_dims - COLUMN_GAP) if side < 0 else (right_edge + COLUMN_GAP)
@@ -947,17 +1014,9 @@ def layout_view(view: ViewData, presentation: Presentation, size: float, regime:
                 break
         for callout, (top, bottom) in zip(column, tops):
             w, _ = _block_size(callout, size)
-            annotations.append(_callout_markup(callout, edge, top, w, size, pitch))
+            layer.annotations.append(_callout_markup(callout, edge, top, w, size, pitch))
             x0, x1 = (edge - w - LANDING, edge) if side < 0 else (edge, edge + w + LANDING)
-            footprint = footprint.union(Box(min(x0, edge - 2 * LANDING), top - 0.5, max(x1, edge + 2 * LANDING),
-                                            bottom + 0.5))
-    section = (fill_section(view.plan.id, view.cut_regions, view.project, view.geometry.scale)
-               if view.plan.kind == "section" else None)
-    annotations.extend(_view_furniture(view, section))
-    if label is not None:
-        annotations.append(label[0])
-        footprint = footprint.union(label[1])
-    return ViewLayout(footprint, annotations, section=section)
+            layer.grow(Box(min(x0, edge - 2 * LANDING), top - 0.5, max(x1, edge + 2 * LANDING), bottom + 0.5))
 
 
 def _side_anchor(callout: Callout, side: int, box: Box) -> tuple[float, float]:
