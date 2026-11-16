@@ -95,36 +95,6 @@ INVENTORY_SCHEMA = "cad-acceptance-inventory/1"
 LEDGER_FILES = ("verification.csv", "manufacturing/evidence.yaml", "manufacturing/findings.yaml")
 SOURCES_DIR = "manufacturing/sources"
 
-CODES: Mapping[str, str] = {
-    "evidence.unqualified": "pass or fail evidence that records no fingerprint of a dependency its level relies on",
-    "evidence.stale": "evidence of another configuration, part revision or dependency fingerprint",
-    "evidence.subject": "evidence about another subject than the obligation it names",
-    "evidence.carry_forward": "evidence sealed for another version counted without an approving impact decision",
-    "evidence.altered": "evidence whose cited artifact or bundle manifest no longer holds the bytes it names",
-    "evidence.csv_unsupported": "verification.csv states pass or waived without current accepted evidence",
-    "evidence.physical_claim": "a producer packet claims a physically validated pass",
-    "packet.invalid": "a producer check packet that fails its seal or contradicts itself or its version",
-    "packet.unexpected": "a producer outcome for an obligation the record does not expect, or at another level",
-    "waiver.unapproved": "a waiver whose decision is missing or not the user's approval",
-    "waiver.expired": "a waiver past its expiry date",
-    "waiver.scope": "a waiver of another subject or obligation than the evidence it is attached to",
-    "waiver.forbidden": "a waiver of a governing safety or regulatory requirement or of a geometry-integrity check",
-    "finding.critical": "a critical producer finding that no resolution or valid waiver disposes of",
-    "gate.record": "the record must be migrated before the stage advances",
-    "gate.fail": "a due obligation failed",
-    "gate.stale": "a due obligation rests on stale evidence",
-    "gate.unresolved": "a due obligation is unknown, untested or only planned",
-    "gate.use_case": "the use case does not support the stage: unconfirmed, unknown service class or open safety questions",
-    "gate.selection": "the manufacturing selection does not support the stage (selection.py): a recorded final choice "
-                      "the assessment does not support, an eliminated recorded route or recommendation, a stale "
-                      "confirmed assessment, or an open or unrecorded choice at a freeze",
-    "gate.selection_approval": "a confirmed selection whose assessment decision is not the user's approval",
-    "release.service_class": "the release scope or service class is unknown",
-    "release.scope": "the release purpose, operating limits, exclusions or evidence policy is not recorded",
-    "release.trial_not_permitted": "a waived physical obligation (an unvalidated trial) in a service class that forbids trials",
-    "release.waiver_forbidden": "a waiver in a safety-critical release",
-}
-
 # Fingerprint domains pass or fail evidence must record, by subject kind and level: evidence is tied to
 # the configuration (configuration.version, manifest), and through these to material, process and criteria.
 _REQUIRED_DOMAINS: Mapping[str, Mapping[str, frozenset[str]]] = {
