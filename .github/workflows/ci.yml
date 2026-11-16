@@ -2,15 +2,67 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  checks:
+    name: Harness, generated files and type check
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: scripts/typecheck.py.lock
+
+      - name: Harness tests
+        run: uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
+
+      - name: Generated files
+        run: uv run --no-project --with pyyaml==6.0.3 python -B harness/generate.py --check
+
+      - name: Scoped Python type check
+        run: uv run --no-project --locked --script scripts/typecheck.py
+
+  skills:
+    name: Skill tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [motion, cad-model, record, freecad-gated, rest]
+    env:
+      FREECAD_APPIMAGE: FreeCAD_1.1.4-Linux-x86_64-py311.AppImage
+      FREECAD_RELEASE: https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4
+      FREECAD_DIR: ${{ github.workspace }}/../freecad-1.1.4
+      # Every shard installs FreeCAD, so a FreeCAD test that cannot find it fails instead of skipping.
+      CAD_REQUIRE_FREECAD: "1"
+      # A file named here runs only in its shard. The rest shard runs every other test file.
+      SHARDS: |
+        motion skills/cad-motion/tests/test_motion.py
+        cad-model skills/cad-model/tests/test_cad_model.py
+        record skills/cad-record/tests/test_release.py
+        record skills/cad-record/tests/test_validate.py
+        freecad-gated skills/cad-analysis/tests/test_fea_static.py
+        freecad-gated skills/cad-design/tests/test_design.py
+        freecad-gated skills/cad-drawings/tests/test_assembly_end_to_end.py
+        freecad-gated skills/cad-drawings/tests/test_drawing.py
+        freecad-gated skills/cad-drawings/tests/test_drawing_framework.py
+        freecad-gated skills/cad-drawings/tests/test_feature_recognition.py
+        freecad-gated skills/cad-drawings/tests/test_part_drawings.py
+        freecad-gated skills/cad-drawings/tests/test_section_hatch.py
+        freecad-gated skills/cad-flow/tests/test_scratch.py
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -41,18 +93,74 @@ jobs:
           enable-cache: true
           cache-dependency-glob: skills-pep723-headers.txt
 
-      - name: CAD skill tests
-        run: |
-          status=0
-          while IFS= read -r test; do
-            uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 \
-              python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")" || status=1
-          done < <(git ls-files 'skills/*/test_*.py' 'skills/*/tests/test_*.py')
-          exit "$status"
+      - name: Cache the FreeCAD AppImage
+        id: freecad-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.FREECAD_DIR }}/download
+          key: freecad-${{ env.FREECAD_APPIMAGE }}
 
-      - name: Harness tests and generated files
+      - name: Download the FreeCAD AppImage
+        if: steps.freecad-cache.outputs.cache-hit != 'true'
         run: |
-          python3 -m unittest discover -s harness -p 'test_*.py'
-          python3 harness/generate.py --check
-      - name: Scoped Python type check
-        run: uv run --no-project --locked --script scripts/typecheck.py
+          mkdir -p "$FREECAD_DIR/download"
+          curl --fail --location --silent --show-error --retry 3 --output-dir "$FREECAD_DIR/download" \
+            --remote-name "$FREECAD_RELEASE/$FREECAD_APPIMAGE" \
+            --remote-name "$FREECAD_RELEASE/$FREECAD_APPIMAGE-SHA256.txt"
+
+      - name: Verify the FreeCAD AppImage
+        working-directory: ${{ env.FREECAD_DIR }}/download
+        run: sha256sum --check "$FREECAD_APPIMAGE-SHA256.txt"
+
+      - name: Install FreeCAD 1.1.4
+        working-directory: ${{ env.FREECAD_DIR }}
+        run: |
+          chmod +x "download/$FREECAD_APPIMAGE"
+          "download/$FREECAD_APPIMAGE" --appimage-extract > /dev/null
+          mkdir -p ~/.local/bin
+          ln -sfn "$PWD/squashfs-root/usr/bin/freecadcmd" ~/.local/bin/freecadcmd
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ~/.local/bin/freecadcmd --version | tee version.txt
+          grep -q 'FreeCAD 1\.1\.4' version.txt
+
+      - name: Skill tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mapfile -t tracked < <(git ls-files 'skills/*/test_*.py' 'skills/*/tests/test_*.py')
+          mapfile -t named < <(awk 'NF { print $2 }' <<< "$SHARDS")
+          for test in "${named[@]}"; do
+            if ! printf '%s\n' "${tracked[@]}" | grep -qxF "$test"; then
+              echo "::error::$test is in SHARDS but is not a tracked test file"
+              exit 1
+            fi
+          done
+          if [ "$SHARD" = rest ]; then
+            mapfile -t files < <(printf '%s\n' "${tracked[@]}" | grep -vxF -f <(printf '%s\n' "${named[@]}"))
+          else
+            mapfile -t files < <(awk -v shard="$SHARD" '$1 == shard { print $2 }' <<< "$SHARDS")
+          fi
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::shard $SHARD has no test files"
+            exit 1
+          fi
+
+          failed=0
+          printf '| Result | Seconds | Test file |\n|---|---:|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          for test in "${files[@]}"; do
+            echo "::group::$test"
+            started=$SECONDS
+            result=pass
+            uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 \
+              python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")" || result=FAIL
+            echo "::endgroup::"
+            elapsed=$((SECONDS - started))
+            if [ "$result" = FAIL ]; then
+              failed=$((failed + 1))
+              echo "::error file=$test::$test failed"
+            fi
+            echo "$result ${elapsed}s $test"
+            echo "| $result | $elapsed | \`$test\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "$failed of ${#files[@]} test files failed in shard $SHARD"
+          [ "$failed" -eq 0 ]
