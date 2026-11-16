@@ -20,7 +20,8 @@ Routes:
 Every request must address the server by a loopback name and its port (`Host`), which closes
 DNS rebinding; a non-loopback `--host` needs `--allow-remote` and adds that address to the names.
 
-stdout: one JSON line {"url": ..., "scene_dir": ..., "idle_timeout_min": ...} once listening. stderr: request log.
+stdout: one JSON line {"url": ..., "scene_dir": ..., "idle_timeout_min": ...} once listening and watching:
+an edit after that line is pushed. stderr: request log.
 Exit 0 on SIGINT/SIGTERM or idle timeout, 2 on usage or bind errors.
 """
 
@@ -138,6 +139,7 @@ class SceneWatcher(threading.Thread):
         self.last_change: list[str] = []
         self.last_activity = time.monotonic()
         self.live_clients = 0
+        self.ready = threading.Event()  # set once the first snapshot is taken: later edits are changes
         self._halt = threading.Event()
 
     def record_request(self) -> None:
@@ -159,7 +161,10 @@ class SceneWatcher(threading.Thread):
         with self.cond:
             return self.live_clients == 0 and time.monotonic() - self.last_activity >= seconds
     def run(self) -> None:
-        before = scene_snapshot(self.scene_dir)
+        try:
+            before = scene_snapshot(self.scene_dir)
+        finally:
+            self.ready.set()
         while not self._halt.wait(self.interval):
             after = scene_snapshot(self.scene_dir)
             files = changed_files(before, after)
@@ -446,6 +451,7 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
     httpd.daemon_threads = True
     handler.hosts = allowed_hosts(httpd.server_address[1], args.host)
     watcher.start()
+    watcher.ready.wait()
 
     def shutdown(_sig: int, _frame: object) -> None:
         watcher.stop()
