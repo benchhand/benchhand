@@ -46,6 +46,10 @@ jobs:
       FREECAD_APPIMAGE: FreeCAD_1.1.4-Linux-x86_64-py311.AppImage
       FREECAD_RELEASE: https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4
       FREECAD_DIR: ${{ github.workspace }}/../freecad-1.1.4
+      # One interpreter for every script environment: the pair cache's rule identity includes the
+      # Python and numpy versions, so tools that share it must run on the same build.
+      UV_PYTHON: "3.12"
+      UV_PYTHON_PREFERENCE: only-managed
       # Every shard installs FreeCAD, so a FreeCAD test that cannot find it fails instead of skipping.
       CAD_REQUIRE_FREECAD: "1"
       # A file named here runs only in its shard. The rest shard runs every other test file.
@@ -92,6 +96,10 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: skills-pep723-headers.txt
+
+      - name: Drop script environments restored from the uv cache
+        # A restored environment keeps the versions it was resolved with; a new one gets today's.
+        run: rm -rf -- "$(uv cache dir)/environments-v2"
 
       - name: Cache the FreeCAD AppImage
         id: freecad-cache
