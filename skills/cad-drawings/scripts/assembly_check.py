@@ -32,8 +32,8 @@ import argparse
 import json
 import math
 import sys
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -395,32 +395,38 @@ def _limit(interface: Mapping[str, Any], kind: str, part: tuple[str, str, bool],
     return None
 
 
-def reconcile(intent: Intent, geometry: Any, bom_rows: Sequence[Mapping[str, str]],
-              interfaces: Sequence[Mapping[str, Any]]) -> tuple[AssemblyPlan | None, list[dict[str, Any]]]:
-    """Bind the intent to the version's occurrences, BOM and interfaces; findings for every disagreement."""
-    findings: list[dict[str, Any]] = []
-    occurrences = {o.occurrence_id: o for o in geometry.occurrences}
-    counts: dict[str, int] = {}
-    for o in geometry.occurrences:
-        counts[o.pn] = counts.get(o.pn, 0) + 1
+@dataclass
+class _Binding:
+    """The version's occurrences, with the findings gathered while binding the intent to them."""
 
-    def resolve(ref: str, where: str) -> str | None:
+    geometry: Any
+    findings: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.occurrences = {o.occurrence_id: o for o in self.geometry.occurrences}
+        self.counts: dict[str, int] = {}
+        for o in self.geometry.occurrences:
+            self.counts[o.pn] = self.counts.get(o.pn, 0) + 1
+
+    def resolve(self, ref: str, where: str) -> str | None:
         if ref.startswith("@"):
-            if ref[1:] in occurrences and occurrences[ref[1:]].ref == ref:
+            if ref[1:] in self.occurrences and self.occurrences[ref[1:]].ref == ref:
                 return ref[1:]
-            findings.append(finding("invalid_drawing_intent", f"{where}: {ref} names no occurrence"))
+            self.findings.append(finding("invalid_drawing_intent", f"{where}: {ref} names no occurrence"))
             return None
-        found: list[str] = [o.occurrence_id for o in geometry.occurrences if o.pn == ref]
+        found: list[str] = [o.occurrence_id for o in self.geometry.occurrences if o.pn == ref]
         if len(found) == 1:
             return found[0]
-        findings.append(finding("invalid_drawing_intent", f"{where}: {ref} " +
-                                ("names no occurrence" if not found else f"is placed {len(found)} times; name one")))
+        self.findings.append(finding("invalid_drawing_intent", f"{where}: {ref} " +
+                                     ("names no occurrence" if not found
+                                      else f"is placed {len(found)} times; name one")))
         return None
 
-    bom_rows = list(bom_rows)
-    bom = bom_rollup(bom_rows)
-    bom_children = {row["PN"] for index, row in enumerate(bom_rows[:-1])
-                    if int(bom_rows[index + 1]["level"]) > int(row["level"])}
+
+def _bind_items(binding: _Binding, intent: Intent, bom: Mapping[str, Mapping[str, Any]],
+                bom_children: set[str]) -> tuple[dict[int, tuple[str, tuple[str, ...]]], dict[str, int]]:
+    """Bind each parts-list item to its occurrences; return the items and the item of every occurrence."""
+    findings, occurrences, counts = binding.findings, binding.occurrences, binding.counts
     item_of: dict[str, int] = {}
     items: dict[int, tuple[str, tuple[str, ...]]] = {}
     for entry in intent.items:
@@ -433,9 +439,9 @@ def reconcile(intent: Intent, geometry: Any, bom_rows: Sequence[Mapping[str, str
                                     item=entry.item))
             continue
         if entry.refs is None:
-            resolved = [resolve(entry.pn, where)]
+            resolved = [binding.resolve(entry.pn, where)]
         else:
-            resolved = [resolve(ref, where) for ref in entry.refs]
+            resolved = [binding.resolve(ref, where) for ref in entry.refs]
             for ref, oid in zip(entry.refs, resolved):
                 if oid is not None and occurrences[oid].pn != entry.pn:
                     findings.append(finding("invalid_drawing_intent", f"{where}: {ref} is an occurrence of "
@@ -458,24 +464,30 @@ def reconcile(intent: Intent, geometry: Any, bom_rows: Sequence[Mapping[str, str
                                     f"item {entry.item}: {entry.pn} has bom.csv quantity {row['qty']}, "
                                     f"{counts.get(entry.pn, 0)} occurrences in the assembly STEP and {len(ids)} in the item",
                                     item=entry.item))
-    for o in geometry.occurrences:
+    return items, item_of
+
+
+def _check_coverage(binding: _Binding, item_of: Mapping[str, int], bom: Mapping[str, Mapping[str, Any]],
+                    bom_children: set[str]) -> None:
+    """Findings for occurrences without an item and bom.csv rows the STEP does not place."""
+    for o in binding.geometry.occurrences:
         if o.occurrence_id not in item_of:
-            findings.append(finding("assembly_item_unidentified", f"occurrence {o.ref} ({o.pn}) has no parts-list item"))
-    for pn in sorted(set(bom) - set(counts) - bom_children):
-        findings.append(finding("bom_geometry_mismatch", f"bom.csv lists {pn}, which the assembly STEP does not place"))
+            binding.findings.append(finding("assembly_item_unidentified",
+                                            f"occurrence {o.ref} ({o.pn}) has no parts-list item"))
+    for pn in sorted(set(bom) - set(binding.counts) - bom_children):
+        binding.findings.append(finding("bom_geometry_mismatch",
+                                        f"bom.csv lists {pn}, which the assembly STEP does not place"))
 
-    explode: dict[str, Vec] = {}
-    for ref, offset in intent.explode.items():
-        oid = resolve(ref, "drawing/explode")
-        if oid is not None:
-            explode[oid] = offset
 
+def _resolve_operations(binding: _Binding, intent: Intent, interfaces: Sequence[Mapping[str, Any]],
+                        item_of: Mapping[str, int]) -> list[ResolvedOperation]:
+    findings, occurrences, counts = binding.findings, binding.occurrences, binding.counts
     by_interface = {i.get("id"): i for i in interfaces}
-    joints = geometry.joints
+    joints = binding.geometry.joints
     resolved_ops: list[ResolvedOperation] = []
     for operation in intent.operations:
         where = f"drawing/operations/{operation.id}"
-        part, into = resolve(operation.part, where), resolve(operation.into, where)
+        part, into = binding.resolve(operation.part, where), binding.resolve(operation.into, where)
         if part is None or into is None:
             continue
         if part == into:
@@ -512,14 +524,20 @@ def reconcile(intent: Intent, geometry: Any, bom_rows: Sequence[Mapping[str, str
         direction = None if operation.direction is None else rotate(occurrences[into].rotation, operation.direction)
         resolved_ops.append(ResolvedOperation(operation, part, into, item_of[part], item_of[into], limit, travel,
                                               direction))
+    return resolved_ops
 
+
+def _plan_sheets(binding: _Binding, intent: Intent, items: Mapping[int, tuple[str, tuple[str, ...]]],
+                 bom: Mapping[str, Mapping[str, Any]], resolved_ops: Sequence[ResolvedOperation]) -> list[SheetPlan]:
+    """One sheet for the whole assembly and one per requested subassembly."""
+    geometry = binding.geometry
     sheets: list[SheetPlan] = []
     scopes = [(TOP, None, tuple(o.occurrence_id for o in geometry.occurrences))]
     for group_id in intent.subassembly_sheets:
         group = geometry.groups.get(group_id)
         if group is None:
-            findings.append(finding("invalid_drawing_intent", f"drawing/subassembly_sheets: {group_id} is not a "
-                                                              "subassembly of assembly.yaml"))
+            binding.findings.append(finding("invalid_drawing_intent", f"drawing/subassembly_sheets: {group_id} is not a "
+                                                                      "subassembly of assembly.yaml"))
             continue
         scopes.append((group_id, group[1], group[2]))
     for number, (scope, heading, members) in enumerate(scopes, start=1):
@@ -537,8 +555,28 @@ def reconcile(intent: Intent, geometry: Any, bom_rows: Sequence[Mapping[str, str
         operations = tuple(op for op in resolved_ops if {op.part_occurrence, op.into_occurrence} <= in_scope)
         sheets.append(SheetPlan(number=number, scope=scope, heading=heading, occurrences=tuple(members),
                                 rows=tuple(rows), item_occurrences=per_item, operations=operations))
-    if findings:
-        return None, findings
+    return sheets
+
+
+def reconcile(intent: Intent, geometry: Any, bom_rows: Sequence[Mapping[str, str]],
+              interfaces: Sequence[Mapping[str, Any]]) -> tuple[AssemblyPlan | None, list[dict[str, Any]]]:
+    """Bind the intent to the version's occurrences, BOM and interfaces; findings for every disagreement."""
+    binding = _Binding(geometry)
+    bom_rows = list(bom_rows)
+    bom = bom_rollup(bom_rows)
+    bom_children = {row["PN"] for index, row in enumerate(bom_rows[:-1])
+                    if int(bom_rows[index + 1]["level"]) > int(row["level"])}
+    items, item_of = _bind_items(binding, intent, bom, bom_children)
+    _check_coverage(binding, item_of, bom, bom_children)
+    explode: dict[str, Vec] = {}
+    for ref, offset in intent.explode.items():
+        oid = binding.resolve(ref, "drawing/explode")
+        if oid is not None:
+            explode[oid] = offset
+    resolved_ops = _resolve_operations(binding, intent, interfaces, item_of)
+    sheets = _plan_sheets(binding, intent, items, bom, resolved_ops)
+    if binding.findings:
+        return None, binding.findings
     return AssemblyPlan(intent=intent, sheets=tuple(sheets), explode=explode, bom=bom), []
 
 
@@ -610,6 +648,14 @@ def check_sheet(svg_text: str, evidence: Mapping[str, Any]) -> list[dict[str, An
         found.append(finding(code, message, sheet=sheet))
 
     items = {int(k): v for k, v in evidence["items"].items()}
+    listed = _check_parts_list(root, evidence, items, fail)
+    _check_balloons(read_balloons(root), evidence["views"], listed, items, fail)
+    return found
+
+
+def _check_parts_list(root: Any, evidence: Mapping[str, Any], items: Mapping[int, Mapping[str, Any]],
+                      fail: Callable[[str, str], None]) -> dict[int, dict[str, str]]:
+    """Compare the sheet's parts list with the expected items and bom.csv; return its rows by item number."""
     rows = read_parts_list(root, evidence["regime"])
     if rows is None:
         fail("assembly_item_unidentified", "the sheet has no parts list")
@@ -640,13 +686,17 @@ def check_sheet(svg_text: str, evidence: Mapping[str, Any]) -> list[dict[str, An
                                           f"{len(expected['occurrences'])} occurrences")
         if evidence["scope"] == TOP and row["qty"] != str(bom.get("qty")):
             fail("bom_geometry_mismatch", f"item {number} lists quantity {row['qty']}; bom.csv rolls up {bom.get('qty')}")
-        for field in ("rev", "title", "material", "designation"):
-            if row[field] != str(bom.get(field, "")):
-                fail("bom_geometry_mismatch", f"item {number} {field} {row[field]!r} differs from bom.csv "
-                                              f"{bom.get(field, '')!r}")
+        for field_name in ("rev", "title", "material", "designation"):
+            if row[field_name] != str(bom.get(field_name, "")):
+                fail("bom_geometry_mismatch", f"item {number} {field_name} {row[field_name]!r} differs from bom.csv "
+                                              f"{bom.get(field_name, '')!r}")
+    return listed
 
-    balloons = read_balloons(root)
-    views = evidence["views"]
+
+def _check_balloons(balloons: Sequence[Mapping[str, Any]], views: Mapping[str, Mapping[str, Any]],
+                    listed: Mapping[int, Any], items: Mapping[int, Mapping[str, Any]],
+                    fail: Callable[[str, str], None]) -> None:
+    """Compare each view's balloons with the parts list: one per item, printed number, anchor and leader."""
     for balloon in balloons:
         if balloon["view"] not in views or not views[balloon["view"]]["balloons"]:
             fail("assembly_item_unidentified", f"balloon {balloon['item']} is in view {balloon['view']}, "
@@ -661,40 +711,44 @@ def check_sheet(svg_text: str, evidence: Mapping[str, Any]) -> list[dict[str, An
             if count != 1:
                 fail("assembly_item_unidentified", f"item {number} has {count} balloons in view {view_id}; expected one")
         for balloon in mine:
-            label = f"balloon {balloon['item']} in view {view_id}"
-            try:
-                number = int(balloon["item"])
-            except ValueError:
-                fail("assembly_item_unidentified", f"{label} has no item number")
-                continue
-            if number not in listed:
-                fail("assembly_item_unidentified", f"{label} names no parts-list item")
-                continue
-            if balloon["text"] != str(number):
-                fail("assembly_item_unidentified", f"{label} prints {balloon['text']!r}")
-            occurrence = balloon["occurrence"]
-            if number in items and occurrence not in items[number]["occurrences"]:
-                fail("assembly_item_unidentified", f"{label} points at {occurrence}, not an occurrence of item {number}")
-                continue
-            anchor = view["anchors"].get(occurrence)
-            if anchor is None:
-                fail("feature_not_presentable", f"{label}: {occurrence} has no visible surface point in the view")
-                continue
-            dot, leader, circle = balloon["dot"], balloon["leader"], balloon["circle"]
-            if dot is None or leader is None or circle is None:
-                fail("assembly_item_unidentified", f"{label} lacks its circle, leader or terminating dot")
-                continue
-            if not _near(dot, anchor):
-                fail("assembly_item_unidentified", f"{label} ends at ({dot[0]:.2f}, {dot[1]:.2f}), not on {occurrence} "
-                                                   f"at ({anchor[0]:.2f}, {anchor[1]:.2f})")
-            x0, y0, x1, y1 = view["bounds"]
-            if not (x0 <= dot[0] <= x1 and y0 <= dot[1] <= y1):
-                fail("assembly_item_unidentified", f"{label} ends outside the view")
-            start, end = leader[:2], leader[2:]
-            on_circle = abs(math.dist(start, circle[:2]) - circle[2]) <= ENDPOINT_TOLERANCE_MM
-            if not (_near(end, dot) and on_circle):
-                fail("assembly_item_unidentified", f"{label}: its leader does not join the balloon to its dot")
-    return found
+            _check_balloon(balloon, view_id, view, listed, items, fail)
+
+
+def _check_balloon(balloon: Mapping[str, Any], view_id: str, view: Mapping[str, Any], listed: Mapping[int, Any],
+                   items: Mapping[int, Mapping[str, Any]], fail: Callable[[str, str], None]) -> None:
+    label = f"balloon {balloon['item']} in view {view_id}"
+    try:
+        number = int(balloon["item"])
+    except ValueError:
+        fail("assembly_item_unidentified", f"{label} has no item number")
+        return
+    if number not in listed:
+        fail("assembly_item_unidentified", f"{label} names no parts-list item")
+        return
+    if balloon["text"] != str(number):
+        fail("assembly_item_unidentified", f"{label} prints {balloon['text']!r}")
+    occurrence = balloon["occurrence"]
+    if number in items and occurrence not in items[number]["occurrences"]:
+        fail("assembly_item_unidentified", f"{label} points at {occurrence}, not an occurrence of item {number}")
+        return
+    anchor = view["anchors"].get(occurrence)
+    if anchor is None:
+        fail("feature_not_presentable", f"{label}: {occurrence} has no visible surface point in the view")
+        return
+    dot, leader, circle = balloon["dot"], balloon["leader"], balloon["circle"]
+    if dot is None or leader is None or circle is None:
+        fail("assembly_item_unidentified", f"{label} lacks its circle, leader or terminating dot")
+        return
+    if not _near(dot, anchor):
+        fail("assembly_item_unidentified", f"{label} ends at ({dot[0]:.2f}, {dot[1]:.2f}), not on {occurrence} "
+                                           f"at ({anchor[0]:.2f}, {anchor[1]:.2f})")
+    x0, y0, x1, y1 = view["bounds"]
+    if not (x0 <= dot[0] <= x1 and y0 <= dot[1] <= y1):
+        fail("assembly_item_unidentified", f"{label} ends outside the view")
+    start, end = leader[:2], leader[2:]
+    on_circle = abs(math.dist(start, circle[:2]) - circle[2]) <= ENDPOINT_TOLERANCE_MM
+    if not (_near(end, dot) and on_circle):
+        fail("assembly_item_unidentified", f"{label}: its leader does not join the balloon to its dot")
 
 
 # --------------------------------------------------------------------------- package CLI
