@@ -145,8 +145,8 @@ def entry_of(chosen: manufacture.Plan) -> dict[str, object]:
     return manufacture.facts(chosen, "P", {"kernel_volume_mm3": 1.0}, native, "p")
 
 
-def recipe_hash(**fields: str | None) -> str:
-    return store.key(manufacture.outputs_recipe(entry_of(plan(**fields)), None, None, "process"))
+def recipe_hash(material: str = "PETG", color: str | None = None) -> str:
+    return store.key(manufacture.outputs_recipe(entry_of(plan(color=color, material=material)), None, None, "process"))
 
 
 class RecipeTests(unittest.TestCase):
@@ -176,6 +176,40 @@ class RecipeTests(unittest.TestCase):
 
 
 class ReadTests(unittest.TestCase):
+    def test_a_colour_writes_a_basematerials_entry_the_object_points_at(self) -> None:
+        data = threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material="PETG", color="#336699")
+        model = entries(data)["3D/3dmodel.model"].decode("utf-8")
+        self.assertIn('<basematerials id="1"><base name="PETG" displaycolor="#336699FF"/></basematerials>', model)
+        self.assertIn('<object id="2" name="TST-0001" type="model" pid="1" pindex="0">', model)
+        self.assertIn(threemf.MATERIAL_METADATA, model)  # the material name stays beside the colour
+        read = threemf.read(data)
+        self.assertEqual((read.objects[0].color, [i.objectid for i in read.build]), ("#336699FF", [2]))
+
+    def test_no_colour_keeps_the_metadata_and_writes_no_basematerials(self) -> None:
+        model = entries(cube())["3D/3dmodel.model"].decode("utf-8")
+        self.assertNotIn("basematerials", model)
+        self.assertNotIn("pid=", model)
+        self.assertIn('<metadata name="cadagent:material">PETG</metadata>', model)
+        self.assertIsNone(threemf.read(cube()).objects[0].color)
+
+    def test_changing_only_the_colour_changes_the_bytes(self) -> None:
+        def colored(color: str | None) -> bytes:
+            return threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material="PETG", color=color)
+        self.assertEqual(colored("#336699"), colored("#336699"))
+        self.assertEqual(len({colored(None), colored("#336699"), colored("#336698")}), 3)
+
+    def test_a_colour_that_is_not_srgb_hex_is_refused(self) -> None:
+        for bad in ("336699", "#33669", "#33669G", "blue", "#336699FF"):
+            with self.subTest(bad), self.assertRaises(threemf.ThreeMFError):
+                threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="P", color=bad)
+
+    def test_a_pid_that_resolves_to_no_basematerials_entry_is_refused(self) -> None:
+        good = entries(threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="P", color="#336699"))["3D/3dmodel.model"].decode()
+        data = repack(threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="P", color="#336699"),
+                      **{"3D/3dmodel.model": good.replace('pindex="0"', 'pindex="3"').encode()})
+        with self.assertRaises(threemf.ThreeMFError):
+            threemf.read(data)
+
     def test_the_mesh_the_writer_wrote_is_read_back(self) -> None:
         model = threemf.read(cube())
         (obj,) = model.objects
@@ -288,6 +322,8 @@ class TessellationTests(unittest.TestCase):
         expected = {"cracked": ["watertight"], "inward": ["outward", "volume_within_deflection"],
                     "scaled": ["volume_within_deflection", "box_within_deflection"],
                     "other_material": ["material_named"], "no_material": ["material_named"],
+                    "colour_declared_not_written": ["color_matches"],
+                    "colour_written_not_declared": ["color_matches"], "other_colour": ["color_matches"],
                     "transformed": ["no_transform"], "two_items": ["one_object"], "two_objects": ["one_object"]}
         for pn, report in self.report.items():
             for fault, failed in expected.items():
@@ -313,10 +349,20 @@ class ReadBackTests(unittest.TestCase):
                               capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr[-3000:]
         cls.report = json.loads(proc.stdout)
+        colored = Path(cls.tmp.name) / "colored.3mf"
+        colored.write_bytes(threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material="PETG", color="#336699"))
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "threemf_probe.py"), str(colored)],
+                              capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr[-3000:]
+        cls.colored = json.loads(proc.stdout)
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.tmp.cleanup()
+
+    def test_a_coloured_package_validates_against_the_schemas_and_trimesh_reads_it(self) -> None:
+        self.assertEqual(self.colored["schema"], {"[Content_Types].xml": [], "_rels/.rels": [], "3D/3dmodel.model": []})
+        self.assertTrue(self.colored["trimesh"]["watertight"])
 
     def test_trimesh_reads_one_closed_millimetre_object_at_the_identity(self) -> None:
         trimesh = self.report["trimesh"]

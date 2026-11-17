@@ -35,7 +35,7 @@ folder = Path(sys.argv[1])
 pose = load_pose()
 report = {}
 for pn, title, shape in (("TST-0001", "Drilled plate", plate), ("TST-0002", "Ball", ball)):
-    entry = {"PN": pn, "product": f"{pn} {title}", "material": MATERIAL, "mesh": MESH}
+    entry = {"PN": pn, "product": f"{pn} {title}", "material": MATERIAL, "color": None, "mesh": MESH}
     step = folder / f"{pn}.step"
     pose.write_part_step(step, pose.Part(pn, entry["product"], shape))
     written, problem = manufacture.read_part(step, pn)
@@ -46,10 +46,10 @@ for pn, title, shape in (("TST-0001", "Drilled plate", plate), ("TST-0002", "Bal
     stl = folder / f"{pn}.stl"
     mesh.write_stl(written.shape, stl, MESH["linear_deflection_mm"], MESH["angular_deflection_rad"])
 
-    def variant(name: str, verts, tris, material=MATERIAL) -> dict:
+    def variant(name: str, verts, tris, material=MATERIAL, color=None, expected=None) -> dict:
         path = folder / f"{pn}-{name}.3mf"
-        threemf.write(path, verts, tris, name=entry["product"], material=material)
-        return manufacture._threemf(path, entry, written.shape)
+        threemf.write(path, verts, tris, name=entry["product"], material=material, color=color)
+        return manufacture._threemf(path, {**entry, "color": expected}, written.shape)
 
     def edited(name: str, old: str, new: str) -> dict:
         """The good package with `old` replaced by `new` in its model part, judged."""
@@ -66,6 +66,9 @@ for pn, title, shape in (("TST-0001", "Drilled plate", plate), ("TST-0002", "Bal
         "transformed": edited("transformed", item, '<item objectid="1" transform="1 0 0 0 1 0 0 0 1 5 0 0"/>'),
         "two_items": edited("two_items", item, item + item),
         "two_objects": edited("two_objects", "</resources>", '<object id="2" type="model"><mesh><vertices/><triangles/></mesh></object></resources>'),
+        "colour_declared_not_written": variant("c1", vertices, triangles, expected="#336699"),
+        "colour_written_not_declared": variant("c2", vertices, triangles, color="#336699"),
+        "other_colour": variant("c3", vertices, triangles, color="#336698", expected="#336699"),
         "cracked": variant("cracked", vertices, triangles[:-1]),
         "inward": variant("inward", vertices, [(a, c, b) for a, b, c in triangles]),
         "scaled": variant("scaled", [(x * 1.1, y * 1.1, z * 1.1) for x, y, z in vertices], triangles),
@@ -75,5 +78,7 @@ for pn, title, shape in (("TST-0001", "Drilled plate", plate), ("TST-0002", "Bal
     report[pn] = {"step_volume_mm3": occ.volume(written.shape),
                   "threemf_volume_mm3": threemf.measure(vertices, triangles)["volume_mm3"],
                   "stl_volume_mm3": mesh.stl_report(stl)["volume_mm3"],
-                  "good": manufacture._threemf(target, entry, written.shape), "faults": faults}
+                  "good": manufacture._threemf(target, entry, written.shape),
+                  "good_colour": variant("c4", vertices, triangles, color="#336699", expected="#336699"),
+                  "faults": faults}
 print(json.dumps(report))
