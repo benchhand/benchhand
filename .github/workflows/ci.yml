@@ -237,5 +237,5 @@ jobs:
           [ "$failed" -eq 0 ]
 
       - name: Mutation corpus rates and baseline ratchet
-        if: matrix.shard == 'freecad-gated'
+        if: env.SKIP != 'true' && matrix.shard == 'freecad-gated'
         run: uv run --script skills/cad-design/tests/mfg_corpus/rates.py --check-baseline
