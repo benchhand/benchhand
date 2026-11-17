@@ -12,13 +12,19 @@ boundary cases.
 from __future__ import annotations
 
 import copy
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
 from pathlib import Path
 from typing import Any
+from unittest import mock
+
+import yaml
+from jsonschema import Draft202012Validator
 
 HERE = Path(__file__).resolve().parent
 
@@ -716,6 +722,117 @@ class SelectionGate(unittest.TestCase):
             self.assertIn("TST-0302 is a made part no selection candidate covers", found[0].message)
         blocking = evidence.packet_blocking({}, record=selected(docs), stage="design_freeze", selection_sha256=digest)
         self.assertTrue(any("TST-0302 is a made part no selection candidate covers" in item for item in blocking), blocking)
+
+
+class Producer:
+    """A fake producer step that has passed."""
+
+    def poll(self) -> int:
+        return 0
+
+    def stop(self) -> int:
+        return 0
+
+    def result(self) -> dict[str, Any]:
+        return {"status": "pass"}
+
+
+class EvidenceRun(unittest.TestCase):
+    """`evidence.py run` on the TST record built as v1 (no independent movable joint), its producers faked."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-evidence-run-test-")
+        self.addCleanup(temporary.cleanup)
+        self.hw = fx.write_record(Path(temporary.name) / "hw", fx.tst_record())
+        for pn in ("TST-0001", "TST-0002", "TST-0004"):
+            (self.hw / "parts" / pn / "model.py").write_text(f"# {pn}\n", encoding="utf-8")
+        folder = self.hw / "versions" / "v1"
+        pns = sorted(p.parent.name for p in (self.hw / "parts").glob("*/part.yaml"))
+        for name in acceptance.layout.snapshot_names(self.hw, pns):
+            target = folder / "record" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((self.hw / name).read_bytes())
+        files = {p.relative_to(folder).as_posix(): acceptance.sha(p.read_bytes()) for p in sorted(folder.rglob("*")) if p.is_file()}
+        parts = {p.parent.name: {"source_sha256": acceptance.sha(p.read_bytes())} for p in sorted(self.hw.glob("parts/*/model.py"))}
+        (folder / "manifest.json").write_text(json.dumps({"label": "v1", "parts": parts, "joints": [], "files": files}),
+                                              encoding="utf-8")
+        self.spawned: list[str] = []
+
+    def spawn(self, step: Any) -> Producer:
+        self.spawned.append(step.id)
+        return Producer()
+
+    def run_scope(self, scope: str, stage: str) -> tuple[int, dict[str, Any]]:
+        return evidence.run(self.hw, "v1", scope, stage=stage, spawn=self.spawn, strays=list)
+
+    def pass_every_producer_obligation(self) -> None:
+        acceptance.publish_packet(self.hw, "v1", acceptance.producer_packet(impact.read_record(self.hw), "v1"))
+
+    def test_the_packet_of_a_run_is_the_packet_check_prints_for_the_same_inputs(self) -> None:
+        self.pass_every_producer_obligation()
+        code, report = self.run_scope("provisional", "parts")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            evidence.main(["check", "--hw", str(self.hw), "--version", "v1", "--stage", "parts"])
+        self.assertEqual((code, report["status"], report["stopped_at"]), (0, "pass", None))
+        self.assertEqual(report["packet"], json.loads(out.getvalue()))
+        schema = json.loads((HERE.parent / "schemas" / "evidence-run.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual([e.message for e in Draft202012Validator(schema).iter_errors(report)], [])
+
+    def test_a_c_step_runs_only_while_an_obligation_it_covers_is_stale_or_open_and_due(self) -> None:
+        def material_changed() -> None:
+            self.pass_every_producer_obligation()
+            materials = self.hw / "manufacturing" / "materials.yaml"
+            data = yaml.safe_load(materials.read_text(encoding="utf-8"))
+            data["profiles"][0]["revision"] = 2
+            materials.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        cases = {  # the TST record's form-check obligations are due from parts
+            "not yet due": ("layout", lambda: None, ["static.changed"]),
+            "due and unknown": ("parts", lambda: None, ["form", "static.changed"]),
+            "due and passed": ("parts", self.pass_every_producer_obligation, ["static.changed"]),
+            "passed, then a material changed": ("parts", material_changed, ["form", "static.changed"]),
+        }
+        for label, (stage, change, spawned) in cases.items():
+            with self.subTest(label):
+                shutil.rmtree(self.hw / "checks", ignore_errors=True)
+                change()
+                self.spawned = []
+                code, report = self.run_scope("commit", stage)
+                self.assertEqual((code, self.spawned), (0, spawned))
+                self.assertEqual([s["status"] for s in report["steps"] if s["id"] == "sweep.smoke"], ["skipped"])
+
+    def test_a_flow_edit_stales_no_producer_packet(self) -> None:
+        self.pass_every_producer_obligation()
+        _, before = self.run_scope("commit", "parts")
+        product = self.hw / "product.yaml"
+        data = yaml.safe_load(product.read_text(encoding="utf-8"))
+        data["flow"].update(stage="detail", recheck_from="detail")
+        product.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        self.spawned = []
+        _, after = self.run_scope("commit", "parts")
+        self.assertNotEqual(before["record_sha256"], after["record_sha256"], "flow is a record input")
+        self.assertEqual(after["packet"]["statuses"], before["packet"]["statuses"])
+        self.assertEqual(self.spawned, ["static.changed"], "the form check is not due again")
+
+    def test_a_version_that_is_not_built_is_refused_and_runs_nothing(self) -> None:
+        code, report = evidence.run(self.hw, "v2", "commit", stage="parts", spawn=self.spawn, strays=list)
+        self.assertEqual((code, report["status"], report["steps"], report["packet"], self.spawned), (1, "refused", [], None, []))
+        self.assertEqual([f["code"] for f in report["findings"]], ["run.not_built"])
+
+    def test_by_default_each_producer_runs_through_run_py_with_its_output_in_scratch(self) -> None:
+        launcher = self.hw.parent / "run.py"
+        launcher.write_text("import json, sys\nprint(json.dumps({'status': 'fail', 'argv': sys.argv[1:]}))\nsys.exit(1)\n",
+                            encoding="utf-8")
+        with mock.patch.object(evidence, "RUN_PY", launcher):
+            code, report = evidence.run(self.hw, "v1", "commit", stage="layout")
+        self.assertEqual((code, report["status"], report["stopped_at"], report["packet"]), (1, "fail", "static.changed", None))
+        step = next(item for item in report["steps"] if item["id"] == "static.changed")
+        self.assertEqual((step["id"], step["exit"], step["argv"][1:3]), ("static.changed", 1, [str(launcher), "cad-model/scripts/cad_model.py"]))
+        self.assertEqual(step["result"]["status"], "fail")
+        output = self.hw.parent / step["result"]["stdout"]
+        self.assertEqual(output.parent.parent, self.hw.parent / ".cad-work" / "evidence-run")
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["argv"][0], "cad-model/scripts/cad_model.py")
 
 
 if __name__ == "__main__":

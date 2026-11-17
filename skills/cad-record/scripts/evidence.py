@@ -9,6 +9,8 @@ built on it; waivers; and the acceptance digest a freeze and a release anchor.
 
     uv run --script evidence.py check  --hw HW --version vN [--stage STAGE] [--out .cad-work/evidence.json]
     uv run --script evidence.py digest --hw HW --version vN
+    uv run --script evidence.py run    --hw HW --version vN --scope inner|commit|provisional|full [--stage STAGE]
+                                       [--since-version vM] [--out .cad-work/evidence-run.json]
 
 Evidence levels are independent facets, never an ordinal badge: CAD-valid, geometrically
 manufacturable, process planned, simulation-supported and physically validated can each differ per
@@ -38,6 +40,18 @@ freeze or release with no material and process selection recorded blocks like an
 its evidence_sha256, which a record version 2 freeze records in product.yaml flow.frozen and a
 release seals: exit 0, or 2 when the inventory cannot be formed.
 
+`run` produces the evidence a scope needs and then the same packet `check` prints
+(schemas/evidence-run.schema.json). It runs validate.py in process, then the producer steps that
+MATRIX marks for the scope (inner, commit, provisional, full) and that apply to the version and
+stage. A step marked C runs only while an obligation it covers (FAMILY_PRODUCERS) is stale or open
+and due at the stage. fail_fast.py plans and runs the steps: in parallel through cad-flow run.py,
+read in the fail-fast order, stopping the producers still running at the first blocking result;
+the full scope runs them one after another. Exit 0 when every step passes (and, in the full scope,
+the packet's gate passes); 1 when a step blocks, the gate of a full run blocks, the record is
+record version 1 or the version is not built (refused); 2 on a usage error, a stray run (its stop
+commands are listed) or a producer that gave no result. `check` stays separate: it recomputes the
+packet without producers.
+
 The module itself is standard library only; load it by path as `cad_record_evidence` (dataclasses
 look it up in sys.modules). The CLI reads the record with PyYAML.
 """
@@ -53,6 +67,7 @@ import json
 import os
 import posixpath
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -81,6 +96,8 @@ impact = _load_module("cad_record_impact", SCRIPTS / "impact.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
 operations = _load_module("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
+fail_fast = _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
+SKILLS = SCRIPTS.parents[1]
 
 STAGES = mi.STAGES
 LEVELS = mi.EVIDENCE_LEVELS
@@ -1241,6 +1258,266 @@ def packet_blocking(data: Mapping[str, Any], *, record: Any, stage: str, selecti
     return found
 
 
+# --- the evidence run --------------------------------------------------------------------------------------------
+
+# The producer x iteration matrix (issue #23, 02-process-design). Columns: In the designer's inner
+# loop on scratch, Cm a batch commit of vN, Pv the provisional (fast) scope, Fl the approval's full
+# scope, Fz the freeze, Rl the release. Marks: R required; C only while an obligation the producer
+# covers is stale or open and due; O optional; reads (it reads what an earlier scope produced); -
+# skipped. `run` executes the fail_fast.STEP_ORDER rows of the In, Cm, Pv and Fl columns. The other
+# rows and columns record the rest of the process for the gate rules.
+COLUMNS = ("In", "Cm", "Pv", "Fl", "Fz", "Rl")
+SCOPE_COLUMN: Mapping[str, str] = {"inner": "In", "commit": "Cm", "provisional": "Pv", "full": "Fl"}
+
+
+@dataclass(frozen=True)
+class MatrixRow:
+    label: str
+    cells: tuple[str, str, str, str, str, str]  # one mark per COLUMNS
+    note: str = ""
+
+    def mark(self, column: str) -> str:
+        return self.cells[COLUMNS.index(column)]
+
+
+MATRIX: Mapping[str, MatrixRow] = {
+    "validate": MatrixRow("validate.py", ("R", "R", "R", "R", "R", "R")),
+    "build": MatrixRow("cad-model run", ("R", "R", "-", "-", "-", "-"), "from layout; never part of a run"),
+    "static.changed": MatrixRow("cad-model check --changed-only", ("R", "R", "reads", "-", "-", "-")),
+    "static.all": MatrixRow("cad-model check, every pair", ("-", "-", "-", "R", "-", "-")),
+    "form": MatrixRow("form_check.py at F1 (layout), F2 (parts), F3 (detail on)", ("R", "C", "reads", "R", "-", "-"),
+                      "inner: the unit's PNs; commit: changed PNs; full: every due obligation"),
+    "sweep.smoke": MatrixRow("sweep.py --smoke --changed-only", ("C", "R", "reads", "-", "-", "-"),
+                             "inner: when a moving pair changed; commit: once a joint moves"),
+    "sweep.full": MatrixRow("sweep.py, every pose", ("-", "-", "-", "R", "R", "-"),
+                            "full: at layout and analysis; at parts and detail a hash-proven carry-forward, else R; "
+                            "freeze: R or carried"),
+    "motion.default": MatrixRow("motion.py render --case default", ("-", "-", "R", "R", "-", "-")),
+    "render": MatrixRow("render.py, 4 views", ("O", "-", "R", "-", "-", "-"), "inner: when visibility-bound"),
+    "drawings.part": MatrixRow("part drawings", ("R", "C", "-", "R", "C", "-"),
+                               "inner: completeness of the unit's own PNs at detail; commit: from detail; full: at detail"),
+    "drawings.assembly": MatrixRow("assembly drawing", ("-", "-", "-", "R", "C", "-"), "full: at detail"),
+    "bom": MatrixRow("bom.py", ("-", "R", "R", "R", "R", "R"), "commit: from layout"),
+    "stackup": MatrixRow("stackup.py", ("R", "R", "R", "R", "R", "-"), "inner: at detail; commit: from detail"),
+    "fea": MatrixRow("FEA case", ("O", "-", "-", "R", "C", "-"),
+                     "inner: the analyst's coarse-mesh smoke run; full: at analysis, C at reconcile"),
+    "selection": MatrixRow("sourcing and selection.py", ("-", "C", "-", "R", "-", "-"), "full: at intent and parts"),
+    "evidence": MatrixRow("evidence.py check", ("R", "-", "R", "R", "R", "R"),
+                          "inner: scratch scope; provisional: --stage; release: inside release.py"),
+    "stamp": MatrixRow("cad-recheck stamp", ("-", "R", "-", "R", "R", "-"), "commit: at git commit"),
+    "release": MatrixRow("build_guide.py and release.py", ("-", "-", "-", "-", "O", "R"), "freeze: a preview"),
+}
+
+# The producers that show each obligation family, by family prefix (the longest matching prefix
+# decides): a MATRIX row, or access and play (cad-motion access.py, play.py), which no scope runs.
+FAMILY_PRODUCERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cad.", ("static.changed", "static.all")),
+    ("process.", ("form",)), ("purchase.", ("form",)), ("route.", ("form",)), ("optical.route", ("form",)),
+    ("assembly.access", ("access",)), ("assembly.order", ("access",)), ("motion.play", ("play",)),
+    ("interface.stack", ("stackup",)), ("engineering.", ("fea",)),
+)
+RUN_KIND = "cad-evidence-run"
+RUN_SCHEMA_VERSION = 1
+RUN_PY = SKILLS / "cad-flow" / "scripts" / "run.py"
+_MOTION_STEPS = ("sweep.smoke", "sweep.full", "motion.default")
+
+
+def producers_of(family: str) -> tuple[str, ...]:
+    """The producers that show obligations of `family`; none for a family no producer shows."""
+    best = max((prefix for prefix, _ in FAMILY_PRODUCERS if family.startswith(prefix)), key=len, default=None)
+    return dict(FAMILY_PRODUCERS)[best] if best is not None else ()
+
+
+def _due(obligation: Any, stage: str) -> bool:
+    return stage in ("design_freeze", "release") or STAGES.index(obligation.stage) <= STAGES.index(stage)
+
+
+def stale_producers(assessment: Assessment, stage: str) -> set[str]:
+    """The producers of every obligation due at `stage` that is not resolved (stale, failed, unknown or
+    planned). A physical validation is left out: no producer can show it."""
+    found: set[str] = set()
+    for obligation in assessment.expected:
+        if obligation.level != PHYSICAL and _due(obligation, stage) \
+                and assessment.statuses[obligation.id].result not in RESOLVED:
+            found.update(producers_of(obligation.family))
+    return found
+
+
+def _moves(manifest: Mapping[str, Any]) -> bool:
+    """Whether a version has an independent movable joint (not fixed, not coupled); True when its
+    manifest records no joints, so the motion producers decide."""
+    joints = manifest.get("joints")
+    if not isinstance(joints, list):
+        return True
+    return any(isinstance(j, Mapping) and j.get("type") != "fixed" and j.get("nominal") is not None for j in joints)
+
+
+def _moving_inputs_changed(hw: Path, manifest: Mapping[str, Any], snapshot: Path, since: str | None) -> bool:
+    """Whether a part's geometry or interfaces, or a joint, changed since built version `since`; True
+    without `since`, since nothing proves them unchanged."""
+    if since is None:
+        return True
+    _, before_folder, before_snapshot = layout.built_version(hw, since)
+    before_manifest = json.loads((before_folder / layout.MANIFEST).read_text(encoding="utf-8"))
+    if before_manifest.get("joints") != manifest.get("joints"):
+        return True
+    changed = impact.changed_domains(
+        impact.subject_fingerprints(impact.read_record(before_snapshot, ledgers_from=hw), impact.version_geometry(before_manifest)),
+        impact.subject_fingerprints(impact.read_record(snapshot, ledgers_from=hw), impact.version_geometry(manifest)))
+    return any({"geometry", "interface"} & set(domains) for domains in changed.values())
+
+
+def _not_applicable(stage: str, manifest: Mapping[str, Any]) -> dict[str, str]:
+    skipped = {}
+    if STAGES.index(stage) < STAGES.index("layout"):
+        skipped["form"] = "the form check starts at layout"
+    if not _moves(manifest):
+        skipped.update(dict.fromkeys(_MOTION_STEPS, "the version has no independent movable joint"))
+    return skipped
+
+
+def _fidelity(stage: str) -> str:
+    index = STAGES.index(stage)
+    return "F1" if index <= STAGES.index("layout") else "F2" if index == STAGES.index("parts") else "F3"
+
+
+def producer_argv(hw: Path, version: str, stage: str, since: str | None) -> dict[str, list[str]]:
+    """The command of each producer step, through cad-flow run.py."""
+    def through(script: str, *args: str) -> list[str]:
+        return [sys.executable, str(RUN_PY), script, *args]
+
+    hw_arg, baseline = str(hw), (["--since-version", since] if since else [])
+    return {
+        "form": through("cad-design/scripts/form_check.py", "--hw", hw_arg, "--version", version, "--fidelity", _fidelity(stage)),
+        "static.changed": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg, "--changed-only", *baseline),
+        "static.all": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg),
+        "sweep.smoke": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version, "--smoke", "--changed-only",
+                               *baseline),
+        "sweep.full": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version),
+        "render": through("cad-render/scripts/render.py", hw_arg, "--version", version),
+        "motion.default": through("cad-motion/scripts/motion.py", "render", "--hw", hw_arg, "--version", version, "--case",
+                                  "default", "--outputs", "glb,sheet"),
+    }
+
+
+def run_plan(hw: Path, version: str, scope: str, stage: str, assessment: Assessment, *,
+             since_version: str | None = None) -> Any:
+    """The fail_fast.Plan of `scope` for built `version` at `stage`, given the version's assessment."""
+    hw = Path(hw).resolve()
+    _, folder, snapshot = layout.built_version(hw, version)
+    manifest = json.loads((folder / layout.MANIFEST).read_text(encoding="utf-8"))
+    column = {ident: row.mark(SCOPE_COLUMN[scope]) for ident, row in MATRIX.items()} if scope in SCOPE_COLUMN else {}
+    stale = stale_producers(assessment, stage)
+    if column.get("sweep.smoke") == "C" and _moving_inputs_changed(hw, manifest, snapshot, since_version):
+        stale.add("sweep.smoke")
+    # TODO(2b, issue #23 04-full-sweep): the hash-proven full-sweep carry-forward plugs in here. At the
+    # parts and detail approvals and at the freeze, a carry that passes proof checks 1-5 turns sweep.full
+    # into a `carried` step recording carried_from and the proof hashes; anything unproved runs the sweep.
+    return fail_fast.plan(scope, column, producer_argv(hw, version, stage, since_version),
+                          not_applicable=_not_applicable(stage, manifest), stale=stale)
+
+
+class _Producer:
+    """A producer started under cad-flow process_lifecycle, its output in the run's scratch folder."""
+
+    def __init__(self, lifecycle: Any, process: Any, stdout: Path, project: Path) -> None:
+        self.lifecycle, self.process, self.stdout, self.project = lifecycle, process, stdout, project
+
+    def poll(self) -> int | None:
+        code = self.process.poll()
+        return int(code) if code is not None else None
+
+    def stop(self) -> int:
+        return int(self.lifecycle.terminate_group(self.process))
+
+    def result(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self.stdout.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        return {"stdout": self.stdout.relative_to(self.project).as_posix(),
+                "status": data.get("status") if isinstance(data, Mapping) else None}
+
+
+def _lifecycle() -> Any:
+    return _load_module("cad_flow_process_lifecycle", SKILLS / "cad-flow" / "scripts" / "process_lifecycle.py")
+
+
+def _spawner(hw: Path, version: str, scope: str) -> Callable[[Any], _Producer]:
+    lifecycle, project = _lifecycle(), Path(hw).parent
+    folder = layout.scratch_path(hw, project / layout.SCRATCH / "evidence-run" / f"{version}-{scope}-{os.urandom(4).hex()}",
+                                 "the run folder")
+
+    def spawn(step: Any) -> _Producer:
+        folder.mkdir(parents=True, exist_ok=True)
+        stdout = folder / f"{step.id}.out"
+        with stdout.open("wb") as out, (folder / f"{step.id}.err").open("wb") as err:
+            process = lifecycle.spawn(step.argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, cwd=project)
+        return _Producer(lifecycle, process, stdout, project)
+
+    return spawn
+
+
+def _strays(hw: Path) -> list[dict[str, Any]]:
+    """Recorded runs of `hw` that ended and left processes behind, or that cannot be verified."""
+    lifecycle = _lifecycle()
+    try:
+        return [stray.to_json() for stray in lifecycle.strays(hw) if stray.state != "running"]
+    except lifecycle.Unsupported as error:
+        return [{"record": None, "state": "unverifiable", "reason": str(error), "stop": []}]
+
+
+def _validate_step(hw: Path) -> tuple[int, dict[str, Any]]:
+    validate = _validate()
+    blocking = validate.blocking(validate.validate_project(hw))
+    return (1 if blocking else 0), {"blocking": len(blocking), "findings": [dict(item) for item in blocking[:20]]}
+
+
+def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_version: str | None = None,
+        spawn: Callable[[Any], Any] | None = None, strays: Callable[[], Sequence[Mapping[str, Any]]] | None = None,
+        today: date | None = None) -> tuple[int, dict[str, Any]]:
+    """`evidence.py run`: (exit status, report). `spawn` and `strays` default to cad-flow
+    process_lifecycle; a ValueError is a usage error (an unknown scope or stage)."""
+    hw = Path(hw).resolve()
+    if scope not in SCOPE_COLUMN:
+        raise ValueError(f"unknown scope {scope!r}; one of {', '.join(SCOPE_COLUMN)}")
+    report: dict[str, Any] = {"kind": RUN_KIND, "schema_version": RUN_SCHEMA_VERSION, "status": "refused", "scope": scope,
+                              "stage": stage, "version": version, "version_manifest_sha256": None, "record_sha256": None,
+                              "steps": [], "stopped_at": None, "packet": None}
+    try:
+        label, folder, _ = layout.built_version(hw, version)
+    except layout.LayoutError as error:
+        return 1, {**report, "findings": [Finding("run.not_built", "hw/versions",
+                                                  f"{error}; build the version first (cad-model run)").as_dict()]}
+    _, record = impact.read_inputs(hw)
+    stage = stage or (impact.plain(record.product).get("flow") or {}).get("stage")
+    if not isinstance(stage, str) or stage not in STAGES:
+        raise ValueError(f"product.yaml flow.stage {stage!r} is not a stage; pass --stage")
+    report.update(stage=stage, version=label, version_manifest_sha256=_sha256(folder / layout.MANIFEST),
+                  record_sha256=record_digest(record_inputs(hw)))
+    if record.version != mi.RECORD_VERSION:
+        problem = mi.migration_problem(record.product)
+        message = problem.message if problem is not None else "the record is not record version 2"
+        action = f"; {problem.action}" if problem is not None and problem.action else ""
+        return 1, {**report, "findings": [Finding(mi.MIGRATION_REQUIRED, "hw/product.yaml", message + action).as_dict()]}
+    assessment, _ = build_assessment(hw, label, today)
+    work = run_plan(hw, label, scope, stage, assessment, since_version=since_version)
+    outcome = fail_fast.execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),
+                                strays=strays or (lambda: _strays(hw)))
+    report.update(status=outcome.status, steps=[step.as_dict() for step in outcome.steps], stopped_at=outcome.stopped_at)
+    if outcome.strays:
+        report["strays"] = [dict(item) for item in outcome.strays]
+        report["stop_commands"] = [command for item in outcome.strays for command in item.get("stop") or ()]
+    if outcome.status != "pass":
+        return outcome.exit, report
+    assessment, _ = build_assessment(hw, label, today)
+    report["packet"] = assessment.packet(stage, record_digest(record_inputs(hw)))
+    if scope == "full" and not report["packet"]["gate"]["passed"]:
+        report["status"] = "fail"
+        return 1, report
+    return 0, report
+
+
 # --- CLI ---------------------------------------------------------------------------------------------------------
 
 def _validate() -> Any:
@@ -1315,9 +1592,25 @@ def main(argv: list[str] | None = None) -> int:
     digest = commands.add_parser("digest", help="print the acceptance inventory and evidence_sha256 of a built version")
     digest.add_argument("--hw", type=Path, required=True)
     digest.add_argument("--version", required=True)
+    runner = commands.add_parser("run", help="run the producer steps of a scope, then print the evidence packet")
+    runner.add_argument("--hw", type=Path, required=True)
+    runner.add_argument("--version", required=True)
+    runner.add_argument("--scope", required=True, choices=tuple(SCOPE_COLUMN))
+    runner.add_argument("--stage", choices=STAGES, help="the gate to apply; product.yaml flow.stage when omitted")
+    runner.add_argument("--since-version", help="the baseline of the changed-only steps; their own default when omitted")
+    runner.add_argument("--out", type=Path, help="also write the run report here, under .cad-work/")
     args = parser.parse_args(argv)
     try:
         hw = args.hw.resolve()
+        if args.command == "run":
+            target = layout.scratch_path(hw, args.out, "--out") if args.out is not None else None
+            code, report = run(hw, args.version, args.scope, stage=args.stage, since_version=args.since_version)
+            text = json.dumps(report, indent=2, ensure_ascii=False)
+            if target is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text + "\n", encoding="utf-8")
+            print(text)
+            return code
         assessment, packets = build_assessment(hw, args.version)
         if args.command == "digest":
             inventory = acceptance_inventory(hw, assessment.record, packets)
