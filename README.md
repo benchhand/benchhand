@@ -178,3 +178,4 @@ python3 "$CAD_AGENT/harness/install.py" --harness all --project . \
 ```
 
 A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:` prefix and a `provider/model[#variant]` value, and never gets `model: inherit`. Rendering adds `model: "<m>"` to Claude (instead of `inherit`) and OpenCode, `model = "<m>"` to Codex, and `"model"` to Kiro. A tier with no entry adds no model line, so a default install matches the committed profiles. `--tier-model` needs PyYAML.
+
