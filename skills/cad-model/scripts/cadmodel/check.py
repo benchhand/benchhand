@@ -4,10 +4,10 @@ Definition checks (STEP read-back volume, BRep validity, solid structure, sliver
 assembly checks run per occurrence: every component of assembly.step must be an occurrence of the
 manifest at its recorded placement, interference covers every occurrence pair (two occurrences of
 one PN included), each clearance requirement of the version's interfaces.yaml holds on its pair,
-connectivity welds occurrences, each occurrence's GLB node is judged watertight alone and against the
-assembly STEP's shape and placement (`glb_step_agreement`, cadmodel.agreement), and a heat-set hole diameter
+connectivity welds occurrences, the check judges the GLB node of each occurrence watertight alone and against the
+shape and placement in the assembly STEP (`glb_step_agreement`, cadmodel.agreement), and a heat-set hole diameter
 the record states must be a bore of its host (`declared_dimensions`). A check that lacks the data to judge is
-`unknown` and listed under `abstentions`; it never blocks and is never read as a pass. A version
+`unknown` and listed under `abstentions`. That result does not block, and no reader takes it for a pass. A version
 1 version (written before occurrences) reads as one occurrence per PN. Every file must match the
 manifest inventory (`artifact_integrity`), and the manufacturing outputs of each custom-made part
 are judged again on the sealed files (`manufacturing`, cadmodel.manufacture); `build_volume`, a
@@ -717,11 +717,11 @@ def _worst_status(statuses: Iterable[str]) -> str:
 
 
 def agreement_scope(occurrences: Mapping[str, Any], changes: Any | None) -> set[str]:
-    """The occurrence ids whose GLB mesh is compared with the STEP. Every one, in a full check and in a
-    changed-only check without a baseline. With a baseline (`changes`, incremental.ChangeSet), the occurrences
-    of a PN whose geometry changed, and the added and the moved occurrences: a mutation of a changed part is
-    caught, an unchanged part at its old place is left to the full check, which the report's `scope.complete`
-    already says a changed-only check is not."""
+    """The occurrence ids whose GLB mesh the check compares with the STEP. Every one, in a full check and in a
+    changed-only check without a baseline. With a baseline (`changes`, a `ChangeSet` of incremental.py), the occurrences
+    of a PN whose geometry changed, and the added and the moved occurrences. That catches a mutation of a
+    changed part. The full check covers an unchanged part at its old place, and the `scope.complete` of the
+    report already says a changed-only check is not complete."""
     if changes is None or changes.baseline is None:
         return set(occurrences)
     return {oid for oid, built in occurrences.items()
@@ -729,17 +729,18 @@ def agreement_scope(occurrences: Mapping[str, Any], changes: Any | None) -> set[
 
 
 def agreement_result(rows: Mapping[str, Mapping[str, Any]], skipped: Iterable[str], linear: float | None) -> dict[str, Any]:
-    """The `glb_step_agreement` check from its per-occurrence rows; `skipped` names the occurrences a changed-only
-    check left out (empty in a full check)."""
+    """The `glb_step_agreement` check from its per-occurrence rows. `skipped` names the occurrences a changed-only
+    check leaves out (empty in a full check)."""
     return {"status": _worst_status(r["status"] for r in rows.values()), "blocking": True,
             "linear_deflection_mm": linear, "skipped": sorted(skipped), "occurrences": dict(sorted(rows.items()))}
 
 
 def glb_step_agreement(folder: Path, manifest: Mapping[str, Any], part_map: Mapping[str, Any], step: Any,
                        examined: Iterable[str], skipped: Iterable[str] = ()) -> dict[str, Any]:
-    """Per examined occurrence: its GLB node depicts the assembly STEP's shape at the STEP's placement
-    (cadmodel.agreement). The GLB is read without the manifest's help: a mesh of another model, scale or place
-    fails here though it is a closed solid and the STEP matches the kernel. `unknown` where the data cannot judge."""
+    """Per examined occurrence: whether its GLB node depicts the shape and placement in the assembly STEP
+    (cadmodel.agreement). The check reads the GLB without the help of the manifest. A mesh of another model,
+    scale or place fails here though it is a closed solid and the STEP matches the kernel. `unknown` where the
+    data cannot judge."""
     wanted = set(examined)
     if not agreement.AVAILABLE:
         reason = {"status": "unknown", "reason": "numpy is not installed: the GLB and STEP meshes cannot be compared"}
@@ -760,10 +761,10 @@ def glb_step_agreement(folder: Path, manifest: Mapping[str, Any], part_map: Mapp
 
 def declared_dimensions(heat_sets: Iterable[Mapping[str, Any]], host_pns: Mapping[str, str],
                         metrics: Mapping[str, Any]) -> dict[str, Any]:
-    """Each dimension the record states, measured on the sealed model: a heat-set insert's `hole_d` (within its
-    `hole_tol`, else HOLE_D_DEFAULT_MM) must be the diameter of a bore of its host. `host_pns`: occurrence id ->
-    PN; `metrics`: the version's metrics.json `parts`. A host with no recorded bores is unknown; one with
-    bores and none of the declared size fails."""
+    """Each dimension the record states, measured on the sealed model: the `hole_d` of a heat-set insert (within its
+    `hole_tol`, else HOLE_D_DEFAULT_MM) must be the diameter of a bore of its host. `host_pns` maps occurrence id
+    to PN. `metrics` holds the metrics.json `parts` of the version. A host with no recorded bores is `unknown`.
+    A host with bores and none of the declared size fails."""
     rows = []
     for item in heat_sets:
         pn = host_pns.get(item["host"])

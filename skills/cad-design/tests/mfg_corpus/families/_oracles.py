@@ -1,10 +1,10 @@
-"""Shared runner of the semantic-output-oracle families: one case is built and checked by
-`_oracle_driver.py` under `uv run --script`. Its own environment holds cad-model's runtime, so the
-corpus process needs nothing beyond what rates.py declares.
+"""Runner shared by the semantic-output-oracle families. `_oracle_driver.py` builds and checks one case under
+`uv run --script`. Its own environment holds cad-model's runtime, so the corpus process needs nothing beyond
+what rates.py declares.
 
 `case(model=..., fault=...)` returns the `run` function of a Pair: run(True) builds the project with the
-model overrides and the one exporter fault, run(False) the unmodified project. Verdicts are cached per
-process, so the clean twin that several pairs share is built once."""
+model overrides and the one exporter fault, run(False) the unmodified project. The runner caches verdicts per
+process, so pairs that share a clean twin build it once."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def verdict(model: dict[str, Any] | None, fault: dict[str, Any] | None, changed_
 def case(model: dict[str, Any] | None = None, fault: dict[str, Any] | None = None, *,
          changed_only: bool = False) -> Callable[[bool], Outcome]:
     """With `changed_only`, `model` is the change under test (v2 against a clean v1), so the twin keeps it and
-    differs from the mutant by the fault alone; otherwise the twin is the unmodified project."""
+    differs from the mutant by the fault alone. Otherwise the twin is the unmodified project."""
     def run(mutant: bool) -> Outcome:
         if mutant:
             return verdict(model, fault, changed_only)

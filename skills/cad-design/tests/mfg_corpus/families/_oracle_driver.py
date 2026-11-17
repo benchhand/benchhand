@@ -113,7 +113,7 @@ def write_glb(path: Path, gltf: dict[str, Any], binary: bytes) -> None:
 
 
 def matrix(node: dict[str, Any]) -> list[float]:
-    """The node's local transform as a column-major 4x4."""
+    """Column-major 4x4 of the local transform of the node."""
     if "matrix" in node:
         return [float(v) for v in node["matrix"]]
     x, y, z, w = node.get("rotation", [0.0, 0.0, 0.0, 1.0])
@@ -185,7 +185,7 @@ def main(case_path: Path, work: Path) -> int:
     changed_only = bool(case.get("changed_only"))
     label = "v2" if changed_only else "v1"
     write_project(hw, with_defaults(None) if changed_only else model)
-    if changed_only:  # v1 is the clean default project; v2 is built from `model` and checked against it
+    if changed_only:  # v1 is the clean default project. v2 comes from `model`, and the check compares it with v1
         build.run(hw, "v1", "auto", [])
         write_models(hw, model)
     real = mesh.write_glb

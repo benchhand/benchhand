@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _oracles import case  # noqa: E402
 from corpus import Family, Pair  # noqa: E402
 
-# v2 moves the plate's hole from X 25 to X 31 (the change under test); v1 is the clean default project.
+# v2 moves the plate's hole from X 25 to X 31 (the change under test). v1 is the clean default project.
 MOVED_HOLE = {"plate": {"hole_x": 31.0}}
 
 FAMILY = Family(

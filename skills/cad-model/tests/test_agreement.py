@@ -48,7 +48,7 @@ class AgreementTests(unittest.TestCase):
         self.assertEqual(self.status("flat_shifted_just_below_floor"), "pass")  # 0.12 mm
 
     def test_the_floor_at_a_large_assemblys_deflection_is_three_times_it_plus_the_epsilon(self) -> None:
-        """A large assembly's GLB is written at the exporter's cap, 0.05 mm: floor = 3 x 0.05 + 0.005 = 0.155 mm.
+        """The exporter writes the GLB of a large assembly at its cap, 0.05 mm: floor = 3 x 0.05 + 0.005 = 0.155 mm.
         A coarser GLB widens the floor in step, so a change to REACH_MARGIN, REFERENCE_FACTOR or EPS_MM shows here
         as a moved number."""
         self.assertAlmostEqual(self.probe["cases"]["flat_shifted_above_large_floor"]["tolerance_mm"], 0.155, places=9)
@@ -67,12 +67,12 @@ class AgreementTests(unittest.TestCase):
     def test_a_mesh_lacking_the_steps_hole_does_not_agree(self) -> None:
         row = self.probe["cases"]["hole_missing_in_mesh"]
         self.assertEqual(row["status"], "fail")
-        self.assertGreater(row["step_to_glb_mm"], row["tolerance_mm"])  # the STEP's hole wall has no mesh near it
+        self.assertGreater(row["step_to_glb_mm"], row["tolerance_mm"])  # no mesh lies near the hole wall of the STEP
 
     def test_a_mesh_with_a_hole_the_step_lacks_does_not_agree(self) -> None:
         row = self.probe["cases"]["extra_hole_in_mesh"]
         self.assertEqual(row["status"], "fail")
-        self.assertGreater(row["glb_to_step_mm"], row["tolerance_mm"])  # the mesh's hole wall is off the STEP's surface
+        self.assertGreater(row["glb_to_step_mm"], row["tolerance_mm"])  # the hole wall of the mesh is off the STEP surface
 
     def test_a_hole_a_quarter_millimetre_too_wide_does_not_agree(self) -> None:
         self.assertEqual(self.status("hole_6_vs_6_5"), "fail")

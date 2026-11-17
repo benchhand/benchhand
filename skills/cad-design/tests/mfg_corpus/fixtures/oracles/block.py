@@ -1,5 +1,5 @@
 """Corpus fixture: base block with one through bore, CadQuery. `shape` "round" keeps the plan area
-(size squared) and so the volume, but is a cylinder; `bore_x` moves the bore along X."""
+(size squared) and so the volume, but is a cylinder. `bore_x` moves the bore along X."""
 
 import math
 

@@ -2,15 +2,15 @@
 assembly.step places it. The two outputs come from one exporter run, so a stale, scaled, moved or
 re-shaped mesh passes every check that reads either file alone.
 
-Both are reduced to triangle meshes in the assembly frame (mm, Z up): the GLB node's world mesh, and a finer
-tessellation of the STEP definition moved by the component's location. The meshes agree when each sampled
-point (a vertex or a triangle center) of one lies within both meshes' deflections of the other's triangles: a
-point is within its own mesh's deflection of the shape's surface, which the other mesh follows within its own.
-A mismatch beyond that is a different shape or place; the two directions together see a feature that one mesh
-has and the other lacks.
+The code turns both into triangle meshes in the assembly frame (mm, Z up): the world mesh of the GLB node, and a
+finer tessellation of the STEP definition moved by the location of the component. The meshes agree when each
+sampled point (a vertex or a triangle center) of one lies within the deflections of both meshes of the triangles
+of the other. A point is within the deflection of its own mesh of the surface of the shape, and the other mesh
+follows that surface within its own deflection. A mismatch beyond that is a different shape or place. The two
+directions together see a feature that one mesh has and the other lacks.
 
 An occurrence the data cannot judge (no deflection recorded, no node or triangles in the GLB, no shape) is
-`unknown`, never `pass`. glTF is meters, Y up; the CAD frame is mm, Z up:
+`unknown`, never `pass`. glTF is meters, Y up. The CAD frame is mm, Z up:
 (x, y, z) -> (1000 x, -1000 z, 1000 y), the inverse of the exporter's own conversion.
 """
 
@@ -26,7 +26,7 @@ from typing import Any
 
 try:
     import numpy as np
-except ImportError:  # `check` also runs where numpy is missing: the agreement then abstains
+except ImportError:  # `check` also runs without numpy. The agreement then abstains
     np = None  # type: ignore[assignment]
 
 AVAILABLE = np is not None
@@ -36,10 +36,10 @@ from cadmodel.mesh import ANGULAR_RAD
 Vec = tuple[float, float, float]
 Rot = tuple[Vec, Vec, Vec]
 EPS_MM = 5e-3           # float32 coordinates and the exporter's own rounding, on top of the deflections
-REFERENCE_FACTOR = 0.5  # the STEP reference is tessellated this much finer than the exporter's deflection
-REACH_MARGIN = 2.0      # the reach is this many times the two deflections' sum: on lamp-arm (0.05 mm GLB) the worst
-                        # clean point sits at 1.19 of the sum (LMP-0004, a 1.2 mm fillet torus), so the reach and
-                        # EPS_MM leave a 1.74x margin; a bare sum would fail that clean part
+REFERENCE_FACTOR = 0.5  # the check tessellates the STEP reference at this fraction of the GLB deflection
+REACH_MARGIN = 2.0      # the reach is this many times the sum of both deflections. On lamp-arm (0.05 mm GLB) the
+                        # worst clean point sits at 1.19 of the sum (LMP-0004, a 1.2 mm fillet torus). The reach
+                        # and EPS_MM leave a 1.74x margin. A bare sum would fail that clean part
 MAX_SAMPLES = 1500      # points checked per direction and occurrence
 CELLS = 8               # grid cells along the longest side of a mesh, for the triangle lookup
 SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contribute a sample point
@@ -88,7 +88,7 @@ def _accessor(gltf: Mapping[str, Any], binary: bytes, index: int) -> np.ndarray:
 
 
 def _local(node: Mapping[str, Any]) -> np.ndarray:
-    """The node's own transform as a 4x4 (row-major, acting on column vectors)."""
+    """The own transform of the node as a 4x4 (row-major, acting on column vectors)."""
     if "matrix" in node:
         return np.array(node["matrix"], dtype=float).reshape(4, 4).T
     x, y, z, w = node.get("rotation", (0.0, 0.0, 0.0, 1.0))
@@ -119,8 +119,8 @@ def _chunks(path: Path) -> tuple[dict[str, Any], bytes]:
 
 
 def read_glb(path: Path) -> dict[str, Mesh]:
-    """Each named node that holds a mesh -> its triangles at the node's world pose, in mm and Z up.
-    Nodes of one name are merged into one mesh."""
+    """Each named node that holds a mesh -> its triangles at the world pose of the node, in mm and Z up.
+    The function merges nodes of one name into one mesh."""
     gltf, binary = _chunks(path)
     nodes = gltf.get("nodes", [])
     parent = {child: index for index, node in enumerate(nodes) for child in node.get("children", ())}
@@ -271,7 +271,7 @@ class _Surface:
 def _samples(mesh: Mesh) -> np.ndarray:
     """Up to MAX_SAMPLES points on the mesh, spread over it: its vertices and triangle centers, the first of each
     grid cell, thinned by an even stride when there are more. A vertex at the rim of a straight wall lies on the
-    plane beside it; the wall's triangle center lies in the wall, where a hole the other mesh lacks shows."""
+    plane beside it. The triangle center of the wall lies in the wall, where a hole the other mesh lacks shows."""
     used = np.unique(mesh.triangles)
     found = np.concatenate([mesh.points[used], mesh.points[mesh.triangles].mean(axis=1)])
     low = found.min(axis=0)
@@ -285,7 +285,7 @@ def _samples(mesh: Mesh) -> np.ndarray:
 
 
 def _off(points: np.ndarray, surface: _Surface) -> tuple[float, int]:
-    """(the largest distance of the points beyond `surface.reach`, how many); (0.0, 0) when all are within."""
+    """(the largest distance of the points beyond `surface.reach`, how many). (0.0, 0) when all are within."""
     failing = points[~surface.within(points)]
     if not len(failing):
         return 0.0, 0
@@ -295,8 +295,8 @@ def _off(points: np.ndarray, surface: _Surface) -> tuple[float, int]:
 def compare(glb: Mesh, step: Mesh, linear_mm: float) -> dict[str, Any]:
     """Whether `glb` and `step` (both in the assembly frame) are one shape. A sample of one mesh is within its own
     deflection of the true surface and the other mesh within its: `linear_mm` for the GLB, REFERENCE_FACTOR of
-    it for the STEP reference; their sum bounds the sample's distance to the other mesh, REACH_MARGIN times that
-    sum plus EPS_MM is the reach."""
+    it for the STEP reference. Their sum bounds the distance of the sample to the other mesh. REACH_MARGIN times
+    that sum plus EPS_MM is the reach."""
     reach = REACH_MARGIN * linear_mm * (1.0 + REFERENCE_FACTOR) + EPS_MM
     if not len(glb.triangles) or not len(step.triangles):
         return {"status": "unknown", "tolerance_mm": reach,
