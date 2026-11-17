@@ -873,6 +873,22 @@ class PurchasedIdentityTests(Checks):
                 self.assertEqual(self.outcome(result, self.obligation), "fail")
                 self.assertEqual(self.codes(result, self.obligation), ["purchase.designation_missing"])
 
+    def test_a_fractional_or_unified_size_without_a_length_identifies_a_part(self) -> None:
+        for size in ("1/4-20", "1/4", "3/8-16", "#10-24", "5/16-18 UNC", "1/2\"", "1/4-20UNC", "1/4-20 UNC-2B", "1/4-20 x 1"):
+            designation = f"ASME B18.2.2 {size}"
+            with self.subTest(size=size, where="field"):
+                self.assertEqual(self.outcome(self.bought(designation=designation), self.obligation), "pass")
+            with self.subTest(size=size, where="title"):
+                self.assertEqual(self.outcome(self.bought(f"Hex nut {designation}"), self.obligation), "pass")
+
+    def test_a_size_token_that_continues_into_letters_is_not_a_size(self) -> None:
+        for size in ("1/4-20HV", "1/4abc", "1/4-20UNCX"):
+            designation = f"ASME B18.2.2 {size}"
+            with self.subTest(size=size, where="field"):
+                self.assertEqual(self.outcome(self.bought(designation=designation), self.obligation), "fail")
+            with self.subTest(size=size, where="title"):
+                self.assertEqual(self.outcome(self.bought(f"Hex nut {designation}"), self.obligation), "fail")
+
     def test_a_hardness_grade_in_the_title_is_not_a_size(self) -> None:
         result = self.bought("Washer ISO 7089 200HV")
         self.assertEqual(self.outcome(result, self.obligation), "fail")
