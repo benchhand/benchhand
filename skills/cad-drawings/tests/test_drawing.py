@@ -848,6 +848,7 @@ class SheetExportParts(unittest.TestCase):
             calls.append("write" if "texts" in job else "probe")
             supported = [c for c in job["codepoints"] if c != 0x2603]
             if "texts" in job:
+                Path(job["pdf"]).write_bytes(self.qt_style_pdf())   # export_sheet pins the dates of the file the job wrote
                 return {"supported_codepoints": supported, "png": {"dark_pixels": 10_000}}, ""
             return {"supported_codepoints": supported}, ""
 
