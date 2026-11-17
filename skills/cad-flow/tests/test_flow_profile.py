@@ -23,6 +23,7 @@ sys.path.insert(0, str(SKILLS.parent / "scripts"))
 from modload import load_module  # noqa: E402
 
 flow_profile = load_module("cad_flow_profile", SCRIPT)
+yaml_loader = flow_profile.yaml_loader  # the repo's YAML reader: YAML 1.1, so a bare on, off, yes or no is a boolean
 fx = load_module("cad_record_mi_fixtures", SKILLS / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
 
 # Design section 3 (issue 23, comment 6944452744), copied by hand.
@@ -79,6 +80,28 @@ class SchemaContract(unittest.TestCase):
             with self.subTest(name):
                 self.assertNotEqual(list(validator.iter_errors(gates)), [])
 
+    def test_the_fea_shape_agreed_with_package_a(self) -> None:
+        validator = flow_profile.schema_registry.ref_validator(flow_profile.SCHEMAS, flow_profile.PROFILE_REF)
+        accepted = ({"enabled": False}, {"enabled": True, "mode": "accurate"}, {"enabled": True, "mode": "fast"},
+                    {"enabled": True, "mode": "fast", "fast_band_pct": 50}, "not_asked")
+        rejected = ({"enabled": True}, {"enabled": False, "mode": "fast"}, {"enabled": False, "fast_band_pct": 5},
+                    {"enabled": True, "mode": "accurate", "fast_band_pct": 5},
+                    {"enabled": True, "mode": "fast", "fast_band_pct": 0},
+                    {"enabled": True, "mode": "fast", "fast_band_pct": -1},
+                    {"enabled": True, "mode": "fast", "fast_band_pct": 50.5},
+                    {"enabled": True, "mode": "fast", "solver": "ccx"}, "off", True)
+        for fea in accepted:
+            with self.subTest(accepted=fea):
+                self.assertEqual(list(validator.iter_errors(fx.flow_profile(fea=fea))), [])
+        for fea in rejected:
+            with self.subTest(rejected=fea):
+                self.assertNotEqual(list(validator.iter_errors(fx.flow_profile(fea=fea))), [])
+
+    def test_an_unasked_fea_is_neither_off_nor_fast(self) -> None:
+        self.assertEqual(flow_profile.fea_setting(fx.flow_profile(fea="not_asked")), (None, None))
+        self.assertEqual(flow_profile.fea_setting(fx.flow_profile(fea={"enabled": False})), (False, None))
+        self.assertEqual(flow_profile.fea_setting(fx.flow_profile(fea={"enabled": True, "mode": "fast"})), (True, "fast"))
+
     def test_fdm_is_the_iso_52900_material_extrusion_category(self) -> None:
         schema = json.loads((SKILLS / "cad-record" / "schemas" / "product.schema.json").read_text(encoding="utf-8"))
         processes = schema["$defs"]["profile"]["properties"]["processes"]["properties"]
@@ -111,37 +134,57 @@ class Record(unittest.TestCase):
         return run("record", "--hw", str(self.hw), "--decision", decision, *answers)
 
     def profile(self) -> Any:
-        return yaml.safe_load(self.product.read_text(encoding="utf-8"))["flow"]["profile"]
+        return yaml_loader.safe_load(self.product.read_text(encoding="utf-8"))["flow"]["profile"]
 
     def test_record_writes_the_answers_and_marks_every_unasked_question_not_asked(self) -> None:
-        result = self.record("DR-001", "--human-approval", "key", "--fea", "off", "--stack-up", "auto", "--critique", "light",
+        result = self.record("DR-001", "--human-approval", "key", "--fea", "fast:5", "--stack-up", "off", "--critique", "light",
                              "--results-in-git", "no", "--supports", "free", "--overhang-deg", "50", "--warp", "off",
-                             "--print-in-place", "offer", "--pip-clearance-xy", "0.3")
+                             "--cosmetic-faces", "on", "--print-in-place", "offer", "--pip-clearance-xy", "0.3")
         self.assertEqual(result.returncode, 0, result.stderr)
         n = "not_asked"
         self.assertEqual(self.profile(), {
-            "decision": "DR-001", "human_approval": "key", "fea": "off", "stack_up": "auto", "critique": "light",
-            "motion": "auto", "storage_results_in_git": False,
+            "decision": "DR-001", "human_approval": "key", "fea": {"enabled": True, "mode": "fast", "fast_band_pct": 5},
+            "stack_up": "off", "critique": "light", "motion": "auto", "storage_results_in_git": False,
             "processes": {"fdm": {"orientation": n, "supports": "free", "overhang_deg": 50, "bridge_mm": n, "min_wall_mm": n,
-                                  "min_feature_mm": n, "warp": "off", "cosmetic_faces": n, "print_in_place": "offer",
+                                  "min_feature_mm": n, "warp": "off", "cosmetic_faces": True, "print_in_place": True,
                                   "pip_clearance_mm": {"xy": 0.3, "z": n}}}})
-        data = yaml.safe_load(self.product.read_text(encoding="utf-8"))
+        data = yaml_loader.safe_load(self.product.read_text(encoding="utf-8"))
         self.assertEqual({k: v for k, v in data.items() if k != "flow"},
                          {"record_version": 2, "id": "tst-product", "rigor": "pro", "units": "mm"})
         self.assertEqual((data["flow"]["stage"], data["flow"]["recheck_from"]), ("intent", "intent"))
         self.assertIn("# a comment the profile record keeps\n", self.product.read_text(encoding="utf-8"))
 
+    def test_record_quotes_every_string_it_writes(self) -> None:
+        self.assertEqual(self.record("DR-001", "--stack-up", "off", "--warp", "off", "--fea", "off").returncode, 0)
+        text = self.product.read_text(encoding="utf-8")
+        for line in ('    stack_up: "off"\n', '        warp: "off"\n', '      enabled: false\n', '    critique: "not_asked"\n'):
+            self.assertIn(line, text)
+
+    def test_the_fea_answer_records_off_accurate_or_fast_with_an_optional_band(self) -> None:
+        for decision, answer, fea in (("DR-001", "off", {"enabled": False}),
+                                      ("DR-002", "accurate", {"enabled": True, "mode": "accurate"}),
+                                      ("DR-003", "fast", {"enabled": True, "mode": "fast"}),
+                                      ("DR-004", "fast:2.5", {"enabled": True, "mode": "fast", "fast_band_pct": 2.5}),
+                                      ("DR-005", "fast:50", {"enabled": True, "mode": "fast", "fast_band_pct": 50})):
+            with self.subTest(answer):
+                self.product.write_text(PRODUCT, encoding="utf-8")
+                self.assertEqual(self.record(decision, "--fea", answer).returncode, 0)
+                self.assertEqual(self.profile()["fea"], fea)
+        for index, answer in enumerate(("on", "accurate:5", "fast:0", "fast:-1", "fast:50.5", "fast:x")):
+            with self.subTest(answer):
+                self.assertEqual(self.record(f"DR-09{index}", "--fea", answer).returncode, 2)
+
     def test_record_writes_the_answers_as_an_approved_intent_decision(self) -> None:
-        self.assertEqual(self.record("DR-004", "--fea", "on").returncode, 0)
+        self.assertEqual(self.record("DR-004", "--fea", "accurate").returncode, 0)
         text = (self.hw / "decisions" / "DR-004.md").read_text(encoding="utf-8")
         self.assertEqual(text.splitlines()[:3], ["Status: APPROVED", "Gate: intent", "Version: N/A"])
-        self.assertIn("| fea | on |", text)
+        self.assertIn("| fea.mode | accurate |", text)
         self.assertIn("| processes.fdm.orientation | not_asked |", text)
 
     def test_record_refuses_a_decision_that_exists_and_changes_nothing(self) -> None:
         (self.hw / "decisions").mkdir()
         (self.hw / "decisions" / "DR-001.md").write_text("# DR-001 an earlier decision\n", encoding="utf-8")
-        result = self.record("DR-001", "--fea", "on")
+        result = self.record("DR-001", "--fea", "accurate")
         self.assertEqual(result.returncode, 2)
         self.assertIn("DR-001", result.stderr)
         self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
@@ -149,14 +192,14 @@ class Record(unittest.TestCase):
 
     def test_a_second_record_replaces_the_profile_under_its_new_decision(self) -> None:
         self.assertEqual(self.record("DR-001", "--fea", "off").returncode, 0)
-        self.assertEqual(self.record("DR-002", "--fea", "on").returncode, 0)
-        self.assertEqual((self.profile()["decision"], self.profile()["fea"]), ("DR-002", "on"))
+        self.assertEqual(self.record("DR-002", "--fea", "accurate").returncode, 0)
+        self.assertEqual((self.profile()["decision"], self.profile()["fea"]), ("DR-002", {"enabled": True, "mode": "accurate"}))
         self.assertEqual(self.product.read_text(encoding="utf-8").count("profile:"), 1)
 
     def test_record_refuses_a_flow_it_cannot_edit_as_text(self) -> None:
         text = PRODUCT.replace("flow:\n  stage: intent\n  recheck_from: intent\n", "flow: {stage: intent, recheck_from: intent}\n")
         self.product.write_text(text, encoding="utf-8")
-        result = self.record("DR-001", "--fea", "on")
+        result = self.record("DR-001", "--fea", "accurate")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.product.read_text(encoding="utf-8"), text)
         self.assertFalse((self.hw / "decisions" / "DR-001.md").exists())
@@ -222,6 +265,8 @@ class Check(unittest.TestCase):
                 exit_code, report = self.check(stage)
                 self.assertEqual(exit_code, code, report)
                 self.assertEqual([p["path"] for p in report["problems"]], ["flow/profile/fea"] if code else [])
+                if code:
+                    self.assertIn("not assessed (not asked)", report["problems"][0]["message"])
 
     def test_the_fdm_questions_fall_due_only_for_a_product_that_plans_fdm(self) -> None:
         profile = fx.flow_profile(fdm={"orientation": "not_asked"})
@@ -234,7 +279,7 @@ class Check(unittest.TestCase):
                                  ["flow/profile/processes/fdm/orientation"] if code else [])
 
     def test_the_pip_clearance_falls_due_only_while_print_in_place_is_offered(self) -> None:
-        for offer, code in (("offer", 1), ("no", 0)):
+        for offer, code in ((True, 1), (False, 0)):
             with self.subTest(print_in_place=offer):
                 self.write("detail", fx.flow_profile(fdm={"print_in_place": offer,
                                                           "pip_clearance_mm": {"xy": 0.3, "z": "not_asked"}}))
@@ -243,18 +288,59 @@ class Check(unittest.TestCase):
                 self.assertEqual([p["path"] for p in report["problems"]],
                                  ["flow/profile/processes/fdm/pip_clearance_mm/z"] if code else [])
 
-    def test_an_unquoted_on_blocks_with_the_reason(self) -> None:
-        self.write("specify", fx.flow_profile(fea=True))
-        exit_code, report = self.check()
-        self.assertEqual(exit_code, 1, report)
-        self.assertEqual([p["path"] for p in report["problems"]], ["flow/profile/fea"])
-        self.assertIn("quote", report["problems"][0]["message"])
-
     def test_check_exits_2_without_a_readable_record_or_with_an_unknown_stage(self) -> None:
         self.write("parts", fx.flow_profile())
         self.assertEqual(run("check", "--hw", str(self.hw), "--stage", "assembly").returncode, 2)
         (self.hw / "product.yaml").unlink()
         self.assertEqual(run("check", "--hw", str(self.hw)).returncode, 2)
+
+
+class BareYaml(unittest.TestCase):
+    """YAML 1.1 reads a bare on, off, yes or no as a boolean (the repo's yaml_loader). A two-state field is a
+    boolean, so the bare word is its value; a field with more states is a string, and a bare word blocks
+    with flow.profile_unquoted, never read as an answer."""
+
+    BOOLEAN = (("enabled", "on", "fea/enabled", True), ("enabled", "off", "fea/enabled", False),
+               ("cosmetic_faces", "on", "processes/fdm/cosmetic_faces", True),
+               ("cosmetic_faces", "off", "processes/fdm/cosmetic_faces", False),
+               ("print_in_place", "yes", "processes/fdm/print_in_place", True),
+               ("print_in_place", "no", "processes/fdm/print_in_place", False),
+               ("storage_results_in_git", "yes", "storage_results_in_git", True),
+               ("storage_results_in_git", "no", "storage_results_in_git", False))
+    STRING = (("stack_up", "on", "stack_up"), ("stack_up", "off", "stack_up"), ("critique", "off", "critique"),
+              ("supports", "off", "processes/fdm/supports"), ("overhang_deg", "off", "processes/fdm/overhang_deg"),
+              ("bridge_mm", "off", "processes/fdm/bridge_mm"), ("min_wall_mm", "off", "processes/fdm/min_wall_mm"),
+              ("min_feature_mm", "off", "processes/fdm/min_feature_mm"), ("warp", "off", "processes/fdm/warp"))
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-flow-profile-bare-")
+        self.addCleanup(temporary.cleanup)
+        self.hw = fx.write_record(Path(temporary.name) / "hw", fx.record())
+
+    def parsed(self, key: str, word: str) -> Any:
+        """product.yaml with `key: <word>` written bare, read by the repo's loader."""
+        product = fx.product(stage="release")
+        if key == "enabled":
+            product["flow"]["profile"]["fea"] = {"enabled": True, "mode": "accurate"} if word == "on" else {"enabled": False}
+        text = yaml.safe_dump(product, sort_keys=False)
+        lines = [line for line in text.splitlines() if line.lstrip().startswith(f"{key}:")]
+        self.assertEqual(len(lines), 1, key)
+        indent = lines[0][:len(lines[0]) - len(lines[0].lstrip())]
+        return yaml_loader.safe_load(text.replace(lines[0], f"{indent}{key}: {word}"))
+
+    def test_a_bare_word_is_the_value_of_a_two_state_field(self) -> None:
+        for key, word, path, value in self.BOOLEAN:
+            with self.subTest(f"{key}: {word}"):
+                product = self.parsed(key, word)
+                self.assertEqual(flow_profile.value_at(product["flow"]["profile"], path), value)
+                self.assertEqual(flow_profile.gate(self.hw, "release", product=product)[1], [])
+
+    def test_a_bare_on_or_off_in_a_field_with_more_states_blocks_and_asks_for_quotes(self) -> None:
+        for key, word, path in self.STRING:
+            with self.subTest(f"{key}: {word}"):
+                _stage, found = flow_profile.gate(self.hw, "release", product=self.parsed(key, word))
+                self.assertEqual([(item.code, item.path) for item in found], [("flow.profile_unquoted", f"flow/profile/{path}")])
+                self.assertIn(f'write "{word}" in quotes', found[0].message)
 
 
 class Conflicts(unittest.TestCase):
@@ -281,9 +367,14 @@ class Conflicts(unittest.TestCase):
         self.assertEqual(self.conflicts(), [])
 
     def test_fea_off_conflicts_with_a_strength_requirement_or_an_authored_fea_case(self) -> None:
-        self.assertEqual(self.conflicts(fea="off", critique="light", fea_cases=("bracket_load",)), [("fea_off", False)])
+        self.assertEqual(self.conflicts(fea={"enabled": False}, critique="light", fea_cases=("bracket_load",)),
+                         [("fea_off", False)])
         self.documents["requirements.yaml"]["requirements"][0]["verification"]["step"] = "fea"
-        self.assertEqual(self.conflicts(fea="off", critique="light"), [("fea_off", False)])
+        self.assertEqual(self.conflicts(fea={"enabled": False}, critique="light"), [("fea_off", False)])
+
+    def test_an_unasked_fea_is_no_conflict_since_its_due_check_blocks_instead(self) -> None:
+        self.documents["requirements.yaml"]["requirements"][0]["verification"]["step"] = "fea"
+        self.assertEqual(self.conflicts(fea="not_asked", critique="light", fea_cases=("bracket_load",)), [])
 
     def test_stack_up_off_conflicts_with_a_critical_interface(self) -> None:
         self.assertEqual(self.conflicts(stack_up="off"), [("stack_up_off", False)])
@@ -298,7 +389,7 @@ class Conflicts(unittest.TestCase):
 
     def test_a_print_in_place_joint_conflicts_with_declining_print_in_place_or_an_unchecked_overhang(self) -> None:
         self.pip_joint()
-        for fdm in ({"print_in_place": "no"}, {"overhang_deg": "off"}):
+        for fdm in ({"print_in_place": False}, {"overhang_deg": "off"}):
             with self.subTest(**fdm):
                 self.assertEqual(self.conflicts(fdm=fdm), [("pip_not_offered", False)])
 
@@ -308,7 +399,7 @@ class Conflicts(unittest.TestCase):
         self.assertEqual(self.conflicts(fdm={"pip_clearance_mm": {"xy": 0.2, "z": 0.3}}), [("pip_play_too_tight", False)])
 
     def test_safety_critical_service_or_regulated_rigor_refuses_every_off_and_light(self) -> None:
-        profile = {"fea": "off", "critique": "light", "stack_up": "auto", "fdm": {"warp": "off"}}
+        profile = {"fea": {"enabled": False}, "critique": "light", "stack_up": "auto", "fdm": {"warp": "off"}}
         expected = [("fea_off", False), ("safety_off", True), ("safety_off", True), ("safety_off", True)]
         self.documents["product.yaml"]["use_case"]["service_class"] = fx.known("safety_critical")
         self.assertEqual(self.conflicts(fea_cases=("bracket_load",), **profile), expected)

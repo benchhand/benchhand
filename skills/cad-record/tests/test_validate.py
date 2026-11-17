@@ -738,6 +738,18 @@ class FlowProfileGate(unittest.TestCase):
         _code, findings = self.findings("concept", fx.flow_profile(fdm={"warp": "off"}))
         self.assertEqual(self.flow(findings), [("flow.conflict", "error", "flow/profile/processes/fdm/warp")])
 
+    def test_a_bare_off_where_a_word_is_due_asks_for_quotes(self) -> None:
+        self.findings("layout", fx.flow_profile())
+        product = self.project / "hw" / "product.yaml"
+        text = product.read_text(encoding="utf-8")
+        self.assertEqual(text.count("stack_up: auto\n"), 1)
+        product.write_text(text.replace("stack_up: auto\n", "stack_up: off\n"), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,
+                                timeout=120)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.flow(json.loads(result.stdout)["findings"]),
+                         [("flow.profile_unquoted", "error", "flow/profile/stack_up")])
+
 
 class LedgerEvidence(unittest.TestCase):
     """The record's own evidence checks: waivers must stand, and a CSV result is never evidence."""

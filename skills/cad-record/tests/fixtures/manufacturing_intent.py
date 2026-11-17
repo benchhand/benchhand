@@ -150,11 +150,12 @@ def flow_profile(decision: str = PROFILE_DECISION, **changes: Any) -> dict[str, 
     question answered, in the combination no flow.conflict rule fires on. `changes` replace top-level
     fields; `fdm` replaces processes.fdm fields."""
     fdm = {"orientation": "propose", "supports": "allowed", "overhang_deg": 45, "bridge_mm": 10, "min_wall_mm": 0.8,
-           "min_feature_mm": 0.4, "warp": "calibrated", "cosmetic_faces": "off", "print_in_place": "offer",
+           "min_feature_mm": 0.4, "warp": "calibrated", "cosmetic_faces": False, "print_in_place": True,
            "pip_clearance_mm": {"xy": "calibrated", "z": "calibrated"}}
     fdm.update(changes.pop("fdm", {}))
-    data: dict[str, Any] = {"decision": decision, "human_approval": "all", "fea": "on", "stack_up": "auto", "critique": "full",
-                            "motion": "auto", "storage_results_in_git": False, "processes": {"fdm": fdm}}
+    data: dict[str, Any] = {"decision": decision, "human_approval": "all", "fea": {"enabled": True, "mode": "accurate"},
+                            "stack_up": "auto", "critique": "full", "motion": "auto", "storage_results_in_git": False,
+                            "processes": {"fdm": fdm}}
     data.update(changes)
     return data
 

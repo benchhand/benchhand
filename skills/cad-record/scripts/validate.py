@@ -649,7 +649,7 @@ def check_flow(product: dict[str, Any], path: str, hw: Path, part_records: dict[
     At the recorded stage, the flow profile and its decision exist and no question due by then is unasked."""
     flow = product["flow"]
     for problem in flow_profile.problems(hw, product):
-        findings.append(finding(path, f"{problem.path}: {problem.message}", code="flow.profile", action=problem.action))
+        findings.append(finding(path, f"{problem.path}: {problem.message}", code=problem.code, action=problem.action))
     frozen, change = flow.get("frozen"), flow.get("change")
     approves = {"frozen": "freezes a version", "change": "opens an engineering change"}
     for where, item in (("frozen", frozen), ("change", change)):
@@ -1115,6 +1115,9 @@ def validate_project(project_dir: Path) -> list[dict[str, str]]:
     if valid.get("product.yaml"):
         check_flow(documents["product.yaml"], str(hw / "product.yaml"), hw, part_records, findings)
         check_flow_conflicts(documents, hw, part_records, findings)
+    for problem in flow_profile.unquoted(documents.get("product.yaml")):  # the schema rejects it too, less plainly
+        findings.append(finding(str(hw / "product.yaml"), f"{problem.path}: {problem.message}", code=problem.code,
+                                action=problem.action))
     record = check_manufacturing_intent(hw, documents, part_records, verification, findings)
     check_acceptance_anchor(hw, record, findings)
     check_design_rules(hw, documents, valid, part_records, inventory, findings)
