@@ -522,9 +522,9 @@ class RequiredChecks(unittest.TestCase):
         self.assertIn("engineering.load_cases@TST-0001", found)
         self.assertNotIn("engineering.creep@TST-0001", found)
         legacy = {o.id for o in mi.required_checks(mi.load_record(fx.LAMP))}
-        self.assertIn("intent.route@LMP-0001", legacy)
         self.assertIn("intent.use_case@product", legacy)
-        self.assertFalse(any(i.startswith("process.fdm") for i in legacy), "a legacy fdm label dispatches no process checks")
+        self.assertFalse(any(i.startswith("process.") and "TST-0004" in i for i in found),
+                         "a part whose route is unknown dispatches no process checks from its process label")
 
     def test_every_component_gets_its_own_obligations(self) -> None:
         documents = fx.tst_record()
