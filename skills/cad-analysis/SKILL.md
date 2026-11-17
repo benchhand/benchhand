@@ -88,6 +88,8 @@ A versioned run probes the tools first and records only their versions in the re
 - `solver_crashed`: ccx died from a signal; details give signal, stage and degrees of freedom. The bundled SPOOLES index limit can fail on very large models; raise `mesh_size`.
 - `solver_failed`: ccx stopped with `*ERROR` messages. A nonpositive Jacobian lists distorted second-order elements; lower `mesh_size`.
 - `freecad_timeout`: details identify `import`, `mesh`, `solve` or `results`; raise `timeout_seconds` or adjust `mesh_size` for meshing.
+- `load_not_applied`: a load with a nonzero force reaches no node of the CalculiX input, so the job refuses it before ccx runs. FreeCAD found no mesh element face on the selected faces. Details list each such load's constraint, force and node count (0). Check the face selector, or change `mesh_size`.
+- `zero_result`: ccx returned a peak von Mises stress or a peak displacement of exactly 0 under a nonzero load. The load never reached the solved model, so the job refuses the result instead of passing it.
 
 ## Rules
 

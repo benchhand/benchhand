@@ -354,6 +354,7 @@ JOB=json.loads({job_json!r})
 sys.path.insert(0, os.path.dirname(JOB["selection_module"]))
 sys.path.insert(0, os.path.dirname(JOB["solvers_module"]))
 from fea_part_selection import MultipleSolids, SceneObject, select_occurrence, select_part_solid, selected_face_indices
+from ccx_failure import applied_loads, unapplied_load, zero_result
 from fea_solvers import resolve_in_freecad
 from ccx_failure import ccx_failure
 from mesh_quality import mesh_quality, needs_fallback, read_c3d10
@@ -499,7 +500,13 @@ def run():
         if not fea.ccx_binary_present: raise RuntimeError("%s did not identify itself as CalculiX ccx" % tools["calculix"]["path"])
         problems=fea.check_prerequisites()
         if problems: raise RuntimeError("CalculiX prerequisites failed: %r" % problems)
-        fea.write_inp_file(); phase("solve")
+        fea.write_inp_file()
+        # Each nonzero load must reach a node of the input ccx solves: FreeCAD writes an empty *CLOAD for a face
+        # selection it finds no mesh element face on (issue #143), and ccx then solves the part unloaded.
+        loads=[("FaceForce%d" % n, math.sqrt(sum(c*c for c in spec["force"]))) for n, spec in enumerate(JOB["loads"])]
+        with open(fea.inp_file_name, "r", encoding="utf-8") as inp: unapplied=unapplied_load(applied_loads(inp.read()), loads)
+        if unapplied: raise AnalysisError(unapplied)
+        phase("solve")
         os.environ.update(JOB["ccx_environment"])  # start_ccx's ccx inherits this process environment
         # ccx creates spooles.out on entering the SPOOLES factorisation.
         failure=ccx_failure(fea.start_ccx(), fea.ccx_stdout, spooles_started=os.path.isfile(os.path.join(JOB["run_directory"], "spooles.out")), node_count=nodes)
@@ -510,6 +517,8 @@ def run():
         stress=[float(v) for v in results.vonMises]; displacement=[float(v) for v in results.DisplacementLengths]
         if not stress or not displacement: raise RuntimeError("solver returned no stress or displacement results")
         max_stress=max(stress); max_displacement=max(displacement); y=float(JOB["material"]["yield"])
+        empty=zero_result(max_stress, max_displacement, loads)
+        if empty: raise AnalysisError(empty)
         safety_factor=y/max_stress if max_stress else None
         result={{"run_id":JOB["run_id"], "part":JOB.get("part"), "occurrence":JOB.get("occurrence"), "solid_index":JOB.get("solid_index"), "max_von_mises_mpa":max_stress, "max_displacement_mm":max_displacement, "safety_factor_yield":safety_factor, "node_count":nodes, "element_count":elements, "solve_time_seconds":solve_seconds}}
         result["solver_versions"]=JOB["solver_versions"]

@@ -1,9 +1,11 @@
-"""Classify a failed CalculiX ccx run into an actionable no-result error."""
+"""Classify a CalculiX run that cannot give a valid result into an actionable no-result error: a failed ccx
+run, a load that the ccx input applies to no mesh node, or a zero result under a nonzero load (issue #143)."""
 
 from __future__ import annotations
 
 import re
 import signal
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 # SPOOLES 2.2's I2Ohash_insert, unpatched in the CalculiX ccx that FreeCAD bundles, multiplies two
@@ -95,3 +97,62 @@ def _stop_message(returncode: int, errors: list[str]) -> str:
         more = f" (+{len(errors) - 3} more)" if len(errors) > 3 else ""
         return f"CalculiX ccx stopped with exit status {returncode}: " + "; ".join(errors[:3]) + more
     return f"CalculiX ccx stopped with exit status {returncode} without an *ERROR message."
+
+
+def applied_loads(inp: str) -> dict[str, int]:
+    """Each force constraint of a FreeCAD-written ccx input, mapped to the number of distinct nodes its *CLOAD
+    lines load with a nonzero component. FreeCAD names the constraint in the `** <name>` comment before its
+    *CLOAD, and writes one `node, degree of freedom, load` line per loaded component."""
+    loads: dict[str, set[str]] = {}
+    comment, current = None, None
+    for line in inp.splitlines():
+        text = line.strip()
+        if text.startswith("**"):
+            comment = text[2:].strip()
+        elif text.upper().startswith("*CLOAD"):
+            current = comment or f"*CLOAD {len(loads)}"
+            loads.setdefault(current, set())
+        elif text.startswith("*"):
+            current = None
+        elif current is not None and text:
+            fields = [field.strip() for field in text.split(",")]
+            if len(fields) == 3 and _nonzero(fields[2]):
+                loads[current].add(fields[0])
+    return {name: len(nodes) for name, nodes in loads.items()}
+
+
+def _nonzero(value: str) -> bool:
+    """Whether a *CLOAD magnitude is nonzero. A magnitude that does not parse counts as nonzero, so the check
+    passes it."""
+    try:
+        return float(value) != 0.0
+    except ValueError:
+        return True
+
+
+def unapplied_load(applied: Mapping[str, int], loads: Sequence[tuple[str, float]]) -> dict[str, Any] | None:
+    """The `load_not_applied` error when a load with a nonzero force reaches no node of the ccx input, else None.
+    `loads` lists each case load in order as (its force constraint's name, its force in N)."""
+    missing = [(index, {"constraint": name, "force_n": force, "nodes": applied.get(name, 0)})
+               for index, (name, force) in enumerate(loads) if force != 0.0 and applied.get(name, 0) == 0]
+    if not missing:
+        return None
+    named = "; ".join(f"load {index} ({load['force_n']:g} N) reaches no mesh node" for index, load in missing)
+    return {"code": "load_not_applied", "details": {"loads": [load for _, load in missing]},
+            "message": (f"{named} in the CalculiX input, so ccx would solve without it. FreeCAD found no element "
+                        "face of the mesh on the selected faces: check the load's face selector, or change "
+                        "mesh_size. Nothing was solved.")}
+
+
+def zero_result(max_stress: float, max_displacement: float, loads: Sequence[tuple[str, float]]) -> dict[str, Any] | None:
+    """The `zero_result` error when the case applies a nonzero force but ccx returns a peak von Mises stress
+    or a peak displacement of exactly 0, else None. Such a result says the load never reached the solved model."""
+    force = sum(abs(magnitude) for _, magnitude in loads)
+    if force == 0.0 or (max_stress != 0.0 and max_displacement != 0.0):
+        return None
+    return {"code": "zero_result",
+            "details": {"max_von_mises_mpa": max_stress, "max_displacement_mm": max_displacement,
+                        "applied_force_n": force},
+            "message": (f"CalculiX ccx returned a peak von Mises stress of {max_stress:g} MPa and a peak "
+                        f"displacement of {max_displacement:g} mm under {force:g} N of load: the load did not reach "
+                        "the solved model. The result is refused.")}
