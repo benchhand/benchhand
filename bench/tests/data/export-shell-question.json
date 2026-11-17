@@ -1,0 +1,177 @@
+{
+ "info": {
+  "id": "ses_e1713cef1ffexPNLD2COPAsL1s",
+  "projectID": "global",
+  "cost": 0.0018830650000000002,
+  "tokens": {
+   "input": 468,
+   "output": 212,
+   "reasoning": 0,
+   "cache": {
+    "read": 12507,
+    "write": 12801
+   }
+  },
+  "outcome": "succeeded",
+  "time": {
+   "created": 1794909155672,
+   "updated": 1794909176031,
+   "busy": 1794909157008,
+   "idle": 1794909176034,
+   "archived": 1794909155679
+  },
+  "title": "Shell command and colour preference",
+  "location": {
+   "directory": "/scratch/bench-probe/proj"
+  }
+ },
+ "messages": [
+  {
+   "id": "msg_1e8ec318a001pXtvHlTEtdLqp5",
+   "time": {
+    "created": 1794909157018
+   },
+   "text": "Read a.txt, then run the shell command 'echo hi; exit 1', then ask me which colour I prefer and stop.",
+   "files": [],
+   "type": "user"
+  },
+  {
+   "id": "msg_1e8ec36a3001IuxH0fZ6JhEgp0",
+   "time": {
+    "created": 1794909157030,
+    "firstToken": 1794909160857,
+    "streamed": 1794909161383,
+    "completed": 1794909173035
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "global.anthropic.claude-haiku-5-5",
+    "providerID": "amazon-bedrock"
+   },
+   "content": [
+    {
+     "type": "tool",
+     "id": "tooluse_fKb9gbVQuQA9AiaHJ1udWS",
+     "name": "read",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "path": "/scratch/bench-probe/proj/a.txt"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "Read file /scratch/bench-probe/proj/a.txt, lines 1-1\n1: hello"
+       }
+      ],
+      "metadata": {
+       "truncated": false
+      }
+     },
+     "time": {
+      "created": 1794909160858,
+      "ran": 1794909161375,
+      "completed": 1794909161393
+     }
+    },
+    {
+     "type": "tool",
+     "id": "tooluse_OxbpLlkHyY26mEC7SaaTR7",
+     "name": "shell",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "echo hi; exit 1"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "hi\n"
+       },
+       {
+        "type": "text",
+        "text": "Exit code: 1"
+       }
+      ],
+      "metadata": {
+       "status": "completed",
+       "truncated": false,
+       "exit": 1
+      }
+     },
+     "time": {
+      "created": 1794909161376,
+      "ran": 1794909161381,
+      "completed": 1794909172886
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+    "end": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+    "files": []
+   },
+   "finish": "tool-calls",
+   "rawFinish": "tool_use",
+   "cost": 0.0016392750000000002,
+   "tokens": {
+    "input": 4,
+    "output": 151,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 12507
+    }
+   }
+  },
+  {
+   "id": "msg_1e8ec7531001SBabmYRC7GUad1",
+   "time": {
+    "created": 1794909173043,
+    "firstToken": 1794909175848,
+    "streamed": 1794909175971,
+    "completed": 1794909176031
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "global.anthropic.claude-haiku-5-5",
+    "providerID": "amazon-bedrock"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "I read `a.txt`; it contains `hello`. The shell command printed `hi` and exited with code 1, as expected.\n\nWhich colour do you prefer?"
+    }
+   ],
+   "snapshot": {
+    "start": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+    "end": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+    "files": []
+   },
+   "finish": "stop",
+   "rawFinish": "end_turn",
+   "cost": 0.00018802,
+   "tokens": {
+    "input": 2,
+    "output": 52,
+    "reasoning": 0,
+    "cache": {
+     "read": 12507,
+     "write": 294
+    }
+   }
+  },
+  {
+   "id": "msg_1e8ec80e2001sxpnFDnQGh1RW7",
+   "time": {
+    "created": 1794909176034
+   },
+   "type": "idle",
+   "outcome": "succeeded"
+  }
+ ]
+}

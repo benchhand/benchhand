@@ -1,0 +1,41 @@
+{
+  "currency": "USD",
+  "price_source": {
+    "url": "https://models.dev/api.json",
+    "provider": "amazon-bedrock",
+    "fetched": "2026-11-17",
+    "unit": "USD per million tokens; a tier applies when a request's context (input + cache read + cache write) exceeds context_over",
+    "note": "The same catalogue OpenCode prices its step costs from; a probe step on haiku-5-5 matched OpenCode's reported cost to the cent. The AWS Bedrock pricing page renders its tables in the browser and could not be read as text."
+  },
+  "prices_usd_per_million": {
+    "amazon-bedrock/global.anthropic.claude-opus-5-5": {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5},
+    "amazon-bedrock/global.anthropic.claude-sonnet-5-5": {"input": 2, "output": 10, "cache_read": 0.1, "cache_write": 2.5},
+    "amazon-bedrock/global.anthropic.claude-haiku-5-5": {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125,
+      "tiers": [{"context_over": 100000, "input": 0.5, "output": 2.5, "cache_read": 0.05, "cache_write": 0.625}]},
+    "amazon-bedrock/global.openai.gpt-6.1-sol": {"input": 2, "output": 10, "cache_read": 0.1, "cache_write": 2.5,
+      "tiers": [{"context_over": 272000, "input": 4, "output": 15, "cache_read": 0.2, "cache_write": 5}]},
+    "amazon-bedrock/global.openai.gpt-6-luna": {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125,
+      "tiers": [{"context_over": 272000, "input": 0.2, "output": 0.75, "cache_read": 0.02, "cache_write": 0.25}]}
+  },
+  "producer": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "agent": null},
+  "judge": {"model": "amazon-bedrock/global.openai.gpt-6.1-sol", "vendor": "OpenAI (producer: Anthropic)"},
+  "tier_models": {"cheap": "amazon-bedrock/global.anthropic.claude-haiku-5-5"},
+  "caps": {"max_turns": 60, "max_active_minutes": 300, "run_spend_usd": 40},
+  "check_timeouts_s": {"default": 1200, "sweep": 3600},
+  "opencode": {
+    "$schema": "https://opencode.ai/config.json",
+    "providers": {
+      "amazon-bedrock": {
+        "settings": {"profile": "agent-bedrock", "region": "us-east-1", "cache": {"ttl": "5m"}},
+        "models": {
+          "global.anthropic.claude-opus-5-5": {"body": {"additionalModelRequestFields": {"output_config": {"effort": "medium"}}}},
+          "global.anthropic.claude-sonnet-5-5": {"body": {"additionalModelRequestFields": {"output_config": {"effort": "medium"}}}},
+          "global.openai.gpt-6.1-sol": {"settings": {"cache": {"ttl": "30m"}}}
+        }
+      }
+    },
+    "permissions": [{"action": "question", "resource": "*", "effect": "deny"}],
+    "formatter": false,
+    "websearch": {"provider": "random"}
+  }
+}

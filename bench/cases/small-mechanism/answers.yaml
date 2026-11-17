@@ -1,0 +1,49 @@
+extends: _common
+slots:
+  purpose: >-
+    It latches a hinged panel on a workbench cabinet. Adults push the lever by hand to open and
+    close the latch.
+  service-class: 'Working prototype representative of intended use: four latches on our own cabinet.'
+  rigor: pro
+  release-scope: >-
+    A CAD release: STEP and STL, drawings, BOM and the checks and analyses we run. It claims no
+    measured strength or life.
+  pn-prefix: Use the product id small-mechanism and part numbers LCH-0001 onward.
+  equipment: >-
+    Our own Prusa MK4: 250 × 210 × 220 mm build volume, 0.4 mm nozzle, 0.2 mm layers, PETG. A
+    6 mm H7 hand reamer for the lever's pin hole. No calibration records or measured capability.
+  material: >-
+    PETG (Prusament PETG) for the bracket and lever. The pin is a purchased steel grooved pin and
+    the rings are DIN 6799 spring steel.
+  mass: No mass target.
+  loads: >-
+    Up to 30 N by hand at the lever's handle end, about 80 mm from the pivot, in either direction
+    of travel, including against each stop. No impact or vibration rating.
+  motion: >-
+    The lever turns about the pin from 0° latched to 75° open, with hard stops on the bracket at
+    both ends. About 20 cycles a day; no life target is claimed.
+  clearance: >-
+    0.3 mm axial gap between the lever and each cheek. The pin runs in the reamed lever hole with
+    a 6 H7/f7-class clearance fit and is held in the bracket cheeks. At least 1 mm between the
+    lever and the bracket through the whole travel, except at the stops.
+  environment: Indoor workshop, 10 to 35 °C, dry.
+  accuracy: >-
+    As printed except the reamed Ø6 H7 hole in the lever. The cheek holes are printed and may be
+    drilled to suit.
+  consequences: Low consequence; a failed latch lets the panel swing open. No standard applies.
+  quantity: 4 latches, printed in-house within two weeks.
+  maintenance: The lever comes off by removing one retaining ring and pulling the pin.
+  appearance: Plain, any single colour.
+intents:
+  - id: pin
+    match: ['\bpin\b.*\b(length|diameter|groove|type|source|designation|material)', 'retaining ring', 'DIN 6799',
+            '\bE-?clip\b', '\bcirclip\b']
+    answer: >-
+      Ø6 mm steel grooved pin, 30 mm long, with a groove for a DIN 6799 size 5 retaining ring near
+      each end; source a catalogue grooved pin and its ring by designation. Each ring bears on the
+      outside face of a bracket cheek.
+  - id: panel-screws
+    match: ['\bM4\b', '\bpanel\b', 'mount(ing)? (screws?|holes?)']
+    answer: >-
+      Two ISO 7380 M4 × 12 button head screws hold the bracket to a 3 mm steel panel with M4 rivet
+      nuts, 40 mm apart along the bracket's length.

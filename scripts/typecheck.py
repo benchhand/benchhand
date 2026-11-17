@@ -102,6 +102,11 @@ CHANGED_FILES = (
     "skills/cad-design/tests/mfg_corpus/families/form_check_kernel_validity.py",
 )
 STRICT_FILES = (
+    "bench/acceptance.py",
+    "bench/dialogue.py",
+    "bench/metrics.py",
+    "bench/report.py",
+    "bench/run.py",
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-flow/scripts/fea_solvers.py",

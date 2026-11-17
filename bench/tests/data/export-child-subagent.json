@@ -1,0 +1,85 @@
+{
+ "info": {
+  "id": "ses_e17124009ffeQAcWUJtCR3T5iN",
+  "parentID": "ses_e17124cd2ffezncxVk64dImBJ8",
+  "projectID": "global",
+  "agent": "general",
+  "cost": 0.001393525,
+  "tokens": {
+   "input": 4,
+   "output": 4,
+   "reasoning": 0,
+   "cache": {
+    "read": 0,
+    "write": 11129
+   }
+  },
+  "outcome": "succeeded",
+  "time": {
+   "created": 1794909257723,
+   "updated": 1794909260345,
+   "busy": 1794909257727,
+   "idle": 1794909260348
+  },
+  "title": "Ping-pong reply",
+  "location": {
+   "directory": "/scratch/bench-probe/proj"
+  }
+ },
+ "messages": [
+  {
+   "id": "msg_1e8edbffc0022955S6xENyQRtL",
+   "time": {
+    "created": 1794909257729
+   },
+   "text": "You are a subagent spawned by another session.\nReply with the single word pong.",
+   "type": "user"
+  },
+  {
+   "id": "msg_1e8edc004001htBgq7jEC7DLGA",
+   "time": {
+    "created": 1794909257733,
+    "firstToken": 1794909260041,
+    "streamed": 1794909260047,
+    "completed": 1794909260345
+   },
+   "type": "assistant",
+   "agent": "general",
+   "model": {
+    "id": "global.anthropic.claude-haiku-5-5",
+    "providerID": "amazon-bedrock"
+   },
+   "content": [
+    {
+     "type": "text",
+     "text": "pong"
+    }
+   ],
+   "snapshot": {
+    "start": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+    "end": "2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1",
+    "files": []
+   },
+   "finish": "stop",
+   "rawFinish": "end_turn",
+   "cost": 0.001393525,
+   "tokens": {
+    "input": 4,
+    "output": 4,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 11129
+    }
+   }
+  },
+  {
+   "id": "msg_1e8edca3c001pfFj0h2tJ6pzSg",
+   "time": {
+    "created": 1794909260348
+   },
+   "type": "idle",
+   "outcome": "succeeded"
+  }
+ ]
+}

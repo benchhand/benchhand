@@ -1,0 +1,43 @@
+extends: _common
+slots:
+  purpose: A desk box for small parts such as screws and SD cards. Adults open and close it by hand.
+  service-class: >-
+    Working prototype representative of intended use: we print 5 to judge the hinge, then keep
+    using them.
+  rigor: maker
+  release-scope: >-
+    A CAD release: STEP and STL, drawings, BOM and the checks we run. It claims no hinge life or
+    print success; the 0.3 mm clearance is a design value, not a measured one.
+  pn-prefix: Use the product id print-in-place and part numbers PIP-0001 onward.
+  equipment: >-
+    Our own Prusa MK4: 250 × 210 × 220 mm build volume, 0.4 mm nozzle, 0.2 mm layers, PLA. We have
+    no calibration records or measured clearance capability for it.
+  material: Prusament PLA for the whole print.
+  mass: No mass target.
+  loads: Only hand opening and closing, under 5 N at the lid edge. No impact rating.
+  motion: >-
+    The lid turns about the hinge axis from 0° closed to 110° open, where a printed stop stops it.
+    A few open and close cycles a day; no life target is claimed.
+  clearance: >-
+    0.3 mm radial clearance between the pin and each knuckle bore and 0.3 mm axial gap between
+    neighbouring knuckles, laid out with the clearance margin. Closed, the lid rests on the base rim.
+  environment: Indoor desk, 15 to 30 °C, dry, no sunlight.
+  accuracy: As printed; no post-processing. The hinge must turn freely after the print is removed.
+  consequences: Low consequence; a failed print is reprinted. No standard applies.
+  quantity: 5 boxes, printed in-house this week.
+  maintenance: None; it is one printed part.
+  appearance: A single filament colour, plain finish.
+intents:
+  - id: one-piece
+    match: ['one piece', 'single (part|print|body)', 'separate (parts|bodies|pin)', 'print[- ]in[- ]place',
+            'how many parts', 'components?\b.*\b(solid|body)']
+    answer: >-
+      It prints as one job with no assembly: the base with its knuckles, the lid with its knuckles,
+      and the pin, which are separate solids only because the clearance separates them. Record it
+      however the record models a print-in-place part best.
+  - id: orientation
+    match: ['\borientation\b', 'support[- ](material|structures?|inside|removal|free)', 'supports? (are )?(needed|allowed|acceptable)',
+            'print (direction|position)', '\bbed\b']
+    answer: >-
+      Print it open at 90° or flat, whichever keeps the hinge axis parallel to the bed and needs
+      no support inside the hinge. Supports elsewhere are acceptable if needed.

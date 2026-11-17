@@ -1,0 +1,26 @@
+# Must-have acceptance requirements the judge scores from the record, check results and renders.
+hard_checks:
+  sweep: true
+requirements:
+  - id: LA-1
+    text: >-
+      Three revolute joints with the ranges the brief states: head at least ±45°, elbow 0° to
+      -120°, base -10° to 80°; the sweep over them finds no interference.
+  - id: LA-2
+    text: >-
+      The record carries the 0.8 kg head at full horizontal reach as a requirement with a
+      verification method, and claims it verified only with analysis evidence.
+  - id: LA-3
+    text: >-
+      Every made part has a recorded material and process route: PETG FDM for the base and head,
+      6061-T6 CNC for the two links, stainless pins made to drawing.
+  - id: LA-4
+    text: >-
+      Each pin is axially retained by a DIN 471 ring in a groove, and each printed pivot carries a
+      brass bushing.
+  - id: LA-5
+    text: The base has two holes or slots for M6 fasteners to a work surface.
+  - id: LA-6
+    text: The BOM lists every made and bought part with quantities, including three rings.
+  - id: LA-7
+    text: The renders show the base, both links and the head joined at three pivots.

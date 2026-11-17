@@ -1,0 +1,46 @@
+extends: _common
+slots:
+  purpose: >-
+    It holds one end of a shelf in our own workshop. Adults place tools and storage boxes on the
+    shelf. No children use it.
+  service-class: 'Production: end-use brackets for our own workshop, not a prototype.'
+  rigor: pro
+  release-scope: >-
+    A CAD release: STEP, drawings, BOM and the analyses we run. It claims no physical test or
+    certification; the 200 N tip load is a design requirement that analysis supports, not a rating.
+  pn-prefix: Use the product id wall-bracket and part numbers WBR-0001 onward.
+  equipment: >-
+    No in-house machining. An outsourced CNC bureau mills 3-axis from 6061-T6 plate up to 20 mm
+    thick; its published general capability is ±0.1 mm and minimum internal corner radius 1 mm. We
+    have no calibration records for it. The fasteners are bought.
+  material: 6061-T6 aluminium for the bracket; the screws are standard steel catalogue parts.
+  mass: No mass target; lighter is better once the load and deflection requirements are met.
+  loads: >-
+    Static 200 N downward at the shelf's front edge, 250 mm from the wall face, plus about 15 N
+    shelf weight per bracket. Boxes are placed, not dropped; no impact, vibration or cyclic rating.
+    Use a safety factor of 2 on yield for the 200 N case. Tip deflection under 200 N below 2 mm.
+  motion: No motion; it is a static bracket.
+  clearance: >-
+    The M6 holes are clearance holes (6.6 mm, ISO 273 medium). The bracket's back face sits flat
+    on the rail face.
+  environment: Indoor, dry workshop, 10 to 35 °C. No chemicals, UV or corrosion exposure.
+  accuracy: >-
+    As machined and deburred, no coating. The two M6 holes must be at 32 mm pitch within ±0.2 mm
+    to meet the rail's rivet nuts.
+  consequences: >-
+    If it fails the shelf falls; nobody stands under it. No regulatory standard applies. I approve
+    the design myself.
+  quantity: 20 brackets, about 15 EUR each from the bureau, within three weeks.
+  maintenance: No maintenance. A bracket is replaced by removing its two cap screws.
+  appearance: Appearance does not matter.
+intents:
+  - id: rail
+    match: ['rail (face|width|thickness|material|profile)', 'rivet nut', 'hole pitch', 'wall (type|construction|anchor)']
+    answer: >-
+      The rail face is 40 mm wide and 2 mm steel, with M6 rivet nuts at 32 mm vertical pitch. The
+      bracket's back face sits on the rail face and two ISO 4762 M6 screws go into the rivet nuts.
+  - id: shelf
+    match: ['shelf (board|thickness|depth|material)', '\bplywood\b', 'wood screws?']
+    answer: >-
+      18 mm plywood, 250 mm deep, resting on the bracket's top flange. Two 4 × 16 mm countersunk
+      wood screws go up through the flange into the board.

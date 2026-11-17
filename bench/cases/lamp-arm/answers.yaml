@@ -1,0 +1,45 @@
+extends: _common
+slots:
+  purpose: >-
+    A desk lamp arm for a home office or workbench. An adult aims the head by hand a few times a
+    day; nobody hangs anything else on it.
+  service-class: 'Production: end-use lamp arms built in a small batch.'
+  rigor: pro
+  release-scope: >-
+    A CAD release: STEP, drawings, BOM, verification matrix and the analyses we run. It claims no
+    electrical or lighting safety; the lampholder and wiring are out of scope.
+  pn-prefix: Keep the product id lamp-arm and the existing LMP-#### part numbers; new parts continue the sequence.
+  equipment: >-
+    All outsourced. An FDM bureau prints PETG with a published ±0.2 mm, ±1° capability; a CNC
+    bureau machines 6061-T6 with ±0.05 mm on size and ⌀0.1 position, and supplies the links
+    deburred. The stainless pins are made to drawing by a turning shop still to be chosen. No
+    calibration records for any of them.
+  material: >-
+    PETG for the base and head, 6061-T6 for the links, stainless A2 for the pins, brass for the
+    bushings and insert, spring steel C60S for the DIN 471 rings, as the record has them.
+  mass: Keep the record's mass targets.
+  loads: >-
+    The 0.8 kg head at full horizontal reach is the governing static case, with a safety factor of
+    2 on yield for the metal parts. Users push the head with up to 10 N to aim it. No impact or
+    vibration rating.
+  motion: >-
+    The ranges in the brief: head ±45°, elbow 0° to -120°, base -10° to 80°. The joints are
+    friction-held by hand adjustment a few times a day; no life target is claimed.
+  clearance: Use the fits and stack-ups the record already holds (DR-003, DR-004).
+  environment: Indoor home office or workshop, 10 to 35 °C, dry. The head near the bulb may reach 50 °C.
+  accuracy: As the record's tolerance table in DR-004 states.
+  consequences: >-
+    If a joint fails the head drops onto the desk. No regulatory standard applies to the
+    mechanical arm. I approve the design myself.
+  quantity: 10 lamp arms, within six weeks, cost as quoted by the bureaus.
+  maintenance: Pins come out after removing their DIN 471 rings with standard pliers; metric hex keys for the rest.
+  appearance: Black PETG; the links natural machined aluminium, deburred.
+intents:
+  - id: migration
+    match: ['\bmigrat', '--apply', 'record version 1', '\bv1 record\b']
+    answer: >-
+      Yes: I reviewed the dry run. Apply the migration with --apply as the owner, then fill the
+      unknowns it adds from my answers.
+  - id: existing-decisions
+    match: ['\bDR-00[1-4]\b', 'existing (decisions|record)', 'keep\b.*\b(current|existing)']
+    answer: Keep every existing decision and the layout the record holds unless a check shows it cannot work.

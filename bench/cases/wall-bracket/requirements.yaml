@@ -1,0 +1,28 @@
+# Must-have acceptance requirements the judge scores from the record, check results and renders.
+hard_checks:
+  sweep: false
+requirements:
+  - id: WB-1
+    text: >-
+      Exactly one custom-made part, the bracket, recorded in 6061-T6 aluminium on a CNC machining
+      route; every fastener is a purchased part identified by its standard designation.
+  - id: WB-2
+    text: >-
+      The record states the 200 N static tip load at 250 mm from the wall face as a requirement
+      with a verification method.
+  - id: WB-3
+    text: The bracket has two M6 clearance holes at a 32 mm pitch in the face that sits on the rail.
+  - id: WB-4
+    text: >-
+      The bracket supports the shelf to at least 250 mm from the wall face and has two holes in its
+      top flange for the shelf's wood screws.
+  - id: WB-5
+    text: The BOM lists the bracket, two M6 cap screws and two wood screws per bracket, with quantities.
+  - id: WB-6
+    text: >-
+      The renders show a recognisable bracket with a wall face and a shelf-support flange, and the
+      fasteners in place.
+  - id: WB-7
+    text: >-
+      The 2 mm tip-deflection limit is a requirement, and the record does not claim it verified
+      without analysis evidence.

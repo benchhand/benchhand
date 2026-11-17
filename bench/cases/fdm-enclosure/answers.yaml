@@ -1,0 +1,50 @@
+extends: _common
+slots:
+  purpose: >-
+    It houses a sensor board on an office desk. Adults plug a USB-C cable in and out; nobody opens
+    it except to service the board.
+  service-class: 'Production: 10 end-use enclosures for our own desks.'
+  rigor: maker
+  release-scope: >-
+    A CAD release: STEP and STL, drawings, BOM and the checks we run. It claims no drop, ingress,
+    thermal or electrical rating.
+  pn-prefix: Use the product id fdm-enclosure and part numbers ENC-0001 onward.
+  equipment: >-
+    Our own Bambu Lab X1C: 256 × 256 × 256 mm build volume, 0.4 mm hardened nozzle, 0.2 mm layers,
+    PETG. We have no calibration records or measured dimensional capability for it. We have a
+    soldering iron with a heat-set insert tip and calipers.
+  material: >-
+    PETG (Bambu PETG HF) for both printed parts. The heat-set inserts are brass catalogue parts;
+    the screws are steel ISO 7380 button head screws.
+  mass: No mass target.
+  loads: >-
+    Only handling and plugging a USB-C cable: about 20 N on the receptacle opening, and the screw
+    preload of the inserts. No impact or drop rating.
+  motion: No motion apart from removing the lid for service, a few times in its life.
+  clearance: >-
+    At least 2 mm between the PCB component envelope and every inside wall and the lid. The
+    USB-C opening is 0.5 mm larger than the receptacle opening on each side.
+  environment: Indoor office, 15 to 35 °C, dry, no sunlight on it.
+  accuracy: >-
+    As printed, no post-processing beyond insert installation. The board's four mounting holes
+    must line up with the bosses.
+  consequences: >-
+    Low consequence: a failed boss or lid is reprinted. No electrical safety standard applies; the
+    board runs on 5 V USB power.
+  quantity: 10 enclosures, printed in-house over a week.
+  maintenance: The lid comes off with a 2 mm hex key to service the board.
+  appearance: Any single filament colour; a plain matte look is fine.
+intents:
+  - id: pcb
+    match: ['\bPCB\b', '\bboard\b.*\b(dimension|size|hole|component|envelope|thickness)', '\bconnector\b', 'USB']
+    answer: >-
+      80 × 50 × 1.6 mm, four Ø3.2 mm holes on a 72 × 42 mm rectangle centred on the board.
+      Components reach 15 mm above the top face and 3 mm below the bottom face. One USB-C
+      receptacle at the middle of a 50 mm edge: opening 9 × 3.5 mm, centred 3 mm above the top face,
+      flush with the board edge. Model the board and its envelope as one bought part.
+  - id: inserts
+    match: ['heat[- ]set', '\binserts?\b', '\bbosses?\b']
+    answer: >-
+      Brass heat-set inserts from a common catalogue such as ruthex: M2.5 × 4 mm long for the PCB
+      bosses and M3 × 5.7 mm long for the lid screws. Use the supplier's published dimensions and
+      recommended hole size, and keep at least 1.6 mm of wall around each insert.

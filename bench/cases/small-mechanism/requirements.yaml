@@ -1,0 +1,26 @@
+# Must-have acceptance requirements the judge scores from the record, check results and renders.
+hard_checks:
+  sweep: true
+requirements:
+  - id: SM-1
+    text: >-
+      Two custom-made PETG FDM parts, a bracket and a lever; the pivot pin and two DIN 6799 size 5
+      retaining rings are purchased parts identified by designation.
+  - id: SM-2
+    text: >-
+      The lever is a revolute joint about the pin axis from 0° to 75°, with hard stops on the
+      bracket at both ends of the travel.
+  - id: SM-3
+    text: >-
+      The 0.3 mm axial gap between the lever and each cheek is recorded as an interface or
+      requirement and the static check reports no interference.
+  - id: SM-4
+    text: >-
+      The record states the at least 1 mm lever-to-bracket clearance through the travel, and the
+      sweep over 0° to 75° finds no interference.
+  - id: SM-5
+    text: The pin is axially retained by a retaining ring in a groove at each end.
+  - id: SM-6
+    text: The 30 N handle load at about 80 mm from the pivot is a recorded requirement with a verification method.
+  - id: SM-7
+    text: The renders show the bracket with two cheeks, the lever between them on the pin, and the rings.

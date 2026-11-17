@@ -1,0 +1,26 @@
+# Must-have acceptance requirements the judge scores from the record, check results and renders.
+hard_checks:
+  sweep: true
+requirements:
+  - id: PP-1
+    text: >-
+      The design prints as a single PLA FDM job with no assembly: the hinge pin and both knuckle
+      sets are formed in the same print.
+  - id: PP-2
+    text: >-
+      The 0.3 mm radial pin clearance and the 0.3 mm axial knuckle gap are recorded as requirements
+      or interfaces, and the static check reports no interference between the hinge solids.
+  - id: PP-3
+    text: >-
+      The hinge is a revolute joint from 0° to 110°, and the record has a stop at 110°; the sweep
+      over that range finds no interference.
+  - id: PP-4
+    text: The closed box is about 60 × 40 × 30 mm, with a base tray and a lid that rests on its rim.
+  - id: PP-5
+    text: The walls are 1.6 mm and the whole print fits the MK4's 250 × 210 × 220 mm build volume.
+  - id: PP-6
+    text: >-
+      The record states a print orientation with the hinge axis parallel to the bed and no support
+      inside the hinge.
+  - id: PP-7
+    text: The renders show the box with its lid and a visible hinge with interleaved knuckles.

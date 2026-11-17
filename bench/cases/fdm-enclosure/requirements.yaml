@@ -1,0 +1,26 @@
+# Must-have acceptance requirements the judge scores from the record, check results and renders.
+hard_checks:
+  sweep: false
+requirements:
+  - id: EN-1
+    text: >-
+      Two custom-made parts, a housing and a lid, both recorded in PETG on an FDM route; the PCB,
+      the inserts and the screws are purchased parts.
+  - id: EN-2
+    text: >-
+      The PCB is modelled as 80 × 50 × 1.6 mm with its component envelope (15 mm above, 3 mm
+      below) and sits on four housing bosses on a 72 × 42 mm pattern.
+  - id: EN-3
+    text: >-
+      Heat-set inserts are recorded for the four PCB bosses (M2.5) and the four lid screws (M3),
+      each with a seat hole in the housing.
+  - id: EN-4
+    text: >-
+      The record states the 2 mm clearance between the component envelope and the inside walls and
+      lid as a requirement or interface, and no check result shows it violated.
+  - id: EN-5
+    text: The housing has a USB-C opening aligned with the receptacle on the board edge.
+  - id: EN-6
+    text: Every printed wall is at least 2 mm thick, and each part fits the 256 mm build volume.
+  - id: EN-7
+    text: The renders show a closed box with a separate lid, the screws in place and the USB-C opening visible.

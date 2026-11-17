@@ -1,0 +1,128 @@
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+BENCH = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BENCH))
+import dialogue  # noqa: E402
+import run  # noqa: E402
+
+SCRIPT = dialogue.load_script({
+    "default": "Use your recommendation.", "nudge": "Continue.", "wait_s": {"question": 60, "gate": 300},
+    "stop": {"bench": "parts-gate", "fixture": "layout"},
+    "intents": [
+        {"id": "parts-gate", "kind": "gate", "match": ["PARTS gate"], "answer": "PARTS approved."},
+        {"id": "layout", "kind": "gate", "match": ["LAYOUT freeze"], "answer": "Frozen."},
+        {"id": "loads", "match": ["load"], "answer": "200 N."},
+        {"id": "profile", "profile": True, "match": ["flow profile"], "answer": "Default."},
+    ],
+})
+CAPS = {"max_turns": 10, "max_active_minutes": 60, "run_spend_usd": 40}
+
+
+def write_version(hw: Path, label: str, stage: str) -> None:
+    folder = hw / "versions" / label
+    (folder / "record").mkdir(parents=True)
+    (folder / "manifest.json").write_text("{}", encoding="utf-8")
+    (folder / "record/product.yaml").write_text(f"flow: {{stage: {stage}}}\n", encoding="utf-8")
+
+
+class FakeDriver(run.Driver):
+    """Plays back the lead's replies: (exit code, cap hit, text); writes an L2 version when told to."""
+
+    def __init__(self, paths: run.Paths, turns: list[tuple[int, str | None, str]], build_at: int | None = None) -> None:
+        super().__init__(paths, {}, None, None, 40.0)
+        self.turns, self.build_at, self.sent = turns, build_at, []
+
+    def send(self, message: str, deadline: float) -> run.Invocation:
+        self.sent.append(message)
+        code, killed, _text = self.turns[len(self.invocations)]
+        if self.build_at == len(self.invocations) + 1:
+            write_version(self.paths.project / "hw", "v3", "parts")
+        self.session = "ses_lead"
+        invocation = run.Invocation(len(self.invocations) + 1, 2.0, code, killed, self.session)
+        self.invocations.append(invocation)
+        return invocation
+
+    def export(self, session: str, sanitize: bool = False) -> dict:
+        text = self.turns[len(self.invocations) - 1][2]
+        return {"info": {"id": session}, "messages": [{"type": "user"}, {"type": "assistant", "content": [{"type": "text", "text": text}]}]}
+
+
+class ConverseTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.folder = tempfile.TemporaryDirectory()
+        root = Path(self.folder.name)
+        (root / "project/hw").mkdir(parents=True)
+        self.paths = run.Paths("r1", root, root / "project", root / "home", root / "raw", root / "results", root / "results/runs/r1")
+
+    def tearDown(self) -> None:
+        self.folder.cleanup()
+
+    def test_the_run_ends_one_turn_after_the_stop_gate_is_answered_on_a_built_version(self) -> None:
+        driver = FakeDriver(self.paths, [
+            (0, None, "What loads apply? Which flow profile should I use?"),
+            (0, None, "v3 passed the full check. Do you approve the PARTS gate?"),
+            (0, None, "Recorded DR-009. Stopping."),
+        ], build_at=2)
+        conversation = run.converse(driver, SCRIPT, "bench", "start", CAPS)
+        self.assertEqual(conversation.outcome, "reached")
+        self.assertEqual(driver.sent[1], "Answers from the user:\n- 200 N.\n- Default.")
+        self.assertTrue(driver.sent[2].endswith(dialogue.STOP_NOTE))
+        metrics = run.dialogue_metrics(conversation, driver)
+        self.assertEqual((metrics["harness_turns"], metrics["questions_asked"], metrics["human_wait_events"],
+                          metrics["human_wait_s"], metrics["gates_answered"], metrics["profile_asked"]),
+                         (3, 3, 2, 360.0, 1, True))
+
+    def test_a_stop_gate_named_before_its_version_exists_does_not_end_the_run(self) -> None:
+        driver = FakeDriver(self.paths, [(0, None, "Do you approve the PARTS gate?")] * 3)
+        conversation = run.converse(driver, SCRIPT, "bench", "start", {**CAPS, "max_turns": 3})
+        self.assertEqual(conversation.outcome, "cap:turns")
+        self.assertEqual(len(driver.invocations), 3)
+
+    def test_a_cap_the_driver_hit_ends_the_run_as_that_cap(self) -> None:
+        driver = FakeDriver(self.paths, [(0, None, "What loads apply?"), (-15, "spend", "")])
+        self.assertEqual(run.converse(driver, SCRIPT, "bench", "start", CAPS).outcome, "cap:spend")
+
+    def test_two_failed_invocations_in_a_row_end_the_run_as_an_error(self) -> None:
+        driver = FakeDriver(self.paths, [(0, None, "What loads apply?"), (1, None, ""), (1, None, "")])
+        self.assertEqual(run.converse(driver, SCRIPT, "bench", "start", CAPS).outcome, "error")
+
+
+class RecordStateTests(unittest.TestCase):
+    def test_the_layout_counts_frozen_once_the_stage_moved_on_with_an_approved_layout_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            hw = Path(folder)
+            (hw / "decisions").mkdir()
+            (hw / "product.yaml").write_text("flow: {stage: parts}\n", encoding="utf-8")
+            (hw / "decisions/DR-005.md").write_text("Status: PROVISIONAL\n# LAYOUT freeze v2\n", encoding="utf-8")
+            self.assertFalse(run.layout_frozen(hw).passed)
+            (hw / "decisions/DR-006.md").write_text("Status: APPROVED\n# LAYOUT freeze v2\n", encoding="utf-8")
+            self.assertTrue(run.layout_frozen(hw).passed)
+
+    def test_built_versions_read_the_stage_each_snapshot_was_built_at(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            hw = Path(folder)
+            write_version(hw, "v1", "layout")
+            write_version(hw, "v2", "parts")
+            (hw / "versions/v3").mkdir()  # an unsealed, partial version is not a built version
+            self.assertEqual(run.built_versions(hw), {"v1": "layout", "v2": "parts"})
+
+    def test_the_opening_message_is_the_installed_cad_flow_command_with_the_brief_and_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            commands = root / "home/.config/opencode/commands"
+            commands.mkdir(parents=True)
+            (commands / "cad-flow.md").write_text((run.ROOT / "harness/opencode/commands/cad-flow.md").read_text(encoding="utf-8"),
+                                                  encoding="utf-8")
+            paths = run.Paths("r", root, root, root / "home", root, root, root)
+            message = run.first_message(paths, run.CASES / "wall-bracket", "bench")
+            self.assertTrue(message.startswith("Read the `cad-flow` skill and follow its workflow."))
+            self.assertIn("200 N", message)
+            self.assertIn(run.SCOPE["bench"], message)
+            self.assertNotIn("$ARGUMENTS", message)
+
+
+if __name__ == "__main__":
+    unittest.main()
