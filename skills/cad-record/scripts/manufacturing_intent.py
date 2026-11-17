@@ -749,6 +749,7 @@ class Record:
     dispositions: tuple[Mapping[str, Any], ...]
     artifacts: Mapping[str, str]  # source artifact path (relative to hw/) -> sha256 the record names
     problems: tuple[Problem, ...]
+    assembly_inventory: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # assembly.yaml occurrences, subassemblies
 
     @property
     def migrated(self) -> bool:
@@ -1054,7 +1055,8 @@ class _Reader:
         self.resolve()
         return Record(RECORD_VERSION, freeze(product), use_case, requirements, preferences, assumptions, questions, parts,
                       interfaces, operations, capabilities, materials, selection, evidence, dispositions,
-                      types.MappingProxyType(dict(self.artifacts)), tuple(self.problems))
+                      types.MappingProxyType(dict(self.artifacts)), tuple(self.problems),
+                      freeze({key: (self.doc("assembly.yaml") or {}).get(key) for key in ("occurrences", "subassemblies")}))
 
     def legacy(self, product: Mapping[str, Any], version: int) -> Record:
         """A version 1 (or unreadable-version) record: every manufacturing-intent field unknown, never defaulted."""
@@ -2217,8 +2219,9 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
     """Every check obligation the record implies, enumerated before any producer runs, sorted by id:
     each made component x route operation x its kind's check families; purchase checks for bought items;
     function-driven engineering checks; critical interface fit, stack, acceptance, contact and play (play for
-    every critical interface that declares it or rotates or slides); assembly order and access, and joint
-    evidence for every joining operation; requirement evidence levels; and an intent.* obligation for every unknown
+    every critical interface that declares it or rotates or slides); assembly order (per operation and for the
+    whole product) and access, and joint evidence for every joining operation; requirement evidence levels;
+    and an intent.* obligation for every unknown
     input that hides checks. A producer cannot shrink this list by omission; an unknown route kind gets
     process.<kind>.coverage, which no handler can pass."""
     found: dict[str, Obligation] = {}
@@ -2253,6 +2256,8 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
                 if operation.get("kind") in JOINING_KINDS:
                     add("assembly.joint", {"assembly_operation": ident}, "process_planned", "detail",
                         f"assembly operation {ident}: engagement, edge distance, retention, torque and host suitability")
+        add("assembly.order", {"product": True}, "process_planned", "detail",
+            "every assembly occurrence is installed by an operation, apart from the assembly's one base")
     for req_id, requirement in sorted(record.requirements.items()):
         for level in requirement.evidence_required:
             add(f"requirement.{level}", {"product": True, "requirements": (req_id,)}, level, _LEVEL_STAGE[level],

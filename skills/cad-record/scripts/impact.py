@@ -318,6 +318,9 @@ class _Record:
             combined["criterion"] = {"requirements": [plain(r) for _, r in sorted(self.record.requirements.items())],
                                      "policy": _get(self.use_case, "evidence_policy")}
         combined.pop("lot", None)
+        if key == "product":  # the whole sequence, occurrence references included, which the per-part view misses
+            combined["interface"] = {"parts": combined["interface"], "assembly_sequence": self.operations,
+                                     "assembly_inventory": plain(self.record.assembly_inventory)}
         return combined
 
 

@@ -15,7 +15,9 @@ so both shapes normalize to the same operations.
 Order model. Record order is the assembly sequence; `predecessors` are constraints that sequence must
 satisfy. A part an installing operation (press_fit, heat_set, retaining_ring, insert, fasten, join,
 close) puts in place is absent before it and present after it until a disassemble operation removes
-it; every other occurrence is present from the start (the base). A close operation encloses its
+it; the one occurrence no operation installs is present from the start (the base: with an inventory, the first
+such occurrence the sequence names, as the record designates none). Any other uninstalled occurrence fails
+`assembly.never_installed`. A close operation encloses its
 `closes` parts: no later operation reaches them. `check_order` judges exactly this declared sequence:
 an operation whose receiving part is absent, whose part is enclosed or installed twice, or whose
 predecessor comes later or is missing fails `assembly.order`. Whether the part and the tools can
@@ -357,6 +359,8 @@ class AssemblyState:
     steps: tuple[Step, ...]
     base: frozenset[str]  # present from the start: every occurrence no operation installs
     unresolved: Mapping[str, str] = field(default_factory=dict)  # operation id -> why its references do not resolve
+    ground: str | None = None  # with an inventory: the one base, the first uninstalled occurrence the sequence names
+    floating: frozenset[str] = frozenset()  # with an inventory: the other occurrences no operation installs
 
 
 def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
@@ -378,11 +382,16 @@ def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
     resolved = [(op, resolve(op.part, op), None if op.into is None else resolve(op.into, op),
                  tuple(resolve(ref, op) for ref in op.closes)) for op in operations.items]
     installed = {part for op, part, _into, _closes in resolved if op.installs}
-    if inventory is not None:
-        everyone = set(inventory.ids)
-    else:
-        everyone = {ref for _op, part, into, closes in resolved for ref in (part, into, *closes) if ref is not None}
+    named = list(dict.fromkeys(ref for _op, part, into, closes in resolved for ref in (part, into, *closes)
+                               if ref is not None))
+    everyone = set(inventory.ids) if inventory is not None else set(named)
     base = frozenset(everyone - installed)
+    # The record names no base. The first uninstalled occurrence the sequence names is the base, or the first
+    # occurrence of the inventory when the sequence names none (an empty known sequence). The rest float.
+    ground = None
+    if inventory is not None:
+        ground = next((ref for ref in (*named, *inventory.ids) if ref in base), None)
+    floating = frozenset(base - {ground}) if inventory is not None else frozenset()
     present = set(base)
     closed: dict[str, str] = {}
     steps = []
@@ -395,18 +404,23 @@ def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
         if op.kind == "close":
             for ref in closes:
                 closed.setdefault(ref, op.id)
-    return AssemblyState(tuple(steps), base, types.MappingProxyType(unresolved))
+    return AssemblyState(tuple(steps), base, types.MappingProxyType(unresolved), ground, floating)
 
 
 # --------------------------------------------------------------------------- findings
 
 
-def _finding(ident: str, code: str, op: AssemblyOperation, *, severity: str, outcome: str, measured: str,
+def _finding(ident: str, code: str, op: AssemblyOperation | None, *, severity: str, outcome: str, measured: str,
              consequence: str, remedy: str, family: str, obligation: str | None, criterion: Mapping[str, Any] | None = None,
              uncertainty: str = "none: the declared record decides it", alternatives: list[dict[str, str]] | None = None,
-             coverage: str | None = None) -> dict[str, Any]:
+             coverage: str | None = None, subject: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """A finding about operation `op`, or about `subject` when no operation is at fault (`op` is then None)."""
+    if subject is None:
+        assert op is not None, "a finding needs an operation or a subject"
+        subject = {"assembly_operation": op.id}
+    subject = dict(subject)
     data: dict[str, Any] = {
-        "id": ident, "code": code, "subject": {"assembly_operation": op.id}, "severity": severity, "outcome": outcome,
+        "id": ident, "code": code, "subject": subject, "severity": severity, "outcome": outcome,
         "measured": {"text": measured} if outcome != "unknown" else {"status": "unknown", "reason": measured},
         "criterion": dict(criterion) if criterion is not None else {
             "property": "assembly_order", "operator": "equals",
@@ -415,7 +429,7 @@ def _finding(ident: str, code: str, op: AssemblyOperation, *, severity: str, out
         "method": {"name": ORDER_METHOD if family == "assembly.order" else "declared joint evidence (cad-record assembly_operations)",
                    "tool": "cad-record assembly_operations.py"},
         "uncertainty": uncertainty, "consequence": consequence, "remedy": remedy,
-        "recheck": {"families": [family], "scope": [{"assembly_operation": op.id}], "earliest_stage": "detail"},
+        "recheck": {"families": [family], "scope": [subject], "earliest_stage": "detail"},
     }
     if obligation is not None:
         data["obligation"] = obligation
@@ -525,7 +539,40 @@ def check_order(operations: Operations, inventory: Any = None) -> Report:
         if mine:
             row["findings"] = [f["id"] for f in mine]
         outcomes.append(row)
+    if inventory is not None:
+        never = _never_installed(state, inventory)
+        product: dict[str, Any] = {"obligation": "assembly.order@product", "outcome": "fail" if never else "pass",
+                                   "level": "process_planned", "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
+        if never:
+            product["findings"] = [f["id"] for f in never]
+        outcomes.append(product)
+        findings.extend(never)
     return Report(tuple(outcomes), tuple(findings))
+
+
+def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any]]:
+    """A finding per occurrence of the inventory that no operation installs and that is not the assembly's one
+    base: it would pass as a second base, but nothing says where it comes from."""
+    found: list[dict[str, Any]] = []
+    taken: set[str] = set()
+    for occurrence_id in sorted(state.floating):
+        occurrence = inventory.get(occurrence_id)
+        subject: dict[str, Any] = {"PN": occurrence.pn}
+        if occurrence.explicit:
+            subject["occurrence"] = occurrence.ref
+        base = inventory.get(state.ground).ref if state.ground else "none"
+        ident = f"{_slug(occurrence_id)}_never_installed"
+        while ident in taken:  # `clip-a` and `clip_a` slug alike
+            ident = f"{ident}_2"
+        taken.add(ident)
+        found.append(_finding(
+            ident, "assembly.never_installed", None, severity="critical", outcome="fail",
+            measured=f"no operation installs {occurrence.ref}, and the assembly has one base (the base is {base})",
+            consequence=f"{occurrence.ref} is in the assembly but the sequence never puts it in place, so it floats "
+                        "beside the base and the assembly cannot be built as recorded",
+            remedy=f"add the installing operation for {occurrence.ref}, or remove the occurrence from the assembly",
+            family="assembly.order", obligation="assembly.order@product", subject=subject))
+    return found
 
 
 # --------------------------------------------------------------------------- access plan
