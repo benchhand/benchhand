@@ -518,10 +518,10 @@ class _Assessor:
             return [f"service load {ref}'s force magnitude is unknown"]
         peak = magnitude.value.to("N").bounds[1]
         applied = _sum_vectors(item["force"] for item in self.case["loads"] if item.get("load") == ref)
-        direction = self.service_direction(ref)
+        direction = _unit(load.direction)
         if direction is None:
-            gaps = [f"service load {ref}'s direction is not stated as a vector (such as '0 0 -1' or '-Z'), so "
-                    "the direction of the case's forces cannot be checked against it"]
+            gaps = [f"service load {ref}'s direction is not a valid unit vector, so the direction of the case's "
+                    "forces cannot be checked against it"]
             if _norm(applied) < peak * (1 - 1e-9):
                 gaps.append(f"the case's forces for service load {ref} add up to {_norm(applied):g} N, which reaches "
                             f"{peak:g} N")
@@ -535,20 +535,6 @@ class _Assessor:
             return [f"the case's forces for service load {ref} point {across:g} N across its direction "
                     f"{_text(direction)}; more than {LOAD_CROSS_TOLERANCE:.0%} of the {peak:g} N it reaches"]
         return []
-
-    def service_direction(self, ref: str) -> tuple[float, float, float] | None:
-        """The unit vector of a service load's direction fact, or None when it is absent or not a vector."""
-        product = self.documents.get("product.yaml")
-        use_case = product.get("use_case") if isinstance(product, Mapping) else None
-        for item in (use_case.get("loads") if isinstance(use_case, Mapping) else None) or ():
-            if isinstance(item, Mapping) and item.get("id") == ref:
-                fact = item.get("direction")
-                if isinstance(fact, list):   # the form cad-record #64 requires: a bare [x, y, z]
-                    return _parse_direction(" ".join(str(part) for part in fact)) if len(fact) == 3 and all(
-                        isinstance(part, (int, float)) and not isinstance(part, bool) for part in fact) else None
-                if isinstance(fact, Mapping) and fact.get("status") == "known" and isinstance(fact.get("value"), str):
-                    return _parse_direction(fact["value"])
-        return None
 
     def convergence(self, profile: Any, profile_sha: str) -> dict[str, Any]:
         stated = self.case.get("mesh_convergence")
@@ -599,27 +585,18 @@ def _text(vector: tuple[float, ...]) -> str:
     return "[" + ", ".join(f"{component:.6g}" for component in vector) + "]"
 
 
-_AXES = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
-
-
-def _parse_direction(text: str) -> tuple[float, float, float] | None:
-    """A unit vector from `0 0 -1`, `[0, 0, -1]`, `(0,0,-2)`, `-Z` or `+x`; None for any other text."""
-    stripped = text.strip()
-    axis = re.fullmatch(r"([+-]?)([xyzXYZ])", stripped)
-    if axis:
-        sign = -1.0 if axis.group(1) == "-" else 1.0
-        return tuple(sign * component for component in _AXES[axis.group(2).lower()])  # type: ignore[return-value]
-    parts = [part for part in re.split(r"[\s,;]+", stripped.strip("[]()")) if part]
-    if len(parts) != 3:
+def _unit(direction: Any) -> tuple[float, float, float] | None:
+    """A working copy of the load's direction, scaled to length 1, or None when it is not three finite numbers of
+    norm 1 within the record's 1e-6. The record's own direction is left as stated and reports an invalid one; this
+    refuses it again. The scaling matters because the record accepts a norm of 1 ± 1e-6 and the projections assume 1."""
+    if not isinstance(direction, (tuple, list)) or len(direction) != 3:
         return None
-    try:
-        vector = tuple(float(part) for part in parts)
-    except ValueError:
+    if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(c) for c in direction):
         return None
-    length = _norm(vector)
-    if not math.isfinite(length) or length == 0:
+    length = _norm(tuple(direction))
+    if abs(length - 1.0) > 1e-6:
         return None
-    return (vector[0] / length, vector[1] / length, vector[2] / length)
+    return (direction[0] / length, direction[1] / length, direction[2] / length)
 
 
 def _selector_key(selector: Any) -> str:
