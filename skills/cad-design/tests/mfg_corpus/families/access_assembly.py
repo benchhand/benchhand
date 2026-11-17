@@ -4,6 +4,8 @@ Judged on the assembly.access obligations only (order is the assembly_operations
 reuse cad-motion's operation files; each twin is the same operations in an order or tool description that works.
 """
 
+from typing import Any
+
 from corpus import Family, Outcome, Pair
 from support import access_outcomes, reordered, socket_operations, verdict
 
@@ -11,7 +13,7 @@ ACCESS = "assembly.access@"
 VALID = ("seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")  # screw driven before the bracket goes on
 
 
-def _verdict(items: list[dict]) -> Outcome:
+def _verdict(items: list[dict[str, Any]]) -> Outcome:
     return verdict(v for k, v in access_outcomes(items).items() if k.startswith(ACCESS))
 
 

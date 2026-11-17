@@ -4,6 +4,7 @@ Mutants reuse cad-motion's operation files; each twin is the same operations in 
 """
 
 import copy
+from typing import Any
 
 from corpus import Family, Outcome, Pair
 from support import check_order, operations_file, reordered, verdict
@@ -11,7 +12,7 @@ from support import check_order, operations_file, reordered, verdict
 VALID = ("seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
 
 
-def _valid() -> list[dict]:
+def _valid() -> list[dict[str, Any]]:
     return reordered(operations_file("blocked_socket.yaml"), *VALID)
 
 

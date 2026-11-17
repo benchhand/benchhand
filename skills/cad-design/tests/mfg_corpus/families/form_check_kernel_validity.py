@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from corpus import Family, Outcome, Pair, Skip
 from support import SKILLS
@@ -19,10 +20,10 @@ DEFECTS = DESIGN / "tests" / "fixtures" / "defects" / "cadquery"
 HW = SKILLS.parent / "examples" / "lamp-arm" / "hw"
 
 
-def _run(command: list[str]) -> dict:
+def _run(command: list[str]) -> dict[str, Any]:
     done = subprocess.run(command, capture_output=True, text=True, check=False, timeout=1800)
     try:
-        report: dict = json.loads(done.stdout)
+        report: dict[str, Any] = json.loads(done.stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"{command[3]} printed no JSON (exit {done.returncode}): {done.stderr[-800:]}") from error
     return report

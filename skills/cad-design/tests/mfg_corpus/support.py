@@ -52,6 +52,7 @@ def require(module: str) -> None:
 # --- assembly operations (cad-record/scripts/assembly_operations.py) ---------------------------------------------
 
 def operations_file(name: str, socket_sha256: str = "0" * 64) -> list[dict[str, Any]]:
+    require("yaml")
     import yaml
 
     text = (MOTION_FIXTURES / name).read_text(encoding="utf-8").replace("{socket_sha256}", socket_sha256)
@@ -160,6 +161,7 @@ def _access_geometry() -> tuple[Path, str]:
 
 def socket_operations(name: str) -> list[dict[str, Any]]:
     """An operations file of cad-motion's fixtures with the built socket's sha256 bound."""
+    require("yaml")
     return operations_file(name, _access_geometry()[1])
 
 

@@ -3,13 +3,15 @@
 Judged on the fdm geometry obligation. Millimetres, bed frame, +Z up.
 """
 
+from typing import Any
+
 from corpus import Family, Outcome, Pair
 from support import assess_printed, printed_verdict, solids
 
 GEOMETRY = "process.fdm.geometry@"
 
 
-def _verdict(shape) -> Outcome:
+def _verdict(shape: Any) -> Outcome:
     return printed_verdict(assess_printed(shape), GEOMETRY)
 
 

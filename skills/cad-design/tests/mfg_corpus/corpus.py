@@ -9,6 +9,7 @@ Pure standard library: the check and its fixtures are imported lazily inside `ru
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ OUTCOMES: tuple[str, ...] = ("fail", "pass", "unknown")
 HERE = Path(__file__).resolve().parent
 FAMILIES_DIR = HERE / "families"
 FIXTURES_DIR = HERE / "fixtures"
+BASELINE_DIR = HERE / "baseline"
 
 
 class Skip(Exception):
@@ -90,11 +92,17 @@ def run_pair(pair: Pair) -> PairResult:
         result.skipped = str(skip) or "skipped"
         return result
     except Exception as exc:  # a crashing check is recorded, never hidden as a pass
-        result.error = f"{type(exc).__name__}: {exc}"
-        return result
+        return _errored(result, f"{type(exc).__name__}: {exc}")
     for variant in (result.mutant, result.twin):
         if variant not in OUTCOMES:
-            result.error = f"outcome {variant!r} is not one of {OUTCOMES}"
+            return _errored(result, f"outcome {variant!r} is not one of {OUTCOMES}")
+    return result
+
+
+def _errored(result: PairResult, message: str) -> PairResult:
+    """A failure on either side voids both verdicts, so the pair is a miss and never a detection."""
+    result.mutant = result.twin = None
+    result.error = message
     return result
 
 
@@ -104,12 +112,12 @@ def rate(count: int, total: int) -> float | None:
 
 def summarise(family: Family, results: list[PairResult]) -> dict[str, Any]:
     """Rates over the pairs that ran: detection = FAIL on mutant, abstention = UNKNOWN on mutant,
-    false positive = FAIL on twin. A pair that errored counts as a miss on the mutant and no verdict on the twin."""
+    false positive = FAIL on twin. A pair that errored on either side has no verdicts: it is a miss."""
     ran = [r for r in results if not r.skipped]
     n = len(ran)
     detected = sum(r.mutant == "fail" for r in ran)
     abstained = sum(r.mutant == "unknown" for r in ran)
-    missed = sum(r.mutant == "pass" for r in ran)
+    missed = n - detected - abstained  # a pass on the mutant, or a pair that errored
     false_pos = sum(r.twin == "fail" for r in ran)
     return {
         "family": family.id, "check": family.check, "owner": family.owner,
@@ -135,3 +143,28 @@ def table(rows: list[dict[str, Any]]) -> str:
     widths = [max(len(str(x[i])) for x in (head, *body)) for i in range(len(head))]
     lines = ["  ".join(str(x[i]).ljust(widths[i]) for i in range(len(head))).rstrip() for x in (head, *body)]
     return "\n".join(lines)
+
+
+def check_baseline(rows: list[dict[str, Any]], baseline_dir: Path, *, whole_registry: bool = True) -> list[str]:
+    """Problems against `baseline_dir/<family>.json`: registry and baselines must match one-to-one (when
+    `whole_registry`), no family may run fewer pairs than recorded, detection may not fall, false positives may not rise."""
+    problems: list[str] = []
+    files = {path.stem: path for path in sorted(baseline_dir.glob("*.json"))}
+    ids = {row["family"] for row in rows}
+    for family in sorted(ids - files.keys()) if whole_registry else ():
+        problems.append(f"{family}: no baseline file baseline/{family}.json")
+    for family in sorted(files.keys() - ids) if whole_registry else ():
+        problems.append(f"{family}: baseline file without a registered family")
+    for row in rows:
+        path = files.get(row["family"])
+        if path is None:
+            continue
+        base = json.loads(path.read_text(encoding="utf-8"))
+        name = row["family"]
+        if row["ran"] < base["ran"]:
+            problems.append(f"{name}: ran {row['ran']} pairs, baseline {base['ran']} ({row['skipped']} skipped)")
+        if row["detection_rate"] is None or row["detection_rate"] < base["detection_rate"]:
+            problems.append(f"{name}: detection {row['detection_rate']} below baseline {base['detection_rate']}")
+        if row["false_positive_rate"] is None or row["false_positive_rate"] > base["false_positive_rate"]:
+            problems.append(f"{name}: false positives {row['false_positive_rate']} above baseline {base['false_positive_rate']}")
+    return problems

@@ -4,13 +4,15 @@ The calibrated limits are overhang 45 deg and bridge 5 mm; every case plans no s
 Geometry is real B-rep probed by form_check.probe, never hand-written facts. Millimetres, bed frame, +Z up.
 """
 
+from typing import Any
+
 from corpus import Family, Outcome, Pair
 from support import assess_printed, printed_verdict, solids
 
 SUPPORT = "process.fdm.support@"
 
 
-def _verdict(shape) -> Outcome:
+def _verdict(shape: Any) -> Outcome:
     return printed_verdict(assess_printed(shape), SUPPORT)
 
 
@@ -29,11 +31,11 @@ def bridge_span(mutant: bool) -> Outcome:
 
 def gusset_under_shelf(mutant: bool) -> Outcome:
     """A shelf off a post; the twin adds a gusset under it (underside 37 deg from vertical, inside the 45 deg limit)."""
+    s = solids()  # first: it raises Skip when OCP is absent
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
     from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
     from OCP.gp import gp_Pnt, gp_Vec
 
-    s = solids()
     shape = s.fuse(s.box(0, 0, 0, 10, 10, 30), s.box(10, 0, 20, 25, 10, 25))
     if not mutant:
         triangle = BRepBuilderAPI_MakePolygon()
@@ -47,10 +49,10 @@ def gusset_under_shelf(mutant: bool) -> Outcome:
 
 def horizontal_bore_roof(mutant: bool) -> Outcome:
     """A horizontal bore along Y through a block: a 20 mm round roof against a 3 mm one."""
+    s = solids()  # first: it raises Skip when OCP is absent
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
     from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
-    s = solids()
     radius = 10.0 if mutant else 1.5
     bore = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(20, -1, 20), gp_Dir(0, 1, 0)), radius, 32).Shape()
     return _verdict(s.cut(s.box(0, 0, 0, 40, 30, 40), bore))

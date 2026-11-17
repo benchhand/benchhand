@@ -187,3 +187,7 @@ jobs:
           done
           echo "$failed of ${#files[@]} test files failed in shard $SHARD"
           [ "$failed" -eq 0 ]
+
+      - name: Mutation corpus rates and baseline ratchet
+        if: matrix.shard == 'freecad-gated'
+        run: uv run --script skills/cad-design/tests/mfg_corpus/rates.py --check-baseline
