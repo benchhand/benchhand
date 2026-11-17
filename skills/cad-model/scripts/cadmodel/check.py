@@ -756,7 +756,7 @@ EXPORT_COVERAGE = ("the sealed part.3mf against its STEP read-back and the recor
 
 def _export_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any]:
     """The export.3mf outcome of one part: its part.3mf check (and each component's) decides, and a sealed file that
-    changed fails it; a part with no part.3mf check stays unknown."""
+    changed fails it, and a part with no part.3mf check stays unknown."""
     pn = obligation.subject["PN"]
     row = checks["manufacturing"]["parts"].get(pn)
     status = ((row or {})["checks"].get("threemf") or {}).get("status") if row is not None else None
@@ -825,8 +825,8 @@ def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any]) -> lis
 
 
 def export_artifacts(hw: Path, folder: Path, expected: Iterable[Any]) -> list[dict[str, str]]:
-    """The {path, sha256} pair (path project-relative under hw/, as an evidence artifact) of each sealed part.3mf
-    an export.3mf obligation of `expected` is judged on; a part without a sealed part.3mf has none."""
+    """The {path, sha256} pair of the sealed part.3mf behind each export.3mf obligation of `expected`. The path is
+    project-relative under hw/, as an evidence artifact. A part without a sealed part.3mf adds no pair."""
     layout = load_layout()
     pairs = []
     for obligation in expected:

@@ -1,10 +1,9 @@
 """A deterministic 3MF writer and a strict reader, stdlib only.
 
-The package targets 3MF Core 1.4.0 (ISO/IEC 25422:2025) in millimetres: three entries in a fixed order,
-stored without compression, with fixed timestamps and attributes, and floats in one fixed format, so the same
-mesh always gives the same bytes. It has no Production, Slice or Toolpath extension and no UUIDs. The model
-element's namespaces are listed in `EXTENSIONS`, the one place where Materials 1.2.1 or Production 1.1.2 would
-be added.
+The package targets 3MF Core 1.4.0 (ISO/IEC 25422:2025) in millimetres. It has three entries in a fixed order,
+stored without compression, with fixed timestamps and attributes. Floats use one fixed format, so the same
+mesh always gives the same bytes. It has no Production, Slice or Toolpath extension and no UUIDs. `EXTENSIONS`
+lists the namespaces of the model element. It is the one place to add Materials 1.2.1 or Production 1.1.2.
 
 `read` accepts only what `dumps` writes, and refuses a package whose parts, units, ids or indices do not
 resolve. `measure` judges a mesh by its indices: a crack, a flipped triangle and an unwelded vertex all show.
@@ -36,7 +35,7 @@ PARTS = (CONTENT_TYPES_PART, RELS_PART, MODEL_PART)  # the entry order of every 
 ZIP_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 ZIP_EXTERNAL_ATTR = 0o644 << 16
 ZIP_CREATE_SYSTEM = 3  # Unix
-DECIMALS = 6  # nanometres: a coordinate is written, and welded, at this precision
+DECIMALS = 6  # nanometres: the writer rounds and welds every coordinate at this precision
 XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
 
 MATERIAL_METADATA = "cadagent:material"
@@ -61,7 +60,7 @@ EXTENSIONS: tuple[Namespace, ...] = ()
 
 
 class ThreeMFError(ValueError):
-    """The package is not one this module writes: a part, unit, id or index that does not resolve."""
+    """The package has a part, unit, id or index that does not resolve, or a value `dumps` refuses."""
 
 
 @dataclass(frozen=True)
@@ -119,7 +118,7 @@ def _model(vertices: Iterable[Sequence[float]], triangles: Iterable[Sequence[int
                 if material is not None else "")
     points = "".join(f'<vertex x="{number(x)}" y="{number(y)}" z="{number(z)}"/>' for x, y, z in vertices)
     faces = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in triangles)
-    # Resource ids share one space: the colour group takes 1, the object the next free id.
+    # Resource ids share one space: the color group takes 1, the object the next free id.
     group, ident, pid = "", 1, ""
     if color is not None:
         group = (f'<basematerials id="1"><base name={quoteattr(material or name)} '
@@ -135,11 +134,11 @@ def dumps(vertices: Iterable[Sequence[float]], triangles: Iterable[Sequence[int]
           material: str | None = None, color: str | None = None) -> bytes:
     """The package of one mesh object, `name`d, with `material` as its `cadagent:material` metadata when given.
 
-    `color` (`#RRGGBB`) adds a basematerials group with that display colour and points the object at it; absent,
-    the package has no basematerials and no pid.
+    `color` (`#RRGGBB`) adds a basematerials group with that display color and points the object at it. Without
+    it the package has no basematerials and no pid.
 
-    The mesh is taken as it is: wind and weld it before. Millimetres; the build item has no transform, so
-    the vertices are in the pose they are to be made in."""
+    The mesh goes in as it is, so wind and weld it first. The unit is millimetres. The build item has no
+    transform, so the vertices already sit in the print pose."""
     if color is not None and not COLOR_PATTERN.fullmatch(color):
         raise ThreeMFError(f"colour {color!r} is not #RRGGBB")
     contents = {CONTENT_TYPES_PART: _content_types(), RELS_PART: _relationships(),
@@ -208,7 +207,7 @@ def _check_envelope(archive: zipfile.ZipFile) -> None:
 
 
 def _color(element: ET.Element, groups: dict[int, list[str]]) -> str | None:
-    """The display colour of the basematerials entry `element` points at by pid and pindex, if any."""
+    """The display color of the basematerials entry `element` points at by pid and pindex, if any."""
     if element.get("pid") is None:
         return None
     pid, index = _int(element.get("pid"), "object pid"), _int(element.get("pindex"), "object pindex")
@@ -279,9 +278,10 @@ def read(source: Path | bytes) -> Model:
 
 
 def measure(vertices: Sequence[Sequence[float]], triangles: Sequence[Sequence[int]]) -> dict[str, Any]:
-    """What an importer sees of a mesh, by its indices alone (nothing is welded or repaired): `watertight`
-    when every edge is used by exactly two triangles, `winding_consistent` when every directed edge is
-    used once, the signed volume (positive when wound outward), the area and the bounding box."""
+    """Measure a mesh by its indices alone, as an importer reads it. It welds and repairs nothing. `watertight`
+    holds when exactly two triangles use every edge. `winding_consistent` holds when one triangle uses every
+    directed edge. The result also has the signed volume (positive when wound outward), the area and the
+    bounding box."""
     directed = Counter((a, b) for t in triangles for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])))
     undirected: Counter[tuple[int, int]] = Counter()
     for (a, b), count in directed.items():

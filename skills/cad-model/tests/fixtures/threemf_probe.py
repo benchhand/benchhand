@@ -18,7 +18,7 @@ import trimesh
 from lxml import etree
 
 SCHEMAS = Path(__file__).resolve().parent / "3mf-schema"
-# Which schema validates which entry: the Core 1.4.0 model, and the two OPC parts.
+# Each entry and its schema: the Core 1.4.0 model and the two OPC parts.
 SCHEMA_OF = {"3D/3dmodel.model": "3mf-core.xsd", "[Content_Types].xml": "opc-contentTypes.xsd",
              "_rels/.rels": "opc-relationships.xsd"}
 

@@ -46,7 +46,7 @@ def entries(data: bytes) -> dict[str, bytes]:
 
 
 def repack(data: bytes, **replace: bytes) -> bytes:
-    """`data` with the named entries' bytes swapped, in the same order."""
+    """`data` with the bytes of the named entries swapped, in the same order."""
     out = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w") as target:
         for info in source.infolist():
@@ -132,7 +132,7 @@ class ColourTests(unittest.TestCase):
 
 
 def plan(color: str | None = None, material: str = "PETG") -> manufacture.Plan:
-    """A plan with the fields `facts` reads; `color` is what package B's PartIntent.color will carry."""
+    """A plan with the fields `facts` reads. `color` stands in for package B's PartIntent.color."""
     policy = types.SimpleNamespace(relationship="same", state="installed", reason=None, decision=None,
                                    volume_rel_tolerance=0.0, volume_abs_tolerance_mm3=0.0, linear_deflection_mm=0.1,
                                    angular_deflection_rad=0.1, volume_tolerance_mm3=lambda volume: 0.0,
@@ -269,7 +269,7 @@ class TessellationTests(unittest.TestCase):
     def test_a_drilled_plate_with_reversed_hole_faces_is_closed_outward_and_at_its_analytic_volume(self) -> None:
         plate = self.report["TST-0001"]
         self.assertEqual(plate["good"]["status"], "pass", plate["good"])
-        analytic = 40 * 30 * 8 - math.pi * 2.5 ** 2 * 8  # 9442.92 mm3; the 0.1 rad hole polygon adds about 0.26
+        analytic = 40 * 30 * 8 - math.pi * 2.5 ** 2 * 8  # 9442.92 mm3. The 0.1 rad hole polygon adds about 0.26
         self.assertAlmostEqual(plate["threemf_volume_mm3"], analytic, delta=0.5)
 
     def test_a_ball_with_collapsed_pole_triangles_is_closed_outward_and_at_its_analytic_volume(self) -> None:
@@ -299,7 +299,7 @@ class TessellationTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the trimesh, lxml and lib3mf environment")
 class ReadBackTests(unittest.TestCase):
-    """Other readers' view of a written package: trimesh, the 3MF Consortium schemas and lib3mf."""
+    """A written package as trimesh, the 3MF Consortium schemas and lib3mf read it."""
 
     @classmethod
     def package(cls) -> bytes:

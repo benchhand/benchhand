@@ -73,8 +73,8 @@ class SharedDefinitions(SchemaCase):
                 list(validator(path.name).iter_errors({}))
 
     def test_a_family_segment_after_the_first_may_start_with_a_digit_in_all_three_family_grammars(self) -> None:
-        """check_family, finding_code and the family prefix of obligation_id share one grammar: the first segment
-        starts with a letter; later ones may start with a digit (export.3mf). The subject after `@` is unchanged."""
+        """check_family, finding_code and the family prefix of obligation_id share one grammar. The first segment
+        starts with a letter and later ones may start with a digit (export.3mf). The subject after `@` is unchanged."""
         self.assert_shared("check_family", {"export.3mf": "export.3mf", "single": "export", "deep": "process.fdm.support"},
                            {"digit first": "3mf.export", "leading dot": ".3mf", "trailing dot": "export.", "capital": "Export.3mf",
                             "empty segment": "export..3mf"})

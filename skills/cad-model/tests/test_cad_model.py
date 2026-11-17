@@ -776,7 +776,7 @@ class ManufacturingStateTests(unittest.TestCase):
         self.assertFalse(os.path.samefile(v1 / "manufacturing" / STRAP / "manufacturing.json",
                                           v2 / "manufacturing" / STRAP / "manufacturing.json"))
         outputs = [p for sub in ("parts", "manufacturing") for p in sorted((v2 / sub).rglob("*")) if p.is_file()]
-        self.assertEqual(len(outputs), 8)  # 2 STEPs; TST-0001 step and json; the strap's step, stl, 3mf and json
+        self.assertEqual(len(outputs), 8)  # 2 STEPs, then TST-0001 step and json, then the strap step, stl, 3mf and json
         for path in outputs:
             self.assertTrue(os.path.samefile(path, v3 / path.relative_to(v2)), path.relative_to(v2))
         tools = json.loads((v3 / "manifest.json").read_text(encoding="utf-8"))["tools"]["cadquery"]
@@ -1357,8 +1357,8 @@ class CheckRuleTests(unittest.TestCase):
         self.assertEqual(outcomes(legacy, "left"), {"cad.readback@TST-0001.left": "unknown"})
 
     def test_export_3mf_outcomes_follow_the_part_3mf_check_and_the_sealed_files(self) -> None:
-        """export.3mf is judged on the part.3mf check alone: a failing 3MF fails it, a part with no 3MF row stays
-        unknown, a sealed file that changed fails it, and a bad B-rep does not (that is cad.readback's)."""
+        """export.3mf follows the part.3mf check alone. A failing 3MF fails it, a part with no 3MF row stays
+        unknown, a sealed file that changed fails it, and a bad B-rep does not (cad.readback owns that)."""
         owed = mock.Mock(id="export.3mf@TST-0001", family="export.3mf", subject={"PN": "TST-0001"}, level="cad_valid")
 
         def outcome(threemf: dict | None, *, integrity: str = "pass", valid: bool = True) -> dict:

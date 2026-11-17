@@ -202,9 +202,9 @@ def write_stl(shape: Any, path: Path, linear_mm: float, angular_rad: float) -> N
 def surface(shape: Any, linear_mm: float, angular_rad: float) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
     """The triangles `write_stl` writes for `shape`, as welded vertices and outward-wound index triples.
 
-    The faces are tessellated with the same absolute deflections, a face whose orientation is reversed
-    has its winding flipped, and each vertex is rounded to the 3MF precision (`threemf.DECIMALS`) and then
-    welded by position (`welded`), so the indices share edges exactly where the text will."""
+    The faces use the same absolute deflections as the STL. A face with a reversed orientation gets its
+    winding flipped. The function rounds each vertex to the 3MF precision (`threemf.DECIMALS`) and then
+    welds it by position (`welded`), so the indices share edges exactly where the text will."""
     import numpy as np
     import trimesh
     from OCP.BRep import BRep_Tool

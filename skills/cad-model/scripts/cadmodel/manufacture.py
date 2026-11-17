@@ -40,7 +40,7 @@ from cadmodel.record import Snapshot, load_intent, load_layout, load_yaml_loader
 
 SIDECAR = "manufacturing.json"
 SIDECAR_SCHEMA = 2  # 2 adds intent, components, component_outputs and the export pose
-OUTPUTS_FORMAT = 3  # 3 adds part.3mf; bump when what make writes changes without any keyed input changing
+OUTPUTS_FORMAT = 3  # 3 adds part.3mf. Bump it when what make writes changes and no keyed input does
 BED_MM = 1e-6  # bed contact, and how far a measured bound may pass a reserved extent
 FLOAT32_EPS = 2.0 ** -23  # STL stores float32 coordinates
 COMPONENT_DIR = "components"
@@ -241,7 +241,7 @@ def _color(plan: Plan) -> str | None:
 
 
 def outputs_recipe(entry: Mapping[str, Any], state: Any, features: Any, identity: Any) -> dict[str, Any]:
-    """What `make` keys a part's outputs by (`store.key`): the entry holds the material and colour that part.3mf writes."""
+    """What `make` keys a part's outputs by (`store.key`). The entry holds the material and color that part.3mf writes."""
     return {"format": OUTPUTS_FORMAT, "kind": "manufacturing", "entry": entry, "state": state, "features": features,
             "process": identity}
 
@@ -558,10 +558,11 @@ def _mesh(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
 
 
 def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
-    """The 3MF against the STEP it was tessellated from: a package the reader accepts (its parts, ids and
-    indices resolve), one millimetre mesh object built once with no transform, closed and consistently wound
-    outward by its indices, the part's material named, and within the declared chord deviation of the exact
-    solid in volume (at most area x deflection) and on each box face. Nothing is repaired."""
+    """Judge the 3MF against the STEP it came from. The reader accepts the package (its parts, ids and
+    indices resolve). It holds one millimetre mesh object, built once with no transform, closed and consistently
+    wound outward by its indices. It names the part's material and shows its color. Its volume is within the
+    declared chord deviation of the exact solid (at most area x deflection), and so is each box face. The check
+    repairs nothing."""
     try:
         model = threemf.read(path)
     except (threemf.ThreeMFError, OSError) as error:
@@ -573,7 +574,7 @@ def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]
     deflection = entry["mesh"]["linear_deflection_mm"]
     step_volume, area = occ.volume(shape), occ.area(shape)
     low, high = _box(shape)
-    slack = 10.0 ** -threemf.DECIMALS  # the coordinates are rounded to this
+    slack = 10.0 ** -threemf.DECIMALS  # the writer rounds each coordinate to this
     bound = area * (deflection + slack)
     volume_error = abs(report["volume_mm3"] - step_volume)
     m_low, m_high = report["bbox_mm"]["min"], report["bbox_mm"]["max"]
