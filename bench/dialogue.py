@@ -181,9 +181,11 @@ def _clean(line: str) -> str:
 
 
 def asks_in_context(text: str) -> list[tuple[str, str | None]]:
-    """Question sentences and reply-requesting lines of the lead's reply, in order, each with the
-    sentence before it when the ask is a follow-up that only makes sense with it ("Or kept out of git?")."""
+    """Question sentences and reply-requesting lines of the lead's reply, in order, each with its context:
+    the sentence before it for a follow-up ("Or kept out of git?"), or the last line that names a gate for
+    an approval request that does not ("Approve or name changes.")."""
     asks: list[tuple[str, str | None]] = []
+    gate_line: str | None = None
     for line in text.splitlines():
         cleaned = _clean(line)
         if not cleaned:
@@ -194,8 +196,11 @@ def asks_in_context(text: str) -> list[tuple[str, str | None]]:
             found = [(0, cleaned)]
         for index, piece in found:
             follow_up = index > 0 and (FOLLOW_UP.match(piece) is not None or len(piece.split()) <= 3)
+            context = pieces[index - 1] if follow_up else (gate_line if APPROVAL_ASK.search(piece) else None)
             if piece not in (ask for ask, _context in asks):
-                asks.append((piece, pieces[index - 1] if follow_up else None))
+                asks.append((piece, context))
+        if GATE_WORD.search(cleaned):
+            gate_line = cleaned
     return asks
 
 

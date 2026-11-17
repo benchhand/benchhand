@@ -126,6 +126,21 @@ class RecordedGroundTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_the_recorded_layout_freeze_prompt_is_a_gate_its_approval_request_matched_through_its_heading(self) -> None:
+        text = recorded_text("events-gate-wall-bracket-layout.jsonl")
+        reply = dialogue.respond(case_script("wall-bracket"), text, "fixture", can_stop=True)
+        self.assertEqual([(ask.text, ask.intent) for ask in reply.asks],
+                         [("Approve or name changes. Please also confirm or correct these assumptions:", "layout-freeze")])
+        self.assertTrue(reply.at_gate)
+        self.assertFalse(reply.unmatched_at_gate)
+        self.assertTrue(reply.stops)
+
+    def test_the_recorded_gate_prompt_with_a_question_no_intent_matches_is_unmatched_at_the_gate(self) -> None:
+        text = recorded_text("events-gate-wall-bracket-layout.jsonl") + "\nShould the bracket get a drip edge?"
+        reply = dialogue.respond(case_script("wall-bracket"), text, "fixture", can_stop=True)
+        self.assertTrue(reply.unmatched_at_gate)
+        self.assertEqual([ask.text for ask in reply.unmatched], ["Should the bracket get a drip edge?"])
+
     def test_a_question_no_intent_matches_in_a_gate_prompt_is_unmatched_at_the_gate(self) -> None:
         text = "v2 passed the full check.\nDo you approve the LAYOUT freeze? Should the hinge get a detent?"
         reply = dialogue.respond(case_script("print-in-place"), text, "fixture", can_stop=True)
