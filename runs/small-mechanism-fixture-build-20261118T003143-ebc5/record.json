@@ -1,0 +1,202 @@
+{
+  "run_id": "small-mechanism-fixture-build-20261118T003143-ebc5",
+  "case": "small-mechanism",
+  "arm": "fixture-build",
+  "mode": "fixture",
+  "started": "2026-11-17T20:32:00+00:00",
+  "finished": "2026-11-17T21:53:41+00:00",
+  "producer_model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
+  "agent": "build",
+  "judge_model": "amazon-bedrock/global.openai.gpt-6.1-sol",
+  "outcome": "reached",
+  "accepted": null,
+  "isolation": {
+    "passed": true,
+    "findings": [],
+    "loaded": {
+      "config_sources": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/opencode.json",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode"
+      ],
+      "skills": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-analysis/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-bom/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-concept/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-design/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-drawings/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-fits/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-flow/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-model/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-motion/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-recheck/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-record/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-render/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-review-dfm/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-review-mech/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.config/opencode/skills/cad-viewer/SKILL.md",
+        "skill://browser/SKILL.md",
+        "skill://opencode/SKILL.md",
+        "skill://report/SKILL.md"
+      ],
+      "agents": [
+        "build",
+        "cad-analyst",
+        "cad-clerk",
+        "cad-concept-designer",
+        "cad-dfm-reviewer",
+        "cad-mech-reviewer",
+        "cad-part-designer",
+        "cad-sourcing-researcher",
+        "compaction",
+        "explore",
+        "general",
+        "plan",
+        "summary",
+        "title"
+      ],
+      "commands": [
+        "cad-flow",
+        "goal",
+        "init",
+        "review"
+      ],
+      "cache": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261118T003143-ebc5/home/.cache/opencode"
+    }
+  },
+  "repo_commit": "224f5f0ab2a8907e9f4b092e5360763c4c39cf81",
+  "spend": {
+    "producer_usd": 17.193799,
+    "judge_usd": 0.0,
+    "total_usd": 17.193799,
+    "opencode_reported_usd": 17.193799,
+    "currency": "USD"
+  },
+  "version": "v3",
+  "metrics": {
+    "model_turns": 188,
+    "lead_model_turns": 132,
+    "subagent_model_turns": 56,
+    "subagent_sessions": 3,
+    "tool_calls": 247,
+    "tool_calls_by_tool": {
+      "edit": 19,
+      "glob": 5,
+      "grep": 2,
+      "read": 50,
+      "shell": 126,
+      "skill": 3,
+      "subagent": 3,
+      "websearch": 1,
+      "write": 38
+    },
+    "failed_builds": 1,
+    "lead_model_time_s": 1911.998,
+    "lead_tool_time_s": 1374.618,
+    "subagent_model_time_s": 4476.578,
+    "subagent_tool_time_s": 3006.535,
+    "input_tokens": 39485102,
+    "uncached_input_tokens": 396,
+    "cached_input_tokens": 38473299,
+    "cache_write_tokens": 1011407,
+    "output_tokens": 222026,
+    "reasoning_tokens": 0,
+    "spend_usd": 17.193799,
+    "spend_by_model_usd": {
+      "amazon-bedrock/global.anthropic.claude-opus-5-5": 17.193799
+    },
+    "opencode_reported_cost_usd": 17.193799,
+    "unpriced_models": [],
+    "subagent_dispatches": 3,
+    "subagent_redispatches": 0,
+    "subagent_followups": 0,
+    "redispatched_units": [],
+    "dispatches_by_agent": {
+      "cad-concept-designer": 3
+    },
+    "harness_turns": 5,
+    "active_wall_s": 3680.2,
+    "human_wait_events": 4,
+    "human_wait_s": 1560.0,
+    "nudges": 0,
+    "questions_asked": 33,
+    "questions_matched": 29,
+    "questions_unmatched": 4,
+    "questions_unmatched_at_gate": 1,
+    "gates_answered": 5,
+    "profile_questions_asked": 0,
+    "profile_asked": false,
+    "tool_errors": 1
+  },
+  "unmatched_questions": [
+    {
+      "turn": 1,
+      "text": "Where on the handle, and in which direction (for example, at right angles to the lever, in the swing plane)?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Does it also apply with the lever pressed against either stop?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "What do you measure with (calipers, pin gauges)?",
+      "at_gate": false
+    },
+    {
+      "turn": 5,
+      "text": "Approve the print orientations.",
+      "at_gate": true
+    }
+  ],
+  "hard_checks": {
+    "passed": false,
+    "failed": [
+      "sweep"
+    ],
+    "checks": [
+      {
+        "name": "l1_version",
+        "passed": true,
+        "detail": "latest layout version: v3",
+        "exit_code": null
+      },
+      {
+        "name": "validate",
+        "passed": true,
+        "detail": "validate.py exit 0",
+        "exit_code": 0
+      },
+      {
+        "name": "layout_frozen",
+        "passed": true,
+        "detail": "flow.stage parts; approved LAYOUT freeze DRs ['DR-009.md']",
+        "exit_code": null
+      },
+      {
+        "name": "cad_model_check",
+        "passed": true,
+        "detail": "cad_model check v3 exit 0",
+        "exit_code": 0
+      },
+      {
+        "name": "sweep",
+        "passed": false,
+        "detail": "sweep v3 exit 2",
+        "exit_code": 2
+      }
+    ]
+  },
+  "verdicts": null,
+  "machine": {
+    "peak_load1": 104.11,
+    "min_available_gb": 9.49
+  },
+  "leftover_processes": {
+    "own_groups_stopped": [],
+    "still_running": [],
+    "viewers_stopped": [],
+    "warmups_stopped": []
+  },
+  "fixture": "/Users/sjors/personal/dev/cad-agent-bench/bench/cases/small-mechanism/fixture/hw"
+}
