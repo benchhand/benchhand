@@ -1,66 +1,64 @@
 """install_missing: an assembly occurrence that no operation installs, other than its one base.
 
-cad-record assembly_operations.check_order treats every occurrence no operation installs as base. A part
-that lost its installing operation then looks like a second base part, and the sequence passes. This holds
-whether nothing else names the part, or a close operation only names it. The mutant drops one installing
-operation from the housing assembly sequence. The twin keeps it. `_outcome` builds both variants.
+The verdict is the user-visible one: the `result` of the packet cad-motion access.py builds for the record,
+not check_order's rows. A part that lost its installing operation looks like a second base part, and the
+sequence passes unless the packet fails. The mutant drops one installing operation from the housing assembly
+sequence. The twin keeps it. `_result` builds both variants.
 """
 
 from __future__ import annotations
 
 import copy
-import sys
+import json
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import Any
 
-from corpus import Family, Pair, Skip
+from corpus import Family, Outcome, Pair
+from support import PNS, SKILLS, TITLES, _access_geometry, load, require, reordered, socket_operations
 
-ROOT = Path(__file__).resolve().parents[5]
-RECORD_SCRIPTS = ROOT / "skills" / "cad-record" / "scripts"
-PNS = ("TST-0101", "TST-0102", "TST-0103", "TST-0104", "TST-0105")  # housing, bearing, cover, screw, bracket
-DOWN = [0, 0, -1]
-
-# The housing assembly sequence of cad-motion's blocked_socket fixture, without tool envelopes.
-OPERATIONS: list[dict[str, Any]] = [
-    {"id": "seat-bearing", "kind": "press_fit", "part": "TST-0102", "into": "TST-0101", "interface": "IF-001",
-     "direction": DOWN, "acceptance": {"kind": "seated", "features": ["outer_face", "seat_floor"]}},
-    {"id": "fit-cover", "kind": "close", "part": "TST-0103", "into": "TST-0101", "closes": ["TST-0102"],
-     "direction": DOWN},
-    {"id": "mount-bracket", "kind": "join", "part": "TST-0105", "into": "TST-0101", "direction": DOWN,
-     "acceptance": {"kind": "standoff", "features": ["bracket_foot", "housing_top"]}},
-    {"id": "fasten-cover", "kind": "fasten", "part": "TST-0104", "into": "TST-0103", "direction": DOWN,
-     "acceptance": {"kind": "seated", "features": ["head_face", "cover_top"]}},
-]
+VALID = ("seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")  # the screw is driven before the bracket goes on
 
 
-def _outcome(dropped: str | None) -> str:
-    """check_order over the sequence without the operation `dropped`: "fail" when any order outcome fails."""
-    try:
-        if str(ROOT / "scripts") not in sys.path:
-            sys.path.insert(0, str(ROOT / "scripts"))
-        from modload import load_module
-
-        operations = load_module("cad_record_assembly_operations", RECORD_SCRIPTS / "assembly_operations.py")
-        data = load_module("cad_record_assembly_data", RECORD_SCRIPTS / "assembly_data.py")
-    except ImportError as error:
-        raise Skip(f"cad-record scripts not importable: {error}") from error
-    items = [copy.deepcopy(op) for op in OPERATIONS if op["id"] != dropped]
-    inventory = data.normalize({"subassemblies": [{"id": "main", "title": "Main", "parts": list(PNS)}]})
-    report = operations.check_order(operations.normalize({"operations": items}), inventory)
-    outcomes = {row["outcome"] for row in report.outcomes}
-    return "fail" if "fail" in outcomes else "unknown" if "unknown" in outcomes else "pass"
+def _result(dropped: str | None) -> Outcome:
+    """The `result` of access.py's packet over the five parts, without the operation `dropped`."""
+    require("yaml")
+    root, _ = _access_geometry()
+    full = reordered(socket_operations("blocked_socket.yaml"), *VALID)
+    items = [copy.deepcopy(op) for op in full if op["id"] != dropped]
+    fx = load("cad_record_mi_fixtures", SKILLS / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
+    parts = [fx.part(pn, TITLES[pn], process="cnc") for pn in PNS]
+    interface = fx.interface("IF-001", "TST-0101", "TST-0102", "mounting",
+                             limits={"press_fit": {"fit": "22 H7/p6", "pair": ["TST-0102", "TST-0101"]}})
+    documents = fx.record(parts=parts, interfaces=[interface], operations=items)
+    with tempfile.TemporaryDirectory(dir=root) as tmp:
+        hw = fx.write_record(Path(tmp) / "hw", documents)
+        source = hw / "manufacturing" / "sources" / "socket.step"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / "geometry" / "socket.step", source)
+        attach = [arg for pn in PNS[1:] for arg in ("--attach", f"{pn}=TST-0101")]
+        run = subprocess.run(["uv", "run", "--quiet", "--script", str(SKILLS / "cad-motion" / "scripts" / "access.py"),
+                              "--hw", str(hw), "--parts-dir", str(root / "geometry" / "parts"), *attach],
+                             capture_output=True, text=True, timeout=1800, check=False)
+        if run.returncode not in (0, 1):
+            raise RuntimeError(f"access.py exited {run.returncode}: {(run.stdout + run.stderr)[-1500:]}")
+        result = json.loads(run.stdout)["result"]
+    if result not in ("fail", "pass", "unknown"):
+        raise RuntimeError(f"unexpected packet result {result!r}")
+    return result  # type: ignore[no-any-return]
 
 
 def _pair(pair_id: str, dropped: str, defect: str) -> Pair:
-    def run(mutant: bool) -> str:
-        return _outcome(dropped if mutant else None)
+    def run(mutant: bool) -> Outcome:
+        return _result(dropped if mutant else None)
 
     return Pair(pair_id, defect, run)
 
 
 FAMILY = Family(
     id="install_missing",
-    check="skills/cad-record/scripts/assembly_operations.py check_order",
+    check="skills/cad-motion/scripts/access.py packet result (assembly_operations.check_order)",
     owner="pkgE",
     pairs=(
         _pair("bracket", "mount-bracket", "the bracket's installing join is missing and nothing else names it"),

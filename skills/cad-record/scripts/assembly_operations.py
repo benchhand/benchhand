@@ -536,10 +536,12 @@ def check_order(operations: Operations, inventory: Any = None) -> Report:
         if mine:
             row["findings"] = [f["id"] for f in mine]
         outcomes.append(row)
-    never = _never_installed(state, inventory)
-    if never:
-        product: dict[str, Any] = {"obligation": "assembly.order@product", "outcome": "fail", "level": "process_planned",
-                                   "method": ORDER_METHOD, "coverage": ORDER_COVERAGE, "findings": [f["id"] for f in never]}
+    if inventory is not None:
+        never = _never_installed(state, inventory)
+        product: dict[str, Any] = {"obligation": "assembly.order@product", "outcome": "fail" if never else "pass",
+                                   "level": "process_planned", "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
+        if never:
+            product["findings"] = [f["id"] for f in never]
         outcomes.append(product)
         findings.extend(never)
     return Report(tuple(outcomes), tuple(findings))
@@ -548,15 +550,20 @@ def check_order(operations: Operations, inventory: Any = None) -> Report:
 def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any]]:
     """A finding per occurrence of the inventory that no operation installs and that is not the assembly's one
     base: it would pass as a second base, but nothing says where it comes from."""
-    found = []
+    found: list[dict[str, Any]] = []
+    taken: set[str] = set()
     for occurrence_id in sorted(state.floating):
         occurrence = inventory.get(occurrence_id)
         subject: dict[str, Any] = {"PN": occurrence.pn}
         if occurrence.explicit:
             subject["occurrence"] = occurrence.ref
         base = inventory.get(state.ground).ref if state.ground else "none"
+        ident = f"{_slug(occurrence_id)}_never_installed"
+        while ident in taken:  # `clip-a` and `clip_a` slug alike
+            ident = f"{ident}_2"
+        taken.add(ident)
         found.append(_finding(
-            f"{_slug(occurrence_id)}_never_installed", "assembly.never_installed", None, severity="critical", outcome="fail",
+            ident, "assembly.never_installed", None, severity="critical", outcome="fail",
             measured=f"no operation installs {occurrence.ref}, and the assembly has one base (the base is {base})",
             consequence=f"{occurrence.ref} is in the assembly but the sequence never puts it in place, so it floats "
                         "beside the base and the assembly cannot be built as recorded",

@@ -23,6 +23,8 @@ ops = load("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
 assembly_data = load("cad_record_assembly_data", SCRIPTS / "assembly_data.py")
 fx = load("cad_record_mi_fixtures", HERE / "fixtures" / "manufacturing_intent.py")
 intent = fx.intent_module()
+evidence = load("cad_record_evidence", SCRIPTS / "evidence.py")
+check_packet = load("cad_record_check_packet", SCRIPTS / "check_packet.py")
 
 PRESS = {"id": "fit-bearing", "kind": "press_fit", "part": "TST-0003", "into": "TST-0001", "interface": "IF-001",
          "direction": [0, 0, -2], "acceptance": {"kind": "seated", "features": ["bearing_face", "seat_floor"]},
@@ -279,7 +281,8 @@ class NeverInstalledTests(unittest.TestCase):
         report = self.check([self.SEAT, self.COVER])
         self.assertEqual(report.findings, ())
         self.assertEqual({row["obligation"] for row in report.outcomes},
-                         {"assembly.order@op:seat-bearing", "assembly.order@op:fit-cover"})
+                         {"assembly.order@op:seat-bearing", "assembly.order@op:fit-cover", "assembly.order@product"})
+        self.assertEqual(report.outcome("assembly.order@product")["outcome"], "pass")
 
     def test_each_missing_installer_is_named(self) -> None:
         report = self.check([self.SEAT], pns=(*self.PNS, "TST-0104"))
@@ -301,12 +304,55 @@ class NeverInstalledTests(unittest.TestCase):
         report = self.check([close])
         self.assertEqual([f["subject"]["PN"] for f in report.findings], ["TST-0102"])
 
+    def test_occurrences_whose_ids_differ_only_by_dash_or_underscore_get_distinct_finding_ids(self) -> None:
+        record = {"occurrences": [{"id": name, "PN": pn} for name, pn in
+                                  (("base", "TST-0101"), ("clip-a", "TST-0102"), ("clip_a", "TST-0102"),
+                                   ("clip-b", "TST-0102"))],
+                  "subassemblies": [{"id": "main", "title": "Main", "occurrences": ["@base", "@clip-a", "@clip_a", "@clip-b"]}]}
+        join = {**self.COVER, "id": "mount-clip", "part": "@clip-b", "into": "@base"}
+        report = ops.check_order(ops.normalize({"operations": [join]}),
+                                assembly_data.normalize(record, {"TST-0102": "part_local"}))
+        ids = [f["id"] for f in report.findings]
+        self.assertEqual(len(report.findings), 2, ids)
+        self.assertEqual(len(set(ids)), 2, ids)
+        self.assertEqual(report.outcome("assembly.order@product")["findings"], ids)
+
     def test_one_base_plus_installed_parts_is_clean(self) -> None:
         chain = {**self.SEAT, "id": "mount-cover", "part": "TST-0103", "into": "TST-0102"}
         self.assertEqual(self.check([self.SEAT, chain]).findings, ())
 
     def test_without_an_inventory_there_is_no_occurrence_to_miss(self) -> None:
         self.assertEqual(self.check([self.SEAT], with_inventory=False).findings, ())
+
+
+class NeverInstalledPacketTests(unittest.TestCase):
+    """A missing installer reaches the user through the packet and the evidence assessment, not only check_order."""
+
+    PNS = ("TST-0101", "TST-0102", "TST-0103")
+    SEAT = NeverInstalledTests.SEAT
+
+    def assessed(self, items: list[dict]):
+        documents = fx.record(parts=[fx.part(pn, pn, process="cnc") for pn in self.PNS], operations=items,
+                              interfaces=[fx.interface("IF-001", "TST-0101", "TST-0102", "mounting")])
+        record = intent.normalize_record({rel: doc for rel, doc in documents.items() if not rel.startswith("_")})
+        inventory = assembly_data.normalize(documents["assembly.yaml"])
+        report = ops.check_order(ops.normalize({"operations": items}), inventory)
+        expected = [o for o in intent.required_checks(record) if o.family == "assembly.order"]
+        data = check_packet.build(record, expected, "test producer", "v1", list(report.outcomes), list(report.findings), {})
+        packet = evidence.ProducerPacket("hw/checks/v1/assembly-access", "b" * 64, data)
+        result = evidence.assess(record, version="v1", manifest_sha256="a" * 64, packets=[packet])
+        return expected, result
+
+    def test_the_product_order_obligation_is_required_and_fails_a_missing_installer(self) -> None:
+        expected, result = self.assessed([self.SEAT])
+        self.assertIn("assembly.order@product", {o.id for o in expected})
+        self.assertEqual(result.statuses["assembly.order@product"].result, "fail")
+        self.assertNotIn("packet.invalid", {f.code for f in result.findings})
+
+    def test_a_complete_sequence_passes_the_product_order_obligation(self) -> None:
+        cover = NeverInstalledTests.COVER
+        _, result = self.assessed([self.SEAT, cover])
+        self.assertEqual(result.statuses["assembly.order@product"].result, "pass")
 
 
 if __name__ == "__main__":
