@@ -237,6 +237,8 @@ CASES = {
                         "bed", plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_reversed": (cut(box(0, 0, 0, 60, 60, 30), extruded(outline((10, 10), ((40, 10),), ((40, 14),), ((10, 14),), ((10, 10),)), -1, 10)),
                         "bed", plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_bowtie": (cut(box(0, 0, 0, 60, 60, 30), extruded(outline((10, 10), ((40, 10),), ((10, 14),), ((40, 14),), ((10, 10),)), -1, 10)),
+                      "bed", plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_elliptic": (cut(box(0, 0, 0, 60, 60, 30), elliptic_strip(10, 10, 40, 4.0, 3.0, -1, 10)), "bed",
                         plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_elliptic_thin": (cut(box(0, 0, 0, 60, 60, 30), elliptic_strip(10, 10, 40, 0.0015, 1.0, -1, 10)), "bed",

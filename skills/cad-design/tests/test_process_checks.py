@@ -1184,6 +1184,7 @@ class ProbeGeometryTests(Checks):
             ("pocket_flared", ("bridge", None)),  # one end flares out in two concave R1 arcs
             ("pocket_scooped", ("bridge", None)),  # R1 corner arcs that are not tangent to the sides
             ("pocket_reversed", ("bridge", 4.0)),  # a plain 4 x 30 roof whose long edges run in opposite directions
+            ("pocket_bowtie", ("bridge", None)),  # the two ends cross: low end of one run to high end of the other
             ("pocket_elliptic", ("bridge", None)),  # a half-ellipse end is not a circle
             ("pocket_elliptic_thin", ("bridge", None)),  # the same at 0.0015 mm wide: radius 0 is within tolerance of gap / 2
             ("pocket_oversize", ("bridge", None)),  # corner arcs of radius 2.5 and 0.5 on a 4 mm gap: 2.5 is above gap / 2

@@ -927,9 +927,11 @@ def _strip_gap(a: _Edge, b: _Edge, roof: list[_Edge]) -> float | None:
         return None
     remaining = [edge for edge in roof if not _on_run(edge, a, along) and not _on_run(edge, b, along)]
     low, high = _walk(a.start, remaining, b), _walk(a.end, remaining, b)
-    if remaining or low is None or high is None or _near(low[1], high[1]):
+    if remaining or low is None or high is None:
         return None
     frame = _Frame(a.start, along, tuple(c / gap for c in skew), length, gap)
+    if abs(frame.at(low[1])[0]) > PROBE_TOL_MM or abs(frame.at(high[1])[0] - length) > PROBE_TOL_MM:
+        return None  # each end must join the same end of both runs, or the outline crosses itself
     return gap if _end_ok(low[0], (a.start, low[1]), a, frame) and _end_ok(high[0], (a.end, high[1]), a, frame) else None
 
 
