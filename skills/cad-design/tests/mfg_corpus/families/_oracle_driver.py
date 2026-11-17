@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy>=1.26", "python-fcl==0.7.0.11"]
+# requires-python = ">=3.12,<3.15"
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy==2.5.5", "python-fcl==0.7.0.11"]
 # ///
 """Build one corpus case with cad-model and run `cad_model.py check`'s function on it; print the verdict as JSON.
 

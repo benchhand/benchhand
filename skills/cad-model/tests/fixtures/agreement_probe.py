@@ -1,6 +1,6 @@
 # /// script
-# requires-python = ">=3.11,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "pyyaml>=6.0", "numpy>=1.26"]
+# requires-python = ">=3.12,<3.15"
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "pyyaml>=6.0", "numpy==2.5.5"]
 # ///
 """Run `cadmodel.agreement` on shapes built here and on a GLB written here; print the verdicts as JSON.
 
