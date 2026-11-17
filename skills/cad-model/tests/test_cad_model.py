@@ -1410,7 +1410,7 @@ class CheckRuleTests(unittest.TestCase):
                                       "sha256": hashlib.sha256(b"three-mf").hexdigest()}])
 
     @staticmethod
-    def heat_set(hole_d: float = 7.77, hole_tol: list[float] | None = None, host: str = "@host") -> dict:
+    def heat_set(hole_d: float = 7.77, hole_tol: object = None, host: str = "@host") -> dict:
         return {"pair": [host, "@insert"], "host": host, "insert": "M4 x 8", "hole_d": hole_d, "hole_tol": hole_tol,
                 "interface": "IF-001", "source": "interfaces.yaml#/interfaces/0/limits/heat_set/0"}
 
@@ -1432,6 +1432,15 @@ class CheckRuleTests(unittest.TestCase):
     def test_a_heat_set_hole_with_no_declared_tolerance_must_match_to_a_hundredth_of_a_millimetre(self) -> None:
         self.assertEqual(self.dimensions(self.heat_set(), self.bores(7.775))["status"], "pass")
         self.assertEqual(self.dimensions(self.heat_set(), self.bores(7.79))["status"], "fail")
+
+    def test_a_malformed_tolerance_is_unknown_even_when_it_is_falsey(self) -> None:
+        """An empty list or tuple, 0, an empty mapping or string, and False all lack the [low, high] form. None of
+        them falls back to the default tolerance: a 7.775 mm bore would pass that, and the declaration would be wrong."""
+        for bad in ([], (), {}, 0, 0.0, "", False):
+            with self.subTest(hole_tol=bad):
+                row = self.dimensions(self.heat_set(hole_tol=bad), self.bores(7.775))
+                self.assertEqual(row["status"], "unknown")
+                self.assertIn("is not [low, high]", row["heat_sets"][0]["reason"])
 
     def test_a_host_with_no_bore_fails_and_a_host_with_no_measurement_is_unknown(self) -> None:
         self.assertEqual(self.dimensions(self.heat_set(), self.bores())["status"], "fail")
@@ -2817,6 +2826,42 @@ class LegacyOutputTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-2000:])
         self.assertEqual((checked["checks"]["manufacturing"]["status"], checked["checks"]["manufacturing"]["complete"]),
                          ("pass", True))
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
+class AbstentionAggregationTests(unittest.TestCase):
+    """`check` lists the oracles that could not judge under the report's top-level `abstentions`. When a version
+    manifest records no GLB deflection, such as one built before the exporter recorded it, the agreement abstains
+    for every occurrence. The report reads `pass`: an abstention blocks nothing."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.hw = two_part_project(Path(cls.tmp.name), "cadquery")
+        set_arm(cls.hw, "cadquery")
+        cls.built = cli("run", str(cls.hw), "--label", "v1")
+        path = cls.hw / "versions" / "v1" / "manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["glb"].pop("linear_deflection_mm")
+        path.chmod(0o644)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def test_an_abstaining_oracle_is_listed_in_the_reports_abstentions_and_blocks_nothing(self) -> None:
+        self.assertEqual(self.built[0].returncode, 0, self.built[0].stderr[-3000:])
+        proc, result, _ = cli("check", "v1", "--hw", str(self.hw), "--no-cache")
+        self.assertEqual(proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-2000:])
+        agreement = result["checks"]["glb_step_agreement"]
+        self.assertEqual(agreement["status"], "unknown")
+        self.assertIn("no GLB deflection", next(iter(agreement["occurrences"].values()))["reason"])
+        self.assertIn("glb_step_agreement", result["abstentions"])
+        self.assertEqual(result["abstentions"],
+                         sorted(name for name, c in result["checks"].items() if c["status"] == "unknown"))
+        self.assertNotIn("glb_step_agreement", result["blocking_failures"])
+        self.assertEqual(result["status"], "pass")
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the OCP environment")

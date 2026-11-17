@@ -772,7 +772,9 @@ def declared_dimensions(heat_sets: Iterable[Mapping[str, Any]], host_pns: Mappin
     for item in heat_sets:
         pn = host_pns.get(item["host"])
         holes = (metrics.get(pn) or {}).get("holes") if pn is not None else None
-        tolerance = item.get("hole_tol") or (-HOLE_D_DEFAULT_MM, HOLE_D_DEFAULT_MM)
+        tolerance = item.get("hole_tol")
+        if tolerance is None:
+            tolerance = (-HOLE_D_DEFAULT_MM, HOLE_D_DEFAULT_MM)
         row: dict[str, Any] = {"source": item["source"], "host": item["host"], "PN": pn, "hole_d_mm": item["hole_d"]}
         if not isinstance(tolerance, (list, tuple)) or len(tolerance) != 2 \
                 or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in tolerance):
