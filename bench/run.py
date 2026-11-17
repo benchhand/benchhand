@@ -47,6 +47,7 @@ import yaml
 import acceptance
 import dialogue
 import isolation
+import toolerrors
 import metrics
 
 JSON = dict[str, Any]
@@ -478,7 +479,7 @@ def record_turn(conversation: Conversation, invocation: Invocation, text: str, r
         entry.update({"reply_kind": reply.kind, "reply": reply.message, "sent": sent, "wait_s": reply.wait_s,
                       "stops": reply.stops, "at_gate": reply.at_gate,
                       "asks": [{"text": ask.text, "intent": ask.intent, "kind": ask.kind, "matched": ask.matched,
-                                "profile": ask.profile} for ask in reply.asks]})
+                                "profile": ask.profile, "options": list(ask.options)} for ask in reply.asks]})
     conversation.entries.append(entry)
 
 
@@ -841,6 +842,14 @@ def base_record(args: argparse.Namespace, config: Mapping[str, Any], paths: Path
     }
 
 
+def write_tool_errors(paths: Paths, exports: Sequence[Mapping[str, Any]]) -> int:
+    """tool-errors.jsonl beside record.json: one line per failed record or check tool call, pushed with the results.
+    The file is written even when empty, so its presence shows the capture ran."""
+    records = toolerrors.collect(exports, paths.project, paths.scratch, paths.home)
+    (paths.run_dir / "tool-errors.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    return len(records)
+
+
 def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case, paths: Paths, env: dict[str, str],
                 caps: Mapping[str, Any], record: JSON) -> JSON:
     """Drive the lead, evaluate the result and fill the run record."""
@@ -854,6 +863,7 @@ def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case,
         evaluation = evaluate(driver, config, args.mode, case.rubric, prices, judge=args.mode == "bench" and not args.no_judge)
     exports = export_tree(driver, driver.session or "", sanitize=False)
     run_metrics = {**metrics.summarize(exports, driver.session or "", prices), **dialogue_metrics(conversation, driver)}
+    run_metrics["tool_errors"] = write_tool_errors(paths, exports)
     sessions = paths.run_dir / "sessions"
     sessions.mkdir()
     for export in export_tree(driver, driver.session or "", sanitize=True):
@@ -881,8 +891,9 @@ def execute(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     folder = CASES / args.case
     case = Case(args.case, folder, load_answers(folder), acceptance.load_rubric(load_yaml(folder / "requirements.yaml")))
     check_results_checkout(args.results)
-    if args.budget is not None and ledger_total(args.results) >= args.budget:
-        raise BenchError(f"ledger total reached the budget ${args.budget}")
+    budget = float(args.budget if args.budget is not None else config["caps"]["total_spend_usd"])
+    if ledger_total(args.results) >= budget:
+        raise BenchError(f"ledger total reached the budget ${budget}")
     run_id = args.run_id
     paths = Paths.create(run_id, args.results)
     caps = {**config["caps"], **{key: value for key, value in (("max_turns", args.max_turns),
@@ -933,7 +944,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-turns", type=int)
     parser.add_argument("--max-active-minutes", type=float)
     parser.add_argument("--spend-cap", type=float, help="USD; stop the run above this (default config caps.run_spend_usd)")
-    parser.add_argument("--budget", type=float, help="USD; refuse to start once the ledger total reaches it")
+    parser.add_argument("--budget", type=float,
+                        help="USD; refuse to start once the ledger total reaches it (default config caps.total_spend_usd)")
     parser.add_argument("--run-id")
     parser.add_argument("--no-judge", action="store_true")
     parser.add_argument("--no-push", action="store_true")

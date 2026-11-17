@@ -106,6 +106,7 @@ CHANGED_FILES = (
     "bench/metrics.py",
     "bench/report.py",
     "bench/run.py",
+    "bench/toolerrors.py",
 )
 STRICT_FILES = (
     "bench/acceptance.py",
@@ -114,6 +115,7 @@ STRICT_FILES = (
     "bench/metrics.py",
     "bench/report.py",
     "bench/run.py",
+    "bench/toolerrors.py",
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-flow/scripts/fea_solvers.py",

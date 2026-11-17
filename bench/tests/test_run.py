@@ -139,6 +139,37 @@ class ConverseTests(unittest.TestCase):
         self.assertEqual(run.dialogue_metrics(conversation, driver)["questions_unmatched"], 1)
 
 
+class ToolErrorFileTests(unittest.TestCase):
+    def test_tool_errors_jsonl_holds_one_line_per_failed_repo_tool_call_and_exists_when_empty(self) -> None:
+        export = json.loads((DATA / "export-shell-question.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            paths = run.Paths("r", root, root / "project", root / "home", root / "raw", root / "results", root / "run")
+            paths.run_dir.mkdir()
+            self.assertEqual(run.write_tool_errors(paths, [export]), 0)  # the recorded `echo hi; exit 1` is no repo tool
+            self.assertEqual((paths.run_dir / "tool-errors.jsonl").read_text(encoding="utf-8"), "")
+            shell = next(p for m in export["messages"] if m["type"] == "assistant" for p in m["content"] if p.get("name") == "shell")
+            shell["state"]["input"]["command"] = f"cd {paths.project} && uv run --script run.py cad-recheck/scripts/stamp.py --verify"
+            shell["state"]["metadata"]["exit"] = 2
+            self.assertEqual(run.write_tool_errors(paths, [export]), 1)
+            [line] = (paths.run_dir / "tool-errors.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(json.loads(line)["argv"][:2], ["cd", "."])
+
+
+class BudgetTests(unittest.TestCase):
+    def test_a_run_refuses_to_start_once_the_ledger_reaches_the_configured_total_cap(self) -> None:
+        config = json.loads(run.CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(config["caps"]["total_spend_usd"], 500)
+        with tempfile.TemporaryDirectory() as folder:
+            results = Path(folder)
+            (results / "spend.jsonl").write_text(json.dumps({"total_usd": 500.0}) + "\n", encoding="utf-8")
+            args = run.argparse.Namespace(case="wall-bracket", results=results, budget=None, run_id="b")
+            with mock.patch.object(run, "check_results_checkout"), mock.patch.object(run, "Paths") as paths:
+                with self.assertRaisesRegex(run.BenchError, "budget"):
+                    run.execute(args, config)
+                paths.create.assert_not_called()
+
+
 class MarkerTests(unittest.TestCase):
     def test_a_run_claims_its_own_marker_directory_and_refuses_a_used_run_id(self) -> None:
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(run, "MARKER_ROOT", Path(folder)):

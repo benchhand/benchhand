@@ -20,7 +20,8 @@
   "producer": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "agent": null},
   "judge": {"model": "amazon-bedrock/global.openai.gpt-6.1-sol", "vendor": "OpenAI (producer: Anthropic)"},
   "tier_models": {"cheap": "amazon-bedrock/global.anthropic.claude-haiku-5-5"},
-  "caps": {"max_turns": 60, "max_active_minutes": 300, "run_spend_usd": 40},
+  "caps": {"max_turns": 60, "max_active_minutes": 300, "run_spend_usd": 40, "total_spend_usd": 500,
+    "total_spend_note": "programme cap for the whole bench (fixtures, pilot, baseline), USD, set 2026-11-17; a run refuses to start once the spend ledger reaches it"},
   "check_timeouts_s": {"default": 1200, "sweep": 3600},
   "opencode": {
     "$schema": "https://opencode.ai/config.json",
