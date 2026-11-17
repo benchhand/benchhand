@@ -23,7 +23,7 @@ Policy this package applies (a plugin rule, not a product fact):
   trials and first-article inspection are physical evidence the ledger holds (they are named as findings).
 
 Public API: `expected(record)`, `assess(record, geometry, today=)` -> `Assessment` (`outcomes`, `findings`,
-`complete`, `result`, `packet(version, dependencies)`), `probe_plan(record, PN, component)`, `Geometry`,
+`complete`, `result`, `packet(dependencies)`), `probe_plan(record, PN, component)`, `Geometry`,
 `TABLE`, `owned`, `NotAssessable`, `HandlerError`, `PRODUCER`, `PROBE_FORMAT`.
 """
 

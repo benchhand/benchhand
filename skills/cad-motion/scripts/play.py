@@ -577,7 +577,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     outcomes: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     if not expected:
-        return check_packet.build(record, expected, PRODUCER, version, outcomes, findings, dependencies), detail
+        return check_packet.build(record, expected, PRODUCER, outcomes, findings, dependencies), detail
     assembly, chain, definitions = pose.load_inputs(args)
     allowed, fitted, clearances = sweep.declared_policy(record_hw, assembly)
     shapes = {pn: part.shape for pn, part in definitions.items()}
@@ -628,7 +628,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         uncertain = "; ".join(r for i in ids for r in assessments[i].reasons())
         outcomes.append(outcome_row(obligation, state, [f for i in ids for f in by_interface[i]],
                                     uncertain or f"through {', '.join(ids)}"))
-    return check_packet.build(record, expected, PRODUCER, version, outcomes, findings, dependencies), detail
+    return check_packet.build(record, expected, PRODUCER, outcomes, findings, dependencies), detail
 
 
 def main(argv: list[str] | None = None) -> int:

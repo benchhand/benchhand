@@ -1087,7 +1087,7 @@ def status_of(result: Mapping[str, Any]) -> str:
     return "fail" if requirement is not None and not requirement["pass"] else "pass"
 
 
-def check_packet(result: Mapping[str, Any], record: Any, version: str,
+def check_packet(result: Mapping[str, Any], record: Any,
                  dependencies: Mapping[str, str]) -> dict[str, Any] | None:
     """The required-check packet of an intent stack bound to a record version 2 snapshot: the outcome of the
     interface.stack or feature.fit obligation it judges, as its governing method judged it (unknown stays
@@ -1103,7 +1103,7 @@ def check_packet(result: Mapping[str, Any], record: Any, version: str,
     ids = {o.id for o in expected}
     outcomes = [dict(row) for row in result["obligations"] if row["obligation"] in ids]
     findings = [dict(item) for item in result["findings"] if item.get("obligation") in ids]
-    packet: dict[str, Any] = CHECK_PACKET.build(record, expected, PRODUCER, version, outcomes, findings, dependencies)
+    packet: dict[str, Any] = CHECK_PACKET.build(record, expected, PRODUCER, outcomes, findings, dependencies)
     return packet
 
 
@@ -1190,7 +1190,7 @@ def main(argv: list[str] | None = None) -> int:
                 result["bundle"] = str(published.path)
                 result["reused"] = published.reused
             if record is not None:
-                packet = check_packet(result, record, version, packet_dependencies(args.hw, stack_path, stack))
+                packet = check_packet(result, record, packet_dependencies(args.hw, stack_path, stack))
                 result["check_bundle"] = (None if packet is None else
                                           publish_check(args.hw, version, subject, result, packet, args.replace))
         elif args.out is not None:

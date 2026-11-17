@@ -822,7 +822,7 @@ def packet(result: Mapping[str, Any], a: Assessment) -> dict[str, Any]:
     states = {row["outcome"] for row in outcomes}
     verdict = ("fail" if "fail" in states else "unknown" if "unknown" in states else
                "pass" if "pass" in states else "not_applicable")
-    return {"schema_version": 1, "record_version": 2, "producer": PRODUCER, "version": a.version, "scope": [subject],
+    return {"schema_version": 1, "record_version": 2, "producer": PRODUCER, "scope": [subject],
             "expected": a.expected, "outcomes": outcomes, "findings": findings, "dependencies": dict(a.dependencies),
             "complete": len(outcomes) == len(a.expected), "result": verdict}
 

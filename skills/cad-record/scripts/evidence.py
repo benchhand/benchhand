@@ -696,7 +696,7 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
     # producer packets
     accepted_packets = []
     for packet in packets:
-        problems = _packet_problems(packet, version, by_id)
+        problems = _packet_problems(packet, by_id)
         if problems:
             findings.append(Finding("packet.invalid", packet.bundle, f"{packet.bundle}/result.json: " + "; ".join(problems)))
             complete = False
@@ -803,14 +803,12 @@ def _joint_results(record: Any, part_of: Callable[[str], str | None] | None) -> 
     return found
 
 
-def _packet_problems(packet: ProducerPacket, version: str | None, expected: Mapping[str, Any]) -> list[str]:
-    """Why a producer packet cannot be counted: not a check-result packet, another version, or a packet
+def _packet_problems(packet: ProducerPacket, expected: Mapping[str, Any]) -> list[str]:
+    """Why a producer packet cannot be counted: not a check-result packet, or a packet
     that contradicts itself (a claimed completeness or result its outcomes do not show)."""
     data = packet.data
     if not isinstance(data, Mapping) or data.get("schema_version") != 1 or data.get("record_version") != mi.RECORD_VERSION:
         return ["not a record version 2 manufacturing check result (schema_version 1)"]
-    if version is None or data.get("version") != version:
-        return [f"it checks {data.get('version')}, not {version}"]
     problems = []
     outcomes = [o for o in data.get("outcomes") or () if isinstance(o, Mapping)]
     ids = [o.get("obligation") for o in outcomes]

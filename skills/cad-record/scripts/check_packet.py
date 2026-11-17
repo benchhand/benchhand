@@ -31,7 +31,7 @@ class PacketError(ValueError):
     """A packet that cannot be published as asked: a usage error (exit 2)."""
 
 
-def build(record: Any, expected: Iterable[Any], producer: str, version: str | None, outcomes: list[dict[str, Any]],
+def build(record: Any, expected: Iterable[Any], producer: str, outcomes: list[dict[str, Any]],
           findings: list[dict[str, Any]], dependencies: Mapping[str, str]) -> dict[str, Any]:
     """The packet of `expected` (manufacturing_intent Obligations) from this run's outcomes and findings."""
     wanted = [o.as_dict() for o in expected]
@@ -42,7 +42,7 @@ def build(record: Any, expected: Iterable[Any], producer: str, version: str | No
     result = "fail" if "fail" in states else "unknown" if ("unknown" in states or not complete) else "pass"
     scope = [o["subject"] for o in wanted if not o["subject"].get("product")] or [{"product": True}]
     unique_scope = [dict(s) for s in {json.dumps(s, sort_keys=True): s for s in scope}.values()]
-    return {"schema_version": 1, "record_version": record.version, "producer": producer, "version": version,
+    return {"schema_version": 1, "record_version": record.version, "producer": producer,
             "scope": unique_scope, "expected": wanted, "outcomes": outcomes, "findings": findings,
             "dependencies": dict(sorted(dependencies.items())), "complete": complete, "result": result}
 
