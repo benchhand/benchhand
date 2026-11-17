@@ -13,8 +13,9 @@ case, part or profile.
 Explicit numbers stay readable in a standalone case and in a record version 1 version: they are labelled
 unsourced and the result is exploratory, never service evidence. A completed sourced solve is
 simulation-supported evidence at most, never physical validation; `engineering.*` outcomes pass only with a
-sourced acceptance criterion, service-grade properties, covered service loads and demonstrated mesh
-convergence.
+sourced acceptance criterion, service-grade properties, service loads covered as vectors and a mesh convergence
+study that is approved, bound to this geometry, material, supports, forces and mesh, and converged. Anything
+unproven is unknown, never pass, and never service evidence.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+
+import yaml
 
 INTENT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "manufacturing_intent.py"
 PRODUCER = "cad-analysis fea_static.py"
@@ -49,6 +52,19 @@ FORMING = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": 
 LEVEL = "simulation_supported"
 DECISION = re.compile(r"DR-[0-9]{3}")
 REQUIREMENT = re.compile(r"REQ-[0-9]{3}")
+# A decision (mesh convergence, effective isotropic model) counts only when its first line is exactly this.
+APPROVED = "Status: APPROVED"
+
+
+STUDY_BLOCK = re.compile(r"```mesh-convergence[ \t]*\r?\n(.*?)```", re.S)
+MONITORED = ("max_von_mises_mpa", "max_displacement_mm")  # what a study must show settled
+MIN_REFINEMENTS = 3
+CONVERGENCE_LIMIT = 0.1  # the largest relative_change_max a study may claim for "settled"
+# Tolerances for vector comparisons: a study's force components against the case's, per application region
+# (relative to the region's force), and how far across a service load's direction the applied force may point
+# (as a share of the service magnitude). Over-applying along the direction is conservative and allowed.
+LOAD_BINDING_TOLERANCE = 1e-6
+LOAD_CROSS_TOLERANCE = 0.01
 METHOD = "static linear elastic isotropic FEA (FreeCAD FEM, Gmsh second-order tetrahedra, CalculiX)"
 LIMITS = (
     "static, linear elastic, small displacement and isotropic: no contact, plasticity, buckling, dynamics or thermal load",
@@ -57,6 +73,11 @@ LIMITS = (
     "a yield safety factor is not a fatigue, creep, wear, impact, buckling or service-life margin",
     "simulation-supported evidence at most, never physical validation",
 )
+
+
+def is_approved(text: str) -> bool:
+    """A decision is approved only when its first line is exactly `Status: APPROVED`."""
+    return text.split("\n", 1)[0].rstrip("\r") == APPROVED
 
 
 class Refused(ValueError):
@@ -104,6 +125,15 @@ class Assessment:
     @property
     def sourced(self) -> bool:
         return self.material.get("source") == "profile"
+
+    def all_gaps(self) -> list[str]:
+        """Every reason this solve is not service evidence: the basis gaps, the uncovered service loads and an
+        unproven mesh convergence. A sourced result carries all three; an exploratory one only its basis note."""
+        gaps = list(self.evidence_gaps)
+        if self.sourced:
+            gaps += self.load_gaps
+            gaps += convergence_gaps(self.convergence)
+        return gaps
 
     def recipe(self) -> dict[str, Any]:
         """The recipe fields that bind a published bundle to this material, criterion and configuration."""
@@ -196,9 +226,9 @@ class _Assessor:
         self.service_conditions(conditions)
         criteria = self.criteria()
         load_gaps = self.load_coverage(part)
-        convergence = self.convergence()
-        self.check()
         profile_sha = _digest(self.mi.thaw(profile.raw))
+        convergence = self.convergence(profile, profile_sha)
+        self.check()
         self.dependencies["material_profile"] = profile_sha
         material = {
             "source": "profile", "name": profile.raw.get("title") or profile.id,
@@ -350,6 +380,10 @@ class _Assessor:
             return {"model": "unsupported", "reasons": reasons}
         self.decision(model["decision"], f"decision_{model['decision'].lower().replace('-', '_')}", "material.anisotropy",
                       "material.effective_isotropic")
+        decided = self.hw / "decisions" / f"{model['decision']}.md"
+        if decided.is_file() and not is_approved(decided.read_text(encoding="utf-8", errors="replace")):
+            self.refuse("material.anisotropy", f"{model['decision']} is not approved: its first line must be exactly "
+                                               f"'{APPROVED}', because a provisional decision is not evidence")
         return {"model": "effective_isotropic", "reasons": reasons, "orientation": conditions["orientation"],
                 "decision": model["decision"], "justification": model["justification"]}
 
@@ -458,7 +492,10 @@ class _Assessor:
         return found
 
     def load_coverage(self, part: Any) -> list[str]:
-        """Why the case's loads do not cover the part's service loads (empty when they do)."""
+        """Why the case's loads do not cover the part's service loads (empty when they do).
+
+        The case's forces for a service load are added as vectors and compared with the service load's magnitude
+        along its stated direction, so a reversed, rotated or cancelling force never counts as covered."""
         named = [load.get("load") for load in self.case["loads"] if load.get("load")]
         loads = self.record.use_case.loads
         known = {} if self.mi.is_fact(loads) else {load.id: load for load in loads}
@@ -471,29 +508,269 @@ class _Assessor:
         wanted = list(service.get("loads") or ())
         if not wanted or self.mi.is_fact(loads):
             return [f"{part.pn}'s service loads are unknown"]
-        gaps = []
-        for ref in wanted:
-            load = known.get(ref)
-            magnitude = load.magnitude if load is not None else None
-            if magnitude is None or not magnitude.known or not isinstance(magnitude.value, self.mi.Quantity) \
-                    or magnitude.value.dimension != "force":
-                gaps.append(f"service load {ref}'s force magnitude is unknown")
-                continue
-            applied = sum(math.sqrt(sum(c * c for c in item["force"])) for item in self.case["loads"] if item.get("load") == ref)
-            peak = magnitude.value.to("N").bounds[1]
-            if applied < peak * (1 - 1e-9):
-                gaps.append(f"the case applies {applied:g} N for service load {ref}, which reaches {peak:g} N")
-        return gaps
+        return [gap for ref in wanted for gap in self.load_gaps_of(ref, known.get(ref))]
 
-    def convergence(self) -> dict[str, Any]:
+    def load_gaps_of(self, ref: str, load: Any) -> list[str]:
+        """Why the case's forces for one service load fall short of it (empty when they reach it)."""
+        magnitude = load.magnitude if load is not None else None
+        if magnitude is None or not magnitude.known or not isinstance(magnitude.value, self.mi.Quantity) \
+                or magnitude.value.dimension != "force":
+            return [f"service load {ref}'s force magnitude is unknown"]
+        peak = magnitude.value.to("N").bounds[1]
+        applied = _sum_vectors(item["force"] for item in self.case["loads"] if item.get("load") == ref)
+        direction = self.service_direction(ref)
+        if direction is None:
+            gaps = [f"service load {ref}'s direction is not stated as a vector (such as '0 0 -1' or '-Z'), so "
+                    "the direction of the case's forces cannot be checked against it"]
+            if _norm(applied) < peak * (1 - 1e-9):
+                gaps.append(f"the case's forces for service load {ref} add up to {_norm(applied):g} N, which reaches "
+                            f"{peak:g} N")
+            return gaps
+        along = _dot(applied, direction)
+        across = _norm(tuple(a - along * d for a, d in zip(applied, direction)))
+        if along < peak * (1 - 1e-9):
+            return [f"the case applies {max(along, 0.0):g} N along service load {ref}'s direction "
+                    f"{_text(direction)}, which reaches {peak:g} N (its forces add up to {_text(applied)} N)"]
+        if across > LOAD_CROSS_TOLERANCE * peak:
+            return [f"the case's forces for service load {ref} point {across:g} N across its direction "
+                    f"{_text(direction)}; more than {LOAD_CROSS_TOLERANCE:.0%} of the {peak:g} N it reaches"]
+        return []
+
+    def service_direction(self, ref: str) -> tuple[float, float, float] | None:
+        """The unit vector of a service load's direction fact, or None when it is absent or not a vector."""
+        product = self.documents.get("product.yaml")
+        use_case = product.get("use_case") if isinstance(product, Mapping) else None
+        for item in (use_case.get("loads") if isinstance(use_case, Mapping) else None) or ():
+            if isinstance(item, Mapping) and item.get("id") == ref:
+                fact = item.get("direction")
+                if isinstance(fact, list):   # the form cad-record #64 requires: a bare [x, y, z]
+                    return _parse_direction(" ".join(str(part) for part in fact)) if len(fact) == 3 and all(
+                        isinstance(part, (int, float)) and not isinstance(part, bool) for part in fact) else None
+                if isinstance(fact, Mapping) and fact.get("status") == "known" and isinstance(fact.get("value"), str):
+                    return _parse_direction(fact["value"])
+        return None
+
+    def convergence(self, profile: Any, profile_sha: str) -> dict[str, Any]:
         stated = self.case.get("mesh_convergence")
         if stated is None:
-            return {"status": "not_demonstrated",
-                    "reason": "one mesh: refine mesh_size until peak stress and displacement settle, then record the study "
-                              "in an approved decision named by mesh_convergence.decision"}
-        self.decision(stated["decision"], f"decision_{stated['decision'].lower().replace('-', '_')}", "analysis.convergence",
-                      "mesh_convergence")
-        return {"status": "demonstrated", "decision": stated["decision"]}
+            reason = ("one mesh: refine mesh_size until peak stress and displacement settle, then record the study "
+                      "in an approved decision named by mesh_convergence.decision")
+            return {"status": "not_demonstrated", "reason": reason, "problems": [reason]}
+        ref = stated["decision"]
+        self.decision(ref, f"decision_{ref.lower().replace('-', '_')}", "analysis.convergence", "mesh_convergence")
+        path = self.hw / "decisions" / f"{ref}.md"
+        if not path.is_file():
+            return {"status": "not_demonstrated", "decision": ref, "problems": [f"{ref} is missing"]}
+        step = self.case.get("_step")
+        geometry = hashlib.sha256(Path(step).read_bytes()).hexdigest() if step and Path(step).is_file() else None
+        study, problems = read_study(path.read_text(encoding="utf-8", errors="replace"), ref)
+        if study is None:
+            return {"status": "not_demonstrated", "decision": ref, "problems": problems, "reason": "; ".join(problems)}
+        problems += study_problems(study, geometry=geometry, profile_id=profile.id, profile_sha=profile_sha,
+                                   supports=self.case["fixed_faces"], loads=self.case["loads"],
+                                   mesh_size=self.case["mesh_size"])
+        if problems:
+            return {"status": "not_demonstrated", "decision": ref, "problems": problems, "reason": "; ".join(problems)}
+        return {"status": "demonstrated", "decision": ref,
+                "study": {"sizes_mm": [row["size_mm"] for row in study["refinements"]],
+                          "relative_change_max": study["criterion"]["relative_change_max"]}}
+
+
+# --- loads as vectors ------------------------------------------------------------------------------------------
+
+
+def _sum_vectors(vectors: Any) -> tuple[float, float, float]:
+    total = [0.0, 0.0, 0.0]
+    for vector in vectors:
+        for axis in range(3):
+            total[axis] += float(vector[axis])
+    return (total[0], total[1], total[2])
+
+
+def _norm(vector: tuple[float, ...]) -> float:
+    return math.sqrt(sum(component * component for component in vector))
+
+
+def _dot(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _text(vector: tuple[float, ...]) -> str:
+    return "[" + ", ".join(f"{component:.6g}" for component in vector) + "]"
+
+
+_AXES = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
+
+
+def _parse_direction(text: str) -> tuple[float, float, float] | None:
+    """A unit vector from `0 0 -1`, `[0, 0, -1]`, `(0,0,-2)`, `-Z` or `+x`; None for any other text."""
+    stripped = text.strip()
+    axis = re.fullmatch(r"([+-]?)([xyzXYZ])", stripped)
+    if axis:
+        sign = -1.0 if axis.group(1) == "-" else 1.0
+        return tuple(sign * component for component in _AXES[axis.group(2).lower()])  # type: ignore[return-value]
+    parts = [part for part in re.split(r"[\s,;]+", stripped.strip("[]()")) if part]
+    if len(parts) != 3:
+        return None
+    try:
+        vector = tuple(float(part) for part in parts)
+    except ValueError:
+        return None
+    length = _norm(vector)
+    if not math.isfinite(length) or length == 0:
+        return None
+    return (vector[0] / length, vector[1] / length, vector[2] / length)
+
+
+def _selector_key(selector: Any) -> str:
+    """A selector in a form two equal selectors share: sorted indices, or a plane whose numbers are compared by
+    value (0 and 0.0, 1e-06 and 0.000001 select the same plane)."""
+    if isinstance(selector, Mapping) and isinstance(selector.get("indices"), list):
+        try:
+            return json.dumps({"indices": sorted(selector["indices"])}, sort_keys=True)
+        except TypeError:
+            pass
+    plane = selector.get("plane") if isinstance(selector, Mapping) else None
+    if isinstance(plane, Mapping):
+        numbers = {key: (float(value) + 0.0 if isinstance(value, (int, float)) and not isinstance(value, bool) else value)
+                   for key, value in plane.items()}   # + 0.0 turns -0.0 into 0.0
+        return json.dumps({"plane": numbers}, sort_keys=True, default=str)
+    return json.dumps(selector, sort_keys=True, default=str)
+
+
+def _regions(loads: Any) -> dict[str, tuple[float, float, float]] | None:
+    """The force on each application region (faces or plane), the case's loads on one region added up; None
+    when a load has no usable selector or force."""
+    sums: dict[str, list[tuple[float, ...]]] = {}
+    for load in loads if isinstance(loads, list) else ():
+        force = load.get("force") if isinstance(load, Mapping) else None
+        if not isinstance(force, list) or len(force) != 3 or any(
+                not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) for v in force):
+            return None
+        sums.setdefault(_selector_key(load.get("selector")), []).append(tuple(float(v) for v in force))
+    return {key: _sum_vectors(vectors) for key, vectors in sums.items()} or None
+
+
+# --- the mesh convergence study --------------------------------------------------------------------------------
+
+
+def read_study(text: str, ref: str) -> tuple[dict[str, Any] | None, list[str]]:
+    """The study block of a convergence decision, or why the decision proves nothing: it is not approved (its
+    first line is not exactly `Status: APPROVED`) or holds no readable study."""
+    problems = []
+    if not is_approved(text):
+        problems.append(f"{ref} is not approved: its first line must be exactly '{APPROVED}'")
+    block = STUDY_BLOCK.search(text)
+    if block is None:
+        problems.append(f"{ref} holds no ```mesh-convergence block with the refinement study")
+        return None, problems
+    try:
+        study = yaml.safe_load(block.group(1))
+    except yaml.YAMLError as exc:
+        problems.append(f"{ref}'s mesh-convergence block is not valid YAML: {exc}")
+        return None, problems
+    if not isinstance(study, dict) or not study:
+        problems.append(f"{ref}'s mesh-convergence block is empty")
+        return None, problems
+    return (study if not problems else None), problems
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def study_problems(study: Mapping[str, Any], *, geometry: str | None, profile_id: str, profile_sha: str, supports: Any,
+                   loads: Any, mesh_size: float) -> list[str]:
+    """Why a study does not demonstrate convergence of this case (empty when it does): it must be bound to this
+    geometry, material, supports, forces per region and mesh, and its refinements must meet its own criterion."""
+    problems: list[str] = []
+    if geometry is None:
+        problems.append("the case's geometry file cannot be read to bind the study to it")
+    elif study.get("geometry_sha256") != geometry:
+        problems.append("the study is not bound to this geometry: geometry_sha256 is missing or differs")
+    material = study.get("material")
+    if not isinstance(material, Mapping) or material.get("profile") != profile_id or material.get("sha256") != profile_sha:
+        problems.append(f"the study is not bound to this material: material needs profile {profile_id} and its sha256")
+    if "supports" not in study or _selector_key(study["supports"]) != _selector_key(supports):
+        problems.append("the study is not bound to these supports: supports is missing or selects other faces")
+    problems += _load_problems(study.get("loads"), loads)
+    stated = study.get("mesh")
+    mesh: Mapping[str, Any] = stated if isinstance(stated, Mapping) else {}
+    size = _number(mesh.get("size_mm"))
+    if size is None or abs(size - mesh_size) > 1e-9 * max(abs(mesh_size), 1.0) or mesh.get("element_order") != "second":
+        problems.append(f"the study is not bound to this mesh: mesh needs size_mm {mesh_size:g} and element_order second")
+    criterion = study.get("criterion")
+    tolerance = _number(criterion.get("relative_change_max")) if isinstance(criterion, Mapping) else None
+    if tolerance is None or not 0 < tolerance <= CONVERGENCE_LIMIT:
+        problems.append(f"criterion.relative_change_max must be a number above 0 and at most {CONVERGENCE_LIMIT:g}")
+        tolerance = None
+    problems += _refinement_problems(study.get("refinements"), mesh_size, tolerance)
+    return problems
+
+
+def _load_problems(study_loads: Any, case_loads: Any) -> list[str]:
+    wanted, stated = _regions(case_loads), _regions(study_loads)
+    if stated is None:
+        return ["the study is not bound to these loads: loads needs a selector and a force vector for each application region"]
+    if wanted is None or stated.keys() != wanted.keys():
+        return ["the study's loads act on other application regions than the case's"]
+    for key, force in wanted.items():
+        difference = _norm(tuple(a - b for a, b in zip(stated[key], force)))
+        if difference > LOAD_BINDING_TOLERANCE * max(_norm(force), 1e-9):
+            return [f"the study's force on {key} is {_text(stated[key])} N, but the case applies {_text(force)} N "
+                    f"(tolerance {LOAD_BINDING_TOLERANCE:g} of the force)"]
+    return []
+
+
+def _refinement_series(rows: list[Any]) -> tuple[list[float], dict[str, list[float]]] | str:
+    """The sizes and the monitored series of the refinement rows, or why a row is unusable."""
+    sizes: list[float] = []
+    series: dict[str, list[float]] = {name: [] for name in MONITORED}
+    for index, row in enumerate(rows):
+        message = f"refinement {index + 1} needs a positive size_mm and positive {' and '.join(MONITORED)}"
+        size = _number(row.get("size_mm")) if isinstance(row, Mapping) else None
+        values = [_number(row.get(name)) if isinstance(row, Mapping) else None for name in MONITORED]
+        if size is None or size <= 0 or any(value is None or value <= 0 for value in values):
+            return message
+        sizes.append(size)
+        for name, value in zip(MONITORED, values):
+            series[name].append(value)   # type: ignore[arg-type]
+    return sizes, series
+
+
+def _refinement_problems(rows: Any, mesh_size: float, tolerance: float | None) -> list[str]:
+    if not isinstance(rows, list) or len(rows) < MIN_REFINEMENTS:
+        return [f"the study needs at least {MIN_REFINEMENTS} refinement results, coarse to fine"]
+    parsed = _refinement_series(rows)
+    if isinstance(parsed, str):
+        return [parsed]
+    sizes, series = parsed
+    if any(coarse <= fine for coarse, fine in zip(sizes, sizes[1:])):
+        return ["the refinement sizes must strictly decrease from coarse to fine"]
+    here = [i for i, size in enumerate(sizes) if abs(size - mesh_size) <= 1e-9 * max(mesh_size, 1.0)]
+    if not here:
+        return [f"the case's mesh size {mesh_size:g} mm is not one of the study's refinement sizes"]
+    if tolerance is None:
+        return []
+    problems: list[str] = []
+    for name, values in series.items():
+        settled = abs(values[-1] - values[-2]) / values[-1]
+        used = abs(values[-1] - values[here[0]]) / values[-1]
+        if settled > tolerance:
+            problems.append(f"{name} still moves {settled:.1%} between the two finest meshes (limit {tolerance:.1%})")
+        elif used > tolerance:
+            problems.append(f"{name} on the case's mesh differs {used:.1%} from the finest mesh (limit {tolerance:.1%})")
+    return problems
+
+
+def convergence_gaps(convergence: Mapping[str, Any]) -> list[str]:
+    """Why a result is not service evidence on account of its mesh: empty only for a demonstrated study."""
+    if convergence.get("status") == "demonstrated":
+        return []
+    problems = convergence.get("problems") or [convergence.get("reason") or "no convergence study"]
+    return ["mesh convergence is not demonstrated: " + "; ".join(str(problem) for problem in problems)]
 
 
 _PROFILE_NAMES = frozenset(name for name, _units in PROPERTIES.values())
@@ -515,7 +792,7 @@ def report(result: dict[str, Any], assessment: Assessment, case: Mapping[str, An
     result["material"] = assessment.material
     result["mesh"] = {"size_mm": case["mesh_size"], "element_order": "second", "nodes": result.get("node_count"),
                       "elements": result.get("element_count"), "convergence": convergence}
-    gaps = list(assessment.evidence_gaps)
+    gaps = assessment.all_gaps()
     result["evidence"] = {
         "level": LEVEL if assessment.sourced else None,
         "exploratory": not assessment.sourced,
@@ -560,9 +837,7 @@ _CHECKS = {
 def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assessment,
              subject: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     family = obligation["family"]
-    gaps = list(a.evidence_gaps)
-    if a.convergence.get("status") != "demonstrated":
-        gaps.append("mesh convergence is not demonstrated")
+    gaps = list(a.evidence_gaps) + convergence_gaps(a.convergence)
     if family == "engineering.anisotropy":
         model = a.effective_isotropic
         if model is None:

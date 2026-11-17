@@ -42,7 +42,26 @@ TRIGGER
 
 For v2, use `material: {profile?, conditions: {conditioning, temperature, orientation?}, effective_isotropic?: {decision, justification}}` with `--hw hw --version vN`. A v2 case selects `part` or an `occurrence`; do not pass numeric material properties or `solid_index`. Legacy explicit `{E, nu, density, yield}` is accepted only for standalone/record-v1 exploratory cases and is never service evidence.
 
-Optional case keys: `acceptance: {strength: REQ-###, stiffness: REQ-###}`, `mesh_convergence: {decision: DR-###}`, and `loads[].load`. The referenced requirement needs a structured criterion; convergence needs the approved mesh-study decision. Result blocks include material, evidence, mesh, binding and engineering packet.
+Optional case keys: `acceptance: {strength: REQ-###, stiffness: REQ-###}`, `mesh_convergence: {decision: DR-###}`, and `loads[].load`. The referenced requirement needs a structured criterion. Result blocks include material, evidence, mesh, binding and engineering packet.
+
+A service load is covered only when the case's forces tagged with its `load` add up, as vectors, to at least its magnitude along its direction (at most 1% of the magnitude across it). The use case states the direction as text the checker can read as a vector, such as `0 0 -1`, `[0, 0, -1]` or `-Z`. A reversed, rotated or cancelling force, or a direction that is not a vector, leaves the load uncovered.
+
+Mesh convergence counts only as an approved, bound, converged study. The decision file `hw/decisions/DR-###.md` must have the exact first line `Status: APPROVED` and a fenced `mesh-convergence` YAML block:
+
+```yaml
+geometry_sha256: <sha256 of the case's STEP file>
+material: {profile: <profile id>, sha256: <profile sha256 from the result's binding>}
+supports: {indices: [1]}            # the case's fixed_faces
+loads: [{selector: {indices: [2]}, force: [0, 0, -50]}]   # the case's forces per region, within 1e-6 of the force
+mesh: {size_mm: 2, element_order: second}
+criterion: {relative_change_max: 0.05}   # above 0, at most 0.1
+refinements:                          # at least three, coarse to fine, one at the case's mesh_size
+  - {size_mm: 4, max_von_mises_mpa: 78.0, max_displacement_mm: 0.190}
+  - {size_mm: 2, max_von_mises_mpa: 82.5, max_displacement_mm: 0.198}
+  - {size_mm: 1, max_von_mises_mpa: 83.3, max_displacement_mm: 0.199}
+```
+
+Both monitored quantities must move no more than `relative_change_max` between the two finest meshes and between the case's mesh and the finest. A missing, provisional, void or unbound study leaves convergence not demonstrated: strength and stiffness stay `unknown` and the result is not service evidence.
 
 Completed results record reproducibility settings in `mesh_settings`: one Gmsh thread, random seed 1, zero 3D random factor, standard and Netgen mesh optimizers disabled, fixed elastic-plus-optimization high-order pass, and CalculiX SPOOLES solver. The `calculix_environment` setting gives ccx one thread in each of its three parallel stages. Each FreeCAD job uses a private FreeCAD profile, so user FEM and import preferences do not apply. `mesh_input_hashes` name the normalized `.geo` and BRep inputs. High-order Gmsh optimization can perturb nodes across identical runs; repeat safety factors within 0.5% are this mesh noise, not evidence of a design difference.
 
