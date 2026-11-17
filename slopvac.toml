@@ -1,0 +1,35 @@
+# slopvac configuration.
+#
+# In code-comment mode slopvac cannot run rules that need prose structure
+# (sentence length, vertical lists, controlled vocabulary). It reports them as
+# "did NOT run", which makes every source file exit 2 (incomplete). The override
+# below turns those rules off for Python source only. Markdown keeps the full
+# ruleset because the override matches only the globs listed in `files`.
+
+[[overrides]]
+files = ["*.py"]
+
+[overrides.rules]
+"ai-tells-formatting.em-dash-density" = "off"
+"ai-tells-formatting.bold-spray" = "off"
+"ai-tells-formatting.inline-header-list" = "off"
+"ai-tells-formatting.heading-hierarchy" = "off"
+"ai-tells-content-shape.adjective-per-noun-spray" = "off"
+"prose-craft.sentence-length" = "off"
+"prose-discipline.run-on" = "off"
+"prose-format.prose-block" = "off"
+"ste-descriptive.sentence-too-long-descriptive" = "off"
+"ste-descriptive.paragraph-too-many-sentences" = "off"
+"ste-nouns.multiword-noun-too-long" = "off"
+"ste-practices.inconsistent-wording-for-same-step" = "off"
+"ste-procedural.sentence-too-long-procedural" = "off"
+"ste-punctuation.colon-terminates-sentence-for-count" = "off"
+"ste-safety.safety-block-missing-consequence" = "off"
+"ste-sentences.complex-text-not-in-vertical-list" = "off"
+"ste-sentences.vertical-list-lead-in-missing-colon" = "off"
+"ste-sentences.vertical-list-item-punctuation" = "off"
+"ste-verbs.verb-form-not-listed" = "off"
+"ste-words.word-outside-controlled-vocabulary" = "off"
+"ste-words.word-used-in-wrong-part-of-speech" = "off"
+"ste-words.verb-or-adjective-form-not-permitted" = "off"
+"ste-words.inconsistent-term-for-same-thing" = "off"
