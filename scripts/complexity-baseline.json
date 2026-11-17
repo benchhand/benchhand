@@ -1,7 +1,7 @@
 {
  "counts": {
-  "C901": 172,
-  "PLR0912": 89,
+  "C901": 171,
+  "PLR0912": 87,
   "PLR0915": 50
  },
  "offenders": [
@@ -204,7 +204,6 @@
   "PLR0912 skills/cad-fits/scripts/stackup.py::_IntentStack.evaluate",
   "PLR0912 skills/cad-fits/scripts/stackup.py::_IntentStack.parse_contributor",
   "PLR0912 skills/cad-fits/scripts/stackup.py::_IntentStack.statistical",
-  "PLR0912 skills/cad-fits/scripts/stackup.py::main",
   "PLR0912 skills/cad-model/scripts/cadmodel/build.py::run",
   "PLR0912 skills/cad-model/scripts/cadmodel/check.py::readback_outcomes",
   "PLR0912 skills/cad-model/scripts/cadmodel/components.py::bind",
