@@ -439,6 +439,43 @@ class DocLeakTests(unittest.TestCase):
 
 
 @unittest.skipUnless(DOC_DEPS, "pyyaml, jsonschema and defusedxml are required")
+class DocTreeLeakTests(unittest.TestCase):
+    """A doc_purchased_designation mutant carries its defect and nothing else: the identifier it removes is absent from EVERY
+    file of its tree (the record, the BOM and the generated build guide), and the twin has it."""
+
+    def tree(self, pair_id: str, mutant: bool) -> dict[str, str]:
+        import doc_support
+
+        module = doc_support.load("cad_record_build_guide", doc_support.RECORD / "scripts" / "build_guide.py")
+        found: dict[str, str] = {}
+
+        def capture(hw: Path, root: Path, judged: tuple[str, ...] = ()) -> str:
+            version = hw / "versions" / doc_support.VERSION
+            version.mkdir(parents=True, exist_ok=True)
+            (version / "manifest.json").write_text(json.dumps({"label": doc_support.VERSION, "manufacturing": {}}), encoding="utf-8")
+            documents = module.make_guide(hw, doc_support.VERSION, root / "docs")
+            found.update({str(path.relative_to(root)): path.read_text(encoding="utf-8", errors="replace")
+                          for path in sorted(root.rglob("*")) if path.is_file()})
+            found.update({f"generated/{name}": text for name, text in documents.items()})
+            return "pass"
+
+        with mock.patch.object(doc_support, "pipeline", capture):
+            family_pair("doc_purchased_designation", pair_id).run(mutant)
+        return found
+
+    def test_the_identifier_of_each_pair_is_in_no_file_of_the_mutant_and_in_the_twin(self) -> None:
+        corpus.load_families()
+        tokens = sys.modules["mfg_corpus_family_doc_purchased_designation"].TOKENS
+        self.assertEqual(sorted(tokens), ["designation_standard", "mpn_non_standard", "title_with_size", "title_without_size"])
+        for pair_id, token in tokens.items():
+            mutant, twin = self.tree(pair_id, True), self.tree(pair_id, False)
+            with self.subTest(pair=pair_id, token=token):
+                self.assertTrue([name for name in mutant if name.endswith("index.md")], "the guide is part of the tree")
+                self.assertEqual([name for name, text in mutant.items() if token in text], [], "survives in the mutant")
+                self.assertTrue([name for name, text in twin.items() if token in text], "missing from the twin")
+
+
+@unittest.skipUnless(DOC_DEPS, "pyyaml, jsonschema and defusedxml are required")
 class DocRecordLeakTests(unittest.TestCase):
     """The doc_manufacturing and doc_retaining_ring/no_groove_part mutants generate no document, so the check reads the record:
     the part document of the mutant lacks what the pair removes, and the twin has it."""
