@@ -246,7 +246,7 @@ class ProfileTests(unittest.TestCase):
             _, problems = process_checks.intent().check_record(hw)
         self.assertEqual([p.code for p in problems if p.severity == "error"], [])
         found = {c["characteristic"] for c in capability_profile.capabilities()[0]["calibrations"]}
-        self.assertEqual(found, {"overhang_angle", "bridge_span", "min_wall", "min_feature"})
+        self.assertEqual(found, {"overhang_angle", "bridge_span", "min_wall", "min_feature", "min_bed_contact_area"})
 
 
 INNER_CHECKS = frozenset({"check_order", "check_joints", "check_version", "check_record", "assess", "probe",
