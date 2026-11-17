@@ -23,8 +23,13 @@ _FIT = r"(?:\s*[a-zA-Z]{1,2}\d{1,2})?"  # a tolerance class after the diameter: 
 _SIZE = rf"(?:[M#]\d+(?:\.\d+)?(?:-\d+)?(?:{_TIMES})?|\d+(?:[./]\d+)*(?:-\d+)?{_FIT}{_TIMES})(?!\d)"
 # A bare nominal size (ISO 7089 - 5 - 200 HV, ASME B18.2.2 1/4-20) follows the standard number after a space, so a part of
 # a multi-part standard number (EN 10025-2) is not read as one. It is a whole token: a number, a fraction or a thread
-# (1/4-20), an optional series (UNC, UNF, UNEF), then a space, a delimiter or the end. A grade like 200HV is not a size.
-_BARE = r"\d{1,4}(?:\.\d+)?(?:/\d{1,3})?(?:-\d{1,3})?(?:UNEF|UNC|UNF)?(?=\s|$|[,;)\"])"
+# (1/4-20), an optional series (UNC, UNF, UNEF), then a space, a delimiter or the end. A token that carries a grade marker
+# is not a size: a number before a hardness unit (200 HV) or a property class (8.8, 10.9, 12.9). A stainless class (A2-70)
+# starts with a letter, so it is never a size. Another decimal such as 8.4 is a washer size.
+_HARDNESS_UNIT = r"HV|HB[WS]?|HR[ABC]"
+_PROPERTY_CLASS = r"(?:8\.8|10\.9|12\.9)(?![\d.])"
+_BARE = (rf"(?!{_PROPERTY_CLASS})\d{{1,4}}(?:\.\d+)?(?:/\d{{1,3}})?(?:-\d{{1,3}})?(?:UNEF|UNC|UNF)?(?=\s|$|[,;)\"])"
+         rf"(?!\s*(?:{_HARDNESS_UNIT})\b)")
 STANDARD_DESIGNATION = re.compile(
     rf"(?<![A-Za-z])(?P<bodies>(?:{_BODY})(?:[ /]+(?:{_BODY}))*)\s+(?P<number>{_NUMBER})"
     rf"(?:(?:\s*[-\u2013\u2014]\s*|\s+){_SIZE}|\s+(?:[-\u2013\u2014]\s+)?{_BARE})")

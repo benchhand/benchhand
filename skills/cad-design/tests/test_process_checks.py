@@ -889,6 +889,24 @@ class PurchasedIdentityTests(Checks):
             with self.subTest(size=size, where="title"):
                 self.assertEqual(self.outcome(self.bought(f"Hex nut {designation}"), self.obligation), "fail")
 
+    def test_a_grade_is_not_a_size_but_a_real_size_beside_a_grade_is(self) -> None:
+        """A token is a grade only with a grade marker: a hardness unit (HV, HB, HRC), a stainless class (A2-70), or a property
+        class (8.8, 10.9, 12.9). Another decimal such as 8.4 is a washer size."""
+        cases = (
+            ("Washer ISO 7089 - 200 HV", "fail"), ("Washer ISO 7089 200 HV", "fail"), ("Washer ISO 7089 - 40 HRC", "fail"),
+            ("ISO 4762 - 8.8", "fail"), ("ISO 4762 10.9", "fail"), ("ISO 4762 - A2-70", "fail"), ("A2-70", "fail"),
+            ("ISO 7089 - 5 - 200 HV", "pass"), ("Washer ISO 7089 - 8 - 200 HV", "pass"), ("DIN 125 - 8.4", "pass"),
+            ("Washer ISO 7089 - 8.4 - 200 HV", "pass"), ("ISO 4762 M6x20 - 8.8", "pass"), ("ISO 4762 M3x10 10.9", "pass"),
+        )
+        for designation, expected in cases:
+            with self.subTest(designation=designation, where="field"):
+                result = self.bought(designation=designation)
+                self.assertEqual(self.outcome(result, self.obligation), expected)
+                if expected == "fail":
+                    self.assertEqual(self.codes(result, self.obligation), ["purchase.designation_missing"])
+            with self.subTest(designation=designation, where="title"):
+                self.assertEqual(self.outcome(self.bought(designation), self.obligation), expected)
+
     def test_a_hardness_grade_in_the_title_is_not_a_size(self) -> None:
         result = self.bought("Washer ISO 7089 200HV")
         self.assertEqual(self.outcome(result, self.obligation), "fail")
