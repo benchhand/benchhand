@@ -18,6 +18,7 @@ import zlib
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 from defusedxml import ElementTree as SafeET
@@ -362,6 +363,14 @@ class FreeCADConcurrency(unittest.TestCase):
             assert slot is not None
             slot.acquire()   # the only slot is busy
             self.addCleanup(slot.release)
+            waiting = threading.Event()
+            acquire = slot.acquire
+
+            def acquire_and_announce(*args: Any, **kwargs: Any) -> bool:
+                waiting.set()   # the worker arrives at the slot and blocks on it
+                return acquire(*args, **kwargs)
+
+            slot.acquire = acquire_and_announce   # type: ignore[method-assign]
 
             def call() -> None:
                 try:
@@ -371,6 +380,7 @@ class FreeCADConcurrency(unittest.TestCase):
 
             thread = threading.Thread(target=call)
             thread.start()
+            self.assertTrue(waiting.wait(10), "the run never reached the launch slot")
             freecad_runtime._CANCEL_JOBS.set()
             try:
                 thread.join(10)
