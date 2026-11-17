@@ -719,6 +719,46 @@ class DispatchByProcessTests(Checks):
         self.assertEqual(self.outcome(result, "process.cnc.access@TST-0602/mill"), "pass")
 
 
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class PurchasedMountingOccurrenceTests(Checks):
+    """A bought part placed three times appears by occurrence (`@id`) in assembly operations. Its mounting check
+    needs an operation that names each occurrence as part or into."""
+
+    OBLIGATION = "purchase.mounting@TST-0603/buy"
+
+    def documents(self, mounted: tuple[str, ...]) -> dict[str, Any]:
+        ring = part("TST-0603", [FX.operation("buy", "purchased", purchase={
+            "identity": known("TST-RING 15"), "specification": known("TST ISO 15", "standard", [FX.source("standard", "TST ISO 15")]),
+            "ratings": known("TST 1 kN", "supplier_typical", [datasheet("TST ring")]),
+            "availability": known("TST stock item")})], process="purchased", material=None, make_buy="buy",
+            procurement={"mode": "catalog"}, model_frame="part_local")
+        ring["intent"]["material_profile"] = FX.not_applicable("catalogue item")
+        housing = part("TST-0604", [FX.operation("print", "fdm", "tst_printer", orientation=copy.deepcopy(APPROVED),
+                                                 supports={"strategy": "none"})], process="fdm", model_frame="part_local")
+        operations = [{"id": f"mount-{name}", "kind": "join", "part": f"@ring-{name}", "into": "@housing",
+                       "direction": [0, 0, -1], "acceptance": {"kind": "standoff", "features": ["foot", "top"]}}
+                      for name in mounted]
+        documents = FX.record(parts=[ring, housing], operations=operations,
+                              capabilities=[FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE)],
+                              materials=materials())
+        documents["assembly.yaml"]["subassemblies"] = [{"id": "main", "title": "Main", "occurrences": [
+            "@housing", "@ring-a", "@ring-b", "@ring-c"]}]
+        documents["assembly.yaml"]["occurrences"] = [{"id": "housing", "PN": "TST-0604"}] + [
+            {"id": f"ring-{name}", "PN": "TST-0603"} for name in "abc"]
+        return documents
+
+    def test_every_occurrence_with_an_installing_operation_is_mounted(self) -> None:
+        result = self.assess(self.documents(("a", "b", "c")))
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "pass")
+
+    def test_an_occurrence_without_an_operation_fails_and_is_named(self) -> None:
+        result = self.assess(self.documents(("a", "b")))
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "fail")
+        finding = self.finding(result, "purchase.mounting_unmounted")
+        self.assertIn("@ring-c", finding["measured"]["text"])
+        self.assertNotIn("@ring-a", finding["measured"]["text"])
+
+
 # --- row 18: unsupported process ------------------------------------------------------------------------------------
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")

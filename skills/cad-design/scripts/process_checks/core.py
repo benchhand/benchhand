@@ -21,6 +21,8 @@ from typing import Any
 
 INTENT_PATH = Path(__file__).resolve().parents[3] / "cad-record" / "scripts" / "manufacturing_intent.py"
 INTENT_MODULE = "cad_record_manufacturing_intent"  # the shared name cad-model and cad-record load it under
+ASSEMBLY_DATA_PATH = INTENT_PATH.with_name("assembly_data.py")
+ASSEMBLY_DATA_MODULE = "cad_record_assembly_data"  # the shared name cad-motion and cad-record load it under
 
 PASS, FAIL, UNKNOWN, NOT_APPLICABLE = "pass", "fail", "unknown", "not_applicable"
 IMPLICIT = "main"  # the component id of a sole solid (cad-model components.IMPLICIT)
@@ -35,16 +37,26 @@ POLICY = types.MappingProxyType({
     "origin": "cad-agent plugin", "document": "skills/cad-design/scripts/process_checks/__init__.py"})
 
 
-def intent() -> Any:
-    """cad-record manufacturing_intent.py under its shared module name."""
-    module = sys.modules.get(INTENT_MODULE)
+def _load(name: str, path: Path) -> Any:
+    """The cad-record module at `path`, loaded once and registered in sys.modules as `name`."""
+    module = sys.modules.get(name)
     if module is None:
-        spec = importlib.util.spec_from_file_location(INTENT_MODULE, INTENT_PATH)
+        spec = importlib.util.spec_from_file_location(name, path)
         assert spec and spec.loader
         module = importlib.util.module_from_spec(spec)
-        sys.modules[INTENT_MODULE] = module
+        sys.modules[name] = module
         spec.loader.exec_module(module)
     return module
+
+
+def intent() -> Any:
+    """cad-record manufacturing_intent.py under its shared module name."""
+    return _load(INTENT_MODULE, INTENT_PATH)
+
+
+def assembly_data() -> Any:
+    """cad-record assembly_data.py (the occurrence inventory) under its shared module name."""
+    return _load(ASSEMBLY_DATA_MODULE, ASSEMBLY_DATA_PATH)
 
 
 # --- results ----------------------------------------------------------------------------------------------------
