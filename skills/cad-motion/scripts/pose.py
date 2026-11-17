@@ -1251,9 +1251,8 @@ def _add_shape(tool: Any, shape: Any) -> Any:
     # The values describe the geometry as written, placement included.
     prototype = TDF_Label()
     target = prototype if tool.GetReferredShape_s(label, prototype) else label
-    volume, area = GProp_GProps(), GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, volume)
-    BRepGProp.SurfaceProperties_s(shape, area)
+    volume, area = volume_properties(shape), GProp_GProps()
+    BRepGProp.SurfaceProperties_s(shape, area, VOLUME_EPS, False)
     XCAFDoc_Volume.Set_s(target, volume.Mass())
     XCAFDoc_Area.Set_s(target, area.Mass())
     XCAFDoc_Centroid.Set_s(target, volume.CentreOfMass())
