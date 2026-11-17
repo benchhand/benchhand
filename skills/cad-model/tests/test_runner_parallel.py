@@ -18,6 +18,7 @@ import time
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -84,14 +85,16 @@ def build(params):
                    "server_pgrp": os.getpgid(server), "runner_pgrp": os.getpgid(runner)}, out)
     return cq.Solid.makeBox(3, 4, 5)
 """
-HOLD = """import json, multiprocessing, os, time
+HOLD = """import multiprocessing, os, time
+from pathlib import Path
 import cadquery as cq
+from cadmodel.build import write_json
 KERNEL = "cadquery"
 PARAMS = {}
 def build(params):
     server, runner = os.getppid(), multiprocessing.parent_process().pid
-    with open(os.environ["WHERE_LOG"] + "/" + str(os.getpid()), "w") as out:
-        json.dump({"pid": os.getpid(), "server": server, "runner": runner}, out)
+    write_json(Path(os.environ["WHERE_LOG"]) / str(os.getpid()),
+               {"pid": os.getpid(), "server": server, "runner": runner})
     time.sleep(120)
     return cq.Solid.makeBox(3, 4, 5)
 """
@@ -149,6 +152,41 @@ def step_text(path: Path) -> str:
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to start the runners")
+class HoldSidecar(unittest.TestCase):
+    def test_hold_sidecar_is_never_visible_half_written(self) -> None:
+        # the readiness check counts sidecars by name, so a name must only appear once its JSON is complete
+        sidecars = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        visible: list[list[str]] = []
+        real_iterencode = json.JSONEncoder.iterencode
+
+        def spying_iterencode(encoder: json.JSONEncoder, *args: Any, **kwargs: Any) -> Any:
+            visible.append([p.name for p in sidecars.glob("[0-9]*")])
+            return real_iterencode(encoder, *args, **kwargs)
+
+        class Held(Exception):
+            pass
+
+        def stop_at_sleep(_seconds: float) -> None:
+            raise Held
+
+        with (
+            mock.patch.dict(sys.modules, {"cadquery": mock.Mock()}),
+            mock.patch.dict(os.environ, {"WHERE_LOG": str(sidecars)}),
+            mock.patch("multiprocessing.parent_process", return_value=mock.Mock(pid=1)),
+            mock.patch("time.sleep", stop_at_sleep),
+            mock.patch.object(json.JSONEncoder, "iterencode", spying_iterencode),
+        ):
+            namespace: dict[str, Any] = {}
+            exec(HOLD, namespace)
+            with self.assertRaises(Held):
+                namespace["build"]({})
+        self.assertTrue(visible, "the sidecar was never serialised")
+        self.assertTrue(all(names == [] for names in visible), visible)
+        written = json.loads((sidecars / str(os.getpid())).read_text())
+        self.assertEqual(written["pid"], os.getpid())
+        self.assertEqual(list(sidecars.iterdir()), [sidecars / str(os.getpid())])
+
+
 class ParallelBuilds(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
