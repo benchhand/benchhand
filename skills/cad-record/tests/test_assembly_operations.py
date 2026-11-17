@@ -338,7 +338,7 @@ class NeverInstalledPacketTests(unittest.TestCase):
         inventory = assembly_data.normalize(documents["assembly.yaml"])
         report = ops.check_order(ops.normalize({"operations": items}), inventory)
         expected = [o for o in intent.required_checks(record) if o.family == "assembly.order"]
-        data = check_packet.build(record, expected, "test producer", "v1", list(report.outcomes), list(report.findings), {})
+        data = check_packet.build(record, expected, "test producer", list(report.outcomes), list(report.findings), {})
         packet = evidence.ProducerPacket("hw/checks/v1/assembly-access", "b" * 64, data)
         result = evidence.assess(record, version="v1", manifest_sha256="a" * 64, packets=[packet])
         return expected, result
