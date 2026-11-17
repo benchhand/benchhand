@@ -32,6 +32,13 @@ jobs:
       - name: CI shard planner tests
         run: uv run --no-project --python 3.12 python -B -m unittest discover -s scripts -p 'test_ci_shards.py'
 
+      # The README names Python 3.11 as the minimum, and every other step runs 3.12, so check the
+      # floor here: 3.12-only syntax fails to compile, and the harness tests run on 3.11.
+      - name: Python 3.11 floor
+        run: |
+          uv run --no-project --python 3.11 python -B -m compileall -q skills harness scripts
+          uv run --no-project --python 3.11 --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
+
       - name: Generated files
         run: uv run --no-project --with pyyaml==6.0.3 python -B harness/generate.py --check
 
