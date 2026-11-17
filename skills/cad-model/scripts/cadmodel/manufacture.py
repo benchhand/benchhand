@@ -172,6 +172,18 @@ def _orientations(part: Any) -> list[tuple[str, Mapping[str, Any]]]:
     return [(op.id, op.orientation) for op in route if isinstance(op.orientation, Mapping)]
 
 
+def _part_refusal(snapshot: Snapshot, pn: str, part: Any) -> str | None:
+    """The reason to refuse a record version 2 part before any plan: its part.yaml does not name it, or its intent.color is
+    invalid (an `intent.color_invalid` record problem). None when neither."""
+    path = f"hw/parts/{pn}/part.yaml"
+    if part is None:
+        return f"{path} does not name PN {pn}"
+    for problem in snapshot.intent.problems:
+        if problem.code == load_intent().COLOR_INVALID and problem.path == path:
+            return f"{problem.code}: {problem.message}"
+    return None
+
+
 def plan(snapshot: Snapshot) -> tuple[dict[str, Plan], list[tuple[str, str]], dict[str, str]]:
     """A Plan per custom-made part record of `snapshot`, (PN, message) for each record whose declaration
     is refused, and the message of each custom-made part whose process has no output contract."""
@@ -207,12 +219,8 @@ def plan(snapshot: Snapshot) -> tuple[dict[str, Plan], list[tuple[str, str]], di
         part = snapshot.intent.parts.get(pn)
         envelopes: dict[str, orientation.BuildVolume] = {}
         if snapshot.version == intent.RECORD_VERSION:
-            if part is None:
-                refused.append((pn, f"hw/parts/{pn}/part.yaml does not name PN {pn}"))
-                continue
-            invalid = [p for p in snapshot.intent.problems if p.code == intent.COLOR_INVALID and p.path == f"hw/parts/{pn}/part.yaml"]
-            if invalid:
-                refused.append((pn, f"{invalid[0].code}: {invalid[0].message}"))
+            if refusal := _part_refusal(snapshot, pn, part):
+                refused.append((pn, refusal))
                 continue
             problems = []
             for op_id, data in _orientations(part):
