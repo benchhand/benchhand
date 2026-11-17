@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy==2.5.5", "python-fcl==0.7.0.11"]
+# dependencies = ["click==8.5.1", "cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy==2.5.5", "python-fcl==0.7.0.11"]
 # ///
 """Build, check, and diff versions of a hardware design from its part model scripts.
 
@@ -66,9 +66,12 @@ import importlib.util
 import json
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
+import click
 from cadmodel import build
 
 
@@ -108,6 +111,22 @@ def load_lifecycle() -> Any:
     return sys.modules[name]
 
 
+class _Converter(click.ParamType[Any, Any]):
+    """A value type from a function that raises `argparse.ArgumentTypeError` (cad-motion's `jobs_argument` does)."""
+
+    def __init__(self, name: str, convert: Callable[[str], Any]) -> None:
+        self.name = name
+        self._convert = convert
+
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            return self._convert(value)
+        except argparse.ArgumentTypeError as error:
+            self.fail(str(error), param, ctx)
+
+
 def _pair(text: str) -> tuple[str, str]:
     from cadmodel.motion import load_pose
 
@@ -132,131 +151,111 @@ def _jobs(text: str) -> int:
     return cast(int, load_pair_measure().jobs_argument(text))
 
 
-def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(
-        description="Build, check, and diff CAD design versions"
-    )
-    sub = root.add_subparsers(dest="command", required=True)
-    run = sub.add_parser(
-        "run", help="build hw/versions/<label>/ from the part model scripts"
-    )
-    run.add_argument("hw", type=Path, help="hardware design record directory (hw/)")
-    run.add_argument("--label", required=True, help="version label: v1, v2, ...")
-    run.add_argument(
-        "--kernel",
-        choices=("auto", *build.KERNELS),
-        default="auto",
-        help="auto: each part's declared KERNEL; otherwise every part must declare this kernel",
-    )
-    run.add_argument(
-        "--attach",
-        action="append",
-        default=[],
-        metavar="REF=PARENT_REF",
-        help="rigidly attach an occurrence without a joint (a PN or @id; repeatable)",
-    )
-    check = sub.add_parser("check", help="geometry checks on a built version")
-    check.add_argument("label")
-    check.add_argument("--hw", type=Path, default=Path("hw"))
-    selection = check.add_mutually_exclusive_group()
-    selection.add_argument(
-        "--pair",
-        action="append",
-        type=_pair,
-        metavar="REF:REF",
-        help="check only these occurrence pairs for interference (default: all pairs)",
-    )
-    selection.add_argument(
-        "--changed-only",
-        action="store_true",
-        help="measure only the pairs a change since the baseline version can affect (partial report)",
-    )
-    check.add_argument(
-        "--since-version",
-        metavar="vM",
-        help="--changed-only baseline: a built version (default: the newest one before the checked version)",
-    )
-    check.add_argument(
-        "--exact",
-        action="store_true",
-        help="measure every pair; by default a far pair passes on its proven distance bounds",
-    )
-    check.add_argument(
-        "--allow-interference",
-        action="append",
-        type=_pair,
-        default=[],
-        metavar="REF:REF",
-        help="undeclared intentional overlap: reported, not blocking (repeatable)",
-    )
-    check.add_argument(
-        "--expect-solids",
-        action="append",
-        type=_expect,
-        default=[],
-        metavar="PN=N",
-        help="expected solid count; overrides the record's declared components and the previous "
-        "version as baseline",
-    )
-    check.add_argument("--out", type=Path, help="also write the result JSON here")
-    check.add_argument(
-        "--jobs",
-        type=_jobs,
-        default="1",
-        metavar="N|auto",
-        help="worker processes measuring pairs (1, the default: this process, on OCCT's thread pool; "
-        "auto: the CPU count, at most 8)",
-    )
-    caching = check.add_mutually_exclusive_group()
-    caching.add_argument(
-        "--cache",
-        type=Path,
-        metavar="DIR",
-        help="pair result cache shared with cad-motion sweep.py (default: hw/.cad)",
-    )
-    caching.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="measure every pair, reading and writing no cache",
-    )
-    diff = sub.add_parser("diff", help="compare two built versions")
-    diff.add_argument("a")
-    diff.add_argument("b")
-    diff.add_argument("--hw", type=Path, default=Path("hw"))
-    diff.add_argument("--out", type=Path, help="also write the result JSON here")
-    latest = sub.add_parser(
-        "latest", help="point hw/versions/latest.json at the newest sealed version"
-    )
-    latest.add_argument("hw", type=Path, help="hardware design record directory (hw/)")
-    latest.add_argument(
-        "--label",
-        required=True,
-        help="the sealed version label the pointer write failed for",
-    )
-    store = sub.add_parser(
-        "store", help="maintain the part store hw/.cad/parts and hw/.cad/builds"
-    )
-    store.add_argument(
-        "action",
-        choices=("gc",),
-        help="gc: remove what no version or release manifest references, report the bytes freed",
-    )
-    store.add_argument("hw", type=Path, help="hardware design record directory (hw/)")
-    store.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="report what gc would remove; remove nothing",
-    )
-    for command in sub.choices.values():
-        command.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
-    return root
+PAIR = _Converter("REF:REF", _pair)
+EXPECT = _Converter("PN=N", _expect)
+JOBS = _Converter("N|auto", _jobs)
+HW_ARGUMENT = click.argument("hw", type=click.Path(path_type=Path))
+HW_OPTION = click.option("--hw", type=click.Path(path_type=Path), default=Path("hw"))
+OUT_OPTION = click.option("--out", type=click.Path(path_type=Path), help="also write the result JSON here")
+JSON_OPTION = click.option("--json", "json_flag", is_flag=True,
+                           help="print the full JSON result whatever CAD_OUTPUT says")
+
+
+def _exclusive(first: tuple[str, object], second: tuple[str, object]) -> None:
+    """Refuse two options given together, as argparse's mutually exclusive group did."""
+    if first[1] and second[1]:
+        raise click.UsageError(f"argument {second[0]}: not allowed with argument {first[0]}")
+
+
+@click.group(help="Build, check, and diff CAD design versions")
+def cli() -> None:
+    pass
+
+
+@cli.command(help="build hw/versions/<label>/ from the part model scripts")
+@HW_ARGUMENT
+@click.option("--label", required=True, help="version label: v1, v2, ...")
+@click.option("--kernel", type=click.Choice(("auto", *build.KERNELS)), default="auto",
+              help="auto: each part's declared KERNEL; otherwise every part must declare this kernel")
+@click.option("--attach", multiple=True, metavar="REF=PARENT_REF",
+              help="rigidly attach an occurrence without a joint (a PN or @id; repeatable)")
+@JSON_OPTION
+def run(**params: Any) -> int:
+    return execute("run", params | {"attach": list(params["attach"])})
+
+
+@cli.command(help="geometry checks on a built version")
+@click.argument("label")
+@HW_OPTION
+@click.option("--pair", multiple=True, type=PAIR, metavar="REF:REF",
+              help="check only these occurrence pairs for interference (default: all pairs)")
+@click.option("--changed-only", is_flag=True,
+              help="measure only the pairs a change since the baseline version can affect (partial report)")
+@click.option("--since-version", metavar="vM",
+              help="--changed-only baseline: a built version (default: the newest one before the checked version)")
+@click.option("--exact", is_flag=True,
+              help="measure every pair; by default a far pair passes on its proven distance bounds")
+@click.option("--allow-interference", multiple=True, type=PAIR, metavar="REF:REF",
+              help="undeclared intentional overlap: reported, not blocking (repeatable)")
+@click.option("--expect-solids", multiple=True, type=EXPECT, metavar="PN=N",
+              help="expected solid count; overrides the record's declared components and the previous "
+              "version as baseline")
+@OUT_OPTION
+@click.option("--jobs", type=JOBS, default="1", metavar="N|auto",
+              help="worker processes measuring pairs (1, the default: this process, on OCCT's thread pool; "
+              "auto: the CPU count, at most 8)")
+@click.option("--cache", type=click.Path(path_type=Path), metavar="DIR",
+              help="pair result cache shared with cad-motion sweep.py (default: hw/.cad)")
+@click.option("--no-cache", is_flag=True, help="measure every pair, reading and writing no cache")
+@JSON_OPTION
+def check(**params: Any) -> int:
+    _exclusive(("--pair", params["pair"]), ("--changed-only", params["changed_only"]))
+    _exclusive(("--cache", params["cache"]), ("--no-cache", params["no_cache"]))
+    if params["since_version"] and not params["changed_only"]:
+        raise click.UsageError("--since-version needs --changed-only")
+    return execute("check", params | {"pair": list(params["pair"]) or None,
+                                      "allow_interference": list(params["allow_interference"]),
+                                      "expect_solids": list(params["expect_solids"])})
+
+
+@cli.command(help="compare two built versions")
+@click.argument("a")
+@click.argument("b")
+@HW_OPTION
+@OUT_OPTION
+@JSON_OPTION
+def diff(**params: Any) -> int:
+    return execute("diff", params)
+
+
+@cli.command(help="point hw/versions/latest.json at the newest sealed version")
+@HW_ARGUMENT
+@click.option("--label", required=True, help="the sealed version label the pointer write failed for")
+@JSON_OPTION
+def latest(**params: Any) -> int:
+    return execute("latest", params)
+
+
+@cli.command(help="maintain the part store hw/.cad/parts and hw/.cad/builds")
+@click.argument("action", type=click.Choice(("gc",)))
+@HW_ARGUMENT
+@click.option("--dry-run", is_flag=True, help="report what gc would remove; remove nothing")
+@JSON_OPTION
+def store(**params: Any) -> int:
+    return execute("store", params)
 
 
 def main(argv: list[str] | None = None) -> int:
-    root = parser()
-    args = root.parse_args(argv)
-    if getattr(args, "since_version", None) and not args.changed_only:
-        root.error("--since-version needs --changed-only")
+    try:
+        code = cli.main(args=argv, standalone_mode=False)
+    except click.ClickException as error:
+        error.show()
+        return error.exit_code
+    return int(code or 0)
+
+
+def execute(command: str, params: dict[str, Any]) -> int:
+    args = SimpleNamespace(command=command, json=params.pop("json_flag"), **params)
     from cadmodel.motion import load_pair_measure, load_pose
 
     pose = load_pose()
