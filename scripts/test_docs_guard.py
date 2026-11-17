@@ -169,6 +169,8 @@ ALLOWED = [
     Allow('skills/cad-record/tests/test_migration_plan.py', 'MigrationPlan.test_every_stray_gets_its_destination_and_nothing_changes', 'hw/docs/notes.md already exists: a collision', HW),
     Allow('skills/cad-record/tests/test_migration_plan.py', 'MigrationPlan.test_every_stray_gets_its_destination_and_nothing_changes', 'hw/notes.md', HW, 2),
     Allow('skills/cad-record/tests/test_migration_plan.py', 'MigrationPlan.test_the_report_goes_to_stdout_or_a_path_under_cad_work_only', 'docs', HW, 2),
+    Allow('skills/cad-record/tests/test_migrate.py', 'Version1Record.test_apply_writes_a_valid_version_2_record_of_explicit_unknowns', '.md', HW),
+    Allow('skills/cad-record/tests/test_migrate.py', 'Version1Record.test_apply_writes_a_valid_version_2_record_of_explicit_unknowns', 'docs', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Documents.guide', 'docs', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Documents.test_the_package_okh_toml_describes_its_release', 'docs', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Pruning.test_an_interrupted_prune_moves_back_a_version_that_became_a_milestone', 'DR-006.md', HW),

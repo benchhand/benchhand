@@ -24,6 +24,7 @@ SKILL = HERE.parent
 MIGRATE = SKILL / "scripts" / "migrate.py"
 VALIDATOR = SKILL / "scripts" / "validate.py"
 TEMPLATE = SKILL / "assets" / "project-template" / "hw"
+V1_MINIMAL = HERE / "fixtures" / "record_v1_minimal" / "hw"  # a minimal record version 1: one part, four decisions
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
@@ -66,6 +67,63 @@ class MigrationCase(unittest.TestCase):
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         change(data)
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+class Version1Record(MigrationCase):
+    """migrate.py on the minimal record version 1 fixture: the only migrate input in this file that is version 1."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-migrate-v1-")
+        self.addCleanup(temporary.cleanup)
+        self.project = Path(temporary.name) / "project"
+        self.hw = self.project / "hw"
+        shutil.copytree(V1_MINIMAL, self.hw)
+
+    def test_apply_writes_a_valid_version_2_record_of_explicit_unknowns(self) -> None:
+        untouched = {rel: digest for rel, digest in tree(self.hw).items()
+                     if rel.endswith("model.py") or rel in ("bom.csv", "verification.csv") or rel.startswith("decisions/")}
+        self.assertEqual(len(untouched), 1 + 2 + 4, "one model, the BOM and verification sheets, four decisions")
+        code, report = self.run_cli("--apply", "--json")
+        self.assertEqual((code, report["status"]), (0, "applied"))
+        after = tree(self.hw)
+        self.assertEqual({rel: after[rel] for rel in untouched}, untouched)
+        record, problems = mi.check_record(self.hw)
+        self.assertEqual([p.finding() for p in problems], [])
+        self.assertEqual(record.version, 2)
+        self.assertEqual(record.use_case.status, "unknown")
+        self.assertTrue(all(fact.unknown and fact.question for fact in record.use_case.facts.values()))
+        self.assertTrue(record.use_case.service_class.unknown)
+        self.assertEqual(list(record.parts), ["LMP-0001"])
+        part = record.parts["LMP-0001"]
+        for name in ("functions", "material_profile", "service", "critical_surfaces", "route"):
+            value = getattr(part.intent, name)
+            self.assertTrue(mi.is_fact(value) and value.unknown and value.question in record.questions, (name, value))
+        self.assertIn(part.material, part.intent.material_profile.reason, "the legacy material is named, not adopted")
+        self.assertEqual(record.interfaces, {})
+        self.assertEqual((dict(record.capabilities), dict(record.materials), record.selection.status), ({}, {}, "not_assessed"))
+        assembly = yaml.safe_load((self.hw / "assembly.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("operations", assembly["drawing"])
+        self.assertEqual(assembly["operations"], {"status": "unknown", "reason": "not recorded before record version 2",
+                                                  "question": "Q-012"}, "legacy operations were absent, so an explicit unknown")
+        comment = "# Assembly drawing intent (cad-drawings assembly_drawing.py): sheet 1 is the whole arm, then one"
+        self.assertIn(comment, (self.hw / "assembly.yaml").read_text(encoding="utf-8"), "comments survive the edit")
+        self.assertFalse(mi.assess_use_case(record).final_ready)
+        note = (self.hw / "docs" / f"record-migration-v2-{date.today().isoformat()}.md").read_text(encoding="utf-8")
+        for text in ("Nothing was approved", "no process, material, capability, criterion", "| Q-012 |", "LMP-0001",
+                     "`hw/versions/`, `hw/releases/`"):
+            self.assertIn(text, note)
+        validated = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,
+                                   timeout=120, check=False)
+        self.assertEqual((validated.returncode, json.loads(validated.stdout)), (0, {"ok": True, "findings": []}))
+
+    def test_a_second_run_changes_nothing(self) -> None:
+        self.assertEqual(self.run_cli("--apply")[0], 0)
+        migrated = tree(self.project)
+        for args in (("--apply", "--json"), ("--json",)):
+            with self.subTest(args=args):
+                code, report = self.run_cli(*args)
+                self.assertEqual((code, report["status"], report["changes"]), (0, "current", []))
+                self.assertEqual(tree(self.project), migrated)
 
 
 class LampExample(MigrationCase):
