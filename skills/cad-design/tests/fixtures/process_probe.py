@@ -11,6 +11,10 @@ Shapes (mm, the frame they are probed in):
   plate   a 40 x 30 x 3 plate with a through 6 mm hole at x 20, y 15
   disc    a 100 mm disc, 5 mm thick, on the bed; its cylinder seam is turned 5.625 degrees off +X
   slot    a 40 x 30 x 30 block on the bed with a 4 mm wide, 30 mm long square slot through it along Y, its flat roof at z 14
+  beam_*  a beam at z 20..25 over posts, its flat roof at z 20: long (a 4 x 30 roof held by two posts), three (the same
+          with an end wall), ends (a 4 x 30 roof held by two end posts), corner (an 18 x 18 roof held by two adjacent walls)
+  pocket_* a 60 x 60 x 30 block with a pocket open to the bed, its flat roof at z 10: l (two 30 x 4 arms), trapezoid
+          (parallel sides 10 and 6), ring (an annulus around a pillar), boss (a 30 x 6 roof around a 7.5 x 4 boss)
   pair    two 10 x 10 x 2 plates 20 mm apart: one component of two equivalent members
 Usage: uv run --script process_probe.py
 stdout: {case: probe facts (process_checks Geometry)}.
@@ -28,10 +32,10 @@ form_check = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(form_check)
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse  # noqa: E402
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon  # noqa: E402
 from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet  # noqa: E402
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder  # noqa: E402
-from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt  # noqa: E402
-
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakePrism  # noqa: E402
+from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Vec  # noqa: E402
 import math  # noqa: E402
 from OCP.TopAbs import TopAbs_EDGE  # noqa: E402
 from OCP.TopExp import TopExp_Explorer  # noqa: E402
@@ -45,6 +49,15 @@ def box(x0, y0, z0, x1, y1, z1):
 
 def cylinder(point, direction, radius, height):
     return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(*point), gp_Dir(*direction)), radius, height).Shape()
+
+
+def prism(points, z0, z1):
+    """A closed (x, y) polygon extruded from z0 to z1."""
+    wire = BRepBuilderAPI_MakePolygon()
+    for x, y in points:
+        wire.Add(gp_Pnt(x, y, z0))
+    wire.Close()
+    return BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(wire.Wire()).Face(), gp_Vec(0, 0, z1 - z0)).Shape()
 
 
 def fuse(a, b):
@@ -95,8 +108,24 @@ CASES = {
     "plate": (cut(box(0, 0, 0, 40, 30, 3), cylinder((20, 15, -1), (0, 0, 1), 3, 5)), "model",
               bore("ream_bore", (23, 15, 1.5), (-1, 0, 0)), {"directions": {"+z": [0.0, 0.0, 1.0], "-x": [-1.0, 0.0, 0.0]}}),
     "disc": (turned_disc(50.0, 5.0, 5.625), "bed", {}, {}),
-    "slot": (cut(box(0, 0, 0, 40, 30, 30), box(18, -1, 10, 22, 31, 14)), "bed",
-             plane("slot_roof", (20, 15, 14), (0, 0, -1)), {}),
+    "slot": (cut(box(0, 0, 0, 40, 30, 30), box(18, -1, 10, 22, 31, 14)), "bed", plane("roof", (20, 15, 14), (0, 0, -1)), {}),
+    "beam_long": (fuse(fuse(box(0, 0, 0, 10, 30, 20), box(14, 0, 0, 24, 30, 20)), box(0, 0, 20, 24, 30, 25)), "bed",
+                  plane("roof", (12, 15, 20), (0, 0, -1)), {}),
+    "beam_three": (fuse(fuse(fuse(box(0, 0, 0, 10, 30, 20), box(14, 0, 0, 24, 30, 20)), box(10, 0, 0, 14, 2, 20)),
+                        box(0, 0, 20, 24, 30, 25)), "bed", plane("roof", (12, 15, 20), (0, 0, -1)), {}),
+    "beam_ends": (fuse(fuse(box(0, 0, 0, 4, 10, 20), box(0, 40, 0, 4, 50, 20)), box(0, 0, 20, 4, 50, 25)), "bed",
+                  plane("roof", (2, 25, 20), (0, 0, -1)), {}),
+    "beam_corner": (fuse(fuse(box(0, 0, 0, 2, 20, 20), box(0, 0, 0, 20, 2, 20)), box(0, 0, 20, 20, 20, 25)), "bed",
+                    plane("roof", (10, 10, 20), (0, 0, -1)), {}),
+    "pocket_l": (cut(box(0, 0, 0, 60, 60, 30), prism([(10, 10), (40, 10), (40, 14), (14, 14), (14, 40), (10, 40)], -1, 10)),
+                 "bed", plane("roof", (12, 12, 10), (0, 0, -1)), {}),
+    "pocket_trapezoid": (cut(box(0, 0, 0, 60, 60, 30), prism([(10, 10), (20, 10), (18, 14), (12, 14)], -1, 10)), "bed",
+                         plane("roof", (15, 12, 10), (0, 0, -1)), {}),
+    "pocket_ring": (cut(box(0, 0, 0, 60, 60, 30), cut(cylinder((30, 30, -1), (0, 0, 1), 10, 11),
+                                                      cylinder((30, 30, -2), (0, 0, 1), 5, 13))),
+                    "bed", plane("roof", (37.5, 30, 10), (0, 0, -1)), {}),
+    "pocket_boss": (cut(box(0, 0, 0, 60, 60, 30), cut(box(10, 27, -1, 40, 33, 10), box(21.25, 28, -2, 28.75, 32, 11))), "bed",
+                    plane("roof", (12, 28, 10), (0, 0, -1)), {}),
     "pair": (occ.compound([box(0, 0, 0, 10, 10, 2), box(30, 0, 0, 40, 10, 2)]), "bed", {}, {}),
 }
 

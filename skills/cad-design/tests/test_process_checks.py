@@ -1168,9 +1168,21 @@ class ProbeGeometryTests(Checks):
         self.assertEqual(self.outcome(seat, "process.fdm.support@TST-0102/print"), "fail")
         self.assertIn("process.fdm.support_on_critical", self.codes(seat))
 
-    def test_a_long_slot_roof_bridges_its_width_not_its_length(self) -> None:
-        roof = self.face_of("slot", "slot_roof")["down"]
-        self.assertEqual((roof["kind"], roof["span_mm"]), ("bridge", 4.0))
+    def test_a_flat_roof_is_judged_by_its_shape_on_real_geometry(self) -> None:
+        for case, expected in (
+            ("slot", ("bridge", 4.0)),  # 4 x 30, held on all four sides
+            ("beam_long", ("bridge", 4.0)),  # 4 x 30, held on the two long sides
+            ("beam_three", ("bridge", 4.0)),  # 4 x 28, held on both long sides and one end
+            ("beam_ends", ("bridge", 30.0)),  # 4 x 30, held on the two short ends only: the bridge runs along it
+            ("beam_corner", ("overhang", None)),  # 18 x 18, held on two adjacent sides only
+            ("pocket_l", ("bridge", None)),  # two 30 x 4 arms
+            ("pocket_trapezoid", ("bridge", None)),  # parallel sides 10 and 6
+            ("pocket_ring", ("bridge", None)),  # an annulus around a pillar
+            ("pocket_boss", ("bridge", None)),  # 30 x 6 around a 7.5 x 4 boss: never the 5 mm gap
+        ):
+            with self.subTest(case):
+                roof = self.face_of(case, "roof")["down"]
+                self.assertEqual((roof["kind"], roof["span_mm"]), expected)
 
     def test_the_pocket_corners_reach_and_visibility_are_measured(self) -> None:
         pocket = self.probed["pocket"]
@@ -1208,13 +1220,6 @@ class ProbeGeometryTests(Checks):
         self.assertEqual(len({f["id"][:2] for f in pair["faces"]}), 2)
 
 
-# --- every component end to end: U3's loose project, built and checked -------------------------------------------------
-
-def _projects() -> Any:
-    return _module("cad_model_manufacturing_projects", SKILLS / "cad-model" / "tests" / "fixtures" / "manufacturing_projects.py")
-
-
-@unittest.skipUnless(UV and DEPS, "uv, pyyaml and jsonschema are required for the kernel build")
 def _edge(start: tuple[float, ...], end: tuple[float, ...], mid: tuple[float, ...] | None = None) -> Any:
     """A straight roof edge, or with `mid` an arc through it."""
     form_check = _module("cad_design_form_check", FORM_CHECK)
@@ -1232,6 +1237,8 @@ def _outline(points: list[tuple[float, float]], anchored: list[int]) -> list[Any
 RECT_4X30 = [(0.0, 0.0), (30.0, 0.0), (30.0, 4.0), (0.0, 4.0)]  # edges: 0 bottom long, 1 right end, 2 top long, 3 left end
 L_SHAPE = [(0.0, 0.0), (30.0, 0.0), (30.0, 4.0), (4.0, 4.0), (4.0, 30.0), (0.0, 30.0)]  # two 30 x 4 arms, area 224
 TRAPEZOID = [(0.0, 0.0), (10.0, 0.0), (8.0, 4.0), (2.0, 4.0)]  # parallel sides 10 and 6 apart by 4, area 32
+RECT_6X30 = [(0.0, 0.0), (30.0, 0.0), (30.0, 6.0), (0.0, 6.0)]
+BOSS_7X4 = [(11.25, 1.0), (18.75, 1.0), (18.75, 5.0), (11.25, 5.0)]  # a 7.5 x 4 boss centred in the 30 x 6 roof, area left 150
 
 
 def _circle(radius: float) -> Any:
@@ -1243,8 +1250,6 @@ class RoofSpanTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        if not DEPS:
-            raise unittest.SkipTest("PyYAML and jsonschema are needed to load form_check")
         cls.span = staticmethod(_module("cad_design_form_check", FORM_CHECK)._roof_span)
 
     def test_a_strip_is_bridged_across_its_width(self) -> None:
@@ -1274,6 +1279,14 @@ class RoofSpanTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.span(120.0, anchors), ("overhang", None))
 
+    def test_a_roof_around_a_boss_is_never_measured_from_unrelated_anchors(self) -> None:
+        """The outer edge and the far boss edge are 5 mm apart but overlap only 7.5 mm: the end regions are 6 mm wide."""
+        anchors = _outline(RECT_6X30, [0, 1, 2, 3]) + _outline(BOSS_7X4, [0, 1, 2, 3])
+        self.assertEqual(self.span(150.0, anchors), ("bridge", None))
+
+    def test_a_roof_with_a_hole_through_it_has_a_bridge_of_unknown_span(self) -> None:
+        self.assertEqual(self.span(120.0, _outline(RECT_4X30, [0, 1, 2, 3]), True), ("bridge", None))
+
     def test_a_roof_that_is_not_one_strip_has_a_bridge_of_unknown_span(self) -> None:
         for name, area, anchors in (
             ("L-shape", 224.0, _outline(L_SHAPE, [0, 1, 2, 3, 4, 5])),
@@ -1284,6 +1297,13 @@ class RoofSpanTests(unittest.TestCase):
                 self.assertEqual(self.span(area, anchors), ("bridge", None))
 
 
+# --- every component end to end: U3's loose project, built and checked -------------------------------------------------
+
+def _projects() -> Any:
+    return _module("cad_model_manufacturing_projects", SKILLS / "cad-model" / "tests" / "fixtures" / "manufacturing_projects.py")
+
+
+@unittest.skipUnless(UV and DEPS, "uv, pyyaml and jsonschema are required for the kernel build")
 class LooseComponentCoverageTests(Checks):
     """cad-model builds U3's two loose solids (the smaller unplanned); form_check --version publishes one
     packet in which both components are assessed on their own exported files, the unplanned one UNKNOWN."""

@@ -676,7 +676,7 @@ PROBE_RAY_SAMPLES = 16  # samples per face whose visibility rays are cast along 
 PROBE_TOL_MM = 1e-3  # a locator patch point this close to a face lies on it (cad-model components.BIND_TOLERANCE_MM)
 PROBE_RAY_OFFSET_MM = 1e-4
 ROOF_PARALLEL_TOL = 1e-6  # sine of the allowed angle between two edges that bound one bridged strip
-ROOF_STRIP_FIT = (0.9, 1.001)  # roof area over (anchor gap x anchor extent) of a roof that is one strip
+ROOF_STRIP_FIT = (0.9, 1.001)  # roof area over the rectangle between two opposite anchors, for a roof that is that strip
 PROBE_LEVEL_MM = 1e-6  # faces this close to the lowest z lie on the bed
 FULL_TURN = 2.0 * math.pi - 1e-6
 
@@ -777,9 +777,11 @@ def _touch(a: _Edge, b: _Edge) -> bool:
     return any(_norm(_sub(p, q)) <= PROBE_TOL_MM for p in (a.start, a.end) for q in (b.start, b.end))
 
 
-def _strip_gap(a: _Edge, b: _Edge, anchors: list[_Edge], area: float) -> float | None:
-    """The distance between parallel overlapping line edges `a` and `b` when the roof is that strip: its area is
-    ROOF_STRIP_FIT of gap x the extent of `anchors` along the edges. None otherwise."""
+def _strip_gap(a: _Edge, b: _Edge, curved: bool, area: float) -> float | None:
+    """The distance between `a` and `b` when they are the two opposite sides of the strip that is the roof, else None.
+
+    They must be parallel lines of one length that overlap along their whole length, and the roof area must fit the
+    rectangle between them (plus round caps at most a gap wide when an anchor is an arc) within ROOF_STRIP_FIT."""
     length, other = _norm(a.chord), _norm(b.chord)
     if not (a.straight and b.straight) or min(length, other) <= PROBE_TOL_MM:
         return None
@@ -787,25 +789,40 @@ def _strip_gap(a: _Edge, b: _Edge, anchors: list[_Edge], area: float) -> float |
     if _norm(_cross(along, b.chord)) > ROOF_PARALLEL_TOL * other:
         return None
     gap = _norm(_cross(_sub(b.start, a.start), along))
-    spans = [sorted(_dot(p, along) for p in (e.start, e.end)) for e in (a, b)]
-    if gap <= PROBE_TOL_MM or min(spans[0][1], spans[1][1]) - max(spans[0][0], spans[1][0]) <= PROBE_TOL_MM:
+    (a_low, a_high), (b_low, b_high) = (sorted(_dot(p, along) for p in (e.start, e.end)) for e in (a, b))
+    overlap = min(a_high, b_high) - max(a_low, b_low)
+    if gap <= PROBE_TOL_MM or abs(length - overlap) > PROBE_TOL_MM or abs(other - overlap) > PROBE_TOL_MM:
         return None
-    reach = [_dot(p, along) for e in anchors for p in (e.start, e.mid, e.end)]
+    strip = gap * overlap
     low, high = ROOF_STRIP_FIT
-    return gap if low <= area / (gap * (max(reach) - min(reach))) <= high else None
+    return gap if low * strip <= area <= high * (strip + (gap * gap if curved else 0.0)) else None
 
 
-def _roof_span(area: float, anchors: list[_Edge]) -> tuple[str, float | None]:
+def _has_hole(face: Any) -> bool:
+    """Whether `face` has an inner wire: a boss or a hole through it."""
+    from OCP.TopAbs import TopAbs_WIRE
+    from OCP.TopExp import TopExp_Explorer
+
+    explorer, wires = TopExp_Explorer(face, TopAbs_WIRE), 0
+    while explorer.More():
+        wires += 1
+        explorer.Next()
+    return wires > 1
+
+
+def _roof_span(area: float, anchors: list[_Edge], has_hole: bool = False) -> tuple[str, float | None]:
     """(kind, span_mm) of a horizontal ceiling of `area` held at `anchors`, the edges where the next face continues lower.
 
-    Filament crosses the roof between opposing anchors, so the span is the gap between the closest pair of parallel
-    anchor edges when the roof is just that strip (the ends and round caps can hold or not). Anchors that all touch
-    or a lone anchor hold a cantilever: an "overhang". Any other roof (an L, a ring around a pillar, a taper) is a
-    "bridge" of unknown span: the best single filament direction is not worked out here."""
+    Filament crosses the roof between opposing anchors, so the span is the gap between the closest pair of anchor
+    edges that are the two opposite sides of a roof that is just that strip (round caps and corners can hold or not).
+    Anchors that all touch or a lone anchor hold a cantilever: an "overhang". Any other roof (an L, a ring around a
+    pillar, a taper, a roof with a boss or hole) is a "bridge" of unknown span: the best single filament direction is
+    not worked out here."""
     pairs = list(itertools.combinations(anchors, 2))
     if not any(not _touch(a, b) for a, b in pairs):
         return "overhang", None
-    gaps = [gap for a, b in pairs if (gap := _strip_gap(a, b, anchors, area)) is not None]
+    curved = any(not edge.straight for edge in anchors)
+    gaps = [] if has_hole else [gap for a, b in pairs if (gap := _strip_gap(a, b, curved, area)) is not None]
     return "bridge", min(gaps, default=None)
 
 
@@ -973,7 +990,8 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
             kind = "island"  # a local lowest region off the bed: supports must start under it
         elif row["type"] == "plane" and row.get("normal", [0, 0, 0])[2] < -1.0 + 1e-6:
             # A horizontal ceiling: anchored where a neighbour continues downward, it bridges between opposing anchors.
-            kind, span = _roof_span(row["area_mm2"], [edge for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM])
+            held = [edge for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM]
+            kind, span = _roof_span(row["area_mm2"], held, bool(held) and _has_hole(faces[n]))
         row["down"] = {"area_mm2": round(sum(angles.values()), 6), "max_angle_deg": float(max(angles)),
                        "angles": [[float(a), round(v, 6)] for a, v in sorted(angles.items())], "kind": kind,
                        "span_mm": None if span is None else round(span, 6),
