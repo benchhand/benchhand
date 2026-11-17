@@ -553,7 +553,8 @@ def answers_body(profile: Mapping[str, Any], today: date) -> str:
         f"- Date: {today.isoformat()}",
         "- Source: the user's answers to the project-start questions (cad-flow `flow_profile.py questions`)", "",
         "`product.yaml` `flow.profile` records these answers. `not_asked` marks a question nobody asked: its check",
-        "reports it not assessed, and blocks once the check falls due. The motion sweep was stated, not asked.", "",
+        "reports it not assessed, and blocks once the check falls due. The lead told the user that the motion sweep",
+        "runs once a joint moves.", "",
         "| Setting | Answer |", "|---|---|", *answers, ""])
 
 
