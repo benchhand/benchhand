@@ -89,8 +89,9 @@ class OrderTests(unittest.TestCase):
         report = self.check(operations("blocked_socket.yaml"))
         self.assert_schema_valid(report)
         self.assertEqual({row["obligation"]: row["outcome"] for row in report.outcomes},
-                         {f"assembly.order@op:{ident}": "pass"
-                          for ident in ("seat-bearing", "fit-cover", "mount-bracket", "fasten-cover")})
+                         {**{f"assembly.order@op:{ident}": "pass"
+                             for ident in ("seat-bearing", "fit-cover", "mount-bracket", "fasten-cover")},
+                          "assembly.order@product": "pass"})
         self.assertEqual(report.findings, ())
         self.assertIn("part paths and tool reach are assembly.access", report.outcomes[0]["coverage"])
 
