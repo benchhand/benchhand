@@ -22,12 +22,14 @@ and reads one JSON result from that file once the runner exits, identical in sha
                "LMP-0004": {"ok": false, "error": {"type": "SafeEditError", "message": "...",
                                                    "where": "model.py:42 in build"}}}}
 
-A request of several parts builds them in spawned worker processes of the runner's process group, one
-fresh process per part (`build_jobs` workers at a time; CAD_MODEL_BUILD_JOBS overrides, 1 = one at a
-time), so a part's bytes, STEP occurrence ids included, never depend on the parts built before it. A
-request of one part builds in this process. The result lists the parts in request order. `import_s` is
-the wall time of one kernel import: this process's, or the slowest worker's, as workers import
-concurrently. A worker that dies fails its unfinished parts with error type WorkerCrashed.
+A request of several parts builds them in worker processes of the runner's process group, one fresh
+process per part (`build_jobs` workers at a time; CAD_MODEL_BUILD_JOBS overrides, 1 = one at a time).
+The workers fork from a server that has imported the kernel and written nothing, so a part's bytes,
+STEP occurrence ids included, never depend on the parts built before it. A request of one part builds
+in this process. The result lists the parts in request order. `import_s` is the wall time to a kernel
+ready to build: the import in this process or, with workers, the seconds until the first worker
+started on a part (the server's start and kernel import included). A worker that dies fails its
+unfinished parts with error type WorkerCrashed.
 
 `sources` hashes every Python file the runner loaded from the plugin or the project, the part models
 themselves excepted: with `tools` and the part's own files they are what a cached build depends on.
@@ -381,18 +383,18 @@ def _build_or_fail(kernel: str, part: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _no_bytecode() -> None:
-    sys.dont_write_bytecode = True  # a spawned worker starts with the default: no __pycache__ beside model.py
+    sys.dont_write_bytecode = True  # a new worker process starts with the default: no __pycache__ beside model.py
 
 
 def _build_in_worker(kernel: str, part: Mapping[str, Any],
                      roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
-    """One part in a fresh worker: the kernel import time, the part's result and the plugin and project
-    sources this worker loaded (the parent never loads the models' helper modules). The import runs here,
-    not in the pool initializer, so a replacement worker that never gets a task imports nothing."""
-    started = time.perf_counter()
+    """One part in a fresh worker: the time it started, the part's result and the plugin and project
+    sources this worker loaded (the parent never loads the models' helper modules). The kernel import
+    is a no-op in a worker forked from the preloaded server; it runs here, not in the pool initializer,
+    so a replacement worker that never gets a task imports nothing."""
+    started = time.time()
     importlib.import_module(kernel)
-    import_s = round(time.perf_counter() - started, 3)
-    return _build_or_fail(kernel, part), provenance.sources(roots, MODEL_MODULE), import_s
+    return _build_or_fail(kernel, part), provenance.sources(roots, MODEL_MODULE), started
 
 
 def _worker_died(error: BaseException) -> dict[str, Any]:
@@ -402,27 +404,32 @@ def _worker_died(error: BaseException) -> dict[str, Any]:
 
 def _build_in_workers(kernel: str, parts: list[Mapping[str, Any]], jobs: int,
                       roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
-    """Build `parts` in `jobs` spawned workers, one part per worker process, results in request order.
+    """Build `parts` in `jobs` workers, one part per worker process, results in request order.
 
-    spawn, not fork: OCCT keeps process-global state and threads once imported. One part per process:
-    OCCT's STEP writer numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter, so a reused
-    worker would write ids that depend on which parts it built before. Workers stay in the runner's
-    process group and session, so killing that group (build._stop) takes them too. A worker that dies
-    fails the parts it had not finished; the others keep their results."""
+    forkserver, not fork: the server is a fresh single-threaded process that imports the kernel and runs
+    nothing, so each worker forks from a state without OCCT threads or open files. A worker is also
+    never reused: OCCT's STEP writer numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter,
+    so a reused worker would write ids that depend on which parts it built before. Workers stay in the
+    runner's process group and session, so killing that group (build._stop) takes them and the server
+    too. A worker that dies fails the parts it had not finished; the others keep their results."""
     results: dict[str, Any] = {}
     sources: dict[str, str] = {}
-    import_s = 0.0
-    with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn"),
-                             initializer=_no_bytecode, max_tasks_per_child=1) as pool:
+    first_start = float("inf")
+    context = multiprocessing.get_context("forkserver")
+    context.set_forkserver_preload([kernel])
+    submitted = time.time()
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=context, initializer=_no_bytecode,
+                             max_tasks_per_child=1) as pool:
         futures = [(part, pool.submit(_build_in_worker, kernel, part, roots)) for part in parts]
         for part, future in futures:
             try:
-                results[part["pn"]], worker_sources, worker_import_s = future.result()
+                results[part["pn"]], worker_sources, started = future.result()
             except BrokenProcessPool as error:
                 results[part["pn"]] = _worker_died(error)
                 continue
             sources.update(worker_sources)
-            import_s = max(import_s, worker_import_s)
+            first_start = min(first_start, started)
+    import_s = round(max(first_start - submitted, 0.0), 3) if first_start != float("inf") else 0.0
     return results, sources, import_s
 
 
