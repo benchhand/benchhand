@@ -90,28 +90,36 @@ class VersionOneCase(MigrationCase):
         self.hw = self.project / "hw"
         shutil.copytree(V1_MINIMAL, self.hw)
 
+    def add_interface(self) -> None:
+        """The fixture has no interfaces, so give the copy one without a functional block, as in version 1."""
+        interface = {"id": "IF-001", "from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
+        self.edit_yaml("interfaces.yaml", lambda d: d.update(interfaces=[interface]))
+
 
 class Version1Record(VersionOneCase):
     """migrate.py on the minimal record version 1 fixture: the only migrate input in this file that is version 1."""
 
     def test_a_dry_run_reports_every_change_and_writes_nothing(self) -> None:
         self.assert_version_1()
+        self.add_interface()
         before = tree(self.project)
         code, report = self.run_cli("--json")
         self.assertEqual((code, report["status"], report["record_version"]), (1, "pending", {"from": 1, "to": 2}))
         self.assertEqual(tree(self.project), before, "a dry run moves, writes and deletes nothing")
         paths = {change["path"]: change for change in report["changes"]}
-        # The fixture has one part, no interfaces and no installation operations, so interfaces.yaml is not edited.
+        # One part, the one interface added above and no installation operations to move.
         expected = {"hw/product.yaml", "hw/requirements.yaml", "hw/assembly.yaml", "hw/parts/LMP-0001/part.yaml",
+                    "hw/interfaces.yaml",
                     "hw/manufacturing/capabilities.yaml", "hw/manufacturing/materials.yaml", "hw/manufacturing/selection.yaml",
                     f"hw/docs/record-migration-v2-{date.today().isoformat()}.md"}
         self.assertEqual(set(paths), expected)
         self.assertEqual(paths["hw/manufacturing/selection.yaml"]["action"], "create")
         self.assertIn("+record_version: 2\n", paths["hw/product.yaml"]["diff"])
+        self.assertIn("+  functional:", paths["hw/interfaces.yaml"]["diff"])
         self.assertIn("+operations: {status: unknown", paths["hw/assembly.yaml"]["diff"])  # the fixture records no operations to move
         self.assertEqual(report["questions"][0]["id"], "Q-001")
-        # 11 use-case questions, 1 for the absent operations, 1 for the part, 0 for the absent interfaces.
-        self.assertEqual(len(report["questions"]), 11 + 1 + 1)
+        # 11 use-case questions, 1 for the absent operations, 1 for the part, 1 for the interface.
+        self.assertEqual(len(report["questions"]), 11 + 1 + 1 + 1)
         self.assertEqual(report["findings"], [])
         code, text = self.run_cli("--dry-run")
         self.assertEqual(code, 1)
@@ -138,6 +146,7 @@ class Version1Record(VersionOneCase):
         self.assertEqual((record.version, [p.finding() for p in problems]), (2, []))
 
     def test_apply_writes_a_valid_version_2_record_of_explicit_unknowns(self) -> None:
+        self.add_interface()
         untouched = {rel: digest for rel, digest in tree(self.hw).items()
                      if rel.endswith("model.py") or rel in ("bom.csv", "verification.csv") or rel.startswith("decisions/")}
         self.assertEqual(len(untouched), 1 + 2 + 4, "one model, the BOM and verification sheets, four decisions")
@@ -157,7 +166,9 @@ class Version1Record(VersionOneCase):
             value = getattr(part.intent, name)
             self.assertTrue(mi.is_fact(value) and value.unknown and value.question in record.questions, (name, value))
         self.assertIn(part.material, part.intent.material_profile.reason, "the legacy material is named, not adopted")
-        self.assertEqual(record.interfaces, {})
+        self.assertEqual(list(record.interfaces), ["IF-001"])
+        for interface in record.interfaces.values():
+            self.assertTrue(interface.functional.critical.unknown and interface.functional.functions.unknown)
         self.assertEqual((dict(record.capabilities), dict(record.materials), record.selection.status), ({}, {}, "not_assessed"))
         assembly = yaml.safe_load((self.hw / "assembly.yaml").read_text(encoding="utf-8"))
         self.assertNotIn("operations", assembly["drawing"])

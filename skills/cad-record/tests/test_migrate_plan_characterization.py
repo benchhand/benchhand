@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """migrate.plan characterization: the whole outcome (plan JSON with diffs, or the refusal message) of each variant
 that exercises one planning branch, pinned by digest so a refactor cannot change a byte. The record version 1
-variants run on the minimal v1 fixture; the refusal digests hash message text worked out from migrate.py."""
+variants run on the minimal v1 fixture, given one interface where the branch needs it. The refusal digests hash
+message text worked out from migrate.py; the pending digests are pinned from a run on that input."""
 
 from __future__ import annotations
 
@@ -17,8 +18,10 @@ import yaml
 
 from test_migrate import TODAY, V1_MINIMAL, fx, mi, migrate
 
+# preferences, use_case_kept and blocks_present: regenerated when the input gained an interface (IF-001) so that
+# the functional-block branch of plan_interfaces is exercised; the refusal digests are unchanged.
 GOLDEN = {
-    'blocks_present': 'pending:4f0b3efc0b06ffa419d2cb57e5eae6a9302bc2e83a23eb36daa33e35e8d8f2c8',
+    'blocks_present': 'pending:4144d70a19d2dad06f96630d3e94722cb26c4ff7c7b41d67640ef60dba34074e',
     'lamp': 'pending:6b36118a2f3afe40d71a075daea512bc03d7cbe0dc44bb989892f377e241d01e',
     'missing_file': 'refused:09b3aedef2fae20db529d5d9e0697c50c74100c2394b1211ee77ecc30c31ede3',
     'missing_question': 'refused:5a4b00b06fe5db33a42593aadfdf92979fc4dea7b926a94401de624fb78a7e36',
@@ -26,8 +29,8 @@ GOLDEN = {
     'no_operations': 'pending:0ca25ee48f3a76a06eb6c0bbab223134e2110f4b24f46cdfa0e19da334015bd3',
     'no_product': 'refused:2d8d8cc2b3d3028be4b727a95807fb4807c7df1dd7241c73c8972d6b6b50e0eb',
     'not_mapping': 'refused:d59a63f21132ab76ba29500f332a006266fb27171760be5915a70475e3f0b76d',
-    'preferences': 'pending:42b4e04e71cb8540f7c560d96682c967b7a986fee0fe85d9fbca94c7bb059a7f',
-    'use_case_kept': 'pending:fb92ef0aa8d59b02b4c8b66aa9772d8f7e31502643d818bde2bc9b2eb38c208b',
+    'preferences': 'pending:97e59212da5c3c6a8da029017c4db3ef509e003d5a334c2f662a5bfe1f57d567',
+    'use_case_kept': 'pending:848ecf4c6fe2d8de46cd955a3c632cc16119f2aea69ed70f29f7071b7359d2fb',
 }
 
 
@@ -61,6 +64,9 @@ class PlanOutcome(unittest.TestCase):
         self.assertEqual(self.digest(), GOLDEN[name])
 
 
+KEPT = "TST: filled in by hand before the run was interrupted"
+
+
 class Version1Variants(PlanOutcome):
     """The planning branches that need a record version 1, on the minimal v1 fixture (one part, no interfaces)."""
 
@@ -74,21 +80,39 @@ class Version1Variants(PlanOutcome):
         product = yaml.safe_load((self.hw / "product.yaml").read_text(encoding="utf-8"))
         self.assertEqual(mi.record_version(product), 1, "the input is a record version 1, or the test proves nothing")
 
+    def add_interface(self) -> None:
+        """The fixture has no interfaces, so give the copy one without a functional block, as in version 1."""
+        interface = {"id": "IF-001", "from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
+        self.edit("interfaces.yaml", lambda d: d.update(interfaces=[interface]))
+
     def migrated_then(self, change: Any) -> None:
+        """Migrate a copy that has an interface, hand-edit the interface's functional block so a rewrite shows, then
+        undo the version bump (and more, by `change`): the state an interrupted run leaves."""
+        self.add_interface()
         migrate.apply(migrate.plan(self.hw, TODAY))
+        self.edit("interfaces.yaml", lambda d: d["interfaces"][0]["functional"]["critical"].update(reason=KEPT))
         self.edit("product.yaml", change)
+
+    def assert_functional_kept(self) -> None:
+        """Replanning leaves the interface's existing functional block alone (migrate.py skips it) and on disk."""
+        self.assertNotIn("hw/interfaces.yaml", {c.path for c in migrate.plan(self.hw, TODAY).changes})
+        interfaces = yaml.safe_load((self.hw / "interfaces.yaml").read_text(encoding="utf-8"))["interfaces"]
+        self.assertEqual(interfaces[0]["functional"]["critical"]["reason"], KEPT)
 
     def test_preferences_already_present(self) -> None:
         self.assert_version_1()
+        self.add_interface()
         self.edit("requirements.yaml", lambda d: d.update(preferences=[]))
-        change = next(c for c in migrate.plan(self.hw, TODAY).changes if c.path == "hw/requirements.yaml")
-        # 11 use-case questions, 1 for the absent operations, 1 for the part; preferences are already there.
-        self.assertEqual(change.summary, ["adds assumptions, open_questions (13 open questions)"])
+        changes = {c.path: c for c in migrate.plan(self.hw, TODAY).changes}
+        # 11 use-case questions, 1 for the absent operations, 1 for the part, 1 for the interface; preferences are there.
+        self.assertEqual(changes["hw/requirements.yaml"].summary, ["adds assumptions, open_questions (14 open questions)"])
+        self.assertEqual(changes["hw/interfaces.yaml"].summary, ["adds functional (critical and functions unknown) to IF-001"])
         self.check("preferences")
 
     def test_interrupted_run_keeps_use_case_and_rewrites_the_dated_note(self) -> None:
         self.migrated_then(lambda d: d.pop("record_version"))
         self.assert_version_1()
+        self.assert_functional_kept()
         note = next(c for c in migrate.plan(self.hw, TODAY).changes if c.path.startswith("hw/docs/record-migration-v2-"))
         self.assertEqual(note.action, "modify", "the first run's dated note exists and is rewritten")
         self.check("use_case_kept")
@@ -96,6 +120,7 @@ class Version1Variants(PlanOutcome):
     def test_interrupted_run_with_every_block_present_but_the_use_case(self) -> None:
         self.migrated_then(lambda d: (d.pop("record_version"), d.pop("use_case")))
         self.assert_version_1()
+        self.assert_functional_kept()
         self.check("blocks_present")
 
     def test_an_interface_without_an_id(self) -> None:
