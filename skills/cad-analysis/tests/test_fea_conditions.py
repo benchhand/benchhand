@@ -493,6 +493,19 @@ class QualificationBypasses(SourcedFEACase):
                 self.build(documents(direction=direction))
                 self.assert_unproven(self.solve(self.loads_case(([2], [0, 0, -50]))), loads=True)
 
+    def test_a_non_finite_service_direction_keeps_the_verdict_unknown(self) -> None:
+        """YAML carries .nan and .inf where JSON cannot, so the fixture goes through the same YAML path the CLI reads."""
+        nan, inf = float("nan"), float("inf")
+        for direction in ([nan, 0, 1], [0, nan, 0], [inf, 0, 0], [0, 0, inf], [-inf, 0, 0], [0, -inf, 0],
+                          "nan 0 1", "0 0 nan", "inf 0 0", "-inf 0 0", "[0, inf, 0]", "(nan, nan, nan)"):
+            with self.subTest(direction=direction):
+                self.solved.clear()
+                self.build(documents(direction=direction))
+                if not isinstance(direction, str):   # the bare list reached product.yaml as .nan or .inf
+                    written = (self.hw / "product.yaml").read_text(encoding="utf-8")
+                    self.assertTrue(".nan" in written or ".inf" in written)
+                self.assert_unproven(self.solve(self.loads_case(([2], [0, 0, -50]))), loads=True)
+
     def test_text_forms_of_a_service_direction_are_read_as_vectors(self) -> None:
         for direction in ("0 0 -1", "[0, 0, -1]", "(0,0,-2)", "-Z", "-z"):
             with self.subTest(direction=direction):
