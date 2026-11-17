@@ -191,6 +191,37 @@ class SharedRegistry(unittest.TestCase):
         self.assertTrue(list(check.iter_errors({})))
 
 
+class CrossRootReferences(SchemaRoots):
+    """A schema in one directory `$ref`s a schema in another: both constructors take the other directory as `also`."""
+
+    BASE = "https://srobroek.com/cad/schemas"
+
+    def roots(self) -> tuple[Path, Path]:
+        """`top/top.schema.json` references `lib/lib.schema.json#/$defs/code`, a string of at most 3 characters."""
+        top, lib = self.root / "top", self.root / "lib"
+        top.mkdir()
+        lib.mkdir()
+        (lib / "lib.schema.json").write_text(json.dumps({
+            "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": f"{self.BASE}/lib.schema.json",
+            "$defs": {"code": {"type": "string", "maxLength": 3}}}), encoding="utf-8")
+        (top / "top.schema.json").write_text(json.dumps({
+            "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": f"{self.BASE}/top.schema.json",
+            "type": "object", "properties": {"code": {"$ref": f"{self.BASE}/lib.schema.json#/$defs/code"}}}), encoding="utf-8")
+        return top, lib
+
+    def test_document_validator_resolves_a_reference_into_an_also_directory(self) -> None:
+        top, lib = self.roots()
+        check = registry.document_validator(top, "top.schema.json", also=(lib,))
+        self.assertEqual([e.message for e in check.iter_errors({"code": "abc"})], [])
+        self.assertEqual([e.message for e in check.iter_errors({"code": "abcd"})], ["'abcd' is too long"])
+
+    def test_ref_validator_resolves_a_reference_into_an_also_directory(self) -> None:
+        top, lib = self.roots()
+        check = registry.ref_validator(top, f"{self.BASE}/top.schema.json", also=(lib,))
+        self.assertEqual([e.message for e in check.iter_errors({"code": "abc"})], [])
+        self.assertEqual([e.message for e in check.iter_errors({"code": "abcd"})], ["'abcd' is too long"])
+
+
 class LazyJsonschema(unittest.TestCase):
     def test_loading_the_registry_and_the_validator_script_does_not_import_jsonschema(self) -> None:
         code = ("import importlib.util, sys\n"
