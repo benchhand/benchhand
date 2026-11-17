@@ -1180,7 +1180,10 @@ class ProbeGeometryTests(Checks):
             ("pocket_notch", ("bridge", None)),  # 4 x 30 with a 3 x 2 notch in a short end: 95% of the strip
             ("pocket_stadium", ("bridge", 4.0)),  # 4 x 30 with round ends
             ("pocket_hole", ("bridge", None)),  # 4 x 30 with a vertical hole through the roof
-            ("pocket_rounded", ("bridge", None)),  # 4 x 30 with R1 corners: four extra arcs, not two caps
+            ("pocket_rounded", ("bridge", 4.0)),  # 4 x 30 with R1 corners: straight ends with a tangent corner arc each side
+            ("pocket_flared", ("bridge", None)),  # one end flares out in two concave R1 arcs
+            ("pocket_scooped", ("bridge", None)),  # R1 corner arcs that are not tangent to the sides
+            ("pocket_oversize", ("bridge", None)),  # corner arcs of radius 2.5 and 0.5 on a 4 mm gap: 2.5 is above gap / 2
             ("pocket_stadium_hole", ("bridge", None)),  # the stadium with a 1 mm hole through a round end
             ("pocket_stadium_notch", ("bridge", None)),  # the stadium with a notch confined to a round end
             ("pocket_l", ("bridge", None)),  # two 30 x 4 arms

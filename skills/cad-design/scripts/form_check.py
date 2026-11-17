@@ -844,12 +844,73 @@ def _is_end(edge: _Edge, a: _Edge, gap: float, along: Sequence[float]) -> bool:
     return abs(edge.radius - gap / 2.0) <= PROBE_TOL_MM and (low or high)
 
 
+class _Frame(NamedTuple):
+    """Roof coordinates of a strip: u along the runs from the start of run `a`, v across from run `a`."""
+
+    origin: tuple[float, float, float]
+    along: tuple[float, ...]
+    across: tuple[float, ...]
+    length: float
+    gap: float
+
+    def at(self, point: Sequence[float]) -> tuple[float, float]:
+        offset = _sub(point, self.origin)
+        return _dot(offset, self.along), _dot(offset, self.across)
+
+
+def _corner_arc(arc: _Edge, foot: Sequence[float], frame: _Frame) -> bool:
+    """Whether `arc` is a convex corner arc of radius at most gap / 2 that starts at `foot`, the end of a run, tangent to
+    that run and, at its other end, to an end edge across the strip."""
+    radius = arc.radius
+    if arc.straight or radius <= PROBE_TOL_MM or radius > frame.gap / 2.0 + PROBE_TOL_MM:
+        return False
+    far = arc.end if _near(arc.start, foot) else arc.start
+    (u, v), (far_u, far_v), (mid_u, mid_v) = frame.at(foot), frame.at(far), frame.at(arc.mid)
+    low, high = abs(u) <= PROBE_TOL_MM, abs(u - frame.length) <= PROBE_TOL_MM
+    side_a, side_b = abs(v) <= PROBE_TOL_MM, abs(v - frame.gap) <= PROBE_TOL_MM
+    if not ((low or high) and (side_a or side_b)):
+        return False
+    out, inward, bulge = (-1.0 if low else 1.0), (1.0 if side_a else -1.0), math.sqrt(0.5)
+    expected = ((u + out * radius, v + inward * radius), (u + out * radius * bulge, v + inward * radius * (1.0 - bulge)))
+    return all(abs(x - y) <= PROBE_TOL_MM for found, want in (((far_u, far_v), expected[0]), ((mid_u, mid_v), expected[1]))
+               for x, y in zip(found, want))
+
+
+def _end_ok(chain: list[_Edge], feet: tuple[Sequence[float], Sequence[float]], a: _Edge, frame: _Frame) -> bool:
+    """Whether the edges `chain` from run `a` to the other run are an allowed end: one straight edge, one half circle,
+    or a straight edge across with a convex corner arc at each side."""
+    if len(chain) == 1:
+        return _is_end(chain[0], a, frame.gap, frame.along)
+    if len(chain) != 3:
+        return False
+    first, across, last = chain
+    return (across.straight and _norm(across.chord) > PROBE_TOL_MM and abs(_dot(across.chord, frame.along)) <= PROBE_TOL_MM
+            and _corner_arc(first, feet[0], frame) and _corner_arc(last, feet[1], frame))
+
+
+def _walk(start: Sequence[float], remaining: list[_Edge], b: _Edge) -> tuple[list[_Edge], Sequence[float]] | None:
+    """The edges taken out of `remaining` that chain from `start` to an end of `b` (at most three), and where they end."""
+    chain: list[_Edge] = []
+    here = start
+    while len(chain) < 3:
+        edge = next((e for e in remaining if _near(e.start, here) or _near(e.end, here)), None)
+        if edge is None:
+            return None
+        remaining.remove(edge)
+        chain.append(edge)
+        here = edge.end if _near(edge.start, here) else edge.start
+        if _near(here, b.start) or _near(here, b.end):
+            return chain, here
+    return None
+
+
 def _strip_gap(a: _Edge, b: _Edge, roof: list[_Edge]) -> float | None:
     """The distance between `a` and `b` when the roof outline is exactly four parts in order, else None.
 
     The parts are the two runs `a` and `b` (parallel lines of one length that overlap along their whole length) and
-    two end edges that join their ends. Each end edge is one straight edge across, or one convex circular arc of
-    radius gap / 2 (a half circle). Any other edge, notch, hole, corner arc or other cap shape leaves it None."""
+    two ends that join them. Each end is one straight edge across, one convex half circle of radius gap / 2, or a
+    straight edge across with one convex corner arc at each side, tangent to the run and to that edge, of radius at
+    most gap / 2. Any other edge, notch, hole or cap shape leaves it None."""
     length, other = _norm(a.chord), _norm(b.chord)
     if not (a.straight and b.straight) or min(length, other) <= PROBE_TOL_MM:
         return None
@@ -857,17 +918,17 @@ def _strip_gap(a: _Edge, b: _Edge, roof: list[_Edge]) -> float | None:
     if _norm(_cross(along, b.chord)) > ROOF_PARALLEL_TOL * other:
         return None
     offset = _sub(b.start, a.start)
-    gap = _norm(_sub(offset, tuple(_dot(offset, along) * c for c in along)))
+    skew = _sub(offset, tuple(_dot(offset, along) * c for c in along))
+    gap = _norm(skew)
     reach = sorted(_dot(_sub(p, a.start), along) for p in (b.start, b.end))
     if gap <= PROBE_TOL_MM or abs(reach[0]) > PROBE_TOL_MM or abs(reach[1] - length) > PROBE_TOL_MM:
         return None
-    ends = [edge for edge in roof if not _on_run(edge, a, along) and not _on_run(edge, b, along)]
-    if len(ends) != 2 or not all(_is_end(edge, a, gap, along) for edge in ends):
+    remaining = [edge for edge in roof if not _on_run(edge, a, along) and not _on_run(edge, b, along)]
+    low, high = _walk(a.start, remaining, b), _walk(a.end, remaining, b)
+    if remaining or low is None or high is None or _near(low[1], high[1]):
         return None
-    first, second = ends
-    chained = any(_joins(c1, a.start, bp) and _joins(c2, a.end, bq) for c1, c2 in ((first, second), (second, first))
-                  for bp, bq in ((b.start, b.end), (b.end, b.start)))
-    return gap if chained else None
+    frame = _Frame(a.start, along, tuple(c / gap for c in skew), length, gap)
+    return gap if _end_ok(low[0], (a.start, low[1]), a, frame) and _end_ok(high[0], (a.end, high[1]), a, frame) else None
 
 
 def _roof_span(roof: list[_Edge], held: set[tuple[float, ...]], wires: int) -> tuple[str, float | None]:

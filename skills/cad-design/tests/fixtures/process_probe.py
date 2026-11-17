@@ -19,7 +19,9 @@ Shapes (mm, the frame they are probed in):
           (parallel sides 10 and 6), ring (an annulus around a pillar), boss (a 30 x 6 roof around a 7.5 x 4 boss),
           notch (a 30 x 4 roof with a 3 x 2 notch in a short end), stadium (a 30 x 4 roof with round ends), hole (a 30 x 4
           roof with a 3 mm vertical hole through it), rounded (a 30 x 4 roof with R1 corners), stadium_hole (the stadium
-          with a 1 mm hole through a round end), stadium_notch (the stadium with a notch confined to a round end)
+          with a 1 mm hole through a round end), stadium_notch (the stadium with a notch confined to a round end),
+          flared (a 30 x 4 roof whose one end flares out in two concave R1 arcs), scooped (the same roof with the corner
+          arcs not tangent), oversize (the same roof with corner radii 2.5 and 0.5 at one end, 2.5 above gap / 2)
   pair    two 10 x 10 x 2 plates 20 mm apart: one component of two equivalent members
 Usage: uv run --script process_probe.py
 stdout: {case: probe facts (process_checks Geometry)}.
@@ -37,8 +39,14 @@ form_check = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(form_check)
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse  # noqa: E402
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon  # noqa: E402
+from OCP.BRepBuilderAPI import (  # noqa: E402
+    BRepBuilderAPI_MakeEdge,
+    BRepBuilderAPI_MakeFace,
+    BRepBuilderAPI_MakePolygon,
+    BRepBuilderAPI_MakeWire,
+)
 from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet  # noqa: E402
+from OCP.GC import GC_MakeArcOfCircle  # noqa: E402
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakePrism  # noqa: E402
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Vec  # noqa: E402
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain  # noqa: E402
@@ -64,6 +72,45 @@ def prism(points, z0, z1):
         wire.Add(gp_Pnt(x, y, z0))
     wire.Close()
     return BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(wire.Wire()).Face(), gp_Vec(0, 0, z1 - z0)).Shape()
+
+
+def outline(start, *parts):
+    """A closed (x, y) outline from `start`: each part is a line to (x, y) or an arc through a middle point to (x, y)."""
+    wire, here = BRepBuilderAPI_MakeWire(), start
+    for part in parts:
+        end = part[-1]
+        if len(part) == 1:
+            edge = BRepBuilderAPI_MakeEdge(gp_Pnt(*here, 0), gp_Pnt(*end, 0)).Edge()
+        else:
+            edge = BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(gp_Pnt(*here, 0), gp_Pnt(*part[0], 0), gp_Pnt(*end, 0)).Value()).Edge()
+        wire.Add(edge)
+        here = end
+    return wire.Wire()
+
+
+def extruded(wire, z0, z1):
+    """`wire` (drawn at z 0) moved to z0 and extruded to z1."""
+    from OCP.gp import gp_Trsf
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+
+    move = gp_Trsf()
+    move.SetTranslation(gp_Vec(0, 0, z0))
+    placed = BRepBuilderAPI_Transform(BRepBuilderAPI_MakeFace(wire).Face(), move).Shape()
+    return BRepPrimAPI_MakePrism(placed, gp_Vec(0, 0, z1 - z0)).Shape()
+
+
+def filleted_pocket(x0, y0, z0, x1, y1, z1, radii):
+    """A pocket tool box with a fillet of the mapped radius on each vertical edge at an (x, y) corner of `radii`."""
+    shape = box(x0, y0, z0, x1, y1, z1)
+    fillet = BRepFilletAPI_MakeFillet(shape)
+    explorer = TopExp_Explorer(shape, TopAbs_EDGE)
+    while explorer.More():
+        edge = occ.downcast(explorer.Current(), "EDGE")
+        low, high = occ.bbox(edge)
+        if abs(low[0] - high[0]) < 1e-9 and abs(low[1] - high[1]) < 1e-9 and (round(low[0], 6), round(low[1], 6)) in radii:
+            fillet.Add(radii[(round(low[0], 6), round(low[1], 6))], edge)
+        explorer.Next()
+    return fillet.Shape()
 
 
 def unified(shape):
@@ -159,6 +206,16 @@ CASES = {
                             plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_stadium_notch": (cut(box(0, 0, 0, 60, 60, 30), cut(STADIUM, box(39.2, 11, -2, 41, 13, 12))), "bed",
                              plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_flared": (cut(box(0, 0, 0, 60, 60, 30),
+                          extruded(outline((11, 10), ((40, 10),), ((40, 14),), ((11, 14),), ((10.292893, 14.292893), (10, 15)),
+                                           ((10, 9),), ((10.292893, 9.707107), (11, 10))), -1, 10)), "bed",
+                      plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_scooped": (cut(box(0, 0, 0, 60, 60, 30),
+                           extruded(outline((11, 10), ((40, 10),), ((40, 14),), ((11, 14),), ((10.707107, 13.292893), (10, 13)),
+                                            ((10, 11),), ((10.707107, 10.707107), (11, 10))), -1, 10)), "bed",
+                       plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_oversize": (cut(box(0, 0, 0, 60, 60, 30), filleted_pocket(10, 10, -1, 40, 14, 10, {(10.0, 10.0): 2.5, (10.0, 14.0): 0.5})),
+                        "bed", plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_boss": (cut(box(0, 0, 0, 60, 60, 30), cut(box(10, 27, -1, 40, 33, 10), box(21.25, 28, -2, 28.75, 32, 11))), "bed",
                     plane("roof", (12, 28, 10), (0, 0, -1)), {}),
     "pair": (occ.compound([box(0, 0, 0, 10, 10, 2), box(30, 0, 0, 40, 10, 2)]), "bed", {}, {}),
