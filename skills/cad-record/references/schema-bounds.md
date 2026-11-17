@@ -18,7 +18,7 @@ A tunable is a setting the user may change. It always has a `default`.
 - FEA timeout
 - Motion frame rate
 
-The build volume comes from the active capability profile's envelope. The schema gives it no default.
+The build volume has no default. It comes from the active capability profile's envelope.
 
 ## Annotations
 
