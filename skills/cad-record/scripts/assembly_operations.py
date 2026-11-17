@@ -532,8 +532,9 @@ def check_order(operations: Operations, inventory: Any = None) -> Report:
         outcomes.append(row)
     never = _never_installed(state, inventory)
     if never:
-        outcomes.append({"obligation": "assembly.order@product", "outcome": "fail", "level": "process_planned",
-                         "method": ORDER_METHOD, "coverage": ORDER_COVERAGE, "findings": [f["id"] for f in never]})
+        product: dict[str, Any] = {"obligation": "assembly.order@product", "outcome": "fail", "level": "process_planned",
+                                   "method": ORDER_METHOD, "coverage": ORDER_COVERAGE, "findings": [f["id"] for f in never]}
+        outcomes.append(product)
         findings.extend(never)
     return Report(tuple(outcomes), tuple(findings))
 
