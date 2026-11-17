@@ -17,6 +17,7 @@ CHANGED_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-analysis/scripts/fea_static.py",
+    "skills/cad-analysis/scripts/mesh_quality.py",
     "skills/cad-design/scripts/form_check.py",
     "skills/cad-design/scripts/process_checks/__init__.py",
     "skills/cad-design/scripts/process_checks/additive.py",
@@ -106,6 +107,7 @@ CHANGED_FILES = (
 STRICT_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
+    "skills/cad-analysis/scripts/mesh_quality.py",
     "skills/cad-flow/scripts/fea_solvers.py",
     "skills/cad-design/scripts/process_checks/__init__.py",
     "skills/cad-design/scripts/process_checks/additive.py",

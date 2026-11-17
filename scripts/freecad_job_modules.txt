@@ -28,4 +28,5 @@ skills/cad-record/scripts/schema_registry.py
 # fea_solvers_job imports fea_solvers too.
 skills/cad-analysis/scripts/fea_part_selection.py
 skills/cad-analysis/scripts/ccx_failure.py
+skills/cad-analysis/scripts/mesh_quality.py
 skills/cad-flow/scripts/fea_solvers.py
