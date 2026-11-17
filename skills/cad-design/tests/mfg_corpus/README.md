@@ -50,3 +50,10 @@ Add `families/<family_id>.py`; nothing else needs editing, so stacked PRs do not
 `run(True)` builds the mutant and `run(False)` its twin from the same code, so the pair cannot drift. Map the
 check's own verdict onto `fail`, `pass` or `unknown`. Import heavy tools (OCP, yaml) inside `run`, and
 `raise Skip("why")` when they are absent. A crash counts as a miss. Family and pair ids are unique.
+
+## Baseline and ratchet
+
+`baseline/<family_id>.json` holds the rates recorded when a family was seeded (`detection_rate`, `abstention_rate`,
+`false_positive_rate`, `ran`). `../test_mfg_corpus.py` fails when a family's detection rate falls or its
+false-positive rate rises past its baseline. After a check improves, raise the rates in that family's baseline file
+in the same PR. A new family adds its own file; one file per family keeps stacked PRs from conflicting.

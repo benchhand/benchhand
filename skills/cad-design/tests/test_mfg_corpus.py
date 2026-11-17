@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -75,6 +76,27 @@ class RegistryTests(unittest.TestCase):
 
     def test_the_shipped_registry_loads_with_unique_ids(self) -> None:
         corpus.load_families()
+
+
+class RatchetTests(unittest.TestCase):
+    """A family's detection rate never falls and its false-positive rate never rises below baseline/<family>.json
+    (the rates recorded when the family was seeded). Improve a rate, then lower the bar by editing its baseline file."""
+
+    def test_no_family_regresses_from_its_baseline(self) -> None:
+        if not DEPS or shutil.which("uv") is None or importlib.util.find_spec("OCP") is None:
+            self.skipTest("pyyaml, jsonschema, uv and OCP are required (run rates.py as a script for them)")
+        by_id = {f.id: f for f in corpus.load_families()}
+        baselines = sorted((CORPUS / "baseline").glob("*.json"))
+        self.assertTrue(baselines)
+        for path in baselines:
+            base = json.loads(path.read_text())
+            with self.subTest(family=path.stem):
+                row = corpus.evaluate([by_id[path.stem]])[0]
+                if row["skipped"]:
+                    self.skipTest(f"{row['skipped']} pairs skipped")
+                self.assertEqual(row["errors"], 0)
+                self.assertGreaterEqual(row["detection_rate"], base["detection_rate"])
+                self.assertLessEqual(row["false_positive_rate"], base["false_positive_rate"])
 
 
 class CommandTests(unittest.TestCase):
