@@ -35,8 +35,8 @@ _SCHEMA_MAP = ("properties", "patternProperties", "$defs", "definitions", "depen
 
 
 def subschemas(node: Any, pointer: str = "") -> Iterator[tuple[str, dict[str, Any]]]:
-    """Every schema object under `node` with its JSON pointer. Data keywords (default, examples, const, enum)
-    are values, not schemas, and are not entered."""
+    """Walks `node` and yields each schema object with its JSON pointer. The data keywords (default,
+    examples, const, enum) hold values, not schemas, so the walk skips them."""
     if not isinstance(node, dict):
         return
     yield pointer, node
