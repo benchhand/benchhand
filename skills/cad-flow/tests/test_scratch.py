@@ -33,6 +33,10 @@ FREECAD_PRESENT = FREECADCMD is not None and FREECADCMD.is_file()
 TEMPLATE = HERE.parents[1] / "cad-record" / "assets" / "project-template" / "hw"
 VALIDATOR = HERE.parents[1] / "cad-record" / "scripts" / "validate.py"
 LAMP_EXAMPLE = HERE.parents[2] / "examples" / "lamp-arm" / "hw"
+sys.path.insert(0, str(HERE.parents[2] / "scripts"))
+from modload import load_module  # noqa: E402
+
+flow_profile = load_module("cad_flow_profile", HERE.parent / "scripts" / "flow_profile.py")
 
 
 def tree(root: Path) -> dict[str, str]:
@@ -279,6 +283,7 @@ class InitAndDeliver(ScratchCase):
         model = ('KERNEL = "cadquery"\nPARAMS = {"size": 12.0}\n\n\ndef build(params):\n    import cadquery as cq\n\n'
                  '    return cq.Workplane("XY").box(params["size"], params["size"], params["size"])\n')
         (self.hw / "parts" / "PRT-0001" / "model.py").write_text(model, encoding="utf-8")
+        flow_profile.record(self.hw, "DR-001", {"human_approval": "key", "storage_results_in_git": False})
         cad_model = HERE.parents[1] / "cad-model" / "scripts" / "cad_model.py"
         lead = subprocess.run(["uv", "run", "--quiet", "--script", str(cad_model), "run", "hw", "--label", "v1"],
                               cwd=self.project, capture_output=True, text=True, timeout=1800)

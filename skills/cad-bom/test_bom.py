@@ -250,6 +250,11 @@ class StepRoundTripTests(unittest.TestCase):
                 "id: test-assembly\nrigor: pro\nunits: mm\nregime: iso\ngeneral_tolerance: 0.1\n"
                 "flow: {stage: layout, recheck_from: layout}\n", encoding="utf-8"
             )
+            sys.path.insert(0, str(HERE.parent.parent / "scripts"))
+            from modload import load_module
+
+            load_module("cad_record_mi_fixtures",
+                        HERE.parent / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py").add_flow_profile(hw)
             (hw / "requirements.yaml").write_text(
                 "requirements:\n  - id: REQ-001\n    text: Fit\n    rationale: Assemble\n"
                 "    source: Test\n    priority: must\n    verification: {method: I, criteria: Fits}\n",

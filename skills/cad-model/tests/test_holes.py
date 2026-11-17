@@ -16,12 +16,19 @@ import re
 import shutil
 import sys
 import subprocess
+import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import result_payload  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+from modload import load_module  # noqa: E402
+
+fx = load_module("cad_record_mi_fixtures",
+                 Path(__file__).resolve().parents[2] / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
@@ -67,6 +74,7 @@ def hole_project(root: Path, kernel: str) -> Path:
     hw = root / kernel / "hw"
     hw.mkdir(parents=True)
     (hw / "product.yaml").write_text("id: holes\n", encoding="utf-8")
+    fx.add_flow_profile(hw)
     first, *rest = PNS.values()
     (hw / "assembly.yaml").write_text("joints:\n" + "".join(
         f"  - {{id: J-{i:03d}, type: fixed, parent: {first}, child: {pn}, axis: [0, 0, 1], origin: [0, 0, 0],"

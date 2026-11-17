@@ -134,6 +134,7 @@ class DrawingRecordAdditions(unittest.TestCase):
         self.hw = Path(temporary.name) / "project" / "hw"
         self.docs = {"product.yaml": copy.deepcopy(PRODUCT), "interfaces.yaml": copy.deepcopy(INTERFACES),
                      "assembly.yaml": copy.deepcopy(ASSEMBLY), "requirements.yaml": copy.deepcopy(REQUIREMENTS)}
+        self.docs["product.yaml"]["flow"]["profile"] = fx.flow_profile()  # cites DR-001, which write() writes
         self.parts = {"TST-0001": copy.deepcopy(BASE), "TST-0002": copy.deepcopy(PIN)}
         self.procurement_columns = True
         self.bom_edit: Callable[[list[dict[str, str]]], None] = lambda rows: None

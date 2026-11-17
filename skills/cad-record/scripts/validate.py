@@ -50,6 +50,8 @@ evidence = _load_module("cad_record_evidence", Path(__file__).resolve().parent /
 # The one YAML reader (libyaml when PyYAML has it) and the bundled schemas' shared registry and validators.
 yaml_loader = _load_module("cad_record_yaml_loader", Path(__file__).resolve().parent / "yaml_loader.py")
 schema_registry = _load_module("cad_record_schema_registry", Path(__file__).resolve().parent / "schema_registry.py")
+# cad-flow's flow profile: the project-start answers that gate validation, and their conflicts with the record.
+flow_profile = _load_module("cad_flow_profile", Path(__file__).resolve().parents[2] / "cad-flow" / "scripts" / "flow_profile.py")
 # cad-motion's pose.py and plan.py, loaded only for a record with authored motion cases.
 MOTION_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts"
 
@@ -643,8 +645,11 @@ def decision_approves(hw: Path, decision: str | None) -> bool:
 
 def check_flow(product: dict[str, Any], path: str, hw: Path, part_records: dict[str, Any],
                findings: list[dict[str, str]]) -> None:
-    """The frozen anchor names a built version by its exact manifest, and an open change starts from it."""
+    """The frozen anchor names a built version by its exact manifest, and an open change starts from it.
+    At the recorded stage, the flow profile and its decision exist and no question due by then is unasked."""
     flow = product["flow"]
+    for problem in flow_profile.problems(hw, product):
+        findings.append(finding(path, f"{problem.path}: {problem.message}", code="flow.profile", action=problem.action))
     frozen, change = flow.get("frozen"), flow.get("change")
     approves = {"frozen": "freezes a version", "change": "opens an engineering change"}
     for where, item in (("frozen", frozen), ("change", change)):
@@ -671,6 +676,22 @@ def check_flow(product: dict[str, Any], path: str, hw: Path, part_records: dict[
         for pn in change["affected_parts"]:
             if pn not in part_records:
                 findings.append(finding(path, f"flow/change/affected_parts: {pn} has no parts/{pn}/part.yaml"))
+
+
+def check_flow_conflicts(documents: Mapping[str, Any], hw: Path, part_records: dict[str, Any],
+                         findings: list[dict[str, Any]]) -> None:
+    """flow.conflict: where the profile contradicts the record. The VARIANT gate decides them, so each
+    warns before LAYOUT and blocks from it; a safety refusal blocks at every stage."""
+    product = documents.get("product.yaml")
+    parts = {pn: part for pn, (part, _path) in part_records.items()}
+    graded = stage_reached(product, "layout")
+    for item in flow_profile.conflicts(product, documents.get("requirements.yaml"), documents.get("interfaces.yaml"),
+                                       parts, flow_profile.fea_cases(hw)):
+        action = ("turn the check on: record the profile again with a new decision" if item.refuse else
+                  "decide it at the gate: record the profile again with a new decision, or change the record")
+        findings.append(finding(str(hw / "product.yaml"), f"{item.path}: {item.message}",
+                                severity="error" if item.refuse or graded else "warning", code="flow.conflict",
+                                action=action))
 
 
 @functools.cache
@@ -1093,6 +1114,7 @@ def validate_project(project_dir: Path) -> list[dict[str, str]]:
             check_release_readiness(hw, verification, part_records, str(path), findings)
     if valid.get("product.yaml"):
         check_flow(documents["product.yaml"], str(hw / "product.yaml"), hw, part_records, findings)
+        check_flow_conflicts(documents, hw, part_records, findings)
     record = check_manufacturing_intent(hw, documents, part_records, verification, findings)
     check_acceptance_anchor(hw, record, findings)
     check_design_rules(hw, documents, valid, part_records, inventory, findings)

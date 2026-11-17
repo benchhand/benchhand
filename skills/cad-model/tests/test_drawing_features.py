@@ -26,7 +26,10 @@ CLI = SCRIPTS / "cad_model.py"
 sys.path.insert(0, str(SCRIPTS))
 from cadmodel import build, check, runner  # noqa: E402 - stdlib-only imports; OCP loads on first use
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-from modload import result_payload  # noqa: E402
+from modload import load_module, result_payload  # noqa: E402
+
+fx = load_module("cad_record_mi_fixtures",
+                 Path(__file__).resolve().parents[2] / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
 
 ASSEMBLY = """joints:
   - {id: J-001, type: revolute, parent: TST-0001, child: TST-0002, axis: [0, 0, 1], origin: [0, 0, 20],
@@ -206,6 +209,7 @@ def project(root: Path, name: str, base: tuple[str, str], arm_kernel: str) -> Pa
     hw = root / name / "hw"
     hw.mkdir(parents=True)
     (hw / "product.yaml").write_text("id: features\n", encoding="utf-8")
+    fx.add_flow_profile(hw)
     (hw / "assembly.yaml").write_text(ASSEMBLY, encoding="utf-8")
     set_model(hw, "TST-0001", base[0], base[1], "Base block")
     set_model(hw, "TST-0002", arm_kernel, "arm.py", "Swing arm", ARM)

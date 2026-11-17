@@ -114,6 +114,9 @@ def install(project: Path, source: Path, stamp_source: Path, *, force: bool = Fa
     hook_motion = hooks_dir / "cad-motion" / "scripts"
     hook_motion.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(motion_scripts / "coupling.py", hook_motion / "coupling.py")
+    hook_flow = hooks_dir / "cad-flow" / "scripts"
+    hook_flow.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source.parents[2] / "cad-flow" / "scripts" / "flow_profile.py", hook_flow / "flow_profile.py")
     hook_layout = hooks_dir / "cad-record"
     (hook_layout / "scripts").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(record_root / "scripts" / "layout.py", hook_layout / "scripts" / "layout.py")

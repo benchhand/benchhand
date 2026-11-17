@@ -117,6 +117,7 @@ def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path
         built[pn] = {"model": f"parts/{pn}/model.py", "source_sha256": sha(folder / "model.py"), "step": f"parts/{pn}.step"}
     # The record as current cad-record reads it: record version 2, every manufacturing-intent field unknown.
     fx.upgrade_record(hw)
+    fx.add_flow_profile(hw)  # the project-start answers, cited by DR-001
     spec = {"definitions": {pn: {"name": f"{pn} {p['title']}", **p["shape"]} for pn, p in PARTS.items()},
             "occurrences": [{"id": PLATE, "PN": PLATE, "explicit": False, "translation_mm": [0, 0, 0], "axis": [0, 0, 1],
                              "angle_deg": 0}] + [{"id": oid, "PN": PIN, "explicit": True, "translation_mm": xyz,
