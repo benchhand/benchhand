@@ -68,9 +68,20 @@ class MigrationCase(unittest.TestCase):
         change(data)
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
+    def assert_refused(self, expected: str) -> None:
+        before = tree(self.project)
+        code, report = self.run_cli("--apply", "--json")
+        self.assertEqual((code, report["status"]), (2, "refused"))
+        self.assertIn(expected, report["message"])
+        self.assertEqual(tree(self.project), before, "a refusal writes nothing")
 
-class Version1Record(MigrationCase):
-    """migrate.py on the minimal record version 1 fixture: the only migrate input in this file that is version 1."""
+    def assert_version_1(self) -> None:
+        product = yaml.safe_load((self.hw / "product.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(mi.record_version(product), 1, "the input is a record version 1, or the test proves nothing")
+
+
+class VersionOneCase(MigrationCase):
+    """A per-test copy of the minimal record version 1 fixture."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-migrate-v1-")
@@ -78,6 +89,53 @@ class Version1Record(MigrationCase):
         self.project = Path(temporary.name) / "project"
         self.hw = self.project / "hw"
         shutil.copytree(V1_MINIMAL, self.hw)
+
+
+class Version1Record(VersionOneCase):
+    """migrate.py on the minimal record version 1 fixture: the only migrate input in this file that is version 1."""
+
+    def test_a_dry_run_reports_every_change_and_writes_nothing(self) -> None:
+        self.assert_version_1()
+        before = tree(self.project)
+        code, report = self.run_cli("--json")
+        self.assertEqual((code, report["status"], report["record_version"]), (1, "pending", {"from": 1, "to": 2}))
+        self.assertEqual(tree(self.project), before, "a dry run moves, writes and deletes nothing")
+        paths = {change["path"]: change for change in report["changes"]}
+        # The fixture has one part, no interfaces and no installation operations, so interfaces.yaml is not edited.
+        expected = {"hw/product.yaml", "hw/requirements.yaml", "hw/assembly.yaml", "hw/parts/LMP-0001/part.yaml",
+                    "hw/manufacturing/capabilities.yaml", "hw/manufacturing/materials.yaml", "hw/manufacturing/selection.yaml",
+                    f"hw/docs/record-migration-v2-{date.today().isoformat()}.md"}
+        self.assertEqual(set(paths), expected)
+        self.assertEqual(paths["hw/manufacturing/selection.yaml"]["action"], "create")
+        self.assertIn("+record_version: 2\n", paths["hw/product.yaml"]["diff"])
+        self.assertIn("+operations: {status: unknown", paths["hw/assembly.yaml"]["diff"])  # the fixture records no operations to move
+        self.assertEqual(report["questions"][0]["id"], "Q-001")
+        # 11 use-case questions, 1 for the absent operations, 1 for the part, 0 for the absent interfaces.
+        self.assertEqual(len(report["questions"]), 11 + 1 + 1)
+        self.assertEqual(report["findings"], [])
+        code, text = self.run_cli("--dry-run")
+        self.assertEqual(code, 1)
+        self.assertIn("== hw/parts/LMP-0001/part.yaml (modify)", text)
+        self.assertIn("+intent:", text)
+        self.assertIn("Nothing was changed.", text)
+        self.assertEqual(tree(self.project), before)
+
+    def test_an_interrupted_apply_completes_on_the_next_run(self) -> None:
+        self.assert_version_1()
+        plan = migrate.plan(self.hw, TODAY)
+        self.assertEqual(plan.status, "pending")
+        # Planning order is requirements.yaml, then each part.yaml; product.yaml is last.
+        self.assertEqual([c.path for c in plan.changes[:2]], ["hw/requirements.yaml", "hw/parts/LMP-0001/part.yaml"])
+        partial = migrate.Plan(plan.hw, plan.status, plan.source_version, plan.changes[:2], plan.questions, plan.unknown, plan.findings)
+        migrate.apply(partial)  # requirements and the part written; product.yaml still version 1
+        self.assert_version_1()
+        rest = migrate.plan(self.hw, TODAY)
+        self.assertEqual(rest.status, "pending")
+        self.assertNotIn("hw/requirements.yaml", {c.path for c in rest.changes})
+        self.assertNotIn("hw/parts/LMP-0001/part.yaml", {c.path for c in rest.changes})
+        migrate.apply(rest)
+        record, problems = mi.check_record(self.hw)
+        self.assertEqual((record.version, [p.finding() for p in problems]), (2, []))
 
     def test_apply_writes_a_valid_version_2_record_of_explicit_unknowns(self) -> None:
         untouched = {rel: digest for rel, digest in tree(self.hw).items()
@@ -162,14 +220,41 @@ class Version1Record(MigrationCase):
         self.assertIn(b"intent:\r\n", data)
 
 
-class Refusals(MigrationCase):
-    def assert_refused(self, expected: str) -> None:
-        before = tree(self.project)
-        code, report = self.run_cli("--apply", "--json")
-        self.assertEqual((code, report["status"]), (2, "refused"))
-        self.assertIn(expected, report["message"])
-        self.assertEqual(tree(self.project), before, "a refusal writes nothing")
+class Version1Refusals(VersionOneCase):
+    def test_a_frozen_record_needs_an_open_change(self) -> None:
+        self.assert_version_1()
+        frozen = {"version": "v1", "manifest_sha256": "a" * 64, "decision": "DR-001"}
+        self.edit_yaml("product.yaml", lambda d: d["flow"].update(frozen=frozen))
+        self.assert_refused("open an approved change")
+        self.edit_yaml("product.yaml", lambda d: d["flow"].update(change={"decision": "DR-002", "baseline_version": "v1",
+                                                                          "affected_parts": ["LMP-0001"]}))
+        plan = migrate.plan(self.hw, TODAY)
+        self.assertEqual(plan.status, "pending")
+        self.assertEqual([(f["code"], f["severity"]) for f in plan.findings], [("record.legacy_freeze", "warning")],
+                         "the old freeze stays readable but anchors no evidence, so no release accepts it")
 
+    def test_unreadable_and_invalid_records_are_refused(self) -> None:
+        self.assert_version_1()
+        self.assertEqual(migrate.plan(self.hw, TODAY).status, "pending", "the untouched fixture migrates")
+        part = self.hw / "parts" / "LMP-0001" / "part.yaml"
+        original = part.read_text(encoding="utf-8")
+        part.write_text(original + "  bad: [\n", encoding="utf-8")
+        self.assert_refused("does not parse")
+        part.write_text(original.replace("finish: ", "finished: "), encoding="utf-8")
+        self.assertNotEqual(part.read_text(encoding="utf-8"), original, "the fixture part declares a finish to misspell")
+        self.assert_refused("would not validate")
+
+    def test_a_layout_the_textual_edit_cannot_place_is_refused(self) -> None:
+        self.assert_version_1()
+        interface = {"id": "IF-001", "from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
+        path = self.hw / "interfaces.yaml"
+        path.write_text(yaml.safe_dump({"interfaces": [interface]}, sort_keys=False), encoding="utf-8")
+        self.assertEqual(migrate.plan(self.hw, TODAY).status, "pending", "the same interface in block style is placed")
+        path.write_text(yaml.safe_dump({"interfaces": [interface]}, default_flow_style=True, width=100000), encoding="utf-8")
+        self.assert_refused("interfaces")
+
+
+class Refusals(MigrationCase):
     def test_an_unknown_record_version_is_refused(self) -> None:
         self.edit_yaml("product.yaml", lambda d: d.update(record_version=3))
         self.assert_refused("record_version 3 is not supported")

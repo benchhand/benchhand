@@ -28,6 +28,7 @@ import yaml
 SKILL = Path(__file__).resolve().parents[2]
 SCRIPTS = SKILL / "scripts"
 LAMP = SKILL.parent.parent / "examples" / "lamp-arm" / "hw"
+V1_MINIMAL = SKILL / "tests" / "fixtures" / "record_v1_minimal" / "hw"  # a minimal record version 1: one part, no interfaces
 SYNTHETIC = "synthetic test fixture value, not material, machine or supplier data"
 
 
