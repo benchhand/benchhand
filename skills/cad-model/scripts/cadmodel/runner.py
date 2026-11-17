@@ -359,19 +359,20 @@ def _failure(error: BaseException, model: str) -> dict[str, Any]:
 
 
 BUILD_JOBS_ENV = "CAD_MODEL_BUILD_JOBS"
-MAX_BUILD_JOBS = 8  # each worker imports the kernel (~1 GB resident for OCP); more rarely pays back
+MAX_BUILD_JOBS = 4  # lamp-arm on 16 cores: 4 workers match 6, 8 and 11 to within 1 s (see the PR measurements)
 
 
 def build_jobs(part_count: int, environ: Mapping[str, str], cpus: int | None = None) -> int:
-    """Worker processes for `part_count` parts: min(cpu count, parts, MAX_BUILD_JOBS), or the positive
-    integer in CAD_MODEL_BUILD_JOBS (still capped by the parts)."""
+    """Worker processes for `part_count` parts: min(half the cpus, parts, MAX_BUILD_JOBS), at least 1, or
+    the positive integer in CAD_MODEL_BUILD_JOBS (still capped by the parts). Half the cpus leaves room
+    for the other kernel's runner and the orchestrator, which run beside this one."""
     raw = environ.get(BUILD_JOBS_ENV, "").strip()
     if raw:
         if not raw.isdecimal() or int(raw) < 1:
             raise ValueError(f"{BUILD_JOBS_ENV} must be a positive integer, got {raw!r}")
         wanted = int(raw)
     else:
-        wanted = min(cpus or os.cpu_count() or 1, MAX_BUILD_JOBS)
+        wanted = min((cpus or os.cpu_count() or 2) // 2, MAX_BUILD_JOBS)
     return max(1, min(wanted, part_count))
 
 

@@ -90,14 +90,8 @@ PROJECT = [
 
 
 class BuildJobs(unittest.TestCase):
-    def test_default_is_cpus_parts_and_cap(self) -> None:
-        for cpus, parts, want in [
-            (16, 20, 8),
-            (16, 3, 3),
-            (2, 20, 2),
-            (4, 1, 1),
-            (None, 5, min(os.cpu_count() or 1, 5, 8)),
-        ]:
+    def test_default_is_half_the_cpus_capped_by_parts_and_four(self) -> None:
+        for cpus, parts, want in [(16, 20, 4), (16, 3, 3), (8, 20, 4), (4, 20, 2), (2, 20, 1), (1, 20, 1), (16, 1, 1)]:
             with self.subTest(cpus=cpus, parts=parts):
                 self.assertEqual(runner.build_jobs(parts, {}, cpus), want)
 
