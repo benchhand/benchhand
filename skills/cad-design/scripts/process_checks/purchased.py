@@ -1,5 +1,5 @@
-"""Purchased-item handler: identity, specification, ratings, mounting and availability only. A bought item
-never gets a made-part check (wall, overhang, cutter, kerf); its function is its rating."""
+"""Purchased-item handler: identity, specification, ratings, mounting and availability only. The made-part checks (wall,
+overhang, cutter, kerf) belong to made parts. The function of a bought item is its rating."""
 
 from __future__ import annotations
 
@@ -21,8 +21,12 @@ _TIMES = r"\s*[x\u00d7]\s*\d+(?:\.\d+)?"
 # number alone (DIN 471) is not one.
 _FIT = r"(?:\s*[a-zA-Z]{1,2}\d{1,2})?"  # a tolerance class after the diameter: ISO 2338 - 5 m6 x 20
 _SIZE = rf"(?:[M#]\d+(?:\.\d+)?(?:-\d+)?(?:{_TIMES})?|\d+(?:[./]\d+)*(?:-\d+)?{_FIT}{_TIMES})(?!\d)"
+# A bare nominal size (ISO 7089 - 5 - 200 HV) follows the standard number after a space, so a part of a multi-part
+# standard number (EN 10025-2) is not read as one.
+_BARE = r"\d{1,4}(?:\.\d+)?(?![\d./-])"
 STANDARD_DESIGNATION = re.compile(
-    rf"(?<![A-Za-z])(?P<bodies>(?:{_BODY})(?:[ /]+(?:{_BODY}))*)\s+(?P<number>{_NUMBER})(?:\s*[-\u2013\u2014]\s*|\s+){_SIZE}")
+    rf"(?<![A-Za-z])(?P<bodies>(?:{_BODY})(?:[ /]+(?:{_BODY}))*)\s+(?P<number>{_NUMBER})"
+    rf"(?:(?:\s*[-\u2013\u2014]\s*|\s+){_SIZE}|\s+(?:[-\u2013\u2014]\s+)?{_BARE})")
 
 # Standards that specify features or tolerances (threads, fits, general tolerances), not purchasable parts. A feature
 # standard matches by body plus number: ISO 965 covers ISO 965-1, DIN ISO 965-1 and DIN EN ISO 965-1, not DIN 965 (a screw).

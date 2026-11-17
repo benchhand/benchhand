@@ -830,7 +830,7 @@ class PurchasedIdentityTests(Checks):
 
     def test_a_standard_designation_with_a_size_identifies_the_part_without_an_order_code(self) -> None:
         for designation in ("DIN 471 - 5x0.6", "DIN 471 – 8×0.8", "ISO 4762 M5x20", "EN ISO 4017 - M8 x 30",
-                            "ISO/EN/DIN 898-1 M6x25", "ISO 2338 - 5 m6 x 20", "ASME B18.2.1 1/4-20 x 1", "ANSI B18.3 #10-24 x 1",
+                            "ISO/EN/DIN 898-1 M6x25", "ISO 2338 - 5 m6 x 20", "ISO 7089 - 5 - 200 HV", "ISO 7089 5", "DIN 125 - 8.4", "ASME B18.2.1 1/4-20 x 1", "ANSI B18.3 #10-24 x 1",
                             "Retaining ring DIN 471 - 5x0.6, spring steel C60S"):
             with self.subTest(designation=designation):
                 result = self.bought(designation=designation)
@@ -866,7 +866,7 @@ class PurchasedIdentityTests(Checks):
         self.assertEqual([f["code"] for f in result.findings if f["code"].startswith("purchase.")], [])
 
     def test_a_standard_number_without_a_size_does_not_identify_a_part(self) -> None:
-        for designation in ("DIN 471", "ISO 4762", "DIN 471 retaining ring", "Standard fastener"):
+        for designation in ("DIN 471", "ISO 4762", "EN 10025-2", "DIN 471 retaining ring", "Standard fastener"):
             with self.subTest(designation=designation):
                 result = self.bought(designation=designation)
                 self.assertEqual(self.outcome(result, self.obligation), "fail")
