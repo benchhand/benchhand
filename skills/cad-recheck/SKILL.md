@@ -23,6 +23,8 @@ TRIGGER
    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --stage <stage> --checks .cad-work/recheck/evidence.json [--passed]
    ```
 
+   Stamp at the stage of the gate just passed. After a provisional gate has written its decision and advanced `flow.stage`, rerun `evidence.py check --stage <gate stage>`: `product.yaml` is a record input, so an earlier packet is refused. `--verify` accepts a stamp at `flow.stage` or the stage just before it, never below `flow.recheck_from`.
+
    The evidence input MUST be the JSON packet printed/written by `evidence.py check`, not a `cad_model.py check` result. Include `--passed` only when every blocking obligation passes; omit it for a failed gate. A record v1 must be migrated and rebuilt before it can be stamped.
 4. Stage the design changes and `hw/.cad/recheck.json`. The pre-commit hook accepts only a passing stamp for the exact staged `hw/` tree.
 5. Install the hook in a hardware project's repository:

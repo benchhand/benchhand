@@ -326,22 +326,27 @@ def main() -> int:
             if not isinstance(record_data, dict):
                 raise RuntimeError("recheck stamp must be a JSON object")
             actual_hash = staged_tree_hash(root)
-            if record_data.get("stage") != current_stage:
-                raise RuntimeError("the recheck stamp stage does not match staged hw/product.yaml flow.stage")
-            if record_data.get("stage") not in validate.stages():
+            order = validate.stages()
+            stamped_stage = record_data.get("stage")
+            if stamped_stage not in order:
                 raise RuntimeError("recheck stamp has an unknown stage")
+            # A provisional gate advances flow.stage past the gate just passed, so the stamp may sit one stage behind.
+            if order.index(stamped_stage) not in (order.index(current_stage), order.index(current_stage) - 1):
+                raise RuntimeError("the recheck stamp stage does not match staged hw/product.yaml flow.stage")
+            if order.index(stamped_stage) < order.index(threshold):
+                raise RuntimeError(f"the recheck stamp stage {stamped_stage} is below flow.recheck_from {threshold}")
             if record_data.get("passed") is not True:
                 raise RuntimeError("the recheck stamp does not say passed: true")
             if record_data.get("tree_hash") != actual_hash:
                 raise RuntimeError("the recheck stamp is stale for the staged hw/ tree")
             checks = record_data.get("checks")
-            blocking = require_evidence(checks, staged, current_stage)
+            blocking = require_evidence(checks, staged, stamped_stage)
             stamped = checks if isinstance(checks, dict) else {}
             if record_data.get("record_sha256") != staged.record_sha256 or \
                     record_data.get("expected_sha256") != stamped.get("expected_sha256"):
                 raise RuntimeError("the recheck stamp does not record the evidence of the staged record; stamp it again")
             if blocking:
-                raise RuntimeError(f"the stamped evidence has {len(blocking)} blocking finding(s) at {current_stage}: "
+                raise RuntimeError(f"the stamped evidence has {len(blocking)} blocking finding(s) at {stamped_stage}: "
                                    + "; ".join(blocking[:3]))
             print(json.dumps({"passed": True, "tree_hash": actual_hash, "expected_sha256": record_data["expected_sha256"]}))
             return 0
