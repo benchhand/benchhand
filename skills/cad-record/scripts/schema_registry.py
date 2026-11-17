@@ -20,12 +20,13 @@ import json
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
+CONCEPT_SCHEMAS = Path(__file__).resolve().parents[2] / "cad-concept" / "assets" / "schemas"
 _CACHE_SIZE = 256
 # The coarsest file time step allowed for: FAT stores modification times in 2 s steps.
 _TICK_NS = 2_000_000_000
@@ -93,19 +94,31 @@ def _names(root: Path) -> tuple[str, ...]:
                         if entry.name.endswith(".schema.json") and entry.is_file()))
 
 
-def _directory_state(root: Path) -> State:
-    """Every schema file of `root` by name, with the sha256 of its text."""
+def _roots(root: Path, also: Iterable[Path]) -> tuple[Path, ...]:
+    """`root` and the `also` directories, resolved, each once."""
+    return tuple(dict.fromkeys(_resolved(str(entry)) for entry in (root, *also)))
+
+
+def _directory_state(roots: tuple[Path, ...]) -> State:
+    """Every schema file of `roots` by name, with the sha256 of its text."""
+    state = []
+    for root in roots:
+        state.extend(_root_state(root))
+    return tuple(state)
+
+
+def _root_state(root: Path) -> list[tuple[str, str]]:
     state = []
     for name in _kept("names", root, lambda: _names(root)):
         try:
             state.append((name, _content(root / name)))
         except FileNotFoundError:  # removed since the listing: the next listing leaves it out
             continue
-    return tuple(state)
+    return state
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
-def _registry(root: Path, state: State) -> Any:
+def _registry(state: State) -> Any:
     from referencing import Registry, Resource  # noqa: PLC0415 - jsonschema's dependency, needed only to validate
 
     resources = []
@@ -115,10 +128,10 @@ def _registry(root: Path, state: State) -> Any:
     return Registry().with_resources(resources)
 
 
-def registry(root: Path = SCHEMAS) -> Any:
-    """Every schema of `root` by its $id."""
-    resolved = _resolved(str(root))
-    return _registry(resolved, _directory_state(resolved))
+def registry(root: Path = SCHEMAS, *, also: Iterable[Path] = ()) -> Any:
+    """Every schema of `root` and of the `also` directories by its $id. Pass `also=(CONCEPT_SCHEMAS,)` to
+    resolve the cad-concept schemas, which share the `$id` base of cad-record's."""
+    return _registry(_directory_state(_roots(root, also)))
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
@@ -135,28 +148,34 @@ def schema(root: Path, name: str) -> Any:
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
-def _document_validator(digest: str, root: Path, state: State, formats: bool) -> Any:
+def _document_validator(digest: str, state: State, formats: bool) -> Any:
     from jsonschema import Draft202012Validator, FormatChecker  # noqa: PLC0415 - needed only to validate
 
-    return Draft202012Validator(_schema(digest), registry=_registry(root, state),
+    return Draft202012Validator(_schema(digest), registry=_registry(state),
                                 format_checker=FormatChecker() if formats else None)
 
 
-def document_validator(root: Path, name: str, *, formats: bool = False) -> Any:
-    """The validator of `root/name`; with `formats` it also asserts `format` keywords. Raises OSError or
-    json.JSONDecodeError when a schema of `root` cannot be read."""
+def document_validator(root: Path, name: str, *, formats: bool = False, also: Iterable[Path] = ()) -> Any:
+    """The validator of `root/name`, resolving `$ref`s in `root` and the `also` directories; with `formats`
+    it also asserts `format` keywords. Raises OSError or json.JSONDecodeError when a schema cannot be read."""
     resolved = _resolved(str(root))
-    return _document_validator(_content(resolved / name), resolved, _directory_state(resolved), formats)
+    return _document_validator(_content(resolved / name), _directory_state(_roots(root, also)), formats)
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
-def _ref_validator(ref: str, root: Path, state: State) -> Any:
+def _ref_validator(ref: str, state: State) -> Any:
     from jsonschema import Draft202012Validator  # noqa: PLC0415 - needed only to validate
 
-    return Draft202012Validator({"$ref": ref}, registry=_registry(root, state))
+    return Draft202012Validator({"$ref": ref}, registry=_registry(state))
 
 
-def ref_validator(root: Path, ref: str) -> Any:
+def ref_validator(root: Path, ref: str, *, also: Iterable[Path] = ()) -> Any:
     """The validator of one schema or definition of `root` by its `$ref`, such as `<$id>#/$defs/finding`."""
-    resolved = _resolved(str(root))
-    return _ref_validator(ref, resolved, _directory_state(resolved))
+    return _ref_validator(ref, _directory_state(_roots(root, also)))
+
+
+def check_schema(contents: Any) -> None:
+    """Raises jsonschema.SchemaError when `contents` is not a valid Draft 2020-12 schema."""
+    from jsonschema import Draft202012Validator  # noqa: PLC0415 - needed only to validate
+
+    Draft202012Validator.check_schema(contents)

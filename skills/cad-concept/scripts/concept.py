@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import sys
@@ -39,14 +40,24 @@ class UsageError(Exception):
 # --- validation -------------------------------------------------------------
 
 
+def _schema_registry() -> Any:
+    """cad-record's schema registry, the one validator path, loaded by path as its docstring asks."""
+    name = "cad_record_schema_registry"
+    if name not in sys.modules:
+        path = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "schema_registry.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise UsageError(f"schema registry not found at {path}")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
 def schema_errors(instance: Any, schema_path: Path) -> list[str]:
     """Return JSON Schema 2020-12 violations as 'path: message' lines."""
-    # Imported here so the pure geometry and wiring checks below stay importable
+    # Loaded here so the pure geometry and wiring checks below stay importable
     # by stdlib-only tests that run without the PEP 723 environment.
-    from jsonschema import Draft202012Validator
-
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    validator = Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
+    validator = _schema_registry().document_validator(schema_path.parent, schema_path.name, formats=True)
     errors = sorted(validator.iter_errors(instance), key=lambda e: list(e.absolute_path))
     return [f"{_json_path(e.absolute_path)}: {e.message}" for e in errors]
 
