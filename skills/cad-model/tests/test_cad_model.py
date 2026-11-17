@@ -776,7 +776,7 @@ class ManufacturingStateTests(unittest.TestCase):
         self.assertFalse(os.path.samefile(v1 / "manufacturing" / STRAP / "manufacturing.json",
                                           v2 / "manufacturing" / STRAP / "manufacturing.json"))
         outputs = [p for sub in ("parts", "manufacturing") for p in sorted((v2 / sub).rglob("*")) if p.is_file()]
-        self.assertEqual(len(outputs), 7)
+        self.assertEqual(len(outputs), 8)  # 2 STEPs; TST-0001 step and json; the strap's step, stl, 3mf and json
         for path in outputs:
             self.assertTrue(os.path.samefile(path, v3 / path.relative_to(v2)), path.relative_to(v2))
         tools = json.loads((v3 / "manifest.json").read_text(encoding="utf-8"))["tools"]["cadquery"]
