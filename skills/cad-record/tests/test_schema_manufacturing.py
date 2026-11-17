@@ -220,6 +220,8 @@ class RecordDocuments(SchemaCase):
         self.assert_cases("product.schema.json", fx.product(), {
             "version 2 needs a use case": (drop("use_case"), False),
             "no version is refused": (drop("record_version"), False),
+            "a version 1 product (neither record_version nor use_case) is refused": (
+                lambda d: (d.pop("record_version"), d.pop("use_case")), False),
             "explicit version 1 is not a version": (lambda d: d.update(record_version=1), False),
             "version 3 is unsupported": (lambda d: d.update(record_version=3), False),
             "a version 2 freeze anchors evidence": (frozen(True), True),
@@ -511,8 +513,14 @@ class RecordDocuments(SchemaCase):
                                                                                     "consequence": "x"}]), False),
             "claim of an invented level": (lambda d: d["acceptance"].update(claims={"REQ-001": ["certified"]}), False),
         })
-        for older in ({k: v for k, v in v3.items() if k != "schema_version"}, {**v3, "schema_version": 2}):
-            self.assertTrue(errors("release-manifest.schema.json", older), "only manifest version 3 is read")
+        # The manifests the older releases wrote, valid before manifest versions 1 and 2 were removed: refused now.
+        v2 = {k: v for k, v in v3.items() if k not in ("record_version", "acceptance")}
+        v2.update(schema_version=2, frozen={k: v for k, v in frozen.items() if k != "evidence_sha256"},
+                  manufacturing={"TST-0001": {"process": "fdm", "quantity": 1, "files": ["manufacturing/TST-0001/part.step"]}})
+        v1 = {"product_id": "tst", "rev": "A", "released_at": "2026-01-01T00:00:00Z", "files": ["hw/bom.csv"], "checks": {}}
+        for label, older in (("version 2", v2), ("version 1", v1)):
+            with self.subTest(manifest=label):
+                self.assertTrue(errors("release-manifest.schema.json", older), f"a {label} release manifest is refused")
 
 class ShippedAssets(SchemaCase):
     def test_the_template_is_record_version_2_with_nothing_chosen(self) -> None:
