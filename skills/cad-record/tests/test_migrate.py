@@ -125,21 +125,12 @@ class Version1Record(MigrationCase):
                 self.assertEqual((code, report["status"], report["changes"]), (0, "current", []))
                 self.assertEqual(tree(self.project), migrated)
 
-
-class LampExample(MigrationCase):
     def test_dry_run_is_the_default_and_reports_what_no_flag_reports(self) -> None:
         before = tree(self.project)
-        self.assertEqual(self.run_cli("--dry-run", "--json"), self.run_cli("--json"))
+        dry = self.run_cli("--dry-run", "--json")
+        self.assertEqual(dry[1]["status"], "pending", "a version 1 record has changes, so the dry run has a plan")
+        self.assertEqual(dry, self.run_cli("--json"))
         self.assertEqual(tree(self.project), before)
-
-    def test_a_second_run_changes_nothing(self) -> None:
-        self.assertEqual(self.run_cli("--apply")[0], 0)
-        migrated = tree(self.project)
-        for args in (("--apply", "--json"), ("--json",)):
-            with self.subTest(args=args):
-                code, report = self.run_cli(*args)
-                self.assertEqual((code, report["status"], report["changes"]), (0, "current", []))
-                self.assertEqual(tree(self.project), migrated)
 
     def test_sealed_versions_releases_bundles_and_geometry_are_never_touched(self) -> None:
         write(self.hw / "versions" / "v1" / "record" / "product.yaml", "id: lamp-arm\n")
@@ -149,10 +140,26 @@ class LampExample(MigrationCase):
         write(self.hw / "parts" / "LMP-0005" / "sources" / "quote.pdf", "%PDF quote\n")
         sealed = {rel: digest for rel, digest in tree(self.hw).items() if rel.split("/")[0] in ("versions", "releases", "checks")
                   or "/sources/" in rel}
-        migrate.apply(migrate.plan(self.hw, TODAY))
+        plan = migrate.plan(self.hw, TODAY)
+        self.assertEqual(plan.status, "pending", "the migration must have changes to apply, or the check below is vacuous")
+        migrate.apply(plan)
+        self.assertEqual(yaml.safe_load((self.hw / "product.yaml").read_text(encoding="utf-8"))["record_version"], 2,
+                         "the migration was applied")
         self.assertEqual({rel: digest for rel, digest in tree(self.hw).items() if rel in sealed}, sealed)
         self.assertFalse((self.project / ".cad-work" / "migration").exists() and any((self.project / ".cad-work" / "migration").iterdir()),
                          "staging is cleaned up")
+
+    def test_crlf_files_keep_their_newlines(self) -> None:
+        path = self.hw / "parts" / "LMP-0001" / "part.yaml"
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        plan = migrate.plan(self.hw, TODAY)
+        self.assertEqual(plan.status, "pending", "the migration must have changes to apply, or the check below is vacuous")
+        migrate.apply(plan)
+        self.assertEqual(yaml.safe_load((self.hw / "product.yaml").read_text(encoding="utf-8"))["record_version"], 2,
+                         "the migration was applied")
+        data = path.read_bytes()
+        self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
+        self.assertIn(b"intent:\r\n", data)
 
 
 class Refusals(MigrationCase):
@@ -181,13 +188,7 @@ class EdgeCases(MigrationCase):
         shutil.copytree(TEMPLATE, self.hw)
         self.assertEqual(migrate.plan(self.hw, TODAY).status, "current")
 
-    def test_crlf_files_keep_their_newlines(self) -> None:
-        path = self.hw / "parts" / "LMP-0003" / "part.yaml"
-        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
-        migrate.apply(migrate.plan(self.hw, TODAY))
-        data = path.read_bytes()
-        self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
-        self.assertIn(b"intent:\r\n", data)
+
 
 if __name__ == "__main__":
     unittest.main()
