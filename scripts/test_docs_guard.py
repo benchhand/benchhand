@@ -98,6 +98,9 @@ LAYOUT = (
 ALLOWED = [
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_a_changed_decision_invalidates_the_published_bundle', 'DR-002.md', HW),
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_a_criterion_service_loads_and_convergence_make_strength_and_stiffness_pass', 'DR-002.md', HW),
+    Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_an_approved_effective_isotropic_model_analyses_printed_material_at_its_orientation', 'DR-003.md', HW),
+    Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_an_effective_isotropic_decision_needs_status_approved', 'DR-003.md', HW),
+    Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'SourcedFEACase.approve', '.md', HW),
     Allow('skills/cad-fits/test_stackup.py', 'StackPacketTests.test_a_justified_rss_publishes_its_statistical_outcome_and_approving_decision', 'DR-001.md', HW),
     Allow('skills/cad-flow/tests/test_preflight.py', 'HarnessInstallTests.test_opencode_receipt_uses_installer_project_paths', '.opencode/agents/cad-analyst.md', STUB, 2),
     Allow('skills/cad-flow/tests/test_preflight.py', 'HarnessInstallTests.test_opencode_receipt_uses_installer_project_paths', '.opencode/skills/cad-flow/SKILL.md', STUB, 2),
