@@ -323,6 +323,27 @@ def nudge(value: float, direction: int) -> float:
     return value + direction * 1e-6 * max(1.0, abs(value))
 
 
+def check_bounds(test: unittest.TestCase, case: Case, accept: Any, reject: Any, label: str = "") -> None:
+    """Runs the boundary matrix of `case` through `accept(value, unit)` and `reject(value, unit)`. Each hard bound
+    refuses a value just outside it and accepts one just inside. A bound that includes its own value accepts it. Other
+    units than the canonical one use a nudge, because their conversion is inexact."""
+    low, low_open, high, high_open = parse(case.bounds)
+    for unit in units_of(case):
+        exact = unit in ("", case.canon)
+        for bound, is_open, direction in ((low, low_open, -1), (high, high_open, 1)):
+            if bound is None:
+                continue
+            edge = shifted(case, bound, unit)
+            step = 1 if case.shape in ("int", "size") else None
+            outside = edge + direction * step if step else nudge(edge, direction)
+            inside = edge - direction * step if step else nudge(edge, -direction)
+            with test.subTest(case.name, label=label, unit=unit, bound=bound):
+                test.assertTrue(reject(outside, unit or None), f"{outside} should be refused")
+                if exact:
+                    test.assertEqual(accept(edge, unit or None), not is_open, f"the bound {edge}")
+                test.assertTrue(accept(inside, unit or None), f"{inside} should be accepted")
+
+
 class Rows(unittest.TestCase):
     def test_every_audit_row_is_covered_or_belongs_to_the_flow_profile(self) -> None:
         covered = {case.row for case in CASES}
@@ -331,23 +352,9 @@ class Rows(unittest.TestCase):
 
     def test_a_value_just_outside_each_hard_bound_is_an_error_and_the_bound_itself_is_accepted(self) -> None:
         for case in CASES:
-            if case.shape == "enum":
-                continue
-            low, low_open, high, high_open = parse(case.bounds)
-            for unit in units_of(case):
-                exact = unit in ("", case.canon)
-                for bound, is_open, direction in ((low, low_open, -1), (high, high_open, 1)):
-                    if bound is None:
-                        continue
-                    edge = shifted(case, bound, unit)
-                    step = 1 if case.shape in ("int", "size") else None
-                    outside = edge + direction * step if step else nudge(edge, direction)
-                    inside = edge - direction * step if step else nudge(edge, -direction)
-                    with self.subTest(case.name, unit=unit, bound=bound):
-                        self.assertTrue(rejected(case, outside, unit or None), f"{outside} should be refused")
-                        if exact:
-                            self.assertEqual(accepted(case, edge, unit or None), not is_open, f"the bound {edge}")
-                        self.assertTrue(accepted(case, inside, unit or None), f"{inside} should be accepted")
+            if case.shape != "enum":
+                check_bounds(self, case, lambda value, unit, c=case: accepted(c, value, unit),
+                             lambda value, unit, c=case: rejected(c, value, unit))
 
     def test_an_enum_field_accepts_its_choices_and_refuses_anything_else(self) -> None:
         for case in (c for c in CASES if c.shape == "enum"):
@@ -436,54 +443,182 @@ class Wiring(unittest.TestCase):
         fixtures = load_module("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py")
         return copy.deepcopy(fixtures.tst_record())
 
-    def source(self) -> dict[str, Any]:
-        return {"kind": "user", "reference": "x", "origin": "lead"}
-
-    def known(self, value: dict[str, Any]) -> dict[str, Any]:
-        return {"status": "known", "value": value, "sources": [self.source()], "basis": "user_declared"}
-
-    def test_a_capability_parameter_outside_its_bound_is_refused_in_a_profile(self) -> None:
+    def test_a_characteristic_without_a_bound_takes_any_limit(self) -> None:
         schema = "manufacturing-capabilities.schema.json"
-        base = self.tst()["manufacturing/capabilities.yaml"]
-        self.assertEqual(self.errors(schema, base), [])
-        for name, value in (("nozzle_diameter", {"value": 5, "units": "mm"}), ("layer_height", {"value": 5, "units": "mm"}),
-                            ("hotend_max_temperature", {"value": 5000, "units": "deg_C"})):
-            with self.subTest(name):
-                document = copy.deepcopy(base)
-                document["profiles"][0]["parameters"][name] = self.known(value)
-                self.assertTrue(self.errors(schema, document))
+        document = self.tst()["manufacturing/capabilities.yaml"]
+        calibration = document["profiles"][0]["calibrations"][0]
+        calibration["characteristic"] = "flatness"
+        calibration["result"]["limits"] = {"value": 50, "units": "mm"}
+        self.assertEqual(self.errors(schema, document), [])
 
-    def test_a_calibration_limit_is_bounded_by_its_characteristic(self) -> None:
-        schema = "manufacturing-capabilities.schema.json"
-        base = self.tst()["manufacturing/capabilities.yaml"]
-        for characteristic, limits, valid in (("min_wall", {"value": -2, "units": "mm"}, False),
-                                              ("min_wall", {"value": 1.2, "units": "mm"}, True),
-                                              ("bridge_span", {"lower": 0, "upper": 500, "units": "mm"}, False),
-                                              ("overhang_angle", {"value": 95, "units": "deg"}, False),
-                                              ("hole_diameter_deviation", {"lower": -0.1, "upper": 0.2, "units": "mm"}, True),
-                                              ("flatness", {"value": 50, "units": "mm"}, True)):
-            with self.subTest(characteristic, limits=limits):
-                document = copy.deepcopy(base)
-                calibration = document["profiles"][0]["calibrations"][0]
-                calibration["characteristic"] = characteristic
-                calibration["result"]["limits"] = limits
-                self.assertEqual(not self.errors(schema, document), valid, self.errors(schema, document))
 
-    def test_a_material_property_outside_its_bound_is_refused_in_a_profile(self) -> None:
-        schema = "manufacturing-materials.schema.json"
-        base = self.tst()["manufacturing/materials.yaml"]
-        self.assertEqual(self.errors(schema, base), [])
-        for name, value, valid in (("youngs_modulus", {"value": 1e9, "units": "GPa"}, False),
-                                   ("youngs_modulus", {"value": 2.1, "units": "GPa"}, True),
-                                   ("glass_transition_temperature", {"value": -500, "units": "deg_C"}, False),
-                                   ("density", {"value": 1.24, "units": "g_cm3"}, True),
-                                   ("poisson_ratio", {"value": 0.5, "units": "dimensionless"}, False)):
-            with self.subTest(name, value=value):
-                document = copy.deepcopy(base)
-                prop = document["profiles"][1]["properties"][0]
-                prop["name"] = name
-                prop["value"] = self.known(value)
-                self.assertEqual(not self.errors(schema, document), valid, self.errors(schema, document))
+CAPABILITIES = "manufacturing-capabilities.schema.json"
+MATERIALS = "manufacturing-materials.schema.json"
+# The calibration characteristics and material property names that dispatch to a bounded definition
+CALIBRATION_NAMES = {
+    "calibration.bridge_span": ["bridge_span"], "calibration.overhang_angle": ["overhang_angle"],
+    "calibration.min_wall": ["min_wall"],
+    "calibration.deviation": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"],
+}
+PROPERTY_NAMES = {
+    "modulus": ["youngs_modulus", "flexural_modulus", "shear_modulus", "creep_modulus"], "density": ["density"],
+    "temperature": ["heat_deflection_temperature", "vicat_softening_temperature", "glass_transition_temperature",
+                    "melting_temperature", "max_service_temperature"],
+    "poisson_ratio": ["poisson_ratio"],
+}
+
+
+class Documents(unittest.TestCase):
+    """The boundary matrix again, through whole capability and material profile documents and the registry's
+    validator. A record dispatches to each parameter, characteristic and property, so a bound that a definition
+    holds but no document dispatches to fails here."""
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(SKILL.parents[1] / "scripts"))
+        from modload import load_module  # noqa: PLC0415 - path set just above
+        fixtures = load_module("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py")
+        self.record = copy.deepcopy(fixtures.tst_record())
+
+    def valid(self, schema: str, document: Any) -> bool:
+        return registry.document_validator(registry.SCHEMAS, schema).is_valid(document)
+
+    def known(self, instance: dict[str, Any]) -> dict[str, Any]:
+        return {**instance, "sources": [{"kind": "user", "reference": "x", "origin": "lead"}], "basis": "user_declared"}
+
+    def through(self, case: Case, instance: Any, edit: Any) -> bool:
+        """Whether the document that `edit` builds around `instance` is valid."""
+        schema = case.schema
+        document = copy.deepcopy(self.record["manufacturing/capabilities.yaml" if schema == CAPABILITIES else "manufacturing/materials.yaml"])
+        edit(document, instance)
+        return self.valid(schema, document)
+
+    def run_routes(self, case: Case, label: str, edit: Any) -> None:
+        def verdicts(value: float, unit: str | None) -> list[bool]:
+            return [self.through(case, item, edit) for item in instances(case, value, unit)]
+        check_bounds(self, case, lambda value, unit: all(verdicts(value, unit)), lambda value, unit: not any(verdicts(value, unit)), label)
+
+    def test_every_capability_parameter_is_bounded_in_a_profile_and_in_a_tool(self) -> None:
+        cases = [c for c in CASES if c.schema == CAPABILITIES and c.shape == "fact"]
+        self.assertEqual(len(cases), 12)
+        for case in cases:
+            def in_profile(document: Any, fact: Any, name: str = case.name) -> None:
+                document["profiles"][0]["parameters"][name] = self.known(fact)
+
+            def in_tool(document: Any, fact: Any, name: str = case.name) -> None:
+                document["profiles"][0]["tools"] = [{"id": "probe", "description": "x", "parameters": {name: self.known(fact)}}]
+            self.run_routes(case, "profile", in_profile)
+            self.run_routes(case, "tool", in_tool)
+
+    def test_every_calibration_limit_is_bounded_by_its_characteristic(self) -> None:
+        cases = [c for c in CASES if c.name in CALIBRATION_NAMES]
+        self.assertEqual(len(cases), 4)
+        for case in cases:
+            for name in CALIBRATION_NAMES[case.name]:
+                def edit(document: Any, limits: Any, name: str = name) -> None:
+                    calibration = document["profiles"][0]["calibrations"][0]
+                    calibration["characteristic"] = name
+                    calibration["result"]["limits"] = limits
+                self.run_routes(case, name, edit)
+
+    def test_every_material_property_is_bounded_by_its_name(self) -> None:
+        cases = [c for c in CASES if c.schema == MATERIALS]
+        self.assertEqual(len(cases), 4)
+        for case in cases:
+            for name in PROPERTY_NAMES[case.name]:
+                def edit(document: Any, fact: Any, name: str = name) -> None:
+                    prop = document["profiles"][1]["properties"][0]
+                    prop["name"] = name
+                    prop["value"] = self.known(fact)
+                self.run_routes(case, name, edit)
+
+    def test_the_base_profiles_are_valid_so_a_refusal_comes_from_the_bound(self) -> None:
+        self.assertTrue(self.valid(CAPABILITIES, self.record["manufacturing/capabilities.yaml"]))
+        self.assertTrue(self.valid(MATERIALS, self.record["manufacturing/materials.yaml"]))
+
+
+BOUND_KEYWORDS = frozenset({"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "pattern", "enum", "const"})
+
+
+def reach(root: str) -> dict[tuple[str, str], tuple[Any, ...]]:
+    """The document path to every subschema reachable from the schema `root`, by (file, pointer). A property adds
+    its name, items add 0, a map of properties adds a key, and a $ref, allOf, anyOf, oneOf, if, then or else adds
+    nothing. The first path found stays."""
+    found: dict[tuple[str, str], tuple[Any, ...]] = {}
+    queue: list[tuple[str, str, tuple[Any, ...]]] = [(root, "", ())]
+    while queue:
+        file, pointer, path = queue.pop(0)
+        if (file, pointer) in found:
+            continue
+        found[(file, pointer)] = path
+        here = node(file, pointer)
+        if not isinstance(here, dict):
+            continue
+        if "$ref" in here:
+            target, _, fragment = here["$ref"].partition("#")
+            queue.append((target or file, fragment, path))
+        for name, child in (here.get("properties") or {}).items():
+            queue.append((file, f"{pointer}/properties/{name.replace('~', '~0').replace('/', '~1')}", (*path, name)))
+        for key in ("items", "additionalProperties"):
+            if isinstance(here.get(key), dict):
+                queue.append((file, f"{pointer}/{key}", (*path, 0 if key == "items" else "key")))
+        for key in ("allOf", "anyOf", "oneOf"):
+            for index in range(len(here.get(key) or ())):
+                queue.append((file, f"{pointer}/{key}/{index}", path))
+        for key in ("if", "then", "else"):
+            if isinstance(here.get(key), dict):
+                queue.append((file, f"{pointer}/{key}", path))
+    return found
+
+
+def nest(path: tuple[Any, ...], leaf: Any) -> Any:
+    for step in reversed(path):
+        leaf = [leaf] if step == 0 else {step: leaf}
+    return leaf
+
+
+def bound_errors(root: str, data: Any, path: tuple[Any, ...]) -> list[Any]:
+    """The bound-keyword errors at `path` or below it, found through the oneOf and anyOf contexts."""
+    def leaves(error: Any) -> Any:
+        yield error
+        for inner in error.context or ():
+            yield from leaves(inner)
+    found = []
+    for top in registry.document_validator(registry.SCHEMAS, root).iter_errors(data):
+        found += [e for e in leaves(top) if tuple(e.absolute_path)[:len(path)] == path and e.validator in BOUND_KEYWORDS]
+    return found
+
+
+class Reached(unittest.TestCase):
+    """The same matrix for a field under $defs, through the registry's validator. The document follows the path
+    from a root schema to the field. Only the bound errors at that path count, so omitted sibling fields do not
+    matter."""
+
+    def route(self, case: Case) -> tuple[str, tuple[Any, ...]]:
+        roots = [case.schema, *(p.name for p in sorted(registry.SCHEMAS.glob("*.schema.json")) if p.name != case.schema)]
+        for root in roots:
+            path = REACH.setdefault(root, reach(root)).get((case.schema, case.pointer))
+            if path is not None:
+                return root, path
+        self.fail(f"{case.name}: no document reaches {case.schema}#{case.pointer}")
+
+    def test_every_non_fact_field_is_bounded_where_a_document_puts_it(self) -> None:
+        cases = [c for c in CASES if c.shape not in ("fact", "quantity")]
+        self.assertGreater(len(cases), 60)
+        for case in cases:
+            root, path = self.route(case)
+
+            def refused(value: Any, unit: str | None, c: Case = case, r: str = root, p: tuple[Any, ...] = path) -> list[bool]:
+                return [bool(bound_errors(r, nest(p, item), p)) for item in instances(c, value, unit)]
+            if case.shape == "enum":
+                with self.subTest(case.name):
+                    self.assertFalse(any(bound_errors(root, nest(path, choice), path) for choice in case.bounds.split(",")))
+                    self.assertTrue(bound_errors(root, nest(path, "bogus"), path))
+                continue
+            check_bounds(self, case, lambda value, unit, f=refused: not any(f(value, unit)),
+                         lambda value, unit, f=refused: all(f(value, unit)), label=root)
+
+
+REACH: dict[str, dict[tuple[str, str], tuple[Any, ...]]] = {}
 
 
 class Surfaces(unittest.TestCase):
