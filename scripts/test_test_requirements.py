@@ -18,7 +18,7 @@ import shlex
 import subprocess
 import sys
 import unittest
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 
 import yaml
@@ -116,6 +116,14 @@ def unpinned_lines(requirements_text: str) -> list[str]:
 
 def imported_modules(folders: tuple[str, ...]) -> set[str]:
     """Top-level modules imported by any tracked .py file under the folders."""
+    modules: set[str] = set()
+    for text in tracked_sources(folders).values():
+        modules.update(IMPORT.findall(text))
+    return modules
+
+
+def tracked_sources(folders: tuple[str, ...]) -> dict[str, str]:
+    """Text of every tracked .py file under the folders, by repo path."""
     listing = subprocess.run(
         ["git", "ls-files", "-z", "--", *(f"{folder}/*.py" for folder in folders)],
         cwd=ROOT,
@@ -123,25 +131,28 @@ def imported_modules(folders: tuple[str, ...]) -> set[str]:
         text=True,
         check=True,
     ).stdout
-    modules: set[str] = set()
-    for name in filter(None, listing.split("\0")):
-        modules.update(IMPORT.findall((ROOT / name).read_text(encoding="utf-8")))
-    return modules
+    return {
+        name: (ROOT / name).read_text(encoding="utf-8")
+        for name in filter(None, listing.split("\0"))
+    }
 
 
-def imports_of(sources: Mapping[str, str], served: Iterable[str]) -> set[str]:
-    """Top-level modules imported by the served files, given every file's text by repo path."""
-    modules: set[str] = set()
+def unused_job_pins(
+    requirements_text: str, manifest_text: str, sources: Mapping[str, str]
+) -> list[str]:
+    """Pins that no module of the FreeCAD job set imports.
+
+    The served code is the manifest's entries, the files `import_check.py --manifest` checks, and
+    nothing else in `sources`.
+    """
+    served = import_check.manifest_entries(manifest_text)
+    missing = [name for name in served if name not in sources]
+    if missing:
+        raise ValueError(f"the manifest lists files that are not tracked sources: {missing}")
+    imported: set[str] = set()
     for name in served:
-        modules.update(IMPORT.findall(sources[name]))
-    return modules
-
-
-def job_module_imports() -> set[str]:
-    """Modules imported by the FreeCAD job set: the files `import_check.py --manifest` checks."""
-    names = [path.relative_to(ROOT).as_posix() for path in import_check.manifest_paths()]
-    sources = {name: (ROOT / name).read_text(encoding="utf-8") for name in names}
-    return imports_of(sources, names)
+        imported.update(IMPORT.findall(sources[name]))
+    return unused_pins(requirements_text, imported)
 
 
 def unused_pins(requirements_text: str, imported: set[str]) -> list[str]:
@@ -202,20 +213,27 @@ class InlinePinTests(unittest.TestCase):
         self.assertEqual(inline_pins(workflow("uv run --with rich python x")), [])
 
 
-class ServedCodeTests(unittest.TestCase):
-    SOURCES = {
-        "skills/cad-x/scripts/job.py": "import json\n",
-        "skills/cad-recheck/scripts/stamp.py": "import yaml\n",
-    }
-    JOBS = ["skills/cad-x/scripts/job.py"]
+class JobPinTests(unittest.TestCase):
+    PINS = "pyyaml==6.0.3\njsonschema==4.26.0\n"
+    MANIFEST = "# job modules\nskills/x/job.py  # runs in freecadcmd\n"
 
-    def test_a_pin_imported_only_by_a_non_job_file_is_unused_for_the_job_set(self) -> None:
-        imported = imports_of(self.SOURCES, self.JOBS)
-        self.assertEqual(unused_pins("pyyaml==6.0.3\n", imported), ["pyyaml"])
+    def test_a_pin_imported_only_outside_the_manifest_is_unused(self) -> None:
+        sources = {
+            "skills/x/job.py": "import jsonschema\n",
+            "skills/y/host.py": "import yaml\n",
+        }
+        self.assertEqual(unused_job_pins(self.PINS, self.MANIFEST, sources), ["pyyaml"])
 
-    def test_a_pin_imported_by_a_listed_job_module_is_used(self) -> None:
-        sources = {**self.SOURCES, "skills/cad-x/scripts/job.py": "import yaml\n"}
-        self.assertEqual(unused_pins("pyyaml==6.0.3\n", imports_of(sources, self.JOBS)), [])
+    def test_a_pin_imported_by_a_listed_module_is_used(self) -> None:
+        sources = {
+            "skills/x/job.py": "import jsonschema\nimport yaml\n",
+            "skills/y/host.py": "import os\n",
+        }
+        self.assertEqual(unused_job_pins(self.PINS, self.MANIFEST, sources), [])
+
+    def test_a_manifest_entry_without_a_source_is_an_error(self) -> None:
+        with self.assertRaises(ValueError):
+            unused_job_pins(self.PINS, self.MANIFEST, {"skills/y/host.py": "import yaml\n"})
 
 
 class RequirementFileTests(unittest.TestCase):
@@ -273,7 +291,10 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(
             unused_pins(self.minimal, imported_modules(("harness", "scripts"))), []
         )
-        self.assertEqual(unused_pins(self.freecad, job_module_imports()), [])
+        manifest = import_check.MANIFEST.read_text(encoding="utf-8")
+        self.assertEqual(
+            unused_job_pins(self.freecad, manifest, tracked_sources(("skills",))), []
+        )
 
 
 if __name__ == "__main__":

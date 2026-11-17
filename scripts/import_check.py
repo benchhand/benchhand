@@ -41,10 +41,14 @@ JOB_SCRIPTS = {
 }
 
 
+def manifest_entries(text: str) -> list[str]:
+    """The FreeCAD job set in manifest text: one repo-relative path per line, `#` starts a comment."""
+    lines = (line.split("#", 1)[0].strip() for line in text.splitlines())
+    return [line for line in lines if line]
+
+
 def manifest_paths(manifest: Path = MANIFEST) -> list[Path]:
-    """The FreeCAD job set: one repo-relative path per line, `#` starts a comment."""
-    lines = (line.split("#", 1)[0].strip() for line in manifest.read_text(encoding="utf-8").splitlines())
-    return [ROOT / line for line in lines if line]
+    return [ROOT / line for line in manifest_entries(manifest.read_text(encoding="utf-8"))]
 
 
 def candidates() -> list[Path]:
