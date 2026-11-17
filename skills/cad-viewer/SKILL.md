@@ -48,7 +48,7 @@ Session identity:
    B side by side, cameras synced both ways. Either side may be `latest`. `mode single --active A|B`
    flips one viewer.
    The panel's Versions section shows a labeled select for each shown version (A, plus B side by side).
-   It lists `latest (vN)`, then every `hw/versions/vN` newest first with build time and part count.
+   It lists `latest (vN)`, then every `hw/versions/vN` newest first with part count.
    Picking one loads it into that slot and keeps the camera and view state. `show` and `compare`
    update the selects. When a version cannot load, such as a missing part STEP, the error shows
    under its select and the slot keeps its model. Command output reports `versions.<A|B>.selected`

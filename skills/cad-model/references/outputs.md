@@ -102,7 +102,9 @@ same project:
 Every other part reuses its earlier STEP (and `build_manufacture` state) byte for byte, with the
 runner facts the manifest records (`params`, kernel volume, solids, validity, drawing features,
 warnings). A kernel whose parts are all reused does not start; the manifest's `tools.<kernel>` then
-comes from `--tools` and has no `import_s`. A custom-made part's `manufacturing/<PN>/` files,
+comes from `--tools`. The manifest holds no import time and no build timestamp, so equal inputs give
+equal manifest facts; import time is a diagnostic that only `run` stdout `timings_s` reports. A
+custom-made part's `manufacturing/<PN>/` files,
 placement and checks are reused the same way while its manifest facts, its state's geometry and the
 orchestrator's code and runtime are unchanged. The parts built in a run that then fails are kept
 for the next run. A part is cached only when the runner executed the model bytes and folder files

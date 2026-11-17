@@ -14,7 +14,6 @@ import math
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -306,7 +305,7 @@ def version_previews(hw: Path, label: str) -> dict[str, list[dict[str, Any]]]:
 
 
 def _version_entry(hw: Path, label: str) -> dict[str, Any]:
-    entry: dict[str, Any] = {"label": label, "built_utc": None, "parts": None, "error": None,
+    entry: dict[str, Any] = {"label": label, "parts": None, "error": None,
                              "previews": {kind: [] for kind in ("renders", "captures", "drawings")}}
     api = _layout()
     try:
@@ -323,9 +322,6 @@ def _version_entry(hw: Path, label: str) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         entry["error"] = f"{manifest_path}: expected a JSON object"
         return entry
-    created = manifest.get("created_utc")
-    entry["built_utc"] = created if isinstance(created, str) else datetime.fromtimestamp(
-        manifest_path.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     placed = manifest.get("occurrences") if isinstance(manifest.get("occurrences"), dict) else manifest.get("parts")
     entry["parts"] = len(placed) if isinstance(placed, dict) else None
     return entry

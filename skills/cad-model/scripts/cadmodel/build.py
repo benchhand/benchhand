@@ -34,7 +34,6 @@ import tempfile
 import time
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
@@ -661,7 +660,6 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
             "record_version": snapshot.version,  # its snapshot holds every layout version.record file present
             "label": label,
             "number": number,
-            "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "product_id": pose.product_id(hw),
             "top_product": top,
             "kernel_option": kernel,
@@ -680,8 +678,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
             "ground": chain.root,
             "glb": glb_info,
             "tools": {"orchestrator": orchestrator_tools(),  # a kernel whose parts were all reused did not start
-                      **{k: ({**results[k]["tools"], "import_s": results[k]["import_s"]} if k in results
-                             else dict(runtimes[k]["tools"])) for k in groups}},
+                      **{k: dict(results[k]["tools"] if k in results else runtimes[k]["tools"]) for k in groups}},
             "parts": {pn: {
                 "title": by_pn[pn].title,
                 "product": by_pn[pn].product,
