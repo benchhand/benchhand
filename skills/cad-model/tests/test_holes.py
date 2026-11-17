@@ -14,10 +14,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-import sys
 import shutil
-import sys
 import subprocess
+import sys
+import threading
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -64,16 +64,19 @@ CASES: dict[str, list[dict]] = {
 PNS = {case: f"HOL-{i:04d}" for i, case in enumerate(CASES, start=1)}
 
 
+_UPGRADE_LOCK = threading.Lock()
+
+
 def upgrade(hw: Path) -> Path:
     """Complete the hand-written project below `hw` as a record version 2 record (cad-model's project fixtures)."""
     name = "cad_model_manufacturing_projects"
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, FIXTURES / "manufacturing_projects.py")
-        assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # registered only once complete: kernels build in threads
-        sys.modules[name] = module
-    return sys.modules[name].upgrade_project(hw)
+    with _UPGRADE_LOCK:  # both kernels build in threads and the fixture modules register before they finish loading
+        if name not in sys.modules:
+            spec = importlib.util.spec_from_file_location(name, FIXTURES / "manufacturing_projects.py")
+            assert spec and spec.loader
+            sys.modules[name] = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sys.modules[name])
+        return sys.modules[name].upgrade_project(hw)
 
 
 def hole_project(root: Path, kernel: str) -> Path:

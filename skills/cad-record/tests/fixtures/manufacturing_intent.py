@@ -36,9 +36,8 @@ def _module(name: str, path: Path) -> Any:
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(name, path)
         assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # registered only once complete: kernels build in threads
-        sys.modules[name] = module
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
     return sys.modules[name]
 
 
