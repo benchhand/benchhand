@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.12,<3.13"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "pyyaml>=6.0", "numpy==2.5.5", "python-fcl==0.7.0.11"]
 # ///
 """Audit a sweep's mesh-cleared requests by measuring them exactly.

@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.12,<3.13"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["trimesh==4.*", "numpy==2.5.5"]
 # ///
 """Write a GLB of two tetrahedra that each carry a collapsed triangle, then print `mesh.watertight`.

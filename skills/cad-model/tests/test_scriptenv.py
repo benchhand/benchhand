@@ -110,8 +110,9 @@ class ScriptEnvTests(unittest.TestCase):
 class SharedCacheEnvironmentTests(unittest.TestCase):
     """cad-model and cad-motion scripts share cached results only when their envs match."""
 
-    # This class holds the pin. A move to another Python or numpy changes these two constants and the headers.
-    PYTHON = ">=3.12,<3.13"
+    # This class holds the pin. A move to another Python or numpy changes these constants and the headers.
+    PYTHON = ">=3.12,<3.15"
+    RUNNER_PYTHON = ">=3.12,<3.13"   # the kernel runners keep the interpreter their results were sealed on
     NUMPY = "numpy==2.5.5"
 
     def headers(self) -> dict[Path, dict]:
@@ -129,8 +130,11 @@ class SharedCacheEnvironmentTests(unittest.TestCase):
         scripts = self.headers()
         names = {script.name for script in scripts}
         self.assertTrue({"cad_model.py", "run_cadquery.py", "motion.py", "mesh_probe.py"} <= names, sorted(names))
+        runners = {runner.name for runner in build.RUNNERS.values()}
         found = {str(script.relative_to(SKILLS)): meta.get("requires-python") for script, meta in scripts.items()}
-        self.assertEqual({value for value in found.values()}, {self.PYTHON}, found)
+        expected = {str(script.relative_to(SKILLS)): self.RUNNER_PYTHON if script.name in runners else self.PYTHON
+                    for script in scripts}
+        self.assertEqual(found, expected)
 
     def test_every_declared_numpy_is_one_exact_pin(self) -> None:
         pins = {str(script.relative_to(SKILLS)): requirement

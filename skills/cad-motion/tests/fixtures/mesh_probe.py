@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.12,<3.13"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "pyyaml>=6.0", "numpy==2.5.5", "python-fcl==0.7.0.11"]
 # ///
 """Probe mesh_bound.py and pair_measure.py's fast mode on real fixture geometry; print the findings as JSON.
