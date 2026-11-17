@@ -37,7 +37,7 @@ on the same frames: FreeCAD solves the coupled record and every joint must agree
 (crosscheck.json, evidence/motion.FCStd). Without --out-dir the files publish as the immutable
 bundle hw/motion/vN/<case>/; the same recipe reuses it, another needs --replace.
 
-stdout: JSON. Exit 0 = pass or flagged (a declared partial plan), 1 = a coverage gap or limit
+stdout: JSON in the tool-result envelope (cad-record emit.py). Exit 0 = pass or flagged (a declared partial plan), 1 = a coverage gap or limit
 finding, a cross-check deviation or a render parity failure (nothing published), 2 = a plan, usage
 or infrastructure error, or a cross-check without a result.
 """

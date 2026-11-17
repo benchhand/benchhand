@@ -52,7 +52,7 @@ frames/frame-NNNN.png, contact-sheet.png and motion-render.json (cameras, and th
 world placements against the spec's expected ones within 1e-9) into --out-dir; motion.py publishes
 them. Exit 1 = a parity failure.
 
-stdout: one JSON summary. Exit 0 = every view is usable (pass or warn, including cache hits) and every visibility check passes, 1 = an unusable view remains after its retry ladder or a visibility check fails (renders and manifest are still written), 2 = usage or infrastructure error (nothing written).
+stdout: one JSON summary in the tool-result envelope (cad-record emit.py). Exit 0 = every view is usable (pass or warn, including cache hits) and every visibility check passes, 1 = an unusable view remains after its retry ladder or a visibility check fails (renders and manifest are still written), 2 = usage or infrastructure error (nothing written).
 """
 
 from __future__ import annotations

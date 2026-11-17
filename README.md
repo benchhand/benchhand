@@ -114,13 +114,27 @@ These producers print either full JSON or a short summary:
 
 The summary holds the verdict, up to five blocking findings and the path of the full JSON. That file sits under `.cad-work/agent-output/`, or is the `--out` file. A result shorter than its summary prints whole.
 
-The mode comes from the first of these that is set:
+The mode comes from the first of these that applies:
 
 1. The `--json` flag: full JSON.
 2. The `CAD_OUTPUT` variable: `compact`, `json`, or `text`. `text` renders as `compact`.
 3. The stream: `compact` on a terminal, `json` when piped or redirected.
 
-`run.py` sets `CAD_OUTPUT=compact` unless the variable is already set. A script that parses a producer's stdout must pass `--json` or set `CAD_OUTPUT=json`.
+`run.py` sets `CAD_OUTPUT=compact` unless you already set the variable. A script that parses a producer's stdout must pass `--json` or set `CAD_OUTPUT=json`.
+
+Full JSON is a tool-result envelope with four keys:
+
+- `schema`: the envelope id, `tool-result/1`.
+- `status`: the verdict, such as `pass`, `fail` or `error`.
+- `findings`: the findings of the result.
+- `payload`: the producer's result, unchanged.
+
+The envelope wraps stdout and the `--out` files that are not sealed, such as `cad_model.py check --out`. These files keep their own shape:
+
+- sealed bundle and version files
+- the check packet that `form_check.py --out` writes
+
+Read a stdout document with `unwrap()` from `cad-record/scripts/emit.py`.
 
 ## Workflow
 

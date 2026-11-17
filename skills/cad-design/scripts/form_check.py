@@ -73,7 +73,7 @@ Checks (each failure is one `findings` entry):
     cnc_internal_radius) are universal heuristics: diagnostics with `blocking: false` (decision 3).
     Only brep_invalid, step_readback and joint_bore_missing carry `blocking: true`.
 
-stdout: JSON {status, fidelity, parts, joints, findings[, version, manufacturing]}; `manufacturing` holds
+stdout: JSON in the tool-result envelope (cad-record emit.py) whose payload is {status, fidelity, parts, joints, findings[, version, manufacturing]}; `manufacturing` holds
 the packet's status, complete, bundle, outcome counts, open obligations and its major and critical
 findings. stderr: diagnostics.
 Exit 0 = no blocking finding and (--version) a passing packet, 1 = a blocking finding or a failing,

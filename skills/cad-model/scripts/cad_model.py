@@ -54,7 +54,7 @@ store gc removes from the part store (hw/.cad/parts, hw/.cad/builds) every objec
       release manifest references and no build record of a referenced output needs, and every other
       build record; it reports the bytes freed. --dry-run removes nothing.
 
-stdout: one JSON document. stderr: diagnostics.
+stdout: one JSON document in the tool-result envelope (cad-record emit.py; --out files hold it too). stderr: diagnostics.
 Exit codes: 0 pass, 1 a part model or a manufacturing output failed (run) or a blocking check failed
 (check), 2 usage or infrastructure error.
 """
