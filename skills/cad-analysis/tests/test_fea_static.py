@@ -762,8 +762,15 @@ if len(sys.argv) > 1:
             step.touch()
             child_pid = root / "child.pid"
             freecad = hanging_freecad(root, child_pid)
-            parent_code = (f"import sys\nfrom pathlib import Path\nfrom unittest.mock import patch\n"
+            # The FEA process lists the job's group in its run record only after the job has started (Supervised
+            # writes it after `ps` identifies the supervisor); a 2 s delay there holds that window open on any host.
+            parent_code = (f"import sys, time\nfrom pathlib import Path\nfrom unittest.mock import patch\n"
                            f"sys.path.insert(0, {str(SCRIPT.parent)!r})\nimport fea_static\n"
+                           "register = fea_static.lifecycle.RunGuard._register\n"
+                           "def late_register(guard, process):\n"
+                           "    time.sleep(2)\n"
+                           "    register(guard, process)\n"
+                           "fea_static.lifecycle.RunGuard._register = late_register\n"
                            f"guard = fea_static.lifecycle.claim_run(Path({str(hw)!r}), 'fea')\n"
                            f"with patch('fea_static.find_freecad', return_value=Path({str(freecad)!r})):\n"
                            f"    fea_static.run_job(Path({str(root)!r}) / 'case.yaml', {hanging_case(step, 600)!r}, "
@@ -776,7 +783,13 @@ if len(sys.argv) > 1:
             pid = int(child_pid.read_text(encoding="utf-8"))
             self.addCleanup(lambda: pid_runs(pid) and os.kill(pid, signal.SIGKILL))
             [record] = lifecycle.runs_dir(hw).glob("*.json")
-            [group] = json.loads(record.read_text(encoding="utf-8"))["groups"]
+
+            def groups() -> list:
+                return json.loads(record.read_text(encoding="utf-8"))["groups"]
+
+            self.assertTrue(wait_until(lambda: len(groups()) == 1, 60),
+                            f"the run record never listed the FreeCAD job's process group: {record.read_text()}")
+            [group] = groups()
             with self.assertRaises(lifecycle.RunRefused):  # one FEA run at a time
                 lifecycle.claim_run(hw, "fea")
             os.killpg(parent.pid, signal.SIGKILL)  # the FEA process and its own group, with no chance to clean up
