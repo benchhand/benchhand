@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from cadmodel import agreement  # noqa: E402
 
 LINEAR = 0.04  # the exporter's deflection in these cases, mm: what a 40 mm part gets (0.0005 of its diagonal)
+LAMP_ARM_LINEAR = 0.2  # the deflection of examples/lamp-arm's GLB, mm
 EMPTY_POINTS, EMPTY_TRIANGLES = np.empty((0, 3)), np.empty((0, 3), dtype=np.int64)
 ROT = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
@@ -49,9 +50,9 @@ def moved(mesh: Any, dx: float) -> Any:
     return agreement.placed(mesh, ROT, (dx, 0.0, 0.0))
 
 
-def verdict(drawn: Any, depicted: Any, *, shift: float = 0.0) -> dict[str, Any]:
-    mesh = moved(agreement.reference(drawn, LINEAR), shift)
-    return agreement.compare(mesh, agreement.reference(depicted, LINEAR / 4), LINEAR)
+def verdict(drawn: Any, depicted: Any, *, shift: float = 0.0, linear: float = LINEAR) -> dict[str, Any]:
+    mesh = moved(agreement.reference(drawn, linear), shift)
+    return agreement.compare(mesh, agreement.reference(depicted, linear / 4), linear)
 
 
 def cases() -> dict[str, Any]:
@@ -63,6 +64,8 @@ def cases() -> dict[str, Any]:
         "shifted_3_mm": verdict(clean, clean, shift=3.0),
         "flat_shifted_just_above_floor": verdict(plain, plain, shift=0.13),
         "flat_shifted_just_below_floor": verdict(plain, plain, shift=0.12),
+        "flat_shifted_above_lamp_arm_floor": verdict(plain, plain, shift=0.61, linear=LAMP_ARM_LINEAR),
+        "flat_shifted_below_lamp_arm_floor": verdict(plain, plain, shift=0.60, linear=LAMP_ARM_LINEAR),
         "hole_moved_8_mm": verdict(block(hole_x=8.0), clean),
         "hole_missing_in_mesh": verdict(block(hole_x=None), clean),
         "extra_hole_in_mesh": verdict(clean, block(hole_x=None)),
