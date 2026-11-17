@@ -248,9 +248,14 @@ def read_pdf(path: Path) -> PdfContent:
 
 
 DEFAULT_PDF_EPOCH = 315_532_800   # 1980-01-01T00:00:00Z: the PDF date when SOURCE_DATE_EPOCH is not set
-_INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()D:\d{14}(?:[+-]\d\d'\d\d'|Z)(\))")
-_CREATION_DATE = re.compile(rb"/CreationDate \(D:\d{14}(?:[+-]\d\d'\d\d'|Z)\)")
-_XMP_DATE = re.compile(rb'(xmp:(?:CreateDate|ModifyDate|MetadataDate)=")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d([+-]\d\d:\d\d|Z)(")')
+# Info-dictionary dates (PDF 32000 7.9.4): D:YYYY[MM[DD[HH[mm[SS[O[HH'[mm']]]]]]]] with O one of + - Z; the
+# apostrophes are optional here because readers accept their absence.
+_INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()([^)]*)(\))")
+_CREATION_DATE = re.compile(rb"/CreationDate \(")
+_PDF_DATE = re.compile(rb"D:(\d{4})(\d\d)?(\d\d)?(\d\d)?(\d\d)?(\d\d)?((?:[+\-Z](?:\d\d'?(?:\d\d'?)?)?)?)")
+# XMP dates are ISO 8601: YYYY[-MM[-DD[THH:mm[:SS[.f+]][Z|+HH:MM]]]].
+_XMP_DATE = re.compile(rb'(xmp:(?:CreateDate|ModifyDate|MetadataDate)=")([^"]*)(")')
+_XMP_VALUE = re.compile(rb"(\d{4})(?:-(\d\d)(?:-(\d\d)(?:T(\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?(Z|[+\-]\d\d:\d\d)?)?)?)?")
 
 
 MAX_PDF_EPOCH = 253_402_300_799   # 9999-12-31T23:59:59Z: the last second a four-digit year can write
@@ -280,27 +285,54 @@ def document_id(content: bytes, page_mm: Sequence[float]) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_OID, digest))
 
 
+def _pdf_date(text: bytes, when: datetime) -> bytes:
+    """``when`` (UTC) in the field set and offset form of the Info date ``text``; the length is unchanged."""
+    match = _PDF_DATE.fullmatch(text)
+    if match is None:
+        raise ExportError("export_failed", f"cannot pin the PDF date {text[:40]!r}: not a PDF date string")
+    parts = [f"{when.year:04d}", f"{when.month:02d}", f"{when.day:02d}", f"{when.hour:02d}", f"{when.minute:02d}",
+             f"{when.second:02d}"]
+    fields = "".join(part for part, found in zip(parts, match.groups()[:6]) if found is not None)
+    offset = re.sub(r"\d", "0", match.group(7).decode("ascii")).replace("-", "+")   # Z stays Z; +HH'mm' becomes +00'00'
+    return b"D:" + fields.encode("ascii") + offset.encode("ascii")
+
+
+def _xmp_date(text: bytes, when: datetime) -> bytes:
+    """``when`` (UTC) in the field set, fraction width and offset form of the XMP date ``text``."""
+    match = _XMP_VALUE.fullmatch(text)
+    if match is None:
+        raise ExportError("export_failed", f"cannot pin the XMP date {text[:40]!r}: not an ISO 8601 date")
+    year, month, day, hour, minute, second, fraction, zone = match.groups()
+    out = f"{when.year:04d}"
+    if month is not None:
+        out += f"-{when.month:02d}"
+    if day is not None:
+        out += f"-{when.day:02d}"
+    if hour is not None:
+        out += f"T{when.hour:02d}:{when.minute:02d}"
+    if second is not None:
+        out += f":{when.second:02d}"
+    if fraction is not None:
+        out += "." + "0" * len(fraction)
+    if zone is not None:
+        out += "Z" if zone == b"Z" else "+00:00"
+    return out.encode("ascii")
+
+
 def pin_pdf_dates(data: bytes, epoch: int) -> bytes:
     """Replace Qt's wall-clock PDF dates (Info dictionary and XMP) with ``epoch`` in UTC.
 
-    Qt's QPdfWriter has no date setter. Each replacement keeps the length of the text it replaces,
-    so every xref offset stays valid. A PDF without a /CreationDate is refused: Qt changed its output.
+    Qt's QPdfWriter has no date setter. Each date is rewritten in its own field set, offset form and width
+    (Qt writes ``Z`` for a UTC machine and ``+00'00'`` otherwise), so every xref offset stays valid. A PDF
+    without a /CreationDate, or with a date this cannot parse, is refused: Qt changed its output.
     """
     if not 0 <= epoch <= MAX_PDF_EPOCH:
         raise ExportError("export_failed", f"PDF date epoch {epoch} is outside 0 to {MAX_PDF_EPOCH}")
     when = datetime.fromtimestamp(epoch, timezone.utc)
-    info = f"D:{when:%Y%m%d%H%M%S}+00'00'".encode("ascii")
-    xmp = f"{when:%Y-%m-%dT%H:%M:%S}".encode("ascii")
     if not _CREATION_DATE.search(data):
         raise ExportError("export_failed", "the PDF has no /CreationDate to pin")
-
-    def info_date(match: re.Match[bytes]) -> bytes:
-        return match.group(1) + info + match.group(2)
-
-    def xmp_date(match: re.Match[bytes]) -> bytes:
-        return match.group(1) + xmp + (b"Z" if match.group(2) == b"Z" else b"+00:00") + match.group(3)
-
-    pinned = _XMP_DATE.sub(xmp_date, _INFO_DATE.sub(info_date, data))
+    pinned = _XMP_DATE.sub(lambda m: m.group(1) + _xmp_date(m.group(2), when) + m.group(3),
+                           _INFO_DATE.sub(lambda m: m.group(1) + _pdf_date(m.group(2), when) + m.group(3), data))
     if len(pinned) != len(data):
         raise ExportError("export_failed", "pinning the PDF dates changed its length")
     return pinned

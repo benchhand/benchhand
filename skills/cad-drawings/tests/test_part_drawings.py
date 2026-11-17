@@ -296,7 +296,7 @@ class PinDrawingGate(unittest.TestCase):
         code, first = self.draw("v1", "unused", output=False, hw=hw, env=first_env)
         self.assertEqual((code, first["status"]), (0, "pass"), first.get("findings"))
         package = Path(first["output_dir"])
-        self.assertIn(b"/CreationDate (D:20231114221320+00'00')", (package / "sheet-1.pdf").read_bytes())
+        self.assertRegex((package / "sheet-1.pdf").read_bytes(), rb"/CreationDate \(D:20231114221320(?:Z|\+00'00')\)")
         code, again = self.draw("v1", "unused", output=False, hw=hw, env=first_env)
         self.assertEqual((code, again.get("cache")), (0, "hit"))
         code, refused = self.draw("v1", "unused", output=False, hw=hw, env=second_env)
@@ -304,7 +304,7 @@ class PinDrawingGate(unittest.TestCase):
         self.assertIn(b"D:20231114221320", (package / "sheet-1.pdf").read_bytes())   # the sealed bundle is untouched
         code, replaced = self.draw("v1", "unused", output=False, hw=hw, env=second_env, extra=("--replace",))
         self.assertEqual((code, replaced["status"], replaced.get("cache")), (0, "pass", None), replaced.get("findings"))
-        self.assertIn(b"/CreationDate (D:20231114231320+00'00')", (Path(replaced["output_dir"]) / "sheet-1.pdf").read_bytes())
+        self.assertRegex((Path(replaced["output_dir"]) / "sheet-1.pdf").read_bytes(), rb"/CreationDate \(D:20231114231320(?:Z|\+00'00')\)")
 
     def test_explicit_output_outside_cad_work_is_refused(self) -> None:
         outside = Path(self.tmp.name) / "outside"

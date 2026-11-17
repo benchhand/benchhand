@@ -479,6 +479,63 @@ class SheetExportParts(unittest.TestCase):
         self.assertEqual(re.sub(rb"20231114221320\+00'00'|2023-11-14T22:13:20\+00:00", b"", pinned).replace(b"D:", b""),
                          re.sub(rb"20261116203848\+04'00'|2026-11-16T20:38:48\+04:00", b"", data).replace(b"D:", b""))
 
+    def test_real_qt_dates_are_pinned_in_their_own_form_at_the_same_length(self) -> None:
+        # The strings Qt 6.8.3 wrote on dev (aarch64) and pace (x86_64, the CI runner's build), by TZ. TZ=UTC makes
+        # Qt write "Z" in the Info dictionary, which is six bytes shorter than "+00'00'".
+        xmp_zone = {"TZ unset": "+00:00", "TZ=UTC": "+00:00", "Europe/Amsterdam": "+01:00", "Asia/Dubai": "+04:00"}
+        cases = [
+            ("TZ unset", "D:20261117091914+00'00'", "2026-11-17T09:19:14+00:00", "D:20231114221320+00'00'"),
+            ("TZ=UTC", "D:20261117091913Z", "2026-11-17T09:19:13+00:00", "D:20231114221320Z"),
+            ("Europe/Amsterdam", "D:20261117101855+01'00'", "2026-11-17T10:18:55+01:00", "D:20231114221320+00'00'"),
+            ("Asia/Dubai", "D:20261117131856+04'00'", "2026-11-17T13:18:56+04:00", "D:20231114221320+00'00'"),
+        ]
+        for name, info, xmp, expected_info in cases:
+            with self.subTest(tz=name):
+                self.assertTrue(xmp.endswith(xmp_zone[name]))
+                data = self.qt_style_pdf(info, xmp)
+                pinned = sheet_export.pin_pdf_dates(data, 1_700_000_000)
+                self.assertEqual(len(pinned), len(data))
+                self.assertEqual(re.findall(rb"/(?:CreationDate|ModDate) \(([^)]*)\)", pinned), [expected_info.encode()] * 2)
+                self.assertEqual(re.findall(rb'xmp:\w+Date="([^"]*)"', pinned), [b"2023-11-14T22:13:20+00:00"] * 3)
+                self.assert_xref_intact(self, pinned)
+
+    def test_pdf_date_grammar_is_pinned_field_for_field(self) -> None:
+        pdf_dates = {
+            "D:2026": "D:2023", "D:202611": "D:202311", "D:20261117": "D:20231114", "D:2026111709": "D:2023111422",
+            "D:202611170918": "D:202311142213", "D:20261117091856": "D:20231114221320",
+            "D:20261117091856Z": "D:20231114221320Z", "D:20261117091856+01'00'": "D:20231114221320+00'00'",
+            "D:20261117091856-07'30'": "D:20231114221320+00'00'", "D:20261117091856+01'00": "D:20231114221320+00'00",
+            "D:20261117091856+0100": "D:20231114221320+0000", "D:20261117091856+01": "D:20231114221320+00",
+            "D:20261117091856Z00'00'": "D:20231114221320Z00'00'",
+        }
+        for original, expected in pdf_dates.items():
+            with self.subTest(info=original):
+                pinned = sheet_export.pin_pdf_dates(self.qt_style_pdf(original), 1_700_000_000)
+                self.assertEqual(re.findall(rb"/(?:CreationDate|ModDate) \(([^)]*)\)", pinned), [expected.encode()] * 2)
+                self.assertEqual(len(pinned), len(self.qt_style_pdf(original)))
+        xmp_dates = {
+            "2026": "2023", "2026-11": "2023-11", "2026-11-17": "2023-11-14", "2026-11-17T09:18Z": "2023-11-14T22:13Z",
+            "2026-11-17T09:18:56": "2023-11-14T22:13:20", "2026-11-17T09:18:56Z": "2023-11-14T22:13:20Z",
+            "2026-11-17T09:18:56+05:30": "2023-11-14T22:13:20+00:00", "2026-11-17T09:18:56-07:00": "2023-11-14T22:13:20+00:00",
+            "2026-11-17T09:18:56.123Z": "2023-11-14T22:13:20.000Z",
+            "2026-11-17T09:18:56.123456+01:00": "2023-11-14T22:13:20.000000+00:00",
+            "2026-11-17T09:18:56.5": "2023-11-14T22:13:20.0",
+        }
+        for original, expected in xmp_dates.items():
+            with self.subTest(xmp=original):
+                data = self.qt_style_pdf(xmp=original)
+                pinned = sheet_export.pin_pdf_dates(data, 1_700_000_000)
+                self.assertEqual(re.findall(rb'xmp:\w+Date="([^"]*)"', pinned), [expected.encode()] * 3)
+                self.assertEqual(len(pinned), len(data))
+
+    def test_a_date_form_that_cannot_keep_its_length_is_refused(self) -> None:
+        for original in ("D:2026-11-17", "D:abc", "D:20261117091856X", "D:2026111", "D:20261117091856+01'00'x", "D:"):
+            with self.subTest(info=original), self.assertRaisesRegex(sheet_export.ExportError, "PDF date"):
+                sheet_export.pin_pdf_dates(self.qt_style_pdf(original), 0)
+        for original in ("2026-11-17 09:18:56", "20261117T091856Z", "12026-11-17T09:18:56Z", "2026-11-17T09:18:56.Z", ""):
+            with self.subTest(xmp=original), self.assertRaisesRegex(sheet_export.ExportError, "XMP date"):
+                sheet_export.pin_pdf_dates(self.qt_style_pdf(xmp=original), 0)
+
     def test_pinned_dates_do_not_depend_on_the_original_clock_or_zone(self) -> None:
         first = sheet_export.pin_pdf_dates(self.qt_style_pdf(), 0)
         second = sheet_export.pin_pdf_dates(self.qt_style_pdf("D:20300101000000-07'00'", "2030-01-01T00:00:00-07:00"), 0)
@@ -581,7 +638,7 @@ class SheetExportParts(unittest.TestCase):
             with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000000"}):
                 sheet_export.export_sheet(command, svg, root / "c.pdf", root / "c.png", ["Aa 0123"], 300)
             dated = (root / "c.pdf").read_bytes()
-            self.assertIn(b"/CreationDate (D:20231114221320+00'00')", dated)
+            self.assertRegex(dated, rb"/CreationDate \(D:20231114221320(?:Z|\+00'00')\)")
             self.assertNotEqual(dated, outputs[0])
             svg.write_text(svg.read_text(encoding="utf-8").replace("Aa 0123", "Bb 0123"), encoding="utf-8")
             sheet_export.export_sheet(command, svg, root / "d.pdf", root / "d.png", ["Bb 0123"], 300)

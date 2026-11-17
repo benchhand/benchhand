@@ -218,7 +218,7 @@ class EndToEnd(unittest.TestCase):
         status, first = run_cli(hw, env=first_env)
         self.assertEqual((status, first["status"]), (0, "pass"), first.get("findings"))
         package = hw.parent / first["output_dir"]
-        self.assertIn(b"/CreationDate (D:20231114221320+00'00')", (package / "sheet-1.pdf").read_bytes())
+        self.assertRegex((package / "sheet-1.pdf").read_bytes(), rb"/CreationDate \(D:20231114221320(?:Z|\+00'00')\)")
         status, again = run_cli(hw, env=first_env)
         self.assertEqual((status, again.get("cache")), (0, "hit"))
         status, refused = run_cli(hw, env=second_env)
@@ -227,8 +227,7 @@ class EndToEnd(unittest.TestCase):
         self.assertIn(b"D:20231114221320", (package / "sheet-1.pdf").read_bytes())   # the sealed bundle is untouched
         status, replaced = run_cli(hw, env=second_env, replace=True)
         self.assertEqual((status, replaced["status"], replaced.get("cache")), (0, "pass", None), replaced.get("findings"))
-        self.assertIn(b"/CreationDate (D:20231114231320+00'00')",
-                      (hw.parent / replaced["output_dir"] / "sheet-1.pdf").read_bytes())
+        self.assertRegex((hw.parent / replaced["output_dir"] / "sheet-1.pdf").read_bytes(), rb"/CreationDate \(D:20231114231320(?:Z|\+00'00')\)")
 
     def test_parallel_assembly_sheets_match_sequential_report_order(self) -> None:
         hw = write_project(self.root / "parallel")
