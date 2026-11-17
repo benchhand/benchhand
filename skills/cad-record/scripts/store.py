@@ -132,7 +132,7 @@ class Store:
             folder.mkdir(parents=True, exist_ok=True)
         ignore = folder.parent / ".gitignore"
         if not ignore.is_file():
-            staged = ignore.with_name(f".gitignore.{os.getpid()}.tmp")
+            staged = ignore.with_name(f".gitignore.{os.getpid()}.{threading.get_ident()}.tmp")  # one per thread
             staged.write_text("*\n", encoding="utf-8")
             os.replace(staged, ignore)
         return folder

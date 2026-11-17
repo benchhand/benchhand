@@ -295,6 +295,25 @@ class Place(Fixture):
 
 
 class Locks(Fixture):
+    def test_threads_that_lock_an_empty_store_at_once_all_get_their_locks(self) -> None:
+        errors: list[BaseException] = []
+        start = threading.Barrier(8)
+
+        def take(i: int) -> None:
+            try:
+                start.wait()
+                with store.Store(self.hw).lock(key(f"cold{i}")):
+                    pass
+            except BaseException as error:  # noqa: BLE001 - every failure is the finding
+                errors.append(error)
+
+        threads = [threading.Thread(target=take, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertEqual(errors, [])
+        self.assertEqual((self.hw / ".cad" / "cache" / ".gitignore").read_text(encoding="utf-8"), "*\n")
     def test_the_lock_of_a_key_is_held_by_one_holder_at_a_time(self) -> None:
         held: list[str] = []
         with self.store.lock(key("l")):
