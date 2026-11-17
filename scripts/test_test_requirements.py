@@ -16,12 +16,16 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+import sys
 import unittest
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import import_check  # noqa: E402
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 FULL = "harness/test-requirements.txt"
 MIN = "harness/test-requirements-min.txt"
@@ -125,6 +129,21 @@ def imported_modules(folders: tuple[str, ...]) -> set[str]:
     return modules
 
 
+def imports_of(sources: Mapping[str, str], served: Iterable[str]) -> set[str]:
+    """Top-level modules imported by the served files, given every file's text by repo path."""
+    modules: set[str] = set()
+    for name in served:
+        modules.update(IMPORT.findall(sources[name]))
+    return modules
+
+
+def job_module_imports() -> set[str]:
+    """Modules imported by the FreeCAD job set: the files `import_check.py --manifest` checks."""
+    names = [path.relative_to(ROOT).as_posix() for path in import_check.manifest_paths()]
+    sources = {name: (ROOT / name).read_text(encoding="utf-8") for name in names}
+    return imports_of(sources, names)
+
+
 def unused_pins(requirements_text: str, imported: set[str]) -> list[str]:
     return [
         name
@@ -183,6 +202,22 @@ class InlinePinTests(unittest.TestCase):
         self.assertEqual(inline_pins(workflow("uv run --with rich python x")), [])
 
 
+class ServedCodeTests(unittest.TestCase):
+    SOURCES = {
+        "skills/cad-x/scripts/job.py": "import json\n",
+        "skills/cad-recheck/scripts/stamp.py": "import yaml\n",
+    }
+    JOBS = ["skills/cad-x/scripts/job.py"]
+
+    def test_a_pin_imported_only_by_a_non_job_file_is_unused_for_the_job_set(self) -> None:
+        imported = imports_of(self.SOURCES, self.JOBS)
+        self.assertEqual(unused_pins("pyyaml==6.0.3\n", imported), ["pyyaml"])
+
+    def test_a_pin_imported_by_a_listed_job_module_is_used(self) -> None:
+        sources = {**self.SOURCES, "skills/cad-x/scripts/job.py": "import yaml\n"}
+        self.assertEqual(unused_pins("pyyaml==6.0.3\n", imports_of(sources, self.JOBS)), [])
+
+
 class RequirementFileTests(unittest.TestCase):
     def test_a_pin_nothing_imports_is_unused(self) -> None:
         self.assertEqual(unused_pins("pyyaml==6.0.3\nghost==1\n", {"yaml"}), ["ghost"])
@@ -238,7 +273,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(
             unused_pins(self.minimal, imported_modules(("harness", "scripts"))), []
         )
-        self.assertEqual(unused_pins(self.freecad, imported_modules(("skills",))), [])
+        self.assertEqual(unused_pins(self.freecad, job_module_imports()), [])
 
 
 if __name__ == "__main__":
