@@ -46,6 +46,7 @@ MIGRATION_REQUIRED = "record.migration_required"
 VERSION_UNSUPPORTED = "record.version_unsupported"
 INCOMPLETE = "record.incomplete"
 LEGACY_FREEZE = "record.legacy_freeze"
+LOAD_DIRECTION_TOLERANCE = 1e-6
 CODES: Mapping[str, str] = types.MappingProxyType({
     MIGRATION_REQUIRED: "a record version 1 record: readable, but gated actions refuse until migrate.py migrates it",
     VERSION_UNSUPPORTED: "a record_version this cad-agent cannot read",
@@ -56,6 +57,7 @@ CODES: Mapping[str, str] = types.MappingProxyType({
     "intent.duplicate": "an id is declared twice",
     "intent.units": "a quantity's unit is unknown or of the wrong dimension",
     "intent.number": "a non-finite number, a reversed interval or an improper rotation",
+    "load.direction_not_unit": "a load direction whose norm is not 1 within 1e-6, a zero vector included",
     "intent.route": "a route cycle, a dependency on an unknown operation, or a route that contradicts make_buy and procurement",
     "intent.dual_authority": "installation operations in both assembly.yaml operations and drawing.operations",
     "intent.allowable": "an allowable without justification, or in a typical_not_allowable profile",
@@ -519,6 +521,7 @@ class Load:
     id: str | None
     kind: str | None  # static, sustained, cyclic, impact or vibration
     magnitude: Fact
+    direction: tuple[float, float, float] | None  # a unit vector; None only when invalid, which validation reports
     requirements: tuple[str, ...]
 
 
@@ -1111,6 +1114,26 @@ class _Reader:
                          f"the freeze of {frozen.get('version')} anchors no evidence_sha256; a release needs a new record version 2 "
                          "freeze that records its acceptance digest", severity="warning")
 
+    def check_load_direction(self, load: Mapping[str, Any], path: str, pointer: str) -> tuple[float, float, float] | None:
+        """A load's direction as floats, or None when it is not a unit vector. The schema reports a malformed
+        array and intent.number a non-finite component; this reports a well-formed one whose norm is not 1."""
+        direction = load.get("direction")
+        if not (isinstance(direction, list) and len(direction) == 3
+                and all(isinstance(c, (int, float)) and not isinstance(c, bool) for c in direction)):
+            return None
+        if any(isinstance(c, float) and not math.isfinite(c) for c in direction):
+            return None  # intent.number reports a non-finite component
+        try:
+            vector = tuple(float(c) for c in direction)
+        except (OverflowError, TypeError, ValueError):  # an integer beyond float range
+            vector = ()
+        norm = math.hypot(*vector) if vector else math.inf
+        if abs(norm - 1.0) > LOAD_DIRECTION_TOLERANCE:
+            self.problem("load.direction_not_unit", path, f"{pointer}/direction",
+                         f"load {load.get('id')}: direction has norm {norm:.9g}, not 1 within {LOAD_DIRECTION_TOLERANCE:g}")
+            return None
+        return (vector[0], vector[1], vector[2])
+
     def use_case(self, data: Any, path: str) -> UseCase:
         if not isinstance(data, Mapping):
             return UseCase.unknown("product.yaml has no use_case")
@@ -1130,16 +1153,17 @@ class _Reader:
                     continue
                 pointer = f"use_case/loads/{index}"
                 self.define("load", item.get("id"), path, pointer)
-                for key, dimensions in (("duration", ("time",)), ("frequency", ("frequency",)), ("cycles", ("count",)),
-                                        ("direction", None)):
+                for key, dimensions in (("duration", ("time",)), ("frequency", ("frequency",)), ("cycles", ("count",))):
                     if key in item:
                         self.fact(item[key], path, f"{pointer}/{key}", dimensions)
+                direction = self.check_load_direction(item, path, pointer)
                 if "application" in item:
                     self.subject(item["application"], path, f"{pointer}/application")
                 for requirement in item.get("requirements") or ():
                     self.ref("requirement", requirement, path, pointer)
                 entries.append(Load(item.get("id"), item.get("kind"),
                                     self.fact(item.get("magnitude"), path, f"{pointer}/magnitude", ("force", "torque")),
+                                    direction,
                                     tuple(item.get("requirements") or ())))
             loads = tuple(entries)
         else:
