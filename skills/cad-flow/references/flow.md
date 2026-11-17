@@ -155,11 +155,11 @@ The full sweep, a FreeCAD assembly run, an FEA case, and the first run of a new 
 | Producer | Where the output path appears | Key or location |
 |---|---|---|
 | `cad_model.py run` | stdout JSON | `version_dir`, `label` |
-| `cad_model.py check` | stdout JSON; also the file named by `--out` | the `--out` path you passed |
+| `cad_model.py check` | stdout JSON only; no path. With `--out <path under .cad-work/>` it also writes that file | the `--out` path you passed; read stdout otherwise |
 | `scratch.py build` | stdout JSON report | `scratch_hw`, `version_dir`, `label`; `json` and `log` in each step |
 | `form_check.py --version` | stdout JSON | `manufacturing.bundle`; with `--out`, the path you passed |
-| `sweep.py` | stdout JSON | `bundle` for a versioned run |
-| `motion.py render` | stdout JSON | `bundle` and `paths`; with `--out-dir`, `out_dir` and `paths` |
+| `sweep.py` | stdout JSON | `bundle` for a completed versioned run, smoke or full |
+| `motion.py render` | stdout JSON | `bundle`, plus `paths` on a fresh run only (a reused bundle omits `paths`); with `--out-dir`, `out_dir` and `paths` |
 | `render.py` | stdout JSON | `out_dir` |
 | `fea_static.py --hw --version` | stdout JSON | `bundle`, `check_bundle` |
 | `fea_static.py` on a bare case | stdout JSON, with no path | pass `--out`; the result file is that path |

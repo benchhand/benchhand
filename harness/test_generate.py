@@ -403,9 +403,25 @@ class ProcessRuleTests(unittest.TestCase):
                 with self.subTest(section=name, producer=producer):
                     self.assertIn(producer, sections[name])
 
+    @staticmethod
+    def strip_todo_markers(text: str) -> str:
+        """Drop each HTML comment whose own text starts with a well-formed TODO(stage-machine...) header."""
+        header = re.compile(r"<!--\s*TODO\(stage-machine(?: step \d+)?\):")
+        return re.sub(r"<!--.*?-->", lambda m: "" if header.match(m.group(0)) else m.group(0), text, flags=re.DOTALL)
+
+    def test_a_malformed_todo_header_does_not_hide_the_prose_after_it(self) -> None:
+        text = (
+            "<!-- TODO(stage-machine step 6: header without a closing paren -->\n"
+            "Run flow.py now.\n"
+            "<!-- TODO(stage-machine): a later, valid marker -->\n"
+        )
+        stripped = self.strip_todo_markers(text)
+        self.assertIn("flow.py", stripped)
+        self.assertNotIn("a later, valid marker", stripped)
+
     def test_unbuilt_tools_are_only_future_work_in_a_todo_marker(self) -> None:
         for path in (self.FLOW / "SKILL.md", self.FLOW / "references/flow.md", *(CAD / "agents").glob("*.md")):
-            text = re.sub(r"<!-- TODO\(stage-machine[^)]*\):.*?-->", "", self.read(path), flags=re.DOTALL)
+            text = self.strip_todo_markers(self.read(path))
             with self.subTest(path=path.name):
                 self.assertNotRegex(text, r"\b(flow\.py|work\.py|evidence\.py run)\b")
 
