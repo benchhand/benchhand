@@ -55,6 +55,12 @@ intents:
     match: ['results_in_git', 'results? (be )?(stored|kept|tracked) in git', 'generated results', '\bLFS\b',
             'store\b.*\b(STEP|GLB|renders)\b.*\bgit']
     answer: 'Do not store generated results in git: set storage.results_in_git to false.'
+  - id: commit-timing
+    kind: question
+    match: ['commit (now|at the end|later|after)', 'when (to|should I) commit']
+    answer: >-
+      Commit at the end of L2. Keep flow.stage where the provisional gate set it; do not move it back to
+      make a commit pass.
   - id: commit
     kind: question
     match: ['\bcommit\b']
@@ -125,7 +131,7 @@ intents:
     match: ['\bclearances?\b', '\bgap\b', '\bplay\b', '\bfit\b']
   - id: environment
     match: ['\btemperature', '\bheat\b', '\bmoisture\b', '\bhumid', '\bUV\b', '\boutdoors?\b', '\bindoors?\b', '\bchemical', '\bsolvents?\b', '\bcoolants?\b', '\boils?\b',
-            '\bcorrosi', '\benvironment']
+            '\bcorrosi', '\bcorrode', '\banodi[sz]', '\bgalvani[sz]', '\bplat(ed|ing)\b', '\bpainted\b', '\benvironment']
   - id: accuracy
     match: ['\baccura', '\brepeatab', '\bfinish\b', '\btolerances?\b', 'dimensional stability', '\bsurface\b']
   - id: consequences

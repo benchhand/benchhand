@@ -35,7 +35,8 @@ slots:
   appearance: Appearance does not matter.
 intents:
   - id: rail
-    match: ['\bthe rail\b', 'rail (face|width|thickness|material|profile)', 'rivet nut', 'hole pitch', 'wall (type|construction|anchor)']
+    match: ['rail (face|width|thickness|material|profile)', 'rivet nut', 'hole pitch', 'stand off the wall', 'lie flat on',
+            'wall (type|construction|anchor)']
     answer: >-
       The rail face is 40 mm wide and 2 mm steel, with M6 rivet nuts at 32 mm vertical pitch. The
       bracket's back face sits on the rail face and two ISO 4762 M6 screws go into the rivet nuts.

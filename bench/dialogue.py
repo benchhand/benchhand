@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 KINDS = ("question", "gate")
@@ -38,7 +38,15 @@ ASK_LINE = re.compile(
     r"^(?:please|reply|respond|confirm|approve|choose|select|pick|say|let me know|tell me)\b"
     r"|\b(?:do|can|could|would|will) you (?:approve|confirm)\b",
     re.IGNORECASE)
-SENTENCE_END = re.compile(r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\betc\.)(?<!\bvs\.)(?<!\bcf\.)(?<=[.!?])\s+|\n+")
+# A sentence ends at ".", "!" or "?", optionally followed by a closing bracket or quote, then whitespace.
+SENTENCE_BOUNDARY = re.compile(r"[.!?][\])\"'”’]*\s+")
+# Abbreviations whose full stop ends no sentence: matched case-insensitively, plus Fig./No. in their
+# capitalised form only, so "The answer is no." still ends its sentence.
+ABBREVIATIONS = frozenset({"e.g.", "i.e.", "etc.", "vs.", "cf.", "approx."})
+CASED_ABBREVIATIONS = frozenset({"Fig.", "Figs.", "No.", "Nos."})
+HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
+DECISION_LABEL = re.compile(r"^(?:decision for you|please choose|please decide|your decision|choose one)\s*:$", re.IGNORECASE)
+OPTION_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)")
 MARKUP = re.compile(r"^[\s>*#\-+|—–]*(?:\d+[.)]\s*)?|[*`]+")
 GATE_WORD = re.compile(r"\b(gate|freeze)\b", re.IGNORECASE)
 APPROVAL_ASK = re.compile(r"\bapprov(?:e|al)\b", re.IGNORECASE)
@@ -81,7 +89,7 @@ class Ask:
     intent: str | None
     kind: str | None
     profile: bool
-
+    options: tuple[str, ...] = ()
     @property
     def matched(self) -> bool:
         return self.intent is not None
@@ -180,29 +188,94 @@ def _clean(line: str) -> str:
     return MARKUP.sub("", line).strip()
 
 
-def asks_in_context(text: str) -> list[tuple[str, str | None]]:
-    """Question sentences and reply-requesting lines of the lead's reply, in order, each with its context:
-    the sentence before it for a follow-up ("Or kept out of git?"), or the last line that names a gate for
-    an approval request that does not ("Approve or name changes.")."""
-    asks: list[tuple[str, str | None]] = []
+def split_sentences(line: str) -> list[str]:
+    """The sentences of one line, not split after an abbreviation such as "e.g." or "Fig."."""
+    pieces, start = [], 0
+    for boundary in SENTENCE_BOUNDARY.finditer(line):
+        words = line[start:boundary.start() + 1].split()
+        last = words[-1] if words else ""
+        if last.lower() in ABBREVIATIONS or last in CASED_ABBREVIATIONS:
+            continue
+        pieces.append(line[start:boundary.end()].strip())
+        start = boundary.end()
+    pieces.append(line[start:].strip())
+    return [piece for piece in pieces if piece]
+
+
+@dataclass(frozen=True)
+class Found:
+    """One ask in the lead's text: its words, the text that gives it meaning, and a choice's options."""
+
+    text: str
+    context: str | None = None
+    options: tuple[str, ...] = ()
+
+
+def _decision_block(lines: Sequence[str], index: int) -> tuple[Found, int] | None:
+    """A "Decision for you:" or "Please choose:" label followed by option bullets: one ask, and the next line index."""
+    label = _clean(lines[index])
+    if not DECISION_LABEL.match(label):
+        return None
+    options: list[str] = []
+    cursor = index + 1
+    while cursor < len(lines):
+        line = lines[cursor]
+        bullet = OPTION_BULLET.match(line)
+        if bullet:
+            options.append(_clean(bullet.group(1)))
+        elif line.strip() and not options:
+            return None
+        elif line.strip() or options:
+            break
+        cursor += 1
+    if len(options) < 2:
+        return None
+    return Found(" | ".join([label, *options]), None, tuple(options)), cursor
+
+
+def find_asks(text: str) -> list[Found]:
+    """Question sentences, reply-requesting lines and decision blocks of the lead's reply, in order.
+
+    Headings are never asks, but a heading that names a gate is the context of an approval request below it.
+    A follow-up's context is the sentence before it ("Or kept out of git?"); an approval request that names
+    no gate takes the last line that does ("Approve or name changes.")."""
+    asks: list[Found] = []
     gate_line: str | None = None
-    for line in text.splitlines():
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        block = _decision_block(lines, index)
+        if block is not None:
+            found_block, index = block
+            asks.append(found_block)
+            continue
+        index += 1
         cleaned = _clean(line)
         if not cleaned:
             continue
-        pieces = [piece.strip() for piece in SENTENCE_END.split(cleaned) if piece.strip()]
-        found = [(index, piece) for index, piece in enumerate(pieces) if piece.endswith("?")]
+        if GATE_WORD.search(cleaned) and HEADING.match(line):
+            gate_line = cleaned
+        if HEADING.match(line):
+            continue
+        pieces = split_sentences(cleaned)
+        found = [(position, piece) for position, piece in enumerate(pieces) if piece.endswith("?")]
         lead_in = cleaned.endswith(":") and len(cleaned.split()) <= 3  # "Please answer:" introduces the asks below
         if not found and ASK_LINE.search(cleaned) and not lead_in:
             found = [(0, cleaned)]
-        for index, piece in found:
-            follow_up = index > 0 and (FOLLOW_UP.match(piece) is not None or len(piece.split()) <= 3)
-            context = pieces[index - 1] if follow_up else (gate_line if APPROVAL_ASK.search(piece) else None)
-            if piece not in (ask for ask, _context in asks):
-                asks.append((piece, context))
+        for position, piece in found:
+            follow_up = position > 0 and (FOLLOW_UP.match(piece) is not None or len(piece.split()) <= 3)
+            context = pieces[position - 1] if follow_up else (gate_line if APPROVAL_ASK.search(piece) else None)
+            if piece not in (ask.text for ask in asks):
+                asks.append(Found(piece, context))
         if GATE_WORD.search(cleaned):
             gate_line = cleaned
     return asks
+
+
+def asks_in_context(text: str) -> list[tuple[str, str | None]]:
+    """Each ask's words and context; see find_asks."""
+    return [(ask.text, ask.context) for ask in find_asks(text)]
 
 
 def extract_asks(text: str) -> list[str]:
@@ -242,7 +315,7 @@ def respond(script: Script, text: str, mode: str, can_stop: bool = True) -> Repl
     passes whether the record already has the version that gate approves, so a gate named too early
     is answered without ending the run.
     """
-    asks = tuple(classify(script, ask, line) for ask, line in asks_in_context(text))
+    asks = tuple(replace(classify(script, found.text, found.context), options=found.options) for found in find_asks(text))
     if not asks:
         return Reply(script.nudge, asks, "nudge", script.wait_s.get("nudge", 0.0), False)
     by_id = {intent.id: intent for intent in script.intents}

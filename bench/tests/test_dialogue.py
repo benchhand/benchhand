@@ -158,6 +158,81 @@ class AbbreviationTests(unittest.TestCase):
     def test_a_sentence_ending_in_a_period_still_splits_before_the_next_question(self) -> None:
         self.assertEqual(dialogue.extract_asks("The rail is bare. Which finish do you want?"), ["Which finish do you want?"])
 
+    def test_approx_fig_and_no_do_not_split_a_question(self) -> None:
+        for question in ("Is the wall approx. 2 mm or more?", "Is the wall APPROX. 2 mm or more?",
+                         "Does the bore in Fig. 3 need a chamfer?", "Is part No. 4 the lid?"):
+            with self.subTest(question=question):
+                self.assertEqual(dialogue.extract_asks(question), [question])
+
+    def test_a_lowercase_no_at_the_end_of_a_sentence_still_ends_it(self) -> None:
+        self.assertEqual(dialogue.extract_asks("The answer is no. Which colour?"), ["Which colour?"])
+
+    def test_regression_a_bracketed_aside_ending_in_a_full_stop_ends_its_sentence(self) -> None:
+        # Recorded print-in-place GROUND reply: "Size tolerance: ...? [±1 mm.] And what general tolerance should
+        # drawings state?" glued the bracketed suggestion onto the next question.
+        reply = dialogue.respond(case_script("print-in-place"), recorded_text("events-ground-print-in-place.jsonl"), "fixture")
+        tolerance = [ask for ask in reply.asks if "general tolerance" in ask.text]
+        self.assertEqual([(ask.text, ask.intent) for ask in tolerance],
+                         [("And what general tolerance should drawings state?", "accuracy")])
+        self.assertEqual(dialogue.extract_asks("The gap is 0.3 mm (ISO 2768-m.) Which finish?"), ["Which finish?"])
+
+
+class HeadingTests(unittest.TestCase):
+    def test_regression_a_markdown_heading_is_never_a_question(self) -> None:
+        # Recorded fdm-enclosure turn 2: "## Please confirm before L2" was taken for an unmatched question.
+        text = recorded_text("events-gate-fdm-enclosure-layout.jsonl")
+        self.assertNotIn("Please confirm before L2", dialogue.extract_asks(text))
+        self.assertEqual(dialogue.extract_asks("## Which variant do you prefer?\nThe scene is ready."), [])
+
+    def test_the_recorded_heading_at_a_gate_does_not_fail_the_gate(self) -> None:
+        text = recorded_text("events-gate-fdm-enclosure-layout.jsonl") + "\nDo you approve the LAYOUT freeze on v4?"
+        reply = dialogue.respond(case_script("fdm-enclosure"), text, "fixture", can_stop=True)
+        self.assertTrue(reply.at_gate)
+        self.assertFalse(reply.unmatched_at_gate)
+        self.assertEqual([ask.intent for ask in reply.asks], ["layout-freeze"])
+
+    def test_a_heading_still_names_the_gate_for_the_approval_request_below_it(self) -> None:
+        reply = dialogue.respond(case_script("wall-bracket"), "## Decision needed: LAYOUT freeze on v2\nApprove or name changes.",
+                                 "fixture", can_stop=True)
+        self.assertEqual([ask.intent for ask in reply.asks], ["layout-freeze"])
+
+
+class DecisionBlockTests(unittest.TestCase):
+    def test_regression_the_recorded_decision_block_is_one_question_with_its_options(self) -> None:
+        # Recorded wall-bracket turn 3 ends with "**Decision for you:**" and two option bullets, no "?";
+        # it went unanswered.
+        reply = dialogue.respond(case_script("wall-bracket"), recorded_text("events-decision-wall-bracket-commit.jsonl"),
+                                 "fixture", can_stop=True)
+        self.assertEqual(len(reply.asks), 1)
+        ask = reply.asks[0]
+        self.assertEqual((ask.intent, ask.matched), ("commit-timing", True))
+        self.assertEqual(len(ask.options), 2)
+        self.assertTrue(ask.options[0].startswith("Commit now with flow.stage: layout."))
+        self.assertTrue(ask.options[1].startswith("Commit at the end of L2."))
+        self.assertEqual(reply.kind, "question")
+
+    def test_a_decision_block_no_intent_matches_is_one_unmatched_question_answered_by_default(self) -> None:
+        for label in ("Decision for you:", "**Decision for you:**", "Please choose:", "**Please choose:**"):
+            with self.subTest(label=label):
+                text = f"The hinge can take two shapes.\n{label}\n- A barrel hinge.\n- A living hinge.\nThen I continue."
+                reply = dialogue.respond(SCRIPT, text, "bench")
+                self.assertEqual([(a.matched, a.options) for a in reply.asks], [(False, ("A barrel hinge.", "A living hinge."))])
+                self.assertEqual(reply.message, f"Answers from the user:\n- {SCRIPT.default}")
+
+    def test_a_question_inside_an_option_bullet_is_not_asked_twice(self) -> None:
+        text = "Please choose:\n- Keep the colour?\n- Change it?"
+        self.assertEqual(len(dialogue.respond(SCRIPT, text, "bench").asks), 1)
+
+
+class RoutingTests(unittest.TestCase):
+    def test_regression_every_q004_question_routes_to_environment(self) -> None:
+        # Recorded wall-bracket GROUND row Q-004 asks about solvents, the rail's coating and the bracket's
+        # anodising against corrosion; its finish question went to accuracy and the rail one to the rail answer.
+        text = recorded_text("events-ground-wall-bracket.jsonl")
+        row = next(line for line in text.splitlines() if "Q-004" in line)
+        reply = dialogue.respond(case_script("wall-bracket"), row, "fixture")
+        self.assertEqual([ask.intent for ask in reply.asks], ["environment", "environment", "environment"])
+
 
 class GateTests(unittest.TestCase):
     def test_regression_the_recorded_intent_gate_with_a_please_answer_lead_in_is_answered_not_failed(self) -> None:
