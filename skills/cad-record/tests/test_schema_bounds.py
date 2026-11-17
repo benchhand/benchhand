@@ -226,7 +226,8 @@ CASES: tuple[Case, ...] = (
     number(53, "weight", "requirements.schema.json", "/properties/preferences/items/properties/weight", "(0, 1000]",
            {"max": 100}),
     number(53, "min_visible_fraction", "requirements.schema.json",
-           "/properties/requirements/items/properties/visibility/items/properties/min_visible_fraction", "(0, 1]", None),
+           "/properties/requirements/items/properties/visibility/items/properties/min_visible_fraction", "(0, 1]", None,
+           default=0.5),
     number(54, "crank_radius_mm", "assembly.schema.json", "/$defs/mechanism/properties/crank_radius_mm", "(0, 1000]",
            {"max": 200}),
     number(54, "rod_length_mm", "assembly.schema.json", "/$defs/mechanism/properties/rod_length_mm", "(0, 1000]",
@@ -259,7 +260,7 @@ FACTS = {
     "calibration.overhang_angle", "calibration.min_wall", "calibration.deviation", "calibration.min_bed_contact_area", "nozzle_diameter", "layer_height",
     "hotend_max_temperature", "bed_max_temperature", "max_speed", "travel_x", "travel_y", "travel_z", "spindle_max_speed",
     "power", "pump_pressure", "press_brake_force", "modulus", "density", "temperature", "poisson_ratio", "min_clearance_mm",
-    "tol", "tol_plus", "tol_minus", "confidence", "weight", "min_visible_fraction", "crank_radius_mm", "rod_length_mm",
+    "tol", "tol_plus", "tol_minus", "confidence", "weight", "crank_radius_mm", "rod_length_mm",
     "period_deg", "mass_target", "bom.mass",
 }
 # An explicit override that has no default of its own: mesh_size_extent_ratio carries the default and mesh_size wins when set
@@ -329,8 +330,10 @@ def validator(case: Case) -> Any:
     return registry.ref_validator(registry.SCHEMAS, ref)
 
 
-def instances(case: Case, value: Any, unit: str | None = None) -> list[Any]:
-    """The documents that put `value` (in `unit`, default the canonical one) into the case's field."""
+def instances(case: Case, value: Any, unit: str | None = None, side: str | None = None, partner: float | None = None) -> list[Any]:
+    """The documents that put `value` (in `unit`, default the canonical one) into the case's field. For a quantity,
+    `side` ("lower" or "upper") gives one ordered interval whose other endpoint is `partner`, so a single endpoint
+    can be the only one outside its bound."""
     unit = unit or case.canon
     if case.shape == "pair":
         return [[value, 0], [0, value]]
@@ -339,17 +342,20 @@ def instances(case: Case, value: Any, unit: str | None = None) -> list[Any]:
         return [f"{value}x{value}", f"{value}x1600", f"1600x{value}"]
     if case.shape in ("quantity", "fact"):
         both = [{"value": value, "units": unit}, {"lower": value, "upper": value, "units": unit}]
+        if side:
+            ends = {"lower": value, "upper": partner} if side == "lower" else {"lower": partner, "upper": value}
+            both = [{**ends, "units": unit}]
         return both if case.shape == "quantity" else [{"status": "known", "value": item} for item in both]
     return [value]
 
 
-def accepted(case: Case, value: Any, unit: str | None = None) -> bool:
-    return all(validator(case).is_valid(item) for item in instances(case, value, unit))
+def accepted(case: Case, value: Any, unit: str | None = None, side: str | None = None, partner: float | None = None) -> bool:
+    return all(validator(case).is_valid(item) for item in instances(case, value, unit, side, partner))
 
 
-def rejected(case: Case, value: Any, unit: str | None = None) -> bool:
+def rejected(case: Case, value: Any, unit: str | None = None, side: str | None = None, partner: float | None = None) -> bool:
     """Whether the schema refuses every instance."""
-    return not any(validator(case).is_valid(item) for item in instances(case, value, unit))
+    return not any(validator(case).is_valid(item) for item in instances(case, value, unit, side, partner))
 
 
 def units_of(case: Case) -> dict[str, tuple[float, float]]:
@@ -366,11 +372,16 @@ def nudge(value: float, direction: int) -> float:
 
 
 def check_bounds(test: unittest.TestCase, case: Case, accept: Any, reject: Any, label: str = "") -> None:
-    """Runs the boundary matrix of `case` through `accept(value, unit)` and `reject(value, unit)`. Each hard bound
-    refuses a value just outside it and accepts one just inside. A bound that includes its own value accepts it. Other
-    units than the canonical one use a nudge, because their conversion is inexact."""
+    """Runs the boundary matrix of `case` through `accept(value, unit, side, partner)` and `reject(...)`. Each hard
+    bound refuses a value just outside it and accepts one just inside. A bound that includes its own value accepts it.
+    A quantity also gets ordered intervals: only its lower endpoint moves, then only its upper one, while the other
+    endpoint sits mid-range, so removing one bound cannot hide behind the other. Other units than the canonical one
+    use a nudge, because their conversion is inexact."""
     low, low_open, high, high_open = parse(case.bounds)
+    ordered = case.shape in ("quantity", "fact")
+    middle = (low + high) / 2 if low is not None and high is not None else (low + 1 if low is not None else high - 1)
     for unit in units_of(case):
+        partner = shifted(case, middle, unit)
         exact = unit in ("", case.canon)
         for bound, is_open, direction in ((low, low_open, -1), (high, high_open, 1)):
             if bound is None:
@@ -379,11 +390,15 @@ def check_bounds(test: unittest.TestCase, case: Case, accept: Any, reject: Any, 
             step = 1 if case.shape in ("int", "size") else None
             outside = edge + direction * step if step else nudge(edge, direction)
             inside = edge - direction * step if step else nudge(edge, -direction)
+            side = ("lower" if direction < 0 else "upper") if ordered else None
             with test.subTest(case.name, label=label, unit=unit, bound=bound):
                 test.assertTrue(reject(outside, unit or None), f"{outside} should be refused")
+                test.assertTrue(reject(outside, unit or None, side, partner), f"only the {side} endpoint {outside} should be refused")
                 if exact:
                     test.assertEqual(accept(edge, unit or None), not is_open, f"the bound {edge}")
+                    test.assertEqual(accept(edge, unit or None, side, partner), not is_open, f"the {side} endpoint at the bound {edge}")
                 test.assertTrue(accept(inside, unit or None), f"{inside} should be accepted")
+                test.assertTrue(accept(inside, unit or None, side, partner), f"the {side} endpoint {inside} should be accepted")
 
 
 class Rows(unittest.TestCase):
@@ -395,8 +410,8 @@ class Rows(unittest.TestCase):
     def test_a_value_just_outside_each_hard_bound_is_an_error_and_the_bound_itself_is_accepted(self) -> None:
         for case in CASES:
             if case.shape != "enum":
-                check_bounds(self, case, lambda value, unit, c=case: accepted(c, value, unit),
-                             lambda value, unit, c=case: rejected(c, value, unit))
+                check_bounds(self, case, lambda value, unit, side=None, partner=None, c=case: accepted(c, value, unit, side, partner),
+                             lambda value, unit, side=None, partner=None, c=case: rejected(c, value, unit, side, partner))
 
     def test_an_enum_field_accepts_its_choices_and_refuses_anything_else(self) -> None:
         for case in (c for c in CASES if c.shape == "enum"):
@@ -463,7 +478,20 @@ def listed_pointers() -> set[tuple[str, str]]:
                 found.add((case.schema, pointer))
         if case.shape == "pair":
             found.add((case.schema, f"{case.pointer}/items"))
+        if case.shape in ("quantity", "fact"):
+            found |= {(case.schema, pointer) for pointer in unit_branches(case)}
     return found | set(COVERED_BY)
+
+
+def unit_branches(case: Case) -> list[str]:
+    """The pointers of the value, lower and upper bounds that the boundary matrix exercises: the allOf branches
+    of the quantity definition whose unit the case converts."""
+    base = case.band_pointer or case.pointer
+    found = []
+    for index, branch in enumerate(node(case.schema, base).get("allOf", ())):
+        if branch.get("if", {}).get("properties", {}).get("units", {}).get("const") in units_of(case):
+            found += [f"{base}/allOf/{index}/then/properties/{key}" for key in ("value", "lower", "upper")]
+    return found
 
 
 class EveryField(unittest.TestCase):
@@ -479,8 +507,7 @@ class EveryField(unittest.TestCase):
             keys = (*self.KEYS, "enum") if path.name in SURFACES else self.KEYS
             for pointer, item in walk(document(path.name)):
                 if any(key in item for key in keys) and (path.name, pointer) not in NOT_IN_AUDIT:
-                    covered = any(path.name == schema and (pointer == own or pointer.startswith(own + "/")) for schema, own in listed)
-                    if not covered:
+                    if (path.name, pointer) not in listed:
                         unlisted.append(f"{path.name}#{pointer}")
         self.assertEqual(unlisted, [], "add each field to CASES, or to NOT_IN_AUDIT with its reason")
 
@@ -584,9 +611,10 @@ class Documents(unittest.TestCase):
         return self.valid(schema, document)
 
     def run_routes(self, case: Case, label: str, edit: Any) -> None:
-        def verdicts(value: float, unit: str | None) -> list[bool]:
-            return [self.through(case, item, edit) for item in instances(case, value, unit)]
-        check_bounds(self, case, lambda value, unit: all(verdicts(value, unit)), lambda value, unit: not any(verdicts(value, unit)), label)
+        def verdicts(value: float, unit: str | None, side: str | None, partner: float | None) -> list[bool]:
+            return [self.through(case, item, edit) for item in instances(case, value, unit, side, partner)]
+        check_bounds(self, case, lambda value, unit, side=None, partner=None: all(verdicts(value, unit, side, partner)),
+                     lambda value, unit, side=None, partner=None: not any(verdicts(value, unit, side, partner)), label)
 
     def test_every_capability_parameter_is_bounded_in_a_profile_and_in_a_tool(self) -> None:
         cases = [c for c in CASES if c.schema == CAPABILITIES and c.shape == "fact"]
@@ -706,8 +734,8 @@ class Reached(unittest.TestCase):
                     for value in ("bogus", *case.refused):
                         self.assertTrue(bound_errors(root, nest(path, value), path), value)
                 continue
-            check_bounds(self, case, lambda value, unit, f=refused: not any(f(value, unit)),
-                         lambda value, unit, f=refused: all(f(value, unit)), label=root)
+            check_bounds(self, case, lambda value, unit, side=None, partner=None, f=refused: not any(f(value, unit)),
+                         lambda value, unit, side=None, partner=None, f=refused: all(f(value, unit)), label=root)
 
 
 REACH: dict[str, dict[tuple[str, str], tuple[Any, ...]]] = {}
