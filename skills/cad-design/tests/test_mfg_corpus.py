@@ -494,6 +494,83 @@ class DocRecordLeakTests(unittest.TestCase):
                 self.assertEqual("groove" in text, not mutant)
 
 
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class DocVerdictPathTests(unittest.TestCase):
+    """The verdicts of the doc_* families come from the packet and evidence, so each helper changes its answer when what it
+    reads changes, and it refuses a packet the schema rejects. A constant verdict or a swallowed error cannot pass these."""
+
+    def test_the_route_obligations_judge_the_four_manufacturing_defects(self) -> None:
+        for pair_id in ("fdm_orientation", "fdm_supports", "cnc_setup", "cnc_workholding"):
+            with self.subTest(pair=pair_id):
+                pair = family_pair("doc_manufacturing", pair_id)
+                self.assertIsNone(pair.known_gap)
+                self.assertEqual((pair.run(True), pair.run(False)), ("unknown", "pass"))
+
+    def test_a_failing_joint_fact_of_the_record_fails_the_joint_verdict(self) -> None:
+        import doc_support
+
+        fx = doc_support.fixtures()
+        short = {"criterion": fx.criterion("edge_distance", ">=", 4.5, "mm", source=fx.source("standard", "TST-STD-2 insert edge distance")),
+                 "distance": fx.known(fx.quantity(1.0, "mm"))}
+
+        def change(hw: Path, mutant: bool) -> None:
+            if mutant:
+                doc_support.edit(hw, "assembly.yaml", lambda assembly: doc_support.operation(
+                    assembly, "heat_set_socket_insert").update(edge_distance=short))
+
+        run = doc_support.lamp_verdict(change, "assembly.joint@op:heat_set_socket_insert")
+        self.assertEqual((run(True), run(False)), ("fail", "unknown"))
+
+    def bought(self, **purchase: object) -> dict:
+        import doc_support
+
+        fx = doc_support.fixtures()
+        facts = {"identity": fx.known("TST-BRG 608"),
+                 "specification": fx.known("TST ISO 15 608", "standard", [fx.source("standard", "TST ISO 15")]),
+                 "ratings": fx.known("TST C 3.3 kN", "supplier_typical", [fx.source("datasheet", "TST bearing")]),
+                 "availability": fx.known("TST stock item")}
+        facts.update(purchase)
+        part = doc_support.made_part("TST-0003", [fx.operation("buy", "purchased", purchase=facts)], "purchased", None)
+        part.update(make_buy="buy", procurement={"mode": "catalog"})
+        part["intent"]["material_profile"] = fx.not_applicable("catalogue item")
+        return part
+
+    def test_the_purchase_verdict_follows_the_facts_of_the_record(self) -> None:
+        import doc_support
+
+        fx = doc_support.fixtures()
+        known = doc_support.route_verdict(self.bought(), "purchase.identity@")
+        unknown = doc_support.route_verdict(self.bought(identity=fx.unknown("not recorded")), "purchase.identity@")
+        self.assertEqual((known, unknown), ("pass", "unknown"))
+
+    def test_a_purchase_packet_the_schema_rejects_is_refused(self) -> None:
+        import types
+
+        import doc_support
+
+        pc = doc_support.process_checks()
+        broken = types.SimpleNamespace(packet=lambda dependencies: {"schema_version": 99})
+        with mock.patch.object(pc, "assess", lambda *args, **kwargs: broken), self.assertRaises(corpus.Rejected):
+            doc_support.route_verdict(self.bought(), "purchase.identity@")
+
+    def test_purchase_verdict_runs_from_a_process_that_only_imports_support(self) -> None:
+        """#106 calls it without doc_support, so it sets up its own import path."""
+        script = (
+            "import pathlib, sys, tempfile\n"
+            f"sys.path.insert(0, {str(CORPUS)!r})\n"
+            "import support\n"
+            "fx = support.load('cad_record_mi_fixtures', support.SKILLS / 'cad-record' / 'tests' / 'fixtures' / 'manufacturing_intent.py')\n"
+            "ev = support.load('cad_record_evidence', support.SKILLS / 'cad-record' / 'scripts' / 'evidence.py')\n"
+            "with tempfile.TemporaryDirectory() as tmp:\n"
+            "    hw = fx.write_record(pathlib.Path(tmp) / 'hw', fx.record())\n"
+            "    record, _ = ev.mi.check_record(hw)\n"
+            "print(support.purchase_verdict(record, 'route.consistency@'))\n")
+        done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False, cwd=tempfile.gettempdir(),
+                              env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"})
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        self.assertEqual(done.stdout.strip(), "unknown")
+
+
 class DependencyGuardTests(unittest.TestCase):
     """A family whose tool is absent skips its pairs: neither an error nor a verdict."""
 

@@ -175,11 +175,11 @@ def purchase_verdict(record: Any, *prefixes: str) -> Outcome:
     `process.cnc.` and the like) for the parts of `record`. The path is the one the process checks take, without geometry: they assess
     the record into the packet, the schema check validates the packet, then cad-record evidence assesses it. An
     obligation that needs a part's geometry stays unknown, as it does for a build with none."""
-    import process_checks as pc
-
     for folder in (SKILLS / "cad-design" / "scripts", SKILLS / "cad-model" / "scripts"):
         if str(folder) not in sys.path:
             sys.path.insert(0, str(folder))
+    import process_checks as pc
+
     packet = pc.assess(record, {}, today=TODAY).packet({"version_manifest": MANIFEST_SHA256, "producer_code": "0" * 64})
     return release_verdict(record, packet, *prefixes, today=TODAY)
 
