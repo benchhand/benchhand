@@ -106,14 +106,16 @@ class LampArmTests(unittest.TestCase):
                 self.assertLessEqual(len(agent.stdout), len(plain.stdout) + 1)
 
     def test_the_json_flag_prints_full_json_though_the_environment_says_compact(self) -> None:
-        # whether lamp-arm validates is the example's business: assert the flag's effect, not the verdict
-        plain = self.tool(VALIDATE, str(self.hw), env=PLAIN_ENV)
-        agent = self.tool(VALIDATE, str(self.hw), "--json", env=AGENT_ENV)
+        # check's result is large, so compact mode summarizes it whatever lamp-arm's verdict; a full envelope
+        # under CAD_OUTPUT=compact can then only come from --json
+        args = ("check", "v1", "--hw", str(self.hw), "--no-cache")
+        plain = self.tool(CAD_MODEL, *args, env=PLAIN_ENV)
+        control = self.tool(CAD_MODEL, *args, env=AGENT_ENV)
+        self.assertIn("full JSON: ", control.stdout)
+        agent = self.tool(CAD_MODEL, *args, "--json", env=AGENT_ENV)
         self.assertEqual(agent.returncode, plain.returncode, agent.stderr[-2000:])
-        self.assertNotIn("full JSON: ", agent.stdout)  # the whole envelope, not a summary that points at it
-        payload = result_payload(agent.stdout)
-        self.assertEqual(without_timings(payload), without_timings(result_payload(plain.stdout)))
-        self.assertEqual(payload["ok"], agent.returncode == 0)
+        self.assertNotIn("full JSON: ", agent.stdout)
+        self.assertEqual(without_timings(result_payload(agent.stdout)), without_timings(result_payload(plain.stdout)))
 
     def sealed(self, hw: Path) -> dict[str, str]:
         """sha256 of every file the build sealed under hw/versions, by path below hw/."""
