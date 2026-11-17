@@ -298,7 +298,9 @@ def select_bundle(release: Release, kind: str, subject: str, version_sha: str, w
         return
     problems = layout.verify(directory)
     if problems:
-        release.refuse(rel, "tampered", f"{rel} fails its manifest: {'; '.join(problems)}")
+        # a member that is gone leaves the bundle unproven; anything else is tampering
+        code = "missing_member" if all(problem.kind == "missing" for problem in problems) else "tampered"
+        release.refuse(rel, code, f"{rel} fails its manifest: {'; '.join(problems)}")
         return
     manifest = _json(directory / MANIFEST)
     if manifest.get("layout") != f"bundle.{kind}" or manifest.get("path") != rel:
@@ -609,7 +611,8 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
     target_rel = layout.load().path("release.package", {"REV": rev})
     package = layout.locate(hw, target_rel)
     report: dict[str, Any] = {"rev": rev, "version": version, "package": target_rel}
-    problems = layout.verify(package) if package.is_dir() and not package.is_symlink() else ["it is not a directory"]
+    seal = layout.verify(package) if package.is_dir() and not package.is_symlink() else []
+    problems: list[str] = list(seal) if package.is_dir() and not package.is_symlink() else ["it is not a directory"]
     manifest = _json(package / MANIFEST) if not problems else None
     frozen = manifest.get("frozen") if isinstance(manifest, dict) else None
     schema = manifest.get("schema_version", 1) if isinstance(manifest, dict) else None
@@ -625,6 +628,8 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
         finding = validate.finding(target_rel, f"{target_rel} exists but is not the sealed release of {version} approved "
                                                f"by {decision}: {'; '.join(problems)}; a used revision is never overwritten",
                                    code="release.exists")
+        if seal:  # what each seal problem is about: a missing member can be restored, a change cannot
+            report["seal_problems"] = [{"kind": p.kind, "member": p.member, "message": p.message} for p in seal]
         return 1, {**report, "findings": [finding], "status": "refused"}
     return 0, {**report, "already_sealed": True, "manifest_version": schema, "manifest_sha256": sha256(package / MANIFEST),
                "status": "released"}

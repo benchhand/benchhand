@@ -592,6 +592,19 @@ class Refusal(ReleaseCase):
         write(hw / "drawings" / "v1" / "LMP-0002" / "sheet-1.svg", "edited\n")
         self.refused(hw, "hw/drawings/v1/LMP-0002", "tampered", "sheet-1.svg changed after it was sealed")
 
+    def test_a_bundle_missing_a_member_refuses_as_missing_member_and_any_other_seal_problem_as_tampered(self) -> None:
+        cases = {
+            "missing": (lambda b: (b / "sheet-1.svg").unlink(), "missing_member", "sheet-1.svg is listed but missing"),
+            "unlisted": (lambda b: write(b / "sheet-9.svg", "extra\n"), "tampered", "sheet-9.svg is not in the manifest"),
+            "link": (lambda b: (b / "alias.svg").symlink_to(b / "sheet-1.svg"), "tampered", "alias.svg is a link"),
+            "malformed": (lambda b: write(b / "manifest.json", "{}\n"), "tampered", "has no files inventory"),
+        }
+        for kind, (damage, code, text) in cases.items():
+            with self.subTest(kind):
+                hw = self.project()
+                damage(hw / "drawings" / "v1" / "LMP-0002")
+                self.refused(hw, "hw/drawings/v1/LMP-0002", code, text)
+
     def test_a_missing_drawing_refuses(self) -> None:
         hw = self.project(skip_bundles=("LMP-0006",))
         self.refused(hw, "hw/drawings/v1/LMP-0006", "missing", "LMP-0006 declares drawing intent")
@@ -777,6 +790,17 @@ class Acceptance(ReleaseCase):
         path.write_text(json.dumps(legacy), encoding="utf-8")
         code, report = release.sealed(hw, "A", "v1", "DR-005")
         self.assertEqual((code, report["manifest_version"]), (0, 2))
+
+    def test_an_existing_package_that_fails_its_seal_names_the_kind_and_member_of_each_problem(self) -> None:
+        hw = self.project()
+        self.assertEqual(self.release(hw)[0], 0)
+        package = hw / "releases" / "A"
+        (package / "bom.csv").unlink()
+        write(package / "notes.txt", "added after sealing\n")
+        code, report = release.sealed(hw, "A", "v1", "DR-005")
+        self.assertEqual((code, report["status"], report["findings"][0]["code"]), (1, "refused", "release.exists"))
+        self.assertEqual([(p["kind"], p["member"]) for p in report["seal_problems"]],
+                         [("missing", "bom.csv"), ("unlisted", "notes.txt")])
 
     def test_an_open_or_stale_selection_refuses_the_release(self) -> None:
         hw = self.project(before_build=open_selection)
