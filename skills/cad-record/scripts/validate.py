@@ -43,6 +43,7 @@ def _load_module(name: str, path: Path) -> Any:
 coupling = _load_module("cad_motion_coupling", Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "coupling.py")
 # The canonical hw/ layout (layout.json beside schemas/), the one reader of where record and output files live.
 layout = _load_module("cad_record_layout", Path(__file__).resolve().parent / "layout.py")
+emit = _load_module("cad_record_emit", Path(__file__).resolve().parent / "emit.py")
 # The record version 2 manufacturing intent (the one reader of use case, routes and profiles) and the
 # evidence model on it: waivers, typed verification and the acceptance digest.
 intent = _load_module("cad_record_manufacturing_intent", Path(__file__).resolve().parent / "manufacturing_intent.py")
@@ -1238,11 +1239,13 @@ def main() -> int:
     parser.add_argument("--migration-plan", action="store_true",
                         help="print a read-only move and rebuild plan for every stray, legacy or damaged path")
     parser.add_argument("--report", type=Path, help="with --migration-plan: write the plan here, under .cad-work/")
+    parser.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
     args = parser.parse_args()
     if args.report is not None and not args.migration_plan:
         parser.error("--report needs --migration-plan")
     if not args.project_dir.exists() or not args.project_dir.is_dir():
-        print(json.dumps({"ok": False, "findings": [finding(str(args.project_dir), "project directory does not exist")]}))
+        emit.emit({"ok": False, "findings": [finding(str(args.project_dir), "project directory does not exist")]},
+                  tool="validate", name="validate", code=2, json_flag=args.json)
         return 2
     if args.migration_plan:
         hw = (args.project_dir / "hw" if (args.project_dir / "hw").is_dir() else args.project_dir).resolve()
@@ -1251,25 +1254,33 @@ def main() -> int:
             try:
                 target = layout.scratch_path(hw, args.report, "--report")
             except layout.LayoutError as error:
-                print(json.dumps({"ok": False, "findings": [finding(str(args.report), str(error))]}))
+                emit.emit({"ok": False, "findings": [finding(str(args.report), str(error))]},
+                          tool="validate", name="validate", code=2, json_flag=args.json)
                 return 2
-        text = json.dumps(migration_plan(args.project_dir), indent=2)
+        plan = migration_plan(args.project_dir)
         if target is None:
-            print(text)
+            emit.emit(plan, tool="validate --migration-plan", name="migration-plan", code=0, json_flag=args.json,
+                      scratch=emit.work_dir(hw))
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text + "\n", encoding="utf-8")
-            print(json.dumps({"report": layout.relative(hw, target)}))
+            target.write_text(emit.envelope_text(plan) + "\n", encoding="utf-8")
+            emit.emit({"report": layout.relative(hw, target)}, tool="validate --migration-plan", name="migration-plan",
+                      code=0, json_flag=args.json)
         return 0
     findings = validate_project(args.project_dir)
     failures = blocking(findings)
-    print(json.dumps({"ok": not failures, "findings": findings}, indent=2))
-    return 1 if failures else 0
+    report = {"ok": not failures, "findings": findings}
+    code = 1 if failures else 0
+    hw = args.project_dir / "hw" if (args.project_dir / "hw").is_dir() else args.project_dir
+    emit.emit(report, tool="validate", name="validate", code=code, scratch=emit.work_dir(hw), json_flag=args.json,
+              facts={"warnings": len(findings) - len(failures)}, blocking=failures)
+    return code
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        print(json.dumps({"ok": False, "findings": [finding("validate.py", f"infrastructure error: {error}")]}))
+        emit.emit({"ok": False, "findings": [finding("validate.py", f"infrastructure error: {error}")]},
+                  tool="validate", name="validate", code=2)
         raise SystemExit(2)

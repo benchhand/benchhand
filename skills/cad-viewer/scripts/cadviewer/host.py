@@ -174,7 +174,7 @@ class ViewState:
 
 def _load(hw: str, version: str, check_path: str | None) -> Loaded:
     loaded = record.load_version(Path(hw), version)
-    check = record.read_json(Path(check_path)) if check_path else None
+    check = record.read_check(Path(check_path)) if check_path else None
     panel = record.panel_model(loaded, check)
     rows = loaded.nominal_rows()
     shown = {oid: motion.rigid_from_rows(rows[oid]) for oid in rows}

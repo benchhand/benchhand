@@ -1,11 +1,15 @@
-"""Load a script by path for a test. Tests put this directory on sys.path (see any skills/*/tests file)."""
+"""Shared test helpers: load a script by path, and read a producer's enveloped stdout.
+
+Tests put this directory on sys.path (see any skills/*/tests file)."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 
 def load_fresh(name: str, path: Path) -> ModuleType:
@@ -22,3 +26,12 @@ def load_module(name: str, path: Path) -> ModuleType:
     """One module per name for the whole test run: scripts load their siblings under these names, so a second
     copy would split their exception and record classes."""
     return sys.modules[name] if name in sys.modules else load_fresh(name, path)
+
+def result_payload(stdout: str) -> Any:
+    """The payload of a producer's stdout: parse the tool-result envelope, check its shape, return `payload`."""
+    document = json.loads(stdout)
+    assert isinstance(document, dict), f"stdout is not a JSON object: {stdout[:200]!r}"
+    assert set(document) == {"schema", "status", "findings", "payload"}, f"not a tool-result envelope: {sorted(document)}"
+    assert str(document["schema"]).startswith("tool-result/"), document["schema"]
+    assert isinstance(document["status"], str) and isinstance(document["findings"], list), document
+    return document["payload"]

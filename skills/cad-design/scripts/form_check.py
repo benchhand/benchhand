@@ -73,7 +73,7 @@ Checks (each failure is one `findings` entry):
     cnc_internal_radius) are universal heuristics: diagnostics with `blocking: false` (decision 3).
     Only brep_invalid, step_readback and joint_bore_missing carry `blocking: true`.
 
-stdout: JSON {status, fidelity, parts, joints, findings[, version, manufacturing]}; `manufacturing` holds
+stdout: JSON in the tool-result envelope (cad-record emit.py) whose payload is {status, fidelity, parts, joints, findings[, version, manufacturing]}; `manufacturing` holds
 the packet's status, complete, bundle, outcome counts, open obligations and its major and critical
 findings. stderr: diagnostics.
 Exit 0 = no blocking finding and (--version) a passing packet, 1 = a blocking finding or a failing,
@@ -103,6 +103,21 @@ BLOCKING_CHECKS = frozenset({"brep_invalid", "step_readback", "joint_bore_missin
 
 POSE_PATH = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "pose.py"
 CAD_MODEL_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-model" / "scripts"
+
+
+def load_emit() -> Any:
+    """cad-record's output emitter, loaded by path: every skill sits beside cad-record in an installed tree."""
+    name = "cad_record_emit"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "emit.py")
+        assert spec is not None and spec.loader is not None
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+emit = load_emit()
 KERNEL_FACTS = "build.json"
 FIDELITY = ("F0", "F1", "F2", "F3")
 BLOCK_PLANAR_FRACTION = 0.80
@@ -1281,11 +1296,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replace", action="store_true", help="with --version: retain and replace a bundle of another recipe")
     parser.add_argument("--out", type=Path, help="with --version: write the packet to this .cad-work path instead of publishing")
     parser.add_argument("--on", type=date.fromisoformat, help="with --version: the date calibrations must be valid on (default today)")
+    parser.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
     args = parser.parse_args(argv)
     if args.version is None and (args.replace or args.out or args.on):
         parser.error("--replace, --out and --on need --version")
     pose = load_pose()
     sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
+
+    def fail(error: Exception, named: bool = False) -> int:
+        message = f"{type(error).__name__}: {error}" if named else str(error)
+        emit.emit({"status": "error", "error": message}, tool="form_check", name="form_check", code=2, json_flag=args.json)
+        return 2
+
     try:
         with pose.stdout_to_stderr():
             if args.version is None:
@@ -1294,18 +1316,22 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 report, code = check_version(args, pose)
     except (pose.MotionError, RecordError) as error:
-        print(json.dumps({"status": "error", "error": str(error)}))
-        return 2
+        return fail(error)
     except Exception as error:
         layout, packets = sys.modules.get("cad_record_layout"), sys.modules.get("cad_record_check_packet")
         if (layout is not None and isinstance(error, layout.LayoutError)) or (
                 packets is not None and isinstance(error, packets.PacketError)):
-            print(json.dumps({"status": "error", "error": str(error)}))
-            return 2
+            return fail(error)
         traceback.print_exc(file=sys.stderr)
-        print(json.dumps({"status": "error", "error": f"{type(error).__name__}: {error}"}))
-        return 2
-    print(json.dumps(report, indent=2))
+        return fail(error, named=True)
+    manufacturing = report.get("manufacturing") or {}
+    blocking = [*emit.blocking_of(report), *manufacturing.get("problems", []),
+                *manufacturing.get("findings", [])]
+    emit.emit(report, tool="form_check", name="form_check", code=code, scratch=emit.work_dir(args.hw),
+              json_flag=args.json,
+                      facts={"fidelity": report.get("fidelity"), "version": report.get("version"),
+                             "manufacturing": manufacturing.get("status"), "packet": manufacturing.get("bundle")},
+                      blocking=blocking)
     return code
 
 

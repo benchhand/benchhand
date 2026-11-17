@@ -54,7 +54,7 @@ store gc removes from the part store (hw/.cad/parts, hw/.cad/builds) every objec
       release manifest references and no build record of a referenced output needs, and every other
       build record; it reports the bytes freed. --dry-run removes nothing.
 
-stdout: one JSON document. stderr: diagnostics.
+stdout: one JSON document in the tool-result envelope (cad-record emit.py; --out files hold it too). stderr: diagnostics.
 Exit codes: 0 pass, 1 a part model or a manufacturing output failed (run) or a blocking check failed
 (check), 2 usage or infrastructure error.
 """
@@ -62,6 +62,7 @@ Exit codes: 0 pass, 1 a part model or a manufacturing output failed (run) or a b
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 import traceback
@@ -69,6 +70,21 @@ from pathlib import Path
 from typing import Any, cast
 
 from cadmodel import build
+
+
+def load_emit() -> Any:
+    """cad-record's output emitter, loaded by path: every skill sits beside cad-record in an installed tree."""
+    name = "cad_record_emit"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "emit.py")
+        assert spec is not None and spec.loader is not None
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+emit = load_emit()
 
 LIFECYCLE_SCRIPT = (
     Path(__file__).resolve().parents[2]
@@ -231,6 +247,8 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="report what gc would remove; remove nothing",
     )
+    for command in sub.choices.values():
+        command.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
     return root
 
 
@@ -302,10 +320,10 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001 - an unexpected failure is no result, never a check failure
         traceback.print_exc()
         return 2
-    text = json.dumps(result, indent=2)
-    if getattr(args, "out", None):
-        args.out.write_text(text + "\n", encoding="utf-8")
-    print(text)
+    out = getattr(args, "out", None) or None
+    hw = getattr(args, "hw", None) or Path.cwd() / "hw"
+    emit.emit(result, tool=f"cad_model {args.command}", name=f"cad_model-{args.command}", code=code,
+              scratch=emit.work_dir(hw), out=out, facts={"label": result.get("label")}, json_flag=args.json)
     return code
 
 

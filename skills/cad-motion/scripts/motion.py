@@ -37,7 +37,7 @@ on the same frames: FreeCAD solves the coupled record and every joint must agree
 (crosscheck.json, evidence/motion.FCStd). Without --out-dir the files publish as the immutable
 bundle hw/motion/vN/<case>/; the same recipe reuses it, another needs --replace.
 
-stdout: JSON. Exit 0 = pass or flagged (a declared partial plan), 1 = a coverage gap or limit
+stdout: JSON in the tool-result envelope (cad-record emit.py). Exit 0 = pass or flagged (a declared partial plan), 1 = a coverage gap or limit
 finding, a cross-check deviation or a render parity failure (nothing published), 2 = a plan, usage
 or infrastructure error, or a cross-check without a result.
 """
@@ -80,6 +80,7 @@ def _load(name: str, path: Path) -> Any:
 pose = _load("cad_motion_pose", HERE.with_name("pose.py"))
 plan = _load("cad_motion_plan", HERE.with_name("plan.py"))
 motion_glb = _load("cad_motion_glb", HERE.with_name("motion_glb.py"))
+emit = _load("cad_record_emit", SKILLS / "cad-record" / "scripts" / "emit.py")  # the shared output emitter
 LAYOUT = pose.LAYOUT
 
 OUTPUTS = ("glb", "sheet", "video", "frames")
@@ -213,13 +214,14 @@ def _run_json(command: list[str], log: Path, timeout: float, what: str) -> tuple
     """Run a sibling script in its own uv environment; (exit code, its JSON stdout); stderr goes to `log`."""
     try:
         with log.open("w", encoding="utf-8") as stderr:
-            proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=stderr, text=True, timeout=timeout)
+            proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=stderr, text=True, timeout=timeout,
+                                  env=emit.json_env())  # this parser needs the full JSON
     except subprocess.TimeoutExpired as error:
         raise pose.MotionError(f"{what} did not finish within {timeout} s (log: {log})") from error
     except FileNotFoundError as error:
         raise pose.MotionError(f"{what}: uv is not on PATH") from error
     try:
-        return proc.returncode, json.loads(proc.stdout)
+        return proc.returncode, emit.unwrap(json.loads(proc.stdout))
     except json.JSONDecodeError:
         tail = "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-15:])
         raise pose.MotionError(f"{what} exited {proc.returncode} without a JSON result (log: {log}):\n{tail}") from None
@@ -350,8 +352,10 @@ def command_plan(args: argparse.Namespace) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(frames_document(ctx, effective, frames)) + "\n", encoding="utf-8")
         out["frames_out"] = str(target)
-    print(json.dumps(out, indent=2))
-    return 1 if report["status"] == "fail" else 0
+    code = 1 if report["status"] == "fail" else 0
+    blocking = [*report["limit_findings"], *report["gaps"]] if report["status"] == "fail" else []
+    _emit(out, ctx.hw, "plan", code, args.json, blocking=blocking)
+    return code
 
 
 def _recipe(ctx: Context, effective: Mapping[str, Any], outputs: list[str], size: list[int],
@@ -411,7 +415,7 @@ def command_render(args: argparse.Namespace) -> int:
         if reused is not None:
             result = json.loads((reused / "result.json").read_text(encoding="utf-8"))
             result.update(bundle=str(reused), reused=True)
-            print(json.dumps(result, indent=2))
+            _emit(result, ctx.hw, "render", 0, args.json)
             return 0
     work = ctx.hw.parent / ".cad-work" / "motion" / f"{effective['case']}-{uuid.uuid4().hex[:12]}"
     work.mkdir(parents=True)
@@ -486,8 +490,18 @@ def command_render(args: argparse.Namespace) -> int:
     shutil.rmtree(work, ignore_errors=True)
     result.update(published)
     result["timings_s"] = {**timings, "total": round(time.monotonic() - wall, 3)}
-    print(json.dumps(result, indent=2))
+    _emit(result, ctx.hw, "render", 0, args.json)
     return 0
+
+
+def _emit(result: Mapping[str, Any], hw: Path | None, command: str, code: int, json_flag: bool,
+          blocking: Any = None) -> None:
+    """Print a plan or render result: in full, or as a summary of it in compact mode (cad-record emit.py)."""
+    facts = {"version": result.get("version"), "case": result.get("case"), "summary": result.get("summary"),
+             "bundle": result.get("bundle"), "error": result.get("error")}
+    scratch = None if hw is None else emit.work_dir(hw)
+    emit.emit(result, tool=f"motion {command}", name=f"motion-{command}", code=code, scratch=scratch, facts=facts,
+              blocking=blocking, json_flag=json_flag)
 
 
 def place(ctx: Context, files: Mapping[str, Path], result: Mapping[str, Any], params: Mapping[str, str],
@@ -517,6 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("plan", "render"):
         command = sub.add_parser(name)
         command.add_argument("--hw", type=Path, required=True, help="hardware design record directory (hw/)")
+        command.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
         command.add_argument("--version", type=pose._version, required=True, metavar="vN|latest")
         source = command.add_mutually_exclusive_group()
         source.add_argument("--case", help="default (generated) or an authored hw/motion/cases/<case>")
@@ -537,13 +552,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return command_plan(args) if args.command == "plan" else command_render(args)
     except Failed as failure:
-        print(json.dumps(failure.report, indent=2))
+        _emit(failure.report, args.hw, args.command, 1, args.json)
         return 1
     except plan.PlanError as error:
-        print(json.dumps({"status": "error", "problems": error.problems}, indent=2))
+        _emit({"status": "error", "problems": error.problems}, None, args.command, 2, args.json)
         return 2
     except (pose.MotionError, motion_glb.GlbError, OSError, LAYOUT.LayoutError, LAYOUT.PublishConflict) as error:
-        print(json.dumps({"status": "error", "error": str(error)}, indent=2))
+        _emit({"status": "error", "error": str(error)}, None, args.command, 2, args.json)
         return 2
 
 

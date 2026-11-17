@@ -89,6 +89,20 @@ def load_layout() -> Any:
     return sys.modules[name]
 
 
+def load_emit() -> Any:
+    """cad-record's output emitter, for the env of the tools whose JSON this script parses."""
+    name = "cad_record_emit"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, CAD_RECORD_SCRIPTS / "emit.py")
+        assert spec is not None and spec.loader is not None
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+emit = load_emit()
+
+
 layout = load_layout()
 # hw/<kind>/vN/: every version-bound bundle (cad-record layout bundle.*: checks, drawings, renders, captures,
 # motion, analysis) is generated output bound to a version; case definitions beside them (motion/cases/,
@@ -195,11 +209,11 @@ def run_tool(argv: list[str], log: Path) -> tuple[int, dict[str, Any] | None]:
     try:
         with log.open("w", encoding="utf-8") as stderr:
             done = subprocess.run(scriptenv.script_command(Path(argv[0]), *argv[1:]),
-                                  stdout=subprocess.PIPE, stderr=stderr, text=True)
+                                  stdout=subprocess.PIPE, stderr=stderr, text=True, env=emit.json_env())  # this parser needs the full JSON
     except FileNotFoundError as error:
         raise UsageError("uv is not on PATH") from error
     try:
-        return done.returncode, json.loads(done.stdout)
+        return done.returncode, emit.unwrap(json.loads(done.stdout))
     except ValueError:
         with log.open("a", encoding="utf-8") as stderr:
             stderr.write(done.stdout)

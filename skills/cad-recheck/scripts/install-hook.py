@@ -122,7 +122,7 @@ def install(project: Path, source: Path, stamp_source: Path, *, force: bool = Fa
     shutil.copyfile(record_root / "scripts" / "validate.py", hook_layout / "scripts" / "validate.py")
     # validate.py's sibling imports: the record-owned, CAD-kernel-free module closure the stamp reads through
     for module in ("assembly_data.py", "assembly_operations.py", "design_rules.py", "manufacturing_intent.py",
-                   "evidence.py", "impact.py", "selection.py", "schema_registry.py", "yaml_loader.py"):
+                   "evidence.py", "impact.py", "selection.py", "schema_registry.py", "yaml_loader.py", "emit.py"):
         shutil.copyfile(record_root / "scripts" / module, hook_layout / "scripts" / module)
     hook.chmod(hook.stat().st_mode | 0o111)
     stamp.chmod(stamp.stat().st_mode | 0o111)
