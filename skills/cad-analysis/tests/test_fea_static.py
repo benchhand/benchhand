@@ -420,6 +420,30 @@ class StaticFEAContracts(unittest.TestCase):
         self.assertEqual(job_of(script)["ccx_environment"], {"CCX_NPROC_EQUATION_SOLVER": "1",
                                                              "CCX_NPROC_STIFFNESS": "1", "CCX_NPROC_RESULTS": "1"})
 
+    def test_a_job_stopped_while_it_writes_its_phase_leaves_no_partial_phase_file(self) -> None:
+        # The parent reads the phase file after it kills a timed-out job, so the job must replace it whole.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            freecad = root / "freecadcmd"
+            freecad.write_text(f"""#!{sys.executable}
+import json, runpy, sys
+from unittest import mock
+for name in ("FreeCAD", "Part", "Import", "ObjectsFem", "femmesh", "femmesh.gmshtools", "femtools", "femtools.ccxtools"):
+    sys.modules[name] = mock.MagicMock()
+def dump(obj, handle, **kwargs):
+    handle.write('{{"pha')
+    handle.flush()
+    raise OSError("the job stopped mid-write")
+json.dump = dump
+runpy.run_path(sys.argv[1], run_name="__main__")
+""", encoding="utf-8")
+            freecad.chmod(0o755)
+            case = {**self.CASE, "_step": str(root / "beam.step"), "timeout_seconds": 60}
+            with patch("fea_static.find_freecad", return_value=freecad):
+                fea_static.run_job(root / "case.yaml", case, scratch_root=root)
+            phase_files = list((root / "jobs" / "fea_static").glob("*/fea_static_*_phase.json"))
+            self.assertEqual(phase_files, [], [path.read_text(encoding="utf-8") for path in phase_files])
+
     def test_a_failed_job_keeps_its_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

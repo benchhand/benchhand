@@ -106,9 +106,13 @@ SPEC = json.load(open(__SPEC_PATH__, encoding="utf-8"))
 
 
 def finish(result):
+    # Write beside the result and rename it into place: the parent polls the result path, so it must only
+    # ever find a complete result there.
     result["run_id"] = SPEC["run_id"]
-    with open(SPEC["result"], "w", encoding="utf-8") as handle:
+    partial = SPEC["result"] + ".partial"
+    with open(partial, "w", encoding="utf-8") as handle:
         json.dump(result, handle)
+    os.replace(partial, SPEC["result"])
     print(SPEC["marker"], flush=True)
     sys.stderr.flush()
     os._exit(0)
@@ -610,7 +614,12 @@ def run_job(freecad: Path, job_dir: Path, spec: dict[str, Any], timeout: float) 
     try:
         while time.monotonic() < deadline:
             result = _validated_result(result_path, spec["run_id"])
-            if result is not None or proc.poll() is not None:
+            if result is not None:
+                break
+            if proc.poll() is not None:
+                # The job can write its result and exit between the read above and this poll: read it once more.
+                proc.wait()
+                result = _validated_result(result_path, spec["run_id"])
                 break
             time.sleep(0.05)
         if result is None:
