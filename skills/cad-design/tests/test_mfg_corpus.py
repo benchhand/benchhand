@@ -7,6 +7,7 @@ Pure standard library; the families' own checks run through mfg_corpus/rates.py.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -87,6 +88,31 @@ class CommandTests(unittest.TestCase):
             data = json.loads(out.read_text())
             self.assertEqual(data["format"], 1)
             self.assertTrue(all("detection_rate" in f for f in data["families"]))
+
+
+DEPS = importlib.util.find_spec("yaml") is not None and importlib.util.find_spec("jsonschema") is not None
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class ProfileTests(unittest.TestCase):
+    def test_the_test_profile_is_a_valid_record_with_the_calibrations_the_additive_checks_read(self) -> None:
+        import capability_profile
+
+        sys.path.insert(0, str(CORPUS.parents[1] / "scripts"))
+        import process_checks
+
+        fx_path = CORPUS.parents[2] / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py"
+        spec = importlib.util.spec_from_file_location("mfg_corpus_fx", fx_path)
+        assert spec and spec.loader
+        fx = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fx)
+        documents = fx.record(capabilities=capability_profile.capabilities(), materials=capability_profile.materials())
+        with tempfile.TemporaryDirectory() as tmp:
+            hw = fx.write_record(Path(tmp) / "project" / "hw", documents)
+            _, problems = process_checks.intent().check_record(hw)
+        self.assertEqual([p.code for p in problems if p.severity == "error"], [])
+        found = {c["characteristic"] for c in capability_profile.capabilities()[0]["calibrations"]}
+        self.assertEqual(found, {"overhang_angle", "bridge_span", "min_wall", "min_feature"})
 
 
 if __name__ == "__main__":
