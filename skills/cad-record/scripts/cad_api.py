@@ -1573,12 +1573,14 @@ class DrawingFit(TypedDict):
     Field notes:
     - fit: minLength: 1
     - pair: minItems: 2; maxItems: 2; uniqueItems: true
+    - engagement_length_mm: How far the pin, shaft or insert enters its mating bore during assembly, in mm; exclusiveMinimum: 0
     - note: minLength: 1
     """
     fit: Required[str]
     pair: NotRequired[list[AssemblyPartRef]]
     hole: NotRequired[DrawingFitEndpoint]
     shaft: NotRequired[DrawingFitEndpoint]
+    engagement_length_mm: NotRequired[float]
     note: NotRequired[str]
     axial_retainer: NotRequired[DrawingAxialRetainer]
 
@@ -1617,6 +1619,7 @@ class DrawingHeatSet(TypedDict):
     - hole_d: exclusiveMinimum: 0
     - hole_tol: minItems: 2; maxItems: 2
     - depth_min: exclusiveMinimum: 0
+    - engagement_length_mm: How far the pin, shaft or insert enters its mating bore during assembly, in mm; exclusiveMinimum: 0
     - insert: minLength: 1
     - source: pattern: "^https?://\\\\S+$"
     - note: minLength: 1
@@ -1626,6 +1629,7 @@ class DrawingHeatSet(TypedDict):
     hole_d: Required[float]
     hole_tol: NotRequired[list[float]]
     depth_min: NotRequired[float]
+    engagement_length_mm: NotRequired[float]
     insert: Required[str]
     source: Required[str]
     note: NotRequired[str]

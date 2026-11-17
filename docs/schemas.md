@@ -790,6 +790,7 @@ An ISO 286 fit between two parts: a part pair, or a hole and a shaft feature end
 | `pair` | `list[AssemblyPartRef]` | no |  |  |
 | `hole` | `DrawingFitEndpoint` | no |  |  |
 | `shaft` | `DrawingFitEndpoint` | no |  |  |
+| `engagement_length_mm` | `float` | no |  | How far the pin, shaft or insert enters its mating bore during assembly, in mm |
 | `note` | `str` | no |  |  |
 | `axial_retainer` | `DrawingAxialRetainer` | no |  |  |
 
@@ -801,6 +802,7 @@ Constraints not expressed by the type:
 - `pair`: minItems: 2
 - `pair`: maxItems: 2
 - `pair`: uniqueItems: true
+- `engagement_length_mm`: exclusiveMinimum: 0
 - `note`: minLength: 1
 
 ### DrawingFitEndpoint
@@ -855,6 +857,7 @@ A heat-set insert installed in its host part's bore; the pair is [host, insert],
 | `hole_d` | `float` | yes |  |  |
 | `hole_tol` | `list[float]` | no |  |  |
 | `depth_min` | `float` | no |  |  |
+| `engagement_length_mm` | `float` | no |  | How far the pin, shaft or insert enters its mating bore during assembly, in mm |
 | `insert` | `str` | yes |  |  |
 | `source` | `str` | yes |  |  |
 | `note` | `str` | no |  |  |
@@ -870,6 +873,7 @@ Constraints not expressed by the type:
 - `hole_tol`: minItems: 2
 - `hole_tol`: maxItems: 2
 - `depth_min`: exclusiveMinimum: 0
+- `engagement_length_mm`: exclusiveMinimum: 0
 - `insert`: minLength: 1
 - `source`: pattern: "^https?://\\S+$"
 - `note`: minLength: 1
