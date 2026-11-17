@@ -64,7 +64,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import re
 import sys
 import traceback
 from collections.abc import Callable
@@ -76,19 +75,24 @@ import click
 from cadmodel import build
 
 
-def load_emit() -> Any:
-    """cad-record's output emitter, loaded by path: every skill sits beside cad-record in an installed tree."""
-    name = "cad_record_emit"
+def load_record_script(name: str, filename: str) -> Any:
+    """A cad-record script loaded by path: every skill sits beside cad-record in an installed tree."""
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(
-            name, Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "emit.py")
+            name, Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / filename)
         assert spec is not None and spec.loader is not None
         sys.modules[name] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sys.modules[name])
     return sys.modules[name]
 
 
+def load_emit() -> Any:
+    """cad-record's output emitter."""
+    return load_record_script("cad_record_emit", "emit.py")
+
+
 emit = load_emit()
+record_cli = load_record_script("cad_record_cli", "cli.py")
 
 LIFECYCLE_SCRIPT = (
     Path(__file__).resolve().parents[2]
@@ -171,61 +175,11 @@ def _exclusive(first: tuple[str, object], second: tuple[str, object]) -> None:
         raise click.UsageError(f"argument {second[0]}: not allowed with argument {first[0]}")
 
 
-_NUMBER = re.compile(r"^-\d+$|^-\d*\.\d+$")
-
-
-def _option_like(text: str) -> bool:
-    """Whether argparse reads `text` as an option rather than a value: a dash, no space, not a negative number."""
-    return text.startswith("-") and text != "-" and " " not in text and not _NUMBER.match(text)
-
-
 class _Command(click.Command):
-    """A command that reads its arguments as argparse did.
-
-    Click takes the next word as an option's value whatever it looks like. It checks only the last of a repeated
-    scalar option, and it reads a negative number as an unknown option. `_screen` walks the words in order.
-    It refuses a value that looks like an option, converts every occurrence of a typed option, and stops at a
-    help flag so that a later bad word cannot hide the help. It refuses an unknown option last."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.context_settings.setdefault("ignore_unknown_options", True)  # a negative number stays a positional
+    """A command that reads its words by argparse's rules, so existing command lines keep working."""
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        return super().parse_args(ctx, self._screen(ctx, args))
-
-    def _screen(self, ctx: click.Context, args: list[str]) -> list[str]:
-        options = {flag: param for param in self.get_params(ctx) if isinstance(param, click.Option)
-                   for flag in (*param.opts, *param.secondary_opts)}
-        helps = set(self.get_help_option_names(ctx))
-        screened: list[str] = []
-        unknown: str | None = None
-        position = 0
-        while position < len(args):
-            word = args[position]
-            position += 1
-            if word == "--":
-                screened.extend(["--", *args[position:]])
-                break
-            if word in helps:
-                return [*screened, word]
-            name, equals, value = word.partition("=")
-            param = options.get(name) if _option_like(word) else None
-            if _option_like(word) and param is None:
-                unknown = unknown or name
-            elif param is None or param.is_flag:
-                screened.append(word)
-            else:
-                if not equals:
-                    if position >= len(args) or _option_like(args[position]):
-                        raise click.BadOptionUsage(name, f"Option '{name}' requires an argument.", ctx=ctx)
-                    value = args[position]
-                    position += 1
-                param.type(value, param, ctx)
-                screened.extend([word] if equals else [word, value])
-        if unknown is not None:
-            raise click.NoSuchOption(unknown, ctx=ctx)
-        return screened
+        return super().parse_args(ctx, record_cli.screen_words(self, ctx, args))
 
 
 class _Group(click.Group):

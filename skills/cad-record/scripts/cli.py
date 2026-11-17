@@ -2,12 +2,13 @@
 
 Load it by path, as `emit.py`. It imports Click only when it builds options. A field with `x-cli` becomes an
 option, and `x-env` becomes its `envvar`, so Click checks the env var like the flag. The caller passes in the
-loader module.
+loader module. `screen_words` gives a converted script argparse's word rules. See its docstring.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -152,6 +153,70 @@ def _emit() -> ModuleType:
         sys.modules[EMIT_MODULE] = module
         spec.loader.exec_module(module)
     return sys.modules[EMIT_MODULE]
+
+
+_NUMBER = re.compile(r"^-\d+$|^-\d*\.\d+$")
+
+
+def option_like(text: str) -> bool:
+    """Whether argparse reads `text` as an option and not a value: a dash, no space, and not a negative number.
+
+    A lone `-` is a value. This needs no Click."""
+    return text.startswith("-") and text != "-" and " " not in text and not _NUMBER.match(text)
+
+
+def screen_words(command: click.Command, ctx: click.Context, args: Sequence[str]) -> list[str]:
+    """Read `args` by argparse's word rules and return them in the order Click parses them.
+
+    Click takes the next word as an option's value whatever it looks like. It checks only the last of a repeated
+    scalar option. It parses a positional such as `-alt hw` as options. To keep existing command lines working,
+    a converted script overrides `Command.parse_args` and calls
+    `super().parse_args(ctx, screen_words(self, ctx, args))`.
+
+    The screen walks the words in order. It raises Click's `BadOptionUsage` for a value that looks like an
+    option and for a value-taking option with no value. It converts every occurrence of a typed option and
+    raises `BadParameter` for a bad one. A help flag ends the screen and returns the words so far with
+    that flag. After the last word, an unknown option raises `NoSuchOption`, so an earlier bad value
+    comes first. The result lists the options with their values, then `--`, then every positional in order.
+    Every positional reaches Click after the `--`, so it stays a positional. A `--` in `args` makes every later
+    word a positional."""
+    import click
+
+    options = {flag: param for param in command.get_params(ctx) if isinstance(param, click.Option)
+               for flag in (*param.opts, *param.secondary_opts)}
+    helps = set(command.get_help_option_names(ctx))
+    screened: list[str] = []
+    positionals: list[str] = []
+    unknown: str | None = None
+    position = 0
+    while position < len(args):
+        word = args[position]
+        position += 1
+        if word == "--":
+            positionals.extend(args[position:])
+            break
+        if word in helps:
+            return [*screened, word]
+        if not option_like(word):
+            positionals.append(word)
+            continue
+        name, equals, value = word.partition("=")
+        param = options.get(name)
+        if param is None:
+            unknown = unknown or name
+        elif param.is_flag:
+            screened.append(word)
+        else:
+            if not equals:
+                if position >= len(args) or option_like(args[position]):
+                    raise click.BadOptionUsage(name, f"Option '{name}' requires an argument.", ctx=ctx)
+                value = args[position]
+                position += 1
+            param.type(value, param, ctx)
+            screened.extend([word] if equals else [word, value])
+    if unknown is not None:
+        raise click.NoSuchOption(unknown, ctx=ctx)
+    return [*screened, "--", *positionals] if positionals else screened
 
 
 def with_warnings(result: Mapping[str, Any], config: Any) -> dict[str, Any]:
