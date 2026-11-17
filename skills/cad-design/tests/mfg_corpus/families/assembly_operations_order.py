@@ -1,6 +1,6 @@
 """assembly_operations.check_order (cad-record): operation order and closure over the access fixture's five parts.
 
-Mutants reuse cad-motion's operation files; each twin is the same operations in a valid order.
+Mutants reuse cad-motion's operation files. Each twin holds the same operations in a valid order.
 """
 
 import copy
@@ -37,7 +37,7 @@ def predecessor_after(mutant: bool) -> Outcome:
 def enclosed_part_removed(mutant: bool) -> Outcome:
     items = operations_file("blocked_socket.yaml")[:2]
     pull = {"id": "pull-bearing", "kind": "disassemble", "part": "TST-0102", "into": "TST-0101", "direction": [0, 0, 1]}
-    items = items + [pull] if mutant else [items[0], pull]  # the twin never closes the cover over the bearing
+    items = items + [pull] if mutant else [items[0], pull]  # the twin leaves the cover off the bearing
     return verdict(check_order(items).values())
 
 

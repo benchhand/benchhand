@@ -1,9 +1,9 @@
 """Mutation corpus core: pairs, families, the registry and the rate arithmetic.
 
 A Pair is one defect with its clean twin. `run(mutant)` builds the case, runs one manufacturability or
-constructability check and returns an outcome; the same function builds both variants, so the twin differs
+constructability check and returns an outcome. The same function builds both variants, so the twin differs
 from the mutant only by the defect. Families live in `families/*.py` and register by exposing `FAMILY`.
-Pure standard library: the check and its fixtures are imported lazily inside `run`.
+Pure standard library. Each `run` imports the check and its fixtures lazily.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ BASELINE_DIR = HERE / "baseline"
 
 
 class Skip(Exception):
-    """Raised by `run` when the case cannot run here (a missing tool, say); it is excluded from the rates."""
+    """Raised by `run` when the case needs a tool this machine lacks. The rates leave the pair out."""
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,7 @@ def run_pair(pair: Pair) -> PairResult:
         result.mutant = result.twin = None
         result.skipped = str(skip) or "skipped"
         return result
-    except Exception as exc:  # a crashing check is recorded, never hidden as a pass
+    except Exception as exc:  # record the crash, never hide it as a pass
         return _errored(result, f"{type(exc).__name__}: {exc}")
     for variant in (result.mutant, result.twin):
         if variant not in OUTCOMES:
@@ -146,12 +146,13 @@ def table(rows: list[dict[str, Any]]) -> str:
 
 
 def check_baseline(rows: list[dict[str, Any]], baseline_dir: Path, *, whole_registry: bool = True) -> list[str]:
-    """Problems against `baseline_dir/<family>.json`: registry and baselines must match one-to-one (when
-    `whole_registry`), no family may run fewer pairs than recorded, detection may not fall, false positives may not rise."""
+    """Problems against `baseline_dir/<family>.json`. Every evaluated family needs a baseline file. On a whole-registry
+    run each baseline file also needs a family. A family may not run fewer pairs than recorded, lose detection or gain
+    false positives."""
     problems: list[str] = []
     files = {path.stem: path for path in sorted(baseline_dir.glob("*.json"))}
     ids = {row["family"] for row in rows}
-    for family in sorted(ids - files.keys()) if whole_registry else ():
+    for family in sorted(ids - files.keys()):
         problems.append(f"{family}: no baseline file baseline/{family}.json")
     for family in sorted(files.keys() - ids) if whole_registry else ():
         problems.append(f"{family}: baseline file without a registered family")

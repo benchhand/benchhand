@@ -1,7 +1,7 @@
 """cad-motion access.py: the geometric part-path and tool-reach check on the access fixture's built geometry.
 
 Judged on the assembly.access obligations only (order is the assembly_operations_order family). Mutants and twins
-reuse cad-motion's operation files; each twin is the same operations in an order or tool description that works.
+reuse cad-motion's operation files. Each twin holds the same operations in an order or tool description that works.
 """
 
 from typing import Any

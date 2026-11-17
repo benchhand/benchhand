@@ -121,6 +121,20 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(self.problems([self.family("f"), self.family("g")], {"f": {}}),
                          ["g: no baseline file baseline/g.json"])
 
+    def test_a_restricted_run_still_needs_a_baseline_for_each_family_it_evaluated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_baseline(Path(tmp), "f")
+            rows = corpus.evaluate([self.family("g")])
+            self.assertEqual(corpus.check_baseline(rows, Path(tmp), whole_registry=False),
+                             ["g: no baseline file baseline/g.json"])
+
+    def test_a_restricted_run_ignores_baselines_of_families_it_did_not_evaluate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("f", "other"):
+                write_baseline(Path(tmp), name)
+            rows = corpus.evaluate([self.family("f")])
+            self.assertEqual(corpus.check_baseline(rows, Path(tmp), whole_registry=False), [])
+
     def test_a_baseline_file_without_a_family_is_a_problem(self) -> None:
         self.assertEqual(self.problems([self.family("f")], {"f": {}, "gone": {}}),
                          ["gone: baseline file without a registered family"])
@@ -140,9 +154,13 @@ class BaselineTests(unittest.TestCase):
 
 class RatchetTests(unittest.TestCase):
     """The shipped families against baseline/, run as rates.py --check-baseline in its own uv script environment
-    (it carries OCP, which the test interpreter may lack). Under CI=true a missing uv fails instead of skipping."""
+    (it carries OCP, which the test interpreter may lack). Under CI=true a missing uv fails instead of skipping.
+    MFG_CORPUS_RATCHET_IN_CI_STEP=1 (set on the rest shard) skips it there: the freecad-gated shard's
+    "Mutation corpus rates and baseline ratchet" step enforces the same check."""
 
     def test_no_family_regresses_from_its_baseline(self) -> None:
+        if os.environ.get("MFG_CORPUS_RATCHET_IN_CI_STEP") == "1":
+            self.skipTest("enforced by the freecad-gated shard's 'Mutation corpus rates and baseline ratchet' CI step")
         if shutil.which("uv") is None:
             if os.environ.get("CI") == "true":
                 self.fail("uv is required for the corpus ratchet in CI")
@@ -151,6 +169,68 @@ class RatchetTests(unittest.TestCase):
             done = subprocess.run(["uv", "run", "--script", str(CORPUS / "rates.py"), "--check-baseline", "--out",
                                    str(Path(tmp) / "r.json")], capture_output=True, text=True, check=False, timeout=1800)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+
+class RatchetGuardTests(unittest.TestCase):
+    """RatchetTests with uv unavailable: it fails under CI=true, and skips there only for the dedupe marker."""
+
+    METHOD = "test_no_family_regresses_from_its_baseline"
+    MARKER = "MFG_CORPUS_RATCHET_IN_CI_STEP"
+
+    def outcome(self, **env: str) -> unittest.TestResult:
+        """Run the ratchet test. Hide uv from PATH, apply `env`, and remove the marker unless `env` has it."""
+        result = unittest.TestResult()
+        with mock.patch.dict(os.environ, env), mock.patch("shutil.which", return_value=None):
+            if self.MARKER not in env:
+                os.environ.pop(self.MARKER, None)
+            RatchetTests(self.METHOD).run(result)
+        return result
+
+    def test_in_ci_without_uv_and_without_the_marker_it_fails_and_does_not_skip(self) -> None:
+        result = self.outcome(CI="true")
+        self.assertEqual((len(result.failures), result.skipped, result.errors), (1, [], []))
+        self.assertIn("uv is required", result.failures[0][1])
+
+    def test_only_the_marker_value_1_skips_it_and_the_reason_names_the_ci_step(self) -> None:
+        skipped = self.outcome(CI="true", **{self.MARKER: "1"})
+        [(_, reason)] = skipped.skipped
+        self.assertIn("Mutation corpus rates and baseline ratchet", reason)
+        self.assertEqual((skipped.failures, skipped.errors), ([], []))
+        for value in ("", "0", "true", "yes"):
+            with self.subTest(marker=value):
+                result = self.outcome(CI="true", **{self.MARKER: value})
+                self.assertEqual((len(result.failures), result.skipped), (1, []))
+
+    def test_outside_ci_without_uv_it_skips_for_the_missing_tool(self) -> None:
+        result = self.outcome(CI="")
+        [(_, reason)] = result.skipped
+        self.assertIn("uv is required", reason)
+        self.assertEqual((result.failures, result.errors), ([], []))
+
+
+DEPS = importlib.util.find_spec("yaml") is not None and importlib.util.find_spec("jsonschema") is not None
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class ProfileTests(unittest.TestCase):
+    def test_the_test_profile_is_a_valid_record_with_the_calibrations_the_additive_checks_read(self) -> None:
+        import capability_profile
+
+        sys.path.insert(0, str(CORPUS.parents[1] / "scripts"))
+        import process_checks
+
+        fx_path = CORPUS.parents[2] / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py"
+        spec = importlib.util.spec_from_file_location("mfg_corpus_fx", fx_path)
+        assert spec and spec.loader
+        fx = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fx)
+        documents = fx.record(capabilities=capability_profile.capabilities(), materials=capability_profile.materials())
+        with tempfile.TemporaryDirectory() as tmp:
+            hw = fx.write_record(Path(tmp) / "project" / "hw", documents)
+            _, problems = process_checks.intent().check_record(hw)
+        self.assertEqual([p.code for p in problems if p.severity == "error"], [])
+        found = {c["characteristic"] for c in capability_profile.capabilities()[0]["calibrations"]}
+        self.assertEqual(found, {"overhang_angle", "bridge_span", "min_wall", "min_feature"})
 
 
 class DependencyGuardTests(unittest.TestCase):
@@ -215,6 +295,15 @@ class CommandTests(unittest.TestCase):
             write_baseline(baselines, "alpha")
             done = self.run_rates(tmp, "--check-baseline", "--baseline-dir", str(baselines))
             self.assertEqual(done.returncode, 1)
+            self.assertIn("baseline: beta: no baseline file", done.stdout)
+
+    def test_check_baseline_on_a_restricted_run_needs_that_familys_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            baselines = Path(tmp) / "baseline"
+            baselines.mkdir()
+            write_baseline(baselines, "alpha")
+            done = self.run_rates(tmp, "--family", "beta", "--check-baseline", "--baseline-dir", str(baselines))
+            self.assertEqual(done.returncode, 1, done.stdout)
             self.assertIn("baseline: beta: no baseline file", done.stdout)
 
     def test_check_baseline_on_a_restricted_run_ignores_other_families(self) -> None:

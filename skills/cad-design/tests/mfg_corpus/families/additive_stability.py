@@ -23,7 +23,7 @@ def off_centre_mass(mutant: bool) -> Outcome:
 
 
 def line_contact(mutant: bool) -> Outcome:
-    """A 10 mm rod lying on its side touches the bed along a line; standing, it has a flat end."""
+    """A 10 mm rod lying on its side touches the bed along a line. Standing, it has a flat end."""
     s = solids()
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
     from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
@@ -49,7 +49,7 @@ def no_flat_face(mutant: bool) -> Outcome:
 
 
 def slender_tower(mutant: bool) -> Outcome:
-    """A 4 mm square tower on a 30 mm plate: 80 mm tall (aspect 20) against 20 mm. Its centre stays over the footprint."""
+    """A 4 mm square tower on a 30 mm plate: 80 mm tall (aspect 20) against 20 mm. Its center of volume stays over the footprint."""
     s = solids()
     return _verdict(s.fuse(s.box(0, 0, 0, 30, 30, 2), s.box(13, 13, 2, 17, 17, 82 if mutant else 22)))
 

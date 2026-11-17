@@ -1,7 +1,7 @@
 """form_check F0 kernel validity on cad-design's deliberate defect models (reused in place, parameter-edited for the twin).
 
 TST-0101: equal-radius bores meeting in a T leave an unorientable face (brep_invalid). TST-0102: fillets rolled across
-2-5 degree outline kinks come out out of tolerance (step_readback). The twin of each is a temporary copy with one edit (an entry bore 0.8 of the run's radius; the fillets left off); the verdict is fail when form_check reports a blocking finding on that part.
+2-5 degree outline kinks come out out of tolerance (step_readback). The twin of each is a temporary copy with one edit: an entry bore 0.8 of the run's radius, or the fillets left off. The verdict is fail when form_check reports a blocking finding on that part.
 """
 
 import json

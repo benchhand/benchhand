@@ -1,4 +1,4 @@
-"""Shared helpers for corpus families: module loading, verdict mapping, assembly-operation cases.
+"""Shared helpers for corpus families: module loading, verdict mapping, cases for assembly operations.
 
 Heavy imports (yaml, OCP, the check modules) happen inside the functions, so importing this is free.
 """
@@ -30,7 +30,7 @@ def load(name: str, path: Path) -> Any:
 
 
 def verdict(outcomes: Iterable[str]) -> Outcome:
-    """A check's obligation outcomes as one verdict: any fail is fail, else any unknown is unknown, else pass."""
+    """A check's obligation outcomes as one verdict: any fail gives fail, else any unknown gives unknown, else pass."""
     seen = set(outcomes)
     if not seen:
         raise ValueError("a check that returns no outcome has no verdict")
@@ -42,7 +42,7 @@ def verdict(outcomes: Iterable[str]) -> Outcome:
 
 
 def require(module: str) -> None:
-    """Raise Skip when an optional dependency is not importable."""
+    """Raise Skip without the module."""
     import importlib.util
 
     if importlib.util.find_spec(module) is None:

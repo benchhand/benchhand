@@ -158,6 +158,7 @@ jobs:
       - name: Skill tests
         env:
           SHARD: ${{ matrix.shard }}
+          MFG_CORPUS_RATCHET_IN_CI_STEP: ${{ matrix.shard == 'rest' && '1' || '' }}
           JOB_INDEX: ${{ strategy.job-index }}
           JOBS: ${{ strategy.job-total }}
         run: |

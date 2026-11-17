@@ -1,6 +1,6 @@
 """form_check overhang and bridge detection, judged by the fdm support obligation (additive.support) on the TEST profile.
 
-The calibrated limits are overhang 45 deg and bridge 5 mm; every case plans no supports, so a face that needs them fails.
+The calibrated limits are overhang 45 deg and bridge 5 mm. Every case plans no supports, so a face that needs them fails.
 Geometry is real B-rep probed by form_check.probe, never hand-written facts. Millimetres, bed frame, +Z up.
 """
 
@@ -30,7 +30,7 @@ def bridge_span(mutant: bool) -> Outcome:
 
 
 def gusset_under_shelf(mutant: bool) -> Outcome:
-    """A shelf off a post; the twin adds a gusset under it (underside 37 deg from vertical, inside the 45 deg limit)."""
+    """A shelf off a post. The twin adds a gusset under it. The underside then slopes 37 deg from vertical, inside the 45 deg limit."""
     s = solids()  # first: it raises Skip when OCP is absent
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
     from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
