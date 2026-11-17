@@ -9,7 +9,7 @@ Structured path fields (artifacts, bundle, source.artifact) and path-like tokens
 the evidence and findings ledgers go through the same rule. A token is path-like only with a path shape: a
 scratch prefix, an absolute path, a `..` segment, or a file extension after a `/`.
 
-Standard library only; evidence.py loads it by path.
+Standard library only. evidence.py loads it by path.
 """
 
 from __future__ import annotations

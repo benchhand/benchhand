@@ -43,7 +43,7 @@ def git(root: Path, *args: str) -> None:
 
 
 class Project(unittest.TestCase):
-    """A git project with the TST record; hw/checks/v1/lever/evidence holds the promoted measurement."""
+    """A git project with the TST record. Its hw/checks/v1/lever/evidence folder holds the promoted measurement."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-evidence-paths-")
