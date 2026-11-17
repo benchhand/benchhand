@@ -545,6 +545,16 @@ class SheetExportParts(unittest.TestCase):
         with self.assertRaisesRegex(sheet_export.ExportError, "CreationDate"):
             sheet_export.pin_pdf_dates(b"%PDF-1.4\n1 0 obj\n<< >>\nendobj\n", 0)
 
+    def test_an_unterminated_date_literal_is_refused_not_left_unpinned(self) -> None:
+        whole = self.qt_style_pdf()
+        for name in ("CreationDate", "ModDate"):
+            with self.subTest(date=name):
+                cut = whole.replace(b"/" + name.encode() + b" (D:20261116203848+04'00')",
+                                    b"/" + name.encode() + b" (D:20261116203848+04'00'", 1)
+                self.assertNotEqual(cut, whole)
+                with self.assertRaisesRegex(sheet_export.ExportError, f"unterminated /{name}"):
+                    sheet_export.pin_pdf_dates(cut, 0)
+
     def test_pdf_with_only_a_mod_date_is_refused(self) -> None:
         data = self.qt_style_pdf().replace(b"/CreationDate (D:20261116203848+04'00') ", b"")
         self.assertIn(b"/ModDate", data)

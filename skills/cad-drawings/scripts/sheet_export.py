@@ -250,8 +250,7 @@ def read_pdf(path: Path) -> PdfContent:
 DEFAULT_PDF_EPOCH = 315_532_800   # 1980-01-01T00:00:00Z: the PDF date when SOURCE_DATE_EPOCH is not set
 # Info-dictionary dates (PDF 32000 7.9.4): D:YYYY[MM[DD[HH[mm[SS[O[HH'[mm']]]]]]]] with O one of + - Z; the
 # apostrophes are optional here because readers accept their absence.
-_INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()([^)]*)(\))")
-_CREATION_DATE = re.compile(rb"/CreationDate \(")
+_INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()([^()\r\n]*)(\))")
 _PDF_DATE = re.compile(rb"D:(\d{4})(\d\d)?(\d\d)?(\d\d)?(\d\d)?(\d\d)?((?:[+\-Z](?:\d\d'?(?:\d\d'?)?)?)?)")
 # XMP dates are ISO 8601: YYYY[-MM[-DD[THH:mm[:SS[.f+]][Z|+HH:MM]]]].
 _XMP_DATE = re.compile(rb'(xmp:(?:CreateDate|ModifyDate|MetadataDate)=")([^"]*)(")')
@@ -329,7 +328,12 @@ def pin_pdf_dates(data: bytes, epoch: int) -> bytes:
     if not 0 <= epoch <= MAX_PDF_EPOCH:
         raise ExportError("export_failed", f"PDF date epoch {epoch} is outside 0 to {MAX_PDF_EPOCH}")
     when = datetime.fromtimestamp(epoch, timezone.utc)
-    if not _CREATION_DATE.search(data):
+    for name in (b"CreationDate", b"ModDate"):   # every date literal must be whole, so the parser below sees all of them
+        opened = data.count(b"/" + name + b" (")
+        whole = len(re.findall(rb"/" + name + rb" \([^()\r\n]*\)", data))
+        if opened != whole:
+            raise ExportError("export_failed", f"the PDF has an unterminated /{name.decode()} literal")
+    if b"/CreationDate (" not in data:
         raise ExportError("export_failed", "the PDF has no /CreationDate to pin")
     pinned = _XMP_DATE.sub(lambda m: m.group(1) + _xmp_date(m.group(2), when) + m.group(3),
                            _INFO_DATE.sub(lambda m: m.group(1) + _pdf_date(m.group(2), when) + m.group(3), data))
