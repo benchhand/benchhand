@@ -69,6 +69,12 @@ def check_values(root: Path, name: str, *, also: tuple[Path, ...] = ()) -> tuple
     return checked, failures
 
 
+def assert_no_failures(case: unittest.TestCase, failures: list[str]) -> None:
+    """Fails with every message on its own line. A plain assertEqual would cut a long list at maxDiff."""
+    if failures:
+        case.fail("\n".join(failures))
+
+
 class WalkerBites(unittest.TestCase):
     """The check reports a wrong default or example, in a nested subschema and through a `$ref`."""
 
@@ -105,6 +111,21 @@ class WalkerBites(unittest.TestCase):
             "probe.schema.json#/properties/named/default",
         ])
 
+    def test_a_long_failure_list_is_reported_in_full(self) -> None:
+        properties = {f"property_{number:02d}": {"type": "integer", "default": "x"} for number in range(30)}
+        _checked, failures = self.check({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://srobroek.com/cad/schemas/probe.schema.json",
+            "type": "object",
+            "properties": properties,
+        })
+        self.assertEqual(len(failures), 30)
+        with self.assertRaises(AssertionError) as raised:
+            assert_no_failures(self, failures)
+        message = str(raised.exception)
+        for name in properties:
+            self.assertIn(f"probe.schema.json#/properties/{name}/default", message)
+
     def test_valid_values_report_nothing(self) -> None:
         checked, failures = self.check({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -130,7 +151,7 @@ class BundledSchemas(unittest.TestCase):
                 checked += count
                 failures += [f"{directory.name}/{problem}" for problem in problems]
         self.assertGreater(checked, 0, "no default or examples value found: the walk is vacuous")
-        self.assertEqual(failures, [])
+        assert_no_failures(self, failures)
         print(f"checked {checked} values across {sum(map(len, found.values()))} schemas", file=sys.stderr)
 
 
