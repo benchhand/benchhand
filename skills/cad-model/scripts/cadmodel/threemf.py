@@ -151,11 +151,12 @@ def _tag(element: ET.Element) -> str:
 
 def _parse(data: bytes, what: str) -> tuple[ET.Element, set[str]]:
     """The root of an XML part and the namespace prefixes it declares."""
-    parser = ET.XMLPullParser(("start-ns",))
+    parser: Any = ET.XMLPullParser(("start-ns",))
     try:
         parser.feed(data)
         parser.close()
-        prefixes = {prefix for _, (prefix, _) in parser.read_events()}
+        events: list[tuple[str, Any]] = list(parser.read_events())  # start-ns events carry (prefix, uri)
+        prefixes = {namespace[0] for _, namespace in events}
         return ET.fromstring(data), prefixes
     except ET.ParseError as error:
         raise ThreeMFError(f"{what} is not well-formed XML: {error}") from error
