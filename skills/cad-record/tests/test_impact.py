@@ -169,6 +169,27 @@ class ProductOrderStaleness(unittest.TestCase):
         after["assembly.yaml"]["subassemblies"][0]["occurrences"].append("@clip-c")
         self.assertIn(self.PRODUCT, self.compare(before, after).stale_obligations)
 
+    def test_a_sequence_only_change_stales_the_product_order(self) -> None:
+        """Reordering the operations changes nothing else, yet access.py plans paths in sequence order."""
+        both = [self.join("mount-a", "@clip-a"), self.join("mount-b", "@clip-b")]
+        result = self.compare(self.occurrence_docs(both), self.occurrence_docs(both[::-1]))
+        self.assertIn(self.PRODUCT, result.stale_obligations)
+
+    def test_a_product_policy_obligation_goes_stale_on_the_same_change_through_everything(self) -> None:
+        """Documented, not pinned as an assembly check: policy.*@product depends on every domain (_EVERYTHING), so it
+        already goes stale on any change, including the sequence-only one that stales the product order."""
+        both = [self.join("mount-a", "@clip-a"), self.join("mount-b", "@clip-b")]
+        docs = self.occurrence_docs(both)
+        docs["product.yaml"]["use_case"] = acceptance.confirmed_use_case(
+            "prototype", evidence_policy={"obligations": [{"subject": {"product": True}, "level": "cad_valid"}],
+                                          "decision": "DR-001"})
+        reordered = copy.deepcopy(docs)
+        reordered["assembly.yaml"]["operations"] = both[::-1]
+        self.assertIn("policy.cad_valid@product", {o.id for o in impact.mi.required_checks(normalized(docs))})
+        result = self.compare(docs, reordered)
+        self.assertEqual(result.stale_obligations.get("policy.cad_valid@product"), ("interface",))
+        self.assertIn(self.PRODUCT, result.stale_obligations)
+
     def test_an_edit_outside_the_assembly_domains_leaves_the_product_order_fresh(self) -> None:
         """A finish edit moves the part's finish fingerprint, which no assembly.* check depends on (geometry and
         interface are the assembly domains)."""
