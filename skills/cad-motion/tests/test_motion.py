@@ -1300,7 +1300,7 @@ class StepTests(unittest.TestCase):
         scratch = hw.parent / ".cad-work" / "resume" / uuid.uuid4().hex
         scratch.mkdir(parents=True)
         options = ("--hw", str(hw), "--parts-dir", str(self.v6), "--steps", "145", "--grid", "0", "--exact",
-                   "--worst-criterion", "minimum_clearance")
+                   "--worst-criterion", "minimum_clearance", "--jobs", "1")   # the kernel counts below assume one process
         child = subprocess.Popen(["uv", "run", "--quiet", "--script", str(SCRIPTS / "sweep.py"), *options,
                                   "--cache", str(cache), "--worst-step", str(scratch / "killed.step")],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
