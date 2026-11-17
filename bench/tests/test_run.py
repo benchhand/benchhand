@@ -183,6 +183,69 @@ class BudgetTests(unittest.TestCase):
                 paths.create.assert_not_called()
 
 
+class CacheIsolationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.folder = tempfile.TemporaryDirectory()
+        root = Path(self.folder.name)
+        self.real = root / "real"
+        for name in ("cad-flow", "opencode", "cad-concept", "development"):
+            (self.real / ".cache" / name).mkdir(parents=True)
+        self.paths = run.Paths("r", root, root / "project", root / "home", root / "raw", root / "results", root / "run")
+        self.environ = {"XDG_CACHE_HOME": str(self.real / ".cache"), "XDG_CONFIG_HOME": str(root / "nc"),
+                        "XDG_DATA_HOME": str(root / "nd"), "XDG_STATE_HOME": str(root / "ns"),
+                        "UV_CACHE_DIR": str(self.real / ".cache/development/uv"), "HOME": str(self.real)}
+
+    def tearDown(self) -> None:
+        self.folder.cleanup()
+
+    def test_the_run_gets_a_private_cache_with_cad_flow_private_and_the_shared_uv_cache(self) -> None:
+        with mock.patch.dict(run.os.environ, self.environ, clear=True):
+            run.link_farm(self.paths.home)
+            env = run.opencode_env(self.paths)
+        cache = self.paths.home / ".cache"
+        self.assertEqual(env["XDG_CACHE_HOME"], str(cache))
+        self.assertEqual(env["UV_CACHE_DIR"], str(self.real / ".cache/development/uv"))  # a package cache, shared
+        self.assertEqual(sorted(p.name for p in cache.iterdir()), ["cad-concept", "development"])
+        self.assertTrue(all((cache / name).is_symlink() for name in ("cad-concept", "development")))
+
+    def test_without_a_uv_cache_dir_the_real_uv_cache_is_named_explicitly(self) -> None:
+        environ = {key: value for key, value in self.environ.items() if key != "UV_CACHE_DIR"}
+        with mock.patch.dict(run.os.environ, environ, clear=True):
+            env = run.opencode_env(self.paths)
+        self.assertEqual(env["UV_CACHE_DIR"], str(self.real / ".cache/uv"))
+
+    def test_the_cache_check_fails_unless_the_effective_cache_dirs_are_inside_the_run_home(self) -> None:
+        home = self.paths.home
+        good = {"XDG_CACHE_HOME": str(home / ".cache")}
+        self.assertEqual(run.isolation.cache_findings(str(home / ".cache/opencode"), good, home), [])
+        self.assertEqual(run.isolation.cache_findings(str(self.real / ".cache/opencode"), good, home),
+                         [f"opencode cache outside the run home: {self.real / '.cache/opencode'}"])
+        self.assertEqual(run.isolation.cache_findings(str(home / ".cache/opencode"), {}, home),
+                         ["XDG_CACHE_HOME is not set inside the run home: None"])
+        self.assertEqual(run.isolation.cache_findings(None, good, home), ["opencode reported no cache path"])
+
+    def test_a_running_warm_up_the_run_recorded_is_stopped_by_its_recorded_session_only(self) -> None:
+        warm = self.paths.home / ".cache/cad-flow/warm"
+        warm.mkdir(parents=True)
+        child = run.subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "preflight.py", "--warm"],
+                                     start_new_session=True)
+        stranger = run.subprocess.Popen(["sleep", "62"], start_new_session=True)
+        try:
+            (warm / "k.json").write_text(json.dumps({"state": "running", "pid": child.pid}), encoding="utf-8")
+            (warm / "j.json").write_text(json.dumps({"state": "running", "pid": stranger.pid}), encoding="utf-8")
+            results = {Path(r["record"]).name: r for r in run.stop_recorded_warmups(self.paths, grace_s=0.3)}
+            self.assertEqual(results["k.json"]["stopped"], True)
+            self.assertIsNotNone(child.wait(timeout=10))
+            self.assertEqual(results["j.json"]["stopped"], False)  # its pid is no preflight --warm: left alone
+            self.assertIsNone(stranger.poll())
+        finally:
+            stranger.kill()  # exact pid this test started
+            stranger.wait()
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+
+
 class LeftoverTests(unittest.TestCase):
     def test_the_users_cad_viewer_state_is_not_linked_into_the_throwaway_home(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -266,6 +329,27 @@ class IsolationAbortTests(unittest.TestCase):
 
 
 class RecordStateTests(unittest.TestCase):
+    def test_the_gate_context_reads_flow_stage_and_whether_an_l1_version_is_built(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            hw = Path(folder)
+            self.assertEqual(run.gate_context(hw, run.built_versions(hw)), run.dialogue.GateContext(None, False))
+            (hw / "product.yaml").write_text("flow: {stage: concept}\n", encoding="utf-8")
+            write_version(hw, "v1", "layout")
+            (hw / "product.yaml").write_text("flow: {stage: parts}\n", encoding="utf-8")
+            self.assertEqual(run.gate_context(hw, run.built_versions(hw)), run.dialogue.GateContext("parts", True))
+
+    def test_a_layout_freeze_prompt_before_any_l1_version_is_not_a_gate_in_the_conversation(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "project/hw").mkdir(parents=True)
+            (root / "project/hw/product.yaml").write_text("flow: {stage: ground}\n", encoding="utf-8")
+            paths = run.Paths("r", root, root / "project", root / "home", root / "raw", root / "results", root / "run")
+            script = run.load_answers(run.CASES / "wall-bracket")
+            driver = FakeDriver(paths, [(0, None, "Do you approve the LAYOUT freeze on v2? Which colour should it be?")])
+            conversation = run.converse(driver, script, "fixture", "start", {**CAPS, "max_turns": 1})
+            self.assertEqual(conversation.outcome, "cap:turns")  # not fail:unmatched-at-gate: no L1 version exists
+            self.assertEqual((conversation.entries[0]["stage"], conversation.entries[0]["has_l1"]), ("ground", False))
+
     def test_the_layout_counts_frozen_once_the_stage_moved_on_with_an_approved_layout_decision(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             hw = Path(folder)

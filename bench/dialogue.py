@@ -97,6 +97,25 @@ class Script:
 
 
 @dataclass(frozen=True)
+class GateContext:
+    """The record's state when the lead's turn ended: `flow.stage` and whether an L1 (layout) version is built."""
+
+    stage: str | None
+    has_l1: bool
+
+    def admits(self, intent: str) -> bool:
+        """Whether a gate intent can be presented now: INTENT at ground or intent, VARIANT at concept, the
+        LAYOUT freeze once an L1 version exists. Other gates and every question are not stage-bound."""
+        if intent == "intent-gate":
+            return self.stage in ("ground", "intent")
+        if intent == "variant-gate":
+            return self.stage == "concept"
+        if intent == "layout-freeze":
+            return self.has_l1
+        return True
+
+
+@dataclass(frozen=True)
 class Ask:
     text: str
     intent: str | None
@@ -315,16 +334,18 @@ def extract_asks(text: str) -> list[str]:
     return [ask for ask, _context in asks_in_context(text)]
 
 
-def classify(script: Script, ask: str, context: str | None = None) -> Ask:
+def classify(script: Script, ask: str, context: str | None = None, stage: GateContext | None = None) -> Ask:
     """The intent an ask means. For an approval request a gate intent wins, on the ask or the gate line above
     it, so "Approve or name changes. Please confirm these assumptions:" under a LAYOUT freeze heading answers
-    the gate. Otherwise the first intent that matches the ask, else, for a follow-up, the sentence before it."""
-    gates: Sequence[Intent] = tuple(intent for intent in script.intents if intent.kind == "gate")
+    the gate. Otherwise the first intent that matches the ask, else, for a follow-up, the sentence before it.
+    With `stage`, a gate intent that does not fit the record's stage is skipped."""
+    admitted = tuple(intent for intent in script.intents if stage is None or intent.kind != "gate" or stage.admits(intent.id))
+    gates: Sequence[Intent] = tuple(intent for intent in admitted if intent.kind == "gate")
     order: tuple[tuple[Sequence[Intent], str | None], ...]
     if _gate_ask(ask):
-        order = ((gates, ask), (gates, context), (script.intents, ask), (script.intents, context))
+        order = ((gates, ask), (gates, context), (admitted, ask), (admitted, context))
     else:
-        order = ((script.intents, ask), (script.intents, context))
+        order = ((admitted, ask), (admitted, context))
     for candidates, text in order:
         if text is None:
             continue
@@ -341,20 +362,29 @@ def without_time_references(text: str) -> str:
     return TIME_REFERENCE.sub(" ", text)
 
 
-def presents_gate(asks: Sequence[Ask], text: str) -> bool:
-    """The lead presents a gate: an ask matched a gate intent, or it asks for approval in a message naming a gate or freeze."""
-    return any(ask.kind == "gate" for ask in asks) or (
-        bool(GATE_WORD.search(text)) and any(APPROVAL_ASK.search(ask.text) for ask in asks))
+def presents_gate(asks: Sequence[Ask], text: str, script: Script | None = None, gates: GateContext | None = None) -> bool:
+    """The lead presents a gate: an ask matched a gate intent, or it asks for approval in a message naming a gate or
+    freeze. With a stage guard, that message must name a gate that fits the record's stage."""
+    if any(ask.kind == "gate" for ask in asks):
+        return True
+    if not (GATE_WORD.search(text) and any(APPROVAL_ASK.search(ask.text) for ask in asks)):
+        return False
+    if gates is None or script is None:
+        return True
+    plain = without_time_references(text)
+    return any(intent.kind == "gate" and gates.admits(intent.id) and intent.matches(plain) for intent in script.intents)
 
 
-def respond(script: Script, text: str, mode: str, can_stop: bool = True) -> Reply:
+def respond(script: Script, text: str, mode: str, can_stop: bool = True, gates: GateContext | None = None) -> Reply:
     """Build the scripted user's reply to the lead's last message.
 
     The reply ends the run when it answers the mode's stop intent and `can_stop` holds; the caller
     passes whether the record already has the version that gate approves, so a gate named too early
-    is answered without ending the run.
+    is answered without ending the run. `gates` is the record's stage when the turn ended: a gate that
+    does not fit it is not matched, so a GROUND reply that mentions a later gate is no gate prompt.
     """
-    asks = tuple(replace(classify(script, found.text, found.context), options=found.options) for found in find_asks(text))
+    asks = tuple(replace(classify(script, found.text, found.context, gates), options=found.options)
+                 for found in find_asks(text))
     if not asks:
         return Reply(script.nudge, asks, "nudge", script.wait_s.get("nudge", 0.0), False)
     by_id = {intent.id: intent for intent in script.intents}
@@ -370,4 +400,4 @@ def respond(script: Script, text: str, mode: str, can_stop: bool = True) -> Repl
     if stops:
         lines.append(STOP_NOTE)
     return Reply("\n".join(lines), asks, kind, script.wait_s.get(kind, 0.0), stops, tuple(answered),
-                 presents_gate(asks, text))
+                 presents_gate(asks, text, script, gates))

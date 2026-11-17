@@ -121,10 +121,11 @@ def real_base(variable: str, default: str) -> Path:
     return Path(os.environ.get(variable) or Path.home() / default)
 
 
-XDG = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_STATE_HOME", ".local/state"))
-# Entries that stay private to the run instead of linking to the user's own: OpenCode's, and cad-viewer's
-# session files, so a viewer the lead starts records its pid inside the scratch directory.
-PRIVATE_XDG_ENTRIES = frozenset({"opencode", "cad-viewer"})
+XDG = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_STATE_HOME", ".local/state"),
+       ("XDG_CACHE_HOME", ".cache"))
+# Entries that stay private to the run instead of linking to the user's own: OpenCode's, cad-viewer's session
+# files and cad-flow's warm-up record, so what the lead starts records its pid inside the scratch directory.
+PRIVATE_XDG_ENTRIES = frozenset({"opencode", "cad-viewer", "cad-flow"})
 
 
 def link_farm(home: Path) -> None:
@@ -146,6 +147,8 @@ def link_farm(home: Path) -> None:
 def opencode_env(paths: Paths) -> dict[str, str]:
     env = dict(os.environ)
     env["PWD"] = str(paths.project)  # opencode takes its working directory from PWD, not the process cwd
+    # uv's package cache stays shared: it holds wheels, not user state, and a private one re-downloads them all.
+    env["UV_CACHE_DIR"] = os.environ.get("UV_CACHE_DIR") or str(real_base("XDG_CACHE_HOME", ".cache") / "uv")
     for variable, default in XDG:
         env[variable] = str(paths.home / default)
     env.update({
@@ -255,7 +258,17 @@ def check_isolation(paths: Paths, env: Mapping[str, str], timeout: float = 120.0
         for operation in ("config.get", "agent.list", "command.list"):
             report[operation] = api_call(server, env, paths.project, operation)
     found = isolation.findings(report, expected)
-    return {"passed": not found, "findings": found, "loaded": summarize_report(report)}
+    cache = opencode_cache_dir(paths, env)
+    found += isolation.cache_findings(cache, env, paths.home)
+    return {"passed": not found, "findings": found, "loaded": {**summarize_report(report), "cache": cache}}
+
+
+def opencode_cache_dir(paths: Paths, env: Mapping[str, str]) -> str | None:
+    """The cache directory OpenCode itself reports for the run's environment."""
+    result = subprocess.run(["opencode", "debug", "paths", "cache"], cwd=paths.project, env=dict(env), capture_output=True,
+                            text=True, timeout=60, check=False)
+    lines = [line.split(None, 1)[-1].strip() for line in result.stdout.splitlines() if line.strip()]
+    return lines[-1] if result.returncode == 0 and lines else None
 
 
 def git(project: Path, *args: str) -> None:
@@ -354,6 +367,33 @@ def stop_recorded_viewers(paths: Paths, timeout: float = 120.0) -> list[JSON]:
             stdout, _ = process.communicate()
         results.append({"session": str(session_file.relative_to(paths.home)), "exit_code": process.returncode,
                         "result": parse_json(stdout)})
+    return results
+
+
+def stop_recorded_warmups(paths: Paths, grace_s: float = 3.0) -> list[JSON]:
+    """Stop each cad-flow warm-up the run's own private cache records as running, by that record's pid.
+
+    preflight.py starts `--warm` in its own session, so the recorded pid leads its process group. The group is
+    signalled only while that pid still is a `preflight.py --warm` leading its own group; anything else is left.
+    """
+    results = []
+    for record_path in sorted((paths.home / ".cache/cad-flow/warm").glob("*.json")):
+        with contextlib.suppress(OSError, ValueError):
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            pid = record.get("pid") if isinstance(record, dict) and record.get("state") == "running" else None
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                continue
+            listing = subprocess.run(["ps", "-ww", "-o", "pgid=,command=", "-p", str(pid)], capture_output=True, text=True,
+                                     check=False).stdout.strip()
+            group, _, command = listing.partition(" ")
+            ours = group.strip().isdigit() and int(group) == pid and "preflight.py" in command and "--warm" in command
+            if ours:
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(pid, sig)
+                    time.sleep(grace_s)
+            results.append({"record": str(record_path.relative_to(paths.home)), "pid": pid, "stopped": ours,
+                            "command": command[:200]})
     return results
 
 
@@ -576,15 +616,27 @@ def converse(driver: Driver, script: dialogue.Script, mode: str, opening: str, c
             return conversation
         failures = failures + 1 if invocation.exit_code else 0
         hw = driver.paths.project / "hw"
-        can_stop = acceptance.latest_at_stage(built_versions(hw), TARGET_STAGE[mode]) is not None
-        reply = dialogue.respond(script, text, mode, can_stop)
+        versions = built_versions(hw)
+        can_stop = acceptance.latest_at_stage(versions, TARGET_STAGE[mode]) is not None
+        gates = gate_context(hw, versions)
+        reply = dialogue.respond(script, text, mode, can_stop, gates)
         self_approved = not stopping and bool(acceptance.stop_gate_approvals(decisions(hw), mode))
         outcome = terminal_outcome(stopping, failures, len(driver.invocations), caps, reply, self_approved)
         record_turn(conversation, invocation, text, reply, sent=outcome is None)
+        conversation.entries[-1].update({"stage": gates.stage, "has_l1": gates.has_l1})
         if outcome is not None:
             conversation.outcome = outcome
             return conversation
         message, stopping = reply.message, reply.stops
+
+
+def gate_context(hw: Path, versions: Mapping[str, str | None]) -> dialogue.GateContext:
+    """The record's stage when a turn ends, for the stage guard: flow.stage, and whether an L1 version is built."""
+    product = (load_yaml(hw / "product.yaml") if (hw / "product.yaml").is_file() else None) or {}
+    flow = product.get("flow") if isinstance(product, dict) else None
+    stage = flow.get("stage") if isinstance(flow, dict) else None
+    return dialogue.GateContext(stage if isinstance(stage, str) else None,
+                                acceptance.latest_at_stage(versions, "layout") is not None)
 
 
 def export_tree(driver: Driver, lead: str, sanitize: bool) -> list[JSON]:
@@ -923,7 +975,8 @@ def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case,
     with monitor.active():
         conversation = converse(driver, case.script, args.mode, first_message(paths, case.folder, args.mode), caps)
         viewers = stop_recorded_viewers(paths)
-        leftovers = {**kill_leftovers(paths.scratch), "viewers_stopped": viewers}
+        warmups = stop_recorded_warmups(paths)
+        leftovers = {**kill_leftovers(paths.scratch), "viewers_stopped": viewers, "warmups_stopped": warmups}
         evaluation = evaluate(driver, config, args.mode, case.rubric, prices, judge=args.mode == "bench" and not args.no_judge)
     exports = export_tree(driver, driver.session or "", sanitize=False)
     run_metrics = {**metrics.summarize(exports, driver.session or "", prices), **dialogue_metrics(conversation, driver)}

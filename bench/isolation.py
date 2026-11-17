@@ -83,6 +83,22 @@ def findings(report: Mapping[str, Any], expected: Expected) -> list[str]:
     ]
 
 
+def cache_findings(opencode_cache: str | None, env: Mapping[str, str], home: PurePath) -> list[str]:
+    """The effective cache directories must lie inside the run home: OpenCode's (from `opencode debug paths cache`)
+    and XDG_CACHE_HOME, which the lead's tools (cad-flow's warm-up record) read."""
+    def inside(path: str | None) -> bool:
+        return path is not None and (PurePath(path) == home or home in PurePath(path).parents)
+
+    found = []
+    if opencode_cache is None:
+        found.append("opencode reported no cache path")
+    elif not inside(opencode_cache):
+        found.append(f"opencode cache outside the run home: {opencode_cache}")
+    if not inside(env.get("XDG_CACHE_HOME")):
+        found.append(f"XDG_CACHE_HOME is not set inside the run home: {env.get('XDG_CACHE_HOME')}")
+    return found
+
+
 def skills_settled(previous: list[Any] | None, current: list[Any] | None, expected: Expected) -> bool:
     """True once every installed skill is listed and the listing did not change since the last poll."""
     if current is None or previous is None:

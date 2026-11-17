@@ -272,6 +272,62 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual([ask.intent for ask in reply.asks], ["environment", "environment", "environment"])
 
 
+class StageGuardTests(unittest.TestCase):
+    """A gate prompt counts only when the gate fits the record's stage at the end of the turn."""
+
+    GROUND = dialogue.GateContext(stage="ground", has_l1=False)
+    CONCEPT = dialogue.GateContext(stage="concept", has_l1=False)
+    AFTER_L1 = dialogue.GateContext(stage="parts", has_l1=True)  # the provisional gate moved flow.stage on
+
+    def gate_intents(self, case: str, data: str, context: dialogue.GateContext | None) -> list[str]:
+        reply = dialogue.respond(case_script(case), recorded_text(data), "fixture", can_stop=False, gates=context)
+        return [ask.intent for ask in reply.asks if ask.kind == "gate"]
+
+    def test_the_recorded_real_gate_prompts_stay_gates_at_their_stage(self) -> None:
+        cases = [
+            ("small-mechanism", "events-gate-small-mechanism-intent.jsonl", self.GROUND, ["intent-gate"]),
+            ("small-mechanism", "events-gate-small-mechanism-variant.jsonl", self.CONCEPT, ["variant-gate", "variant-gate"]),
+            ("small-mechanism", "events-gate-small-mechanism-variant-options.jsonl", self.CONCEPT, ["variant-gate"]),
+            ("wall-bracket", "events-gate-wall-bracket-layout.jsonl", self.AFTER_L1, ["layout-freeze"]),
+        ]
+        for case, data, context, expected in cases:
+            with self.subTest(data=data):
+                self.assertEqual(self.gate_intents(case, data, context), expected)
+
+    def test_a_recorded_gate_prompt_at_the_wrong_stage_is_no_gate(self) -> None:
+        cases = [
+            ("small-mechanism", "events-gate-small-mechanism-intent.jsonl", self.CONCEPT),
+            ("small-mechanism", "events-gate-small-mechanism-variant.jsonl", self.GROUND),
+            ("small-mechanism", "events-gate-small-mechanism-variant-options.jsonl", self.AFTER_L1),
+            ("wall-bracket", "events-gate-wall-bracket-layout.jsonl", self.CONCEPT),
+        ]
+        for case, data, context in cases:
+            with self.subTest(data=data, stage=context.stage):
+                reply = dialogue.respond(case_script(case), recorded_text(data), "fixture", can_stop=True, gates=context)
+                self.assertEqual([ask.intent for ask in reply.asks if ask.kind == "gate"], [])
+                self.assertFalse(reply.stops)
+
+    def test_the_failed_ground_turns_are_no_gates_at_ground(self) -> None:
+        # …T220910-ab47 and …T000540-acb1 failed live as unmatched-at-gate on these GROUND turns.
+        for data in ("events-ground-small-mechanism-reply-line.jsonl", "events-ground-small-mechanism-time-reference.jsonl"):
+            with self.subTest(data=data):
+                reply = dialogue.respond(case_script("small-mechanism"), recorded_text(data), "fixture", gates=self.GROUND)
+                self.assertFalse(reply.at_gate)
+                self.assertFalse(reply.unmatched_at_gate)
+
+    def test_commit_timing_is_no_stage_gate_and_is_answered_at_any_stage(self) -> None:
+        for context in (self.GROUND, self.CONCEPT, self.AFTER_L1):
+            with self.subTest(stage=context.stage):
+                reply = dialogue.respond(case_script("wall-bracket"), recorded_text("events-decision-wall-bracket-commit.jsonl"),
+                                         "fixture", gates=context)
+                self.assertEqual([ask.intent for ask in reply.asks], ["commit-timing"])
+
+    def test_the_stop_gate_at_the_wrong_stage_does_not_end_the_run(self) -> None:
+        reply = dialogue.respond(case_script("wall-bracket"), "Do you approve the LAYOUT freeze on v2?", "fixture",
+                                 can_stop=True, gates=self.CONCEPT)
+        self.assertFalse(reply.stops)
+
+
 class GateTests(unittest.TestCase):
     def test_regression_a_ground_question_naming_a_gate_as_a_time_reference_is_not_that_gate(self) -> None:
         # The fifth small-mechanism build failed in GROUND: "Release claims: for this session we stop at the LAYOUT
