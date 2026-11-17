@@ -68,7 +68,7 @@ class Versions(unittest.TestCase):
                 self.assertEqual((problem.code, problem.severity, problem.path, problem.pointer),
                                  ("record.version_unsupported", "error", "hw/product.yaml", "record_version"))
         self.assertIsNone(mi.version_problem({"record_version": 2}))
-        self.assertIsNone(mi.version_problem(None))
+        self.assertEqual(mi.version_problem(None).code, "record.version_unsupported", "no product.yaml names no version")
         self.assertLessEqual({"record.version_unsupported", "record.incomplete"}, set(mi.CODES))
         self.assertNotIn("record.migration_required", mi.CODES)
 

@@ -760,12 +760,11 @@ def record_version(product: Mapping[str, Any]) -> int:
 
 
 def version_problem(product: Mapping[str, Any] | None, path: str = "hw/product.yaml") -> Problem | None:
-    """The blocking record.version_unsupported problem, or None for a current record.
+    """The blocking record.version_unsupported problem, or None for a current record. A missing or
+    non-mapping product.yaml names no record_version, so it is refused too.
     validate.py, status and gated commands report it beside every other finding."""
-    if not isinstance(product, Mapping):
-        return None
     try:
-        record_version(product)
+        record_version(product if isinstance(product, Mapping) else {})
     except UnsupportedRecordVersion as error:
         return Problem(VERSION_UNSUPPORTED, path, "record_version", str(error),
                        action="Use the cad-agent release that wrote this record; nothing was changed.")
