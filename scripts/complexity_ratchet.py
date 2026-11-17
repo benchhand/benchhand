@@ -71,12 +71,26 @@ def parse_ruff_output(returncode: int, stdout: str, stderr: str) -> list[Finding
     return data
 
 
+def tracked_python_files(root: Path) -> list[str]:
+    """Repo-relative paths of tracked `*.py` files, so local ignore rules cannot hide any."""
+    proc = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "*.py"], capture_output=True, check=False
+    )
+    if proc.returncode != 0:
+        raise RatchetError(f"git ls-files failed ({proc.returncode}): {proc.stderr.decode(errors='replace').strip()}")
+    files = [name.decode() for name in proc.stdout.split(b"\0") if name]
+    if not files:
+        raise RatchetError("git ls-files found no tracked Python files")
+    return files
+
+
 def run_ruff() -> list[Finding]:
+    files = tracked_python_files(ROOT)
     cmd = [
         ruff_bin(), "check", "--isolated", "--no-cache", "--select", ",".join(SELECTED),
-        "--output-format", "json", str(ROOT),
+        "--output-format", "json", "--", *files,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=ROOT)
     return parse_ruff_output(proc.returncode, proc.stdout, proc.stderr)
 
 

@@ -40,6 +40,27 @@ async def beta():
 ROWS = {"alpha": 1, "method": 6, "inner": 7, "beta": 11}
 
 
+def fake_run(
+    ruff: subprocess.CompletedProcess[str], git: subprocess.CompletedProcess[bytes] | None = None
+):
+    """subprocess.run stand-in: `git ls-files` gets `git` (default: one tracked file), ruff gets `ruff`."""
+    listing = git or subprocess.CompletedProcess([], 0, stdout=b"a.py\0", stderr=b"")
+
+    def run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[object]:
+        return listing if cmd[0] == "git" else ruff  # type: ignore[return-value]
+
+    return run
+
+
+def git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def make_repo(root: Path) -> None:
+    """A throwaway repo; identity is passed per command so no config is written."""
+    git(root, "init", "-q")
+
+
 class RatchetCase(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -207,7 +228,14 @@ class FunctionNameTest(RatchetCase):
 class RuffBoundaryTest(RatchetCase):
     """What ruff prints, mocked at the subprocess call, can never read as zero findings."""
 
-    def run_with_ruff(self, returncode: int, stdout: str, *args: str, stderr: str = "boom") -> int:
+    def run_with_ruff(
+        self,
+        returncode: int,
+        stdout: str,
+        *args: str,
+        stderr: str = "boom",
+        git: subprocess.CompletedProcess[bytes] | None = None,
+    ) -> int:
         self.baseline.write_text(
             json.dumps(
                 {"counts": dict.fromkeys(cr.RULES, 1), "offenders": ["C901 a.py::f"]}
@@ -217,7 +245,7 @@ class RuffBoundaryTest(RatchetCase):
         proc = subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
         with (
             mock.patch.object(cr, "ruff_bin", return_value="ruff"),
-            mock.patch.object(cr.subprocess, "run", return_value=proc),
+            mock.patch.object(cr.subprocess, "run", side_effect=fake_run(proc, git)),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
@@ -275,20 +303,50 @@ class RuffBoundaryTest(RatchetCase):
                 self.assertEqual(self.run_with_ruff(1, json.dumps([diag])), 2)
                 self.assertEqual(self.run_with_ruff(1, json.dumps([diag]), "--update"), 2)
 
-    @unittest.skipUnless(shutil.which("ruff"), "needs ruff on PATH")
-    def test_real_ruff_invalid_utf8_file_fails_with_exit_2(self) -> None:
-        (self.root / "bad.py").write_bytes(b'x = "\xff\xfe"\n')
-        self.baseline.write_text(json.dumps({"counts": dict.fromkeys(cr.RULES, 0), "offenders": []}))
-        before = self.baseline.read_text()
+    def test_git_failure_or_empty_listing_fails_with_exit_2(self) -> None:
+        cases = {
+            "not a repository": subprocess.CompletedProcess([], 128, stdout=b"", stderr=b"fatal"),
+            "empty list": subprocess.CompletedProcess([], 0, stdout=b"", stderr=b""),
+            "only separators": subprocess.CompletedProcess([], 0, stdout=b"\0\0", stderr=b""),
+        }
+        for label, listing in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.run_with_ruff(0, "[]", git=listing), 2)
+                self.assertEqual(self.run_with_ruff(0, "[]", "--update", git=listing), 2)
+
+    def run_real(self, *args: str) -> int:
         with (
             mock.patch.object(cr, "ruff_bin", return_value=shutil.which("ruff")),
             mock.patch.object(cr, "ROOT", self.root),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
-            code = cr.main(["--baseline", str(self.baseline), "--update"], root=self.root)
-        self.assertEqual(code, 2)
+            return cr.main(["--baseline", str(self.baseline), *args], root=self.root)
+
+    @unittest.skipUnless(shutil.which("ruff") and shutil.which("git"), "needs ruff and git")
+    def test_real_ruff_invalid_utf8_file_fails_with_exit_2(self) -> None:
+        make_repo(self.root)
+        (self.root / "bad.py").write_bytes(b'x = "\xff\xfe"\n')
+        git(self.root, "add", "bad.py")
+        self.baseline.write_text(json.dumps({"counts": dict.fromkeys(cr.RULES, 0), "offenders": []}))
+        before = self.baseline.read_text()
+        self.assertEqual(self.run_real("--update"), 2)
         self.assertEqual(self.baseline.read_text(), before)
+
+    @unittest.skipUnless(shutil.which("ruff") and shutil.which("git"), "needs ruff and git")
+    def test_real_ruff_counts_tracked_files_hidden_by_local_ignores(self) -> None:
+        make_repo(self.root)
+        branchy = "def f(x):\n" + "".join(f"    if x == {i}:\n        return {i}\n" for i in range(12))
+        for name in ("excluded.py", "globally_ignored.py"):
+            (self.root / name).write_text(branchy)
+        git(self.root, "add", "excluded.py", "globally_ignored.py")
+        (self.root / ".git" / "info" / "exclude").write_text("excluded.py\n")
+        global_ignore = self.root / "global-ignore"
+        global_ignore.write_text("globally_ignored.py\n")
+        git(self.root, "config", "core.excludesFile", str(global_ignore))  # temp repo only
+        self.assertEqual(self.run_real("--update", "--allow-increase"), 0)
+        offenders = json.loads(self.baseline.read_text())["offenders"]
+        self.assertEqual(offenders, ["C901 excluded.py::f", "C901 globally_ignored.py::f"])
 
     def test_genuine_empty_list_is_zero_findings(self) -> None:
         self.baseline.write_text(
@@ -297,7 +355,7 @@ class RuffBoundaryTest(RatchetCase):
         proc = subprocess.CompletedProcess([], 0, stdout="[]\n", stderr="")
         with (
             mock.patch.object(cr, "ruff_bin", return_value="ruff"),
-            mock.patch.object(cr.subprocess, "run", return_value=proc),
+            mock.patch.object(cr.subprocess, "run", side_effect=fake_run(proc)),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(
