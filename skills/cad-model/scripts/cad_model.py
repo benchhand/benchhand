@@ -64,6 +64,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import sys
 import traceback
 from collections.abc import Callable
@@ -125,6 +126,8 @@ class _Converter(click.ParamType[Any, Any]):
             return self._convert(value)
         except argparse.ArgumentTypeError as error:
             self.fail(str(error), param, ctx)
+        except (TypeError, ValueError):
+            self.fail(f"invalid {self.name} value: {value!r}", param, ctx)
 
 
 def _pair(text: str) -> tuple[str, str]:
@@ -154,9 +157,10 @@ def _jobs(text: str) -> int:
 PAIR = _Converter("REF:REF", _pair)
 EXPECT = _Converter("PN=N", _expect)
 JOBS = _Converter("N|auto", _jobs)
-HW_ARGUMENT = click.argument("hw", type=click.Path(path_type=Path))
-HW_OPTION = click.option("--hw", type=click.Path(path_type=Path), default=Path("hw"))
-OUT_OPTION = click.option("--out", type=click.Path(path_type=Path), help="also write the result JSON here")
+PATH = click.Path(path_type=Path, readable=False)  # a plain path: argparse's Path(text) tested nothing about it
+HW_ARGUMENT = click.argument("hw", type=PATH)
+HW_OPTION = click.option("--hw", type=PATH, default=Path("hw"))
+OUT_OPTION = click.option("--out", type=PATH, help="also write the result JSON here")
 JSON_OPTION = click.option("--json", "json_flag", is_flag=True,
                            help="print the full JSON result whatever CAD_OUTPUT says")
 
@@ -167,7 +171,69 @@ def _exclusive(first: tuple[str, object], second: tuple[str, object]) -> None:
         raise click.UsageError(f"argument {second[0]}: not allowed with argument {first[0]}")
 
 
-@click.group(help="Build, check, and diff CAD design versions")
+_NUMBER = re.compile(r"^-\d+$|^-\d*\.\d+$")
+
+
+def _option_like(text: str) -> bool:
+    """Whether argparse reads `text` as an option rather than a value: a dash, no space, not a negative number."""
+    return text.startswith("-") and text != "-" and " " not in text and not _NUMBER.match(text)
+
+
+class _Command(click.Command):
+    """A command whose argument grammar is argparse's, which the scripts' callers were written against.
+
+    Click takes the next word as an option's value whatever it looks like, checks only the last of a repeated
+    scalar option, and reads a negative number as an unknown option. This screens the words first, in order:
+    a value that looks like an option is refused, every occurrence of a typed option is converted, a help flag
+    ends the screening (so a later bad word cannot hide the help), and an unknown option is refused at the end."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.context_settings.setdefault("ignore_unknown_options", True)  # a negative number stays a positional
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        return super().parse_args(ctx, self._screen(ctx, args))
+
+    def _screen(self, ctx: click.Context, args: list[str]) -> list[str]:
+        options = {flag: param for param in self.get_params(ctx) if isinstance(param, click.Option)
+                   for flag in (*param.opts, *param.secondary_opts)}
+        helps = set(self.get_help_option_names(ctx))
+        screened: list[str] = []
+        unknown: str | None = None
+        position = 0
+        while position < len(args):
+            word = args[position]
+            position += 1
+            if word == "--":
+                screened.extend(["--", *args[position:]])
+                break
+            if word in helps:
+                return [*screened, word]
+            name, equals, value = word.partition("=")
+            param = options.get(name) if _option_like(word) else None
+            if _option_like(word) and param is None:
+                unknown = unknown or name
+            elif param is None or param.is_flag:
+                screened.append(word)
+            else:
+                if not equals:
+                    if position >= len(args) or _option_like(args[position]):
+                        raise click.BadOptionUsage(name, f"Option '{name}' requires an argument.", ctx=ctx)
+                    value = args[position]
+                    position += 1
+                param.type(value, param, ctx)
+                screened.extend([word] if equals else [word, value])
+        if unknown is not None:
+            raise click.NoSuchOption(unknown, ctx=ctx)
+        return screened
+
+
+class _Group(click.Group):
+    command_class = _Command
+
+
+@click.group(cls=_Group, help="Build, check, and diff CAD design versions",
+             context_settings={"help_option_names": ["-h", "--help"]})
 def cli() -> None:
     pass
 
@@ -204,7 +270,7 @@ def run(**params: Any) -> int:
 @click.option("--jobs", type=JOBS, default="1", metavar="N|auto",
               help="worker processes measuring pairs (1, the default: this process, on OCCT's thread pool; "
               "auto: the CPU count, at most 8)")
-@click.option("--cache", type=click.Path(path_type=Path), metavar="DIR",
+@click.option("--cache", type=PATH, metavar="DIR",
               help="pair result cache shared with cad-motion sweep.py (default: hw/.cad)")
 @click.option("--no-cache", is_flag=True, help="measure every pair, reading and writing no cache")
 @JSON_OPTION
@@ -248,6 +314,8 @@ def store(**params: Any) -> int:
 def main(argv: list[str] | None = None) -> int:
     try:
         code = cli.main(args=argv, standalone_mode=False)
+    except click.Abort as error:  # Click turns a Ctrl-C into Abort; argparse let the KeyboardInterrupt through
+        raise error.__cause__ if isinstance(error.__cause__, KeyboardInterrupt) else error
     except click.ClickException as error:
         error.show()
         return error.exit_code
