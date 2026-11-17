@@ -57,7 +57,7 @@ listed files and nothing else.
 | `record.motion_case` | `hw/motion/cases/{ID}/` | record | `plan.yaml` (source) | lead, accepting an analyst motion plan | analysis | controlled | one authored motion plan over the record's independent joints; the default plan is generated, and the case id default is reserved |
 | `version.core` | `hw/versions/{V}/` | generated, sealed by its version manifest | `assembly.step` (definition), `assembly.glb` (review), `part-map.json` (data), `metrics.json` (data), `drawing-features.json` (data, optional), `manufacturing-features.json` (data, optional), `manifest.json` (manifest), `parts/{PN}.step` (definition) | cad-model cad_model.py run | layout | immutable | one built version; its manifest.json inventories every file below it, including record/ and manufacturing/ |
 | `version.record` | `hw/versions/{V}/record/` | generated | `product.yaml` (snapshot), `interfaces.yaml` (snapshot), `assembly.yaml` (snapshot), `parts/{PN}/part.yaml` (snapshot), `requirements.yaml` (snapshot, optional), `manufacturing/capabilities.yaml` (snapshot, optional), `manufacturing/materials.yaml` (snapshot, optional), `manufacturing/selection.yaml` (snapshot, optional), `manufacturing/sources/**` (snapshot, optional) | cad-model cad_model.py run | layout | immutable | the record files the version was built from, for readers of the old state |
-| `version.manufacturing` | `hw/versions/{V}/manufacturing/{PN}/` | generated | `part.step` (manufacture), `part.stl` (manufacture, optional), `components/{COMP}/part.step` (manufacture, optional), `components/{COMP}/part.stl` (manufacture, optional), `manufacturing.json` (data) | cad-model cad_model.py run | layout | immutable | the final manufacturing geometry of one custom-made part; complete for every custom-made PN by design_freeze |
+| `version.manufacturing` | `hw/versions/{V}/manufacturing/{PN}/` | generated | `part.step` (manufacture), `part.stl` (manufacture, optional), `part.3mf` (manufacture, optional), `components/{COMP}/part.step` (manufacture, optional), `components/{COMP}/part.stl` (manufacture, optional), `components/{COMP}/part.3mf` (manufacture, optional), `manufacturing.json` (data) | cad-model cad_model.py run | layout | immutable | the final manufacturing geometry of one custom-made part; complete for every custom-made PN by design_freeze |
 | `version.latest` | `hw/versions/latest.json` | generated | (navigation) | cad-model cad_model.py run | layout | pointer | names the newest complete version |
 | `bundle.checks` | `hw/checks/{V}/{S}/` | generated, sealed by its bundle manifest | `result.json` (data), `evidence/**` (evidence, optional), `manifest.json` (manifest) | cad-model check, cad-design form_check.py, cad-fits stackup.py result adapters | layout | immutable | one check result for one version and subject; a failed result is never reused as a pass. A manufacturing-intent producer writes its required-check packet (schemas/manufacturing-check-result.schema.json) and keeps its retained reports, calibration and test bytes under evidence/ |
 | `bundle.drawings` | `hw/drawings/{V}/{S}/` | generated, sealed by its bundle manifest | `sheet-{N}.svg` (document), `sheet-{N}.pdf` (document), `sheet-{N}.png` (review), `coverage.json` (data), `package.json` (data), `manifest.json` (manifest) | cad-drawings drawing.py, assembly_drawing.py | detail | immutable | one controlled drawing package; rejected drafts stay in .cad-work |
@@ -156,7 +156,7 @@ below `hw/`.
 
 | Class | Suffixes | Canonical location | Action |
 |---|---|---|---|
-| geometry | `.step`, `.stp`, `.stl`, `.3mf`, `.glb`, `.gltf`, `.brep`, `.brp`, `.iges`, `.igs`, `.obj`, `.ply`, `.fcstd`, `.dxf`, `.dwg`, `.amf` | `hw/versions/{NEXT}/manufacturing/{PN}/{FILE}` | Geometry is generated, never placed by hand. Define the state in hw/parts/{PN}/model.py; cad-model run writes hw/versions/{NEXT}/manufacturing/{PN}/part.step, and part.stl for an additive (FDM or resin) part. Keep any one-off exporter outside hw/, for example in .cad-work/migration/. Nothing was changed. |
+| geometry | `.step`, `.stp`, `.stl`, `.3mf`, `.glb`, `.gltf`, `.brep`, `.brp`, `.iges`, `.igs`, `.obj`, `.ply`, `.fcstd`, `.dxf`, `.dwg`, `.amf` | `hw/versions/{NEXT}/manufacturing/{PN}/{FILE}` | Geometry is generated, never placed by hand. Define the state in hw/parts/{PN}/model.py; cad-model run writes hw/versions/{NEXT}/manufacturing/{PN}/part.step, part.stl for an additive (FDM or resin) part, and part.3mf for an FDM part. Keep any one-off exporter outside hw/, for example in .cad-work/migration/. Nothing was changed. |
 | script | `.py`, `.sh`, `.bash`, `.zsh`, `.fcmacro`, `.js`, `.mjs`, `.ts`, `.ipynb`, `.bat`, `.ps1` | `.cad-work/migration/{REL}` | hw/parts/<PN>/model.py is the only CAD source in hw/. Fold the behaviour into the part's model.py, or keep the script outside hw/, for example in .cad-work/migration/. Nothing was changed. |
 | document | `.md`, `.txt`, `.rst`, `.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.csv`, `.tsv`, `.xlsx`, `.xls`, `.ods`, `.docx`, `.doc`, `.odt`, `.html`, `.htm` | `hw/docs/{REL}` | Move human notes and reference material to hw/docs/; nothing there earns geometry, check or release credit. Nothing was changed. |
 | data | any other | `.cad-work/migration/{REL}` | If a CAD command produced it, run that command again so the output lands in its bundle; otherwise keep it outside hw/, for example in .cad-work/migration/. Nothing was changed. |
@@ -193,7 +193,7 @@ A part is custom-made when `make_buy: make` or `procurement.mode: made_to_drawin
 
 | Process | Files |
 |---|---|
-| fdm | `part.step`, `part.stl`, `manufacturing.json` |
+| fdm | `part.step`, `part.stl`, `part.3mf`, `manufacturing.json` |
 | resin | `part.step`, `part.stl`, `manufacturing.json` |
 | cnc | `part.step`, `manufacturing.json` |
 | laser | `part.step`, `manufacturing.json` |
@@ -206,8 +206,8 @@ A part is custom-made when `make_buy: make` or `procurement.mode: made_to_drawin
 | purchased | `part.step`, `manufacturing.json` |
 
 A part with several disconnected solids (part.yaml `intent.components`) also gets
-`components/{COMP}/part.step` per component, and `components/{COMP}/part.stl` where its process has
-`part.stl`; its `manufacturing.json` inventories them. `other` has no output contract: cad-model still builds
+`components/{COMP}/part.step` per component, and `components/{COMP}/part.stl` and `part.3mf` where its
+process has them; its `manufacturing.json` inventories them. `other` has no output contract: cad-model still builds
 the installed definition, the manufacturing coverage stays unknown, and `manufacture_policy` raises
 `UnsupportedProcess`, so freeze and release refuse the part rather than inventing its files.
 
@@ -215,8 +215,9 @@ the installed definition, the manufacturing coverage stays unknown, and `manufac
 |---|---|
 | `part.step` | STEP AP242, exact B-rep, millimetres |
 | `part.stl` | binary STL, millimetres |
+| `part.3mf` | 3MF Core 1.4.0, one mesh object in the bed pose, millimetres; geometry, orientation and material name only, no slicing |
 
-The STL tessellation defaults to 0.05 mm linear and 0.1 rad angular deflection; part.yaml `manufacture.mesh` overrides it per
+The STL and 3MF tessellation defaults to 0.05 mm linear and 0.1 rad angular deflection; part.yaml `manufacture.mesh` overrides it per
 part. A part made in its installed shape compares the manufactured volume to the installed one within
 1e-09 relative. A part with `manufacture.relationship: different`
 declares its own `volume_rel_tolerance` or `volume_abs_tolerance_mm3`.

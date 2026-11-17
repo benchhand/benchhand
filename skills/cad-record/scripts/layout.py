@@ -1122,8 +1122,8 @@ def markdown() -> str:
     uncovered = [process for process in _primary_processes() if process not in rules["outputs"]]
     lines += ["",
               "A part with several disconnected solids (part.yaml `intent.components`) also gets",
-              "`components/{COMP}/part.step` per component, and `components/{COMP}/part.stl` where its process has",
-              "`part.stl`; its `manufacturing.json` inventories them. "
+              "`components/{COMP}/part.step` per component, and `components/{COMP}/part.stl` and `part.3mf` where its",
+              "process has them; its `manufacturing.json` inventories them. "
               f"{' and '.join(f'`{p}`' for p in uncovered) or 'No process'} has no output contract: cad-model still builds",
               "the installed definition, the manufacturing coverage stays unknown, and `manufacture_policy` raises",
               "`UnsupportedProcess`, so freeze and release refuse the part rather than inventing its files."]
@@ -1131,7 +1131,7 @@ def markdown() -> str:
     lines += [f"| `{name}` | {_cell(text)} |" for name, text in rules["formats"].items()]
     mesh = rules["mesh"]
     lines += ["",
-              f"The STL tessellation defaults to {mesh['linear_deflection_mm']} mm linear and "
+              f"The STL and 3MF tessellation defaults to {mesh['linear_deflection_mm']} mm linear and "
               f"{mesh['angular_deflection_rad']} rad angular deflection; part.yaml `manufacture.mesh` overrides it per",
               "part. A part made in its installed shape compares the manufactured volume to the installed one within",
               f"{rules['same_state_volume_rel_tolerance']:g} relative. A part with `manufacture.relationship: different`",
