@@ -18,6 +18,7 @@ import tempfile
 import types
 import unittest
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -223,7 +224,7 @@ def _with_extra(data: bytes) -> bytes:
 
 
 class MeasureTests(unittest.TestCase):
-    def measure(self, triangles: list[tuple[int, int, int]], vertices=CUBE_VERTICES) -> dict:
+    def measure(self, triangles: Sequence[Sequence[int]], vertices=CUBE_VERTICES) -> dict:
         return threemf.measure(vertices, triangles)
 
     def test_the_cube_is_closed_wound_outward_and_measured(self) -> None:
