@@ -12,6 +12,29 @@ build_volume:
 flow:
   stage: layout
   recheck_from: layout
+  profile:
+    decision: "DR-010"
+    human_approval: "all"
+    fea:
+      enabled: false
+    stack_up: "auto"
+    critique: "light"
+    motion: "auto"
+    storage_results_in_git: false
+    processes:
+      fdm:
+        orientation: "propose"
+        supports: "allowed"
+        overhang_deg: "calibrated"
+        bridge_mm: "calibrated"
+        min_wall_mm: "calibrated"
+        min_feature_mm: "calibrated"
+        warp: "calibrated"
+        cosmetic_faces: false
+        print_in_place: false
+        pip_clearance_mm:
+          xy: "not_asked"
+          z: "not_asked"
 drawing:
   definition: model_and_drawing
   projection: first_angle

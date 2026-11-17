@@ -201,6 +201,7 @@ class Version1Record(VersionOneCase):
         for text in ("Nothing was approved", "no process, material, capability, criterion", "| Q-012 |", "LMP-0001",
                      "`hw/versions/`, `hw/releases/`"):
             self.assertIn(text, note)
+        fx.add_flow_profile(self.hw)  # the migration records no project-start answers; validation needs them past INTENT
         validated = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,
                                    timeout=120, check=False)
         self.assertEqual((validated.returncode, result_payload(validated.stdout)), (0, {"ok": True, "findings": []}))
