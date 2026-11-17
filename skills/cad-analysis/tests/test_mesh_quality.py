@@ -40,6 +40,17 @@ class ElementJacobians(unittest.TestCase):
         self.assertAlmostEqual(jacobian_determinants(tetrahedron(0.9))[1], -0.6, places=12)
         self.assertLess(scaled_jacobian(tetrahedron(0.9)), 0)
 
+    def test_a_wholly_inverted_element_reports_minus_one_whatever_its_size(self) -> None:
+        # Reflecting the element through x = 0 inverts it: every sampled determinant is -1 (unit), or -8 when
+        # the element is twice as large. The measure is dimensionless, so both report -1.
+        mirrored = [(-x, y, z) for x, y, z in tetrahedron()]
+        doubled = [(2.0 * x, 2.0 * y, 2.0 * z) for x, y, z in mirrored]
+        for nodes, determinant in ((mirrored, -1.0), (doubled, -8.0)):
+            with self.subTest(determinant=determinant):
+                for value in jacobian_determinants(nodes):
+                    self.assertAlmostEqual(value, determinant, places=12)
+                self.assertAlmostEqual(scaled_jacobian(nodes), -1.0, places=12)
+
 
 class MeshFile(unittest.TestCase):
     def test_reads_the_c3d10_elements_of_an_input_file_and_counts_the_invalid_ones(self) -> None:

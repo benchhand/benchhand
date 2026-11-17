@@ -466,14 +466,12 @@ runpy.run_path(sys.argv[1], run_name="__main__")
         self.assertEqual(quality["invalid_elements"], 0)
         self.assertGreater(quality["min_scaled_jacobian"], 0)
 
-    def solve_tube(self, high_order: dict) -> tuple[dict, int]:
-        """A thin brass tube (outer radius 3.985, bore 2.55, 8 long) at mesh_size 4: with no high-order
-        optimisation, Gmsh curves its second-order nodes onto the bore and inverts two elements."""
-        with tempfile.TemporaryDirectory(prefix="cad-fea-tube-") as directory:
-            root = Path(directory)
-            step = root / "tube.step"
-            job = root / "make_tube.py"
-            job.write_text(f'''import FreeCAD as App, Part, Import
+    def solve_tube(self, root: Path, high_order: dict) -> tuple[dict, int]:
+        """A thin brass tube (outer radius 3.985, bore 2.55, 8 long) at mesh_size 4, solved in `root`: with no
+        high-order optimisation, Gmsh curves its second-order nodes onto the bore and inverts two elements."""
+        step = root / "tube.step"
+        job = root / "make_tube.py"
+        job.write_text(f'''import FreeCAD as App, Part, Import
 doc=App.newDocument("Tube")
 tube=doc.addObject("Part::Feature", "Tube")
 tube.Shape=Part.makeCylinder(3.985, 8).cut(Part.makeCylinder(2.55, 8))
@@ -481,21 +479,22 @@ doc.recompute()
 Import.export([tube], {str(step)!r})
 App.closeDocument(doc.Name)
 ''', encoding="utf-8")
-            built = subprocess.run([str(FREECADCMD), str(job)], cwd=root, capture_output=True, text=True, timeout=120)
-            self.assertTrue(step.is_file(), built.stdout + built.stderr)
-            case_path = root / "case.yaml"
-            case_path.write_text(f"""step: {step}
+        built = subprocess.run([str(FREECADCMD), str(job)], cwd=root, capture_output=True, text=True, timeout=120)
+        self.assertTrue(step.is_file(), built.stdout + built.stderr)
+        case_path = root / "case.yaml"
+        case_path.write_text(f"""step: {step}
 material: {{E: 97000, nu: 0.34, density: 8500, yield: 124}}
 fixed_faces: {{plane: {{axis: z, value: 8, tolerance: 0.000001}}}}
 loads: [{{selector: {{plane: {{axis: z, value: 0, tolerance: 0.000001}}}}, force: [0, 0, 500]}}]
 mesh_size: 4
 """, encoding="utf-8")
-            with patch.dict(fea_static.HIGH_ORDER, high_order):
-                return fea_static.run_job(case_path, load_case(case_path))
+        with patch.dict(fea_static.HIGH_ORDER, high_order):
+            return fea_static.run_job(case_path, load_case(case_path), scratch_root=root)
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
     def test_a_mesh_with_invalid_elements_is_remeshed_at_the_fallback_level(self) -> None:
-        result, status = self.solve_tube({"optimize": 0, "fallback": 2})
+        with tempfile.TemporaryDirectory(prefix="cad-fea-tube-") as directory:
+            result, status = self.solve_tube(Path(directory), {"optimize": 0, "fallback": 2})
         self.assertEqual(status, 0, result)
         quality = result["mesh_quality"]
         self.assertEqual((quality["high_order_optimize"], quality["invalid_elements"]), (2, 0))
@@ -504,13 +503,30 @@ mesh_size: 4
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
     def test_an_invalid_mesh_at_the_terminal_level_is_refused_before_it_is_solved(self) -> None:
-        result, status = self.solve_tube({"optimize": 0, "fallback": 0})
-        self.assertEqual((status, result["error"]["code"]), (2, "mesh_invalid"), result)
-        details = result["error"]["details"]
-        self.assertEqual(details["high_order_optimize"], 0)
-        self.assertGreater(details["invalid_elements"], 0)
-        self.assertLess(details["min_scaled_jacobian"], 0)
-        self.assertEqual(list(Path(result["run_directory"]).glob("GmshMesh.frd")), [])
+        with tempfile.TemporaryDirectory(prefix="cad-fea-tube-") as directory:
+            root = Path(directory)
+            solves = root / "ccx-solves.log"
+            ccx = root / "ccx"  # $CCX: identifies itself as CalculiX, and records every solve (-i) it is asked for
+            ccx.write_text(f"""#!{sys.executable}
+import sys
+print("CalculiX Version 2.23", flush=True)
+if "-i" in [arg.strip() for arg in sys.argv[1:]]:
+    open({str(solves)!r}, "a").write(" ".join(sys.argv[1:]) + "\\n")
+    sys.exit(1)
+""", encoding="utf-8")
+            ccx.chmod(0o755)
+            with patch.dict(os.environ, {"CCX": str(ccx)}):
+                result, status = self.solve_tube(root, {"optimize": 0, "fallback": 0})
+            self.assertEqual((status, result["error"]["code"]), (2, "mesh_invalid"), result)
+            details = result["error"]["details"]
+            self.assertEqual(details["high_order_optimize"], 0)
+            self.assertGreater(details["invalid_elements"], 0)
+            self.assertLess(details["min_scaled_jacobian"], 0)
+            run_dir = Path(result["run_directory"])
+            self.assertTrue(run_dir.is_dir())
+            self.assertTrue((run_dir / "GmshInput.geo").is_file())  # the job meshed in this run directory
+            self.assertFalse(solves.exists(), solves.read_text(encoding="utf-8") if solves.exists() else "")
+            self.assertEqual(list(run_dir.glob("GmshMesh.frd")), [])
 
     def test_a_failed_job_keeps_its_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1105,6 +1121,20 @@ class VersionedPublicationTests(unittest.TestCase):
              patch("fea_static.run_job", side_effect=AssertionError("no solver, no run")), patch("sys.stdout", output):
             status = fea_static.main([str(self.case), "--hw", str(self.hw), "--version", "v1"])
         self.assertEqual((status, json.loads(output.getvalue())["error"]["code"]), (2, "solver_unavailable"))
+
+    def test_a_changed_mesh_quality_check_changes_the_recipe(self) -> None:
+        # Only mesh_quality.py's bytes change: the bundle sealed with the old check is not reused.
+        self.assertEqual(self.call()[0], 0)
+        read_bytes = Path.read_bytes
+
+        def changed(path: Path) -> bytes:
+            data = read_bytes(path)
+            return data + b"\n# changed\n" if path.name == "mesh_quality.py" else data
+
+        with patch.object(Path, "read_bytes", changed):
+            status, report = self.call()
+        self.assertEqual(status, 2)
+        self.assertIn("--replace", report["error"]["message"])
 
     def test_a_cheaper_first_high_order_level_changes_the_recipe(self) -> None:
         self.assertEqual(self.call()[0], 0)

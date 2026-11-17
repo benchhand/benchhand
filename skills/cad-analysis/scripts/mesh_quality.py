@@ -5,8 +5,9 @@ C3D10 node order: corners 1 to 4, then the mid-edge nodes of edges 1-2, 2-3, 3-1
 
 An element's Jacobian determinant is sampled at its ten nodes and at the four integration points of
 ccx's C3D10. The element is invalid when any sample is zero or negative (ccx stops on a nonpositive
-Jacobian); its scaled Jacobian is the smallest sample divided by the largest, 1 for a straight-sided
-tetrahedron. Sampling is not a bound: an element can be invalid between samples.
+Jacobian). Its scaled Jacobian is the smallest sample divided by the largest sample magnitude: 1 for a
+straight-sided tetrahedron, -1 for one inverted everywhere, whatever its size. Sampling is not a bound: an
+element can be invalid between samples.
 """
 
 from __future__ import annotations
@@ -46,10 +47,11 @@ def jacobian_determinants(nodes: Sequence[Vector]) -> list[float]:
 
 
 def scaled_jacobian(nodes: Sequence[Vector]) -> float:
-    """Smallest over largest sampled Jacobian determinant; zero or less is an invalid element."""
+    """Smallest sampled Jacobian determinant over the largest magnitude, in [-1, 1]: dimensionless, so an element
+    and the same element scaled report one value, and negative exactly when the element is inverted somewhere."""
     values = jacobian_determinants(nodes)
-    largest = max(values)
-    return min(values) / largest if largest > 0 else min(values)
+    largest = max(abs(value) for value in values)
+    return min(values) / largest if largest > 0 else 0.0
 
 
 def read_c3d10(text: str) -> tuple[dict[int, Vector], list[tuple[int, ...]]]:
