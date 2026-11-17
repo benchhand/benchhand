@@ -749,6 +749,7 @@ class Record:
     dispositions: tuple[Mapping[str, Any], ...]
     artifacts: Mapping[str, str]  # source artifact path (relative to hw/) -> sha256 the record names
     problems: tuple[Problem, ...]
+    assembly_inventory: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # assembly.yaml occurrences, subassemblies
 
     @property
     def migrated(self) -> bool:
@@ -1054,7 +1055,8 @@ class _Reader:
         self.resolve()
         return Record(RECORD_VERSION, freeze(product), use_case, requirements, preferences, assumptions, questions, parts,
                       interfaces, operations, capabilities, materials, selection, evidence, dispositions,
-                      types.MappingProxyType(dict(self.artifacts)), tuple(self.problems))
+                      types.MappingProxyType(dict(self.artifacts)), tuple(self.problems),
+                      freeze({key: (self.doc("assembly.yaml") or {}).get(key) for key in ("occurrences", "subassemblies")}))
 
     def legacy(self, product: Mapping[str, Any], version: int) -> Record:
         """A version 1 (or unreadable-version) record: every manufacturing-intent field unknown, never defaulted."""

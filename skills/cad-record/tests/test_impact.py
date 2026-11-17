@@ -161,6 +161,14 @@ class ProductOrderStaleness(unittest.TestCase):
         result = self.compare(self.occurrence_docs(both), self.occurrence_docs(both[:1]))
         self.assertIn(self.PRODUCT, result.stale_obligations)
 
+    def test_an_occurrence_no_operation_names_stales_the_product_order(self) -> None:
+        both = [self.join("mount-a", "@clip-a"), self.join("mount-b", "@clip-b")]
+        before = self.occurrence_docs(both)
+        after = copy.deepcopy(before)
+        after["assembly.yaml"]["occurrences"].append({"id": "clip-c", "PN": "TST-0102"})
+        after["assembly.yaml"]["subassemblies"][0]["occurrences"].append("@clip-c")
+        self.assertIn(self.PRODUCT, self.compare(before, after).stale_obligations)
+
     def test_an_edit_outside_the_assembly_domains_leaves_the_product_order_fresh(self) -> None:
         """A finish edit moves the part's finish fingerprint, which no assembly.* check depends on (geometry and
         interface are the assembly domains)."""
