@@ -2383,6 +2383,37 @@ class Build123dLooseComponentTests(LooseComponentChecks, unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
+class ManufacturingInvalidColorTests(unittest.TestCase):
+    """A record whose intent.color is not #RRGGBB is refused with a named finding by `run`, never a traceback."""
+
+    BAD = {"three digits": "#abc", "integer": 16744448, "trailing newline": "#FF8000\n"}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        mp = projects()
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.runs = {}
+        for label, bad in cls.BAD.items():
+            hw = mp.loose_project(Path(cls.tmp.name) / label.replace(" ", "-"), "cadquery", [], color=bad)
+            cls.runs[label] = (hw, *cli("run", str(hw), "--label", "v1")[:2])
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def test_run_refuses_the_part_with_a_named_finding_and_no_traceback(self) -> None:
+        for label, (hw, proc, result) in self.runs.items():
+            with self.subTest(label):
+                self.assertNotIn("Traceback", proc.stdout + proc.stderr)
+                self.assertEqual(proc.returncode, 1, proc.stderr[-3000:])
+                self.assertEqual([(f["pn"], f["check"]) for f in result["findings"]], [("TST-0001", "manufacture")])
+                message = result["findings"][0]["message"]
+                self.assertIn("intent.color_invalid", message)
+                self.assertIn(repr(self.BAD[label]), message)
+                self.assertFalse((hw / "versions" / "v1").exists(), "no version is sealed for a refused part")
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class ManufacturingColorTests(unittest.TestCase):
     """A record version 2 part (CadQuery only) whose intent.color reaches part.3mf: v1 has no color, v2 sets
     #FF8000 and nothing else. The color remakes the manufacturing outputs and never the B-rep."""
@@ -2395,6 +2426,7 @@ class ManufacturingColorTests(unittest.TestCase):
         cls.runs = {"v1": cli("run", str(hw), "--label", "v1")}
         mp.rewrite_part(hw, color="#FF8000")
         cls.runs["v2"] = cli("run", str(hw), "--label", "v2")
+        cls.runs["v3"] = cli("run", str(hw), "--label", "v3")
         cls.checked = cli("check", "v2", "--hw", str(hw))
 
     @classmethod
@@ -2427,6 +2459,12 @@ class ManufacturingColorTests(unittest.TestCase):
         self.assertEqual([manifest["manufacturing"]["TST-0001"]["color"] for manifest in manifests.values()],
                          [None, "#FF8000"])
         self.assertNotEqual(self.model("v1"), self.model("v2"))
+
+    def test_an_unchanged_color_reuses_the_manufacturing_outputs(self) -> None:
+        self.assertEqual(self.runs["v3"][0].returncode, 0, self.runs["v3"][0].stderr[-3000:])
+        self.assertEqual(self.runs["v3"][1]["cache"], {"parts": {"built": 0, "reused": 1},
+                                                       "manufacturing": {"built": 0, "reused": 1}})
+        self.assertEqual(self.model("v3"), self.model("v2"))
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")

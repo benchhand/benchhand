@@ -27,6 +27,7 @@ import types
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
@@ -47,6 +48,7 @@ VERSION_UNSUPPORTED = "record.version_unsupported"
 INCOMPLETE = "record.incomplete"
 LEGACY_FREEZE = "record.legacy_freeze"
 LOAD_DIRECTION_TOLERANCE = 1e-6
+COLOR_INVALID = "intent.color_invalid"
 CODES: Mapping[str, str] = types.MappingProxyType({
     MIGRATION_REQUIRED: "a record version 1 record: readable, but gated actions refuse until migrate.py migrates it",
     VERSION_UNSUPPORTED: "a record_version this cad-agent cannot read",
@@ -55,6 +57,7 @@ CODES: Mapping[str, str] = types.MappingProxyType({
     "intent.schema": "a document violates its JSON schema",
     "intent.reference": "a reference names no question, assumption, requirement, interface, part, load, profile, operation, inspection, evidence, case or decision",
     "intent.duplicate": "an id is declared twice",
+    COLOR_INVALID: "a part intent.color that is not the sRGB #RRGGBB string part.schema.json defines; it reads as no color",
     "intent.units": "a quantity's unit is unknown or of the wrong dimension",
     "intent.number": "a non-finite number, a reversed interval or an improper rotation",
     "load.direction_not_unit": "a load direction whose norm is not 1 within 1e-6, a zero vector included",
@@ -839,6 +842,20 @@ def schema_for(rel: str) -> str | None:
     return None
 
 
+def color_is_valid(value: Any) -> bool:
+    """Whether `value` satisfies part.schema.json's intent color: its type, maxLength and pattern, read from the schema."""
+    rule = _color_rule()
+    return isinstance(value, str) and len(value) <= rule["maxLength"] and re.search(rule["pattern"], value) is not None
+
+
+@lru_cache(maxsize=1)
+def _color_rule() -> Mapping[str, Any]:
+    import json  # noqa: PLC0415 - needed only to read the schema
+
+    schema = json.loads((SCHEMAS / "part.schema.json").read_text(encoding="utf-8"))
+    return types.MappingProxyType(schema["$defs"]["intent"]["properties"]["color"])
+
+
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """JSON-schema problems of every document (needs jsonschema), offline: every bundled schema resolves by $id."""
     schemas = _sibling("cad_record_schema_registry", "schema_registry.py")
@@ -1356,8 +1373,13 @@ class _Reader:
         if isinstance(rationale, Mapping):
             self.ref("decision", rationale.get("decision"), path, "intent/rationale/decision")
             self.ref("candidate", rationale.get("selection"), path, "intent/rationale/selection")
+        color = data.get("color")
+        if color is not None and not color_is_valid(color):
+            self.problem(COLOR_INVALID, path, "intent/color",
+                         f"{pn}: intent.color {color!r} is not an sRGB #RRGGBB string; the part is exported without a color")
+            color = None
         return PartIntent(functions, material, data.get("selection"), service, tuple(components), surfaces, route,
-                          freeze(rationale) if isinstance(rationale, Mapping) else None, data.get("color"))
+                          freeze(rationale) if isinstance(rationale, Mapping) else None, color)
 
     def route(self, pn: str, data: Any, path: str) -> tuple[Operation, ...] | Fact:
         if _looks_like_fact(data):

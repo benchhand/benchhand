@@ -210,6 +210,10 @@ def plan(snapshot: Snapshot) -> tuple[dict[str, Plan], list[tuple[str, str]], di
             if part is None:
                 refused.append((pn, f"hw/parts/{pn}/part.yaml does not name PN {pn}"))
                 continue
+            invalid = [p for p in snapshot.intent.problems if p.code == intent.COLOR_INVALID and p.path == f"hw/parts/{pn}/part.yaml"]
+            if invalid:
+                refused.append((pn, f"{invalid[0].code}: {invalid[0].message}"))
+                continue
             problems = []
             for op_id, data in _orientations(part):
                 try:

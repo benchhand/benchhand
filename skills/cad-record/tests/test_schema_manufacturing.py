@@ -307,6 +307,7 @@ class RecordDocuments(SchemaCase):
             "non-hex digit": (lambda d: d["intent"].update(color="#GG8000"), False),
             "integer": (lambda d: d["intent"].update(color=16744448), False),
             "colour name": (lambda d: d["intent"].update(color="orange"), False),
+            "trailing newline": (lambda d: d["intent"].update(color="#FF8000\n"), False),
         })
 
     def test_interface_functional_block(self) -> None:
