@@ -46,6 +46,7 @@ import yaml
 
 import acceptance
 import dialogue
+import isolation
 import metrics
 
 JSON = dict[str, Any]
@@ -66,6 +67,7 @@ SCOPE = {
 }
 TARGET_STAGE = {"fixture": "layout", "bench": "parts"}
 SPEND_POLL_S = 20.0
+SETTLED_POLLS = 3
 MONITOR_POLL_S = 30.0
 
 
@@ -162,6 +164,92 @@ def install_harness(paths: Paths, config: Mapping[str, Any]) -> None:
     settings = dict(config["opencode"])
     settings["model"] = config["producer"]["model"]
     (paths.home / ".config/opencode/opencode.json").write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+
+
+def expected_install(paths: Paths) -> isolation.Expected:
+    """The skills, agents and commands the harness installed into the throwaway home."""
+    scope = paths.home / ".config/opencode"
+    return isolation.Expected(
+        home=paths.home, project=paths.project,
+        skills=frozenset(p.parent.name for p in (scope / "skills").glob("*/SKILL.md")),
+        agents=frozenset(p.stem for p in (scope / "agents").glob("*.md")),
+        commands=frozenset(p.stem for p in (scope / "commands").glob("*.md")),
+    )
+
+
+@contextlib.contextmanager
+def opencode_server(paths: Paths, env: Mapping[str, str], timeout: float) -> Iterator[tuple[str, str]]:
+    """A local OpenCode server in the run's environment; yields its URL and password (never written anywhere)."""
+    process = subprocess.Popen(["opencode", "serve", "--hostname", "127.0.0.1", "--port", "0"], cwd=paths.project,
+                               env=dict(env), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                               text=True, start_new_session=True)
+    found: dict[str, str] = {}
+
+    def read() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            for key, prefix in (("url", "server listening on "), ("password", "server password ")):
+                if line.startswith(prefix):
+                    found[key] = line[len(prefix):].strip()
+
+    threading.Thread(target=read, daemon=True).start()
+    deadline = time.monotonic() + timeout
+    try:
+        while len(found) < 2 and time.monotonic() < deadline and process.poll() is None:
+            time.sleep(0.2)
+        if len(found) < 2:
+            raise BenchError("isolation check: opencode serve printed no URL and password")
+        yield found["url"], found["password"]
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=10)
+
+
+def api_call(server: tuple[str, str], env: Mapping[str, str], project: Path, operation: str) -> Any:
+    url, password = server
+    command = ["opencode", "api", "--server", url, operation, "--param", f"location[directory]={project}"]
+    result = subprocess.run(command, cwd=project, env={**env, "OPENCODE_SERVER_PASSWORD": password}, capture_output=True,
+                            text=True, timeout=60, check=False)
+    with contextlib.suppress(json.JSONDecodeError):
+        return json.loads(result.stdout)
+    return None
+
+
+def summarize_report(report: Mapping[str, Any]) -> JSON:
+    """The report without skill and agent bodies: sources, names and paths only."""
+    def data(operation: str) -> list[Any]:
+        value = report.get(operation)
+        value = value.get("data") if isinstance(value, Mapping) else value
+        return value if isinstance(value, list) else []
+
+    return {
+        "config_sources": [entry.get("path") for entry in data("config.get") if isinstance(entry, Mapping)],
+        "skills": sorted(str(item.get("path")) for item in data("skill.list") if isinstance(item, Mapping)),
+        "agents": sorted(str(item.get("id")) for item in data("agent.list") if isinstance(item, Mapping)),
+        "commands": sorted(str(item.get("name")) for item in data("command.list") if isinstance(item, Mapping)),
+    }
+
+
+def check_isolation(paths: Paths, env: Mapping[str, str], timeout: float = 120.0) -> JSON:
+    """Ask OpenCode itself what it loaded in the run's environment, before any model call."""
+    expected = expected_install(paths)
+    report: JSON = {}
+    with opencode_server(paths, env, timeout) as server:
+        # OpenCode loads skill sources one by one: wait until every installed skill is listed and the
+        # listing held still for SETTLED_POLLS polls, so a source that loads late is still seen.
+        deadline, previous, settled = time.monotonic() + timeout, None, 0
+        while time.monotonic() < deadline and settled < SETTLED_POLLS:
+            report["skill.list"] = api_call(server, env, paths.project, "skill.list")
+            current = isolation.items(report, "skill.list")
+            settled = settled + 1 if isolation.skills_settled(previous, current, expected) else 0
+            previous = current
+            time.sleep(1.0)
+        for operation in ("config.get", "agent.list", "command.list"):
+            report[operation] = api_call(server, env, paths.project, operation)
+    found = isolation.findings(report, expected)
+    return {"passed": not found, "findings": found, "loaded": summarize_report(report)}
 
 
 def git(project: Path, *args: str) -> None:
@@ -381,18 +469,32 @@ class Conversation:
     entries: list[JSON] = field(default_factory=list)
 
 
-def record_turn(conversation: Conversation, invocation: Invocation, text: str, reply: dialogue.Reply | None) -> None:
+def record_turn(conversation: Conversation, invocation: Invocation, text: str, reply: dialogue.Reply | None,
+                sent: bool = True) -> None:
     entry: JSON = {"turn": invocation.turn, "seconds": round(invocation.seconds, 1), "exit_code": invocation.exit_code,
                    "killed": invocation.killed, "lead_text": text}
     if reply is not None:
-        entry.update({"reply_kind": reply.kind, "reply": reply.message, "wait_s": reply.wait_s, "stops": reply.stops,
+        entry.update({"reply_kind": reply.kind, "reply": reply.message, "sent": sent, "wait_s": reply.wait_s,
+                      "stops": reply.stops, "at_gate": reply.at_gate,
                       "asks": [{"text": ask.text, "intent": ask.intent, "kind": ask.kind, "matched": ask.matched,
                                 "profile": ask.profile} for ask in reply.asks]})
     conversation.entries.append(entry)
 
 
+def terminal_outcome(stopping: bool, failures: int, turns: int, caps: Mapping[str, Any], reply: dialogue.Reply) -> str | None:
+    """Why the run ends after this turn, or None to send the reply."""
+    if stopping or failures >= 2:
+        return "reached" if stopping and not failures else "error"
+    if reply.unmatched_at_gate:
+        return "fail:unmatched-at-gate"
+    if turns >= int(caps["max_turns"]):
+        return "cap:turns"
+    return None
+
+
 def converse(driver: Driver, script: dialogue.Script, mode: str, opening: str, caps: Mapping[str, Any]) -> Conversation:
-    """Send the opening, then answer the lead until the stop gate is answered or a cap is hit."""
+    """Send the opening, then answer the lead until the stop gate is answered, a cap is hit, or a gate asks
+    something the script cannot answer. Every lead reply is classified, the last one too."""
     conversation = Conversation()
     deadline = time.monotonic() + float(caps["max_active_minutes"]) * 60
     message, stopping, failures = opening, False, 0
@@ -406,17 +508,13 @@ def converse(driver: Driver, script: dialogue.Script, mode: str, opening: str, c
             raise BenchError("opencode run printed no session id; see the raw turn files")
         text = metrics.last_assistant_text(driver.export(driver.session))
         failures = failures + 1 if invocation.exit_code else 0
-        if stopping or failures >= 2:
-            conversation.outcome = "reached" if stopping and not failures else "error"
-            record_turn(conversation, invocation, text, None)
-            return conversation
-        if len(driver.invocations) >= int(caps["max_turns"]):
-            conversation.outcome = "cap:turns"
-            record_turn(conversation, invocation, text, None)
-            return conversation
         can_stop = acceptance.latest_at_stage(built_versions(driver.paths.project / "hw"), TARGET_STAGE[mode]) is not None
         reply = dialogue.respond(script, text, mode, can_stop)
-        record_turn(conversation, invocation, text, reply)
+        outcome = terminal_outcome(stopping, failures, len(driver.invocations), caps, reply)
+        record_turn(conversation, invocation, text, reply, sent=outcome is None)
+        if outcome is not None:
+            conversation.outcome = outcome
+            return conversation
         message, stopping = reply.message, reply.stops
 
 
@@ -434,20 +532,30 @@ def export_tree(driver: Driver, lead: str, sanitize: bool) -> list[JSON]:
     return exports
 
 
+def unmatched_questions(conversation: Conversation) -> list[JSON]:
+    """Every question no intent matched, with its turn and whether the lead asked it at a gate."""
+    return [{"turn": entry["turn"], "text": ask["text"], "at_gate": entry["at_gate"]}
+            for entry in conversation.entries if "asks" in entry for ask in entry["asks"] if not ask["matched"]]
+
+
 def dialogue_metrics(conversation: Conversation, driver: Driver) -> JSON:
-    replies = [entry for entry in conversation.entries if "reply_kind" in entry]
-    asks = [ask for entry in replies for ask in entry["asks"]]
-    waits = [entry for entry in replies if entry["reply_kind"] in ("question", "gate")]
+    """Question and wait counts. Every lead reply's asks count; only replies actually sent count as waits."""
+    classified = [entry for entry in conversation.entries if "reply_kind" in entry]
+    sent = [entry for entry in classified if entry["sent"]]
+    asks = [ask for entry in classified for ask in entry["asks"]]
+    waits = [entry for entry in sent if entry["reply_kind"] in ("question", "gate")]
     return {
         "harness_turns": len(driver.invocations),
         "active_wall_s": round(sum(invocation.seconds for invocation in driver.invocations), 1),
         "human_wait_events": len(waits),
         "human_wait_s": sum(float(entry["wait_s"]) for entry in waits),
-        "nudges": sum(1 for entry in replies if entry["reply_kind"] == "nudge"),
+        "nudges": sum(1 for entry in sent if entry["reply_kind"] == "nudge"),
         "questions_asked": len(asks),
         "questions_matched": sum(1 for ask in asks if ask["matched"]),
         "questions_unmatched": sum(1 for ask in asks if not ask["matched"]),
-        "gates_answered": sum(1 for ask in asks if ask["kind"] == "gate"),
+        "questions_unmatched_at_gate": sum(1 for entry in classified if entry["at_gate"]
+                                           for ask in entry["asks"] if not ask["matched"]),
+        "gates_answered": sum(1 for entry in sent for ask in entry["asks"] if ask["kind"] == "gate"),
         "profile_questions_asked": sum(1 for ask in asks if ask["profile"]),
         "profile_asked": any(ask["profile"] for ask in asks),
     }
@@ -700,11 +808,66 @@ def evaluate(driver: Driver, config: Mapping[str, Any], mode: str, rubric: accep
             "accepted": acceptance.accepted(hard, verdicts, rubric) if judge else None}
 
 
-def execute(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
-    case_dir = CASES / args.case
-    script = load_answers(case_dir)
-    rubric = acceptance.load_rubric(load_yaml(case_dir / "requirements.yaml"))
+@dataclass(frozen=True)
+class Case:
+    name: str
+    folder: Path
+    script: dialogue.Script
+    rubric: acceptance.Rubric
+
+
+def base_record(args: argparse.Namespace, config: Mapping[str, Any], paths: Paths, started: str, outcome: str,
+                isolation_result: Mapping[str, Any]) -> JSON:
+    return {
+        "run_id": paths.run_id, "case": args.case, "arm": args.arm, "mode": args.mode, "started": started,
+        "finished": now(), "producer_model": args.model or config["producer"]["model"],
+        "agent": args.agent or config["producer"].get("agent") or "build", "judge_model": config["judge"]["model"],
+        "outcome": outcome, "accepted": False if args.mode == "bench" else None, "isolation": dict(isolation_result),
+        "repo_commit": repo_commit(),
+        "spend": {"producer_usd": 0.0, "judge_usd": 0.0, "total_usd": 0.0, "opencode_reported_usd": 0.0,
+                  "currency": config["currency"]},
+    }
+
+
+def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case, paths: Paths, env: dict[str, str],
+                caps: Mapping[str, Any], record: JSON) -> JSON:
+    """Drive the lead, evaluate the result and fill the run record."""
     prices = metrics.load_prices(config["prices_usd_per_million"])
+    driver = Driver(paths, env, record["producer_model"], args.agent or config["producer"].get("agent"),
+                    float(args.spend_cap or caps["run_spend_usd"]))
+    monitor = Monitor()
+    with monitor.active():
+        conversation = converse(driver, case.script, args.mode, first_message(paths, case.folder, args.mode), caps)
+        leftovers = kill_leftovers(paths.scratch)
+        evaluation = evaluate(driver, config, args.mode, case.rubric, prices, judge=args.mode == "bench" and not args.no_judge)
+    exports = export_tree(driver, driver.session or "", sanitize=False)
+    run_metrics = {**metrics.summarize(exports, driver.session or "", prices), **dialogue_metrics(conversation, driver)}
+    sessions = paths.run_dir / "sessions"
+    sessions.mkdir()
+    for export in export_tree(driver, driver.session or "", sanitize=True):
+        write_gz(sessions / f"{export['info']['id']}.json.gz", export)
+    (paths.run_dir / "dialogue.json").write_text(json.dumps(conversation.entries, indent=2) + "\n", encoding="utf-8")
+    judge_spend = float((evaluation["judge"] or {}).get("spend_usd") or 0.0)
+    accepted = evaluation["accepted"]
+    record.update({
+        "finished": now(), "outcome": conversation.outcome,
+        # A cap, an error or an unmatched question at a gate fails the run whatever the checks say.
+        "accepted": None if accepted is None else accepted and conversation.outcome == "reached",
+        "version": evaluation["version"], "metrics": run_metrics, "unmatched_questions": unmatched_questions(conversation),
+        "hard_checks": evaluation["hard"], "verdicts": evaluation["verdicts"], "machine": monitor.to_json(),
+        "leftover_processes_killed": len(leftovers),
+        "spend": {"producer_usd": run_metrics["spend_usd"], "judge_usd": round(judge_spend, 6),
+                  "total_usd": round(run_metrics["spend_usd"] + judge_spend, 6),
+                  "opencode_reported_usd": round(db_cost(paths.db), 6), "currency": config["currency"]},
+    })
+    if args.mode == "fixture" and conversation.outcome == "reached":
+        record["fixture"] = str(freeze_fixture(paths, case.folder))
+    return record
+
+
+def execute(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
+    folder = CASES / args.case
+    case = Case(args.case, folder, load_answers(folder), acceptance.load_rubric(load_yaml(folder / "requirements.yaml")))
     check_results_checkout(args.results)
     if args.budget is not None and ledger_total(args.results) >= args.budget:
         raise BenchError(f"ledger total reached the budget ${args.budget}")
@@ -713,37 +876,15 @@ def execute(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     caps = {**config["caps"], **{key: value for key, value in (("max_turns", args.max_turns),
                                                                ("max_active_minutes", args.max_active_minutes))
                                   if value is not None}}
-    started, monitor = now(), Monitor()
-    prepare_project(paths, case_dir, args.mode, args.seed_hw)
-    install_harness(paths, config)
-    driver = Driver(paths, opencode_env(paths), args.model or config["producer"]["model"],
-                    args.agent or config["producer"].get("agent"), float(args.spend_cap or caps["run_spend_usd"]))
+    started = now()
     try:
-        with monitor.active():
-            conversation = converse(driver, script, args.mode, first_message(paths, case_dir, args.mode), caps)
-            leftovers = kill_leftovers(paths.scratch)
-            evaluation = evaluate(driver, config, args.mode, rubric, prices, judge=args.mode == "bench" and not args.no_judge)
-        exports = export_tree(driver, driver.session or "", sanitize=False)
-        run_metrics = {**metrics.summarize(exports, driver.session or "", prices), **dialogue_metrics(conversation, driver)}
-        sessions = paths.run_dir / "sessions"
-        sessions.mkdir()
-        for export in export_tree(driver, driver.session or "", sanitize=True):
-            write_gz(sessions / f"{export['info']['id']}.json.gz", export)
-        judge_spend = float((evaluation["judge"] or {}).get("spend_usd") or 0.0)
-        record = {
-            "run_id": run_id, "case": args.case, "arm": args.arm, "mode": args.mode, "started": started,
-            "finished": now(), "producer_model": driver.model, "agent": driver.agent or "build",
-            "judge_model": config["judge"]["model"], "outcome": conversation.outcome,
-            "accepted": evaluation["accepted"], "version": evaluation["version"], "metrics": run_metrics,
-            "hard_checks": evaluation["hard"], "verdicts": evaluation["verdicts"], "machine": monitor.to_json(),
-            "leftover_processes_killed": len(leftovers), "repo_commit": repo_commit(),
-            "spend": {"producer_usd": run_metrics["spend_usd"], "judge_usd": round(judge_spend, 6),
-                      "total_usd": round(run_metrics["spend_usd"] + judge_spend, 6),
-                      "opencode_reported_usd": round(db_cost(paths.db), 6), "currency": config["currency"]},
-        }
-        (paths.run_dir / "dialogue.json").write_text(json.dumps(conversation.entries, indent=2) + "\n", encoding="utf-8")
-        if args.mode == "fixture" and conversation.outcome == "reached":
-            record["fixture"] = str(freeze_fixture(paths, case_dir))
+        prepare_project(paths, folder, args.mode, args.seed_hw)
+        install_harness(paths, config)
+        env = opencode_env(paths)
+        isolated = check_isolation(paths, env)  # before any model call
+        record = base_record(args, config, paths, started, "running" if isolated["passed"] else "isolation_failed", isolated)
+        if isolated["passed"]:
+            record = run_session(args, config, case, paths, env, caps, record)
         (paths.run_dir / "record.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         total = publish(paths, record, args.phase, push=not args.no_push)
     except BaseException:
@@ -751,11 +892,14 @@ def execute(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         raise
     print(json.dumps({"run_id": run_id, "outcome": record["outcome"], "accepted": record["accepted"],
                       "spend_usd": record["spend"]["total_usd"], "ledger_total_usd": round(total, 4),
-                      "record": str(paths.run_dir / "record.json"), "fixture": record.get("fixture")}, indent=2))
+                      "record": str(paths.run_dir / "record.json"), "fixture": record.get("fixture"),
+                      "isolation_findings": record["isolation"]["findings"]}, indent=2))
     if not args.keep_scratch:
         kill_leftovers(paths.scratch)
         remove_scratch(paths)
-    over = record["spend"]["total_usd"] > float(caps["run_spend_usd"]) or conversation.outcome == "cap:spend"
+    if record["outcome"] == "isolation_failed":
+        return 4
+    over = record["spend"]["total_usd"] > float(caps["run_spend_usd"]) or record["outcome"] == "cap:spend"
     return 3 if over else 0
 
 

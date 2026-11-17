@@ -37,7 +37,7 @@ intents:
       however the record models a print-in-place part best.
   - id: orientation
     match: ['\borientation\b', 'support[- ](material|structures?|inside|removal|free)', 'supports? (are )?(needed|allowed|acceptable)',
-            'print (direction|position)', '\bbed\b']
+            'print (direction|position)', '\bbed\b', '\bbridging\b', '\b(print )?pose\b']
     answer: >-
       Print it open at 90° or flat, whichever keeps the hinge axis parallel to the bed and needs
       no support inside the hinge. Supports elsewhere are acceptable if needed.

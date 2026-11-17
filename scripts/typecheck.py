@@ -104,6 +104,7 @@ CHANGED_FILES = (
 STRICT_FILES = (
     "bench/acceptance.py",
     "bench/dialogue.py",
+    "bench/isolation.py",
     "bench/metrics.py",
     "bench/report.py",
     "bench/run.py",

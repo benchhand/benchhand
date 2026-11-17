@@ -36,7 +36,8 @@ slots:
   appearance: Any single filament colour; a plain matte look is fine.
 intents:
   - id: pcb
-    match: ['\bPCB\b', '\bboard\b.*\b(dimension|size|hole|component|envelope|thickness)', '\bconnector\b', 'USB']
+    match: ['\bPCB\b', '\bboard\b.*\b(dimension|size|hole|component|envelope|thickness)', '\bconnector\b',
+            'USB-?C (opening|receptacle|position|location|cutout|port)', '\breceptacle\b']
     answer: >-
       80 × 50 × 1.6 mm, four Ø3.2 mm holes on a 72 × 42 mm rectangle centred on the board.
       Components reach 15 mm above the top face and 3 mm below the bottom face. One USB-C

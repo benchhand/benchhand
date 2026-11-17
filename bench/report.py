@@ -32,7 +32,7 @@ JSON = dict[str, Any]
 METRICS = (
     "model_turns", "lead_model_turns", "tool_calls", "input_tokens", "cached_input_tokens", "output_tokens",
     "spend_usd", "subagent_dispatches", "subagent_redispatches", "failed_builds", "active_wall_s",
-    "human_wait_events", "human_wait_s", "questions_asked", "questions_unmatched",
+    "human_wait_events", "human_wait_s", "questions_asked", "questions_unmatched", "questions_unmatched_at_gate",
 )
 CONFIDENCE = 0.95
 

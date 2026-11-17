@@ -79,6 +79,10 @@ intents:
     answer: >-
       No preferred supplier. Use common European or global catalogue distributors and order
       standard parts by their standard designation.
+  - id: assembly-order
+    kind: question
+    match: ['assembly (order|sequence)', 'fitting order', 'order of assembly']
+    answer: Use the assembly order you propose, and record it.
   - id: proceed
     kind: question
     match: ['\b(shall|should|may|can) I (proceed|continue|start|go ahead)', '\bproceed\?', '\bgo ahead\?',
@@ -87,7 +91,7 @@ intents:
   # --- GROUND slots: shared patterns, answered by each case's `slots` --------------------------
   # Listed most specific first; a case that leaves a slot out gets the default answer.
   - id: service-class
-    match: ['service[ _]class', '\bprototype\b', '\bend[- ]use\b', '\bproduction\b', '\bdemonstrat', 'fit[ /-]assembly',
+    match: ['service[ _]class', '\buse class\b', '\bprototype\b', '\bend[- ]use\b', '\bproduction\b', '\bdemonstrat', 'fit[ /-]assembly',
             'appearance (model|concept)', 'intended (service|use)\b.*\b(class|maturity)']
   - id: rigor
     match: ['\brigou?r\b', '\bmaker\b', '\bregulated\b', 'documentation depth']
@@ -97,7 +101,7 @@ intents:
   - id: pn-prefix
     match: ['part[- ]number', '\bPN\b', '\bprefix\b', '\bnaming\b', '\bproduct id\b']
   - id: equipment
-    match: ['\bprinters?\b', '\bequipment\b', '\bmachines?\b', '\bbureau\b', '\boutsourc', '\bin-house\b', '\bcapabilit',
+    match: ['\bprinters?\b', '\bwho (runs|operates)\b', '\bequipment\b', '\bmachines?\b', '\bbureau\b', '\boutsourc', '\bin-house\b', '\bcapabilit',
             '\bnozzle\b', 'build (volume|plate|envelope)', '\bstock\b', '\boperators?\b', '\bcalibrat', '\bslicer\b',
             '\bmeasur(e|ing|ement)\b.*\b(capabilit|equipment|tools?)']
   - id: material
@@ -107,14 +111,14 @@ intents:
     match: ['\bmass\b', 'weight (target|limit|budget)', 'how heavy']
   - id: loads
     match: ['\bloads?\b', '\bloading\b', '\bforces?\b', '\bweight\b', '\bimpact\b', '\bvibration\b', '\bcyclic\b',
-            '\bsustained\b', 'safety factor', '\bstiffness\b', '\bdeflection\b', '\bstrength\b', '\btorque\b']
+            '\bsustained\b', 'safety factor', '\b\d+ ?N\b', '\bstiffness\b', '\bdeflection\b', '\bstrength\b', '\btorque\b']
   - id: motion
-    match: ['\bmotion\b', '\bduty\b', '(service )?life\b', '\bcycles?\b', '\bwear\b', '\bfriction\b', '\bspeed\b',
+    match: ['\bmotion\b', '\bduty\b', '(service )?life\b', 'how long\b.*\blast\b', '\bcycles?\b', '\bwear\b', '\bfriction\b', '\bspeed\b',
             '\btravel\b', 'range of (motion|travel)', '\bmov(e|es|ing)\b']
   - id: clearance
     match: ['\bclearances?\b', '\bgap\b', '\bplay\b', '\bfit\b']
   - id: environment
-    match: ['\btemperature', '\bheat\b', '\bmoisture\b', '\bhumid', '\bUV\b', '\boutdoors?\b', '\bindoors?\b', '\bchemical',
+    match: ['\btemperature', '\bheat\b', '\bmoisture\b', '\bhumid', '\bUV\b', '\boutdoors?\b', '\bindoors?\b', '\bchemical', '\bsolvents?\b', '\bcoolants?\b', '\boils?\b',
             '\bcorrosi', '\benvironment']
   - id: accuracy
     match: ['\baccura', '\brepeatab', '\bfinish\b', '\btolerances?\b', 'dimensional stability', '\bsurface\b']
@@ -128,5 +132,5 @@ intents:
   - id: appearance
     match: ['\bcolou?r\b', '\bappearance\b', '\baesthetic', '\bstyl(e|ing)\b']
   - id: purpose
-    match: ['\bpurpose\b', '\bwho\b.*\buse', '\busers?\b', 'what (must|should|does|will) (it|the \w+) do', '\bwhere\b.*\bused\b',
+    match: ['\bpurpose\b', '\bwho\b.*\buse', '\bwho handles\b', '\busers?\b', 'what (must|should|does|will) (it|the \w+) do', '\bwhere\b.*\bused\b',
             '\buse case\b']

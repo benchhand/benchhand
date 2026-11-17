@@ -34,6 +34,20 @@ Each run does these steps:
 
 The run stops when the PARTS gate is answered on a built L2 version. It also stops at the turn, time or spend cap in `config.json`, and that counts as a failure. The harness then runs the hard checks: `validate.py`, `cad_model check`, `form_check` at F2 with its process packet, and the sweep where `requirements.yaml` asks for it. A judge model from another vendor then scores the rubric from the record, the check output and the renders.
 
+### Isolation check
+
+Before the first model call, the harness starts `opencode serve` in the run's environment and asks it what it loaded:
+
+- `config.get`: the config sources.
+- `skill.list`: every skill, with its path.
+- `agent.list` and `command.list`: the agent and command names.
+
+The run continues only when every config source and skill path lies inside the throwaway home or the scratch project, or is a built-in `skill://` skill. Every agent and command must be a built-in or one the harness installed, and every installed skill must be listed. Otherwise the run records `isolation_failed`, spends nothing and exits 4. OpenCode loads skill sources one at a time, so the check waits until the skill list holds still for three polls. Without `OPENCODE_TEST_HOME`, the same check reports the skills in `~/.agents/skills`.
+
+### Questions the script cannot answer
+
+An ask that matches no intent gets the default answer, which records a bounded assumption and continues. The record counts these asks in `metrics.questions_unmatched` and lists each one in `unmatched_questions`, with its turn. When the lead presents a gate and asks for approval in the same message as an unmatched question, the run fails as `fail:unmatched-at-gate`, and the harness sends no reply. A gate prompt is a message with an ask that matches a gate intent, or one that asks for approval while it names a gate or a freeze.
+
 Each run commits its record to `bench/results`, appends `spend.jsonl` and pushes. It then deletes its scratch directory. `--mode fixture` builds a fixture instead. It starts from an empty project, or from `--seed-hw`, stops at the LAYOUT freeze, and copies the frozen `hw/` into the case.
 
 ## Report

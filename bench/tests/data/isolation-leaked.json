@@ -1,0 +1,368 @@
+{
+ "config.get": [
+  {
+   "type": "document",
+   "path": "/scratch/bench-run/home/.config/opencode/opencode.json",
+   "info": {
+    "$schema": "https://opencode.ai/config.json",
+    "formatter": false
+   }
+  },
+  {
+   "type": "directory",
+   "path": "/scratch/bench-run/home/.config/opencode"
+  }
+ ],
+ "skill.list": {
+  "location": {
+   "directory": "/scratch/bench-run/proj"
+  },
+  "data": [
+   {
+    "id": "opencode",
+    "name": "OpenCode",
+    "path": "skill://opencode/SKILL.md"
+   },
+   {
+    "id": "report",
+    "name": "Report",
+    "path": "skill://report/SKILL.md"
+   },
+   {
+    "id": "browser",
+    "name": "Browser",
+    "path": "skill://browser/SKILL.md"
+   },
+   {
+    "id": "add-mutation-testing-pipeline-step-jvm",
+    "name": "add-mutation-testing-pipeline-step-jvm",
+    "path": "/Users/someone/.agents/skills/add-mutation-testing-pipeline-step-jvm/SKILL.md"
+   },
+   {
+    "id": "add-mutation-testing-pipeline-step-python",
+    "name": "add-mutation-testing-pipeline-step-python",
+    "path": "/Users/someone/.agents/skills/add-mutation-testing-pipeline-step-python/SKILL.md"
+   },
+   {
+    "id": "add-mutation-testing-pipeline-step-rust",
+    "name": "add-mutation-testing-pipeline-step-rust",
+    "path": "/Users/someone/.agents/skills/add-mutation-testing-pipeline-step-rust/SKILL.md"
+   },
+   {
+    "id": "add-mutation-testing-pipeline-step-typescript",
+    "name": "add-mutation-testing-pipeline-step-typescript",
+    "path": "/Users/someone/.agents/skills/add-mutation-testing-pipeline-step-typescript/SKILL.md"
+   },
+   {
+    "id": "add-mutation-testing-pipeline-step",
+    "name": "add-mutation-testing-pipeline-step",
+    "path": "/Users/someone/.agents/skills/add-mutation-testing-pipeline-step/SKILL.md"
+   },
+   {
+    "id": "get-current-kill-rate-ant",
+    "name": "get-current-kill-rate-ant",
+    "path": "/Users/someone/.agents/skills/get-current-kill-rate-ant/SKILL.md"
+   },
+   {
+    "id": "get-current-kill-rate-jvm",
+    "name": "get-current-kill-rate-jvm",
+    "path": "/Users/someone/.agents/skills/get-current-kill-rate-jvm/SKILL.md"
+   },
+   {
+    "id": "get-current-kill-rate-python",
+    "name": "get-current-kill-rate-python",
+    "path": "/Users/someone/.agents/skills/get-current-kill-rate-python/SKILL.md"
+   },
+   {
+    "id": "get-current-kill-rate-rust",
+    "name": "get-current-kill-rate-rust",
+    "path": "/Users/someone/.agents/skills/get-current-kill-rate-rust/SKILL.md"
+   },
+   {
+    "id": "get-current-kill-rate-typescript",
+    "name": "get-current-kill-rate-typescript",
+    "path": "/Users/someone/.agents/skills/get-current-kill-rate-typescript/SKILL.md"
+   },
+   {
+    "id": "get-current-kill-rate",
+    "name": "get-current-kill-rate",
+    "path": "/Users/someone/.agents/skills/get-current-kill-rate/SKILL.md"
+   },
+   {
+    "id": "increase-mutant-kill-rate-ant",
+    "name": "increase-mutant-kill-rate-ant",
+    "path": "/Users/someone/.agents/skills/increase-mutant-kill-rate-ant/SKILL.md"
+   },
+   {
+    "id": "increase-mutant-kill-rate-jvm",
+    "name": "increase-mutant-kill-rate-jvm",
+    "path": "/Users/someone/.agents/skills/increase-mutant-kill-rate-jvm/SKILL.md"
+   },
+   {
+    "id": "increase-mutant-kill-rate-python",
+    "name": "increase-mutant-kill-rate-python",
+    "path": "/Users/someone/.agents/skills/increase-mutant-kill-rate-python/SKILL.md"
+   },
+   {
+    "id": "increase-mutant-kill-rate-rust",
+    "name": "increase-mutant-kill-rate-rust",
+    "path": "/Users/someone/.agents/skills/increase-mutant-kill-rate-rust/SKILL.md"
+   },
+   {
+    "id": "increase-mutant-kill-rate-typescript",
+    "name": "increase-mutant-kill-rate-typescript",
+    "path": "/Users/someone/.agents/skills/increase-mutant-kill-rate-typescript/SKILL.md"
+   },
+   {
+    "id": "increase-mutant-kill-rate",
+    "name": "increase-mutant-kill-rate",
+    "path": "/Users/someone/.agents/skills/increase-mutant-kill-rate/SKILL.md"
+   },
+   {
+    "id": "setup-mutation-testing-ant",
+    "name": "setup-mutation-testing-ant",
+    "path": "/Users/someone/.agents/skills/setup-mutation-testing-ant/SKILL.md"
+   },
+   {
+    "id": "setup-mutation-testing-for-a-package",
+    "name": "setup-mutation-testing-for-a-package",
+    "path": "/Users/someone/.agents/skills/setup-mutation-testing-for-a-package/SKILL.md"
+   },
+   {
+    "id": "setup-mutation-testing-jvm",
+    "name": "setup-mutation-testing-jvm",
+    "path": "/Users/someone/.agents/skills/setup-mutation-testing-jvm/SKILL.md"
+   },
+   {
+    "id": "setup-mutation-testing-python",
+    "name": "setup-mutation-testing-python",
+    "path": "/Users/someone/.agents/skills/setup-mutation-testing-python/SKILL.md"
+   },
+   {
+    "id": "setup-mutation-testing-rust",
+    "name": "setup-mutation-testing-rust",
+    "path": "/Users/someone/.agents/skills/setup-mutation-testing-rust/SKILL.md"
+   },
+   {
+    "id": "setup-mutation-testing-typescript",
+    "name": "setup-mutation-testing-typescript",
+    "path": "/Users/someone/.agents/skills/setup-mutation-testing-typescript/SKILL.md"
+   },
+   {
+    "id": "update-kill-rate-threshold-ant",
+    "name": "update-kill-rate-threshold-ant",
+    "path": "/Users/someone/.agents/skills/update-kill-rate-threshold-ant/SKILL.md"
+   },
+   {
+    "id": "update-kill-rate-threshold-jvm",
+    "name": "update-kill-rate-threshold-jvm",
+    "path": "/Users/someone/.agents/skills/update-kill-rate-threshold-jvm/SKILL.md"
+   },
+   {
+    "id": "update-kill-rate-threshold-python",
+    "name": "update-kill-rate-threshold-python",
+    "path": "/Users/someone/.agents/skills/update-kill-rate-threshold-python/SKILL.md"
+   },
+   {
+    "id": "update-kill-rate-threshold-rust",
+    "name": "update-kill-rate-threshold-rust",
+    "path": "/Users/someone/.agents/skills/update-kill-rate-threshold-rust/SKILL.md"
+   },
+   {
+    "id": "update-kill-rate-threshold-typescript",
+    "name": "update-kill-rate-threshold-typescript",
+    "path": "/Users/someone/.agents/skills/update-kill-rate-threshold-typescript/SKILL.md"
+   },
+   {
+    "id": "update-kill-rate-threshold",
+    "name": "update-kill-rate-threshold",
+    "path": "/Users/someone/.agents/skills/update-kill-rate-threshold/SKILL.md"
+   },
+   {
+    "id": "cad-analysis",
+    "name": "cad-analysis",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-analysis/SKILL.md"
+   },
+   {
+    "id": "cad-bom",
+    "name": "cad-bom",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-bom/SKILL.md"
+   },
+   {
+    "id": "cad-concept",
+    "name": "cad-concept",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-concept/SKILL.md"
+   },
+   {
+    "id": "cad-design",
+    "name": "cad-design",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-design/SKILL.md"
+   },
+   {
+    "id": "cad-drawings",
+    "name": "cad-drawings",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-drawings/SKILL.md"
+   },
+   {
+    "id": "cad-fits",
+    "name": "cad-fits",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-fits/SKILL.md"
+   },
+   {
+    "id": "cad-flow",
+    "name": "cad-flow",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-flow/SKILL.md"
+   },
+   {
+    "id": "cad-model",
+    "name": "cad-model",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-model/SKILL.md"
+   },
+   {
+    "id": "cad-motion",
+    "name": "cad-motion",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-motion/SKILL.md"
+   },
+   {
+    "id": "cad-recheck",
+    "name": "cad-recheck",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-recheck/SKILL.md"
+   },
+   {
+    "id": "cad-record",
+    "name": "cad-record",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-record/SKILL.md"
+   },
+   {
+    "id": "cad-render",
+    "name": "cad-render",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-render/SKILL.md"
+   },
+   {
+    "id": "cad-review-dfm",
+    "name": "cad-review-dfm",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-review-dfm/SKILL.md"
+   },
+   {
+    "id": "cad-review-mech",
+    "name": "cad-review-mech",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-review-mech/SKILL.md"
+   },
+   {
+    "id": "cad-viewer",
+    "name": "cad-viewer",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-viewer/SKILL.md"
+   }
+  ]
+ },
+ "agent.list": {
+  "location": {
+   "directory": "/scratch/bench-run/proj"
+  },
+  "data": [
+   {
+    "id": "build",
+    "name": "Build",
+    "mode": "primary",
+    "hidden": false
+   },
+   {
+    "id": "general",
+    "name": "General",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "explore",
+    "name": "Explore",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "compaction",
+    "name": "Compaction",
+    "mode": "primary",
+    "hidden": true
+   },
+   {
+    "id": "title",
+    "name": "Title",
+    "mode": "primary",
+    "hidden": true
+   },
+   {
+    "id": "summary",
+    "name": "Summary",
+    "mode": "primary",
+    "hidden": true
+   },
+   {
+    "id": "plan",
+    "name": "Plan",
+    "mode": "primary",
+    "hidden": false
+   },
+   {
+    "id": "cad-analyst",
+    "name": "cad-analyst",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-clerk",
+    "name": "cad-clerk",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-concept-designer",
+    "name": "cad-concept-designer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-dfm-reviewer",
+    "name": "cad-dfm-reviewer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-mech-reviewer",
+    "name": "cad-mech-reviewer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-part-designer",
+    "name": "cad-part-designer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-sourcing-researcher",
+    "name": "cad-sourcing-researcher",
+    "mode": "subagent",
+    "hidden": false
+   }
+  ]
+ },
+ "command.list": {
+  "location": {
+   "directory": "/scratch/bench-run/proj"
+  },
+  "data": [
+   {
+    "name": "init"
+   },
+   {
+    "name": "review"
+   },
+   {
+    "name": "goal"
+   },
+   {
+    "name": "cad-flow"
+   }
+  ]
+ }
+}

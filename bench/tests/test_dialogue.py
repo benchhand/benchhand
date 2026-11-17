@@ -101,6 +101,49 @@ class ScriptTests(unittest.TestCase):
             dialogue.merge({"slots": {"nope": "x"}}, {"intents": []})
 
 
+def recorded_text(name: str) -> str:
+    """The lead's final text event of a recorded `opencode run --format json` turn."""
+    events = [json.loads(line) for line in (DATA / name).read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [event["part"]["text"] for event in events if event["type"] == "text"][-1]
+
+
+class RecordedGroundTests(unittest.TestCase):
+    """Real GROUND replies the lead gave in the fixture builds: long question tables, not gates."""
+
+    def test_a_ground_reply_that_names_later_gates_is_not_a_gate_and_its_unmatched_question_gets_the_default(self) -> None:
+        script = case_script("fdm-enclosure")
+        reply = dialogue.respond(script, recorded_text("events-ground-fdm-enclosure.jsonl"), "fixture", can_stop=False)
+        self.assertFalse(reply.at_gate)
+        self.assertFalse(reply.unmatched_at_gate)
+        self.assertEqual([ask.text for ask in reply.unmatched], ["Q-017 | Do you need vents, LED windows, buttons or rubber feet?"])
+        self.assertEqual(reply.message.splitlines()[-1], f"- {script.default}")
+        self.assertNotIn("approved", reply.message.lower())
+
+    def test_a_follow_up_sentence_is_matched_through_its_line(self) -> None:
+        reply = dialogue.respond(case_script("wall-bracket"), recorded_text("events-ground-wall-bracket.jsonl"), "fixture")
+        follow_up = [ask for ask in reply.asks if ask.text == "Or kept out of git?"]
+        self.assertEqual([ask.intent for ask in follow_up], ["storage"])
+
+
+class GateTests(unittest.TestCase):
+    def test_a_question_no_intent_matches_in_a_gate_prompt_is_unmatched_at_the_gate(self) -> None:
+        text = "v2 passed the full check.\nDo you approve the LAYOUT freeze? Should the hinge get a detent?"
+        reply = dialogue.respond(case_script("print-in-place"), text, "fixture", can_stop=True)
+        self.assertTrue(reply.at_gate)
+        self.assertTrue(reply.unmatched_at_gate)
+        self.assertEqual([ask.text for ask in reply.unmatched], ["Should the hinge get a detent?"])
+
+    def test_an_approval_request_in_a_message_naming_a_gate_is_a_gate_even_when_no_gate_intent_matches(self) -> None:
+        text = "The PROVISIONAL gate for v3 is recorded.\nDo I have your approval to continue? Which colour?"
+        reply = dialogue.respond(SCRIPT, text, "bench")
+        self.assertTrue(reply.at_gate)
+        self.assertEqual([ask.text for ask in reply.unmatched], ["Do I have your approval to continue?"])
+
+    def test_who_approves_the_design_is_a_ground_question_not_a_gate(self) -> None:
+        reply = dialogue.respond(SCRIPT, "Before the LAYOUT freeze I need to know: who approves the design?", "bench")
+        self.assertFalse(reply.at_gate)
+
+
 class CaseAnswerTests(unittest.TestCase):
     """The committed answers files parse, and their gate and profile questions route as intended."""
 

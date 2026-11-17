@@ -1,0 +1,223 @@
+{
+ "config.get": [
+  {
+   "type": "document",
+   "path": "/scratch/bench-run/home/.config/opencode/opencode.json",
+   "info": {
+    "$schema": "https://opencode.ai/config.json",
+    "formatter": false
+   }
+  },
+  {
+   "type": "directory",
+   "path": "/scratch/bench-run/home/.config/opencode"
+  }
+ ],
+ "skill.list": {
+  "location": {
+   "directory": "/scratch/bench-run/proj"
+  },
+  "data": [
+   {
+    "id": "opencode",
+    "name": "OpenCode",
+    "path": "skill://opencode/SKILL.md"
+   },
+   {
+    "id": "report",
+    "name": "Report",
+    "path": "skill://report/SKILL.md"
+   },
+   {
+    "id": "browser",
+    "name": "Browser",
+    "path": "skill://browser/SKILL.md"
+   },
+   {
+    "id": "cad-analysis",
+    "name": "cad-analysis",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-analysis/SKILL.md"
+   },
+   {
+    "id": "cad-bom",
+    "name": "cad-bom",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-bom/SKILL.md"
+   },
+   {
+    "id": "cad-concept",
+    "name": "cad-concept",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-concept/SKILL.md"
+   },
+   {
+    "id": "cad-design",
+    "name": "cad-design",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-design/SKILL.md"
+   },
+   {
+    "id": "cad-drawings",
+    "name": "cad-drawings",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-drawings/SKILL.md"
+   },
+   {
+    "id": "cad-fits",
+    "name": "cad-fits",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-fits/SKILL.md"
+   },
+   {
+    "id": "cad-flow",
+    "name": "cad-flow",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-flow/SKILL.md"
+   },
+   {
+    "id": "cad-model",
+    "name": "cad-model",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-model/SKILL.md"
+   },
+   {
+    "id": "cad-motion",
+    "name": "cad-motion",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-motion/SKILL.md"
+   },
+   {
+    "id": "cad-recheck",
+    "name": "cad-recheck",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-recheck/SKILL.md"
+   },
+   {
+    "id": "cad-record",
+    "name": "cad-record",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-record/SKILL.md"
+   },
+   {
+    "id": "cad-render",
+    "name": "cad-render",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-render/SKILL.md"
+   },
+   {
+    "id": "cad-review-dfm",
+    "name": "cad-review-dfm",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-review-dfm/SKILL.md"
+   },
+   {
+    "id": "cad-review-mech",
+    "name": "cad-review-mech",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-review-mech/SKILL.md"
+   },
+   {
+    "id": "cad-viewer",
+    "name": "cad-viewer",
+    "path": "/scratch/bench-run/home/.config/opencode/skills/cad-viewer/SKILL.md"
+   }
+  ]
+ },
+ "agent.list": {
+  "location": {
+   "directory": "/scratch/bench-run/proj"
+  },
+  "data": [
+   {
+    "id": "build",
+    "name": "Build",
+    "mode": "primary",
+    "hidden": false
+   },
+   {
+    "id": "general",
+    "name": "General",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "explore",
+    "name": "Explore",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "compaction",
+    "name": "Compaction",
+    "mode": "primary",
+    "hidden": true
+   },
+   {
+    "id": "title",
+    "name": "Title",
+    "mode": "primary",
+    "hidden": true
+   },
+   {
+    "id": "summary",
+    "name": "Summary",
+    "mode": "primary",
+    "hidden": true
+   },
+   {
+    "id": "plan",
+    "name": "Plan",
+    "mode": "primary",
+    "hidden": false
+   },
+   {
+    "id": "cad-analyst",
+    "name": "cad-analyst",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-clerk",
+    "name": "cad-clerk",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-concept-designer",
+    "name": "cad-concept-designer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-dfm-reviewer",
+    "name": "cad-dfm-reviewer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-mech-reviewer",
+    "name": "cad-mech-reviewer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-part-designer",
+    "name": "cad-part-designer",
+    "mode": "subagent",
+    "hidden": false
+   },
+   {
+    "id": "cad-sourcing-researcher",
+    "name": "cad-sourcing-researcher",
+    "mode": "subagent",
+    "hidden": false
+   }
+  ]
+ },
+ "command.list": {
+  "location": {
+   "directory": "/scratch/bench-run/proj"
+  },
+  "data": [
+   {
+    "name": "init"
+   },
+   {
+    "name": "review"
+   },
+   {
+    "name": "goal"
+   },
+   {
+    "name": "cad-flow"
+   }
+  ]
+ }
+}

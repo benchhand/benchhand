@@ -31,12 +31,18 @@ from typing import Any
 
 KINDS = ("question", "gate")
 MODES = ("fixture", "bench")
+# A line that asks for a reply without a question mark: an imperative request at its start, or a
+# direct "do you approve" anywhere. Narrative lines ("Once you answer, I'll ask for your approval")
+# are not asks.
 ASK_LINE = re.compile(
-    r"\b(?:reply|respond)\b|\bplease (?:confirm|approve|choose|select|decide)\b|\b(?:your|for) (?:approval|decision|choice)\b"
-    r"|\blet me know\b|\btell me\b|\b(?:waiting|wait|await(?:ing)?) (?:for )?(?:you|your)\b",
+    r"^(?:please|reply|respond|confirm|approve|choose|select|pick|say|let me know|tell me)\b"
+    r"|\b(?:do|can|could|would|will) you (?:approve|confirm)\b",
     re.IGNORECASE)
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
-MARKUP = re.compile(r"^[\s>*#\-+|]*(?:\d+[.)]\s*)?|[*_`]+")
+MARKUP = re.compile(r"^[\s>*#\-+|—–]*(?:\d+[.)]\s*)?|[*_`]+")
+GATE_WORD = re.compile(r"\b(gate|freeze)\b", re.IGNORECASE)
+APPROVAL_ASK = re.compile(r"\bapprov(?:e|al)\b", re.IGNORECASE)
+FOLLOW_UP = re.compile(r"^(?:or|and|also|if so|if not|otherwise)\b", re.IGNORECASE)
 STOP_NOTE = ("This ends the session: record this decision as instructed, commit, and stop. "
              "Do not start the next stage.")
 
@@ -89,6 +95,16 @@ class Reply:
     wait_s: float
     stops: bool
     answered: tuple[str, ...] = field(default=())
+    at_gate: bool = False
+
+    @property
+    def unmatched(self) -> tuple[Ask, ...]:
+        return tuple(ask for ask in self.asks if not ask.matched)
+
+    @property
+    def unmatched_at_gate(self) -> bool:
+        """An unmatched question in a gate prompt: the run fails rather than answer a gate by default."""
+        return self.at_gate and bool(self.unmatched)
 
 
 def _text(value: Any, where: str) -> str:
@@ -164,28 +180,45 @@ def _clean(line: str) -> str:
     return MARKUP.sub("", line).strip()
 
 
-def extract_asks(text: str) -> list[str]:
-    """Question sentences and reply-requesting lines of the lead's reply, in order, without duplicates."""
-    asks: list[str] = []
+def asks_in_context(text: str) -> list[tuple[str, str | None]]:
+    """Question sentences and reply-requesting lines of the lead's reply, in order, each with the
+    sentence before it when the ask is a follow-up that only makes sense with it ("Or kept out of git?")."""
+    asks: list[tuple[str, str | None]] = []
     for line in text.splitlines():
         cleaned = _clean(line)
         if not cleaned:
             continue
         pieces = [piece.strip() for piece in SENTENCE_END.split(cleaned) if piece.strip()]
-        found = [piece for piece in pieces if piece.endswith("?")]
+        found = [(index, piece) for index, piece in enumerate(pieces) if piece.endswith("?")]
         if not found and ASK_LINE.search(cleaned):
-            found = [cleaned]
-        for piece in found:
-            if piece not in asks:
-                asks.append(piece)
+            found = [(0, cleaned)]
+        for index, piece in found:
+            follow_up = index > 0 and (FOLLOW_UP.match(piece) is not None or len(piece.split()) <= 3)
+            if piece not in (ask for ask, _context in asks):
+                asks.append((piece, pieces[index - 1] if follow_up else None))
     return asks
 
 
-def classify(script: Script, ask: str) -> Ask:
-    for intent in script.intents:
-        if intent.matches(ask):
-            return Ask(ask, intent.id, intent.kind, intent.profile)
+def extract_asks(text: str) -> list[str]:
+    """Question sentences and reply-requesting lines of the lead's reply, in order, without duplicates."""
+    return [ask for ask, _context in asks_in_context(text)]
+
+
+def classify(script: Script, ask: str, context: str | None = None) -> Ask:
+    """The first intent that matches the ask, else, for a follow-up, the first that matches the sentence before it."""
+    for candidate in (ask, context):
+        if candidate is None:
+            continue
+        for intent in script.intents:
+            if intent.matches(candidate):
+                return Ask(ask, intent.id, intent.kind, intent.profile)
     return Ask(ask, None, None, False)
+
+
+def presents_gate(asks: Sequence[Ask], text: str) -> bool:
+    """The lead presents a gate: an ask matched a gate intent, or it asks for approval in a message naming a gate or freeze."""
+    return any(ask.kind == "gate" for ask in asks) or (
+        bool(GATE_WORD.search(text)) and any(APPROVAL_ASK.search(ask.text) for ask in asks))
 
 
 def respond(script: Script, text: str, mode: str, can_stop: bool = True) -> Reply:
@@ -195,7 +228,7 @@ def respond(script: Script, text: str, mode: str, can_stop: bool = True) -> Repl
     passes whether the record already has the version that gate approves, so a gate named too early
     is answered without ending the run.
     """
-    asks = tuple(classify(script, ask) for ask in extract_asks(text))
+    asks = tuple(classify(script, ask, line) for ask, line in asks_in_context(text))
     if not asks:
         return Reply(script.nudge, asks, "nudge", script.wait_s.get("nudge", 0.0), False)
     by_id = {intent.id: intent for intent in script.intents}
@@ -210,4 +243,5 @@ def respond(script: Script, text: str, mode: str, can_stop: bool = True) -> Repl
     stops = can_stop and script.stop.get(mode) in answered
     if stops:
         lines.append(STOP_NOTE)
-    return Reply("\n".join(lines), asks, kind, script.wait_s.get(kind, 0.0), stops, tuple(answered))
+    return Reply("\n".join(lines), asks, kind, script.wait_s.get(kind, 0.0), stops, tuple(answered),
+                 presents_gate(asks, text))

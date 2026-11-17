@@ -1,12 +1,18 @@
+import contextlib
+import io
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BENCH = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCH))
 import dialogue  # noqa: E402
 import run  # noqa: E402
+
+DATA = Path(__file__).resolve().parent / "data"
 
 SCRIPT = dialogue.load_script({
     "default": "Use your recommendation.", "nudge": "Continue.", "wait_s": {"question": 60, "gate": 300},
@@ -88,6 +94,62 @@ class ConverseTests(unittest.TestCase):
     def test_two_failed_invocations_in_a_row_end_the_run_as_an_error(self) -> None:
         driver = FakeDriver(self.paths, [(0, None, "What loads apply?"), (1, None, ""), (1, None, "")])
         self.assertEqual(run.converse(driver, SCRIPT, "bench", "start", CAPS).outcome, "error")
+
+    def test_an_unmatched_question_at_a_gate_fails_the_run_without_answering_it(self) -> None:
+        driver = FakeDriver(self.paths, [
+            (0, None, "What loads apply? What colour should it be?"),
+            (0, None, "v3 passed the full check. Do you approve the PARTS gate? Should I add a chamfer?"),
+            (0, None, "never reached"),
+        ], build_at=2)
+        conversation = run.converse(driver, SCRIPT, "bench", "start", CAPS)
+        self.assertEqual(conversation.outcome, "fail:unmatched-at-gate")
+        self.assertEqual(len(driver.sent), 2)  # the gate reply was never sent
+        self.assertEqual(run.unmatched_questions(conversation), [
+            {"turn": 1, "text": "What colour should it be?", "at_gate": False},
+            {"turn": 2, "text": "Should I add a chamfer?", "at_gate": True},
+        ])
+        metrics = run.dialogue_metrics(conversation, driver)
+        self.assertEqual((metrics["questions_unmatched"], metrics["questions_unmatched_at_gate"], metrics["gates_answered"],
+                          metrics["human_wait_events"]), (2, 1, 0, 1))
+
+    def test_the_recorded_ground_reply_counts_and_lists_its_unmatched_question(self) -> None:
+        text = json.loads((DATA / "events-ground-print-in-place.jsonl").read_text(encoding="utf-8"))["part"]["text"]
+        driver = FakeDriver(self.paths, [(0, None, text)])
+        script = run.load_answers(run.CASES / "print-in-place")
+        conversation = run.converse(driver, script, "fixture", "start", {**CAPS, "max_turns": 1})
+        self.assertEqual(conversation.outcome, "cap:turns")
+        self.assertEqual(run.unmatched_questions(conversation), [{
+            "turn": 1, "at_gate": False,
+            "text": "Lid retention: does the lid just rest on the rim by gravity, or must it snap shut?"}])
+        self.assertEqual(run.dialogue_metrics(conversation, driver)["questions_unmatched"], 1)
+
+
+class IsolationAbortTests(unittest.TestCase):
+    def test_a_failed_isolation_check_records_isolation_failed_and_never_drives_the_lead(self) -> None:
+        failed = {"passed": False, "findings": ["skill loaded from outside the throwaway home: /Users/x/.agents/skills/a"],
+                  "loaded": {}}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "results").mkdir()
+            args = run.argparse.Namespace(case="wall-bracket", arm="a", mode="bench", results=root / "results", phase="t",
+                                          model=None, agent=None, seed_hw=None, max_turns=None, max_active_minutes=None,
+                                          spend_cap=None, budget=None, run_id="iso", no_judge=True, no_push=True,
+                                          keep_scratch=False)
+            config = json.loads(run.CONFIG.read_text(encoding="utf-8"))
+            published: list[dict] = []
+            with mock.patch.multiple(run, TMP=root, check_results_checkout=mock.DEFAULT, prepare_project=mock.DEFAULT,
+                                     install_harness=mock.DEFAULT, kill_leftovers=mock.DEFAULT, repo_commit=mock.Mock(return_value="abc123"),
+                                     check_isolation=mock.Mock(return_value=failed), run_session=mock.DEFAULT,
+                                     publish=mock.Mock(side_effect=lambda paths, record, phase, push: published.append(record) or 0.0)) as patched, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = run.execute(args, config)
+            self.assertEqual(code, 4)
+            patched["run_session"].assert_not_called()
+            record = json.loads((root / "results/runs/iso/record.json").read_text(encoding="utf-8"))
+            self.assertEqual((record["outcome"], record["accepted"], record["spend"]["total_usd"]), ("isolation_failed", False, 0.0))
+            self.assertEqual(record["isolation"]["findings"], failed["findings"])
+            self.assertEqual(published[0]["outcome"], "isolation_failed")
+            self.assertFalse((root / "bench-iso").exists())  # scratch removed
 
 
 class RecordStateTests(unittest.TestCase):
