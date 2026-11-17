@@ -6,7 +6,8 @@ the key of a computation, `layout.input_key` of its allowlisted inputs, to its m
 sha256 of its object) and the producer's facts. Locks (`cache.locks`) serialize the producers of one key.
 
 A producer looks a key up with `record`. On a miss it takes `lock(key)`, looks it up once more, computes, and
-`claim`s the record. `claim` keeps the first record of a key even without the lock (os.link onto the name), and a
+`claim`s the record. `claim` takes the key's lock itself, so a producer that skipped `lock` still cannot
+overwrite a record another claimer just kept. The first usable record of a key wins, and a
 second writer whose members differ is a finding in `cache.findings`: the key misses an input. A stale or unreadable
 record gives way to the next claim, and `retire` removes a record its producer judged unusable for a reason outside
 the key. `record` re-hashes
@@ -33,6 +34,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -97,25 +99,6 @@ def _names_version(text: str, label: str) -> bool:
     return re.search(rf"(^|[/._-]){re.escape(label)}([/._-]|$)", text) is not None
 
 
-def _publish(staged: Path, target: Path) -> bool:
-    """Give `staged`'s bytes the name `target` unless that name exists: True when this call created it. A hard
-    link makes the name appear whole. Where the filesystem has no hard links, an exclusive create of `target`
-    takes the name instead, and a reader that meets it half-written sees an unreadable record, a miss."""
-    try:
-        os.link(staged, target)  # first writer wins: os.link fails with FileExistsError on an existing name
-        return True
-    except FileExistsError:
-        return False
-    except OSError:  # no hard links here (FAT, some network shares)
-        pass
-    try:
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    except FileExistsError:
-        return False
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(staged.read_bytes())
-    return True
-
 
 def _exchange(source: Path, target: Path) -> bool:
     """Swap two existing paths in one step where the platform can (Linux renameat2, macOS renamex_np). False
@@ -137,6 +120,7 @@ class Store:
     def __init__(self, hw: Path) -> None:
         self.hw = Path(hw)
         self._checked: dict[str, bool] = {}  # objects already re-hashed by this Store
+        self._held = threading.local()  # the keys whose lock this thread holds through this Store
 
     def _path(self, entry_id: str, digest: str) -> Path:
         return layout.resolve(self.hw, entry_id, SHA=digest)
@@ -243,20 +227,20 @@ class Store:
         staged.write_text(json.dumps({**record, "format": FORMAT}, indent=1, sort_keys=True) + "\n",
                           encoding="utf-8")
         try:
-            if _publish(staged, target):
-                return "claimed"
-            found = self.record(key)
-            kept = found.record
-            if kept is None:  # stale or unreadable: this record replaces it whole
-                os.replace(staged, target)
-                return f"replaced: {found.reason}"
-            if kept.get("members") == members:
-                return "exists"
-            differ = sorted(n for n in set(members) | set(kept["members"]) if members.get(n) != kept["members"].get(n))
-            outcome = (f"conflict: members {', '.join(differ)} differ from the record kept for this key, so the key "
-                       "is missing an input")
-            self._finding(key, outcome)
-            return outcome
+            with self.lock(key):  # one claimer of a key at a time, so the check and the write cannot interleave
+                found = self.record(key)
+                kept = found.record
+                if kept is None:  # none, stale or unreadable: this record takes the name whole
+                    os.replace(staged, target)
+                    return "claimed" if found.reason == "miss: no record" else f"replaced: {found.reason}"
+                if kept.get("members") == members:
+                    return "exists"
+                differ = sorted(n for n in set(members) | set(kept["members"])
+                                if members.get(n) != kept["members"].get(n))
+                outcome = (f"conflict: members {', '.join(differ)} differ from the record kept for this key, so the "
+                           "key is missing an input")
+                self._finding(key, outcome)
+                return outcome
         finally:
             staged.unlink(missing_ok=True)
 
@@ -266,7 +250,8 @@ class Store:
         producer code that its facts name."""
         if not SHA.fullmatch(key):
             raise ValueError(f"a store key is a sha256, not {key!r}")
-        self._path("cache.part_records", key).unlink(missing_ok=True)
+        with self.lock(key):
+            self._path("cache.part_records", key).unlink(missing_ok=True)
 
     def _finding(self, key: str, message: str) -> None:
         path = layout.resolve(self.hw, "cache.findings")
@@ -277,15 +262,23 @@ class Store:
 
     @contextlib.contextmanager
     def lock(self, key: str) -> Iterator[None]:
-        """While the block runs, hold the producer lock of `key` (flock). Another holder waits."""
+        """While the block runs, hold the producer lock of `key` (flock). Another holder waits: another process,
+        or another thread or Store. The thread that holds it can take it again through this Store, as `claim`
+        and `retire` do inside a producer's lock."""
         if not SHA.fullmatch(key):
             raise ValueError(f"a store key is a sha256, not {key!r}")
+        held = self._held.__dict__.setdefault("keys", set())
+        if key in held:
+            yield
+            return
         self._folder("cache.locks")
         with self._path("cache.locks", key).open("a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
+            held.add(key)
             try:
                 yield
             finally:
+                held.discard(key)
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
     def place(self, record: Mapping[str, Any], destination: Path) -> str:

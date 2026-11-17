@@ -190,6 +190,34 @@ class Records(Fixture):
         self.assertRegex(store.Store(self.hw).claim(key("r"), fresh), r"^replaced: stale: mesh\.unv ")
         self.assertEqual(store.Store(self.hw).record(key("r")).record["members"], fresh["members"])
 
+    def test_concurrent_claimers_of_a_stale_key_leave_one_replacement_and_log_the_rest(self) -> None:
+        old = self.claimed(key("q"), {"mesh.unv": b"OLD"})
+        (self.hw / ".cad" / "cache" / "objects" / old["members"]["mesh.unv"]).unlink()
+        records = [{"kind": "test", "members": {"m": self.store.intern(self.file(f"{i}", str(i).encode()))}}
+                   for i in range(8)]
+        outcomes: dict[int, str] = {}
+        threads = [threading.Thread(target=lambda i=i: outcomes.update({i: store.Store(self.hw).claim(key("q"), records[i])}))
+                   for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        winners = [i for i, outcome in outcomes.items() if outcome.startswith("replaced: stale")]
+        self.assertEqual(len(winners), 1, outcomes)
+        self.assertEqual(sum(o.startswith("conflict") for o in outcomes.values()), 7)
+        self.assertEqual(store.Store(self.hw).record(key("q")).record["members"], records[winners[0]]["members"])
+
+    def test_a_claim_waits_while_another_store_holds_the_key(self) -> None:
+        record = {"kind": "test", "members": {"m": self.store.intern(self.file("a", b"A"))}}
+        outcomes: list[str] = []
+        claimer = threading.Thread(target=lambda: outcomes.append(store.Store(self.hw).claim(key("h"), record)))
+        with self.store.lock(key("h")):
+            claimer.start()
+            claimer.join(0.3)
+            self.assertEqual((outcomes, self.store.record(key("h")).reason), ([], "miss: no record"))
+        claimer.join(5)
+        self.assertEqual(outcomes, ["claimed"])
+
     def test_a_retired_record_gives_way_to_the_next_claim(self) -> None:
         self.claimed(key("t"), {"mesh.unv": b"OLD"})
         fresh = {"kind": "test", "members": {"mesh.unv": self.store.intern(self.file("n.unv", b"NEW"))}}
