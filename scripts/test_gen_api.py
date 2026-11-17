@@ -4,9 +4,11 @@ catches stale committed output."""
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -367,6 +369,25 @@ class SchemaHashDrift(FixtureTree):
                 self.assertEqual(self.check()[0], 0)
                 write_json(self.root, self.REL, self.BASE_DOC)
                 run_main([], self.root)
+
+    def test_each_output_header_lists_every_schema_digest_sorted(self) -> None:
+        schema_files = [p for d in gen_api.SCHEMA_DIRS for p in (self.root / d).glob("*.schema.json")]
+        expected = sorted(((hashlib.sha256(p.read_bytes()).hexdigest(), p.relative_to(self.root).as_posix()) for p in schema_files), key=lambda pair: pair[1])
+        self.assertGreaterEqual(len(expected), 3)
+        for rel in (gen_api.API_REL, gen_api.DOC_REL):
+            with self.subTest(output=rel):
+                recorded = re.findall(r"schema-sha256 ([0-9a-f]{64}) (\S+)", (self.root / rel).read_text(encoding="utf-8"))
+                self.assertEqual(recorded, expected)
+
+    def test_an_invisible_edit_makes_both_outputs_stale(self) -> None:
+        changed = json.loads(json.dumps(self.BASE_DOC))
+        changed["$comment"] = "reworded"
+        write_json(self.root, self.REL, changed)
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        for rel in (gen_api.API_REL, gen_api.DOC_REL):
+            with self.subTest(output=rel):
+                self.assertIn(f"stale {rel}", err)
 
     def test_a_whitespace_only_edit_fails_check(self) -> None:
         path = self.root / self.REL
