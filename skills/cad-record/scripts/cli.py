@@ -83,7 +83,7 @@ def _bounds(sub: Mapping[str, Any]) -> dict[str, Any]:
     return {"min": low, "max": high, "min_open": low_open, "max_open": high_open}
 
 
-def _param_type(field: Field) -> click.ParamType:
+def _param_type(field: Field) -> click.ParamType[Any, Any]:
     import click
 
     sub, kind = field.schema, field.schema.get("type")
@@ -126,8 +126,8 @@ def _check_all(found: Sequence[Field]) -> None:
 def _option(field: Field) -> click.Option:
     import click
 
-    common = {"default": field.schema.get("default"), "envvar": field.schema.get("x-env"),
-              "help": field.schema.get("description")}
+    common: dict[str, Any] = {"default": field.schema.get("default"), "envvar": field.schema.get("x-env"),
+                              "help": field.schema.get("description")}
     if field.schema.get("type") == "boolean":
         if field.negative is None:
             common["default"] = field.schema.get("default", False)
