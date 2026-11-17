@@ -249,7 +249,7 @@ class JointTests(unittest.TestCase):
 
 
 class NeverInstalledTests(unittest.TestCase):
-    """An occurrence of the inventory that no operation names is not base: its installing operation is missing."""
+    """An occurrence no operation installs, other than the one base, is a missing installing operation."""
 
     PNS = ("TST-0101", "TST-0102", "TST-0103")
     SEAT = {"id": "seat-bearing", "kind": "press_fit", "part": "TST-0102", "into": "TST-0101", "interface": "IF-001",
@@ -284,6 +284,26 @@ class NeverInstalledTests(unittest.TestCase):
     def test_each_missing_installer_is_named(self) -> None:
         report = self.check([self.SEAT], pns=(*self.PNS, "TST-0104"))
         self.assertEqual(sorted(f["subject"]["PN"] for f in report.findings), ["TST-0103", "TST-0104"])
+
+    def test_a_receiver_nobody_installs_is_a_second_base(self) -> None:
+        # The screw fastens into the cover and the bearing presses into the housing; nothing installs either
+        # receiver, so the housing (named first) is the base and the cover floats beside it.
+        screw = {**self.SEAT, "id": "fasten-cover", "kind": "fasten", "part": "TST-0104", "into": "TST-0103"}
+        report = self.check([self.SEAT, screw], pns=(*self.PNS, "TST-0104"))
+        [finding] = report.findings
+        self.assertEqual((finding["code"], finding["subject"]), ("assembly.never_installed", {"PN": "TST-0103"}))
+        self.assertIn("TST-0101", finding["measured"]["text"], "the finding names the base it floats beside")
+        self.assertEqual(report.outcome("assembly.order@product")["outcome"], "fail")
+
+    def test_a_part_only_closed_over_is_a_second_base(self) -> None:
+        close = {"id": "fit-cover", "kind": "close", "part": "TST-0103", "into": "TST-0101", "closes": ["TST-0102"],
+                 "direction": [0, 0, -1]}
+        report = self.check([close])
+        self.assertEqual([f["subject"]["PN"] for f in report.findings], ["TST-0102"])
+
+    def test_one_base_plus_installed_parts_is_clean(self) -> None:
+        chain = {**self.SEAT, "id": "mount-cover", "part": "TST-0103", "into": "TST-0102"}
+        self.assertEqual(self.check([self.SEAT, chain]).findings, ())
 
     def test_without_an_inventory_there_is_no_occurrence_to_miss(self) -> None:
         self.assertEqual(self.check([self.SEAT], with_inventory=False).findings, ())

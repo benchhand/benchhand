@@ -15,7 +15,9 @@ so both shapes normalize to the same operations.
 Order model. Record order is the assembly sequence; `predecessors` are constraints that sequence must
 satisfy. A part an installing operation (press_fit, heat_set, retaining_ring, insert, fasten, join,
 close) puts in place is absent before it and present after it until a disassemble operation removes
-it; every other occurrence is present from the start (the base). A close operation encloses its
+it; the one occurrence no operation installs is present from the start (the base: with an inventory, the first
+such occurrence the sequence names, as the record designates none). Any other uninstalled occurrence fails
+`assembly.never_installed`. A close operation encloses its
 `closes` parts: no later operation reaches them. `check_order` judges exactly this declared sequence:
 an operation whose receiving part is absent, whose part is enclosed or installed twice, or whose
 predecessor comes later or is missing fails `assembly.order`. Whether the part and the tools can
@@ -357,7 +359,8 @@ class AssemblyState:
     steps: tuple[Step, ...]
     base: frozenset[str]  # present from the start: every occurrence no operation installs
     unresolved: Mapping[str, str] = field(default_factory=dict)  # operation id -> why its references do not resolve
-    unnamed: frozenset[str] = frozenset()  # inventory occurrences no operation installs or names at all
+    ground: str | None = None  # with an inventory: the one base, the first uninstalled occurrence the sequence names
+    floating: frozenset[str] = frozenset()  # with an inventory: the other occurrences no operation installs
 
 
 def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
@@ -379,10 +382,13 @@ def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
     resolved = [(op, resolve(op.part, op), None if op.into is None else resolve(op.into, op),
                  tuple(resolve(ref, op) for ref in op.closes)) for op in operations.items]
     installed = {part for op, part, _into, _closes in resolved if op.installs}
-    named = {ref for _op, part, into, closes in resolved for ref in (part, into, *closes) if ref is not None}
-    everyone = set(inventory.ids) if inventory is not None else named
+    named = list(dict.fromkeys(ref for _op, part, into, closes in resolved for ref in (part, into, *closes)
+                               if ref is not None))
+    everyone = set(inventory.ids) if inventory is not None else set(named)
     base = frozenset(everyone - installed)
-    unnamed = frozenset(base - named) if inventory is not None and resolved else frozenset()
+    # The record names no base, so the first uninstalled occurrence the sequence names is it; the rest float.
+    ground = next((ref for ref in named if ref in base), None) if inventory is not None else None
+    floating = frozenset(base - {ground}) if inventory is not None and resolved else frozenset()
     present = set(base)
     closed: dict[str, str] = {}
     steps = []
@@ -395,7 +401,7 @@ def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
         if op.kind == "close":
             for ref in closes:
                 closed.setdefault(ref, op.id)
-    return AssemblyState(tuple(steps), base, types.MappingProxyType(unresolved), unnamed)
+    return AssemblyState(tuple(steps), base, types.MappingProxyType(unresolved), ground, floating)
 
 
 # --------------------------------------------------------------------------- findings
@@ -540,19 +546,20 @@ def check_order(operations: Operations, inventory: Any = None) -> Report:
 
 
 def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any]]:
-    """A finding per occurrence of the inventory that no operation installs, receives into, closes or
-    operates: it would pass as base, but nothing says where it comes from."""
+    """A finding per occurrence of the inventory that no operation installs and that is not the assembly's one
+    base: it would pass as a second base, but nothing says where it comes from."""
     found = []
-    for occurrence_id in sorted(state.unnamed):
+    for occurrence_id in sorted(state.floating):
         occurrence = inventory.get(occurrence_id)
         subject: dict[str, Any] = {"PN": occurrence.pn}
         if occurrence.explicit:
             subject["occurrence"] = occurrence.ref
+        base = inventory.get(state.ground).ref if state.ground else "none"
         found.append(_finding(
             f"{_slug(occurrence_id)}_never_installed", "assembly.never_installed", None, severity="critical", outcome="fail",
-            measured=f"no operation installs {occurrence.ref}, and none receives into, closes or operates it",
-            consequence=f"{occurrence.ref} is in the assembly but the sequence never puts it in place, so the assembly "
-                        "cannot be built as recorded",
+            measured=f"no operation installs {occurrence.ref}, and the assembly has one base (the base is {base})",
+            consequence=f"{occurrence.ref} is in the assembly but the sequence never puts it in place, so it floats "
+                        "beside the base and the assembly cannot be built as recorded",
             remedy=f"add the installing operation for {occurrence.ref}, or remove the occurrence from the assembly",
             family="assembly.order", obligation="assembly.order@product", subject=subject))
     return found

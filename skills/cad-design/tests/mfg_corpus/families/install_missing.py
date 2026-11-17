@@ -1,9 +1,10 @@
-"""install_missing: an occurrence of the assembly that no operation installs, closes over or receives into.
+"""install_missing: an assembly occurrence that no operation installs, other than its one base.
 
 cad-record assembly_operations.check_order treats every occurrence no operation installs as base (present
-from the start). A part whose installing operation was lost, with nothing else naming it, then looks like a
-second base part and the sequence passes. The mutant drops one installing operation from the housing
-assembly sequence; the twin keeps it. Both variants are built by `_outcome`.
+from the start). A part whose installing operation was lost then looks like a second base part and the
+sequence passes, whether nothing else names it or it only receives or is closed over. The mutant drops one
+installing operation from the housing assembly sequence; the twin keeps it. Both variants are built by
+`_outcome`.
 """
 
 from __future__ import annotations
@@ -65,5 +66,7 @@ FAMILY = Family(
     pairs=(
         _pair("bracket", "mount-bracket", "the bracket's installing join is missing and nothing else names it"),
         _pair("screw", "fasten-cover", "the cover screw's installing fasten is missing and nothing else names it"),
+        _pair("cover", "fit-cover", "the cover's installing close is missing and the screw still fastens into it"),
+        _pair("bearing", "seat-bearing", "the bearing's installing press fit is missing and the cover still closes over it"),
     ),
 )
