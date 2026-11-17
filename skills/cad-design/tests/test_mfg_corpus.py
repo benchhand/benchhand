@@ -573,7 +573,7 @@ class DocVerdictPathTests(unittest.TestCase):
                  "availability": fx.known("TST stock item")}
         facts.update(purchase)
         part = doc_support.made_part("TST-0003", [fx.operation("buy", "purchased", purchase=facts)], "purchased", None)
-        part.update(make_buy="buy", procurement={"mode": "catalog"})
+        part.update(make_buy="buy", procurement={"mode": "catalog", "manufacturer_part_number": "TST-BRG-608"})
         part["intent"]["material_profile"] = fx.not_applicable("catalogue item")
         return part
 
