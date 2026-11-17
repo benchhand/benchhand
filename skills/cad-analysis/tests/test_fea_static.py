@@ -1395,9 +1395,9 @@ class VersionedPublicationTests(unittest.TestCase):
         wrapper.parent.mkdir()
         wrapper.write_text(f'#!/bin/sh\nexec "{FREECADCMD.resolve()}" "$@"\n', encoding="utf-8")
         wrapper.chmod(0o755)
-        step = StaticFEAContracts.make_cantilever_step(self, Path(self.temporary.name))
+        step = StaticFEAContracts.make_cantilever_step(self, Path(self.temporary.name), "TST-0101 Beam")
         shutil.copyfile(step, self.case_dir / "cantilever.step")
-        self.case.write_text(f"step: cantilever.step\n{CANTILEVER_TAIL}", encoding="utf-8")
+        self.case.write_text(f"step: cantilever.step\n{CANTILEVER_VERSIONED_TAIL}", encoding="utf-8")
         env = {key: value for key, value in os.environ.items() if key not in ("CCX", "GMSH")}
         run = subprocess.run([sys.executable, str(SCRIPT), "hw/analysis/cases/cantilever/case.yaml",
                               "--hw", "hw", "--version", "v1"], cwd=self.project, capture_output=True, text=True,
