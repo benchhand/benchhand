@@ -2288,6 +2288,8 @@ def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
                 f"{pn}: B-rep validity, readback, manufacturing state and component identity")
             add("route.consistency", {**base, "component": component}, "process_planned", "parts",
                 f"{pn}: route, profile, material and capability consistency")
+        if part.process == "fdm":
+            add("export.3mf", base, "cad_valid", "layout", f"{pn}: part.3mf, the FDM part's 3MF export of geometry, material and colour")
     if not is_fact(route):
         for op in route:
             targets = [c for c in components if c is None or not op.components or c in op.components]

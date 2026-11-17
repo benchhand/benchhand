@@ -253,7 +253,6 @@ def facts(plan: Plan, product: str, installed: Mapping[str, Any], native: Mappin
     return {
         "schema_version": SIDECAR_SCHEMA, "PN": plan.pn, "rev": record.get("rev"), "title": record.get("title"),
         "product": product, "material": record.get("material"), "color": _color(plan),
-        "artifacts": {f"export.3mf@{plan.pn}": "part.3mf"} if "part.3mf" in policy.outputs else {},
         "process": record.get("process"), "finish": record.get("finish"),
         "eligibility": {"make_buy": record.get("make_buy"), "procurement_mode": procurement.get("mode")},
         "state": {"relationship": policy.relationship, "name": policy.state, "reason": policy.reason,

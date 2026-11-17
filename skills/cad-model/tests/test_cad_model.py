@@ -1356,6 +1356,41 @@ class CheckRuleTests(unittest.TestCase):
         legacy["manufacturing"]["parts"]["TST-0001"]["checks"]["identity"]["status"] = "warn"
         self.assertEqual(outcomes(legacy, "left"), {"cad.readback@TST-0001.left": "unknown"})
 
+    def test_export_3mf_outcomes_follow_the_part_3mf_check_and_the_sealed_files(self) -> None:
+        """export.3mf is judged on the part.3mf check alone: a failing 3MF fails it, a part with no 3MF row stays
+        unknown, a sealed file that changed fails it, and a bad B-rep does not (that is cad.readback's)."""
+        owed = mock.Mock(id="export.3mf@TST-0001", family="export.3mf", subject={"PN": "TST-0001"}, level="cad_valid")
+
+        def outcome(threemf: dict | None, *, integrity: str = "pass", valid: bool = True) -> dict:
+            checks = self.readback_checks(integrity=integrity, valid=valid)
+            if threemf is not None:
+                checks["manufacturing"]["parts"]["TST-0001"]["checks"]["threemf"] = threemf
+            [row] = check.readback_outcomes([owed], checks)
+            return row
+
+        self.assertEqual(outcome({"status": "pass"})["outcome"], "pass")
+        self.assertEqual(outcome({"status": "fail"})["outcome"], "fail")
+        self.assertEqual(outcome({"status": "pass"}, integrity="fail")["outcome"], "fail")
+        self.assertEqual(outcome({"status": "pass"}, valid=False)["outcome"], "pass")
+        missing = outcome(None)
+        self.assertEqual(missing["outcome"], "unknown")
+        self.assertIn("no part.3mf check", missing["uncertainty"])
+        self.assertEqual((outcome({"status": "pass"})["obligation"], outcome({"status": "pass"})["level"]),
+                         ("export.3mf@TST-0001", "cad_valid"))
+
+    def test_the_export_3mf_artifact_is_the_sealed_part_3mf_and_its_sha256(self) -> None:
+        owed = [mock.Mock(family="export.3mf", subject={"PN": "TST-0001"}),
+                mock.Mock(family="export.3mf", subject={"PN": "TST-0002"}),
+                mock.Mock(family="cad.readback", subject={"PN": "TST-0003"})]
+        with tempfile.TemporaryDirectory() as tmp:
+            hw = Path(tmp) / "hw"
+            made = hw / "versions" / "v1" / "manufacturing" / "TST-0001"
+            made.mkdir(parents=True)
+            (made / "part.3mf").write_bytes(b"three-mf")  # TST-0002 has no sealed part.3mf
+            artifacts = check.export_artifacts(hw, hw / "versions" / "v1", owed)
+        self.assertEqual(artifacts, [{"path": "hw/versions/v1/manufacturing/TST-0001/part.3mf",
+                                      "sha256": hashlib.sha256(b"three-mf").hexdigest()}])
+
     def test_build_volume_accepts_axis_permutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = fdm_record(tmp, "build_volume: {x_mm: 35, y_mm: 10, z_mm: 5, margin_mm: 0}\n")

@@ -130,7 +130,7 @@ class ColourTests(unittest.TestCase):
                 threemf.read(repack(package, **{"3D/3dmodel.model": model.replace(good, bad)}))
 
 
-def plan(color: str | None = None, material: str = "PETG", pn: str = "TST-0001") -> manufacture.Plan:
+def plan(color: str | None = None, material: str = "PETG") -> manufacture.Plan:
     """A plan with the fields `facts` reads; `color` is what package B's PartIntent.color will carry."""
     policy = types.SimpleNamespace(relationship="same", state="installed", reason=None, decision=None,
                                    volume_rel_tolerance=0.0, volume_abs_tolerance_mm3=0.0, linear_deflection_mm=0.1,
@@ -138,7 +138,7 @@ def plan(color: str | None = None, material: str = "PETG", pn: str = "TST-0001")
                                    outputs=("part.step", "part.stl", "part.3mf", "manufacturing.json"))
     part = types.SimpleNamespace(intent=types.SimpleNamespace(color=color))
     record = {"rev": "A", "title": "T", "material": material, "process": "fdm", "finish": None}
-    return manufacture.Plan(pn, record, policy, 2, part, {}, None, {})
+    return manufacture.Plan("TST-0001", record, policy, 2, part, {}, None, {})
 
 
 def entry_of(chosen: manufacture.Plan) -> dict[str, object]:
@@ -155,8 +155,8 @@ class RecipeTests(unittest.TestCase):
                    "(geometry, material, appearance) in cad-record impact.py")
     def test_a_colour_or_material_change_stales_the_3mf_artifact_of_that_part_and_a_finish_change_does_not(self) -> None:
         impact = load_module("cad_record_impact", HERE.parents[1] / "cad-record" / "scripts" / "impact.py")
-        key = next(iter(entry_of(plan(pn="TST-0001"))["artifacts"]))  # type: ignore[call-overload]
-        artifact = types.SimpleNamespace(id=key, family="export.3mf", subject={"PN": "TST-0001"})
+        artifact = types.SimpleNamespace(id="export.3mf@TST-0001", family="export.3mf", subject={"PN": "TST-0001"})
+        key = artifact.id
         for domain, stale in (("appearance", True), ("material", True), ("geometry", True), ("finish", False)):
             with self.subTest(domain):
                 changed = {"TST-0001": (domain,), "TST-0002": ("appearance", "material")}
@@ -171,9 +171,6 @@ class RecipeTests(unittest.TestCase):
 
     def test_the_same_colour_and_material_keep_the_recipe_hash(self) -> None:
         self.assertEqual(recipe_hash(color="#FF0000"), recipe_hash(color="#FF0000"))
-
-    def test_the_part_names_its_3mf_artifact_export_3mf_at_pn(self) -> None:
-        self.assertEqual(entry_of(plan(pn="TST-0007"))["artifacts"], {"export.3mf@TST-0007": "part.3mf"})
 
 
 class ReadTests(unittest.TestCase):
