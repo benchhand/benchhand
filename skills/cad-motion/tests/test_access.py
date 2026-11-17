@@ -166,12 +166,36 @@ class GeometricAccessTests(unittest.TestCase):
         shutil.copyfile(self.root / "geometry" / "socket.step", source)
         return hw
 
-    def run_access(self, hw: Path, *extra: str) -> tuple[int, dict, str]:
+    def run_script(self, script: Path, hw: Path, *extra: str) -> subprocess.CompletedProcess[str]:
         attach = [arg for pn in PNS[1:] for arg in ("--attach", f"{pn}=TST-0101")]
-        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw), *extra, *attach],
+        return subprocess.run(["uv", "run", "--quiet", "--script", str(script), "--hw", str(hw), *extra, *attach],
                               capture_output=True, text=True, timeout=1800, check=False)
+
+    def run_access(self, hw: Path, *extra: str) -> tuple[int, dict, str]:
+        proc = self.run_script(SCRIPT, hw, *extra)
         self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
         return proc.returncode, json.loads(proc.stdout), proc.stderr
+
+    def versioned(self, name: str) -> Path:
+        """A project of the valid order with its v1 version folder: parts, record snapshot and manifest."""
+        items = reordered(operations("blocked_socket.yaml", self.socket_sha),
+                          "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+        hw = self.project(name, items)
+        version = hw / "versions" / "v1"
+        (version / "parts").mkdir(parents=True)
+        for step in (self.root / "geometry" / "parts").iterdir():
+            shutil.copyfile(step, version / "parts" / step.name)
+        for path in hw.rglob("*"):
+            rel = path.relative_to(hw)
+            if path.is_file() and rel.parts[0] not in ("versions", "decisions") and (
+                    rel.suffix == ".yaml" or rel.parts[:2] == ("manufacturing", "sources")):
+                target = version / "record" / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, target)
+        files = {p.relative_to(version).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in sorted(version.rglob("*")) if p.is_file()}
+        (version / "manifest.json").write_text(json.dumps({"label": "v1", "files": files}), encoding="utf-8")
+        return hw
 
     def parts_args(self) -> tuple[str, ...]:
         return ("--parts-dir", str(self.root / "geometry" / "parts"))
@@ -209,23 +233,7 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertEqual(result["result"], "fail")
 
     def test_the_valid_order_passes_with_its_coverage_stated_and_publishes_a_packet(self) -> None:
-        items = reordered(operations("blocked_socket.yaml", self.socket_sha),
-                          "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
-        hw = self.project("valid", items)
-        version = hw / "versions" / "v1"
-        (version / "parts").mkdir(parents=True)
-        for step in (self.root / "geometry" / "parts").iterdir():
-            shutil.copyfile(step, version / "parts" / step.name)
-        for path in hw.rglob("*"):
-            rel = path.relative_to(hw)
-            if path.is_file() and rel.parts[0] not in ("versions", "decisions") and (
-                    rel.suffix == ".yaml" or rel.parts[:2] == ("manufacturing", "sources")):
-                target = version / "record" / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(path, target)
-        files = {p.relative_to(version).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-                 for p in sorted(version.rglob("*")) if p.is_file()}
-        (version / "manifest.json").write_text(json.dumps({"label": "v1", "files": files}), encoding="utf-8")
+        hw = self.versioned("valid")
         code, result, stderr = self.run_access(hw, "--version", "v1")
         self.assertEqual(code, 0, stderr)
         self.assertEqual(set(self.outcomes(result).values()), {"pass"})
@@ -241,6 +249,37 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertTrue((bundle / "evidence" / "access.json").is_file())
         again, rerun, _ = self.run_access(hw, "--version", "v1")
         self.assertEqual((again, rerun["reused"]), (0, True))
+
+    def test_a_published_pass_is_not_reused_after_the_access_policy_changes(self) -> None:
+        """The rule digest does not cover access.py or engagement.py, so the recipe must. The scripts run from a private
+        copy of the tree so that one comment line appended to engagement.py stands for any policy change."""
+        tree = self.root / "policy-tree"
+        (tree / "skills" / "cad-motion").mkdir(parents=True)
+        (tree / "scripts").symlink_to(SKILLS.parent / "scripts")
+        for skill in SKILLS.iterdir():
+            if skill.name != "cad-motion":
+                (tree / "skills" / skill.name).symlink_to(skill)
+        motion = SKILLS / "cad-motion"
+        for entry in motion.iterdir():
+            target = tree / "skills" / "cad-motion" / entry.name
+            if entry.name == "scripts":
+                shutil.copytree(entry, target, ignore=shutil.ignore_patterns("__pycache__"))
+            else:
+                target.symlink_to(entry)
+        script = tree / "skills" / "cad-motion" / "scripts" / "access.py"
+        hw = self.versioned("policy")
+        first = self.run_script(script, hw, "--version", "v1")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertFalse(json.loads(first.stdout)["reused"])
+        same = self.run_script(script, hw, "--version", "v1")
+        self.assertEqual((same.returncode, json.loads(same.stdout)["reused"]), (0, True), same.stderr)
+        with (script.parent / "engagement.py").open("a", encoding="utf-8") as handle:
+            handle.write("\n# a later change of the engagement policy\n")
+        changed = self.run_script(script, hw, "--version", "v1")
+        self.assertEqual(changed.returncode, 2, changed.stdout + changed.stderr)  # another recipe, not the old PASS
+        replaced = self.run_script(script, hw, "--version", "v1", "--replace")
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        self.assertFalse(json.loads(replaced.stdout)["reused"])
 
     def test_a_closed_cover_blocks_the_bearing_path_and_fails_the_order(self) -> None:
         hw = self.project("closed", operations("closed_bearing_install.yaml"))

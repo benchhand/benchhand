@@ -37,7 +37,8 @@ pass. Not covered: curved motion between declared points, part or tool rotation 
 forces, deflection, and any joint pose but the nominal. No path planner: the path is the declared one.
 
 With --version the packet is published to hw/checks/<V>/assembly-access/ (bundle.checks): result.json
-(schemas/manufacturing-check-result.schema.json) and evidence/access.json (every path and sample).
+(schemas/manufacturing-check-result.schema.json) and evidence/access.json (every path and sample). A rerun reuses
+the bundle only when the inputs, the options and the sources of this policy (access.py, engagement.py) are the same.
 Exit 0 = every obligation passes, 1 = a failure or an unknown, 2 = usage or input error.
 """
 
@@ -574,6 +575,15 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     return check_packet.build(record, expected, PRODUCER, outcomes, findings, dependencies), detail
 
 
+def policy_digest() -> str:
+    """The sha256 of the access policy sources. The pair evaluator's rule digest covers neither, so a changed policy
+    must reach the recipe, or the next run would reuse a packet from before the change."""
+    digest = hashlib.sha256()
+    for source in (Path(__file__), Path(engagement_module.__file__)):
+        digest.update(source.name.encode() + b"\0" + hashlib.sha256(source.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Assembly order and geometric access of the recorded operations")
     pose.add_geometry_arguments(parser)
@@ -591,7 +601,8 @@ def main(argv: list[str] | None = None) -> int:
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
         result, detail = assess(args, version, record_hw)
         recipe = {"options": {"step_mm": args.step_mm, "min_step_mm": args.min_step_mm, "attach": list(args.attach)},
-                  "dependencies": result["dependencies"], "rule_sha256": pair_measure.RuleVersion.current().digest.hex()}
+                  "dependencies": result["dependencies"], "rule_sha256": pair_measure.RuleVersion.current().digest.hex(),
+                  "access_policy_sha256": policy_digest()}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "access.json",
                                            recipe, out=args.out, replace=args.replace,
                                            record_version=intent_module.RECORD_VERSION)
