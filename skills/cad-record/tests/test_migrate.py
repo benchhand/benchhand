@@ -91,9 +91,10 @@ class VersionOneCase(MigrationCase):
         shutil.copytree(V1_MINIMAL, self.hw)
 
     def add_interface(self) -> None:
-        """The fixture has no interfaces, so give the copy one without a functional block, as in version 1."""
-        interface = {"id": "IF-001", "from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
-        self.edit_yaml("interfaces.yaml", lambda d: d.update(interfaces=[interface]))
+        fx.add_v1_interface(self.hw)
+
+    def add_operations(self) -> None:
+        fx.add_v1_operations(self.hw)
 
 
 class Version1Record(VersionOneCase):
@@ -102,12 +103,13 @@ class Version1Record(VersionOneCase):
     def test_a_dry_run_reports_every_change_and_writes_nothing(self) -> None:
         self.assert_version_1()
         self.add_interface()
+        self.add_operations()
         before = tree(self.project)
         code, report = self.run_cli("--json")
         self.assertEqual((code, report["status"], report["record_version"]), (1, "pending", {"from": 1, "to": 2}))
         self.assertEqual(tree(self.project), before, "a dry run moves, writes and deletes nothing")
         paths = {change["path"]: change for change in report["changes"]}
-        # One part, the one interface added above and no installation operations to move.
+        # One part, the one interface added above, and its two installation operations to move.
         expected = {"hw/product.yaml", "hw/requirements.yaml", "hw/assembly.yaml", "hw/parts/LMP-0001/part.yaml",
                     "hw/interfaces.yaml",
                     "hw/manufacturing/capabilities.yaml", "hw/manufacturing/materials.yaml", "hw/manufacturing/selection.yaml",
@@ -116,10 +118,13 @@ class Version1Record(VersionOneCase):
         self.assertEqual(paths["hw/manufacturing/selection.yaml"]["action"], "create")
         self.assertIn("+record_version: 2\n", paths["hw/product.yaml"]["diff"])
         self.assertIn("+  functional:", paths["hw/interfaces.yaml"]["diff"])
-        self.assertIn("+operations: {status: unknown", paths["hw/assembly.yaml"]["diff"])  # the fixture records no operations to move
+        self.assertIn("-  operations:\n", paths["hw/assembly.yaml"]["diff"])
+        self.assertIn("+operations:\n", paths["hw/assembly.yaml"]["diff"])
+        self.assertEqual(paths["hw/assembly.yaml"]["summary"],
+                         ["moves drawing.operations (2 operations) to top-level operations, unchanged"])  # the two added above
         self.assertEqual(report["questions"][0]["id"], "Q-001")
-        # 11 use-case questions, 1 for the absent operations, 1 for the part, 1 for the interface.
-        self.assertEqual(len(report["questions"]), 11 + 1 + 1 + 1)
+        # 11 use-case questions, 1 for the part and 1 for the interface. The operations exist, so none asks about them.
+        self.assertEqual(len(report["questions"]), 11 + 1 + 1)
         self.assertEqual(report["findings"], [])
         code, text = self.run_cli("--dry-run")
         self.assertEqual(code, 1)
@@ -129,6 +134,8 @@ class Version1Record(VersionOneCase):
         self.assertEqual(tree(self.project), before)
 
     def test_an_interrupted_apply_completes_on_the_next_run(self) -> None:
+        self.add_interface()
+        self.add_operations()
         self.assert_version_1()
         plan = migrate.plan(self.hw, TODAY)
         self.assertEqual(plan.status, "pending")
@@ -144,9 +151,22 @@ class Version1Record(VersionOneCase):
         migrate.apply(rest)
         record, problems = mi.check_record(self.hw)
         self.assertEqual((record.version, [p.finding() for p in problems]), (2, []))
+        self.assertEqual(list(record.interfaces), ["IF-001"], "the interface and its operations were left for the next run")
+        self.assertEqual(len(record.assembly_operations), 2)
+
+    def test_a_record_without_installation_operations_gets_an_unknown(self) -> None:
+        self.assert_version_1()
+        self.assertNotIn("operations", yaml.safe_load((self.hw / "assembly.yaml").read_text(encoding="utf-8"))["drawing"])
+        migrate.apply(migrate.plan(self.hw, TODAY))
+        record, problems = mi.check_record(self.hw)
+        self.assertEqual([p.finding() for p in problems], [])
+        self.assertTrue(record.assembly_operations.unknown)
+        self.assertIn(record.assembly_operations.question, record.questions)
 
     def test_apply_writes_a_valid_version_2_record_of_explicit_unknowns(self) -> None:
         self.add_interface()
+        self.add_operations()
+        assembly_before = (self.hw / "assembly.yaml").read_text(encoding="utf-8")
         untouched = {rel: digest for rel, digest in tree(self.hw).items()
                      if rel.endswith("model.py") or rel in ("bom.csv", "verification.csv") or rel.startswith("decisions/")}
         self.assertEqual(len(untouched), 1 + 2 + 4, "one model, the BOM and verification sheets, four decisions")
@@ -171,9 +191,9 @@ class Version1Record(VersionOneCase):
             self.assertTrue(interface.functional.critical.unknown and interface.functional.functions.unknown)
         self.assertEqual((dict(record.capabilities), dict(record.materials), record.selection.status), ({}, {}, "not_assessed"))
         assembly = yaml.safe_load((self.hw / "assembly.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(len(record.assembly_operations), 2)  # the two operations added above
         self.assertNotIn("operations", assembly["drawing"])
-        self.assertEqual(assembly["operations"], {"status": "unknown", "reason": "not recorded before record version 2",
-                                                  "question": "Q-012"}, "legacy operations were absent, so an explicit unknown")
+        self.assertEqual(assembly["operations"], yaml.safe_load(assembly_before)["drawing"]["operations"])
         comment = "# Assembly drawing intent (cad-drawings assembly_drawing.py): sheet 1 is the whole arm, then one"
         self.assertIn(comment, (self.hw / "assembly.yaml").read_text(encoding="utf-8"), "comments survive the edit")
         self.assertFalse(mi.assess_use_case(record).final_ready)

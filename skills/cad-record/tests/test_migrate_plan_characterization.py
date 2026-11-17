@@ -19,9 +19,10 @@ import yaml
 from test_migrate import TODAY, V1_MINIMAL, fx, mi, migrate
 
 # preferences, use_case_kept and blocks_present: regenerated when the input gained an interface (IF-001) so that
-# the functional-block branch of plan_interfaces runs. The refusal digests are unchanged.
+# the functional-block branch of plan_interfaces runs, and two drawing.operations so the move branch of plan_assembly
+# runs. The refusal digests are unchanged.
 GOLDEN = {
-    'blocks_present': 'pending:4144d70a19d2dad06f96630d3e94722cb26c4ff7c7b41d67640ef60dba34074e',
+    'blocks_present': 'pending:d7fdc21cf2f6aea9206c5158dc4ce8d43a12cd7216d960c620f16e8171528a14',
     'lamp': 'pending:6b36118a2f3afe40d71a075daea512bc03d7cbe0dc44bb989892f377e241d01e',
     'missing_file': 'refused:09b3aedef2fae20db529d5d9e0697c50c74100c2394b1211ee77ecc30c31ede3',
     'missing_question': 'refused:af778ab0eefdbe56a767f2985edc40ceb88da14536441491414f60904d7be225',
@@ -29,8 +30,8 @@ GOLDEN = {
     'no_operations': 'pending:0ca25ee48f3a76a06eb6c0bbab223134e2110f4b24f46cdfa0e19da334015bd3',
     'no_product': 'refused:2d8d8cc2b3d3028be4b727a95807fb4807c7df1dd7241c73c8972d6b6b50e0eb',
     'not_mapping': 'refused:d59a63f21132ab76ba29500f332a006266fb27171760be5915a70475e3f0b76d',
-    'preferences': 'pending:97e59212da5c3c6a8da029017c4db3ef509e003d5a334c2f662a5bfe1f57d567',
-    'use_case_kept': 'pending:848ecf4c6fe2d8de46cd955a3c632cc16119f2aea69ed70f29f7071b7359d2fb',
+    'preferences': 'pending:884a17d8f3f976196758d0941c552f933d051030d1f56afaa10bf9e2186547cb',
+    'use_case_kept': 'pending:6399ceaff758d7a99d905eaa5cab4aa6c2a1ee911bfc751d7f2e154efb71a55c',
 }
 
 
@@ -81,14 +82,16 @@ class Version1Variants(PlanOutcome):
         self.assertEqual(mi.record_version(product), 1, "the input is a record version 1, or the test proves nothing")
 
     def add_interface(self) -> None:
-        """The fixture has no interfaces, so give the copy one without a functional block, as in version 1."""
-        interface = {"id": "IF-001", "from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
-        self.edit("interfaces.yaml", lambda d: d.update(interfaces=[interface]))
+        fx.add_v1_interface(self.hw)
+
+    def add_operations(self) -> None:
+        fx.add_v1_operations(self.hw)
 
     def migrated_then(self, change: Any) -> None:
         """Migrate a copy that has an interface. Hand-edit the interface's functional block so a rewrite shows.
-        Then undo the version bump and more, by `change`. This is the state an interrupted run leaves."""
+        Then undo the version bump and more, by `change`. An interrupted run leaves this state."""
         self.add_interface()
+        self.add_operations()
         migrate.apply(migrate.plan(self.hw, TODAY))
         self.edit("interfaces.yaml", lambda d: d["interfaces"][0]["functional"]["critical"].update(reason=KEPT))
         self.edit("product.yaml", change)
@@ -102,10 +105,13 @@ class Version1Variants(PlanOutcome):
     def test_preferences_already_present(self) -> None:
         self.assert_version_1()
         self.add_interface()
+        self.add_operations()
         self.edit("requirements.yaml", lambda d: d.update(preferences=[]))
         changes = {c.path: c for c in migrate.plan(self.hw, TODAY).changes}
-        # 11 use-case questions, 1 for the absent operations, 1 for the part, 1 for the interface. Preferences are there.
-        self.assertEqual(changes["hw/requirements.yaml"].summary, ["adds assumptions, open_questions (14 open questions)"])
+        # 11 use-case questions, 1 for the part and 1 for the interface. The operations exist. Preferences are there.
+        self.assertEqual(changes["hw/requirements.yaml"].summary, ["adds assumptions, open_questions (13 open questions)"])
+        self.assertEqual(changes["hw/assembly.yaml"].summary,
+                         ["moves drawing.operations (2 operations) to top-level operations, unchanged"])
         self.assertEqual(changes["hw/interfaces.yaml"].summary, ["adds functional (critical and functions unknown) to IF-001"])
         self.check("preferences")
 
@@ -127,9 +133,8 @@ class Version1Variants(PlanOutcome):
         self.migrated_then(lambda d: d.pop("record_version"))
         self.assert_version_1()
         self.assertEqual(migrate.plan(self.hw, TODAY).status, "pending", "the interrupted run replans, or the check below is vacuous")
-        # The first run asked 14 questions (11 use case, operations, part, interface). The replan has the operations in
-        # place, so it needs Q-001 to Q-013. Dropping the last stored one (Q-014) would change nothing, so drop Q-013.
-        self.edit("requirements.yaml", lambda d: d.update(open_questions=[q for q in d["open_questions"] if q["id"] != "Q-013"]))
+        # The first run asked 13 questions (11 use case, part, interface), and the replan needs the same 13.
+        self.edit("requirements.yaml", lambda d: d["open_questions"].pop())
         self.check("missing_question")
 
     def test_an_interface_without_an_id(self) -> None:

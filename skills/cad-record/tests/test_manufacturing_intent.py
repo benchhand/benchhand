@@ -15,8 +15,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
-import yaml
-
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
 
@@ -124,9 +122,9 @@ class Normalization(unittest.TestCase):
     def test_a_legacy_record_reads_with_explicit_unknowns_and_one_migration_problem(self) -> None:
         hw = temp_hw(self)
         shutil.copytree(fx.V1_MINIMAL, hw)
-        # The fixture has no interfaces, so give the copy one to read. It carries no functional block, as in version 1.
-        interface = {"id": "IF-001", "from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
-        (hw / "interfaces.yaml").write_text(yaml.safe_dump({"interfaces": [interface]}), encoding="utf-8")
+        # The fixture has no interface and no operations, so give the copy both to read, as version 1 stores them.
+        fx.add_v1_interface(hw)
+        fx.add_v1_operations(hw)
         record = mi.load_record(hw)
         self.assertEqual(record.version, 1)
         self.assertEqual([p.code for p in record.problems], ["record.migration_required"])
@@ -138,8 +136,8 @@ class Normalization(unittest.TestCase):
                     self.assertTrue(value.unknown and value.reason == mi.LEGACY_REASON, (name, value))
         self.assertEqual(record.parts["LMP-0001"].material, "PETG")
         self.assertEqual(record.use_case.status, "unknown")
-        # The fixture records no drawing.operations, so a version 1 record has an unknown, not a list of operations.
-        self.assertTrue(record.assembly_operations.unknown and record.assembly_operations.reason == mi.LEGACY_REASON)
+        # The two operations added above: drawing.operations stays the operations of a version 1 record.
+        self.assertEqual([op["id"] for op in record.assembly_operations], fx.V1_OPERATION_IDS)
         self.assertEqual(list(record.interfaces), ["IF-001"])
         self.assertTrue(all(i.functional.critical.unknown for i in record.interfaces.values()))
         self.assertEqual((dict(record.capabilities), dict(record.materials)), ({}, {}))
