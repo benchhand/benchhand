@@ -39,6 +39,7 @@ registry = load("cad_record_schema_registry", SKILL / "scripts" / "schema_regist
 # canonical unit -> {unit: (factor, offset)} with value_in_unit = canonical * factor + offset, written by hand
 CONVERT: dict[str, dict[str, tuple[float, float]]] = {
     "mm": {"mm": (1, 0), "um": (1000, 0), "m": (0.001, 0)},
+    "mm2": {"mm2": (1, 0)},
     "deg_C": {"deg_C": (1, 0), "K": (1, 273.15)},
     "mm_s": {"mm_s": (1, 0), "m_s": (0.001, 0)},
     "rpm": {"rpm": (1, 0), "Hz": (1 / 60, 0)},
@@ -196,6 +197,7 @@ CASES: tuple[Case, ...] = (
     quantity(44, "calibration.overhang_angle", "overhang_angle", "[0, 90]", {"min": 20, "max": 70}, "deg"),
     quantity(44, "calibration.min_wall", "min_wall", "[0.1, 25]", {"min": 0.4, "max": 3}, "mm"),
     quantity(44, "calibration.deviation", "deviation", "[-2, 2]", {"min": -0.5, "max": 0.5}, "mm"),
+    quantity(0, "calibration.min_bed_contact_area", "min_bed_contact_area", "(0,)", None, "mm2"),
     fact(45, "nozzle_diameter", "(0, 3]", {"min": 0.2, "max": 1.2}, "mm"),
     fact(45, "layer_height", "(0, 3]", {"relative_to": "nozzle_diameter", "max": 0.8}, "mm"),
     fact(45, "hotend_max_temperature", "[0, 500]", {"max": 300}, "deg_C"),
@@ -254,7 +256,7 @@ FACTS = {
     "profile_tolerance_mm", "zone_mm", "limit_um", "edge_limits", "deviation_mm", "heat_set.hole_d", "heat_set.depth_min",
     "limits.linear_mm", "limits.angular_deg", "min_wall_mm.cnc", "volume_rel_tolerance", "volume_abs_tolerance_mm3",
     "material.E", "material.density", "material.yield", "material.nu", "calibration.samples", "calibration.bridge_span",
-    "calibration.overhang_angle", "calibration.min_wall", "calibration.deviation", "nozzle_diameter", "layer_height",
+    "calibration.overhang_angle", "calibration.min_wall", "calibration.deviation", "calibration.min_bed_contact_area", "nozzle_diameter", "layer_height",
     "hotend_max_temperature", "bed_max_temperature", "max_speed", "travel_x", "travel_y", "travel_z", "spindle_max_speed",
     "power", "pump_pressure", "press_brake_force", "modulus", "density", "temperature", "poisson_ratio", "min_clearance_mm",
     "tol", "tol_plus", "tol_minus", "confidence", "weight", "min_visible_fraction", "crank_radius_mm", "rod_length_mm",
@@ -262,6 +264,10 @@ FACTS = {
 }
 # An explicit override that has no default of its own: mesh_size_extent_ratio carries the default and mesh_size wins when set
 OVERRIDES = {"mesh_size", "interface.margin_mm"}
+# Facts whose plausibility band waits for data: the reason, and the issue that tracks it
+BAND_PENDING = {
+    "calibration.min_bed_contact_area": "the only fixtures are one calibration of 20 to 25 mm2, too few to size a band; #141",
+}
 # Content of a document that the author states, where no default fits
 CONTENT = {"hold_frames"}
 # Schemas that describe tunables and list their enums too. The other schemas hold vocabularies
@@ -484,6 +490,12 @@ class EveryField(unittest.TestCase):
                 self.assertTrue(reason)
                 self.assertTrue(any(key in node(schema, pointer) for key in self.KEYS), "the node has no bound: drop the entry")
 
+    def test_a_pending_band_names_a_case_that_has_none(self) -> None:
+        for name, reason in BAND_PENDING.items():
+            with self.subTest(name):
+                self.assertIn("#141", reason)
+                self.assertIsNone(BY_NAME[name].band, "the case has a band now: drop the pending entry")
+
     def test_the_max_step_default_repeats_its_members_defaults(self) -> None:
         step = node(PLAN, "/properties/max_step")
         self.assertEqual(step["default"], {name: step["properties"][name]["default"] for name in ("deg", "mm")})
@@ -537,6 +549,7 @@ CALIBRATION_NAMES = {
     "calibration.bridge_span": ["bridge_span"], "calibration.overhang_angle": ["overhang_angle"],
     "calibration.min_wall": ["min_wall"],
     "calibration.deviation": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"],
+    "calibration.min_bed_contact_area": ["min_bed_contact_area"],
 }
 PROPERTY_NAMES = {
     "modulus": ["youngs_modulus", "flexural_modulus", "shear_modulus", "creep_modulus"], "density": ["density"],
@@ -589,7 +602,7 @@ class Documents(unittest.TestCase):
 
     def test_every_calibration_limit_is_bounded_by_its_characteristic(self) -> None:
         cases = [c for c in CASES if c.name in CALIBRATION_NAMES]
-        self.assertEqual(len(cases), 4)
+        self.assertEqual(len(cases), 5)
         for case in cases:
             for name in CALIBRATION_NAMES[case.name]:
                 def edit(document: Any, limits: Any, name: str = name) -> None:

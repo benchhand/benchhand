@@ -227,6 +227,12 @@
         {"if": {"required": ["units"], "properties": {"units": {"const": "um"}}}, "then": {"properties": {"value": {"minimum": -2000, "maximum": 2000}, "lower": {"minimum": -2000, "maximum": 2000}, "upper": {"minimum": -2000, "maximum": 2000}}}}
       ]
     },
+    "qty_min_bed_contact_area": {
+      "description": "Calibrated smallest reliable first-layer contact area: above 0 mm2. A fact of the machine and material, so it has no default. The plausibility band waits for more calibrations (#141)",
+      "allOf": [
+        {"if": {"required": ["units"], "properties": {"units": {"const": "mm2"}}}, "then": {"properties": {"value": {"exclusiveMinimum": 0}, "lower": {"exclusiveMinimum": 0}, "upper": {"exclusiveMinimum": 0}}}}
+      ]
+    },
     "material_approval": {
       "type": "object", "additionalProperties": false, "required": ["material", "status", "source"],
       "properties": {
@@ -279,6 +285,7 @@
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "bridge_span"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_bridge_span"}}}}}},
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "overhang_angle"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_overhang_angle"}}}}}},
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "min_wall"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_min_wall"}}}}}},
+        {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "min_bed_contact_area"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_min_bed_contact_area"}}}}}},
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"enum": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"]}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_deviation"}}}}}}
       ]
     }
