@@ -34,7 +34,8 @@
         "recheck_from": {"$ref": "#/$defs/stage"},
         "frozen": {"$ref": "#/$defs/frozen"},
         "change": {"$ref": "#/$defs/change"},
-        "profile": {"$ref": "#/$defs/profile"}
+        "profile": {"$ref": "#/$defs/profile"},
+        "gates": {"$ref": "#/$defs/gates"}
       },
       "dependentRequired": {"change": ["frozen"]}
     },
@@ -94,6 +95,20 @@
   "$defs": {
     "stage": {"type": "string", "enum": ["ground", "intent", "specify", "concept", "layout", "parts", "detail", "bom", "analysis", "critique", "reconcile", "design_freeze", "release"]},
     "gated_stage": {"description": "A stage that ends at a gate, named as the gate's value: a decision record's gate and a flow.gates key", "allOf": [{"$ref": "#/$defs/stage"}], "enum": ["intent", "concept", "layout", "parts", "detail", "analysis", "design_freeze", "release"]},
+    "gates": {
+      "description": "Each gate's state, keyed by the stage it gates. provisional: the fast check passed on the version, and no decision exists yet; approved: the user approved it in the cited decision. version names the built version and its manifest sha256; a gate before the first build has none",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/gated_stage"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["state"],
+        "properties": {
+          "state": {"enum": ["provisional", "approved"]},
+          "version": {"type": "string", "pattern": "^v[1-9][0-9]*@[0-9a-f]{64}$"},
+          "decision": {"$ref": "#/$defs/decision"}
+        },
+        "if": {"properties": {"state": {"const": "approved"}}}, "then": {"required": ["decision"]}
+      }
+    },
     "process": {"$ref": "manufacturing.schema.json#/$defs/primary_process"},
     "version": {"type": "string", "pattern": "^v[1-9][0-9]*$"},
     "decision": {"type": "string", "pattern": "^DR-[0-9]{3}$"},

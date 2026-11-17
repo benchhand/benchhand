@@ -142,8 +142,11 @@ def question(ident: str, text: str = "TST fixture question?", *, material: bool 
     return data
 
 
-def flow_profile(decision: str = "DR-001", **changes: Any) -> dict[str, Any]:
-    """A complete product.yaml flow.profile citing `decision` (DR-001, which record() writes): every
+PROFILE_DECISION = "DR-090"  # the approved decision fixture profiles cite; write_record writes it
+
+
+def flow_profile(decision: str = PROFILE_DECISION, **changes: Any) -> dict[str, Any]:
+    """A complete product.yaml flow.profile citing `decision` (PROFILE_DECISION by default): every
     question answered, in the combination no flow.conflict rule fires on. `changes` replace top-level
     fields; `fdm` replaces processes.fdm fields."""
     fdm = {"orientation": "propose", "supports": "allowed", "overhang_deg": 45, "bridge_mm": 10, "min_wall_mm": 0.8,
@@ -156,7 +159,7 @@ def flow_profile(decision: str = "DR-001", **changes: Any) -> dict[str, Any]:
     return data
 
 
-def add_flow_profile(hw: Path, decision: str = "DR-001", **changes: Any) -> Path:
+def add_flow_profile(hw: Path, decision: str = PROFILE_DECISION, **changes: Any) -> Path:
     """Set hw/product.yaml flow.profile to flow_profile(decision, **changes) and write the decision, for a
     hand-written fixture that builds or validates. The file is dumped again, so its comments go."""
     path = Path(hw) / "product.yaml"
@@ -169,7 +172,7 @@ def add_flow_profile(hw: Path, decision: str = "DR-001", **changes: Any) -> Path
     return path
 
 
-def write_profile_decision(hw: Path, decision: str = "DR-001") -> Path:
+def write_profile_decision(hw: Path, decision: str = PROFILE_DECISION) -> Path:
     """The approved INTENT decision a fixture's flow.profile cites, through cad-flow flow_profile.py's one
     decision writer; an existing record is kept."""
     path = Path(hw) / "decisions" / f"{decision}.md"
@@ -368,6 +371,9 @@ def write_record(hw: Path, documents: dict[str, Any]) -> Path:
         path = hw / "decisions" / f"{ident}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {ident}\n\nTST fixture decision, approved.\n", encoding="utf-8")
+    profile = ((documents.get("product.yaml") or {}).get("flow") or {}).get("profile")
+    if isinstance(profile, dict) and isinstance(profile.get("decision"), str):
+        write_profile_decision(hw, profile["decision"])
     for rel, data in sources.items():
         path = hw / rel
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -86,7 +86,7 @@ def write_project(root: Path, *, features: bool = True) -> tuple[Path, Path]:
         (hw / name).write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     (hw / "parts" / PN / "part.yaml").write_text(yaml.safe_dump(PART, sort_keys=False), encoding="utf-8")
     fx.upgrade_record(hw)  # record version 2, every manufacturing-intent field unknown
-    fx.add_flow_profile(hw)  # the project-start answers, cited by DR-001
+    fx.add_flow_profile(hw)  # the project-start answers and their approval
     model = b'KERNEL = "cadquery"\nPARAMS = {}\n'
     (hw / "parts" / PN / "model.py").write_bytes(model)
     with (hw / "bom.csv").open("w", newline="", encoding="utf-8") as stream:

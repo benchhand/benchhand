@@ -187,12 +187,18 @@ class Check(unittest.TestCase):
                 self.assertEqual(exit_code, code, report)
                 self.assertEqual([p["path"] for p in report["problems"]], ["flow/profile"] if code else [])
 
-    def test_a_profile_without_its_decision_blocks(self) -> None:
+    def test_a_profile_without_its_approving_decision_blocks(self) -> None:
         no_decision = fx.flow_profile()
         del no_decision["decision"]
-        for name, profile in (("no decision", no_decision), ("no decision record", fx.flow_profile("DR-009"))):
+        record = self.hw / "decisions" / "DR-009.md"
+        for name, profile, text in (("no decision", no_decision, None), ("no decision record", fx.flow_profile("DR-009"), None),
+                                    ("not an approval", fx.flow_profile("DR-009"), "Status: PROVISIONAL\n\n# DR-009\n"),
+                                    ("no status", fx.flow_profile("DR-009"), "# DR-009\n\nThe user approved.\n")):
             with self.subTest(name):
                 self.write("specify", profile)
+                record.unlink(missing_ok=True)
+                if text is not None:
+                    record.write_text(text, encoding="utf-8")
                 exit_code, report = self.check()
                 self.assertEqual(exit_code, 1, report)
                 self.assertEqual([p["path"] for p in report["problems"]], ["flow/profile/decision"])

@@ -257,6 +257,9 @@ def problems(hw: Path, product: Any, stage: str | None = None) -> list[Problem]:
     if not isinstance(decision, str) or not (Path(hw) / "decisions" / f"{decision}.md").is_file():
         found.append(Problem("flow/profile/decision", f"flow.profile cites no decision record ({decision or 'none'})",
                              "record the profile again with flow_profile.py record --decision DR-###"))
+    elif not decision_approves(hw, decision):
+        found.append(Problem("flow/profile/decision", f"flow.profile cites {decision}, which is not an approval",
+                             "only the user's explicit approval records the answers: record them again with a new DR-###"))
     fdm = plans_fdm(hw, product)
     pip = value_at(profile, "processes/fdm/print_in_place") != "no"
     for field, due in DUE.items():
@@ -321,7 +324,8 @@ def _pip_conflicts(profile: Mapping[str, Any], interfaces: list[Mapping[str, Any
     if value_at(profile, "processes/fdm/print_in_place") == "no" or value_at(profile, "processes/fdm/overhang_deg") == "off":
         found.append(Conflict("pip_not_offered", "flow/profile/processes/fdm",
                               f"{ids} print in place, but the profile declines print-in-place or turns the overhang check off"))
-    # The record does not say which way each gap faces, so the larger axis clearance governs.
+    # The record does not say which way each gap faces, so the larger axis clearance governs: the
+    # conservative choice, since a gap at least that wide separates in either direction.
     axes = [value_at(profile, f"{PIP_CLEARANCE}{axis}") for axis in ("xy", "z")]
     known = [value for value in axes if isinstance(value, (int, float)) and not isinstance(value, bool)]
     tight = [str(item.get("id")) for item in joints
@@ -467,6 +471,15 @@ def write_decision(hw: Path, number: str, *, status: str, gate: str, version: st
     _replace(path, "\n".join([f"Status: {status}", f"Gate: {gate}", f"Version: {version}", "",
                               f"# {number}: {title}", "", body]))
     return path
+
+
+def decision_approves(hw: Path, number: str) -> bool:
+    """Whether hw/decisions/<number>.md exists and records the user's explicit approval, the one place this
+    script reads the decision record format: its first line is `Status: APPROVED`."""
+    path = Path(hw) / "decisions" / f"{number}.md"
+    if not path.is_file():
+        return False
+    return path.read_text(encoding="utf-8", errors="replace").partition("\n")[0].strip() == "Status: APPROVED"
 
 
 def _replace(path: Path, data: str, newline: str = "\n") -> None:
