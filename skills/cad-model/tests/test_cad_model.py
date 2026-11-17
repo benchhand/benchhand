@@ -1409,6 +1409,45 @@ class CheckRuleTests(unittest.TestCase):
         self.assertEqual(artifacts, [{"path": "hw/versions/v1/manufacturing/TST-0001/part.3mf",
                                       "sha256": hashlib.sha256(b"three-mf").hexdigest()}])
 
+    @staticmethod
+    def heat_set(hole_d: float = 7.77, hole_tol: list[float] | None = None, host: str = "@host") -> dict:
+        return {"pair": [host, "@insert"], "host": host, "insert": "M4 x 8", "hole_d": hole_d, "hole_tol": hole_tol,
+                "interface": "IF-001", "source": "interfaces.yaml#/interfaces/0/limits/heat_set/0"}
+
+    @staticmethod
+    def bores(*diameters: float) -> dict:
+        return {"TST-0001": {"holes": [{"id": f"H{n}", "diameter_mm": d} for n, d in enumerate(diameters, start=1)]}}
+
+    def dimensions(self, heat_set: dict, metrics: dict) -> dict:
+        return check.declared_dimensions([heat_set], {"@host": "TST-0001"}, metrics)
+
+    def test_a_heat_set_hole_is_judged_against_the_bores_of_its_host_within_the_declared_tolerance(self) -> None:
+        clean = self.dimensions(self.heat_set(hole_tol=[-0.04, 0.04]), self.bores(30.0, 7.81))
+        self.assertEqual((clean["status"], clean["blocking"]), ("pass", True), clean)
+        wide = self.dimensions(self.heat_set(hole_tol=[-0.04, 0.04]), self.bores(30.0, 7.82))
+        self.assertEqual(wide["status"], "fail")
+        self.assertIn("7.82", wide["heat_sets"][0]["reason"])
+        self.assertEqual(self.dimensions(self.heat_set(hole_tol=[-0.04, 0.0]), self.bores(7.81))["status"], "fail")
+
+    def test_a_heat_set_hole_with_no_declared_tolerance_must_match_to_a_hundredth_of_a_millimetre(self) -> None:
+        self.assertEqual(self.dimensions(self.heat_set(), self.bores(7.775))["status"], "pass")
+        self.assertEqual(self.dimensions(self.heat_set(), self.bores(7.79))["status"], "fail")
+
+    def test_a_host_with_no_bore_fails_and_a_host_with_no_measurement_is_unknown(self) -> None:
+        self.assertEqual(self.dimensions(self.heat_set(), self.bores())["status"], "fail")
+        self.assertEqual(self.dimensions(self.heat_set(), {})["status"], "unknown")
+        self.assertEqual(self.dimensions(self.heat_set(), {"TST-0001": {}})["status"], "unknown")
+        absent = check.declared_dimensions([self.heat_set(host="@gone")], {"@host": "TST-0001"}, self.bores(7.77))
+        self.assertEqual(absent["status"], "unknown")
+
+    def test_a_failing_heat_set_outweighs_an_unknown_one(self) -> None:
+        both = check.declared_dimensions([self.heat_set(), self.heat_set(host="@gone")], {"@host": "TST-0001"},
+                                         self.bores(9.0))
+        self.assertEqual(both["status"], "fail")
+
+    def test_no_declared_dimension_leaves_nothing_to_judge(self) -> None:
+        self.assertEqual(check.declared_dimensions([], {}, {})["status"], "pass")
+
     def test_build_volume_accepts_axis_permutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = fdm_record(tmp, "build_volume: {x_mm: 35, y_mm: 10, z_mm: 5, margin_mm: 0}\n")
