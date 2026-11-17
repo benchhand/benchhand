@@ -2,7 +2,7 @@
 
 The route of a made part is what a guide would print as manufacturing instructions: for FDM the approved orientation,
 supports and stock, for CNC the setup (stock, datums, tool access, workholding). The release holds `route.consistency@<PN>`
-and `route.operation_plan@<PN>/<op>` from cad-design's packet, and both are checked without geometry. A missing stock or
+and `route.operation_plan@<PN>/<op>` from cad-design's packet, and both need no geometry. A missing stock or
 route leaves `route.consistency` unknown. A missing orientation, support plan, setup or workholding leaves
 `route.operation_plan` unknown.
 """
