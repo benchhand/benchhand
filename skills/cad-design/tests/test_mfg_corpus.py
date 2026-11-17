@@ -225,6 +225,7 @@ class RatchetGuardTests(unittest.TestCase):
 
 
 DEPS = importlib.util.find_spec("yaml") is not None and importlib.util.find_spec("jsonschema") is not None
+DOC_DEPS = DEPS and importlib.util.find_spec("defusedxml") is not None
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
@@ -378,11 +379,129 @@ class NativeExitCodeTests(unittest.TestCase):
         self.assertEqual((row["errors"], row["abstained"], row["results"][0]["mutant"]), (0, 1, "unknown"))
 
 
+def family_pair(family_id: str, pair_id: str) -> corpus.Pair:
+    family = next(item for item in corpus.load_families() if item.id == family_id)
+    return next(item for item in family.pairs if item.id == pair_id)
+
+
+@unittest.skipUnless(DOC_DEPS, "pyyaml, jsonschema and defusedxml are required")
+class DocLeakTests(unittest.TestCase):
+    """A doc_* mutant carries its defect and nothing else: the identifier or step it removes is absent from EVERY document the
+    generator writes (build guide, okh.toml, DIN checklist), and the twin still has it. The check reads the whole output, so a
+    string that survives in another field (an interface display text, say) shows up."""
+
+    NAMES = ("index.md", "okh.toml", "din-spec-3105-1-checklist.md")
+
+    def documents(self, family_id: str, pair_id: str, mutant: bool) -> dict[str, str]:
+        """The documents of build_guide.make_guide for the pair's record, as the pair's own run builds it."""
+        import doc_support
+
+        module = doc_support.load("cad_record_build_guide", doc_support.RECORD / "scripts" / "build_guide.py")
+        found: dict[str, str] = {}
+
+        def capture(hw: Path, root: Path, prefixes: tuple[str, ...]) -> str:
+            version = hw / "versions" / doc_support.VERSION
+            version.mkdir(parents=True, exist_ok=True)
+            (version / "manifest.json").write_text(json.dumps({"label": doc_support.VERSION, "manufacturing": {}}), encoding="utf-8")
+            found.update(module.make_guide(hw, doc_support.VERSION, root / "docs"))
+            return "pass"
+
+        with mock.patch.object(doc_support, "judge", capture):
+            family_pair(family_id, pair_id).run(mutant)
+        self.assertEqual(sorted(found), sorted(self.NAMES))
+        return found
+
+    def assert_absent_from_mutant_present_in_twin(self, family_id: str, pair_id: str, tokens: tuple[str, ...]) -> None:
+        mutant, twin = self.documents(family_id, pair_id, True), self.documents(family_id, pair_id, False)
+        for token in tokens:
+            with self.subTest(pair=pair_id, token=token):
+                self.assertEqual([name for name, text in mutant.items() if token in text], [], "survives in the mutant")
+                self.assertTrue([name for name, text in twin.items() if token in text], "missing from the twin")
+
+    def test_each_removed_step_or_field_is_absent_from_every_document(self) -> None:
+        cases = {
+            ("doc_heatset_insert", "iron_missing"): ("Soldering iron", "230"),
+            ("doc_heatset_insert", "iron_temperature"): ("230",),
+            ("doc_heatset_insert", "pressing_depth"): ("depth min",),
+            ("doc_retaining_ring", "no_pliers"): ("pliers",),
+            ("doc_fastener_bom", "hole_without_fastener"): ("SCR-0001", "Fasten item 12"),
+        }
+        for (family_id, pair_id), tokens in cases.items():
+            self.assert_absent_from_mutant_present_in_twin(family_id, pair_id, tokens)
+
+    def test_the_added_screws_of_the_reverse_pair_are_in_the_mutant_only(self) -> None:
+        mutant = self.documents("doc_fastener_bom", "fastener_without_hole", True)
+        twin = self.documents("doc_fastener_bom", "fastener_without_hole", False)
+        for token in ("SCR-0002", "M3"):
+            with self.subTest(token=token):
+                self.assertTrue([name for name, text in mutant.items() if token in text])
+                self.assertEqual([name for name, text in twin.items() if token in text], [])
+
+
+@unittest.skipUnless(DOC_DEPS, "pyyaml, jsonschema and defusedxml are required")
+class DocRecordLeakTests(unittest.TestCase):
+    """The doc_manufacturing and doc_retaining_ring/no_groove_part mutants generate no document, so the check reads the record:
+    the part document of the mutant lacks what the pair removes, and the twin has it."""
+
+    def dump(self, part: dict) -> str:
+        return json.dumps(part, sort_keys=True, default=str)
+
+    def test_a_stock_less_printed_part_names_no_material_profile_anywhere(self) -> None:
+        import doc_support
+
+        mutant, twin = self.dump(doc_support.fdm_part(material=False)), self.dump(doc_support.fdm_part())
+        self.assertNotIn(doc_support.POLYMER, mutant)
+        self.assertIn(doc_support.POLYMER, twin)
+
+    def test_the_other_printed_part_mutants_lack_the_key_they_remove(self) -> None:
+        import doc_support
+
+        for kwargs, token in (({"orientation": False}, '"orientation"'), ({"supports": False}, '"supports"'),
+                              ({"route": False}, '"print"')):
+            with self.subTest(removed=token):
+                self.assertNotIn(token, self.dump(doc_support.fdm_part(**kwargs)))
+                self.assertIn(token, self.dump(doc_support.fdm_part()))
+
+    def test_a_setup_less_milled_part_has_none_of_the_setup_keys(self) -> None:
+        import doc_support
+
+        mutant, twin = self.dump(doc_support.cnc_part(setup=False)), self.dump(doc_support.cnc_part())
+        for token in ('"setup"', '"datums"', '"access"', '"workholding"', '"dimensions"'):
+            with self.subTest(token=token):
+                self.assertNotIn(token, mutant)
+                self.assertIn(token, twin)
+
+    def test_a_milled_part_without_workholding_keeps_the_rest_of_its_setup(self) -> None:
+        import doc_support
+
+        mutant = self.dump(doc_support.cnc_part(workholding=False))
+        self.assertNotIn('"workholding"', mutant)
+        for token in ('"setup"', '"datums"', '"access"', '"dimensions"'):
+            self.assertIn(token, mutant)
+
+    def test_a_pin_without_a_groove_has_no_groove_in_its_drawing(self) -> None:
+        import doc_support
+        import yaml
+
+        corpus.load_families()
+        family = sys.modules["mfg_corpus_family_doc_retaining_ring"]
+        for mutant in (True, False):
+            with self.subTest(mutant=mutant), doc_support.workspace() as root:
+                hw = doc_support.lamp(root)
+                family.part_groove(hw, mutant)
+                text = (hw / "parts" / "LMP-0005" / "part.yaml").read_text(encoding="utf-8")
+                self.assertEqual("groove" in yaml.safe_load(text)["drawing"]["features"], not mutant)
+                self.assertEqual("groove" in text, not mutant)
+
+
 class DependencyGuardTests(unittest.TestCase):
     """A family whose tool is absent skips its pairs: neither an error nor a verdict."""
 
+    DOC = {"doc_fastener_bom", "doc_heatset_insert", "doc_install_step", "doc_instruction_order", "doc_manufacturing",
+           "doc_retaining_ring"}
     NEEDS = {"yaml": {"assembly_operations_order", "access_assembly", "additive_min_feature", "additive_stability",
-                      "additive_support_overhang_bridge", "stability_contact_hull"},
+                      "additive_support_overhang_bridge", "stability_contact_hull"} | DOC,
+             "jsonschema": DOC - {"doc_install_step", "doc_instruction_order"},
              "OCP": {"additive_min_feature", "additive_stability", "additive_support_overhang_bridge",
                      "stability_contact_hull"}}
 
