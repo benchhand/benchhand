@@ -37,12 +37,12 @@ class Producer:
         self.stopped_while_running = False
         self.stops = 0
 
-    def poll(self) -> int | None:
-        return self.code if self.ends is not None and self.clock() >= self.ends else None
+    def ended(self) -> bool:
+        return self.ends is not None and self.clock() >= self.ends
 
     def stop(self) -> int:
         self.stops += 1
-        if self.poll() is None:
+        if not self.ended():
             self.stopped_while_running = True
             return -15
         return self.code
@@ -72,9 +72,9 @@ class Run:
     def strays(self) -> list[dict[str, Any]]:
         return self.stray_answers.pop(0) if self.stray_answers else []
 
-    def __call__(self, work: Any) -> Any:
+    def __call__(self, work: Any, **options: Any) -> Any:
         return fail_fast.execute(work, validate=lambda: (self.validate_code, {"findings": []}), spawn=self.spawn,
-                                 strays=self.strays, clock=self.clock, sleep=self.clock.sleep)
+                                 strays=self.strays, clock=self.clock, sleep=self.clock.sleep, **options)
 
 
 def statuses(outcome: Any) -> dict[str, str]:
@@ -156,6 +156,13 @@ class Execution(unittest.TestCase):
             with self.subTest(code):
                 outcome = Run({"form": (code, 1.0), "static.changed": (0, 1.0), "sweep.smoke": (0, 1.0)})(PARALLEL)
                 self.assertEqual((outcome.steps[1].status, outcome.status, outcome.exit), ("no_result", "no_result", 2))
+
+    def test_a_judge_decides_a_producer_status_from_its_exit_and_result_and_the_exit_is_kept(self) -> None:
+        def judge(step: Any, code: int | None, result: Any) -> str:
+            return "pass" if step.id == "form" else fail_fast.status_of(code)
+
+        outcome = Run({"form": (1, 1.0), "static.changed": (0, 1.0), "sweep.smoke": (0, 1.0)})(PARALLEL, judge=judge)
+        self.assertEqual((outcome.steps[1].status, outcome.steps[1].exit, outcome.status), ("pass", 1, "pass"))
 
     def test_a_producer_that_cannot_start_is_no_result(self) -> None:
         run = Run({"static.changed": (0, 1.0), "sweep.smoke": (0, 1.0)})

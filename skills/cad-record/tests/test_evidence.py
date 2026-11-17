@@ -727,8 +727,8 @@ class SelectionGate(unittest.TestCase):
 class Producer:
     """A fake producer step that has passed."""
 
-    def poll(self) -> int:
-        return 0
+    def ended(self) -> bool:
+        return True
 
     def stop(self) -> int:
         return 0
@@ -833,6 +833,53 @@ class EvidenceRun(unittest.TestCase):
         output = self.hw.parent / step["result"]["stdout"]
         self.assertEqual(output.parent.parent, self.hw.parent / ".cad-work" / "evidence-run")
         self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["argv"][0], "cad-model/scripts/cad_model.py")
+
+    def test_a_form_check_open_only_on_obligations_not_yet_due_does_not_block(self) -> None:
+        parts = next(o.id for o in mi.required_checks(impact.read_record(self.hw))
+                     if o.family.startswith("process.") and o.stage == "parts")
+        launcher = self.hw.parent / "run.py"  # form_check.py exits 1 on any open obligation it owns
+        launcher.write_text(
+            "import json, sys\n"
+            "if sys.argv[1] != 'cad-design/scripts/form_check.py':\n"
+            "    print(json.dumps({'status': 'pass'})); sys.exit(0)\n"
+            f"print(json.dumps({{'status': 'pass', 'manufacturing': {{'status': 'unknown', "
+            f"'open': [{{'obligation': {parts!r}, 'outcome': 'unknown'}}]}}}}))\n"
+            "sys.exit(1)\n", encoding="utf-8")
+        for stage, status, code in (("layout", "pass", 0), ("parts", "fail", 1)):
+            with self.subTest(stage), mock.patch.object(evidence, "RUN_PY", launcher):
+                exit_status, report = evidence.run(self.hw, "v1", "inner", stage=stage, strays=list)
+                form = next(item for item in report["steps"] if item["id"] == "form")
+                self.assertEqual((form["exit"], form["status"], exit_status), (1, status, code))
+
+    def test_a_version_1_record_is_refused_and_runs_nothing(self) -> None:
+        product = self.hw / "product.yaml"
+        data = yaml.safe_load(product.read_text(encoding="utf-8"))
+        del data["record_version"]
+        product.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        code, report = self.run_scope("commit", "parts")
+        self.assertEqual((code, report["status"], report["steps"], report["packet"], self.spawned), (1, "refused", [], None, []))
+        self.assertEqual([f["code"] for f in report["findings"]], ["record.migration_required"])
+
+    def test_a_full_run_whose_steps_pass_fails_when_the_packet_gate_blocks(self) -> None:
+        code, report = self.run_scope("full", "parts")  # nothing shows the obligations due at parts
+        self.assertEqual((code, report["status"], report["stopped_at"]), (1, "fail", None))
+        self.assertEqual({step["status"] for step in report["steps"]} - {"skipped"}, {"pass"})
+        self.assertFalse(report["packet"]["gate"]["passed"])
+
+    def test_the_smoke_and_the_full_sweep_publish_to_different_bundles(self) -> None:
+        manifest_path = self.hw / "versions" / "v1" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["joints"] = [{"id": "elbow", "type": "revolute", "min": 0, "max": 90, "nominal": 0}]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        def case(argv: list[str]) -> str:
+            return argv[argv.index("--case") + 1] if "--case" in argv else "sweep"  # sweep.py's default case
+
+        cases = {}
+        for scope, ident in (("commit", "sweep.smoke"), ("full", "sweep.full")):
+            _, report = self.run_scope(scope, "layout")
+            cases[ident] = case(next(step["argv"] for step in report["steps"] if step["id"] == ident))
+        self.assertNotEqual(cases["sweep.smoke"], cases["sweep.full"])
 
 
 if __name__ == "__main__":

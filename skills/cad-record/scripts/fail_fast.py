@@ -20,8 +20,9 @@ producer starts, any stray ends the run with no result. Outside the full scope e
 starts at once; their results are read in plan order, and at the first blocking result every
 later producer that still runs is stopped (`Running.stop`, a process group terminate). In the
 full scope each producer starts after the one before it passed. A producer that exits 0 passes, 1
-fails, and any other status (2, a signal, a failure to start) is no result. Both block. Strays
-found after the run also end it with no result.
+fails, and any other status (2, a signal, a failure to start) is no result, unless the caller's
+`judge` decides from what it reported. Both fail and no result block. Strays found after the run
+also end it with no result.
 
 Standard library only; load it by path as `cad_record_fail_fast` (dataclasses look it up in
 sys.modules).
@@ -89,15 +90,19 @@ class Outcome:
 
 
 class Running(Protocol):
-    """A started producer. `poll` is its exit status once it ended, else None. `stop` terminates
+    """A started producer. `ended` tells whether it ended, without reaping it. `stop` terminates
     what still runs of it, reaps it and returns its exit status; it is called once per producer,
     also after one that ended by itself. `result` is what the producer reported."""
 
-    def poll(self) -> int | None: ...
+    def ended(self) -> bool: ...
 
     def stop(self) -> int: ...
 
     def result(self) -> Any: ...
+
+
+# A producer step's status from (the step, its exit status, its result); status_of by default.
+Judge = Callable[[Step, int | None, Any], str]
 
 
 def plan(scope: str, column: Mapping[str, str], argv: Mapping[str, Sequence[str]], *,
@@ -127,9 +132,10 @@ def status_of(code: int | None) -> str:
 
 
 def execute(work: Plan, *, validate: Callable[[], tuple[int, Any]], spawn: Callable[[Step], Running],
-            strays: Callable[[], Sequence[Mapping[str, Any]]], clock: Callable[[], float] = time.monotonic,
-            sleep: Callable[[float], None] = time.sleep) -> Outcome:
-    """Run `work` (see the module docstring)."""
+            strays: Callable[[], Sequence[Mapping[str, Any]]], judge: Judge | None = None,
+            clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> Outcome:
+    """Run `work` (see the module docstring). `judge` decides a producer's status from its exit
+    status and result; the step keeps the exit status either way."""
     done: dict[str, StepResult] = {}
     for step in work.steps:
         if step.skip is not None:
@@ -146,7 +152,8 @@ def execute(work: Plan, *, validate: Callable[[], tuple[int, Any]], spawn: Calla
     if stopped_at is None and producers:
         left = tuple(strays())
         if not left:
-            stopped_at = (_sequential if work.sequential else _parallel)(producers, spawn, done, clock, sleep)
+            runner = _Runner(spawn, done, judge or (lambda _step, code, _result: status_of(code)), clock, sleep)
+            stopped_at = runner.sequential(producers) if work.sequential else runner.parallel(producers)
             left = tuple(strays())
     for step in producers:
         done.setdefault(step.id, StepResult(step.id, step.argv, None, "stopped", None, None))
@@ -156,77 +163,80 @@ def execute(work: Plan, *, validate: Callable[[], tuple[int, Any]], spawn: Calla
     return Outcome(done[stopped_at].status if stopped_at is not None else "pass", steps, stopped_at)
 
 
-def _start(step: Step, spawn: Callable[[Step], Running]) -> Running | str:
-    try:
-        return spawn(step)
-    except (OSError, RuntimeError, ValueError) as error:
-        return f"cannot start: {error}"
+@dataclass
+class _Runner:
+    spawn: Callable[[Step], Running]
+    done: dict[str, StepResult]
+    judge: Judge
+    clock: Callable[[], float]
+    sleep: Callable[[float], None]
 
-
-def _finished(step: Step, process: Running | str, code: int | None, seconds: float | None) -> StepResult:
-    if isinstance(process, str):
-        return StepResult(step.id, step.argv, None, "no_result", {"error": process}, 0.0)
-    return StepResult(step.id, step.argv, code, status_of(code), process.result(), seconds)
-
-
-def _wait(processes: Mapping[str, Running | str], ended: dict[str, float], wanted: str,
-          clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
-    """Poll every producer still running until `wanted` has ended, noting when each one ends."""
-    while True:
-        for ident, process in processes.items():
-            if ident not in ended and (isinstance(process, str) or process.poll() is not None):
-                ended[ident] = clock()
-        if wanted in ended:
-            return
-        sleep(POLL_SECONDS)
-
-
-def _sequential(producers: Sequence[Step], spawn: Callable[[Step], Running], done: dict[str, StepResult],
-                clock: Callable[[], float], sleep: Callable[[float], None]) -> str | None:
-    for step in producers:
-        started = clock()
-        process = _start(step, spawn)
-        ended: dict[str, float] = {}
+    def start(self, step: Step) -> Running | str:
         try:
-            _wait({step.id: process}, ended, step.id, clock, sleep)
-        finally:
-            code = process.stop() if not isinstance(process, str) else None
-        done[step.id] = _finished(step, process, code, ended.get(step.id, clock()) - started)
-        if done[step.id].status in BLOCKING:
-            return step.id
-    return None
+            return self.spawn(step)
+        except (OSError, RuntimeError, ValueError) as error:
+            return f"cannot start: {error}"
 
+    def finish(self, step: Step, process: Running | str, seconds: float) -> StepResult:
+        """Reap `process` (stopping what it left running) and record its result."""
+        if isinstance(process, str):
+            result = StepResult(step.id, step.argv, None, "no_result", {"error": process}, 0.0)
+        else:
+            code = process.stop()
+            reported = process.result()
+            result = StepResult(step.id, step.argv, code, self.judge(step, code, reported), reported, seconds)
+        self.done[step.id] = result
+        return result
 
-def _parallel(producers: Sequence[Step], spawn: Callable[[Step], Running], done: dict[str, StepResult],
-              clock: Callable[[], float], sleep: Callable[[float], None]) -> str | None:
-    started = clock()
-    processes: dict[str, Running | str] = {}
-    ended: dict[str, float] = {}
-    stopped: set[str] = set()
-    try:
+    def wait(self, processes: Mapping[str, Running | str], ended: dict[str, float], wanted: str) -> None:
+        """Poll every producer still running until `wanted` has ended, noting when each one ends."""
+        while True:
+            for ident, process in processes.items():
+                if ident not in ended and (isinstance(process, str) or process.ended()):
+                    ended[ident] = self.clock()
+            if wanted in ended:
+                return
+            self.sleep(POLL_SECONDS)
+
+    def sequential(self, producers: Sequence[Step]) -> str | None:
         for step in producers:
-            processes[step.id] = _start(step, spawn)
-        for index, step in enumerate(producers):
-            _wait(processes, ended, step.id, clock, sleep)
-            process = processes[step.id]
-            code = process.stop() if not isinstance(process, str) else None
-            stopped.add(step.id)
-            done[step.id] = _finished(step, process, code, ended[step.id] - started)
-            if done[step.id].status not in BLOCKING:
-                continue
-            for later in producers[index + 1:]:
-                other = processes[later.id]
-                if isinstance(other, str):
-                    continue
-                if later.id in ended or other.poll() is not None:
-                    code = other.stop()
-                    done[later.id] = _finished(later, other, code, ended.get(later.id, clock()) - started)
-                else:
-                    done[later.id] = StepResult(later.id, later.argv, other.stop(), "stopped", None, clock() - started)
-                stopped.add(later.id)
-            return step.id
+            started = self.clock()
+            process = self.start(step)
+            ended: dict[str, float] = {}
+            try:
+                self.wait({step.id: process}, ended, step.id)
+            except BaseException:
+                if not isinstance(process, str):
+                    process.stop()
+                raise
+            if self.finish(step, process, ended[step.id] - started).status in BLOCKING:
+                return step.id
         return None
-    finally:
-        for ident, process in processes.items():
-            if ident not in stopped and not isinstance(process, str):
-                process.stop()
+
+    def parallel(self, producers: Sequence[Step]) -> str | None:
+        started = self.clock()
+        processes: dict[str, Running | str] = {}
+        ended: dict[str, float] = {}
+        reaped: set[str] = set()
+        try:
+            for step in producers:
+                processes[step.id] = self.start(step)
+            for index, step in enumerate(producers):
+                self.wait(processes, ended, step.id)
+                reaped.add(step.id)
+                if self.finish(step, processes[step.id], ended[step.id] - started).status not in BLOCKING:
+                    continue
+                for later in producers[index + 1:]:
+                    other = processes[later.id]
+                    reaped.add(later.id)
+                    if isinstance(other, str) or later.id in ended or other.ended():
+                        self.finish(later, other, ended.get(later.id, self.clock()) - started)
+                    else:
+                        self.done[later.id] = StepResult(later.id, later.argv, other.stop(), "stopped", None,
+                                                         self.clock() - started)
+                return step.id
+            return None
+        finally:
+            for ident, process in processes.items():
+                if ident not in reaped and not isinstance(process, str):
+                    process.stop()

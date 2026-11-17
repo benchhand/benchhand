@@ -1319,6 +1319,9 @@ RUN_KIND = "cad-evidence-run"
 RUN_SCHEMA_VERSION = 1
 RUN_PY = SKILLS / "cad-flow" / "scripts" / "run.py"
 _MOTION_STEPS = ("sweep.smoke", "sweep.full", "motion.default")
+# The smoke sweep publishes its own bundle (hw/motion/<V>/sweep-smoke): its recipe differs from the
+# full sweep's, which keeps sweep.py's default case, so neither run refuses the other's bundle.
+SMOKE_CASE = "sweep-smoke"
 
 
 def producers_of(family: str) -> tuple[str, ...]:
@@ -1390,8 +1393,8 @@ def producer_argv(hw: Path, version: str, stage: str, since: str | None) -> dict
         "form": through("cad-design/scripts/form_check.py", "--hw", hw_arg, "--version", version, "--fidelity", _fidelity(stage)),
         "static.changed": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg, "--changed-only", *baseline),
         "static.all": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg),
-        "sweep.smoke": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version, "--smoke", "--changed-only",
-                               *baseline),
+        "sweep.smoke": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version, "--case", SMOKE_CASE,
+                               "--smoke", "--changed-only", *baseline),
         "sweep.full": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version),
         "render": through("cad-render/scripts/render.py", hw_arg, "--version", version),
         "motion.default": through("cad-motion/scripts/motion.py", "render", "--hw", hw_arg, "--version", version, "--case",
@@ -1422,9 +1425,8 @@ class _Producer:
     def __init__(self, lifecycle: Any, process: Any, stdout: Path, project: Path) -> None:
         self.lifecycle, self.process, self.stdout, self.project = lifecycle, process, stdout, project
 
-    def poll(self) -> int | None:
-        code = self.process.poll()
-        return int(code) if code is not None else None
+    def ended(self) -> bool:
+        return bool(self.lifecycle.exited(self.process))  # never reaps: terminate_group does, after the group
 
     def stop(self) -> int:
         return int(self.lifecycle.terminate_group(self.process))
@@ -1446,6 +1448,32 @@ def _fail_fast() -> Any:
     # Loaded only by `run`: validate.py and the cad-recheck hook load this module from a copy that
     # holds only the siblings they read.
     return _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
+
+
+def _judge(project: Path, stage: str, expected: Sequence[Any]) -> Callable[[Any, int | None, Any], str]:
+    """A step's status from its exit status, except for the form check. form_check.py exits 1 on
+    every open obligation it owns, due or not. Its step fails only on a fidelity failure, a failed
+    outcome, an open obligation due at `stage` or a report this cannot read."""
+    due = {obligation.id for obligation in expected if _due(obligation, stage)}
+    status_of = _fail_fast().status_of
+
+    def judge(step: Any, code: int | None, result: Any) -> str:
+        status = str(status_of(code))
+        if step.id != "form" or status != "fail" or not isinstance(result, Mapping) or not result.get("stdout"):
+            return status
+        try:
+            report = json.loads((project / str(result["stdout"])).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return status
+        manufacturing = report.get("manufacturing") if isinstance(report, Mapping) else None
+        if not isinstance(report, Mapping) or report.get("status") == "fail" or not isinstance(manufacturing, Mapping) \
+                or not isinstance(manufacturing.get("open"), list):
+            return status
+        blocking = [item for item in manufacturing["open"]
+                    if not isinstance(item, Mapping) or item.get("outcome") != "unknown" or item.get("obligation") in due]
+        return status if blocking else "pass"
+
+    return judge
 
 
 def _spawner(hw: Path, version: str, scope: str) -> Callable[[Any], _Producer]:
@@ -1508,7 +1536,7 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
     assessment, _ = build_assessment(hw, label, today)
     work = run_plan(hw, label, scope, stage, assessment, since_version=since_version)
     outcome = _fail_fast().execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),
-                                   strays=strays or (lambda: _strays(hw)))
+                                   strays=strays or (lambda: _strays(hw)), judge=_judge(hw.parent, stage, assessment.expected))
     report.update(status=outcome.status, steps=[step.as_dict() for step in outcome.steps], stopped_at=outcome.stopped_at)
     if outcome.strays:
         report["strays"] = [dict(item) for item in outcome.strays]
