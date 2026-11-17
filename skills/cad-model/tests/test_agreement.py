@@ -40,6 +40,13 @@ class AgreementTests(unittest.TestCase):
     def test_a_mesh_three_millimetres_off_does_not_agree(self) -> None:
         self.assertEqual(self.status("shifted_3_mm"), "fail")
 
+    def test_the_smallest_flagged_displacement_is_the_reach_at_the_probes_deflection(self) -> None:
+        """The floor is twice the sum of the GLB deflection (0.04 mm) and the reference's half of it (0.02 mm),
+        plus 0.005 mm: 0.125 mm. A flat block, where the tessellation adds no chord error, shows it exactly."""
+        self.assertAlmostEqual(self.probe["cases"]["flat_shifted_just_above_floor"]["tolerance_mm"], 0.125, places=9)
+        self.assertEqual(self.status("flat_shifted_just_above_floor"), "fail")  # 0.13 mm
+        self.assertEqual(self.status("flat_shifted_just_below_floor"), "pass")  # 0.12 mm
+
     def test_a_hole_eight_millimetres_off_does_not_agree(self) -> None:
         self.assertEqual(self.status("hole_moved_8_mm"), "fail")
 

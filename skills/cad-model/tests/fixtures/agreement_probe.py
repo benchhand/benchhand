@@ -56,10 +56,13 @@ def verdict(drawn: Any, depicted: Any, *, shift: float = 0.0) -> dict[str, Any]:
 
 def cases() -> dict[str, Any]:
     clean = block()
+    plain = block(hole_x=None)  # flat faces only: the tessellation is exact, so the floor is not blurred by chords
     return {
         "same_shape": verdict(clean, clean),
         "equal_volume_cylinder": verdict(round_block(), clean),
         "shifted_3_mm": verdict(clean, clean, shift=3.0),
+        "flat_shifted_just_above_floor": verdict(plain, plain, shift=0.13),
+        "flat_shifted_just_below_floor": verdict(plain, plain, shift=0.12),
         "hole_moved_8_mm": verdict(block(hole_x=8.0), clean),
         "hole_missing_in_mesh": verdict(block(hole_x=None), clean),
         "extra_hole_in_mesh": verdict(clean, block(hole_x=None)),

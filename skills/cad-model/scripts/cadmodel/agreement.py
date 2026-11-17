@@ -24,8 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # `check` also runs where numpy is missing: the agreement then abstains
+    np = None  # type: ignore[assignment]
 
+AVAILABLE = np is not None
 from cadmodel import occ
 from cadmodel.mesh import ANGULAR_RAD
 
@@ -40,10 +44,8 @@ CELLS = 8               # grid cells along the longest side of a mesh, for the t
 SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contribute a sample point
 WORST_POINTS = 5        # failing points measured exactly, to report the distance
 BATCH = 256            # query points against their candidate triangles at once
-COMPONENTS = {5121: np.dtype("<u1"), 5123: np.dtype("<u2"), 5125: np.dtype("<u4"), 5126: np.dtype("<f4")}
+COMPONENTS = {5121: "<u1", 5123: "<u2", 5125: "<u4", 5126: "<f4"}
 TYPE_WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3}
-EMPTY_POINTS = np.empty((0, 3))
-EMPTY_TRIANGLES = np.empty((0, 3), dtype=np.int64)
 
 
 class AgreementError(ValueError):
@@ -74,7 +76,7 @@ def _accessor(gltf: Mapping[str, Any], binary: bytes, index: int) -> np.ndarray:
     if "sparse" in accessor:
         raise AgreementError("sparse accessors are not read")
     view = gltf["bufferViews"][accessor["bufferView"]]
-    dtype = COMPONENTS[accessor["componentType"]]
+    dtype = np.dtype(COMPONENTS[accessor["componentType"]])
     width = TYPE_WIDTH[accessor["type"]]
     stride = view.get("byteStride") or dtype.itemsize * width
     start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
@@ -170,7 +172,7 @@ def reference(shape: Any, linear_mm: float) -> Mesh:
             a, b, c = triangulation.Triangle(i).Get()
             triangles.append((base + a - 1, base + b - 1, base + c - 1))
     if not triangles:
-        return Mesh(EMPTY_POINTS, EMPTY_TRIANGLES)
+        return Mesh(np.empty((0, 3)), np.empty((0, 3), dtype=np.int64))
     return Mesh(np.array(points), np.array(triangles, dtype=np.int64))
 
 

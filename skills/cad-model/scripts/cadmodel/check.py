@@ -740,10 +740,13 @@ def glb_step_agreement(folder: Path, manifest: Mapping[str, Any], part_map: Mapp
     """Per examined occurrence: its GLB node depicts the assembly STEP's shape at the STEP's placement
     (cadmodel.agreement). The GLB is read without the manifest's help: a mesh of another model, scale or place
     fails here though it is a closed solid and the STEP matches the kernel. `unknown` where the data cannot judge."""
+    wanted = set(examined)
+    if not agreement.AVAILABLE:
+        reason = {"status": "unknown", "reason": "numpy is not installed: the GLB and STEP meshes cannot be compared"}
+        return agreement_result({oid: dict(reason) for oid in wanted}, skipped, None)
     names = mesh.node_names(part_map)
     definitions = {pn: part.shape for pn, part in step.definitions.items()}
     placements = {}
-    wanted = set(examined)
     for component in step.components:
         oid = component.occurrence if component.occurrence is not None else component.pn
         if oid in wanted and component.pn in definitions:

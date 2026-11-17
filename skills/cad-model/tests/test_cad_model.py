@@ -1455,7 +1455,7 @@ class CheckRuleTests(unittest.TestCase):
             return sorted(check.agreement_scope(built, changes))
 
         def changes(**kept: tuple[str, ...]) -> mock.Mock:
-            return mock.Mock(baseline=object(), geometry=(), added=(), moved=(), **kept)
+            return mock.Mock(baseline=object(), **{"geometry": (), "added": (), "moved": (), **kept})
 
         self.assertEqual(examined(None), ["a1", "a2", "b", "c"])
         self.assertEqual(examined(mock.Mock(baseline=None, geometry=(), added=(), moved=())), ["a1", "a2", "b", "c"])
@@ -1463,6 +1463,13 @@ class CheckRuleTests(unittest.TestCase):
         self.assertEqual(examined(changes(moved=("b",), added=("c",))), ["b", "c"])
         self.assertEqual(examined(changes()), [])  # nothing changed: nothing to re-judge
         self.assertEqual(examined(changes(geometry=("GONE",), added=("never-built",))), [])
+
+    def test_without_numpy_the_agreement_abstains_for_every_occurrence_it_was_to_examine(self) -> None:
+        with mock.patch.object(check.agreement, "AVAILABLE", False):
+            result = check.glb_step_agreement(Path("none"), {}, {}, mock.Mock(), ["a1", "a2"], ["b"])
+        self.assertEqual((result["status"], result["skipped"], sorted(result["occurrences"])),
+                         ("unknown", ["b"], ["a1", "a2"]))
+        self.assertIn("numpy", result["occurrences"]["a1"]["reason"])
 
     def test_a_check_that_examined_no_occurrence_passes_with_those_it_skipped_listed(self) -> None:
         self.assertEqual(check.agreement_result({}, ["a1"], 0.2)["status"], "pass")
