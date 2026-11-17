@@ -194,5 +194,7 @@
     "own_groups_stopped": [],
     "still_running": [],
     "viewers_stopped": []
-  }
+  },
+  "aborted": "provider outage",
+  "aborted_note": "opencode run turns 4 and 5 ended in provider.auth: 'AWS default credential chain failed: Could not load credentials from any providers' (lead session export); not a matcher failure"
 }
