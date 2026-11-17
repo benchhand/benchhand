@@ -41,12 +41,19 @@ FAMILY = textwrap.dedent("""
     os.replace(sys.argv[1] + ".tmp", sys.argv[1])
     time.sleep(600)
 """)
-# A child that dies on SIGTERM and a grandchild that ignores it. The child writes both pids.
+# A child that dies on SIGTERM and a grandchild that ignores it. The child writes both pids once the
+# grandchild reports that it ignores SIGTERM.
 LINGERER = textwrap.dedent("""
     import os, signal, subprocess, sys, time
-    grandchild = subprocess.Popen([sys.executable, "-c", "import signal, time; "
-                                   "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"])
-    time.sleep(0.5)  # the grandchild ignores SIGTERM before anyone sends it
+    ready = sys.argv[1] + ".ready"
+    grandchild = subprocess.Popen([sys.executable, "-c", "import signal, sys, time; "
+                                   "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                                   "open(sys.argv[1], 'w').close(); time.sleep(600)", ready])
+    deadline = time.monotonic() + 60
+    while not os.path.exists(ready):
+        if time.monotonic() > deadline:
+            sys.exit("the grandchild never reported that it ignores SIGTERM")
+        time.sleep(0.01)
     with open(sys.argv[1] + ".tmp", "w") as out:
         out.write(f"{os.getpid()} {grandchild.pid}")
     os.replace(sys.argv[1] + ".tmp", sys.argv[1])
