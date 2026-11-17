@@ -202,6 +202,94 @@ class SelfReferencingClass(FixtureTree):
         self.assertEqual(result.stdout.strip(), "['children', 'name', 'next']")
 
 
+def run_python311(root: Path, source: str, script: str) -> subprocess.CompletedProcess[str]:
+    """Import `source` as module `generated` under Python 3.11 and run `script` against it."""
+    (root / "generated.py").write_text(source, encoding="utf-8")
+    return subprocess.run(
+        ["uv", "run", "--no-project", "--python", "3.11", "python", "-B", "-c", "import generated, typing\n" + script],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+
+
+class ReviewRound1(FixtureTree):
+    def add(self, stem: str, body: dict[str, typing.Any]) -> None:
+        write_json(self.root, f"skills/cad-record/schemas/{stem}.schema.json", {"$id": BASE + f"{stem}.schema.json", **body})
+
+    def assert_in_both(self, *fragments: str) -> None:
+        outputs = gen_api.generate(self.root)
+        for fragment in fragments:
+            for rel, text in outputs.items():
+                with self.subTest(fragment=fragment, output=rel):
+                    self.assertIn(fragment, text)
+
+    def test_prefix_items_are_a_list_type_with_positional_constraints_documented(self) -> None:
+        self.add("pos", {"type": "object", "properties": {
+            "mixed": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "string"}], "minItems": 2, "maxItems": 2, "items": False},
+        }, "$defs": {"vec": {"type": "array", "prefixItems": [{"type": "number"}] * 3, "minItems": 3, "maxItems": 3}}})
+        api = self.api()
+        self.assertIn("\nPosVec = list[float]\n", api)
+        self.assertIn("\n    mixed: NotRequired[list[float | str]]\n", api)
+        self.assertNotIn("tuple[", api)
+        self.assert_in_both('prefixItems: [{"type":"number"},{"type":"number"},{"type":"number"}]', "minItems: 3", 'prefixItems: [{"type":"number"},{"type":"string"}]', "items: false")
+
+    def test_all_of_and_ref_siblings_merge_fields_required_flags_and_notes(self) -> None:
+        self.add("base", {"$defs": {"base": {
+            "type": "object", "additionalProperties": False, "required": ["a"],
+            "properties": {"a": {"type": "string", "pattern": "^x$"}, "b": {"type": "integer"}},
+        }}})
+        self.add("merged", {"type": "object", "$defs": {
+            "viaAllOf": {"allOf": [{"$ref": "base.schema.json#/$defs/base"}, {"required": ["b"], "properties": {"c": {"type": "boolean"}}}]},
+            "viaRefSiblings": {"$ref": "base.schema.json#/$defs/base", "required": ["b"], "properties": {"d": {"type": "number", "minimum": 0}}},
+        }})
+        api = self.api()
+        for cls, extra in (("MergedViaAllOf", "    c: NotRequired[bool]"), ("MergedViaRefSiblings", "    d: NotRequired[float]")):
+            body = api.split(f"class {cls}(TypedDict):")[1].split("\n\n\n")[0]
+            with self.subTest(cls=cls):
+                self.assertIn("\n    a: Required[str]\n", body)
+                self.assertIn("\n    b: Required[int]\n", body)
+                self.assertIn(extra, body)
+                self.assertIn("additionalProperties: false", body)
+                self.assertIn("^x$", body)
+        doc = self.doc()
+        for cls, row in (("MergedViaAllOf", "| `c` | `bool` | no |"), ("MergedViaRefSiblings", "| `d` | `float` | no |")):
+            section = doc.split(f"### {cls}\n")[1].split("\n### ")[0]
+            with self.subTest(cls=cls, output="doc"):
+                self.assertIn("| `a` | `str` | yes |", section)
+                self.assertIn("| `b` | `int` | yes |", section)
+                self.assertIn(row, section)
+                self.assertIn("additionalProperties: false", section)
+                self.assertIn("^x$", section)
+
+    def test_required_keys_without_properties_are_documented(self) -> None:
+        self.add("std", {"type": "object", "properties": {
+            "standards": {"type": "object", "required": ["dimensioning"], "additionalProperties": {"type": "string"}},
+        }})
+        self.assertIn("\n    standards: NotRequired[dict[str, str]]\n", self.api())
+        self.assert_in_both('required keys: ["dimensioning"]')
+
+    def test_keyword_named_optional_field_stays_optional_on_python_311(self) -> None:
+        self.add("kw", {"type": "object", "required": ["from"], "properties": {"class": {"type": "string"}, "from": {"type": "integer"}}})
+        result = run_python311(self.root, self.api(), "print(sorted(generated.Kw.__required_keys__), sorted(generated.Kw.__optional_keys__))")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['from'] ['class']")
+
+    def test_conditional_only_root_keeps_its_documentation_and_conditions(self) -> None:
+        self.add("pick", {
+            "title": "Pick one", "description": "Chooses a version by schema_version.",
+            "if": {"type": "object", "required": ["schema_version"]},
+            "then": {"$ref": "#/$defs/v2"}, "else": {"$ref": "#/$defs/v1"},
+            "$defs": {"v1": {"type": "object", "properties": {"a": {"type": "string"}}}, "v2": {"type": "object", "properties": {"b": {"type": "string"}}}},
+        })
+        self.assertIn("\nPick = PickV2 | PickV1\n", self.api())
+        self.assert_in_both("Chooses a version by schema_version.", 'if {"type":"object","required":["schema_version"]} then')
+
+    def test_false_schema_property_generates_an_importable_module(self) -> None:
+        self.add("nothing", {"type": "object", "properties": {"gone": False}})
+        result = run_python311(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.Nothing)))")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['gone']")
+
+
 class Determinism(FixtureTree):
     def test_two_runs_are_byte_equal(self) -> None:
         self.assertEqual(gen_api.generate(self.root), gen_api.generate(self.root))

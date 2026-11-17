@@ -302,6 +302,7 @@ __all__ = [
     "ProductUseCaseReleaseScope",
     "ProductUseCaseServiceClassOneOf0",
     "ProductVersion",
+    "ReleaseManifest",
     "ReleaseManifestChecks",
     "ReleaseManifestPackagePath",
     "ReleaseManifestProductId",
@@ -358,7 +359,8 @@ AssemblyPartRef = AssemblyPn | AssemblyOccurrenceRef
 # Not expressible as types (see the schema):
 # - minItems: 3
 # - maxItems: 3
-AssemblyVector = tuple[float, float, float]
+# - prefixItems: [{"type":"number"},{"type":"number"},{"type":"number"}]
+AssemblyVector = list[float]
 
 
 class AssemblyAssemblyOperationAcceptance(TypedDict):
@@ -799,13 +801,13 @@ class AssemblyProfile(TypedDict):
 
     Field notes:
     - period_deg: exclusiveMinimum: 0
-    - samples: minItems: 2; items.minItems: 2; items.maxItems: 2
+    - samples: minItems: 2; items.minItems: 2; items.maxItems: 2; items.prefixItems: [{"type":"number"},{"type":"number"}]
     """
     input_unit: Required[Literal["deg"]]
     output_unit: Required[Literal["mm", "deg"]]
     period_deg: Required[float]
     interpolation: Required[Literal["linear"]]
-    samples: Required[list[tuple[float, float]]]
+    samples: Required[list[list[float]]]
 
 
 # Source: skills/cad-record/schemas/assembly.schema.json#/$defs/joint_id
@@ -1943,10 +1945,10 @@ class DrawingProductDrawingDefaultSheet(TypedDict):
 DrawingTolerancePolicyOneOf0 = TypedDict(
     "DrawingTolerancePolicyOneOf0",
     {
-        "kind": "Required[Literal[\"standard\"]]",
-        "standard": "Required[Literal[\"ISO 2768-1:1989\"]]",
-        "class": "Required[Literal[\"f\", \"m\", \"c\", \"v\"]]",
-        "applies_to": "Required[list[DrawingProcess]]",
+        "kind": Required[Literal["standard"]],
+        "standard": Required[Literal["ISO 2768-1:1989"]],
+        "class": Required[Literal["f", "m", "c", "v"]],
+        "applies_to": Required[list[DrawingProcess]],
     },
 )
 
@@ -1981,7 +1983,7 @@ class DrawingProductDrawing(TypedDict):
     - additionalProperties: false
 
     Field notes:
-    - standards: additionalProperties.minLength: 1
+    - standards: required keys: ["dimensioning"]; additionalProperties.minLength: 1
     - tolerance_policies: minProperties: 1; propertyNames: {"$ref":"#/$defs/policy_name"}
     """
     definition: Required[Literal["model_and_drawing"]]
@@ -2463,16 +2465,16 @@ class InterfacesFunctional(TypedDict):
 InterfacesInterfacesItems = TypedDict(
     "InterfacesInterfacesItems",
     {
-        "id": "Required[str]",
-        "from": "Required[str]",
-        "to": "Required[str]",
-        "type": "Required[Literal[\"mounting\", \"motion\", \"electrical\", \"thermal\", \"clearance\", \"other\"]]",
-        "description": "Required[str]",
-        "pair": "NotRequired[list[AssemblyPartRef]]",
-        "min_clearance_mm": "NotRequired[float]",
-        "margin_mm": "NotRequired[float]",
-        "limits": "NotRequired[InterfacesInterfacesItemsLimits]",
-        "functional": "NotRequired[InterfacesFunctional]",
+        "id": Required[str],
+        "from": Required[str],
+        "to": Required[str],
+        "type": Required[Literal["mounting", "motion", "electrical", "thermal", "clearance", "other"]],
+        "description": Required[str],
+        "pair": NotRequired[list[AssemblyPartRef]],
+        "min_clearance_mm": NotRequired[float],
+        "margin_mm": NotRequired[float],
+        "limits": NotRequired[InterfacesInterfacesItemsLimits],
+        "functional": NotRequired[InterfacesFunctional],
     },
 )
 
@@ -2654,12 +2656,12 @@ class LayoutRule(TypedDict):
 LayoutClass = TypedDict(
     "LayoutClass",
     {
-        "class": "Required[str]",
-        "suffixes": "Required[list[str]]",
-        "canonical": "Required[str]",
-        "file_by_suffix": "NotRequired[dict[str, str]]",
-        "message": "Required[str]",
-        "action": "Required[str]",
+        "class": Required[str],
+        "suffixes": Required[list[str]],
+        "canonical": Required[str],
+        "file_by_suffix": NotRequired[dict[str, str]],
+        "message": Required[str],
+        "action": Required[str],
     },
 )
 
@@ -2727,7 +2729,7 @@ class LayoutManufacturing(TypedDict):
 
     Field notes:
     - custom_made: A part is custom-made when any condition holds; minItems: 1
-    - outputs: Output files per primary process that has an output contract; a process without an entry, such as other, has none, so its manufacturing coverage stays unknown; propertyNames: {"$ref":"manufacturing.schema.json#/$defs/primary_process","not":{"const":"other"}}
+    - outputs: Output files per primary process that has an output contract; a process without an entry, such as other, has none, so its manufacturing coverage stays unknown; propertyNames: {"$ref":"manufacturing.schema.json#/$defs/primary_process","not":{"const":"other"}}; required keys: ["fdm","cnc","purchased"]
     - formats: minProperties: 1; additionalProperties.minLength: 1
     - same_state_volume_rel_tolerance: maximum: 1; exclusiveMinimum: 0
     """
@@ -4671,19 +4673,6 @@ class Product(TypedDict):
     use_case: NotRequired[ProductUseCase]
 
 
-# Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/checks
-ReleaseManifestChecks = dict[str, Literal["pass", "fail", "waived"]]
-
-
-# A path inside the package directory
-#
-# Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/package_path
-#
-# Not expressible as types (see the schema):
-# - pattern: "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))(?!manifest\\.json$)[^\\\\]+$"
-ReleaseManifestPackagePath = str
-
-
 # Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/product_id
 #
 # Not expressible as types (see the schema):
@@ -4698,28 +4687,23 @@ ReleaseManifestProductId = str
 ReleaseManifestRev = str
 
 
+class ReleaseManifestV3Frozen(TypedDict):
+    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v3/properties/frozen
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    version: Required[ProductVersion]
+    manifest_sha256: Required[ProductSha256]
+    decision: Required[ProductDecision]
+    evidence_sha256: Required[ProductSha256]
+
+
 # Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/sha256
 #
 # Not expressible as types (see the schema):
 # - pattern: "^[0-9a-f]{64}$"
 ReleaseManifestSha256 = str
-
-
-class ReleaseManifestV1(TypedDict):
-    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v1
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-
-    Field notes:
-    - released_at: format: "date-time"
-    - files: minItems: 1; items.minLength: 1
-    """
-    product_id: Required[ReleaseManifestProductId]
-    rev: Required[ReleaseManifestRev]
-    released_at: Required[str]
-    files: Required[list[str]]
-    checks: Required[ReleaseManifestChecks]
 
 
 class ReleaseManifestV2FilesAdditionalProperties(TypedDict):
@@ -4735,70 +4719,6 @@ class ReleaseManifestV2FilesAdditionalProperties(TypedDict):
     original: Required[str]
 
 
-class ReleaseManifestV2ManufacturingAdditionalProperties(TypedDict):
-    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2/properties/manufacturing/additionalProperties
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-
-    Field notes:
-    - quantity: minimum: 1
-    - files: minItems: 1; uniqueItems: true
-    """
-    process: Required[ManufacturingPrimaryProcess]
-    quantity: Required[int]
-    files: Required[list[ReleaseManifestPackagePath]]
-
-
-class ReleaseManifestV2BundlesItems(TypedDict):
-    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2/properties/bundles/items
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-
-    Field notes:
-    - layout: pattern: "^[a-z]+(\\\\.[a-z_]+)*$"
-    - path: pattern: "^hw/(?!.*(^|/)\\\\.{1,2}(/|$))[^\\\\\\\\]+$"
-    """
-    layout: Required[str]
-    path: Required[str]
-    manifest_sha256: Required[ReleaseManifestSha256]
-
-
-class ReleaseManifestV2(TypedDict):
-    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-
-    Field notes:
-    - released_at: format: "date-time"
-    - approval: the decision record approving this release
-    - files: Every package file but manifest.json, keyed by its path in the package, with its sha256 and the immutable original it copies; minProperties: 1; propertyNames: {"$ref":"#/$defs/package_path"}
-    - manufacturing: Per custom-made PN of the frozen version: its process, assembled quantity and package files; propertyNames: {"pattern":"^[A-Z]{2,5}-[0-9]{4}$"}
-    - bundles: The drawing, check, analysis and other bundles the release selected, by manifest sha256; uniqueItems: true
-    """
-    schema_version: Required[Literal[2]]
-    product_id: Required[ReleaseManifestProductId]
-    rev: Required[ReleaseManifestRev]
-    released_at: Required[str]
-    frozen: Required[ProductFrozen]
-    approval: Required[ProductDecision]
-    files: Required[dict[str, ReleaseManifestV2FilesAdditionalProperties]]
-    manufacturing: Required[dict[str, ReleaseManifestV2ManufacturingAdditionalProperties]]
-    bundles: Required[list[ReleaseManifestV2BundlesItems]]
-    checks: Required[ReleaseManifestChecks]
-
-
-# The drawing, check, analysis and other bundles the release selected, by manifest sha256
-#
-# Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2/properties/bundles
-#
-# Not expressible as types (see the schema):
-# - uniqueItems: true
-ReleaseManifestV2Bundles = list[ReleaseManifestV2BundlesItems]
-
-
 # Every package file but manifest.json, keyed by its path in the package, with its sha256 and the immutable original it copies
 #
 # Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2/properties/files
@@ -4809,16 +4729,13 @@ ReleaseManifestV2Bundles = list[ReleaseManifestV2BundlesItems]
 ReleaseManifestV2Files = dict[str, ReleaseManifestV2FilesAdditionalProperties]
 
 
-class ReleaseManifestV3Frozen(TypedDict):
-    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v3/properties/frozen
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-    """
-    version: Required[ProductVersion]
-    manifest_sha256: Required[ProductSha256]
-    decision: Required[ProductDecision]
-    evidence_sha256: Required[ProductSha256]
+# A path inside the package directory
+#
+# Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/package_path
+#
+# Not expressible as types (see the schema):
+# - pattern: "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))(?!manifest\\.json$)[^\\\\]+$"
+ReleaseManifestPackagePath = str
 
 
 class ReleaseManifestV3ManufacturingAdditionalProperties(TypedDict):
@@ -4838,6 +4755,34 @@ class ReleaseManifestV3ManufacturingAdditionalProperties(TypedDict):
     files: Required[list[ReleaseManifestPackagePath]]
     route: Required[list[ManufacturingRouteKind]]
     components: NotRequired[dict[str, list[ReleaseManifestPackagePath]]]
+
+
+class ReleaseManifestV2BundlesItems(TypedDict):
+    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2/properties/bundles/items
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - layout: pattern: "^[a-z]+(\\\\.[a-z_]+)*$"
+    - path: pattern: "^hw/(?!.*(^|/)\\\\.{1,2}(/|$))[^\\\\\\\\]+$"
+    """
+    layout: Required[str]
+    path: Required[str]
+    manifest_sha256: Required[ReleaseManifestSha256]
+
+
+# The drawing, check, analysis and other bundles the release selected, by manifest sha256
+#
+# Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2/properties/bundles
+#
+# Not expressible as types (see the schema):
+# - uniqueItems: true
+ReleaseManifestV2Bundles = list[ReleaseManifestV2BundlesItems]
+
+
+# Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/checks
+ReleaseManifestChecks = dict[str, Literal["pass", "fail", "waived"]]
 
 
 class ReleaseManifestV3AcceptanceScope(TypedDict):
@@ -4901,6 +4846,74 @@ class ReleaseManifestV3(TypedDict):
     bundles: Required[ReleaseManifestV2Bundles]
     checks: Required[ReleaseManifestChecks]
     acceptance: Required[ReleaseManifestV3Acceptance]
+
+
+class ReleaseManifestV2ManufacturingAdditionalProperties(TypedDict):
+    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2/properties/manufacturing/additionalProperties
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - quantity: minimum: 1
+    - files: minItems: 1; uniqueItems: true
+    """
+    process: Required[ManufacturingPrimaryProcess]
+    quantity: Required[int]
+    files: Required[list[ReleaseManifestPackagePath]]
+
+
+class ReleaseManifestV2(TypedDict):
+    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v2
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - released_at: format: "date-time"
+    - approval: the decision record approving this release
+    - files: Every package file but manifest.json, keyed by its path in the package, with its sha256 and the immutable original it copies; minProperties: 1; propertyNames: {"$ref":"#/$defs/package_path"}
+    - manufacturing: Per custom-made PN of the frozen version: its process, assembled quantity and package files; propertyNames: {"pattern":"^[A-Z]{2,5}-[0-9]{4}$"}
+    - bundles: The drawing, check, analysis and other bundles the release selected, by manifest sha256; uniqueItems: true
+    """
+    schema_version: Required[Literal[2]]
+    product_id: Required[ReleaseManifestProductId]
+    rev: Required[ReleaseManifestRev]
+    released_at: Required[str]
+    frozen: Required[ProductFrozen]
+    approval: Required[ProductDecision]
+    files: Required[dict[str, ReleaseManifestV2FilesAdditionalProperties]]
+    manufacturing: Required[dict[str, ReleaseManifestV2ManufacturingAdditionalProperties]]
+    bundles: Required[list[ReleaseManifestV2BundlesItems]]
+    checks: Required[ReleaseManifestChecks]
+
+
+class ReleaseManifestV1(TypedDict):
+    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v1
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - released_at: format: "date-time"
+    - files: minItems: 1; items.minLength: 1
+    """
+    product_id: Required[ReleaseManifestProductId]
+    rev: Required[ReleaseManifestRev]
+    released_at: Required[str]
+    files: Required[list[str]]
+    checks: Required[ReleaseManifestChecks]
+
+
+# CAD release manifest
+#
+# Version 1 (no schema_version) lists project files in place. Version 2, written by release.py, seals a package of byte copies under hw/releases/<rev>/. Version 3 adds the record version 2 acceptance anchor: the frozen evidence digest, its inventory, the release scope, claims and waivers. Sealed packages are read by their own version and never rewritten or re-certified.
+#
+# Source: skills/cad-record/schemas/release-manifest.schema.json#
+#
+# Not expressible as types (see the schema):
+# - if {"type":"object","required":["schema_version"]} then {"if":{"properties":{"schema_version":{"const":3}}},"then":{"$ref":"#/$defs/v3"},"else":{"$ref":"#/$defs/v2"}} else {"$ref":"#/$defs/v1"}
+ReleaseManifest = ReleaseManifestV3 | ReleaseManifestV2 | ReleaseManifestV1
 
 
 class RequirementsPreferencesItems(TypedDict):

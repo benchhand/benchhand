@@ -473,7 +473,7 @@ Piecewise-linear periodic table: samples from 0 to period_deg with matching end 
 | `output_unit` | `Literal["mm", "deg"]` | yes |  |  |
 | `period_deg` | `float` | yes |  |  |
 | `interpolation` | `Literal["linear"]` | yes |  |  |
-| `samples` | `list[tuple[float, float]]` | yes |  |  |
+| `samples` | `list[list[float]]` | yes |  |  |
 
 Constraints not expressed by the type:
 
@@ -482,6 +482,7 @@ Constraints not expressed by the type:
 - `samples`: minItems: 2
 - `samples`: items.minItems: 2
 - `samples`: items.maxItems: 2
+- `samples`: items.prefixItems: [{"type":"number"},{"type":"number"}]
 
 ### AssemblySubassembliesItems
 
@@ -527,12 +528,13 @@ Constraints not expressed by the type:
 
 Source: `/$defs/vector`
 
-Alias of `tuple[float, float, float]`
+Alias of `list[float]`
 
 Constraints not expressed by the type:
 
 - minItems: 3
 - maxItems: 3
+- prefixItems: [{"type":"number"},{"type":"number"},{"type":"number"}]
 
 ## bom-row.schema.json
 
@@ -1158,6 +1160,7 @@ Source: `/$defs/product_drawing`
 Constraints not expressed by the type:
 
 - additionalProperties: false
+- `standards`: required keys: ["dimensioning"]
 - `standards`: additionalProperties.minLength: 1
 - `tolerance_policies`: minProperties: 1
 - `tolerance_policies`: propertyNames: {"$ref":"#/$defs/policy_name"}
@@ -1811,6 +1814,7 @@ Constraints not expressed by the type:
 - additionalProperties: false
 - `custom_made`: minItems: 1
 - `outputs`: propertyNames: {"$ref":"manufacturing.schema.json#/$defs/primary_process","not":{"const":"other"}}
+- `outputs`: required keys: ["fdm","cnc","purchased"]
 - `formats`: minProperties: 1
 - `formats`: additionalProperties.minLength: 1
 - `same_state_volume_rel_tolerance`: maximum: 1
@@ -4559,6 +4563,20 @@ Constraints not expressed by the type:
 - `$id`: `https://srobroek.com/cad/schemas/release-manifest.schema.json`
 
 CAD release manifest
+
+### ReleaseManifest
+
+Source: schema root
+
+**CAD release manifest**
+
+Version 1 (no schema_version) lists project files in place. Version 2, written by release.py, seals a package of byte copies under hw/releases/<rev>/. Version 3 adds the record version 2 acceptance anchor: the frozen evidence digest, its inventory, the release scope, claims and waivers. Sealed packages are read by their own version and never rewritten or re-certified.
+
+Alias of `ReleaseManifestV3 | ReleaseManifestV2 | ReleaseManifestV1`
+
+Constraints not expressed by the type:
+
+- if {"type":"object","required":["schema_version"]} then {"if":{"properties":{"schema_version":{"const":3}}},"then":{"$ref":"#/$defs/v3"},"else":{"$ref":"#/$defs/v2"}} else {"$ref":"#/$defs/v1"}
 
 ### ReleaseManifestChecks
 

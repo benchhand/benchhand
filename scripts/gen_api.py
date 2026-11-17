@@ -38,7 +38,7 @@ NOTE_KEYS = (
     "pattern", "format", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
     "minLength", "maxLength", "minItems", "maxItems", "uniqueItems", "contains", "minContains", "maxContains",
     "minProperties", "maxProperties", "propertyNames", "not", "dependentRequired", "dependentSchemas",
-    "unevaluatedProperties", "unevaluatedItems", "patternProperties",
+    "unevaluatedProperties", "unevaluatedItems", "patternProperties", "prefixItems",
 )
 SCALARS = {"string": "str", "integer": "int", "number": "float", "boolean": "bool", "null": "None"}
 NO_DEFAULT = object()
@@ -159,7 +159,7 @@ class Walker:
 
     def register_all(self) -> None:
         for schema in self.schemas:
-            if self.structural(schema.data):
+            if self.structural(schema.data) or "if" in schema.data:
                 self.named(schema, "", schema.data)
             for name, node in schema.data.get("$defs", {}).items():
                 self.named(schema, f"/$defs/{name}", node)
@@ -188,7 +188,7 @@ class Walker:
             return "Any"
         if node is False:
             return "Never"
-        for handler in (self.inline_ref, self.inline_value, self.inline_union, self.inline_all_of, self.inline_typed):
+        for handler in (self.inline_ref, self.inline_value, self.inline_union, self.inline_all_of, self.inline_conditional, self.inline_typed):
             result = handler(schema, pointer, node)
             if result is not None:
                 return result
@@ -217,6 +217,22 @@ class Walker:
                 return self.expr(schema, f"{pointer}/allOf/{i}", member)
         return None
 
+    def inline_conditional(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str | None:
+        """A schema that only selects between other schemas with if/then/else is the union of its branches."""
+        if "if" not in node or "type" in node:
+            return None
+        branches = self.branches(node, pointer)
+        return self.union([self.expr(schema, p, b) for p, b in branches]) if branches else None
+
+    def branches(self, node: dict[str, Any], pointer: str) -> list[tuple[str, Any]]:
+        found: list[tuple[str, Any]] = []
+        for key in ("then", "else"):
+            branch = node.get(key)
+            if not isinstance(branch, dict):
+                continue
+            found += self.branches(branch, f"{pointer}/{key}") if "$ref" not in branch else [(f"{pointer}/{key}", branch)]
+        return found
+
     def inline_typed(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str:
         kind = node.get("type")
         if isinstance(kind, list):
@@ -231,7 +247,8 @@ class Walker:
 
     def inline_array(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str:
         if "prefixItems" in node:
-            return "tuple[" + ", ".join(self.expr(schema, f"{pointer}/prefixItems/{i}", m) for i, m in enumerate(node["prefixItems"])) + "]"
+            # Records hold JSON arrays, which load as lists, so the type is a list of the positional types.
+            return "list[" + self.union([self.expr(schema, f"{pointer}/prefixItems/{i}", m) for i, m in enumerate(node["prefixItems"])]) + "]"
         return "list[" + (self.expr(schema, f"{pointer}/items", node["items"]) if "items" in node else "Any") + "]"
 
     @staticmethod
@@ -306,6 +323,8 @@ class Walker:
         notes = [f"{key}: {dump(node[key])}" for key in NOTE_KEYS if key in node]
         if node.get("additionalProperties") is False:
             notes.append("additionalProperties: false")
+        if node.get("items") is False:
+            notes.append("items: false")
         if "if" in node:
             notes.append(f"if {dump(node['if'])} then {dump(node.get('then'))}" + (f" else {dump(node['else'])}" if "else" in node else ""))
         for key in ("oneOf", "anyOf"):
@@ -320,6 +339,8 @@ class Walker:
         notes = [label + n for n in self.node_notes(node) if not (label == "" and n == "additionalProperties: false" and self.is_object(schema, "", node))]
         if self.is_object(schema, "", node):
             return []
+        if node.get("type") == "object" and "required" in node:
+            notes.append(f"{label}required keys: {dump(node['required'])}")
         children: list[tuple[str, Any]] = []
         if isinstance(node.get("items"), dict):
             children.append(("items.", node["items"]))
@@ -380,7 +401,7 @@ def render_class(typedef: TypeDef, quoted: set[tuple[str, str]]) -> list[str]:
     out.append(f"{typedef.name} = TypedDict(")
     out.append(f'    "{typedef.name}",')
     out.append("    {")
-    out += [f"        {json.dumps(f.name)}: {json.dumps(wrap(f, False))}," for f in typedef.fields]
+    out += [f"        {json.dumps(f.name)}: {wrap(f, (typedef.name, f.name) in quoted)}," for f in typedef.fields]
     out += ["    },", ")"]
     return out
 
@@ -464,7 +485,7 @@ def render_api(types: list[TypeDef]) -> str:
     for typedef in ordered:
         body += (render_class(typedef, quoted) if typedef.fields is not None else render_alias(typedef)) + ["", ""]
     text = "\n".join(body)
-    imports = ["Any"] * bool(re.search(r"\bAny\b", text)) + ["Literal"] * ("Literal[" in text)
+    imports = ["Any"] * bool(re.search(r"\bAny\b", text)) + ["Never"] * bool(re.search(r"\bNever\b", text)) + ["Literal"] * ("Literal[" in text)
     imports += ["NotRequired"] * ("NotRequired[" in text) + ["Required"] * bool(re.search(r"(?<!Not)Required\[", text)) + ["TypedDict"] * any(t.fields is not None for t in types)
     names = sorted(t.name for t in types)
     head = [
