@@ -57,6 +57,11 @@ DEFAULT_TIMEOUT_SECONDS = 600.0  # a case's timeout_seconds overrides it
 # ccx 2.23 threads (manual section 2): FreeCAD's start_ccx sets OMP_NUM_THREADS to the CPU count, and these
 # take precedence over it for the equation solver, the stiffness assembly and the result calculation.
 CCX_ENVIRONMENT = {"CCX_NPROC_EQUATION_SOLVER": "1", "CCX_NPROC_STIFFNESS": "1", "CCX_NPROC_RESULTS": "1"}
+# Gmsh Mesh.HighOrderOptimize (0 none, 1 optimization, 2 elastic+optimization, 3 elastic): the job meshes at
+# `optimize`, records the mesh's validity and quality (mesh_quality.py), and remeshes at `fallback` only when an
+# element is invalid; the fallback level is terminal. Levels 0 and 3 leave invalid elements on LMP-0002 (dev sweep,
+# PR #38), so both levels are 2.
+HIGH_ORDER = {"optimize": 2, "fallback": 2}
 
 
 class CaseError(ValueError):
@@ -337,10 +342,11 @@ def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None 
         "freecadcmd": str(freecad),
         "solvers_module": str(Path(SOLVERS.__file__).resolve()),
         "ccx_environment": CCX_ENVIRONMENT,
+        "high_order": HIGH_ORDER,
         "solver_versions": versions,
     }
     job_json = json.dumps(job)
-    script = f'''import json, os, re, shutil, sys, time, math, traceback
+    script = f'''import json, os, re, shutil, sys, tempfile, time, math, traceback
 import FreeCAD as App, Part, Import, ObjectsFem
 from femmesh.gmshtools import GmshTools
 from femtools.ccxtools import CcxTools
@@ -350,6 +356,7 @@ sys.path.insert(0, os.path.dirname(JOB["solvers_module"]))
 from fea_part_selection import MultipleSolids, SceneObject, select_occurrence, select_part_solid, selected_face_indices
 from fea_solvers import resolve_in_freecad
 from ccx_failure import ccx_failure
+from mesh_quality import mesh_quality, needs_fallback, read_c3d10
 CONTAINERS=("App::LinkGroup", "App::Part")
 class AnalysisError(RuntimeError):
     def __init__(self, error):
@@ -460,15 +467,31 @@ def run():
         source_geo=re.sub(r"(?m)^General[.]NumThreads[ \t]*=[ \t]*[^;]+;", "General.NumThreads = 1;", source_geo)
         source_geo=re.sub(r"(?m)^Mesh[.]Optimize[ \t]*=[ \t]*[^;]+;", "Mesh.Optimize = 0;", source_geo)
         source_geo=re.sub(r"(?m)^Mesh[.]OptimizeNetgen[ \t]*=[ \t]*[^;]+;", "Mesh.OptimizeNetgen = 0;", source_geo)
-        source_geo=re.sub(r"(?m)^Mesh[.]HighOrderOptimize[ \t]*=[ \t]*[^;]+;", "Mesh.HighOrderOptimize = 2;", source_geo)
         source_geo=re.sub(r"(?m)^Mesh[.]RandomFactor3D[ \t]*=[ \t]*[^;]+;", "Mesh.RandomFactor3D = 0;", source_geo)
         source_geo="Mesh.RandomSeed = 1;\\n" + source_geo
-        with open(geo_path, "w", encoding="utf-8") as geo_file: geo_file.write(source_geo)
-        mesh_inputs={{"geometry_sha256":__import__("hashlib").sha256(open(brep_path,"rb").read()).hexdigest(), "geo_sha256":__import__("hashlib").sha256(source_geo.encode("utf-8")).hexdigest()}}
+        def mesh_at(level):
+            # Mesh the normalised input at one high-order optimisation level; the run keeps the input it meshed last.
+            text, count=re.subn(r"(?m)^Mesh[.]HighOrderOptimize[ \t]*=[ \t]*[^;]+;", "Mesh.HighOrderOptimize = %d;" % level, source_geo)
+            if count != 1: raise RuntimeError("the Gmsh input sets Mesh.HighOrderOptimize %d times, not once" % count)
+            with open(geo_path, "w", encoding="utf-8") as geo_file: geo_file.write(text)
+            shutil.copyfile(geo_path, os.path.join(JOB["run_directory"], "GmshInput.geo"))
+            gm.compute(); gm.process.waitForFinished(-1)
+            gm.update_properties()
+            written=os.path.join(tempfile.gettempdir(), "mesh_quality_%s.inp" % JOB["run_id"])
+            mesh.FemMesh.write(written)
+            with open(written, "r", encoding="utf-8") as f: quality=mesh_quality(*read_c3d10(f.read()))
+            os.remove(written)
+            return text, {{**quality, "high_order_optimize": level}}
         shutil.copyfile(brep_path, os.path.join(JOB["run_directory"], "GmshGeometry.brep"))
-        shutil.copyfile(geo_path, os.path.join(JOB["run_directory"], "GmshInput.geo"))
-        gm.compute(); gm.process.waitForFinished(-1)
-        gm.update_properties()
+        meshed_geo, quality=mesh_at(JOB["high_order"]["optimize"])
+        if needs_fallback(quality, JOB["high_order"]["optimize"], JOB["high_order"]["fallback"]):
+            rejected=quality
+            meshed_geo, quality=mesh_at(JOB["high_order"]["fallback"])
+            quality["rejected"]=rejected
+        if quality["invalid_elements"] or not quality["elements"]:
+            # The terminal level left inverted elements: refuse with the mesh's quality instead of solving it.
+            raise AnalysisError({{"code":"mesh_invalid", "message":"Gmsh produced %d element(s) with a nonpositive Jacobian at HighOrderOptimize %d (min scaled Jacobian %.3g); reduce mesh_size where walls are thin or curvature is tight" % (quality["invalid_elements"], quality["high_order_optimize"], quality["min_scaled_jacobian"] or 0), "details":quality}})
+        mesh_inputs={{"geometry_sha256":__import__("hashlib").sha256(open(brep_path,"rb").read()).hexdigest(), "geo_sha256":__import__("hashlib").sha256(meshed_geo.encode("utf-8")).hexdigest()}}
         doc.recompute()
         nodes=int(mesh.FemMesh.NodeCount); elements=len(mesh.FemMesh.Volumes)
         if nodes <= 0 or elements <= 0: raise RuntimeError("Gmsh produced an empty mesh")
@@ -494,6 +517,7 @@ def run():
         result["worst_case_pose"]={{"step":JOB["step"], **({{"pose":JOB["pose"]}} if JOB.get("pose") is not None else {{}}), **({{"evidence":JOB["evidence"]}} if JOB.get("evidence") is not None else {{}})}}
         result["required_safety_factor"]=JOB.get("required_safety_factor")
         result["mesh_input_hashes"]=mesh_inputs
+        result["mesh_quality"]=quality
         result["mesh_input_files"]=["GmshGeometry.brep", "GmshInput.geo"]
         result["status"]="fail" if result["required_safety_factor"] is not None and safety_factor is not None and safety_factor < result["required_safety_factor"] else "pass"
         result["retained_files"]=[os.path.relpath(os.path.join(root,name), JOB["run_directory"]).replace(os.sep,"/")
@@ -619,6 +643,7 @@ def _is_solver_evidence(relative_path: str) -> bool:
 def _producer_code_hashes() -> dict[str, str]:
     paths = (Path(__file__), Path(__file__).with_name("fea_part_selection.py"),
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
+             Path(__file__).with_name("mesh_quality.py"),
              conditions.INTENT_PATH, Path(SOLVERS.__file__))
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
@@ -639,7 +664,9 @@ def _case_options(case: dict[str, Any]) -> dict[str, Any]:
         "required_safety_factor": case.get("required_safety_factor"),
         "mesh_settings": {
             "threads": 1, "random_seed": 1, "random_factor_3d": 0,
-            "optimize": False, "optimize_netgen": False, "high_order_optimize": 2,
+            "optimize": False, "optimize_netgen": False, "high_order_optimize": HIGH_ORDER["optimize"],
+            **({"high_order_fallback": HIGH_ORDER["fallback"]} if HIGH_ORDER["fallback"] != HIGH_ORDER["optimize"]
+               else {}),
             "calculix_matrix_solver": "spooles",
             "calculix_environment": CCX_ENVIRONMENT,
         },
