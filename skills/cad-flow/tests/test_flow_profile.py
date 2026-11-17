@@ -67,6 +67,18 @@ class SchemaContract(unittest.TestCase):
             flow_profile.write_decision(Path(tmp), "DR-001", status="APPROVED", gate="specify", version="N/A",
                                         title="TST", body="TST\n")
 
+    def test_flow_gates_take_gated_stage_keys_and_an_approval_cites_its_decision(self) -> None:
+        validator = flow_profile.schema_registry.ref_validator(
+            flow_profile.SCHEMAS, "https://srobroek.com/cad/schemas/product.schema.json#/$defs/gates")
+        version = "v3@" + "a" * 64
+        self.assertEqual(list(validator.iter_errors({"intent": {"state": "approved", "decision": "DR-001"},
+                                                     "layout": {"state": "provisional", "version": version}})), [])
+        for name, gates in (("bad key", {"specify": {"state": "provisional"}}),
+                            ("bad state", {"layout": {"state": "void", "version": version}}),
+                            ("approved without decision", {"layout": {"state": "approved", "version": version}})):
+            with self.subTest(name):
+                self.assertNotEqual(list(validator.iter_errors(gates)), [])
+
     def test_fdm_is_the_iso_52900_material_extrusion_category(self) -> None:
         schema = json.loads((SKILLS / "cad-record" / "schemas" / "product.schema.json").read_text(encoding="utf-8"))
         processes = schema["$defs"]["profile"]["properties"]["processes"]["properties"]
