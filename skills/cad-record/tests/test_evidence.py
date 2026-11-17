@@ -919,6 +919,14 @@ class EvidenceRun(BuiltRecord):
             cases[ident] = case(next(step["argv"] for step in report["steps"] if step["id"] == ident))
         self.assertNotEqual(cases["sweep.smoke"], cases["sweep.full"])
 
+    def test_a_commit_run_without_stage_uses_the_flow_stage(self) -> None:
+        product = self.hw / "product.yaml"
+        product.write_text(product.read_text(encoding="utf-8").replace("stage: parts", "stage: layout"), encoding="utf-8")
+        code, report = evidence.run(self.hw, "v1", "commit", spawn=self.spawn, strays=list)
+        form = next(step for step in report["steps"] if step["id"] == "form")
+        self.assertEqual((report["stage"], form["argv"][form["argv"].index("--fidelity") + 1], report["packet"]["stage"]),
+                         ("layout", "F1", "layout"))
+
     def test_the_full_scope_refuses_to_default_to_an_advanced_flow_stage(self) -> None:
         self.assertEqual(impact.plain(impact.read_record(self.hw).product)["flow"]["stage"], "parts")  # past the layout gate
         with self.assertRaisesRegex(ValueError, "--stage"):
