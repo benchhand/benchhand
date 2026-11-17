@@ -61,7 +61,7 @@ selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
 
 # The evidence ledger's fingerprint domains (manufacturing-evidence.schema.json#/$defs/fingerprint_domain).
 DOMAINS = ("use_case", "load", "environment", "material", "condition", "lot", "process", "route", "capability", "setup",
-           "orientation", "finish", "geometry", "interface", "criterion", "source")
+           "orientation", "finish", "geometry", "interface", "criterion", "source", "appearance")
 # The dependency domains a change is reported under, each grouping fingerprint domains.
 GROUPS: Mapping[str, tuple[str, ...]] = {
     "use_case": ("use_case",),
@@ -70,6 +70,7 @@ GROUPS: Mapping[str, tuple[str, ...]] = {
     "route_process_capability_setup_stock": ("process", "route", "capability", "setup"),
     "orientation_support_finish": ("orientation", "finish"),
     "geometry_state_components": ("geometry",),
+    "appearance": ("appearance",),
     "interface_datum_tolerance_assembly_order": ("interface",),
     "criterion_source_calibration_policy": ("criterion", "source"),
 }
@@ -78,9 +79,11 @@ DOMAIN_STAGE: Mapping[str, str] = {
     "use_case": "intent", "load": "intent", "environment": "intent", "criterion": "specify", "interface": "specify",
     "geometry": "layout", "material": "parts", "condition": "parts", "process": "parts", "route": "parts",
     "capability": "parts", "source": "parts", "setup": "detail", "orientation": "detail", "finish": "detail",
-    "lot": "release",
+    "lot": "release", "appearance": "detail",
 }
-_EVERYTHING = frozenset(DOMAINS)
+# Appearance (intent.color) is an input of the outputs that write it, such as the 3MF export, and of nothing
+# else: a family depends on it only when FAMILY_DOMAINS names it, so "every domain" below leaves it out.
+_EVERYTHING = frozenset(DOMAINS) - {"appearance"}
 _JUDGED = frozenset({"criterion", "source"})  # every check is judged against criteria and sourced data
 # The domains each check family depends on, by family prefix (the longest matching prefix decides).
 FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
@@ -100,6 +103,7 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("motion.", _JUDGED | {"geometry", "interface", "material", "finish", "load", "process"}),
     ("assembly.", _JUDGED | {"geometry", "interface"}),
     ("function.", _JUDGED | {"geometry", "material", "condition", "load", "environment", "interface", "process", "finish"}),
+    ("export.3mf", frozenset({"geometry", "appearance"})),  # package D's 3MF output writes the part colour
     ("requirement.", _EVERYTHING),
     ("policy.", _EVERYTHING),
 )
@@ -244,6 +248,7 @@ class _Record:
                 for op in route]},
             "geometry": {"model": self.geometry.get(pn), "manufacture": part.get("manufacture"),
                          "components": intent.get("components"), "critical_surfaces": intent.get("critical_surfaces")},
+            "appearance": {"color": intent.get("color")},
             "interface": {"interfaces": [self.interfaces[i] for i in sorted(self.interfaces_of(pn))],
                           "operations": [op for op in self.operations if pn in (op.get("part"), op.get("into"))],
                           "datums": _get(part, "drawing", "datum_features")},
@@ -321,6 +326,7 @@ class _Record:
         if key == "product":  # the whole sequence, occurrence references included, which the per-part view misses
             combined["interface"] = {"parts": combined["interface"], "assembly_sequence": self.operations,
                                      "assembly_inventory": plain(self.record.assembly_inventory)}
+        combined.pop("appearance", None)  # only a part has a colour
         return combined
 
 
@@ -416,7 +422,7 @@ def evidence_staleness(entry: Mapping[str, Any], current: Mapping[str, str]) -> 
     recorded = entry.get("fingerprints")
     if not isinstance(recorded, Mapping) or not recorded:
         return ("unrecorded",)
-    return tuple(d for d in DOMAINS if d in recorded and recorded[d] != current.get(d))
+    return tuple(d for d in DOMAINS if d != "appearance" and d in recorded and recorded[d] != current.get(d))
 
 
 def _stage_min(stages: Iterable[str]) -> str | None:

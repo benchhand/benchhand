@@ -119,6 +119,29 @@ class Variants(unittest.TestCase):
         self.assertStale(result, ("cad.readback@TST-0001", "interface.fit@IF-001"), ("cad.readback@TST-0002",))
         self.assertEqual(result.earliest_stage, "layout")
 
+    def test_a_colour_change_stales_only_a_check_family_that_declares_appearance(self) -> None:
+        """`export.3mf` stands in for package D's 3MF output: it declares the appearance domain, nothing else does."""
+        def colour(docs: dict[str, Any]) -> None:
+            docs["parts/TST-0001/part.yaml"]["intent"]["color"] = "#FF8000"
+        entry = acceptance.entry(self.before, "EV-001", {"PN": "TST-0001"}, "simulation_supported",
+                                 obligation="engineering.strength@TST-0001", version="v1", manifest_sha256="a" * 64,
+                                 geometry=GEOMETRY)
+        self.assertIn("appearance", entry["fingerprints"], "the ledger records every domain, appearance included")
+        self.docs["manufacturing/evidence.yaml"] = {"entries": [entry]}
+        self.before = normalized(self.docs)
+        result = self.compare(colour)
+        self.assertEqual(dict(result.changed), {"TST-0001": ("appearance",)})
+        self.assertEqual((result.stale_obligations, result.stale_evidence), ({}, {}))
+        three_mf = mi.Obligation("export.3mf@TST-0001", "export.3mf", {"PN": "TST-0001"}, "cad_valid", "layout", "test")
+        other = mi.Obligation("export.3mf@TST-0002", "export.3mf", {"PN": "TST-0002"}, "cad_valid", "layout", "test")
+        stale = impact.stale_obligations([three_mf, other, *mi.required_checks(self.before)], result.changed)
+        self.assertEqual(stale, {"export.3mf@TST-0001": ("appearance",)})
+
+    def test_a_geometry_change_also_stales_the_3mf_family(self) -> None:
+        three_mf = mi.Obligation("export.3mf@TST-0001", "export.3mf", {"PN": "TST-0001"}, "cad_valid", "layout", "test")
+        stale = impact.stale_obligations([three_mf], {"TST-0001": ("geometry",)})
+        self.assertEqual(stale, {"export.3mf@TST-0001": ("geometry",)})
+
     def test_record_derived_obligations_are_recomputed_never_stale(self) -> None:
         def use_case(docs: dict[str, Any]) -> None:
             docs["product.yaml"]["use_case"]["purpose"] = fx.known("TST another purpose")
