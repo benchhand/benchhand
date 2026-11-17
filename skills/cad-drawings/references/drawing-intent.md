@@ -106,6 +106,15 @@ datums. Instances with a missing or extra node keep one location each.
 `shaft` endpoints `{PN, feature, region?}`; `heat_set[].feature` for the host seat; and
 `retaining_ring.feature` with `groove_d` such as `4.8 h10` for the shaft groove.
 
+`engagement_length_mm` is optional. It goes in four places:
+
+- `press_fit`
+- `running_fit`
+- `locating_fit`
+- each `heat_set[]` entry
+
+It is a number above 0, in mm. It is the distance that the pin, shaft or insert enters its mating bore during assembly. It has no default. Do not derive it from other fields, such as `depth_min`.
+
 ## Recognised features
 
 `feature_recognition` finds the manufacturing features on the STEP without the locators, and the gate
