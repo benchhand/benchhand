@@ -799,7 +799,7 @@ def _roof_span(area: float, anchors: list[_Edge]) -> tuple[str, float | None]:
     """(kind, span_mm) of a horizontal ceiling of `area` held at `anchors`, the edges where the next face continues lower.
 
     Filament crosses the roof between opposing anchors, so the span is the gap between the closest pair of parallel
-    anchor edges when the roof is just that strip (ends and round caps may be anchored or free). Anchors that all touch
+    anchor edges when the roof is just that strip (the ends and round caps can hold or not). Anchors that all touch
     or a lone anchor hold a cantilever: an "overhang". Any other roof (an L, a ring around a pillar, a taper) is a
     "bridge" of unknown span: the best single filament direction is not worked out here."""
     pairs = list(itertools.combinations(anchors, 2))
