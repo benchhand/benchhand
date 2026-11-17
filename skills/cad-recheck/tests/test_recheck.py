@@ -117,10 +117,10 @@ class RecheckHookTests(unittest.TestCase):
     def commit(self) -> subprocess.CompletedProcess[str]:
         return self.git("commit", "-m", "design batch", check=False)
 
-    def evidence_packet(self, stage: str, *, outcome: str = "pass") -> Path:
+    def evidence_packet(self, stage: str, *, outcome: str = "pass", project: Path | None = None) -> Path:
         """The evidence packet of the staged record at `stage`: every software check `outcome` in a
-        synthetic producer packet of a built v1."""
-        staged = stamp_module.staged_record(self.root)
+        synthetic producer packet of a built v1. `project` is the directory holding hw/ (default: the repository)."""
+        staged = stamp_module.staged_record(project or self.root)
         producer = evidence.ProducerPacket("hw/checks/v1/tst", "0" * 64,
                                            acceptance.producer_packet(staged.record, outcome=outcome))
         packet = evidence.assess(staged.record, version="v1", manifest_sha256="0" * 64, packets=[producer],
@@ -498,6 +498,52 @@ class RecheckHookTests(unittest.TestCase):
         result = self.commit()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not say passed: true", result.stderr)
+
+    def move_project(self, subdirectory: str) -> Path:
+        """Commit the project one level below the repository root, as an example project sits in examples/."""
+        project = self.root / subdirectory
+        project.mkdir(parents=True)
+        self.git("mv", "hw", f"{subdirectory}/hw")
+        self.git("commit", "-qm", "move the project", "--no-verify")
+        return project
+
+    def stage_subdirectory_stamp(self, subdirectory: str) -> Path:
+        """Stage a detail-stage product in the moved project and stamp it with --hw; return the project."""
+        project = self.move_project(subdirectory)
+        (project / "hw" / "product.yaml").write_text(
+            json.dumps({"record_version": 2, "id": "test-project", "flow": {"stage": "detail", "recheck_from": "layout"},
+                        "use_case": acceptance.confirmed_use_case("appearance_concept")}, indent=1) + "\n", encoding="utf-8")
+        self.git("add", subdirectory)
+        checks = self.evidence_packet("detail", project=project)
+        result = self.run_python(STAMP, "--hw", subdirectory, "--stage", "detail", "--checks", str(checks), "--passed",
+                                 cwd=self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.git("add", f"{subdirectory}/hw/.cad/recheck.json")
+        return project
+
+    def test_a_project_below_the_repository_root_stamps_and_verifies_with_hw(self) -> None:
+        project = self.stage_subdirectory_stamp("examples/proj")
+        self.assertTrue((project / "hw" / ".cad" / "recheck.json").is_file())
+        self.assertFalse((self.root / "hw").exists())
+        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj", cwd=self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["passed"])
+
+    def test_a_stale_stamp_of_a_project_below_the_repository_root_is_refused(self) -> None:
+        project = self.stage_subdirectory_stamp("examples/proj")
+        part = project / "hw" / "parts" / "PRT-0001" / "part.yaml"
+        part.write_text(part.read_text(encoding="utf-8").replace("Fixture", "Edited"), encoding="utf-8")
+        self.git("add", "examples/proj")
+        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj", cwd=self.root)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("stamp is stale", result.stderr)
+
+    def test_verify_without_hw_reads_the_repository_root_from_a_nested_directory(self) -> None:
+        self.stage_product("detail")
+        self.stamp(passed=True, stage="detail")
+        result = self.run_python(STAMP, "--verify", cwd=self.root / "hw" / "parts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["passed"])
 
     def staged_hash(self) -> str:
         entries = subprocess.run(

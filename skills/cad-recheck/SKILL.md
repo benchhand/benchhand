@@ -43,6 +43,20 @@ uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.
 
 Exit 0 permits the commit; exit 2 means do not commit. Fix stderr's reason, restamp, and verify again.
 
+`stamp.py` reads the project at the git root by default.
+
+For a project below the root, such as `examples/lamp-arm`, add `--hw <project-directory>` to both commands.
+
+The directory holds `hw/`. A relative path starts at the current directory. Under it, `stamp.py` reads and writes only these paths:
+
+- `hw/product.yaml`
+- `hw/.cad/recheck.json`
+- the staged `hw/` tree
+
+```sh
+uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --hw examples/lamp-arm
+```
+
 The installer refuses to replace a different repository-local `core.hooksPath` or ignore non-sample hooks in `.git/hooks/`. Integrate the CAD hook with existing hooks, or explicitly pass `--force` to replace or ignore them. Commit the generated `.githooks/` directory so the hook and its stamp verifier are available to other checkouts.
 
 When the system or global git config sets `core.hooksPath` (Git Defender does), the installer exits 3 and changes nothing, even with `--force`. A repository-local hooks path would stop those managed hooks from running. In that case, verify the stamp yourself before each commit of `hw/` changes. Stage the changes. Then run this command from the project repository:

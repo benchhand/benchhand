@@ -3,7 +3,7 @@
 # requires-python = ">=3.12,<3.15"
 # dependencies = ["pyyaml>=6.0", "jsonschema>=4.23"]
 # ///
-"""Write or verify the CAD design recheck record for the staged index.
+"""Write or verify the CAD design recheck record for the staged index of the project at the git root or `--hw`.
 
 A stamp records the staged hw/ tree hash, the stage and the evidence packet `evidence.py check` wrote
 for it (cad-record), or the packet of an `evidence.py run` report (a run that stopped has none): its
@@ -74,7 +74,7 @@ def staged_inputs(root: Path) -> dict[str, bytes]:
     for raw in git("ls-files", "-z", "--", "hw/", cwd=root).split(b"\0"):
         path = raw.decode("utf-8", errors="surrogateescape")
         if path.startswith("hw/") and evidence.is_record_input(path[3:]):
-            files[path[3:]] = git("show", f":{path}", cwd=root)
+            files[path[3:]] = git("show", f":./{path}", cwd=root)
     return files
 
 
@@ -112,7 +112,7 @@ def require_migrated(record: Any) -> None:
 def require_threshold_kept(root: Path, threshold: str) -> None:
     """flow.recheck_from may stay or move earlier than HEAD's, never later."""
     try:
-        head = yaml_loader.safe_load(git("show", "HEAD:hw/product.yaml", cwd=root).decode("utf-8"))
+        head = yaml_loader.safe_load(git("show", "HEAD:./hw/product.yaml", cwd=root).decode("utf-8"))
     except (RuntimeError, UnicodeError, yaml.YAMLError):
         return  # no commit or no product.yaml yet: nothing to raise it from
     before = (head.get("flow") or {}).get("recheck_from") if isinstance(head, dict) and isinstance(head.get("flow"), dict) else None
@@ -137,7 +137,7 @@ def require_evidence(packet: Any, staged: Staged, stage: str) -> list[str]:
 def staged_product(root: Path, stage: str | None = None) -> dict[str, Any]:
     """Read the index version of product.yaml to grade layout paths at the staged stage."""
     try:
-        raw = git("show", ":hw/product.yaml", cwd=root).decode("utf-8")
+        raw = git("show", ":./hw/product.yaml", cwd=root).decode("utf-8")
         product = yaml_loader.safe_load(raw)
     except (RuntimeError, UnicodeError, yaml.YAMLError) as error:
         if stage is None:
@@ -172,8 +172,17 @@ def git(*args: str, cwd: Path) -> bytes:
     return result.stdout
 
 
-def project_root(start: Path) -> Path:
-    return Path(git("rev-parse", "--show-toplevel", cwd=start).decode().strip())
+def project_root(start: Path, hw: Path | None) -> Path:
+    """The directory holding hw/: `hw` (relative to `start`) when given, else the git root of `start`.
+
+    Every git call runs in it, so the paths git prints and the `:./` index paths are relative to it."""
+    if hw is None:
+        return Path(git("rev-parse", "--show-toplevel", cwd=start).decode().strip())
+    project = (start / hw).resolve()
+    if not project.is_dir():
+        raise RuntimeError(f"--hw {hw} is not a directory")
+    git("rev-parse", "--show-toplevel", cwd=project)  # refuses a directory outside a git work tree
+    return project
 
 
 def staged_tree_hash(root: Path) -> str:
@@ -285,6 +294,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage", choices=validate.stages(), help="stage for a newly written recheck stamp")
     parser.add_argument("--checks", type=Path, help="JSON check results")
     parser.add_argument("--passed", action="store_true", help="record that every required check passed")
+    parser.add_argument("--hw", type=Path, help="project directory holding hw/, inside the repository "
+                        "(default: the git root); the stamp and every path read or written are under it")
     parser.add_argument("--verify", action="store_true", help="verify the staged stamp against the current staged hash")
     args = parser.parse_args()
     if args.verify:
@@ -300,14 +311,14 @@ def main() -> int:
     args = parse_args()
     try:
         start = Path.cwd()
-        root = project_root(start)
+        root = project_root(start, args.hw)
         if args.verify:
             # What the pre-commit hook skipped: a commit that stages no hw/ change needs no stamp.
             if not git("diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB", "--", "hw/", cwd=root).strip():
                 print(json.dumps({"passed": True, "required": False, "reason": "no staged hw/ change"}))
                 return 0
             try:
-                product_data = git("show", ":hw/product.yaml", cwd=root).decode("utf-8")
+                product_data = git("show", ":./hw/product.yaml", cwd=root).decode("utf-8")
             except (RuntimeError, UnicodeError) as error:
                 raise RuntimeError(f"cannot read staged hw/product.yaml: {error}") from error
             try:
@@ -333,7 +344,7 @@ def main() -> int:
             staged = staged_record(root)
             require_migrated(staged.record)
             try:
-                record_data = json.loads(git("show", ":hw/.cad/recheck.json", cwd=root).decode("utf-8"))
+                record_data = json.loads(git("show", ":./hw/.cad/recheck.json", cwd=root).decode("utf-8"))
             except (RuntimeError, UnicodeError, json.JSONDecodeError) as error:
                 raise RuntimeError(f"no staged hw/.cad/recheck.json exists or cannot read it: {error}") from error
             if not isinstance(record_data, dict):
