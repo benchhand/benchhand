@@ -364,10 +364,10 @@ _FONT_PROBES: dict[tuple[str, str], _FontProbe] = {}
 
 
 def supported_codepoints(freecadcmd: Path, job: dict[str, Any], workdir: Path, timeout: float) -> frozenset[int]:
-    """The requested codepoints that the lettering font covers; probe FreeCAD only for ones not seen yet.
+    """The requested codepoints that the lettering font covers. FreeCAD probes only the ones not seen yet.
 
     One caller per (freecadcmd, font) runs the probe. Callers whose codepoints it covers wait for it and share
-    its result, or its error (nothing is cached on failure); callers with other codepoints probe afterwards.
+    its result, or its error. A failure caches nothing. Callers with other codepoints probe afterwards.
     """
     key = (str(freecadcmd), LETTERING_KEY)
     wanted = frozenset(job["codepoints"])

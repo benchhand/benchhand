@@ -135,11 +135,11 @@ def _map_jobs(items: list[_T], executor: Executor, worker: Callable[[_T], _R]) -
         try:
             results[index] = future.result()
         except (KeyboardInterrupt, JobInterrupted):
-            for pending in futures[index + 1:]:   # stop at once; the caller's signal handling ends running jobs
+            for pending in futures[index + 1:]:   # stop at once. The caller's signal handling ends running jobs
                 pending.cancel()
             raise
         except Exception as exc:
-            if not failures:   # items that have not started are dropped; running ones finish
+            if not failures:   # drop items that have not started. Running ones finish
                 for pending in futures[index + 1:]:
                     pending.cancel()
             failures.append(exc)
@@ -305,7 +305,7 @@ _LAUNCH_SLOTS: threading.BoundedSemaphore | None = None
 
 @contextmanager
 def launch_budget(limit: int):
-    """At most ``limit`` FreeCAD processes at once, from any thread, while the block runs."""
+    """While the block runs, allow at most ``limit`` FreeCAD processes at once, from any thread."""
     global _LAUNCH_SLOTS
     if limit < 1:
         raise ValueError("a launch budget must be positive")
@@ -318,7 +318,7 @@ def launch_budget(limit: int):
 
 @contextmanager
 def _launch_slot():
-    """Hold one slot of the launch budget (if any) for the life of one FreeCAD process; give up on a signal."""
+    """Hold one slot of the launch budget (if any) for the life of one FreeCAD process. Stop waiting on a signal."""
     slots = _LAUNCH_SLOTS
     if slots is None:
         yield

@@ -131,7 +131,7 @@ def main():
     application = QGuiApplication.instance() or QGuiApplication(["export_job", "-platform", "offscreen"])  # noqa: F841
     try:
         result = export(job)
-    except Exception as exc:   # any failure goes to the parent as an error result; the job always writes a result file
+    except Exception as exc:   # any failure goes to the parent as an error result. The job always writes a result file
         result = {"status": "error", "error": str(exc), "traceback": traceback.format_exc()}
     with open(job["result"], "w", encoding="utf-8") as handle:
         json.dump(result, handle)

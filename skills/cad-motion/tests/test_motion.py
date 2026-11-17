@@ -1300,7 +1300,7 @@ class StepTests(unittest.TestCase):
         scratch = hw.parent / ".cad-work" / "resume" / uuid.uuid4().hex
         scratch.mkdir(parents=True)
         options = ("--hw", str(hw), "--parts-dir", str(self.v6), "--steps", "145", "--grid", "0", "--exact",
-                   "--worst-criterion", "minimum_clearance", "--jobs", "1")   # the kernel counts below assume one process
+                   "--worst-criterion", "minimum_clearance", "--jobs", "1")   # the kernel counts below need a single process
         child = subprocess.Popen(["uv", "run", "--quiet", "--script", str(SCRIPTS / "sweep.py"), *options,
                                   "--cache", str(cache), "--worst-step", str(scratch / "killed.step")],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -1359,7 +1359,7 @@ class StepTests(unittest.TestCase):
     def test_worker_processes_report_exactly_what_one_process_does(self) -> None:
         """The tie-sensitive minimum_clearance worst case of the V6 sweep, in one process and in three
         workers: the same JSON, evidence and worst-case STEP."""
-        # the one-job run is the same memoised sweep the correctly-timed test reads (it passes --jobs 1 explicitly)
+        # the one-job run is the same memoised sweep that the test with the right timing reads (it passes --jobs 1 explicitly)
         runs = [self.timed_v6_sweep(), self.v6_sweep(None, "minimum_clearance", "--jobs", "3")]
         for hw, proc, _ in runs:
             self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])

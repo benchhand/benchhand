@@ -320,7 +320,7 @@ sys.exit(code)
 
     @staticmethod
     def overlap(runs: list[tuple[float, float]]) -> int:
-        """The most runs that were going at the same moment."""
+        """The most runs in progress at the same moment."""
         events = sorted([(start, 1) for start, _ in runs] + [(end, -1) for _, end in runs], key=lambda e: (e[0], e[1]))
         peak = running = 0
         for _, step in events:
@@ -329,8 +329,8 @@ sys.exit(code)
         return peak
 
     def test_a_two_sheet_part_exports_its_sheets_together_within_the_job_budget(self) -> None:
-        """A recording stand-in for freecadcmd times every FreeCAD process. With --jobs 2 the two sheets' exports
-        overlap and nothing runs three at a time; with --jobs 1 nothing overlaps, the sheet exports included."""
+        """A recording stand-in for freecadcmd times every FreeCAD process. With --jobs 2 the exports of the two
+        sheets overlap and nothing runs three at a time. With --jobs 1 nothing overlaps, the sheet exports included."""
         recorder = Path(self.tmp.name) / "recorder.py"
         recorder.write_text(self.RECORDER, encoding="utf-8")
         recorder.chmod(0o755)

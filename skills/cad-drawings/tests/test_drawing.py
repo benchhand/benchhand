@@ -180,8 +180,8 @@ class FreeCADDiscovery(unittest.TestCase):
         self.assertEqual(found, (str(gone), frozenset({"ASME/ANSIA_Landscape.svg"})))
 
 class ControlledExecutor(Executor):
-    """Runs the first `inline` submitted items at once; the rest stay pending (or running, for the listed indices)
-    until a caller cancels or completes them, so a test needs no clock to know what has started."""
+    """Runs the first `inline` submitted items at once. The rest stay pending (or running, for the listed indices)
+    until a caller cancels or completes them, so a test needs no clock to know what started."""
 
     def __init__(self, inline: int = 0, running: tuple[int, ...] = ()) -> None:
         self.inline, self.running, self.futures = inline, set(running), []
@@ -257,7 +257,7 @@ class FreeCADConcurrency(unittest.TestCase):
         self.assertEqual(result, [0.06, 0.0, 0.03])
 
     def test_first_failure_cancels_items_that_have_not_started(self) -> None:
-        executor = ControlledExecutor(inline=1)   # item 0 runs at once; items 1 and 2 stay pending
+        executor = ControlledExecutor(inline=1)   # item 0 runs at once. Items 1 and 2 stay pending
         started: list[int] = []
 
         def worker(item: int) -> int:
@@ -282,7 +282,7 @@ class FreeCADConcurrency(unittest.TestCase):
                 self.assertEqual([future.cancelled() for future in executor.futures], [False, True, True])
 
     def test_an_interrupt_is_not_masked_by_a_later_failure(self) -> None:
-        executor = ControlledExecutor(inline=3)   # all three have run: item 0 was interrupted, item 2 failed
+        executor = ControlledExecutor(inline=3)   # all three ran. Item 0 raised an interrupt and item 2 failed
 
         def worker(item: int) -> int:
             if item == 0:
@@ -295,7 +295,7 @@ class FreeCADConcurrency(unittest.TestCase):
             freecad_runtime.map_jobs((0, 1, 2), 1, worker, executor)
 
     def test_an_interrupt_does_not_wait_for_a_running_item(self) -> None:
-        executor = ControlledExecutor(inline=1, running=(1,))   # item 1 is running and never finishes on its own
+        executor = ControlledExecutor(inline=1, running=(1,))   # item 1 runs and never finishes on its own
         outcome: list[BaseException] = []
 
         def call() -> None:
@@ -360,7 +360,7 @@ class FreeCADConcurrency(unittest.TestCase):
         with freecad_runtime.launch_budget(1):
             slot = freecad_runtime._LAUNCH_SLOTS
             assert slot is not None
-            slot.acquire()   # the only slot is taken
+            slot.acquire()   # the only slot is busy
             self.addCleanup(slot.release)
 
             def call() -> None:
@@ -882,11 +882,11 @@ class SheetExportParts(unittest.TestCase):
             third = sheet_export.supported_codepoints(fc, {"codepoints": [66, vector]}, Path("."), 5)
         self.assertEqual(asked, [sorted(sheet_export.OSIFONT_CODEPOINTS), [vector]])
         probed = [codepoint for call in asked for codepoint in call]
-        self.assertEqual(len(probed), len(set(probed)))   # no codepoint is asked about twice
+        self.assertEqual(len(probed), len(set(probed)))   # the probe asks about no codepoint twice
         self.assertEqual((first, second, third), (frozenset({65}), frozenset({65, 66}), frozenset({66, vector})))
 
     def probe_threads(self, jobs: list[tuple[str, list[int]]], fake_run_job, watch: ProbeWatch | None = None) -> list:
-        """Run supported_codepoints on one thread per (freecadcmd, codepoints); each outcome or error."""
+        """Run supported_codepoints on one thread per (freecadcmd, codepoints). Return each outcome or error."""
         outcomes: list = [None] * len(jobs)
 
         def call(index: int, command: str, codepoints: list[int]) -> None:
@@ -943,7 +943,7 @@ class SheetExportParts(unittest.TestCase):
 
         def run_job(command, script, job, workdir, timeout):
             commands.append(str(command))
-            both_running.wait(10)   # each probe finishes only while the other is running: they are not serialised
+            both_running.wait(10)   # each probe finishes only while the other runs, so the probes do not run in series
             return {"supported_codepoints": list(job["codepoints"])}, ""
 
         outcomes = self.probe_threads([("fc-a", [65]), ("fc-b", [65])], run_job)
