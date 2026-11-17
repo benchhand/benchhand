@@ -53,20 +53,25 @@ def classify(samples: Mapping[float, float | None], *, tail_mm: float, engaged: 
     run: list[float] = []
     needs: list[float] = []
     reached = False
-    if engaged and positions and hit(positions[0]):
-        run.append(positions[0])
+    if engaged and positions and (samples[positions[0]] is None or hit(positions[0])):
+        run.extend(positions[:1] if hit(positions[0]) else [])
         reached = True
-        for a, b in zip(positions, positions[1:]):
+        last = positions[0]
+        for b in positions[1:]:
+            if samples[b] is None:
+                continue  # unmeasured: the run stays unknown there and only a measured clearance ends it
             if limit is not None and hit(b) and b > limit:
                 needs = []  # the run is longer than the cap whatever lies between: a collision
                 reached = False
                 break
-            if limit is not None and a <= limit and b - a > min_step_mm and samples[b] is not None:
-                needs.append((a + b) / 2)
+            middle = (last + b) / 2
+            if limit is not None and last <= limit and b - last > min_step_mm and middle not in samples:
+                needs.append(middle)
             if not hit(b):
                 reached = False
                 break
             run.append(b)
+            last = b
     exempt = frozenset(run)
     collisions = [s for s in positions if hit(s) and s not in exempt]
     return Engagement(exempt, collisions, needs, run[-1] if run else 0.0,

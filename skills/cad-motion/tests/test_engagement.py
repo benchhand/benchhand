@@ -79,10 +79,25 @@ class ClassifyTests(unittest.TestCase):
         result = classify({0.0: HIT, 1.0: CLEAR, 2.0: CLEAR}, cap=5.0, min_step=1.0)
         self.assertEqual((result.reached_start, result.collisions), (False, []))
 
-    def test_an_unmeasured_sample_stops_the_run_without_calling_it_a_collision(self) -> None:
+    def test_an_unmeasured_sample_inside_the_engagement_does_not_turn_later_interference_into_a_collision(self) -> None:
         result = classify({0.0: HIT, 1.0: None, 2.0: HIT}, cap=5.0, min_step=1.0)
-        self.assertEqual(result.exempt, frozenset({0.0}))
-        self.assertEqual(result.collisions, [2.0])
+        self.assertEqual((result.exempt, result.collisions, result.reached_start), (frozenset({0.0, 2.0}), [], True))
+
+    def test_only_a_measured_clearance_ends_the_run_after_an_unmeasured_sample(self) -> None:
+        result = classify({0.0: HIT, 1.0: None, 2.0: CLEAR, 3.0: HIT}, cap=5.0, min_step=1.0)
+        self.assertEqual((result.exempt, result.collisions), (frozenset({0.0}), [3.0]))
+
+    def test_an_unmeasured_sample_does_not_excuse_interference_past_the_cap(self) -> None:
+        result = classify({0.0: HIT, 1.0: None, 2.0: HIT, 3.0: HIT}, cap=1.0, min_step=0.5)
+        self.assertEqual((result.exempt, result.collisions), (frozenset({0.0}), [2.0, 3.0]))
+
+    def test_an_unmeasured_end_pose_does_not_turn_the_interference_after_it_into_collisions(self) -> None:
+        result = classify({0.0: None, 1.0: HIT, 2.0: HIT, 3.0: CLEAR}, cap=5.0, min_step=1.0)
+        self.assertEqual((result.exempt, result.collisions), (frozenset({1.0, 2.0}), []))
+
+    def test_an_unmeasured_midpoint_is_not_asked_for_again(self) -> None:
+        result = classify({0.0: HIT, 0.5: None, 1.0: HIT}, cap=5.0, min_step=0.25)
+        self.assertEqual((result.needs, result.collisions), ([], []))
 
 
 if __name__ == "__main__":
