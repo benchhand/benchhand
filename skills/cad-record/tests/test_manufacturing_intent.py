@@ -124,7 +124,7 @@ class Normalization(unittest.TestCase):
         self.assertEqual(len(record.assembly_operations), 1)
 
     def test_a_legacy_record_reads_with_explicit_unknowns_and_one_migration_problem(self) -> None:
-        record = mi.load_record(fx.LAMP)
+        record = mi.load_record(fx.LAMP_V1)
         self.assertEqual(record.version, 1)
         self.assertEqual([p.code for p in record.problems], ["record.migration_required"])
         self.assertEqual(len(record.parts), 11)
@@ -460,7 +460,7 @@ class RequiredChecks(unittest.TestCase):
         self.assertIn("optical.route@TST-0004", found, "transparency still demands an optical route")
         self.assertIn("engineering.load_cases@TST-0001", found)
         self.assertNotIn("engineering.creep@TST-0001", found)
-        legacy = {o.id for o in mi.required_checks(mi.load_record(fx.LAMP))}
+        legacy = {o.id for o in mi.required_checks(mi.load_record(fx.LAMP_V1))}
         self.assertIn("intent.route@LMP-0001", legacy)
         self.assertIn("intent.use_case@product", legacy)
         self.assertFalse(any(i.startswith("process.fdm") for i in legacy), "a legacy fdm label dispatches no process checks")

@@ -876,7 +876,7 @@ class DispatchContractTests(Checks):
         self.assertEqual(set(pc.TABLE), set(MI.PROCESS_CHECKS))
 
     def test_a_version_1_record_is_refused_with_its_migration(self) -> None:
-        record = MI.load_record(FX.LAMP)
+        record = MI.load_record(FX.LAMP_V1)
         self.assertEqual(record.version, 1)
         with self.assertRaisesRegex(pc.NotAssessable, "migrat"):
             pc.expected(record)

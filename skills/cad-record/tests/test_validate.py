@@ -630,7 +630,7 @@ class RecordVersion(unittest.TestCase):
         return result.returncode, json.loads(result.stdout)["findings"]
 
     def test_the_unmigrated_lamp_reads_whole_changes_nothing_and_names_the_migration(self) -> None:
-        shutil.copytree(EXAMPLE, self.hw)
+        shutil.copytree(fx.LAMP_V1, self.hw)
         before = tree(self.hw)
         code, findings = self.validate()
         self.assertEqual(code, 1)
@@ -640,7 +640,7 @@ class RecordVersion(unittest.TestCase):
         self.assertEqual(tree(self.hw), before, "reading a version 1 record rewrites nothing")
 
     def test_a_version_1_record_still_reports_its_other_findings(self) -> None:
-        shutil.copytree(EXAMPLE, self.hw)
+        shutil.copytree(fx.LAMP_V1, self.hw)
         part = self.hw / "parts" / "LMP-0001" / "part.yaml"
         part.write_text(part.read_text(encoding="utf-8").replace("decisions: [DR-002, DR-004]", "decisions: [DR-999]"),
                         encoding="utf-8")

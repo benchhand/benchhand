@@ -509,7 +509,7 @@ class CommandLine(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-selection-legacy-")
         self.addCleanup(temporary.cleanup)
         hw = Path(temporary.name) / "hw"
-        shutil.copytree(fx.LAMP, hw)
+        shutil.copytree(fx.LAMP_V1, hw)
         before = tree_digest(hw)
         result = self.run_cli(str(hw), "--json")
         self.assertEqual(result.returncode, 1, result.stderr)

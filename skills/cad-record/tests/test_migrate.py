@@ -53,7 +53,7 @@ class MigrationCase(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.project = Path(temporary.name) / "project"
         self.hw = self.project / "hw"
-        shutil.copytree(fx.LAMP, self.hw)
+        shutil.copytree(fx.LAMP_V1, self.hw)
 
     def run_cli(self, *args: str) -> tuple[int, Any]:
         result = subprocess.run([sys.executable, str(MIGRATE), str(self.project), *args], capture_output=True, text=True,
@@ -241,7 +241,7 @@ class EdgeCases(MigrationCase):
 
     def test_the_fixture_helper_migrates_a_copy(self) -> None:
         target = self.project.parent / "copy" / "hw"
-        fx.migrated_copy(fx.LAMP, target)
+        fx.migrated_copy(fx.LAMP_V1, target)
         self.assertEqual(mi.load_record(target).version, 2)
         self.assertTrue((target / "docs" / "record-migration-v2-2026-01-01.md").is_file())
 

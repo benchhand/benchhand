@@ -35,7 +35,7 @@ class PlanOutcome(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-migrate-char-")
         self.addCleanup(temporary.cleanup)
         self.hw = Path(temporary.name) / "project" / "hw"
-        shutil.copytree(fx.LAMP, self.hw)
+        shutil.copytree(fx.LAMP_V1, self.hw)
 
     def edit(self, rel: str, change: Any) -> None:
         path = self.hw / rel

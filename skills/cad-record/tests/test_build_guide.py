@@ -54,7 +54,7 @@ class BuildGuide(unittest.TestCase):
         return fx.migrated_copy(LAMP_EXAMPLE / "hw", self.hw)
 
     def copy_v1_lamp_example(self) -> Path:
-        shutil.copytree(LAMP_EXAMPLE / "hw", self.hw, dirs_exist_ok=True)
+        shutil.copytree(fx.LAMP_V1, self.hw, dirs_exist_ok=True)
         return self.hw
 
     def make_version(self, hw: Path, version: str) -> None:

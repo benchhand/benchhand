@@ -15,7 +15,7 @@ from typing import Any
 
 SKILL = Path(__file__).resolve().parents[1]
 VALIDATOR = SKILL / "scripts" / "validate.py"
-LAMP = SKILL.parent.parent / "examples" / "lamp-arm" / "hw"
+LAMP = SKILL / "tests" / "fixtures" / "lamp-arm-v1" / "hw"  # the lamp-arm example at record version 1
 
 
 def sha(path: Path) -> str:
