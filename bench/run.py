@@ -641,7 +641,8 @@ def publish(paths: Paths, record: Mapping[str, Any], phase: str, push: bool) -> 
         total = ledger_total(paths.results)
         (paths.results / "spend-total.json").write_text(json.dumps({"total_usd": round(total, 4), "updated": now()},
                                                                    indent=2) + "\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(paths.results), "add", "-A", "--", "runs", "spend.jsonl", "spend-total.json"],
+        own = str(paths.run_dir.relative_to(paths.results))  # never another running run's partial files
+        subprocess.run(["git", "-C", str(paths.results), "add", "-A", "--", own, "spend.jsonl", "spend-total.json"],
                        check=True)
         message = f"bench: {paths.run_id} {record['outcome']} ${record['spend']['total_usd']:.2f} (total ${total:.2f})"
         subprocess.run(["git", "-C", str(paths.results), "commit", "-q", "-m", message], check=True)
