@@ -161,7 +161,7 @@ Agents keep worker scratch and temporary files under `.cad-work/` beside `hw/`. 
 
 ## Tests
 
-Run each skill test file separately with the test pins in `harness/test-requirements.txt`. `harness/run_tests.sh <test file>...` runs chosen files the same way and prints `PASS|FAIL <seconds>s <file>` for each:
+Run each skill test file separately with the test pins in `harness/test-requirements.txt`. The harness and script tests use `harness/test-requirements-min.txt` (PyYAML only), so a host script that imports a package it never declares still fails. `harness/run_tests.sh <test file>...` picks the right file per test, runs each file in its own run directory and prints `PASS|FAIL <seconds>s <file>`; see its header:
 
 ```sh
 for test in skills/*/test_*.py skills/*/tests/test_*.py; do
@@ -169,7 +169,7 @@ for test in skills/*/test_*.py skills/*/tests/test_*.py; do
   uv run --no-project --with-requirements harness/test-requirements.txt \
     python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")"
 done
-uv run --no-project --with-requirements harness/test-requirements.txt python -B -m unittest discover -s harness -p 'test_*.py'
+uv run --no-project --with-requirements harness/test-requirements-min.txt python -B -m unittest discover -s harness -p 'test_*.py'
 python3 harness/generate.py --check
 uv run --no-project --locked --script scripts/typecheck.py
 uvx slopvac <changed-prose-files>
