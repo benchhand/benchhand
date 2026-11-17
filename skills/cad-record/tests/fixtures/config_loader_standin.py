@@ -47,7 +47,11 @@ def _leaves(schema: Mapping[str, Any], path: tuple[str, ...] = ()) -> Iterator[t
 
 
 def _pointer(path: tuple[str, ...]) -> str:
-    return "/" + "/".join(path)
+    return "".join("/" + key.replace("~", "~0").replace("/", "~1") for key in path)
+
+
+def _path(pointer: str) -> tuple[str, ...]:
+    return tuple(token.replace("~1", "/").replace("~0", "~") for token in pointer.split("/")[1:])
 
 
 def _set(values: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
@@ -74,7 +78,7 @@ def env_layer(schema: Mapping[str, Any], environ: Mapping[str, str]) -> Layer:
 def _apply(config: Config, layer: Layer) -> Config:
     values = copy.deepcopy(dict(config.values))
     for pointer in layer.sources:
-        path = tuple(pointer.split("/")[1:])
+        path = _path(pointer)
         node: Any = layer.values
         for key in path:
             node = node[key]
