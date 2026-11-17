@@ -1,8 +1,9 @@
 """FDM treatment of horizontal holes (axis parallel to the bed), judged by the fdm support obligation on the TEST profile.
 
-The TEST profile has no self-supporting-hole calibration. The limits below come from its overhang (45 deg) and bridge
-(5 mm) calibrations: a round hole up to the 5 mm bridge span counts as self-supporting. A teardrop or diamond top whose
-flanks sit at 45 deg from vertical needs no support at any diameter. Every case plans no supports.
+The TEST profile has no self-supporting-hole calibration, so no round roof counts as support-free here. Each pair changes
+one thing: a round roof (mutant) against a 45 deg teardrop or diamond roof of the same width (twin), at a fixed height. The
+teardrop flanks sit at the 45 deg overhang limit. The square pair uses the 5 mm bridge calibration. Every case plans no
+supports.
 Geometry is real B-rep probed by form_check.probe. Millimetres, bed frame, +Z up, hole axis along Y.
 """
 
@@ -13,7 +14,8 @@ from corpus import Family, Outcome, Pair
 from support import assess_printed, printed_verdict, solids
 
 SUPPORT = "process.fdm.support@"
-SELF_SUPPORTING = 4.0  # round hole diameter inside the 5 mm bridge calibration
+SMALL = 8.0  # small round hole diameter
+LARGE = 20.0  # large round hole diameter
 BRIDGE = 5.0  # calibrated bridge span
 BLOCK = (40.0, 30.0, 40.0)  # x, y, z of the block the hole goes through
 MID = 20.0  # axis height of a mid-height hole
@@ -67,34 +69,30 @@ def _with_hole(hole: Any) -> Outcome:
     return _verdict(s.cut(s.box(0, 0, 0, *BLOCK), hole))
 
 
-def small_vs_large_round(mutant: bool) -> Outcome:
-    """A round bore at mid-height: within the self-supporting diameter against 20 mm."""
+def _round_or_teardrop(mutant: bool, diameter: float, z: float) -> Outcome:
     solids()  # first: it raises Skip when OCP is absent
-    return _with_hole(_round(20.0 if mutant else SELF_SUPPORTING, MID))
+    return _with_hole(_round(diameter, z) if mutant else _teardrop(diameter, z))
 
 
-def teardrop_top(mutant: bool) -> Outcome:
-    """A 20 mm bore: round (mutant) or with a 45 deg teardrop top (twin)."""
+def round_roof_mid_height(mutant: bool) -> Outcome:
+    """A mid-height bore of 8 mm: round (mutant) or with a 45 deg teardrop top (twin)."""
+    return _round_or_teardrop(mutant, SMALL, MID)
+
+
+def round_roof_bed_face(mutant: bool) -> Outcome:
+    """The same 8 mm bore with its axis in the bed face, so it is a channel open to the bed."""
+    return _round_or_teardrop(mutant, SMALL, 0.0)
+
+
+def round_roof_large_mid_height(mutant: bool) -> Outcome:
+    """The mid-height bore at 20 mm: round (mutant) or with a 45 deg teardrop top (twin)."""
+    return _round_or_teardrop(mutant, LARGE, MID)
+
+
+def diamond_roof_mid_height(mutant: bool) -> Outcome:
+    """A mid-height 20 mm bore: round (mutant) or a diamond of the same width (twin)."""
     solids()
-    return _with_hole(_round(20.0, MID) if mutant else _teardrop(20.0, MID))
-
-
-def diamond_top(mutant: bool) -> Outcome:
-    """A 20 mm bore: round (mutant) or a diamond of the same width (twin)."""
-    solids()
-    return _with_hole(_round(20.0, MID) if mutant else _diamond(20.0, MID))
-
-
-def bed_face(mutant: bool) -> Outcome:
-    """A half-bore channel open in the bed face: 4 mm against 8 mm round."""
-    solids()
-    return _with_hole(_round(8.0 if mutant else SELF_SUPPORTING, 0.0))
-
-
-def mid_height(mutant: bool) -> Outcome:
-    """The same 4 mm and 8 mm round bores as bed_face, with the axis at mid-height."""
-    solids()
-    return _with_hole(_round(8.0 if mutant else SELF_SUPPORTING, MID))
+    return _with_hole(_round(LARGE, MID) if mutant else _diamond(LARGE, MID))
 
 
 def square_roof_bridge(mutant: bool) -> Outcome:
@@ -106,10 +104,13 @@ def square_roof_bridge(mutant: bool) -> Outcome:
 FAMILY = Family(
     id="fdm_horizontal_hole", check="cad-design form_check.probe + process_checks/additive.py support", owner="cad-design",
     pairs=(
-        Pair("small_vs_large_round", "20 mm round horizontal bore whose roof needs support", small_vs_large_round),
-        Pair("teardrop_top", "20 mm horizontal bore left round where a teardrop top is self-supporting", teardrop_top),
-        Pair("diamond_top", "20 mm horizontal bore left round where a diamond top is self-supporting", diamond_top),
-        Pair("bed_face", "8 mm round channel at the bed face, past the 5 mm bridge", bed_face),
-        Pair("mid_height", "8 mm round bore at mid-height, past the 5 mm bridge", mid_height),
+        Pair("round_roof_mid_height", "8 mm mid-height bore left round where a 45 deg teardrop top avoids the overhang",
+             round_roof_mid_height),
+        Pair("round_roof_bed_face", "8 mm bed-face channel left round where a 45 deg teardrop top avoids the overhang",
+             round_roof_bed_face),
+        Pair("round_roof_large_mid_height", "20 mm mid-height bore left round where a 45 deg teardrop top avoids the overhang",
+             round_roof_large_mid_height),
+        Pair("diamond_roof_mid_height", "20 mm mid-height bore left round where a diamond top avoids the overhang",
+             diamond_roof_mid_height),
         Pair("square_roof_bridge", "12 mm flat-roofed horizontal hole beyond the 5 mm bridge", square_roof_bridge),
     ))
