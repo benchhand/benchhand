@@ -125,25 +125,19 @@ class SharedCacheEnvironmentTests(unittest.TestCase):
                         continue  # no PEP 723 block: not a script env
         return found
 
-    def kernel_scripts(self) -> dict[Path, dict]:
-        """Scripts that load the OCP kernel. They run in the one environment the caches key on."""
-        return {script: meta for script, meta in self.headers().items()
-                if any(scriptenv.normalize(scriptenv.NAME.match(d).group("name")).startswith("cadquery")
-                       for d in meta.get("dependencies", []))}
-
-    def test_every_kernel_script_of_both_skills_runs_on_one_python(self) -> None:
-        scripts = self.kernel_scripts()
-        self.assertTrue(any("cad-model" in str(s) for s in scripts) and any("cad-motion" in str(s) for s in scripts))
-        pythons = {meta.get("requires-python") for meta in scripts.values()}
-        self.assertEqual(pythons, {self.PYTHON}, {str(s.relative_to(SKILLS)): m.get("requires-python")
-                                                       for s, m in scripts.items()})
+    def test_every_script_header_of_both_skills_declares_one_python(self) -> None:
+        scripts = self.headers()
+        names = {script.name for script in scripts}
+        self.assertTrue({"cad_model.py", "run_cadquery.py", "motion.py", "mesh_probe.py"} <= names, sorted(names))
+        found = {str(script.relative_to(SKILLS)): meta.get("requires-python") for script, meta in scripts.items()}
+        self.assertEqual({value for value in found.values()}, {self.PYTHON}, found)
 
     def test_every_declared_numpy_is_one_exact_pin(self) -> None:
         pins = {str(script.relative_to(SKILLS)): requirement
-                for script, meta in self.kernel_scripts().items()
+                for script, meta in self.headers().items()
                 for requirement in meta.get("dependencies", [])
                 if scriptenv.normalize(scriptenv.NAME.match(requirement).group("name")) == "numpy"}
-        self.assertTrue(pins)
+        self.assertTrue({"cad-model/scripts/cad_model.py", "cad-motion/tests/fixtures/mesh_probe.py"} <= set(pins), pins)
         self.assertEqual(set(pins.values()), {self.NUMPY}, pins)
 
 
