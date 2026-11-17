@@ -7,6 +7,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import typing
@@ -165,6 +167,39 @@ class RecursiveSchema(FixtureTree):
         module = import_source(self.api(), self.root / "cad_api_tree.py")
         hints = typing.get_type_hints(module.TreeBranch)
         self.assertEqual(set(hints), {"children"})
+
+
+class SelfReferencingClass(FixtureTree):
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/node.schema.json", {
+            "$id": BASE + "node.schema.json",
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string"},
+                "next": {"$ref": "#"},
+                "children": {"type": "array", "items": {"$ref": "#"}},
+            },
+        })
+
+    def test_self_reference_is_quoted(self) -> None:
+        api = self.api()
+        self.assertIn('\n    next: NotRequired["Node"]\n', api)
+        self.assertIn('\n    children: NotRequired["list[Node]"]\n', api)
+        self.assertIn("\n    name: Required[str]\n", api)
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.11")
+    def test_module_imports_on_python_311_and_hints_resolve(self) -> None:
+        path = self.root / "cad_api_node.py"
+        path.write_text(self.api(), encoding="utf-8")
+        script = "import cad_api_node, typing; print(sorted(typing.get_type_hints(cad_api_node.Node)))"
+        result = subprocess.run(
+            ["uv", "run", "--no-project", "--python", "3.11", "python", "-B", "-c", script],
+            cwd=self.root, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['children', 'name', 'next']")
 
 
 class Determinism(FixtureTree):
