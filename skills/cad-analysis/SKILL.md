@@ -77,7 +77,7 @@ uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-analysis/scripts/stop_
 
 It publishes `hw/checks/<V>/stop-reaction/` (`result.json` and `evidence/stop-reaction.json`). Exit `0` means every obligation passes or is not applicable, `1` a failure or an unknown, `2` no result.
 
-- The pivot is the single movable revolute joint between the interface's two parts, posed at `min` and `max`. A pair at zero distance there is a stop. An interface with no movable joint between its parts is not applicable.
+- The pivot is the single movable revolute joint between the interface's two parts, posed at `min` and `max`. A pair at zero distance there is a stop. An interface with no movable joint, or whose pivot touches nothing at either limit, is not a stop and is not applicable.
 - The contact patch is the overlap of the touching, opposite-facing planar faces. Each outline point has the arm ((p − o) × n) · a. Here o is a point on the axis, a is the axis direction and n is the outward normal of the fixed part's face.
 - The applied moment is the peak force of the interface's use-case loads times the moving part's farthest point from the axis. The record does not say where the force acts, so this arm is a conservative upper bound.
 - The design reaction is the moment over the smallest arm. The evidence also holds the lower bound (moment over the largest arm), the uniform-pressure and compliant-stop figures (information only) and the pivot load bound, the reaction plus the applied force.

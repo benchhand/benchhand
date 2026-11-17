@@ -14,7 +14,8 @@ Obligations are cad-record required_checks' engineering.stop_reaction@IF-###.
 Pivot. The movable joints on the kinematic path between the interface's two parts: exactly one, a revolute
 joint, is the pivot. None means the interface is no stop (not applicable); several, a prismatic or a coupled
 pivot leave it unknown. The pivot is posed at its `min` and at its `max`, the other joints at nominal; an end
-at which the two parts are at zero distance is a stop.
+at which the two parts are at zero distance is a stop. A pivot whose limits touch nothing is no stop either
+(not applicable, with the gaps in the reason).
 
 Patch. The overlap of the touching, opposite-facing planar faces of the two parts. Its outline gives the arms,
 arm = ((p - o) x n) . a, with o a point on the pivot axis, a the axis direction and n the outward normal of the
@@ -165,13 +166,14 @@ def plane_of(face: Any) -> tuple[Vec, Vec] | None:
     return xyz(plane.Location()), normal
 
 
-def touching(first: Any, second: Any) -> bool:
+def separation(first: Any, second: Any) -> float:
+    """The minimum distance in mm between two shapes."""
     from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 
     extrema = BRepExtrema_DistShapeShape(first, second)
     if not extrema.IsDone():
         raise pose.MotionError("distance computation failed")
-    return bool(extrema.Value() <= CONTACT_MM)
+    return float(extrema.Value())
 
 
 def overlap(fixed_face: Any, moving_face: Any) -> list[Any]:
@@ -331,12 +333,13 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
     joint down and the stop resists with a positive moment about the axis; at `max` the reverse."""
     value = pivot.joint.min if label == "min" else pivot.joint.max
     geometry = end_geometry(chain, definitions, pivot, value)
-    contact = touching(geometry["moving"], geometry["fixed"])
+    gap = separation(geometry["moving"], geometry["fixed"])
+    contact = gap <= CONTACT_MM
     patch = None
     if contact:
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"])
         patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
-    return {"label": label, "value": value, "touching": contact, "patch": patch, "reach": geometry["reach"]}
+    return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"]}
 
 
 def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
@@ -374,11 +377,13 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
                               "loads": loads, "peak_force_n": force, "ends": {}}
     for state in states:
         detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
+                                          "gap_mm": state["gap"],
                                           "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
     stops = [state for state in states if state["touching"]]
     if not stops:
-        reason = f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id}, so no stop is modelled"
-        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+        gaps = ", ".join(f"{state['label']} {state['gap']:.4g} mm" for state in states)
+        reason = f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id} (gaps: {gaps}): not a stop"
+        return Assessment(if_id, "not_applicable", [reason], {}, {"outcome": "not_applicable", "reason": reason, **detail})
     recorded = recorded_load_n(interface)
     detail["recorded_contact_load_n"] = recorded
     reactions: dict[str, statics.Reaction] = {}

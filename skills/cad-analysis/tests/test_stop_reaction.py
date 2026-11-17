@@ -37,8 +37,9 @@ def load_entry(ident: str, newtons: float = 30.0) -> dict:
             "requirements": ["REQ-001"]}
 
 
-def documents(contact_load: float | None = None) -> dict:
-    """A record of the fixture parts: IF-006 the lever-to-bracket stops, critical and structural, under two 30 N loads."""
+def documents(contact_load: float | None = None, joint: dict | None = None, kind: str = "other") -> dict:
+    """A record of the fixture parts: IF-006 the lever-to-bracket stops, critical and structural, under two 30 N loads.
+    `joint` replaces the pivot and `kind` is the interface type."""
     functional = {"critical": fx.known(True), "functions": [{"function": "locating"}, {"function": "structural"}],
                   "loads": ["handle_close_at_latched_stop", "handle_open_at_open_stop"]}
     if contact_load is not None:
@@ -47,8 +48,8 @@ def documents(contact_load: float | None = None) -> dict:
     use = fx.use_case("draft", loads=[load_entry("handle_close_at_latched_stop"), load_entry("handle_open_at_open_stop")])
     docs = fx.record(product_data=fx.product(use),
                      parts=[fx.part("TST-0301", "Bracket", process="cnc"), fx.part("TST-0302", "Lever", process="cnc")],
-                     interfaces=[fx.interface("IF-006", "TST-0302", "TST-0301", "other", functional)])
-    docs["assembly.yaml"]["joints"] = [dict(JOINT)]
+                     interfaces=[fx.interface("IF-006", "TST-0302", "TST-0301", kind, functional)])
+    docs["assembly.yaml"]["joints"] = [dict(joint or JOINT)]
     return docs
 
 
@@ -72,8 +73,9 @@ class StopGeometryTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.folder.cleanup()
 
-    def run_stop(self, name: str, contact_load: float | None = None) -> tuple[int, dict]:
-        hw = fx.write_record(self.root / name / "hw", documents(contact_load))
+    def run_stop(self, name: str, contact_load: float | None = None, joint: dict | None = None,
+                 kind: str = "other") -> tuple[int, dict]:
+        hw = fx.write_record(self.root / name / "hw", documents(contact_load, joint, kind))
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw), "--parts-dir",
                                str(self.root / "geometry" / "parts")], capture_output=True, text=True, timeout=1800, check=False)
         self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
@@ -129,6 +131,22 @@ class StopGeometryTests(unittest.TestCase):
         code, result = self.run_stop("covered", contact_load=400.0)
         self.assertEqual((code, result["result"]), (1, "unknown"))
         self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unbounded"])
+
+    def test_a_loaded_mounting_interface_with_no_movable_joint_is_not_a_stop(self) -> None:
+        fixed = {**JOINT, "type": "fixed", "min": 0, "max": 0}
+        code, result = self.run_stop("mounting", joint=fixed, kind="mounting")
+        [row] = result["outcomes"]
+        self.assertEqual((code, result["result"], row["outcome"], result["findings"]), (0, "pass", "not_applicable", []))
+        self.assertIn("no movable joint", row["coverage"])
+
+    def test_a_pivot_whose_limits_touch_nothing_is_not_a_stop(self) -> None:
+        free = {**JOINT, "min": 10, "max": 60, "nominal": 10}
+        code, result = self.run_stop("free-swing", joint=free)
+        [row] = result["outcomes"]
+        self.assertEqual((code, result["result"], row["outcome"], result["findings"]), (0, "pass", "not_applicable", []))
+        self.assertIn("not in contact at either limit of J-001", row["coverage"])
+        ends = result["detail"]["interfaces"]["IF-006"]["ends"]
+        self.assertEqual((ends["min"]["touching"], ends["max"]["touching"]), (False, False))
 
 
 if __name__ == "__main__":

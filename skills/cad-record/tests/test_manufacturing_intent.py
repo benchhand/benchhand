@@ -501,7 +501,7 @@ class Capabilities(unittest.TestCase):
         self.assertEqual(mi.capability_limit(template, "hole_diameter_deviation", material="tst_polymer_printed").status, "refused")
 
 
-# The obligations of fx.tst_record(), a record with no load-bearing interface, as enumerated before engineering.stop_reaction existed.
+# The obligations of fx.tst_record(), a record with no loaded structural interface, as enumerated before engineering.stop_reaction existed.
 TST_RECORD_OBLIGATIONS = (
     'assembly.access@op:fit_bearing',
     'assembly.joint@op:fit_bearing',
@@ -664,7 +664,7 @@ class RequiredChecks(unittest.TestCase):
         functional["play"] = {"radial": fx.known(fx.quantity(0.02))}
         self.assertIn("motion.play@IF-001", self.obligations(documents), "declared play is checked whatever the function")
 
-    def test_a_record_without_a_load_bearing_interface_owes_exactly_the_earlier_obligations(self) -> None:
+    def test_a_record_without_a_loaded_structural_interface_owes_exactly_the_earlier_obligations(self) -> None:
         self.assertEqual(sorted(self.obligations(fx.tst_record())), list(TST_RECORD_OBLIGATIONS))
 
     def test_a_loaded_structural_interface_adds_exactly_its_stop_reaction(self) -> None:
