@@ -232,7 +232,17 @@ def stable(centre: list[float], hull: list, contact: float = 100.0) -> dict[str,
     data = facts(contact=contact)
     data["centre_mm"] = [*centre, 10.0]
     data["bed"]["contact_hull"] = hull
+    data["bed"]["contact_extent"] = {"min": [min(p[0] for p in hull), min(p[1] for p in hull)],
+                                     "max": [max(p[0] for p in hull), max(p[1] for p in hull)]}
     return data
+
+
+def load_module(name: str, path: Path) -> Any:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
@@ -267,6 +277,22 @@ class BedStabilityTests(Checks):
     def test_a_contact_at_the_calibrated_minimum_passes(self) -> None:
         result = self.orient(stable([2.0, 2.0], TRIANGLE, contact=25.0))
         self.assertEqual(self.outcome(result, self.OBLIGATION), "pass")
+
+    def test_a_centre_on_a_slanted_edge_after_the_probe_rounds_its_coordinates_is_stable(self) -> None:
+        """Boundary on an edge is stable. The producer rounds coordinates to 1e-6 mm, so a center exactly on the edge
+        from (0, 0) to (10/3, 1) at x = 2995/900 arrives as (3.327778, 0.998333), 4.8e-7 mm outside it."""
+        form_check = load_module("tst_form_check_boundary", FORM_CHECK)
+        hull = form_check._convex_hull([(0.0, 0.0), (10 / 3, 1.0), (0.0, 1.0)])
+        data = stable([0.0, 0.0], hull)
+        data["centre_mm"] = form_check.rounded_xyz_tuple((2995 / 900, 0.3 * 2995 / 900, 10.0))
+        self.assertEqual(self.outcome(self.orient(data), self.OBLIGATION), "pass")
+
+    def test_a_centre_one_micrometre_beyond_the_edge_still_fails(self) -> None:
+        form_check = load_module("tst_form_check_boundary", FORM_CHECK)
+        hull = form_check._convex_hull([(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)])
+        data = stable([0.0, 0.0], hull)
+        data["centre_mm"] = [5.0 + 0.0007, 5.0 + 0.0007, 10.0]  # 1 micrometre beyond x + y = 10
+        self.assertEqual(self.outcome(self.orient(data), self.OBLIGATION), "fail")
 
     def test_an_uncalibrated_contact_area_is_unknown_never_pass(self) -> None:
         result = self.orient(stable([2.0, 2.0], TRIANGLE), calibrations=[])
@@ -1000,6 +1026,14 @@ class ProbeGeometryTests(Checks):
         self.assertEqual(self.outcome(broken, "process.reaming.access@TST-0501/ream"), "fail")
         fixed = self.assess(multiprocess(complete=True), geometry("TST-0501", data))
         self.assertEqual(self.outcome(fixed, "process.reaming.access@TST-0501/ream"), "pass")
+
+    def test_the_warp_footprint_of_a_circular_contact_is_its_exact_diameter_whatever_the_seam(self) -> None:
+        disc = self.probed["disc"]
+        self.assertAlmostEqual(disc["bed"]["contact_area_mm2"], math.pi * 50.0**2, places=3)
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(99.8))
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[CONTACT, warp])
+        found = self.finding(self.assess(documents, geometry("TST-0101", disc)), "process.fdm.warp_scope")
+        self.assertAlmostEqual(found["measured"]["value"], 100.0, places=4)
 
     def test_equivalent_members_are_probed_one_by_one(self) -> None:
         pair = self.probed["pair"]

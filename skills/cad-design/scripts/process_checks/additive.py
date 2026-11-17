@@ -30,6 +30,8 @@ EXEMPT_CLASSES = frozenset({"tooth_tip", "flank", "chamfer", "fillet", "decorati
 SOLUBLE_WORDS = ("soluble", "pva", "bvoh", "hips", "interface", "breakaway")
 HOLE_CLASSES = {"Z": "axis along the build direction", "XY": "axis in the layer plane", "inclined": "inclined axis"}
 EPS = 1e-9
+COORD_STEP_MM = 1e-6  # form_check rounds probed coordinates to this step
+BOUNDARY_MM = 3 * COORD_STEP_MM
 
 
 def _k(ctx: Context) -> str:
@@ -121,13 +123,15 @@ def orientation(ctx: Context) -> Result:
 
 def _outside_hull(point: Any, hull: Any) -> bool:
     """Whether the x, y of `point` lies outside the counter-clockwise convex polygon `hull`. A hull of fewer
-    than three points has no interior, so everything is outside. A point on the boundary is inside."""
+    than three points has no interior, so everything is outside. A point on an edge is inside (stable).
+    The producer rounds every coordinate to COORD_STEP_MM, so a point up to BOUNDARY_MM outside an edge is
+    on it: 3 steps cover the rounding of the point and of both edge ends."""
     if len(hull) < 3:
         return True
     for i, (x1, y1) in enumerate(hull):
         x2, y2 = hull[(i + 1) % len(hull)]
         cross = (x2 - x1) * (point[1] - y1) - (y2 - y1) * (point[0] - x1)
-        if cross < -EPS * math.hypot(x2 - x1, y2 - y1):  # a distance below -1e-9 mm outside this edge
+        if cross < -BOUNDARY_MM * math.hypot(x2 - x1, y2 - y1):  # more than BOUNDARY_MM outside this edge
             return True
     return False
 
@@ -717,8 +721,8 @@ def thermal_distortion(ctx: Context) -> Result:
     findings: list[Draft] = []
     parts: list[tuple[str, str]] = []
     bed = g.facts.get("bed") or {}
-    hull = bed.get("contact_hull") or ()
-    footprint = max(max(p[i] for p in hull) - min(p[i] for p in hull) for i in (0, 1)) if hull else 0.0
+    extent = bed.get("contact_extent")  # exact contact-face extents, apart from the sampled stability hull
+    footprint = max(extent["max"][i] - extent["min"][i] for i in (0, 1)) if extent else 0.0
     warp = ctx.calibrated("warp")
     if not warp.known:
         findings.append(Draft(f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint),

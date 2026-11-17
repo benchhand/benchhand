@@ -999,11 +999,14 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
                                     and _distance(tuple(walls["location_mm"]), face) <= PROBE_TOL_MM
                                     for f in rows[n]["features"]})
     bed_faces = [row for row in rows if row.get("bed")]
+    bed_boxes = [occ.bbox(faces[n]) for n, row in enumerate(rows) if row.get("bed")]
+    extent = {"min": [round(min(b[0][i] for b in bed_boxes), 6) + 0.0 for i in (0, 1)],
+              "max": [round(max(b[1][i] for b in bed_boxes), 6) + 0.0 for i in (0, 1)]} if bed_boxes else None
     hull = _convex_hull([p for n, row in enumerate(rows) if row.get("bed") for p in _outline_points(faces[n])])
     return {"solids": 1, "shells": occ.count(solid, "SHELL"), "volume_mm3": round(volume, 6),
             "bbox_mm": {"min": rounded_xyz_tuple(low), "max": rounded_xyz_tuple(high)}, "centre_mm": rounded_xyz_tuple(centre),
             "bed": {"z_mm": round(bed_z, 6), "contact_area_mm2": round(sum(r["area_mm2"] for r in bed_faces), 6),
-                    "contact_hull": hull},
+                    "contact_hull": hull, "contact_extent": extent},
             "faces": rows, "holes": found_holes, "corners": corners, "pins": pins, "bends": bends, "walls": walls,
             "features": features, "prismatic_axis": _prismatic_axis(rows, low, high)}
 
