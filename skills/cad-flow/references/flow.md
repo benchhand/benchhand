@@ -148,8 +148,25 @@ The full sweep, a FreeCAD assembly run, an FEA case, and the first run of a new 
 - Run no foreground command longer than 600 s. Start any command that can exceed it as a background job.
 - Smoke first: run the sweep with `--smoke` before the full sweep, a FreeCAD run on its first few frames, and a new tool on a tiny fixture. Start the full run only after its smoke run passed.
 - Before starting, check for stray runs: a sweep refuses while a recorded process group still runs and prints the `kill -TERM -- -PGID` command. Stop a run by its process group, never by its parent PID.
-- Run it as a background job and wait for its result file, such as the sweep's `result.json` in its version bundle or the check's `--out` file, not for its process or shell. A run that ended without its result file produced no result; rerun it.
+- Run it as a background job. When the command exits, read the output path its report names. Exit code 2 means no result: rerun it.
+- Read the path from the producer's stdout JSON, as the table says. Never guess a result filename.
 - While it runs, prepare the gate packet ([Gate control](#gate-control)).
+
+| Producer | Where the output path appears | Key or location |
+|---|---|---|
+| `cad_model.py run` | stdout JSON | `version_dir`, `label` |
+| `cad_model.py check` | stdout JSON; also the file named by `--out` | the `--out` path you passed |
+| `scratch.py build` | stdout JSON report | `scratch_hw`, `version_dir`, `label`; `json` and `log` in each step |
+| `form_check.py --version` | stdout JSON | `manufacturing.bundle`; with `--out`, the path you passed |
+| `sweep.py` | stdout JSON | `bundle` for a versioned run |
+| `motion.py render` | stdout JSON | `bundle` and `paths`; with `--out-dir`, `out_dir` and `paths` |
+| `render.py` | stdout JSON | `out_dir` |
+| `fea_static.py --hw --version` | stdout JSON | `bundle`, `check_bundle` |
+| `fea_static.py` on a bare case | stdout JSON, with no path | pass `--out`; the result file is that path |
+| `drawing.py` | stdout JSON | `output_dir` in each entry of `parts` |
+| `assembly_drawing.py` | stdout JSON | `output_dir` |
+
+<!-- TODO(stage-machine): evidence.py run and work.py report every output path in one JSON document. -->
 
 ## Storage of generated results
 
@@ -190,7 +207,13 @@ The lead orchestrates; workers do independent stage units. Only the lead builds 
 | reconcile | rework units scoped by `impact.py`, sized as parts or detail | 3 writer units at once | as parts or detail |
 | design_freeze, release | lead | 1 | lead |
 
-Tier guard: reviewers, analysts, researchers and any agent that issues a verdict never run on the cheap tier. Gates cite evidence packets, never summaries.
+Tier guard: the cheap tier never runs these agents:
+- reviewers
+- analysts
+- researchers
+- any agent that issues a verdict
+
+Each gate cites the evidence packet, never a summary.
 
 ### Stalled units
 
@@ -200,14 +223,11 @@ A subagent sends no heartbeat. Check each unit that runs past its expected durat
 2. If the unit makes no progress for 10 more minutes:
    - Interrupt it.
    - Release its claim.
-   - Dispatch it again with the same brief.
-3. Give the new run fresh output. Only a unit that owns PNs (part, detail and rework units) resets with `scratch.py init --reset`, because `init` needs at least one `--part`.
-   - Concept unit: delete `.cad-work/<unit>/<variant-id>.scene.json`.
-   - Analysis unit: delete the files it wrote under `.cad-work/<unit>/`: `plan.yaml`, `render/` and any `--out` file. A published version bundle stays, because the same recipe reuses it.
-   - Clerk unit: delete the `--out` files under `.cad-work/<unit>/`.
-   - Reviewer and sourcing units write nothing, so they need no reset.
-   - Alternative: give the new run a new unit id, such as `analysis-<case>-<vN>`.
-4. The new run is a fresh unit. Never merge output from the interrupted run.
+   - Dispatch it again with the same brief under a new unit id: `<unit>-r2`, then `-r3`, and so on.
+3. Leave the old workspace untouched. The new unit id gets its own workspace.
+4. Never merge output from the interrupted run.
+
+<!-- TODO(stage-machine step 6): stale workspace cleanup via scratch.py/work.py -->
 
 No tool records a lease yet. The lease is the lead's own note of when it dispatched the unit and when it last heard from it.
 

@@ -343,10 +343,20 @@ class ProcessRuleTests(unittest.TestCase):
         text = self.read(self.FLOW / "references/flow.md")
         self.assertRegex(text, r"(?i)lease expired[^.]*no live run[^.]*one follow-up")
         self.assertRegex(text, r"(?is)10 more minutes:\s*- interrupt it\.\s*- release its claim\.\s*- dispatch it again")
-        reset = re.search(r"(?m)^3\. Give the new run fresh output\..*$", text)
-        self.assertIsNotNone(reset)
-        self.assertRegex(reset.group(0), r"Only a unit that owns PNs[^.]*`scratch\.py init --reset`")
-        self.assertEqual(text.count("init --reset"), 1)
+        self.assertRegex(text, r"(?i)new unit id[^.]*`<unit>-r2`[^.]*`-r3`")
+        self.assertRegex(text, r"(?i)leave the old workspace untouched")
+        self.assertNotIn("init --reset", text)
+        self.assertIn("TODO(stage-machine step 6): stale workspace cleanup", text)
+
+    def test_agent_prompts_wait_for_the_command_not_a_result_filename(self) -> None:
+        for path in (CAD / "agents").glob("*.md"):
+            with self.subTest(agent=path.stem):
+                text = self.read(path)
+                self.assertNotRegex(text, r"(?i)wait for[^.]*\bresults?\.json\b")
+                self.assertNotRegex(text, r"(?i)wait for[^.]*result file")
+        for name in ("cad-analyst", "cad-part-designer"):
+            with self.subTest(agent=name):
+                self.assertRegex(self.read(CAD / "agents" / f"{name}.md"), r"(?i)when the (command|build) exits, read the output path")
 
     def test_flow_reference_lists_unit_sizes_and_each_iteration(self) -> None:
         text = self.read(self.FLOW / "references/flow.md")
@@ -395,7 +405,7 @@ class ProcessRuleTests(unittest.TestCase):
 
     def test_unbuilt_tools_are_only_future_work_in_a_todo_marker(self) -> None:
         for path in (self.FLOW / "SKILL.md", self.FLOW / "references/flow.md", *(CAD / "agents").glob("*.md")):
-            text = re.sub(r"<!-- TODO\(stage-machine\):.*?-->", "", self.read(path), flags=re.DOTALL)
+            text = re.sub(r"<!-- TODO\(stage-machine[^)]*\):.*?-->", "", self.read(path), flags=re.DOTALL)
             with self.subTest(path=path.name):
                 self.assertNotRegex(text, r"\b(flow\.py|work\.py|evidence\.py run)\b")
 

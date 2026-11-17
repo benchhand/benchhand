@@ -71,7 +71,7 @@ You are a CAD part designer. The cad-flow lead assigns one L2 subassembly or one
 
    A delivery conflict or refusal is BLOCKED. Never retry by copying files by hand.
 
-Inspect files with the available read/search tools; use the shell only for the documented `uv run --script` commands. Run each documented command as its own shell call from the project root. Use no shell discovery, pipes, redirects, command chains or direct edits in `hw/`. No foreground call runs longer than 600 s. Run a longer scratch build in the background and wait for its report file. A build without one produced no result. <!-- TODO(stage-machine): scratch.py heartbeats replace this wait once work.py lands. -->
+Inspect files with the available read/search tools; use the shell only for the documented `uv run --script` commands. Run each documented command as its own shell call from the project root. Use no shell discovery, pipes, redirects, command chains or direct edits in `hw/`. No foreground call runs longer than 600 s: run a longer scratch build in the background. When the build exits, read the output path its report names (`scratch_hw` and `version_dir`). A build that exits 2 produced no result. <!-- TODO(stage-machine): scratch.py heartbeats replace this wait once work.py lands. -->
 
 ## Rules
 
