@@ -82,7 +82,8 @@ CONTACT_MM = 1e-4  # parts at or under this distance touch; planes this close ar
 # A joint limit whose parts are this close counts as the stop. A stop with a small gap in the model then gets a
 # reaction. The value is a tunable. Issue #165 moves it into the tool-settings schema. The effective tolerance
 # is the larger of it and the interface's declared fit clearance.
-STOP_CONTACT_TOLERANCE_MM = 0.2
+STOP_CONTACT_TOLERANCE_MM = 0.15
+STOP_CONTACT_EPSILON_MM = 1e-6  # float noise: a gap on the tolerance gets no verdict from rounding
 NORMAL_TOL = 1e-6  # |n1 . n2 + 1| under this: opposite-facing faces
 MIN_AREA_MM2 = 1e-6
 CURVE_SAMPLES = 64  # points per curved edge when its outline is read
@@ -254,7 +255,7 @@ def contact_faces(fixed: Any, moving: Any, tolerance: float) -> list[tuple[Any, 
             if moving_plane is None or abs(dot(fixed_plane[1], moving_plane[1]) + 1.0) > NORMAL_TOL:
                 continue
             offset = dot(sub(moving_plane[0], fixed_plane[0]), fixed_plane[1])
-            if abs(offset) > tolerance:
+            if abs(offset) > tolerance + STOP_CONTACT_EPSILON_MM:
                 continue
             carried = pose.placed(moving_face, pose.Rigid.translation(fixed_plane[1], -offset))
             found += [(abs(offset), face, fixed_plane[1]) for face in overlap(fixed_face, carried)]
@@ -369,7 +370,7 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
     value = pivot.joint.min if label == "min" else pivot.joint.max
     geometry = end_geometry(chain, definitions, pivot, value)
     gap = separation(geometry["moving"], geometry["fixed"])
-    contact = gap <= tolerance
+    contact = gap <= tolerance + STOP_CONTACT_EPSILON_MM
     patch = None
     if contact:
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)

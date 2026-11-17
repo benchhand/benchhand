@@ -175,7 +175,7 @@ class StopGeometryTests(unittest.TestCase):
         self.assertEqual(latched["reaction"]["status"], "bounded")
         self.assertAlmostEqual(latched["reaction"]["design_reaction_n"], 343.098, places=2)
         self.assertEqual((code, result["result"]), (0, "pass"))
-        self.assertEqual(result["detail"]["interfaces"]["IF-006"]["contact_tolerance"], {"mm": 0.2, "source": "constant"})
+        self.assertEqual(result["detail"]["interfaces"]["IF-006"]["contact_tolerance"], {"mm": 0.15, "source": "constant"})
 
     def test_a_limit_half_a_millimetre_off_is_not_a_stop(self) -> None:
         code, result = self.run_stop("gap-0.5", joint=self.LATCHED_ONLY, gap=0.5)
@@ -183,14 +183,14 @@ class StopGeometryTests(unittest.TestCase):
         self.assertEqual((code, row["outcome"], result["findings"]), (0, "not_applicable", []))
         evidence = result["detail"]["interfaces"]["IF-006"]
         self.assertAlmostEqual(evidence["ends"]["min"]["gap_mm"], 0.5, places=6)
-        self.assertEqual(evidence["contact_tolerance"], {"mm": 0.2, "source": "constant"})
-        self.assertIn("tolerance 0.2 mm", row["coverage"])
+        self.assertEqual(evidence["contact_tolerance"], {"mm": 0.15, "source": "constant"})
+        self.assertIn("tolerance 0.15 mm", row["coverage"])
 
     def test_a_declared_fit_clearance_above_the_constant_raises_the_tolerance(self) -> None:
         # 20 H11/c11: ES 0.130 and ei -0.240 (ISO 286, 18 to 30 mm), so the largest clearance is 0.370 mm.
         fit = {"running_fit": {"fit": "20 H11/c11", "pair": ["TST-0302", "TST-0301"]}}
         _, plain = self.run_stop("gap-0.3-plain", joint=self.LATCHED_ONLY, gap=0.3)
-        self.assertEqual(plain["outcomes"][0]["outcome"], "not_applicable", "0.3 mm is above the 0.2 mm constant")
+        self.assertEqual(plain["outcomes"][0]["outcome"], "not_applicable", "0.3 mm is above the 0.15 mm constant")
         code, result = self.run_stop("gap-0.3-fit", joint=self.LATCHED_ONLY, gap=0.3, limits=fit)
         latched = self.latched_end(result)
         self.assertAlmostEqual(latched["gap_mm"], 0.3, places=6)
@@ -201,6 +201,26 @@ class StopGeometryTests(unittest.TestCase):
         self.assertEqual(tolerance["source"], "fit 20 H11/c11 clearance")
         _, beyond = self.run_stop("gap-0.5-fit", joint=self.LATCHED_ONLY, gap=0.5, limits=fit)
         self.assertEqual(beyond["outcomes"][0]["outcome"], "not_applicable", "0.5 mm is above the 0.37 mm clearance")
+
+    def test_a_gap_exactly_at_the_tolerance_is_a_stop(self) -> None:
+        code, result = self.run_stop("gap-at-tolerance", joint=self.LATCHED_ONLY, gap=0.15)
+        latched = self.latched_end(result)
+        self.assertEqual(latched["reaction"]["status"], "bounded")
+        self.assertEqual((code, result["result"]), (0, "pass"))
+        self.assertEqual(result["detail"]["interfaces"]["IF-006"]["contact_tolerance"], {"mm": 0.15, "source": "constant"})
+
+    def test_a_gap_two_microns_above_the_tolerance_is_not_a_stop(self) -> None:
+        code, result = self.run_stop("gap-above-tolerance", joint=self.LATCHED_ONLY, gap=0.152)
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"], result["findings"]), (0, "not_applicable", []))
+
+    def test_the_same_boundary_holds_at_a_tolerance_raised_by_a_fit(self) -> None:
+        fit = {"running_fit": {"fit": "20 H11/c11", "pair": ["TST-0302", "TST-0301"]}}  # clearance 0.370 mm
+        code, at = self.run_stop("fit-at-tolerance", joint=self.LATCHED_ONLY, gap=0.37, limits=fit)
+        self.assertEqual(self.latched_end(at)["reaction"]["status"], "bounded")
+        self.assertEqual((code, at["result"]), (0, "pass"))
+        _, above = self.run_stop("fit-above-tolerance", joint=self.LATCHED_ONLY, gap=0.372, limits=fit)
+        self.assertEqual(above["outcomes"][0]["outcome"], "not_applicable")
 
     def test_a_tilted_face_within_the_tolerance_has_no_parallel_pair_and_stays_unknown(self) -> None:
         # At 0.5 deg the lever's underside is 7 * sin(0.5 deg) = 0.061 mm off the stop at its nearest edge, and tilted.
