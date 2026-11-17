@@ -90,7 +90,6 @@ import shutil
 import sys
 import traceback
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from datetime import datetime, timezone
 from hashlib import sha256
 from dataclasses import dataclass
 from pathlib import Path
@@ -1234,30 +1233,9 @@ def _set_name(label: Any, text: str) -> None:
     TDataStd_Name.Set_s(label, TCollection_ExtendedString(text))
 
 
-DEFAULT_STEP_EPOCH = 315_532_800   # 1980-01-01T00:00:00Z: the STEP header time when SOURCE_DATE_EPOCH is not set
-MAX_STEP_EPOCH = 253_402_300_799   # 9999-12-31T23:59:59Z: the last second a four-digit year can write
-
-
-def step_epoch() -> int:
-    """Seconds since the epoch for the STEP FILE_NAME time: SOURCE_DATE_EPOCH, else a fixed date; never the clock.
-
-    The value is ASCII digits up to the last four-digit year, the contract of the PDF date pin in cad-drawings.
-    """
-    value = os.environ.get("SOURCE_DATE_EPOCH")
-    if value is None:
-        return DEFAULT_STEP_EPOCH
-    try:
-        epoch = int(value) if value.isascii() and value.isdigit() else -1
-    except ValueError:   # more digits than int() converts
-        epoch = -1
-    if not 0 <= epoch <= MAX_STEP_EPOCH:
-        raise MotionError(f"SOURCE_DATE_EPOCH must be whole seconds from 0 to {MAX_STEP_EPOCH}, got {value[:40]!r}")
-    return epoch
-
-
-def step_timestamp() -> str:
-    """The FILE_NAME time of a written STEP: `step_epoch()` in UTC as `YYYY-MM-DDTHH:MM:SS`."""
-    return datetime.fromtimestamp(step_epoch(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+# The FILE_NAME time of every written STEP. A constant keeps STEP bytes a function of the shape alone, so no
+# cache key or recipe needs the environment (SOURCE_DATE_EPOCH is ignored here on purpose).
+STEP_TIMESTAMP = "1980-01-01T00:00:00"
 
 
 def _write_document(path: Path, doc: Any, tool: Any) -> None:
@@ -1269,7 +1247,6 @@ def _write_document(path: Path, doc: Any, tool: Any) -> None:
     from OCP.TCollection import TCollection_HAsciiString
     from OCP.XSControl import XSControl_WorkSession
 
-    stamp = step_timestamp()   # a bad SOURCE_DATE_EPOCH stops the write before the kernel starts
     tool.UpdateAssemblies()
     path.parent.mkdir(parents=True, exist_ok=True)
     with stdout_to_stderr():
@@ -1284,7 +1261,7 @@ def _write_document(path: Path, doc: Any, tool: Any) -> None:
         if not writer.Transfer(doc, STEPControl_AsIs):
             raise MotionError(f"cannot write {path}")
         # OCCT stamps FILE_NAME with the wall clock; the header entity of the transferred model takes ours
-        APIHeaderSection_MakeHeader(writer.ChangeWriter().Model(False)).SetTimeStamp(TCollection_HAsciiString(stamp))
+        APIHeaderSection_MakeHeader(writer.ChangeWriter().Model(False)).SetTimeStamp(TCollection_HAsciiString(STEP_TIMESTAMP))
         if writer.Write(str(path)) != IFSelect_RetDone:
             raise MotionError(f"cannot write {path}")
 

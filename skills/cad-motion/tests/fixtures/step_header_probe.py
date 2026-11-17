@@ -5,7 +5,7 @@
 """Write one box part as STEP with pose.write_part_step.
 
 Usage: uv run --script step_header_probe.py OUT.step
-SOURCE_DATE_EPOCH in the environment pins the FILE_NAME time.
+The FILE_NAME time is fixed, whatever the environment holds.
 """
 
 from __future__ import annotations
