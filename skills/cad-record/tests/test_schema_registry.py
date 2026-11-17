@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -175,6 +176,32 @@ class SeparateRoots(SchemaRoots):
         self.assertEqual([f["message"] for f in self.check(second, {"title": "Lamp"}, "probe.schema.json")],
                          ["title: 'Lamp' is too long"])
         self.assertEqual(self.check(first, {"title": "Lamp"}, "probe.schema.json"), [])
+
+
+class SharedRegistry(unittest.TestCase):
+    def test_the_concept_schemas_resolve_in_a_registry_that_names_their_directory(self) -> None:
+        shared = registry.registry(registry.SCHEMAS, also=(registry.CONCEPT_SCHEMAS,))
+        for name in ("concept-scene", "handoff", "manufacturing"):
+            with self.subTest(name):
+                self.assertEqual(shared.get_or_retrieve(f"https://srobroek.com/cad/schemas/{name}.schema.json")
+                                 .value.contents["$id"], f"https://srobroek.com/cad/schemas/{name}.schema.json")
+
+    def test_a_concept_document_is_checked_against_its_schema(self) -> None:
+        check = registry.document_validator(registry.CONCEPT_SCHEMAS, "handoff.schema.json", formats=True)
+        self.assertTrue(list(check.iter_errors({})))
+
+
+class LazyJsonschema(unittest.TestCase):
+    def test_loading_the_registry_and_the_validator_script_does_not_import_jsonschema(self) -> None:
+        code = ("import importlib.util, sys\n"
+                "for name, path in (('cad_record_schema_registry', sys.argv[1]), ('cad_record_validate', sys.argv[2])):\n"
+                "    spec = importlib.util.spec_from_file_location(name, path)\n"
+                "    sys.modules[name] = module = importlib.util.module_from_spec(spec)\n"
+                "    spec.loader.exec_module(module)\n"
+                "    print(name, 'jsonschema' in sys.modules)\n")
+        done = subprocess.run([sys.executable, "-c", code, str(SCRIPTS / "schema_registry.py"), str(SCRIPTS / "validate.py")],
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(done.stdout.split("\n")[:2], ["cad_record_schema_registry False", "cad_record_validate False"], done.stderr)
 
 
 if __name__ == "__main__":

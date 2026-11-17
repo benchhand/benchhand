@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import yaml
-from jsonschema import Draft202012Validator, FormatChecker
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import assembly_data  # noqa: E402 - the sibling module, beside this script in the skill
@@ -906,11 +905,15 @@ def validate_project(project_dir: Path) -> list[dict[str, str]]:
     if concept_handoff.is_file():
         concept_schema = Path(__file__).resolve().parents[2] / "cad-concept" / "assets" / "schemas" / "handoff.schema.json"
         if concept_schema.is_file():
-            schema = load_json(concept_schema, findings)
             handoff = load_json(concept_handoff, findings)
-            if schema is not None and handoff is not None:
+            try:
+                schema_registry.schema(concept_schema.parent, concept_schema.name)
+            except (OSError, json.JSONDecodeError) as problem:
+                findings.append(finding(str(concept_schema), f"cannot read JSON: {problem}"))
+                handoff = None
+            if handoff is not None:
                 errors = sorted(
-                    Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(handoff),
+                    schema_registry.document_validator(concept_schema.parent, concept_schema.name, formats=True).iter_errors(handoff),
                     key=lambda error: list(error.absolute_path),
                 )
                 for error in errors:
