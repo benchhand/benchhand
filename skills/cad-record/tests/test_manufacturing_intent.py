@@ -289,12 +289,14 @@ class Normalization(unittest.TestCase):
         self.assertIsNone(record.use_case.loads[0].direction)
 
     def test_a_non_finite_load_direction_is_reported_and_carried_as_none(self) -> None:
-        for component in (float("nan"), float("inf")):
-            with self.subTest(component):
+        for direction in ([float("nan"), 0, 0], [float("inf"), 0, 0], [10 ** 400, float("nan"), 0], [10 ** 400, float("inf"), 0]):
+            with self.subTest(direction):
                 documents = fx.tst_record()
-                documents["product.yaml"]["use_case"]["loads"][0]["direction"] = [component, 0, 0]
+                documents["product.yaml"]["use_case"]["loads"][0]["direction"] = direction
                 record = mi.normalize_record(documents)
-                self.assertIn("intent.number", [p.code for p in record.problems])
+                codes = [p.code for p in record.problems]
+                self.assertEqual(codes.count("intent.number"), 1, codes)
+                self.assertNotIn("load.direction_not_unit", codes)
                 self.assertIsNone(record.use_case.loads[0].direction)
 
     def test_a_parsed_load_carries_its_direction_as_floats(self) -> None:

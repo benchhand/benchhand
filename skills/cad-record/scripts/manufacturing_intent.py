@@ -1121,12 +1121,12 @@ class _Reader:
         if not (isinstance(direction, list) and len(direction) == 3
                 and all(isinstance(c, (int, float)) and not isinstance(c, bool) for c in direction)):
             return None
+        if any(isinstance(c, float) and not math.isfinite(c) for c in direction):
+            return None  # intent.number reports a non-finite component
         try:
             vector = tuple(float(c) for c in direction)
         except (OverflowError, TypeError, ValueError):  # an integer beyond float range
             vector = ()
-        if vector and not all(math.isfinite(c) for c in vector):
-            return None
         norm = math.hypot(*vector) if vector else math.inf
         if abs(norm - 1.0) > LOAD_DIRECTION_TOLERANCE:
             self.problem("load.direction_not_unit", path, f"{pointer}/direction",
