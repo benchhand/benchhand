@@ -20,6 +20,7 @@ from typing import Any, cast
 import yaml
 
 import fea_conditions as conditions
+import fea_mode as MODE
 from fea_part_selection import OCCURRENCE_REF, selected_face_indices as _selected_face_indices
 from freecad_lookup import find_freecad
 import importlib.util
@@ -298,6 +299,53 @@ def default_result_path(case_path: Path) -> Path:
     return case_path.parent.resolve() / "results.json"
 
 
+ACCURATE = MODE.Mode("accurate", None)  # a standalone case, and a version whose profile sets no mode
+
+
+def _criteria_checks(result: dict[str, Any], case: dict[str, Any],
+                     criteria: dict[str, dict[str, Any]]) -> list[Any]:
+    """The acceptance criteria a solved result is judged against: the yield safety factor and, when the case
+    names a stiffness requirement, the largest displacement."""
+    checks = []
+    if case.get("required_safety_factor") is not None and result.get("safety_factor_yield") is not None:
+        checks.append(MODE.Check("yield_safety_factor", float(result["safety_factor_yield"]), ">=",
+                                 float(case["required_safety_factor"])))
+    if "stiffness" in criteria and result.get("max_displacement_mm") is not None:
+        checks.append(MODE.Check("max_displacement", float(result["max_displacement_mm"]), "<=",
+                                 float(criteria["stiffness"]["value"])))
+    return checks
+
+
+def run_case(case_path: Path, case: dict[str, Any], criteria: dict[str, dict[str, Any]],
+             **job: Any) -> tuple[dict[str, Any], int]:
+    """Solve a case in its mode; a fast result whose margin to a criterion lies within the band is solved again
+    in accurate mode, and the accurate result is the one returned. `result["fea_mode"]` records the mode asked
+    for and used, the band, the escalation and why, and a fast result's stated uncertainty."""
+    mode = case.get("_mode", ACCURATE)
+    result, status = run_job(case_path, case, **job)
+    if mode.mode != "fast":
+        result["fea_mode"] = {"requested": mode.mode, "used": mode.mode, "escalated": False,
+                              "reason": "accurate mode requested", "uncertainty_pct": None}
+        return result, status
+    band = mode.band_pct if mode.band_pct is not None else MODE.DEFAULT_BAND_PCT
+    record = {"requested": "fast", "band_pct": band, "bias_pct": MODE.FAST_BIAS_PCT}
+    if status == 2:
+        result["fea_mode"] = {**record, "used": "fast", "escalated": False, "reason": "the fast solve gave no result",
+                              "uncertainty_pct": MODE.FAST_BIAS_PCT}
+        return result, status
+    escalate, reason = MODE.escalation(_criteria_checks(result, case, criteria), band)
+    if not escalate:
+        result["fea_mode"] = {**record, "used": "fast", "escalated": False, "reason": reason,
+                              "uncertainty_pct": MODE.FAST_BIAS_PCT}
+        return result, status
+    fast = {key: result.get(key) for key in ("status", "max_von_mises_mpa", "max_displacement_mm", "safety_factor_yield",
+                                             "node_count", "element_count")}
+    result, status = run_job(case_path, {**case, "_mode": ACCURATE}, **job)
+    result["fea_mode"] = {**record, "used": "accurate", "escalated": True, "reason": reason, "fast_result": fast,
+                          "uncertainty_pct": None}
+    return result, status
+
+
 def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None = None,
             result_path: Path | None = None,
             solver_versions: dict[str, dict[str, str]] | None = None,
@@ -337,6 +385,7 @@ def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None 
         "freecadcmd": str(freecad),
         "solvers_module": str(Path(SOLVERS.__file__).resolve()),
         "ccx_environment": CCX_ENVIRONMENT,
+        "mesh_mode": case.get("_mode", ACCURATE).mode,
         "solver_versions": versions,
     }
     job_json = json.dumps(job)
@@ -460,7 +509,11 @@ def run():
         source_geo=re.sub(r"(?m)^General[.]NumThreads[ \t]*=[ \t]*[^;]+;", "General.NumThreads = 1;", source_geo)
         source_geo=re.sub(r"(?m)^Mesh[.]Optimize[ \t]*=[ \t]*[^;]+;", "Mesh.Optimize = 0;", source_geo)
         source_geo=re.sub(r"(?m)^Mesh[.]OptimizeNetgen[ \t]*=[ \t]*[^;]+;", "Mesh.OptimizeNetgen = 0;", source_geo)
-        source_geo=re.sub(r"(?m)^Mesh[.]HighOrderOptimize[ \t]*=[ \t]*[^;]+;", "Mesh.HighOrderOptimize = 2;", source_geo)
+        # Fast mode: straight-sided second-order tetrahedra, with no high-order pass (fea_mode.py).
+        fast=JOB["mesh_mode"]=="fast"
+        source_geo=re.sub(r"(?m)^Mesh[.]HighOrderOptimize[ \t]*=[ \t]*[^;]+;", "Mesh.HighOrderOptimize = %d;" % (0 if fast else 2), source_geo)
+        source_geo, linear=re.subn(r"(?m)^Mesh[.]SecondOrderLinear[ \t]*=[ \t]*[^;]+;", "Mesh.SecondOrderLinear = %d;" % (1 if fast else 0), source_geo)
+        if linear != 1: raise RuntimeError("the Gmsh input sets Mesh.SecondOrderLinear %d times, not once" % linear)
         source_geo=re.sub(r"(?m)^Mesh[.]RandomFactor3D[ \t]*=[ \t]*[^;]+;", "Mesh.RandomFactor3D = 0;", source_geo)
         source_geo="Mesh.RandomSeed = 1;\\n" + source_geo
         with open(geo_path, "w", encoding="utf-8") as geo_file: geo_file.write(source_geo)
@@ -591,6 +644,21 @@ def solver_versions() -> dict[str, dict[str, str]]:
     }
 
 
+def _version_mode(record_dir: Path) -> Any:
+    """The mesh mode the version's product.yaml snapshot asks for in its flow profile."""
+    path = record_dir / "product.yaml"
+    if not path.is_file():
+        return ACCURATE
+    try:
+        product = YAML.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise CaseError(f"cannot read the version's product.yaml snapshot: {exc}") from exc
+    try:
+        return MODE.read_mode(product if isinstance(product, dict) else {})
+    except MODE.ModeError as exc:
+        raise CaseError(f"version product.yaml: {exc}") from exc
+
+
 def _snapshot_record_hashes(record_dir: Path, case: dict[str, Any]) -> dict[str, str]:
     """Read build-time records relevant to analysis and bind their hashes into the recipe."""
     names = ["product.yaml", "requirements.yaml", "interfaces.yaml", "assembly.yaml", "manufacturing/materials.yaml"]
@@ -619,6 +687,7 @@ def _is_solver_evidence(relative_path: str) -> bool:
 def _producer_code_hashes() -> dict[str, str]:
     paths = (Path(__file__), Path(__file__).with_name("fea_part_selection.py"),
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
+             Path(__file__).with_name("fea_mode.py"),
              conditions.INTENT_PATH, Path(SOLVERS.__file__))
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
@@ -643,7 +712,16 @@ def _case_options(case: dict[str, Any]) -> dict[str, Any]:
             "calculix_matrix_solver": "spooles",
             "calculix_environment": CCX_ENVIRONMENT,
         },
+        "fea_mode": _mode_options(case.get("_mode", ACCURATE)),
     }
+
+
+def _mode_options(mode: Any) -> dict[str, Any]:
+    """The recipe's mesh mode: a fast result's band and stated bias bind it too."""
+    if mode.mode != "fast":
+        return {"mode": mode.mode}
+    band = mode.band_pct if mode.band_pct is not None else MODE.DEFAULT_BAND_PCT
+    return {"mode": "fast", "fast_band_pct": band, "fast_bias_pct": MODE.FAST_BIAS_PCT}
 
 
 def _scratch_hw(path: Path) -> Path:
@@ -716,6 +794,7 @@ def main(argv: list[str] | None = None) -> int:
                 case["material"].setdefault("name", part_record.get("material", "Case material"))
             # Material, criteria and evidence basis, settled (or refused) before anything is solved.
             assessment = conditions.assess_version(case, record_dir=record_dir, hw=args.hw, version=version)
+            case["_mode"] = _version_mode(record_dir)
             recipe_inputs = {**_input_hashes(case), **_snapshot_record_hashes(record_dir, case)}
             if args.out is not None:
                 raise CaseError("--out is only allowed for standalone scratch analyses")
@@ -742,8 +821,8 @@ def main(argv: list[str] | None = None) -> int:
                     output = stage / "results.json"
                     job_scratch = Path(args.hw).parent / ".cad-work"
                     job_scratch.mkdir(parents=True, exist_ok=True)
-                    result, status = run_job(case_path, case, scratch_root=job_scratch,
-                                             result_path=output, solver_versions=tools, guard=guard)
+                    result, status = run_case(case_path, case, assessment.criteria, scratch_root=job_scratch,
+                                              result_path=output, solver_versions=tools, guard=guard)
                 if status != 2:
                     conditions.report(result, assessment, case)
                     run_dir = Path(result["run_directory"])
@@ -788,7 +867,8 @@ def main(argv: list[str] | None = None) -> int:
             # A scratch run is recorded in its project's hw/, one per case file; it is supervised either way.
             with (lifecycle.claim_run(project_hw, "fea", scope=str(case_path)) if project_hw is not None and project_hw.is_dir()
                   else contextlib.nullcontext()) as guard:
-                result, status = run_job(case_path, case, scratch_root=scratch_root, result_path=output, guard=guard)
+                result, status = run_case(case_path, case, assessment.criteria, scratch_root=scratch_root,
+                                          result_path=output, guard=guard)
             if status != 2:
                 conditions.report(result, assessment, case)
                 (output or default_result_path(case_path)).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

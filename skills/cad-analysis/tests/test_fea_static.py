@@ -444,6 +444,30 @@ runpy.run_path(sys.argv[1], run_name="__main__")
             phase_files = list((root / "jobs" / "fea_static").glob("*/fea_static_*_phase.json"))
             self.assertEqual(phase_files, [], [path.read_text(encoding="utf-8") for path in phase_files])
 
+    def test_the_job_meshes_in_the_mode_the_case_names(self) -> None:
+        for mode in ("fast", "accurate"):
+            with self.subTest(mode=mode):
+                _, script, _ = self.generated_job({**self.CASE, "_mode": fea_static.MODE.Mode(mode, None)})
+                self.assertEqual(job_of(script)["mesh_mode"], mode)
+
+    @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
+    def test_fast_mode_meshes_straight_sided_tetrahedra_without_the_high_order_passes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-fea-fast-") as directory:
+            root = Path(directory)
+            step = self.make_cantilever_step(root)
+            case_path = root / "case.yaml"
+            case_path.write_text(f"step: {step}\n{CANTILEVER_TAIL}", encoding="utf-8")
+            case = {**load_case(case_path), "_mode": fea_static.MODE.Mode("fast", None)}
+            result, status = fea_static.run_job(case_path, case)
+            self.assertEqual(status, 0, result)
+            geo = (Path(result["run_directory"]) / "GmshInput.geo").read_text(encoding="utf-8")
+        self.assertIn("Mesh.SecondOrderLinear = 1;", geo)
+        self.assertIn("Mesh.HighOrderOptimize = 0;", geo)
+        # 120 MPa and 2.31884 mm: test_cantilever_matches_beam_theory_within_five_percent
+        self.assertLess(abs(result["max_von_mises_mpa"] / 120.0 - 1), 0.05)
+        self.assertLess(abs(result["max_displacement_mm"] / 2.31884 - 1), 0.05)
+
+
     def test_a_failed_job_keeps_its_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -893,6 +917,55 @@ class CcxFailureDiagnosis(unittest.TestCase):
                          "to element 7")
 
 
+class FastModeEscalation(unittest.TestCase):
+    """fea_static.run_case: a fast result inside the band is solved again in accurate mode (run_job stubbed)."""
+
+    def solve(self, mode: str, *results: dict, band: float | None = 10.0) -> tuple[list[str], dict, int]:
+        modes: list[str] = []
+
+        def run_job(case_path: Path, case: dict, **kwargs) -> tuple[dict, int]:
+            modes.append(case["_mode"].mode)
+            result = dict(results[len(modes) - 1])
+            return result, 2 if result["status"] == "error" else 0
+
+        case = {"_mode": fea_static.MODE.Mode(mode, band if mode == "fast" else None), "required_safety_factor": 2.0}
+        with patch("fea_static.run_job", side_effect=run_job):
+            result, status = fea_static.run_case(Path("case.yaml"), case, {"stiffness": {"value": 0.5}})
+        return modes, result, status
+
+    CLEAR = {"status": "pass", "safety_factor_yield": 3.0, "max_displacement_mm": 0.2, "max_von_mises_mpa": 92.0}
+    NEAR = {"status": "pass", "safety_factor_yield": 2.1, "max_displacement_mm": 0.2, "max_von_mises_mpa": 131.4}
+    ACCURATE = {"status": "fail", "safety_factor_yield": 1.95, "max_displacement_mm": 0.21, "max_von_mises_mpa": 141.5}
+
+    def test_a_clear_fast_result_stays_fast_with_its_bias_as_uncertainty(self) -> None:
+        modes, result, _ = self.solve("fast", self.CLEAR)
+        self.assertEqual(modes, ["fast"])
+        record = result["fea_mode"]
+        self.assertEqual((record["requested"], record["used"], record["escalated"], record["band_pct"]),
+                         ("fast", "fast", False, 10.0))
+        self.assertEqual(record["uncertainty_pct"], fea_static.MODE.FAST_BIAS_PCT)
+
+    def test_a_fast_result_inside_the_band_is_solved_again_in_accurate_mode(self) -> None:
+        modes, result, status = self.solve("fast", self.NEAR, self.ACCURATE)
+        self.assertEqual(modes, ["fast", "accurate"])
+        self.assertEqual((result["status"], status), ("fail", 0))
+        record = result["fea_mode"]
+        self.assertEqual((record["used"], record["escalated"], record["uncertainty_pct"]), ("accurate", True, None))
+        self.assertEqual(record["fast_result"]["safety_factor_yield"], 2.1)
+        self.assertIn("yield_safety_factor 2.1 is within 10%", record["reason"])
+
+    def test_without_a_profile_band_the_measured_default_applies(self) -> None:
+        _, result, _ = self.solve("fast", self.CLEAR, band=None)
+        self.assertEqual(result["fea_mode"]["band_pct"], fea_static.MODE.DEFAULT_BAND_PCT)
+
+    def test_an_accurate_or_failed_solve_is_not_escalated(self) -> None:
+        modes, result, _ = self.solve("accurate", self.NEAR)
+        self.assertEqual((modes, result["fea_mode"]["used"], result["fea_mode"]["escalated"]),
+                         (["accurate"], "accurate", False))
+        modes, result, status = self.solve("fast", {"status": "error", "error": {"code": "solver_failed"}})
+        self.assertEqual((modes, status), (["fast"], 2))
+
+
 class VersionedPublicationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -1037,6 +1110,32 @@ class VersionedPublicationTests(unittest.TestCase):
              patch("fea_static.run_job", side_effect=AssertionError("no solver, no run")), patch("sys.stdout", output):
             status = fea_static.main([str(self.case), "--hw", str(self.hw), "--version", "v1"])
         self.assertEqual((status, json.loads(output.getvalue())["error"]["code"]), (2, "solver_unavailable"))
+
+    def write_product(self, document: dict) -> None:
+        """Replace the version's product.yaml snapshot, keeping its manifest consistent."""
+        version = self.hw / "versions" / "v1"
+        (version / "record" / "product.yaml").write_text(json.dumps(document) + "\n", encoding="utf-8")
+        files = {path.relative_to(version).as_posix(): fea_static.hashlib.sha256(path.read_bytes()).hexdigest()
+                 for path in version.rglob("*") if path.is_file() and path.name != "manifest.json"}
+        (version / "manifest.json").write_text(json.dumps({"label": "v1", "files": files}), encoding="utf-8")
+
+    def recipe_options(self) -> dict:
+        manifest = json.loads((self.hw / "analysis" / "v1" / "cantilever" / "manifest.json").read_text(encoding="utf-8"))
+        return manifest["recipe"]["options"]
+
+    def test_the_flow_profile_fea_mode_enters_the_recipe(self) -> None:
+        self.assertEqual(self.call()[0], 0)
+        self.assertEqual(self.recipe_options()["fea_mode"], {"mode": "accurate"})
+        self.write_product({"flow": {"profile": {"fea": {"enabled": True, "mode": "fast", "fast_band_pct": 12}}}})
+        self.assertEqual(self.call(replace=True)[0], 0)
+        self.assertEqual(self.recipe_options()["fea_mode"],
+                         {"mode": "fast", "fast_band_pct": 12.0, "fast_bias_pct": fea_static.MODE.FAST_BIAS_PCT})
+
+    def test_a_boolean_fea_mode_is_an_invalid_case(self) -> None:
+        self.write_product({"flow": {"profile": {"fea": {"enabled": True, "mode": True}}}})
+        status, report = self.call()
+        self.assertEqual((status, report["error"]["code"]), (2, "invalid_case"))
+        self.assertIn("boolean", report["error"]["message"])
 
     def test_changed_ccx_thread_counts_change_the_recipe(self) -> None:
         self.assertEqual(self.call()[0], 0)
