@@ -508,14 +508,14 @@ class RecheckHookTests(unittest.TestCase):
         return project
 
     def stage_subdirectory_stamp(self, subdirectory: str) -> Path:
-        """Stage a detail-stage product in the moved project and stamp it with --hw; return the project."""
+        """Stage a detail-stage product in the moved project and stamp it with --hw. Return the project."""
         project = self.move_project(subdirectory)
         (project / "hw" / "product.yaml").write_text(
             json.dumps({"record_version": 2, "id": "test-project", "flow": {"stage": "detail", "recheck_from": "layout"},
                         "use_case": acceptance.confirmed_use_case("appearance_concept")}, indent=1) + "\n", encoding="utf-8")
         self.git("add", subdirectory)
         checks = self.evidence_packet("detail", project=project)
-        result = self.run_python(STAMP, "--hw", subdirectory, "--stage", "detail", "--checks", str(checks), "--passed",
+        result = self.run_python(STAMP, "--hw", f"{subdirectory}/hw", "--stage", "detail", "--checks", str(checks), "--passed",
                                  cwd=self.root)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.git("add", f"{subdirectory}/hw/.cad/recheck.json")
@@ -525,7 +525,7 @@ class RecheckHookTests(unittest.TestCase):
         project = self.stage_subdirectory_stamp("examples/proj")
         self.assertTrue((project / "hw" / ".cad" / "recheck.json").is_file())
         self.assertFalse((self.root / "hw").exists())
-        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj", cwd=self.root)
+        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj/hw", cwd=self.root)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)["passed"])
 
@@ -534,9 +534,15 @@ class RecheckHookTests(unittest.TestCase):
         part = project / "hw" / "parts" / "PRT-0001" / "part.yaml"
         part.write_text(part.read_text(encoding="utf-8").replace("Fixture", "Edited"), encoding="utf-8")
         self.git("add", "examples/proj")
-        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj", cwd=self.root)
+        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj/hw", cwd=self.root)
         self.assertEqual(result.returncode, 2)
         self.assertIn("stamp is stale", result.stderr)
+
+    def test_hw_must_name_the_hw_directory_not_the_project(self) -> None:
+        self.stage_subdirectory_stamp("examples/proj")
+        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj", cwd=self.root)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--hw must name an hw directory", result.stderr)
 
     def test_verify_without_hw_reads_the_repository_root_from_a_nested_directory(self) -> None:
         self.stage_product("detail")

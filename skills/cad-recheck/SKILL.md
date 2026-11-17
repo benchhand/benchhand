@@ -43,18 +43,18 @@ uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.
 
 Exit 0 permits the commit; exit 2 means do not commit. Fix stderr's reason, restamp, and verify again.
 
-`stamp.py` reads the project at the git root by default.
+`stamp.py` reads `hw/` at the git root by default.
 
-For a project below the root, such as `examples/lamp-arm`, add `--hw <project-directory>` to both commands.
+For a project below the root, such as `examples/lamp-arm`, add `--hw <hw-directory>` to both commands. It names the `hw/` directory itself, as in `evidence.py --hw`. Pass `examples/lamp-arm/hw`, not `examples/lamp-arm`.
 
-The directory holds `hw/`. A relative path starts at the current directory. Under it, `stamp.py` reads and writes only these paths:
+A relative path starts at the current directory. The project is the parent of that directory. Under it, `stamp.py` reads and writes only these paths:
 
 - `hw/product.yaml`
 - `hw/.cad/recheck.json`
 - the staged `hw/` tree
 
 ```sh
-uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --hw examples/lamp-arm
+uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --hw examples/lamp-arm/hw
 ```
 
 The installer refuses to replace a different repository-local `core.hooksPath` or ignore non-sample hooks in `.git/hooks/`. Integrate the CAD hook with existing hooks, or explicitly pass `--force` to replace or ignore them. Commit the generated `.githooks/` directory so the hook and its stamp verifier are available to other checkouts.

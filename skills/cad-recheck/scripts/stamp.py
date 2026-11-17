@@ -3,7 +3,7 @@
 # requires-python = ">=3.12,<3.15"
 # dependencies = ["pyyaml>=6.0", "jsonschema>=4.23"]
 # ///
-"""Write or verify the CAD design recheck record for the staged index of the project at the git root or `--hw`.
+"""Write or verify the CAD design recheck record for the staged index.
 
 A stamp records the staged hw/ tree hash, the stage and the evidence packet `evidence.py check` wrote
 for it (cad-record), or the packet of an `evidence.py run` report (a run that stopped has none): its
@@ -16,6 +16,7 @@ the digest of the staged selection inputs), passes, so a stale, failed or unknow
 recorded final choice the selection does not support, cannot be stamped as passed.
 `--verify` reads the staged index: the record inputs, the stamp and its packet, never the work tree
 beyond the layout audit. It is the whole pre-commit check: a commit that stages no hw/ change passes.
+`--hw` names the hw/ directory, as in evidence.py (default: hw/ at the git root).
 flow.recheck_from is the threshold and may only stay or move earlier than
 HEAD's: raising it would suppress the checks of the stages it skips.
 """
@@ -173,16 +174,17 @@ def git(*args: str, cwd: Path) -> bytes:
 
 
 def project_root(start: Path, hw: Path | None) -> Path:
-    """The directory holding hw/: `hw` (relative to `start`) when given, else the git root of `start`.
+    """The directory holding hw/: the parent of `hw` (relative to `start`) when given, else the git root of `start`.
 
-    Every git call runs in it, so the paths git prints and the `:./` index paths are relative to it."""
+    `hw` is the hw/ directory itself, as in evidence.py. Every git call runs in the project, so the paths git
+    prints and the `:./` index paths are relative to it."""
     if hw is None:
         return Path(git("rev-parse", "--show-toplevel", cwd=start).decode().strip())
-    project = (start / hw).resolve()
-    if not project.is_dir():
-        raise RuntimeError(f"--hw {hw} is not a directory")
-    git("rev-parse", "--show-toplevel", cwd=project)  # refuses a directory outside a git work tree
-    return project
+    hw_dir = (start / hw).resolve()
+    if hw_dir.name != "hw" or not hw_dir.is_dir():
+        raise RuntimeError(f"--hw must name an hw directory (for example examples/lamp-arm/hw); got {hw}")
+    git("rev-parse", "--show-toplevel", cwd=hw_dir)  # refuses a directory outside a git work tree
+    return hw_dir.parent
 
 
 def staged_tree_hash(root: Path) -> str:
@@ -294,8 +296,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage", choices=validate.stages(), help="stage for a newly written recheck stamp")
     parser.add_argument("--checks", type=Path, help="JSON check results")
     parser.add_argument("--passed", action="store_true", help="record that every required check passed")
-    parser.add_argument("--hw", type=Path, help="project directory holding hw/, inside the repository "
-                        "(default: the git root); the stamp and every path read or written are under it")
+    parser.add_argument("--hw", type=Path, help="the hw/ directory, inside the repository (default: hw/ at the git root); "
+                        "the stamp and every path read or written are under it")
     parser.add_argument("--verify", action="store_true", help="verify the staged stamp against the current staged hash")
     args = parser.parse_args()
     if args.verify:
