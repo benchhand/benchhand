@@ -1,0 +1,48 @@
+{
+  "ok": false,
+  "findings": [
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/product.yaml",
+      "message": "required record file is missing",
+      "severity": "error"
+    },
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/requirements.yaml",
+      "message": "required record file is missing",
+      "severity": "error"
+    },
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/interfaces.yaml",
+      "message": "required record file is missing",
+      "severity": "error"
+    },
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/assembly.yaml",
+      "message": "required record file is missing",
+      "severity": "error"
+    },
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/parts",
+      "message": "parts directory is missing",
+      "severity": "error"
+    },
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/bom.csv",
+      "message": "cannot read CSV: [Errno 2] No such file or directory: '/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/bom.csv'",
+      "severity": "error"
+    },
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/verification.csv",
+      "message": "cannot read CSV: [Errno 2] No such file or directory: '/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/verification.csv'",
+      "severity": "error"
+    },
+    {
+      "path": "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-wall-bracket-trial-20261117T143217-e44a/project/product.yaml",
+      "message": "the record is record version 1; manufacturing intent (use case, part routes, profiles) is unknown and stage advance, freeze, release and record-writing builds refuse it",
+      "severity": "error",
+      "code": "record.migration_required",
+      "canonical_location": null,
+      "action": "Review `uv run --script \"$CAD_SKILLS/cad-flow/scripts/run.py\" cad-record/scripts/migrate.py <project> --dry-run`, then run it with --apply. It adds explicit unknowns and open questions and changes nothing else; nothing was changed."
+    }
+  ]
+}
