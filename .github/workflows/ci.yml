@@ -27,10 +27,10 @@ jobs:
           cache-dependency-glob: scripts/typecheck.py.lock
 
       - name: Harness tests
-        run: uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
+        run: uv run --no-project --with-requirements harness/test-requirements-min.txt python -B -m unittest discover -s harness -p 'test_*.py'
 
       - name: Script tests
-        run: uv run --no-project --python 3.12 --with pyyaml==6.0.3 python -B -m unittest discover -s scripts -p 'test_*.py'
+        run: uv run --no-project --python 3.12 --with-requirements harness/test-requirements-min.txt python -B -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Explicit text encoding
         run: uvx ruff@0.17.4 check --select PLW1514 --preview skills/*/scripts
@@ -41,15 +41,15 @@ jobs:
       # Import-time errors (unhashable dataclass defaults, bad annotations) survive compileall, so import
       # every module. Modules that need FreeCAD or other unavailable packages are listed as SKIPPED.
       - name: Import every module
-        run: uv run --no-project --python 3.12 --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 --with hypothesis==6.170.15 python -B scripts/import_check.py
+        run: uv run --no-project --python 3.12 --with-requirements harness/test-requirements.txt python -B scripts/import_check.py
 
       # freecadcmd runs FreeCAD's bundled Python 3.11, so the modules its jobs load must compile and
       # import there. scripts/freecad_job_modules.txt lists them; reviewers keep it complete.
       - name: FreeCAD job code on Python 3.11
-        run: uv run --no-project --python 3.11 --with pyyaml==6.0.3 --with jsonschema==4.26.0 python -B scripts/import_check.py --manifest
+        run: uv run --no-project --python 3.11 --with-requirements harness/test-requirements-freecad.txt python -B scripts/import_check.py --manifest
 
       - name: Generated files
-        run: uv run --no-project --with pyyaml==6.0.3 python -B harness/generate.py --check
+        run: uv run --no-project --with-requirements harness/test-requirements-min.txt python -B harness/generate.py --check
 
       - name: Scoped Python type check
         run: uv run --no-project --locked --script scripts/typecheck.py
@@ -227,7 +227,7 @@ jobs:
             echo "::group::$test"
             started=$SECONDS
             result=pass
-            uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 --with hypothesis==6.170.15 \
+            uv run --no-project --with-requirements harness/test-requirements.txt \
               python -B scripts/ci_shards.py run "$SHARD" "$test" || result=FAIL
             echo "::endgroup::"
             elapsed=$((SECONDS - started))

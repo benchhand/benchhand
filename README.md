@@ -161,15 +161,15 @@ Agents keep worker scratch and temporary files under `.cad-work/` beside `hw/`. 
 
 ## Tests
 
-Run each skill test file separately with the pinned test dependencies:
+Run each skill test file separately with the test pins in `harness/test-requirements.txt`. The harness and script tests use `harness/test-requirements-min.txt` (PyYAML only), so a host script that imports a package it never declares still fails. The FreeCAD Python 3.11 import check uses `harness/test-requirements-freecad.txt`:
 
 ```sh
 for test in skills/*/test_*.py skills/*/tests/test_*.py; do
   [ -f "$test" ] || continue
-  uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 --with hypothesis==6.170.15 \
+  uv run --no-project --with-requirements harness/test-requirements.txt \
     python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")"
 done
-uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
+uv run --no-project --with-requirements harness/test-requirements-min.txt python -B -m unittest discover -s harness -p 'test_*.py'
 python3 harness/generate.py --check
 uv run --no-project --locked --script scripts/typecheck.py
 uvx slopvac <changed-prose-files>
