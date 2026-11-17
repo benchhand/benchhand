@@ -27,10 +27,10 @@ jobs:
           cache-dependency-glob: scripts/typecheck.py.lock
 
       - name: Harness tests
-        run: uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
+        run: uv run --no-project --with-requirements harness/test-requirements.txt python -B -m unittest discover -s harness -p 'test_*.py'
 
       - name: Script tests
-        run: uv run --no-project --python 3.12 --with pyyaml==6.0.3 python -B -m unittest discover -s scripts -p 'test_*.py'
+        run: uv run --no-project --python 3.12 --with-requirements harness/test-requirements.txt python -B -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Explicit text encoding
         run: uvx ruff@0.17.4 check --select PLW1514 --preview skills/*/scripts
@@ -43,10 +43,10 @@ jobs:
       - name: Python 3.11 floor
         run: |
           uv run --no-project --python 3.11 python -B -m compileall -q skills harness scripts
-          uv run --no-project --python 3.11 --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
+          uv run --no-project --python 3.11 --with-requirements harness/test-requirements.txt python -B -m unittest discover -s harness -p 'test_*.py'
 
       - name: Generated files
-        run: uv run --no-project --with pyyaml==6.0.3 python -B harness/generate.py --check
+        run: uv run --no-project --with-requirements harness/test-requirements.txt python -B harness/generate.py --check
 
       - name: Scoped Python type check
         run: uv run --no-project --locked --script scripts/typecheck.py
@@ -223,7 +223,7 @@ jobs:
             echo "::group::$test"
             started=$SECONDS
             result=pass
-            uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 --with hypothesis==6.170.15 \
+            uv run --no-project --with-requirements harness/test-requirements.txt \
               python -B scripts/ci_shards.py run "$SHARD" "$test" || result=FAIL
             echo "::endgroup::"
             elapsed=$((SECONDS - started))
