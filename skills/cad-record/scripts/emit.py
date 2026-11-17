@@ -4,13 +4,13 @@ The one output emitter of the CAD skills. A producer loads it by path from cad-r
 (`<skills>/cad-record/scripts/emit.py`, reachable from every skill through its own file path) and calls `emit`.
 
 Mode, by precedence: the `--json` flag (`json_flag=True`), then the `CAD_OUTPUT` environment variable
-(`text`, `compact` or `json`), then DEFAULT. `cad-flow/scripts/run.py` sets `CAD_OUTPUT=compact` for the
-tools it launches for an agent.
+(`text`, `compact` or `json`), then the stream default: `compact` when stdout is a terminal, else `json`.
+`cad-flow/scripts/run.py` sets `CAD_OUTPUT=compact` for the tools it launches for an agent.
 
 - `json`: exactly `json.dumps(result, indent=2)` and a newline.
 - `compact`: the verdict, the first blocking findings and the path of the full JSON, which is written byte for
   byte as `json` mode prints it, so no information is lost. A result no longer than its summary prints whole.
-- `text` is accepted but has no renderer yet, so it prints like DEFAULT.
+- `text` is accepted and renders as `compact` until a producer gets a dedicated text renderer.
 
 A tool that parses another producer's stdout must start it with `json_env()`.
 
@@ -29,7 +29,7 @@ from typing import Any, TextIO
 
 ENV = "CAD_OUTPUT"
 MODES = ("text", "compact", "json")
-DEFAULT = "json"
+PIPED_DEFAULT, TERMINAL_DEFAULT = "json", "compact"
 MAX_BLOCKING = 5
 MAX_LINE = 200
 NONBLOCKING_SEVERITIES = frozenset({"warning", "info"})
@@ -37,12 +37,19 @@ IDENTITY_KEYS = ("code", "check", "id", "rule")
 SUBJECT_KEYS = ("part", "joint", "subject", "path")
 
 
-def mode(json_flag: bool = False, env: Mapping[str, str] | None = None) -> str:
-    """The output mode: `--json`, else `CAD_OUTPUT` when it names a mode, else DEFAULT."""
+def stdout_isatty() -> bool:
+    """Whether stdout is a terminal; tests replace it so they do not depend on theirs."""
+    return sys.stdout.isatty()
+
+
+def mode(json_flag: bool = False, env: Mapping[str, str] | None = None, isatty: bool | None = None) -> str:
+    """The output mode, `json` or `compact`: `--json`, else `CAD_OUTPUT` when it names a mode, else by stdout."""
     if json_flag:
         return "json"
     value = (os.environ if env is None else env).get(ENV, "")
-    return value if value in MODES else DEFAULT
+    if value in MODES:
+        return "compact" if value == "text" else value  # no text renderer yet: the compact summary is the human view
+    return TERMINAL_DEFAULT if (stdout_isatty() if isatty is None else isatty) else PIPED_DEFAULT
 
 
 def json_env(env: Mapping[str, str] | None = None) -> dict[str, str]:

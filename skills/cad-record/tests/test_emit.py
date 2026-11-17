@@ -46,18 +46,37 @@ class EmitterTests(unittest.TestCase):
             return emitted(self.result, tool="tool", name="tool", code=1, **kwargs)
 
     def test_plain_mode_prints_the_indented_json_and_nothing_else(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, {emit.ENV: "json"}, clear=True):
             self.assertEqual(emitted(self.result, tool="tool", name="tool", code=1, scratch=self.root),
                              self.text + "\n")
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_the_json_flag_beats_the_environment_which_beats_the_default(self) -> None:
-        cases = [(True, "compact", "json"), (False, "compact", "compact"), (False, "text", "text"),
-                 (False, "json", "json"), (False, "bogus", emit.DEFAULT), (False, None, emit.DEFAULT)]
-        for flag, value, expected in cases:
-            with self.subTest(flag=flag, env=value):
+        cases = [(True, "compact", True, "json"), (False, "compact", False, "compact"),
+                 (False, "json", True, "json"), (False, "text", False, "compact"),
+                 (False, "bogus", True, "compact"), (False, "bogus", False, "json"),
+                 (False, None, True, "compact"), (False, None, False, "json")]
+        for flag, value, tty, expected in cases:
+            with self.subTest(flag=flag, env=value, tty=tty):
                 env = {} if value is None else {emit.ENV: value}
-                self.assertEqual(emit.mode(flag, env), expected)
+                self.assertEqual(emit.mode(flag, env, tty), expected)
+
+    def printed_without_env(self, tty: bool) -> str:
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(emit, "stdout_isatty", return_value=tty):
+            return emitted(self.result, tool="tool", name="tool", code=1, scratch=self.root)
+
+    def test_a_terminal_with_no_flag_or_env_gets_the_compact_summary(self) -> None:
+        shown = self.printed_without_env(True)
+        self.assertTrue(shown.startswith("tool: fail (exit 1)"))
+        self.assertIn("full JSON: ", shown)
+
+    def test_a_pipe_with_no_flag_or_env_gets_the_full_json_byte_for_byte(self) -> None:
+        self.assertEqual(self.printed_without_env(False), self.text + "\n")
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_the_default_follows_the_real_stdout(self) -> None:
+        with mock.patch.object(sys.stdout, "isatty", return_value=True, create=True):
+            self.assertTrue(emit.stdout_isatty())
 
     def test_the_json_flag_prints_full_json_in_compact_mode(self) -> None:
         with mock.patch.dict(os.environ, {emit.ENV: "compact"}):

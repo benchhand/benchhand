@@ -102,6 +102,26 @@ The shared launcher reads inline dependencies and uses an environment keyed by d
 
 The target path is relative to `$CAD_SKILLS`, such as `cad-model/scripts/cad_model.py`. Resolve each skill's scripts, assets, and documents relative to that skill folder. Run lightweight standalone scripts directly with `uv run --script`.
 
+### Output modes
+
+These producers print either full JSON or a short summary:
+
+- `cad_model.py`
+- `form_check.py`
+- `render.py`
+- `motion.py`
+- `validate.py`
+
+The summary holds the verdict, up to five blocking findings and the path of the full JSON. That file sits under `.cad-work/agent-output/`, or is the `--out` file. A result shorter than its summary prints whole.
+
+The mode comes from the first of these that is set:
+
+1. The `--json` flag: full JSON.
+2. The `CAD_OUTPUT` variable: `compact`, `json`, or `text`. `text` renders as `compact`.
+3. The stream: `compact` on a terminal, `json` when piped or redirected.
+
+`run.py` sets `CAD_OUTPUT=compact` unless the variable is already set. A script that parses a producer's stdout must pass `--json` or set `CAD_OUTPUT=json`.
+
 ## Workflow
 
 The `cad-flow` skill guides these stages:
