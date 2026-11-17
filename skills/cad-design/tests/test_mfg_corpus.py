@@ -50,7 +50,7 @@ class RateTests(unittest.TestCase):
 
     def test_a_crashing_check_is_a_miss_not_a_detection(self) -> None:
         row = self.rows(corpus.Pair("a", "d", crashing))
-        self.assertEqual((row["errors"], row["detected"], row["detection_rate"]), (1, 0, 0.0))
+        self.assertEqual((row["errors"], row["detected"], row["missed"], row["detection_rate"]), (1, 0, 1, 0.0))
         self.assertIn("boom", row["results"][0]["error"])
 
     def test_a_twin_crash_voids_the_mutant_verdict_too(self) -> None:
@@ -161,10 +161,13 @@ class DependencyGuardTests(unittest.TestCase):
              "OCP": {"additive_min_feature", "additive_stability", "additive_support_overhang_bridge"}}
 
     def test_pairs_skip_when_their_module_is_absent(self) -> None:
+        """Absent for real: find_spec says so and `import <module>` raises ImportError, with any cached submodule gone."""
         real = importlib.util.find_spec
         families = {f.id: f for f in corpus.load_families()}
         for module, needing in self.NEEDS.items():
-            with mock.patch("importlib.util.find_spec", lambda name, *a, _m=module: None if name == _m else real(name, *a)):
+            hidden = {name: None for name in list(sys.modules) if name == module or name.startswith(module + ".")}
+            with mock.patch("importlib.util.find_spec", lambda name, *a, _m=module: None if name == _m else real(name, *a)), \
+                    mock.patch.dict(sys.modules, {**hidden, module: None}):
                 for family in sorted(needing):
                     for item in families[family].pairs:
                         with self.subTest(module=module, family=family, pair=item.id):
