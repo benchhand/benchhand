@@ -161,7 +161,7 @@ Agents keep worker scratch and temporary files under `.cad-work/` beside `hw/`. 
 
 ## Tests
 
-Run each skill test file separately with the test pins in `harness/test-requirements.txt`. The harness and script tests use `harness/test-requirements-min.txt` (PyYAML only), so a host script that imports a package it never declares still fails. `harness/run_tests.sh <test file>...` picks the right file per test, runs the files of one invocation in one fresh run directory (`log`, `pid`, `done`) and prints `PASS|FAIL <seconds>s <file>` for each. It refuses a tree without `.git`, and `--expect-head <sha>` (7+ characters) refuses a checkout at another commit; see its header:
+Run each skill test file separately with the test pins in `harness/test-requirements.txt`. The harness and script tests use `harness/test-requirements-min.txt` (PyYAML only), so a host script that imports a package it never declares still fails. The FreeCAD Python 3.11 import check uses `harness/test-requirements-freecad.txt`:
 
 ```sh
 for test in skills/*/test_*.py skills/*/tests/test_*.py; do

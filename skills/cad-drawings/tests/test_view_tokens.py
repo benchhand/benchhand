@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The view tokens of a drawing intent: the scale string and the projection relation, no FreeCAD needed.
 
-Run: harness/run_tests.sh skills/cad-drawings/tests/test_view_tokens.py
+Run: uv run --no-project --with-requirements harness/test-requirements.txt python -B -m unittest discover -s skills/cad-drawings/tests -p test_view_tokens.py
 """
 
 from __future__ import annotations

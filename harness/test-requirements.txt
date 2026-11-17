@@ -1,5 +1,6 @@
-# Test-only pins for the skill tests: the single source for CI (.github/workflows/ci.yml), README.md and
-# harness/run_tests.sh. The harness and script tests use test-requirements-min.txt (PyYAML only).
+# Test-only pins for the skill tests: the single source for CI (.github/workflows/ci.yml) and README.md.
+# The harness and script tests use test-requirements-min.txt (PyYAML only), the FreeCAD 3.11 check
+# test-requirements-freecad.txt.
 # Install with: uv run --no-project --with-requirements harness/test-requirements.txt ...
 # Tools with their own pinned environment stay out: ruff (uvx), actionlint, scripts/typecheck.py (its lock).
 pyyaml==6.0.3  # harness/generate.py and install.py --tier-model, and the skill tests that read YAML
