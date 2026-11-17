@@ -100,6 +100,12 @@ CHANGED_FILES = (
     "skills/cad-design/tests/mfg_corpus/families/additive_support_overhang_bridge.py",
     "skills/cad-design/tests/mfg_corpus/families/assembly_operations_order.py",
     "skills/cad-design/tests/mfg_corpus/families/form_check_kernel_validity.py",
+    "bench/acceptance.py",
+    "bench/dialogue.py",
+    "bench/isolation.py",
+    "bench/metrics.py",
+    "bench/report.py",
+    "bench/run.py",
 )
 STRICT_FILES = (
     "bench/acceptance.py",
