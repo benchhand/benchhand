@@ -103,7 +103,7 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("motion.", _JUDGED | {"geometry", "interface", "material", "finish", "load", "process"}),
     ("assembly.", _JUDGED | {"geometry", "interface"}),
     ("function.", _JUDGED | {"geometry", "material", "condition", "load", "environment", "interface", "process", "finish"}),
-    ("export.3mf", frozenset({"geometry", "appearance"})),  # package D's 3MF output writes the part colour
+    ("export.3mf", frozenset({"geometry", "material", "appearance"})),  # package D's 3MF output writes the part colour and material name
     ("requirement.", _EVERYTHING),
     ("policy.", _EVERYTHING),
 )

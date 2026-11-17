@@ -142,6 +142,20 @@ class Variants(unittest.TestCase):
         stale = impact.stale_obligations([three_mf], {"TST-0001": ("geometry",)})
         self.assertEqual(stale, {"export.3mf@TST-0001": ("geometry",)})
 
+    def test_a_material_change_stales_the_3mf_family_of_that_part_only(self) -> None:
+        three_mf = [mi.Obligation(f"export.3mf@{pn}", "export.3mf", {"PN": pn}, "cad_valid", "layout", "test")
+                    for pn in ("TST-0001", "TST-0002")]
+        changes = {
+            "declared material": lambda docs: docs["parts/TST-0001/part.yaml"].update(material="TST other material"),
+            "material profile": lambda docs: docs["parts/TST-0001/part.yaml"]["intent"].update(material_profile="tst_metal_rod"),
+        }
+        for label, change in changes.items():
+            with self.subTest(label):
+                result = self.compare(change)
+                self.assertEqual(result.changed["TST-0001"], ("material",))
+                self.assertEqual(impact.stale_obligations(three_mf, result.changed),
+                                 {"export.3mf@TST-0001": ("material",)})
+
     def test_record_derived_obligations_are_recomputed_never_stale(self) -> None:
         def use_case(docs: dict[str, Any]) -> None:
             docs["product.yaml"]["use_case"]["purpose"] = fx.known("TST another purpose")
