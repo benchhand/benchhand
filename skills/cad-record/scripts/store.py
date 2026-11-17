@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -71,6 +72,11 @@ class Lookup:
 def file_sha(path: Path) -> str:
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _signature(found: os.stat_result) -> tuple[int, int, int]:
+    """An object's inode, size and mtime. Every write to its bytes changes the mtime, and a hard link changes none."""
+    return found.st_ino, found.st_size, found.st_mtime_ns
 
 
 def _link_or_copy(source: Path, target: Path) -> None:
@@ -119,7 +125,8 @@ def _exchange(source: Path, target: Path) -> bool:
 class Store:
     def __init__(self, hw: Path) -> None:
         self.hw = Path(hw)
-        self._checked: dict[str, bool] = {}  # objects already re-hashed by this Store
+        # each object this Store hashed, with its inode, size and mtime at that hash: an edit in place changes the mtime
+        self._checked: dict[str, tuple[tuple[int, int, int], bool]] = {}
         self._held = threading.local()  # the keys whose lock this thread holds through this Store
 
     def _path(self, entry_id: str, digest: str) -> Path:
@@ -132,7 +139,7 @@ class Store:
             folder.mkdir(parents=True, exist_ok=True)
         ignore = folder.parent / ".gitignore"
         if not ignore.is_file():
-            staged = ignore.with_name(f".gitignore.{os.getpid()}.{threading.get_ident()}.tmp")  # one per thread
+            staged = ignore.with_name(f".gitignore.{os.getpid()}.{threading.get_ident()}.tmp")  # transient.store_gitignore
             staged.write_text("*\n", encoding="utf-8")
             os.replace(staged, ignore)
         return folder
@@ -143,10 +150,18 @@ class Store:
         """Whether the object `digest` exists and its bytes still hash to its name."""
         if not isinstance(digest, str) or not SHA.fullmatch(digest):
             return False
-        if digest not in self._checked:
-            path = self._path("cache.part_objects", digest)
-            self._checked[digest] = path.is_file() and not path.is_symlink() and file_sha(path) == digest
-        return self._checked[digest]
+        path = self._path("cache.part_objects", digest)
+        try:
+            found = os.stat(path, follow_symlinks=False)
+        except FileNotFoundError:
+            self._checked.pop(digest, None)
+            return False
+        if not stat.S_ISREG(found.st_mode):
+            return False
+        signature = _signature(found)
+        if self._checked.get(digest, (None, False))[0] != signature:
+            self._checked[digest] = (signature, file_sha(path) == digest)
+        return self._checked[digest][1]
 
     def intern(self, path: Path) -> str:
         """Store the file at `path` as an object and return its sha256. The store holds equal bytes once: when it
@@ -155,13 +170,13 @@ class Store:
         if self.holds(digest) and self.place_object(digest, path):
             return digest
         target = self._path("cache.part_objects", digest)
-        staged = self._folder("cache.part_objects") / f".{digest}.{os.getpid()}.tmp"
+        staged = self._folder("cache.part_objects") / f".{digest}.{os.getpid()}.{threading.get_ident()}.tmp"
         _link_or_copy(Path(path), staged)
         if file_sha(staged) != digest:  # the source changed during the link or copy
             staged.unlink()
             raise StoreError(f"{path} changed while it was stored")
         os.replace(staged, target)
-        self._checked[digest] = True
+        self._checked[digest] = (_signature(os.stat(target)), True)
         return digest
 
     def place_object(self, digest: str, target: Path) -> bool:
@@ -175,7 +190,7 @@ class Store:
         try:
             _link_or_copy(self._path("cache.part_objects", digest), staged)
         except FileNotFoundError:  # gc removed it meanwhile
-            self._checked[digest] = False
+            self._checked.pop(digest, None)
             return False
         os.replace(staged, target)
         return True
@@ -223,7 +238,7 @@ class Store:
                 raise ValueError(f"the record names version label {label} ({', '.join(named)}): a cached output "
                                  "must not depend on the version it is first built for")
         target = self._path("cache.part_records", key)
-        staged = self._folder("cache.part_records") / f".{key}.json.{os.getpid()}.{id(record)}.tmp"
+        staged = self._folder("cache.part_records") / f".{key}.json.{os.getpid()}.{threading.get_ident()}.tmp"
         staged.write_text(json.dumps({**record, "format": FORMAT}, indent=1, sort_keys=True) + "\n",
                           encoding="utf-8")
         try:
@@ -300,7 +315,7 @@ class Store:
                         raise FileNotFoundError(digest)
                     _link_or_copy(self._path("cache.part_objects", digest), target)
                 except FileNotFoundError:  # gc removed it, or its bytes changed, after holds() read it
-                    self._checked[digest] = False
+                    self._checked.pop(digest, None)
                     return f"stale: {name} names object {digest}, which is missing or changed"
             if not destination.exists():
                 os.rename(staged, destination)
@@ -325,18 +340,18 @@ class Store:
 
     def referenced(self) -> tuple[set[str], int]:
         """Every sha256 a sealed manifest under hw/ names (versions, releases and every sealed bundle kind), and
-        how many manifests it read. StoreError on a manifest it cannot read, so gc never removes what it names."""
+        how many manifests it read. A manifest counts where it seals its folder (`layout.sealed`). A file named
+        manifest.json inside a sealed folder is payload, which the outer seal already lists. StoreError on a seal
+        it cannot read, so gc never removes what it names."""
+        lay = layout.load()
         found: set[str] = set()
         manifests = 0
         for root, dirnames, filenames in os.walk(self.hw):  # never follows a link
             folder = Path(root)
             dirnames[:] = sorted(d for d in dirnames if not (folder == self.hw and d == ".cad"))
-            if layout.MANIFEST not in filenames:
+            if layout.MANIFEST not in filenames or lay.sealed(layout.relative(self.hw, folder)) is None:
                 continue
             path = folder / layout.MANIFEST
-            match = layout.classify(path, self.hw)
-            if match is None or match.entry.manifest is None:
-                continue
             try:
                 document = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
@@ -371,10 +386,10 @@ class Store:
         removed, removed_bytes, freed_bytes = [], 0, 0
         for digest in sorted(present - keep):
             path = objects_dir / digest
-            stat = path.stat()
+            info = path.stat()
             removed.append(digest)
-            removed_bytes += stat.st_size
-            freed_bytes += stat.st_size if stat.st_nlink == 1 else 0
+            removed_bytes += info.st_size
+            freed_bytes += info.st_size if info.st_nlink == 1 else 0
             if not dry_run:
                 path.unlink()
         stale = [path for path in records if path not in live]

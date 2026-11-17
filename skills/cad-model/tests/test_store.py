@@ -95,7 +95,7 @@ class StoreTests(unittest.TestCase):
         (self.hw / OBJECTS / digest).unlink()
         target = self.hw / "versions" / ".v2.partial-2" / "parts" / "TST-0001.step"
         self.assertFalse(self.store.place_object(digest, target))
-        self.assertEqual(list(target.parent.iterdir()), [])
+        self.assertFalse(target.exists())
         rebuilt = self.output("rebuilt.step", b"geometry")
         self.assertEqual(self.store.intern(rebuilt), digest)
         self.assertTrue(os.path.samefile(rebuilt, self.hw / OBJECTS / digest))
@@ -185,7 +185,10 @@ class StoreTests(unittest.TestCase):
         obj = self.hw / OBJECTS / digest
         os.chmod(obj, 0o644)
         obj.write_bytes(b"geometrX")  # a damaged object: other bytes under its name
-        self.assertRegex(store.Store(self.hw).record(key).reason, "^stale: step ")
+        self.assertRegex(self.store.record(key).reason, "^stale: step ")  # the Store that checked it before
+        target = self.hw / "versions" / ".v2.partial-2" / "parts" / "TST-0001.step"
+        self.assertFalse(self.store.place_object(digest, target))
+        self.assertFalse(target.exists())
         self.assertRegex(self.store.record(self.part_key("TST-0002")).reason, "^miss")
 
     def test_records_of_another_format_or_with_bad_names_are_never_reused(self) -> None:

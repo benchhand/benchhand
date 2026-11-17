@@ -462,10 +462,11 @@ class TreeAudit(TempProject):
         digest = "a" * 64
         accepted = (".cad/cache/.gitignore", f".cad/cache/objects/{digest}", f".cad/cache/locks/{digest}.lock",
                     f".cad/cache/records/{digest}.json")
-        for rel in (*accepted, f".cad/cache/objects/.{digest}.4242.tmp", f".cad/cache/records/.{digest}.json.4242.tmp"):
+        leftovers = (f".cad/cache/objects/.{digest}.4242.8417272384.tmp", f".cad/cache/records/.{digest}.json.4242.8417272384.tmp",
+                     ".cad/cache/.gitignore.4242.8417272384.tmp")  # store.py's staging names: pid, then thread id
+        for rel in (*accepted, *leftovers):
             write(self.hw / rel)
-        self.assertEqual(self.codes(), {f"hw/.cad/cache/objects/.{digest}.4242.tmp": "layout.transient",
-                                        f"hw/.cad/cache/records/.{digest}.json.4242.tmp": "layout.transient"})
+        self.assertEqual(self.codes(), {f"hw/{rel}": "layout.transient" for rel in leftovers})
         for rel in (accepted[1], accepted[3]):
             with self.subTest(rel):
                 match = layout.classify(f"hw/{rel}")

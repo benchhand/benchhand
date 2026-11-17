@@ -26,6 +26,7 @@ listed files and nothing else.
 | `{CAPTURE_SHA}` | `[0-9a-f]{64}` | `2222222222222222222222222222222222222222222222222222222222222222` | sha256 of the captured viewer state |
 | `{SHA}` | `[0-9a-f]{64}` | `3333333333333333333333333333333333333333333333333333333333333333` | sha256 of a stored part output's bytes, or of the inputs of a cached part output |
 | `{PID}` | `[0-9]+` | `4242` | process id of the writing run |
+| `{TID}` | `[0-9]+` | `8417272384` | thread id of the writing thread within its process |
 | `{STAMP}` | `[0-9]+` | `1730000000` | monotonic clock stamp of the writing run |
 | `{RUN}` | `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` | `3f2b9c1e8d7a4b6c9e0f1a2b3c4d5e6f` | id of one supervised sweep, check or FEA run |
 | `{NAME}` | `[^/]+` | `notes.md` | one file or directory name |
@@ -126,8 +127,9 @@ reported with the action below; `vcs` paths are accepted.
 |---|---|---|---|
 | `hw/versions/.{V}.partial-{PID}`/ | transient | cad-model cad_model.py run | An interrupted cad-model run left this staging folder. Delete it once no run is in progress. |
 | `hw/versions/.latest.json.tmp` | transient | cad-model cad_model.py run | An interrupted cad-model run left this temporary pointer. Delete it once no run is in progress. |
-| `hw/.cad/cache/objects/.{SHA}.{PID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-stored object. Delete it once no run is in progress. |
-| `hw/.cad/cache/records/.{SHA}.json.{PID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written record. Delete it once no run is in progress. |
+| `hw/.cad/cache/objects/.{SHA}.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-stored object. Delete it once no run is in progress. |
+| `hw/.cad/cache/records/.{SHA}.json.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written record. Delete it once no run is in progress. |
+| `hw/.cad/cache/.gitignore.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written .gitignore. Delete it once no run is in progress. |
 | `hw/renders/.{V}.partial-{STAMP}`/ | transient | cad-render render.py | An interrupted render left this staging folder. Delete it once no render is in progress. |
 | `hw/renders/.{V}.old-{STAMP}`/ | transient | cad-render render.py | An interrupted render left the set it was replacing. Delete it once no render is in progress. |
 | `hw/.cad/.recheck.json.tmp` | transient | cad-recheck stamp.py | An interrupted stamp left this temporary file. Delete it once no stamp is in progress. |

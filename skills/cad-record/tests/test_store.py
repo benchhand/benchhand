@@ -158,6 +158,19 @@ class Records(Fixture):
         self.assertIsNone(found.record)
         self.assertRegex(found.reason, r"^stale: mesh\.unv .* does not hash to its name")
 
+    def test_an_object_edited_in_place_after_this_store_checked_it_is_never_published(self) -> None:
+        record = self.claimed(key("i"), {"mesh.unv": b"UNV"})
+        self.assertIsNotNone(self.store.record(key("i")).record)  # this Store has now checked the object
+        path = self.hw / ".cad" / "cache" / "objects" / record["members"]["mesh.unv"]
+        os.chmod(path, 0o644)
+        path.write_bytes(b"EDITED")  # an honest mistake: a tool writes through the object
+        self.assertRegex(self.store.record(key("i")).reason, r"^stale: mesh\.unv ")
+        destination = self.root / "run" / "mesh"
+        self.assertRegex(self.store.place(record, destination), r"^stale: mesh\.unv ")
+        self.assertFalse(destination.exists())
+        self.assertFalse(self.store.place_object(record["members"]["mesh.unv"], self.root / "run" / "one.unv"))
+        self.assertFalse((self.root / "run" / "one.unv").exists())
+
     def test_the_first_writer_of_a_key_wins_and_a_different_second_record_is_a_finding(self) -> None:
         first = self.claimed(key("w"), {"mesh.unv": b"ONE"})
         same = {"kind": "test", "members": dict(first["members"])}
@@ -367,6 +380,44 @@ class Collection(Fixture):
         path.write_text("{", encoding="utf-8")
         with self.assertRaisesRegex(store.StoreError, "manifest"):
             self.store.gc()
+
+    def test_gc_reads_only_the_manifests_that_seal_their_folder(self) -> None:
+        bundle = self.claimed(key("b"), {"mesh.unv": b"BUNDLE"})
+        released = self.claimed(key("c"), {"part.stl": b"RELEASE"})
+        self.seal("analysis/v1/beam", {"evidence/mesh.unv": bundle["members"]["mesh.unv"],
+                                       "evidence/manifest.json": "0" * 64})
+        self.seal("releases/A", {"P.stl": {"sha256": released["members"]["part.stl"], "original": "x"}})
+        for rel in ("analysis/v1/beam/evidence/manifest.json", "releases/A/definition/manifest.json"):
+            payload = self.hw / rel  # a file named manifest.json inside a sealed folder, not a seal itself
+            payload.parent.mkdir(parents=True, exist_ok=True)
+            payload.write_text(json.dumps({"solver": "ccx"}), encoding="utf-8")
+        result = self.store.gc()
+        self.assertEqual((result["manifests"], result["objects"]["removed"]), (2, 0))
+        self.assertIsNotNone(self.store.record(key("b")).record)
+        self.assertIsNotNone(self.store.record(key("c")).record)
+
+
+class Staging(Fixture):
+    def test_every_name_the_store_stages_under_hw_is_a_transient_of_the_layout(self) -> None:
+        """A run killed mid-write leaves these names. The audit names each one a leftover of its writer."""
+        staged: list[Path] = []
+        real = os.replace
+
+        def replace(source, target):
+            if Path(source).is_relative_to(self.hw):
+                staged.append(Path(source))
+            real(source, target)
+
+        with mock.patch.object(store.os, "replace", side_effect=replace):
+            self.claimed(key("g"), {"mesh.unv": b"UNV"})
+        kinds = {path.parent.name if path.parent.name != "cache" else ".gitignore" for path in staged}
+        self.assertEqual(kinds, {".gitignore", "objects", "records"})
+        for path in staged:
+            with self.subTest(name=path.name):
+                found = layout.load().exemption(layout.relative(self.hw, path), False)
+                self.assertIsNotNone(found, path.name)
+                self.assertEqual(found.kind, "transient", path.name)
+                self.assertIn("store.py", found.writer)
 
 
 if __name__ == "__main__":
