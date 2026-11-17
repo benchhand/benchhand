@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from pathlib import Path
@@ -22,7 +23,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 sys.path.insert(0, str(HERE.parent / "scripts"))
-from cadmodel import threemf  # noqa: E402
+from cadmodel import manufacture, store, threemf  # noqa: E402
+sys.path.insert(0, str(HERE.parents[2] / "scripts"))
+from modload import load_module  # noqa: E402
 
 # A 10 mm cube: 8 vertices, 12 triangles wound outward. Its volume is 10^3 and its area 6 x 10^2.
 CUBE_VERTICES = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 10.0, 0.0), (0.0, 10.0, 0.0),
@@ -32,8 +35,8 @@ CUBE_TRIANGLES = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 
 ORDER = ["[Content_Types].xml", "_rels/.rels", "3D/3dmodel.model"]
 
 
-def cube(material: str | None = "PETG") -> bytes:
-    return threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material=material)
+def cube(material: str | None = "PETG", color: str | None = None) -> bytes:
+    return threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material=material, color=color)
 
 
 def entries(data: bytes) -> dict[str, bytes]:
@@ -88,6 +91,88 @@ class PackageTests(unittest.TestCase):
         data = threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name='A&"<B>', material="PLA <1> & \"2\"")
         read = threemf.read(data).objects[0]
         self.assertEqual((read.name, read.metadata), ('A&"<B>', {"cadagent:material": 'PLA <1> & "2"'}))
+
+
+class ColourTests(unittest.TestCase):
+    def test_a_colour_writes_a_basematerials_entry_the_object_points_at(self) -> None:
+        model = entries(cube("PETG", "#1a2B3c"))["3D/3dmodel.model"].decode("utf-8")
+        self.assertIn('<basematerials id="1"><base name="PETG" displaycolor="#1A2B3CFF"/></basematerials>', model)
+        self.assertIn('<object id="2" name="TST-0001" type="model" pid="1" pindex="0">', model)
+        self.assertIn('<item objectid="2"/>', model)
+        self.assertIn('<metadata name="cadagent:material">PETG</metadata>', model)
+
+    def test_the_colour_is_read_back_as_rrggbbaa_and_a_colourless_part_reads_none(self) -> None:
+        (coloured,) = threemf.read(cube("PETG", "#1a2B3c")).objects
+        (plain,) = threemf.read(cube("PETG")).objects
+        self.assertEqual((coloured.color, coloured.id, coloured.metadata), ("#1A2B3CFF", 2, {"cadagent:material": "PETG"}))
+        self.assertIsNone(plain.color)
+
+    def test_a_colour_without_a_material_names_the_base_after_the_part(self) -> None:
+        model = entries(cube(None, "#000000"))["3D/3dmodel.model"].decode("utf-8")
+        self.assertIn('<base name="TST-0001" displaycolor="#000000FF"/>', model)
+        self.assertNotIn("metadata", model)
+
+    def test_a_different_colour_changes_the_bytes_and_two_writes_are_identical(self) -> None:
+        self.assertEqual(cube("PETG", "#FF0000"), cube("PETG", "#FF0000"))
+        self.assertNotEqual(cube("PETG", "#FF0000"), cube("PETG", "#00FF00"))
+
+    def test_a_colour_that_is_not_rrggbb_is_refused(self) -> None:
+        for bad in ("red", "FF0000", "#FF00", "#FF000000", "#GG0000", ""):
+            with self.subTest(color=bad), self.assertRaises(threemf.ThreeMFError):
+                cube("PETG", bad)
+
+    def test_a_pid_that_resolves_to_no_basematerials_entry_is_refused(self) -> None:
+        package = cube("PETG", "#FF0000")
+        model = entries(package)["3D/3dmodel.model"]
+        for label, good, bad in (("pid", b'pid="1"', b'pid="9"'), ("pindex", b'pindex="0"', b'pindex="3"')):
+            with self.subTest(label), self.assertRaises(threemf.ThreeMFError):
+                threemf.read(repack(package, **{"3D/3dmodel.model": model.replace(good, bad)}))
+
+
+def plan(color: str | None = None, material: str = "PETG", pn: str = "TST-0001") -> manufacture.Plan:
+    """A plan with the fields `facts` reads; `color` is what package B's PartIntent.color will carry."""
+    policy = types.SimpleNamespace(relationship="same", state="installed", reason=None, decision=None,
+                                   volume_rel_tolerance=0.0, volume_abs_tolerance_mm3=0.0, linear_deflection_mm=0.1,
+                                   angular_deflection_rad=0.1, volume_tolerance_mm3=lambda volume: 0.0,
+                                   outputs=("part.step", "part.stl", "part.3mf", "manufacturing.json"))
+    part = types.SimpleNamespace(intent=types.SimpleNamespace(color=color))
+    record = {"rev": "A", "title": "T", "material": material, "process": "fdm", "finish": None}
+    return manufacture.Plan(pn, record, policy, 2, part, {}, None, {})
+
+
+def entry_of(chosen: manufacture.Plan) -> dict[str, object]:
+    native = {"kernel_volume_mm3": 1.0, "kernel_solids": 1, "kernel_valid": True, "kernel_errors": []}
+    return manufacture.facts(chosen, "P", {"kernel_volume_mm3": 1.0}, native, "p")
+
+
+def recipe_hash(**fields: str | None) -> str:
+    return store.key(manufacture.outputs_recipe(entry_of(plan(**fields)), None, None, "process"))
+
+
+class RecipeTests(unittest.TestCase):
+    @unittest.skip("STUB(feat/fdm-color impact.py export.3mf): un-skip when feat/fdm-color lands the export.3mf family "
+                   "(geometry, material, appearance) in cad-record impact.py")
+    def test_a_colour_or_material_change_stales_the_3mf_artifact_of_that_part_and_a_finish_change_does_not(self) -> None:
+        impact = load_module("cad_record_impact", HERE.parents[1] / "cad-record" / "scripts" / "impact.py")
+        key = next(iter(entry_of(plan(pn="TST-0001"))["artifacts"]))  # type: ignore[call-overload]
+        artifact = types.SimpleNamespace(id=key, family="export.3mf", subject={"PN": "TST-0001"})
+        for domain, stale in (("appearance", True), ("material", True), ("geometry", True), ("finish", False)):
+            with self.subTest(domain):
+                changed = {"TST-0001": (domain,), "TST-0002": ("appearance", "material")}
+                self.assertEqual(impact.stale_obligations([artifact], changed), {key: (domain,)} if stale else {})
+
+    def test_changing_the_colour_changes_the_recipe_hash(self) -> None:
+        self.assertNotEqual(recipe_hash(color="#FF0000"), recipe_hash(color="#00FF00"))
+        self.assertNotEqual(recipe_hash(color="#FF0000"), recipe_hash(color=None))
+
+    def test_changing_the_material_changes_the_recipe_hash(self) -> None:
+        self.assertNotEqual(recipe_hash(material="PETG"), recipe_hash(material="PLA"))
+
+    def test_the_same_colour_and_material_keep_the_recipe_hash(self) -> None:
+        self.assertEqual(recipe_hash(color="#FF0000"), recipe_hash(color="#FF0000"))
+
+    def test_the_part_names_its_3mf_artifact_export_3mf_at_pn(self) -> None:
+        self.assertEqual(entry_of(plan(pn="TST-0007"))["artifacts"], {"export.3mf@TST-0007": "part.3mf"})
 
 
 class ReadTests(unittest.TestCase):
@@ -216,10 +301,14 @@ class ReadBackTests(unittest.TestCase):
     """Other readers' view of a written package: trimesh, the 3MF Consortium schemas and lib3mf."""
 
     @classmethod
+    def package(cls) -> bytes:
+        return cube()
+
+    @classmethod
     def setUpClass(cls) -> None:
         cls.tmp = tempfile.TemporaryDirectory()
         target = Path(cls.tmp.name) / "part.3mf"
-        target.write_bytes(cube())
+        target.write_bytes(cls.package())
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "threemf_probe.py"), str(target)],
                               capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr[-3000:]
@@ -245,6 +334,15 @@ class ReadBackTests(unittest.TestCase):
         if lib3mf.get("skipped"):
             self.skipTest(lib3mf["skipped"])
         self.assertEqual(lib3mf, {"warnings": 0, "meshes": 1, "vertices": 8, "triangles": 12})
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the trimesh, lxml and lib3mf environment")
+class ColouredReadBackTests(ReadBackTests):
+    """The same readers on a package with a basematerials group: the schemas and strict lib3mf accept it."""
+
+    @classmethod
+    def package(cls) -> bytes:
+        return cube("PETG", "#1A2B3C")
 
 
 if __name__ == "__main__":

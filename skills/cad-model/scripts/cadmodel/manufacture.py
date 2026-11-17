@@ -233,14 +233,28 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _color(plan: Plan) -> str | None:
+    """The part's sRGB `#RRGGBB` (PartIntent.color), or None. STUB(feat/fdm-color PartIntent.color): until
+    that branch lands PartIntent has no `color`, so every part reads as uncoloured."""
+    color = getattr(plan.part.intent, "color", None) if plan.part is not None else None
+    return color if isinstance(color, str) else None
+
+
+def outputs_recipe(entry: Mapping[str, Any], state: Any, features: Any, identity: Any) -> dict[str, Any]:
+    """What `make` keys a part's outputs by (`store.key`): the entry holds the material and colour that part.3mf writes."""
+    return {"format": OUTPUTS_FORMAT, "kind": "manufacturing", "entry": entry, "state": state, "features": features,
+            "process": identity}
+
+
 def facts(plan: Plan, product: str, installed: Mapping[str, Any], native: Mapping[str, Any], path: str) -> dict[str, Any]:
     """The declared claims of one part's outputs, before export: identity, state, tolerance, intent and inputs."""
     record, policy = plan.record, plan.policy
     procurement = value if isinstance(value := record.get("procurement"), Mapping) else {}
     return {
         "schema_version": SIDECAR_SCHEMA, "PN": plan.pn, "rev": record.get("rev"), "title": record.get("title"),
-        "product": product, "material": record.get("material"), "process": record.get("process"),
-        "finish": record.get("finish"),
+        "product": product, "material": record.get("material"), "color": _color(plan),
+        "artifacts": {f"export.3mf@{plan.pn}": "part.3mf"} if "part.3mf" in policy.outputs else {},
+        "process": record.get("process"), "finish": record.get("finish"),
         "eligibility": {"make_buy": record.get("make_buy"), "procurement_mode": procurement.get("mode")},
         "state": {"relationship": policy.relationship, "name": policy.state, "reason": policy.reason,
                   "decision": policy.decision,
@@ -327,7 +341,8 @@ def _write(folder: Path, entry: Mapping[str, Any], shape: Any, placement: Any) -
         mesh.write_stl(written.shape, folder / "part.stl", linear, angular)
         if "part.3mf" in entry["outputs"]:
             vertices, triangles = mesh.surface(written.shape, linear, angular)
-            threemf.write(folder / "part.3mf", vertices, triangles, name=entry["product"], material=entry["material"])
+            threemf.write(folder / "part.3mf", vertices, triangles, name=entry["product"], material=entry["material"],
+                         color=entry["color"])
 
 
 def _component_facts(plan: Plan, bound: components.Bound, placement: Mapping[str, Any], files: list[str]) -> dict[str, Any]:
@@ -565,6 +580,7 @@ def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]
     m_low, m_high = report["bbox_mm"]["min"], report["bbox_mm"]["max"]
     return _judge({"millimetres": model.unit == threemf.UNIT, "one_object": True, "no_transform": item.transform is None,
                    "material_named": obj.metadata.get(threemf.MATERIAL_METADATA) == entry["material"],
+                   "color_matches": obj.color == (f"{color.upper()}FF" if (color := entry.get("color")) else None),
                    "watertight": report["watertight"], "winding_consistent": report["winding_consistent"],
                    "outward": report["volume_mm3"] > 0, "volume_within_deflection": volume_error <= bound,
                    "box_within_deflection": all(low[i] - slack <= m_low[i] <= low[i] + deflection + slack
@@ -703,9 +719,7 @@ def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered:
                       _relative(hw, label, pn))
         target = work / entry["path"]
         located = features.get(pn)
-        outputs_key = store.key({"format": OUTPUTS_FORMAT, "kind": "manufacturing", "entry": entry,
-                                 "state": state_shas.get(pn) if different else None, "features": located,
-                                 "process": identity})
+        outputs_key = store.key(outputs_recipe(entry, state_shas.get(pn) if different else None, located, identity))
         cached = parts_store.record(outputs_key)
         if cached is not None and all(parts_store.place(sha, target / name) for name, sha in cached["objects"].items()):
             entry.update(cached["derived"])

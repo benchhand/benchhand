@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from collections import Counter
@@ -39,6 +40,7 @@ DECIMALS = 6  # nanometres: a coordinate is written, and welded, at this precisi
 XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
 
 MATERIAL_METADATA = "cadagent:material"
+COLOR_PATTERN = re.compile(r"#[0-9A-Fa-f]{6}")  # sRGB, as part.yaml intent.color spells it
 RESOURCE_ID_LIMIT = 2 ** 31  # ST_ResourceID: a positive integer below this
 
 
@@ -75,6 +77,7 @@ class Object:
     metadata: dict[str, str]
     vertices: list[tuple[float, float, float]]
     triangles: list[tuple[int, int, int]]
+    color: str | None = None  # `#RRGGBBAA` of the basematerials entry the object points at
 
 
 @dataclass(frozen=True)
@@ -110,25 +113,37 @@ def _relationships() -> str:
             f'<Relationship Target="/{MODEL_PART}" Id="rel0" Type="{MODEL_RELATIONSHIP}"/></Relationships>')
 
 
-def _model(vertices: Iterable[Sequence[float]], triangles: Iterable[Sequence[int]], name: str, material: str | None) -> str:
+def _model(vertices: Iterable[Sequence[float]], triangles: Iterable[Sequence[int]], name: str, material: str | None,
+           color: str | None) -> str:
     metadata = (f'<metadatagroup><metadata name="{MATERIAL_METADATA}">{escape(material)}</metadata></metadatagroup>'
                 if material is not None else "")
     points = "".join(f'<vertex x="{number(x)}" y="{number(y)}" z="{number(z)}"/>' for x, y, z in vertices)
     faces = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in triangles)
-    return (f"{XML_DECLARATION}<model {_namespaces()}><resources>"
-            f'<object id="1" name={quoteattr(name)} type="model">{metadata}'
+    # Resource ids share one space: the colour group takes 1, the object the next free id.
+    group, ident, pid = "", 1, ""
+    if color is not None:
+        group = (f'<basematerials id="1"><base name={quoteattr(material or name)} '
+                 f'displaycolor="{color.upper()}FF"/></basematerials>')
+        ident, pid = 2, ' pid="1" pindex="0"'
+    return (f"{XML_DECLARATION}<model {_namespaces()}><resources>{group}"
+            f'<object id="{ident}" name={quoteattr(name)} type="model"{pid}>{metadata}'
             f"<mesh><vertices>{points}</vertices><triangles>{faces}</triangles></mesh></object>"
-            '</resources><build><item objectid="1"/></build></model>')
+            f'</resources><build><item objectid="{ident}"/></build></model>')
 
 
 def dumps(vertices: Iterable[Sequence[float]], triangles: Iterable[Sequence[int]], *, name: str,
-          material: str | None = None) -> bytes:
+          material: str | None = None, color: str | None = None) -> bytes:
     """The package of one mesh object, `name`d, with `material` as its `cadagent:material` metadata when given.
+
+    `color` (`#RRGGBB`) adds a basematerials group with that display colour and points the object at it; absent,
+    the package has no basematerials and no pid.
 
     The mesh is taken as it is: wind and weld it before. Millimetres; the build item has no transform, so
     the vertices are in the pose they are to be made in."""
+    if color is not None and not COLOR_PATTERN.fullmatch(color):
+        raise ThreeMFError(f"colour {color!r} is not #RRGGBB")
     contents = {CONTENT_TYPES_PART: _content_types(), RELS_PART: _relationships(),
-                MODEL_PART: _model(vertices, triangles, name, material)}
+                MODEL_PART: _model(vertices, triangles, name, material, color)}
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as archive:
         for part in PARTS:
@@ -141,8 +156,8 @@ def dumps(vertices: Iterable[Sequence[float]], triangles: Iterable[Sequence[int]
 
 
 def write(path: Path, vertices: Iterable[Sequence[float]], triangles: Iterable[Sequence[int]], *, name: str,
-          material: str | None = None) -> None:
-    path.write_bytes(dumps(vertices, triangles, name=name, material=material))
+          material: str | None = None, color: str | None = None) -> None:
+    path.write_bytes(dumps(vertices, triangles, name=name, material=material, color=color))
 
 
 def _tag(element: ET.Element) -> str:
@@ -192,7 +207,17 @@ def _check_envelope(archive: zipfile.ZipFile) -> None:
         raise ThreeMFError(f"{RELS_PART} relates the model to {targets}, not ['/{MODEL_PART}']")
 
 
-def _object(element: ET.Element, prefixes: set[str]) -> Object:
+def _color(element: ET.Element, groups: dict[int, list[str]]) -> str | None:
+    """The display colour of the basematerials entry `element` points at by pid and pindex, if any."""
+    if element.get("pid") is None:
+        return None
+    pid, index = _int(element.get("pid"), "object pid"), _int(element.get("pindex"), "object pindex")
+    if pid not in groups or not 0 <= index < len(groups[pid]):
+        raise ThreeMFError(f"object pid {pid} pindex {index} does not resolve to a basematerials entry")
+    return groups[pid][index]
+
+
+def _object(element: ET.Element, prefixes: set[str], groups: dict[int, list[str]]) -> Object:
     ident = _int(element.get("id"), "object id")
     if not 0 < ident < RESOURCE_ID_LIMIT:
         raise ThreeMFError(f"object id {ident} is outside 1..{RESOURCE_ID_LIMIT - 1}")
@@ -216,7 +241,7 @@ def _object(element: ET.Element, prefixes: set[str]) -> Object:
     for triangle in triangles:
         if not all(0 <= index < len(vertices) for index in triangle) or len(set(triangle)) < 3:
             raise ThreeMFError(f"object {ident} has a triangle {triangle} outside its {len(vertices)} vertices")
-    return Object(ident, element.get("name"), metadata, vertices, triangles)
+    return Object(ident, element.get("name"), metadata, vertices, triangles, _color(element, groups))
 
 
 def read(source: Path | bytes) -> Model:
@@ -234,7 +259,9 @@ def read(source: Path | bytes) -> Model:
         raise ThreeMFError(f"the model requires extensions {root.get('requiredextensions')!r}; this reader has none")
     if root.get("unit") != UNIT:
         raise ThreeMFError(f"the unit is {root.get('unit')!r}, not {UNIT!r}")
-    objects = [_object(e, prefixes) for e in root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}object")]
+    groups = {_int(g.get("id"), "basematerials id"): [b.get("displaycolor") or "" for b in g]
+              for g in root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}basematerials")}
+    objects = [_object(e, prefixes, groups) for e in root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}object")]
     ids = [obj.id for obj in objects]
     if len(set(ids)) != len(ids):
         raise ThreeMFError(f"object ids repeat: {ids}")
