@@ -117,6 +117,7 @@ jobs:
         freecad-gated skills/cad-design/tests/test_process_checks.py
         freecad-gated skills/cad-model/tests/test_drawing_features.py
         freecad-gated skills/cad-analysis/tests/test_fea_static.py
+        freecad-gated skills/cad-analysis/tests/test_fea_part_fixtures.py
         freecad-gated skills/cad-design/tests/test_design.py
         freecad-gated skills/cad-drawings/tests/test_assembly_end_to_end.py
         freecad-gated skills/cad-drawings/tests/test_drawing.py
