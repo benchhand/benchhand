@@ -742,7 +742,7 @@ class Producer:
 
 
 def launcher(path: Path, body: str) -> Path:
-    """A stand-in for cad-flow run.py: `body` runs with sys.argv[1] the producer script it was asked for."""
+    """A stand-in for cad-flow run.py: `body` runs with sys.argv[1] the producer script that the caller names."""
     path.write_text("import json, sys\n" + body, encoding="utf-8")
     return path
 
@@ -779,7 +779,7 @@ class BuiltRecord(unittest.TestCase):
         return evidence.run(self.hw, "v1", scope, stage=stage, spawn=self.spawn, strays=list)
 
     def pass_every_producer_obligation(self) -> None:
-        acceptance.publish_packet(self.hw, "v1", acceptance.producer_packet(impact.read_record(self.hw), "v1"))
+        acceptance.publish_packet(self.hw, "v1", acceptance.producer_packet(impact.read_record(self.hw)))
 
 
 class EvidenceRun(BuiltRecord):
