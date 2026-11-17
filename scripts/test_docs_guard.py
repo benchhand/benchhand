@@ -108,6 +108,7 @@ ALLOWED = [
     Allow('skills/cad-flow/tests/test_preflight.py', 'HarnessInstallTests.test_receipt_must_include_installed_skills_and_agents_at_contract_paths', '.codex/agents/cad-analyst.toml', STUB, 3),
     Allow('skills/cad-flow/tests/test_setup.py', 'PlanTests.test_install_uses_checkout_installer_with_project_relative_destination', 'harness', INSTALLER),
     Allow('skills/cad-flow/tests/test_setup.py', 'PlanTests.test_requested_harness_is_planned_but_not_implicit', 'harness/install.py', INSTALLER),
+    Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.provisional_gate', 'DR-001.md', HW),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.test_frozen_pre_freeze_stage_refuses_a_stray_file', 'hw/stray.md', HW),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.test_frozen_pre_freeze_stage_refuses_a_stray_file', 'stray.md', HW, 2),
     Allow('skills/cad-record/tests/fixtures/acceptance.py', 'decision', '.md', HW),

@@ -241,7 +241,7 @@ class RecheckHookTests(unittest.TestCase):
         staged = stamp_module.staged_record(self.root)
         due = [o for o in evidence.mi.required_checks(staged.record) if order.index(o.stage) <= order.index(stage)]
         producer = evidence.ProducerPacket("hw/checks/v1/tst", "0" * 64,
-                                           acceptance.producer_packet(staged.record, "v1", outcome=outcome, obligations=due))
+                                           acceptance.producer_packet(staged.record, outcome=outcome, obligations=due))
         packet = evidence.assess(staged.record, version="v1", manifest_sha256="0" * 64, packets=[producer],
                                  selection_sha256=staged.selection_sha256).packet(stage, staged.record_sha256)
         checks = self.root / ".checks.json"
