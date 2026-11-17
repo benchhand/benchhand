@@ -171,6 +171,27 @@ class BudgetTests(unittest.TestCase):
 
 
 class LeftoverTests(unittest.TestCase):
+    def test_the_users_cad_viewer_state_is_not_linked_into_the_throwaway_home(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            real_state = root / "real/state"
+            for name in ("cad-viewer", "opencode", "mise"):
+                (real_state / name).mkdir(parents=True)
+            with mock.patch.dict(run.os.environ, {"XDG_STATE_HOME": str(real_state), "XDG_CONFIG_HOME": str(root / "nc"),
+                                                  "XDG_DATA_HOME": str(root / "nd")}):
+                run.link_farm(root / "home")
+            state = root / "home/.local/state"
+            self.assertEqual(sorted(p.name for p in state.iterdir()), ["mise"])
+            self.assertTrue((state / "mise").is_symlink())
+
+    def test_the_viewer_sessions_to_stop_are_the_ones_in_the_throwaway_homes_private_state(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            session = home / ".local/state/cad-viewer/abc/session.json"
+            session.parent.mkdir(parents=True)
+            session.write_text('{"pid": 1}', encoding="utf-8")
+            self.assertEqual(run.recorded_viewer_sessions(home), [session])
+
     def test_only_the_runs_own_process_groups_are_stopped_and_a_scratch_process_outside_them_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             scratch = Path(folder).resolve()

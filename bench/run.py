@@ -122,6 +122,9 @@ def real_base(variable: str, default: str) -> Path:
 
 
 XDG = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_STATE_HOME", ".local/state"))
+# Entries that stay private to the run instead of linking to the user's own: OpenCode's, and cad-viewer's
+# session files, so a viewer the lead starts records its pid inside the scratch directory.
+PRIVATE_XDG_ENTRIES = frozenset({"opencode", "cad-viewer"})
 
 
 def link_farm(home: Path) -> None:
@@ -136,7 +139,7 @@ def link_farm(home: Path) -> None:
         if not real.is_dir():
             continue
         for entry in sorted(real.iterdir()):
-            if entry.name != "opencode" and not (fake / entry.name).exists():
+            if entry.name not in PRIVATE_XDG_ENTRIES and not (fake / entry.name).exists():
                 (fake / entry.name).symlink_to(entry)
 
 
@@ -326,6 +329,32 @@ OWN_GROUPS: set[int] = set()
 
 def own_group(process: subprocess.Popen[Any]) -> None:
     OWN_GROUPS.add(process.pid)
+
+
+def recorded_viewer_sessions(home: Path) -> list[Path]:
+    """cad-viewer session files the run's own viewers wrote into the throwaway home's private state."""
+    return sorted((home / ".local/state/cad-viewer").glob("*/session.json"))
+
+
+def stop_recorded_viewers(paths: Paths, timeout: float = 120.0) -> list[JSON]:
+    """Stop each cad-viewer host the project recorded, with the skill's own `viewer.py stop`, which signals
+    only the pid its session file names and proves; nothing is chosen by pattern."""
+    results = []
+    for session_file in recorded_viewer_sessions(paths.home):
+        command = ["uv", "run", "--script", str(paths.skills / "cad-flow/scripts/run.py"), "cad-viewer/scripts/viewer.py", "stop"]
+        process = subprocess.Popen(command, cwd=paths.project, env={**os.environ, "CAD_VIEWER_SESSION": str(session_file)},
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True,
+                                   start_new_session=True)
+        own_group(process)
+        try:
+            stdout, _ = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            stdout, _ = process.communicate()
+        results.append({"session": str(session_file.relative_to(paths.home)), "exit_code": process.returncode,
+                        "result": parse_json(stdout)})
+    return results
 
 
 def kill_leftovers(scratch: Path, grace_s: float = 3.0) -> JSON:
@@ -886,7 +915,8 @@ def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case,
     monitor = Monitor()
     with monitor.active():
         conversation = converse(driver, case.script, args.mode, first_message(paths, case.folder, args.mode), caps)
-        leftovers = kill_leftovers(paths.scratch)
+        viewers = stop_recorded_viewers(paths)
+        leftovers = {**kill_leftovers(paths.scratch), "viewers_stopped": viewers}
         evaluation = evaluate(driver, config, args.mode, case.rubric, prices, judge=args.mode == "bench" and not args.no_judge)
     exports = export_tree(driver, driver.session or "", sanitize=False)
     run_metrics = {**metrics.summarize(exports, driver.session or "", prices), **dialogue_metrics(conversation, driver)}
@@ -943,7 +973,8 @@ def execute(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     print(json.dumps({"run_id": run_id, "outcome": record["outcome"], "accepted": record["accepted"],
                       "spend_usd": record["spend"]["total_usd"], "ledger_total_usd": round(total, 4),
                       "record": str(paths.run_dir / "record.json"), "fixture": record.get("fixture"),
-                      "isolation_findings": record["isolation"]["findings"]}, indent=2))
+                      "isolation_findings": record["isolation"]["findings"],
+                      "leftover_processes": (record.get("leftover_processes") or {}).get("still_running")}, indent=2))
     if not args.keep_scratch:
         kill_leftovers(paths.scratch)
         remove_scratch(paths)
