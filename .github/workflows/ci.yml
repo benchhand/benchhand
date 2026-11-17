@@ -16,7 +16,7 @@ concurrency:
 jobs:
   checks:
     name: Harness, generated files and type check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,8 +29,11 @@ jobs:
       - name: Harness tests
         run: uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
 
-      - name: CI shard planner tests
-        run: uv run --no-project --python 3.12 python -B -m unittest discover -s scripts -p 'test_ci_shards.py'
+      - name: Script tests
+        run: uv run --no-project --python 3.12 python -B -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Complexity ratchet
+        run: uv run --no-project --script scripts/complexity_ratchet.py
 
       # The README names Python 3.11 as the minimum, and every other step runs 3.12, so check the
       # floor here: 3.12-only syntax fails to compile, and the harness tests run on 3.11.
@@ -47,7 +50,7 @@ jobs:
 
   skills:
     name: Skill tests (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
