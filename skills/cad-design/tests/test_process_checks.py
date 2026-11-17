@@ -905,10 +905,11 @@ class PurchasedIdentityTests(Checks):
         """For ISO 4762 and the other listed screw, bolt and nut standards a bare number is not a size. An unlisted standard
         (a washer, a ring, a pin) keeps a bare decimal as a size."""
         cases = [("ISO 4762 - 8.8", "fail"), ("ISO 4762 10.9", "fail"), ("ISO 4017 - 10.9", "fail"), ("ISO 4762 5", "fail"),
-                 ("ISO 4032 - 8", "fail"), ("ISO 4762 5x20", "fail"),
+                 ("ISO 4032 - 8", "fail"), ("ISO 4762 5x20", "fail"), ("ISO 4762 1/4", "fail"), ("ISO 4762 #10", "fail"),
                  ("ISO 4762 M6", "pass"), ("ISO 4762 #10-24", "pass"), ("ISO 4762 1/4-20", "pass"), ("ISO 4017 M8x30", "pass"),
                  ("ISO 7089 - 8.8", "pass"), ("DIN 125 - 8.4", "pass"), ("DIN 471 - 5x0.6", "pass")]
-        for standard in ("ISO 4762", "ISO 4014", "ISO 4017", "ISO 7380", "ISO 10642", "ISO 4032", "DIN 912", "DIN 933", "DIN 934"):
+        # The table holds ISO 4762 itself. The loop covers the other eight listed standards.
+        for standard in ("ISO 4014", "ISO 4017", "ISO 7380", "ISO 10642", "ISO 4032", "DIN 912", "DIN 933", "DIN 934"):
             cases += [(f"{standard} - 8.8", "fail"), (f"{standard} M6", "pass")]
         self.assert_designations(cases)
 

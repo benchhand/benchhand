@@ -47,7 +47,8 @@ THREADED_FASTENERS = {
     "DIN 934": "hexagon nuts",
 }
 _THREADED = tuple(tuple(entry.split(" ", 1)) for entry in THREADED_FASTENERS)
-_THREAD_SIZE = re.compile(r"(?:M\d|#\d|\d+/\d)")
+# A thread designation: M6 (metric, with the coarse pitch as default), or #10-24 and 1/4-20 (which carry threads per inch).
+_THREAD_SIZE = re.compile(r"(?:M\d|#\d+-\d|\d+/\d+-\d)")
 
 # Standards that specify features or tolerances (threads, fits, general tolerances), not purchasable parts. A feature
 # standard matches by body plus number: ISO 965 covers ISO 965-1, DIN ISO 965-1 and DIN EN ISO 965-1, not DIN 965 (a screw).
