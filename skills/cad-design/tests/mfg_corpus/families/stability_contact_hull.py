@@ -4,14 +4,16 @@ Judged on the fdm orientation obligation. Millimetres, bed frame, +Z up. The tow
 difference between a mutant and its twin. The TEST profile calibrates a 20-25 mm2 minimum bed contact.
 """
 
+from typing import Any
+
 from corpus import Family, Outcome, Pair
-from support import assess_printed, printed_verdict, solids
+from support import printed_verdict, solids
 
 ORIENTATION = "process.fdm.orientation@"
 
 
-def _verdict(shape) -> Outcome:
-    return printed_verdict(assess_printed(shape), ORIENTATION)
+def _verdict(shape: Any) -> Outcome:
+    return printed_verdict(shape, ORIENTATION)
 
 
 def diagonal_pads(mutant: bool) -> Outcome:
