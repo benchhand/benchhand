@@ -44,7 +44,11 @@ Before the first model call, the harness starts `opencode serve` in the run's en
 
 The run continues only when every config source and skill path lies inside the throwaway home or the scratch project, or is a built-in `skill://` skill. Every agent and command must be a built-in or one the harness installed, and every installed skill must be listed. The cache directory OpenCode reports (`opencode debug paths cache`) and `XDG_CACHE_HOME` must both lie inside the run home. Otherwise the run records `isolation_failed`, spends nothing and exits 4. OpenCode loads skill sources one at a time, so the check waits until the skill list holds still for three polls. Without `OPENCODE_TEST_HOME`, the same check reports the skills in `~/.agents/skills`.
 
-Each run has its own config, data, state and cache directories in the throwaway home. Entries from the user's own directories are linked in, except `opencode`, `cad-viewer` and `cad-flow`. Those stay private, so the lead's viewer sessions and `preflight.py --warm` record land in the run home. `UV_CACHE_DIR` stays on the user's uv cache: it holds packages, not user state, and a private copy would download every wheel again in each run. At the end of a run, the harness stops each viewer and each running warm-up through the pid that the run's private records name. Nothing else is signalled unless the run itself started its process group.
+Each run has its own config, data, state and cache directories in the throwaway home. Config, data and state entries from the user's own directories are linked in, except `opencode` and `cad-viewer`.
+
+From commit 7564291 on, the cache is an allowlist. The private cache links only these package-download caches: `uv`, `pip`, `ms-playwright` and `cad-concept`. `cad-concept` holds the three.js modules that cad-render's import map pins by SRI digest, and preflight verifies each digest. Every other cache starts empty in each run, so no state carries from one run into the next: fontconfig, FreeCAD, OCC, cad-flow's warm-up record and the rest. The isolation check fails the run when a private-cache link points anywhere but its allowlisted cache, or when an entry is not a real directory inside the run home. It also fails when a package-cache variable (`UV_CACHE_DIR`, `PIP_CACHE_DIR`, `PLAYWRIGHT_BROWSERS_PATH`) points outside the run home at a cache that is not allowlisted. Runs before 7564291 shared every cache except `opencode`, `cad-flow` and `cad-viewer` with the user, non-download caches included.
+
+The lead's viewer sessions and `preflight.py --warm` record therefore land in the run home. `UV_CACHE_DIR` stays on the user's uv cache: it holds packages, not user state, and a private copy would download every wheel again in each run. At the end of a run, the harness stops each viewer and each running warm-up through the pid that the run's private records name. Nothing else is signalled unless the run itself started its process group.
 
 ### Failed tool calls
 
@@ -68,9 +72,10 @@ From commit a0df35c on, a gate counts only when it fits the record's state at th
 
 - INTENT, only while `flow.stage` is `ground` or `intent`;
 - VARIANT, only while `flow.stage` is `concept`;
-- the LAYOUT freeze, only once `hw/versions/` holds a version built at `layout`.
+- the LAYOUT freeze, only once `hw/versions/` holds a version built at `layout`;
+- the PARTS gate, only once `hw/versions/` holds a version built at `parts` (from commit 7564291 on). The provisional gate moves `flow.stage` past `parts` before the human PARTS gate, so the binding reads the version's own stage, as for the LAYOUT freeze.
 
-At another stage, the harness matches the ask to the other intents instead of that gate. A GROUND reply that names a later gate is then no gate prompt, so its open questions can no longer fail the run as `fail:unmatched-at-gate`. Commit-timing and flow-profile questions are not stage gates. Each dialogue entry records `stage` and `has_l1`.
+At another stage, the harness matches the ask to the other intents instead of that gate. A GROUND reply that names a later gate is then no gate prompt, so its open questions can no longer fail the run as `fail:unmatched-at-gate`. Commit-timing, flow-profile and SPECIFY approval questions are not stage-bound. Each dialogue entry records `stage`, `has_l1` and `has_l2`.
 
 This changes what `metrics.gates_answered`, `metrics.questions_unmatched_at_gate` and the `fail:unmatched-at-gate` outcome count. Results from runs before a0df35c use the old definition, so compare gate metrics only between runs on the same definition. The first run on the new definition is named here once it exists.
 
