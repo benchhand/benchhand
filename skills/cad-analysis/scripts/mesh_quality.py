@@ -3,8 +3,8 @@
 The FreeCAD job writes its Gmsh mesh as an Abaqus/CalculiX input file and reads it back here, in ccx's
 C3D10 node order: corners 1 to 4, then the mid-edge nodes of edges 1-2, 2-3, 3-1, 1-4, 2-4 and 3-4.
 
-An element's Jacobian determinant is sampled at its ten nodes and at the four integration points of
-ccx's C3D10. The element is invalid when any sample is zero or negative (ccx stops on a nonpositive
+The validity check samples an element's Jacobian determinant at its ten nodes and at the four integration
+points of ccx's C3D10. The element is invalid when any sample is zero or negative (ccx stops on a nonpositive
 Jacobian). Its scaled Jacobian is the smallest sample divided by the largest sample magnitude: 1 for a
 straight-sided tetrahedron, -1 for one inverted everywhere, whatever its size. Sampling is not a bound: an
 element can be invalid between samples.
@@ -47,15 +47,15 @@ def jacobian_determinants(nodes: Sequence[Vector]) -> list[float]:
 
 
 def scaled_jacobian(nodes: Sequence[Vector]) -> float:
-    """Smallest sampled Jacobian determinant over the largest magnitude, in [-1, 1]: dimensionless, so an element
-    and the same element scaled report one value, and negative exactly when the element is inverted somewhere."""
+    """Smallest sampled Jacobian determinant over the largest magnitude, in [-1, 1]. The value is dimensionless:
+    an element and its scaled copy report one value, negative exactly where the element turns inside out."""
     values = jacobian_determinants(nodes)
     largest = max(abs(value) for value in values)
     return min(values) / largest if largest > 0 else 0.0
 
 
 def read_c3d10(text: str) -> tuple[dict[int, Vector], list[tuple[int, ...]]]:
-    """The nodes and C3D10 elements of an Abaqus/CalculiX input file; other element types are skipped."""
+    """The nodes and C3D10 elements of an Abaqus/CalculiX input file. The reader skips other element types."""
     nodes: dict[int, Vector] = {}
     elements: list[tuple[int, ...]] = []
     section = None
@@ -94,9 +94,9 @@ def mesh_quality(nodes: Mapping[int, Vector], elements: Iterable[Sequence[int]])
 
 
 def needs_fallback(quality: Mapping[str, Any], level: int, fallback: int) -> bool:
-    """Whether a mesh made at high-order `level` must be remeshed at `fallback`: it has no element or an
-    invalid one. Quality alone never triggers a remesh. The fallback level is terminal: its mesh is never
-    remeshed; it is kept with its quality recorded when valid, and the job refuses it when invalid."""
+    """Whether the job remeshes a mesh made at high-order `level` at `fallback`: True when it has no element
+    or an invalid one. A remesh needs one of those two, whatever the quality. The fallback level is terminal.
+    The job keeps its mesh with its quality recorded when valid, and refuses it when invalid."""
     if level == fallback:
         return False
     return not quality.get("elements") or bool(quality.get("invalid_elements"))

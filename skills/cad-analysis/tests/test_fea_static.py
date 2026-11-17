@@ -468,7 +468,7 @@ runpy.run_path(sys.argv[1], run_name="__main__")
 
     def solve_tube(self, root: Path, high_order: dict) -> tuple[dict, int]:
         """A thin brass tube (outer radius 3.985, bore 2.55, 8 long) at mesh_size 4, solved in `root`: with no
-        high-order optimisation, Gmsh curves its second-order nodes onto the bore and inverts two elements."""
+        high-order optimization, Gmsh curves its second-order nodes onto the bore and inverts two elements."""
         step = root / "tube.step"
         job = root / "make_tube.py"
         job.write_text(f'''import FreeCAD as App, Part, Import
@@ -506,7 +506,7 @@ mesh_size: 4
         with tempfile.TemporaryDirectory(prefix="cad-fea-tube-") as directory:
             root = Path(directory)
             solves = root / "ccx-solves.log"
-            ccx = root / "ccx"  # $CCX: identifies itself as CalculiX, and records every solve (-i) it is asked for
+            ccx = root / "ccx"  # $CCX: identifies itself as CalculiX, and records every solve (-i) the job requests
             ccx.write_text(f"""#!{sys.executable}
 import sys
 print("CalculiX Version 2.23", flush=True)

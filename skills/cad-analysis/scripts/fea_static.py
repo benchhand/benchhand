@@ -57,9 +57,9 @@ DEFAULT_TIMEOUT_SECONDS = 600.0  # a case's timeout_seconds overrides it
 # ccx 2.23 threads (manual section 2): FreeCAD's start_ccx sets OMP_NUM_THREADS to the CPU count, and these
 # take precedence over it for the equation solver, the stiffness assembly and the result calculation.
 CCX_ENVIRONMENT = {"CCX_NPROC_EQUATION_SOLVER": "1", "CCX_NPROC_STIFFNESS": "1", "CCX_NPROC_RESULTS": "1"}
-# Gmsh Mesh.HighOrderOptimize (0 none, 1 optimization, 2 elastic+optimization, 3 elastic): the job meshes at
+# Gmsh `Mesh.HighOrderOptimize` (0 none, 1 optimization, 2 elastic+optimization, 3 elastic): the job meshes at
 # `optimize`, records the mesh's validity and quality (mesh_quality.py), and remeshes at `fallback` only when an
-# element is invalid; the fallback level is terminal. Levels 0 and 3 leave invalid elements on LMP-0002 (dev sweep,
+# element is invalid. The fallback level is terminal. Levels 0 and 3 leave invalid elements on LMP-0002 (dev sweep,
 # PR #38), so both levels are 2.
 HIGH_ORDER = {"optimize": 2, "fallback": 2}
 

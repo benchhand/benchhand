@@ -15,14 +15,14 @@ EDGES = ((0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3))
 
 
 def tetrahedron(edge_1_2_node_x: float = 0.5) -> list[tuple[float, float, float]]:
-    """The unit right tetrahedron in ccx's C3D10 node order; its edge 1-2 node sits at x = `edge_1_2_node_x`."""
+    """The unit right tetrahedron in ccx's C3D10 node order. Its edge 1-2 node sits at x = `edge_1_2_node_x`."""
     middles = [tuple((CORNERS[a][k] + CORNERS[b][k]) / 2 for k in range(3)) for a, b in EDGES]
     middles[0] = (edge_1_2_node_x, 0.0, 0.0)
     return [*CORNERS, *middles]  # type: ignore[list-item]
 
 
 class ElementJacobians(unittest.TestCase):
-    # Moving the edge 1-2 node by d along x adds d * dN5 to the x row of the identity Jacobian, where
+    # A shift of the edge 1-2 node by d along x adds d * dN5 to the x row of the identity Jacobian, where
     # dN5 = 4 * (L1 * dL2 + L2 * dL1): det J = 1 + 4d at corner 1, 1 - 4d at corner 2 and 1 at corners 3 and 4.
 
     def test_a_straight_sided_tetrahedron_has_a_constant_jacobian(self) -> None:
@@ -41,7 +41,7 @@ class ElementJacobians(unittest.TestCase):
         self.assertLess(scaled_jacobian(tetrahedron(0.9)), 0)
 
     def test_a_wholly_inverted_element_reports_minus_one_whatever_its_size(self) -> None:
-        # Reflecting the element through x = 0 inverts it: every sampled determinant is -1 (unit), or -8 when
+        # A reflection through x = 0 inverts the element: every sampled determinant is -1 (unit), or -8 when
         # the element is twice as large. The measure is dimensionless, so both report -1.
         mirrored = [(-x, y, z) for x, y, z in tetrahedron()]
         doubled = [(2.0 * x, 2.0 * y, 2.0 * z) for x, y, z in mirrored]
@@ -75,8 +75,8 @@ class FallbackDecision(unittest.TestCase):
             ({"elements": 10, "invalid_elements": 0, "min_scaled_jacobian": 0.05}, 3, 2, False),
             ({"elements": 10, "invalid_elements": 59, "min_scaled_jacobian": -0.95}, 3, 2, True),
             ({"elements": 0, "invalid_elements": 0, "min_scaled_jacobian": None}, 0, 2, True),
-            # The fallback level is terminal: LMP-0002's level-2 mesh (min scaled Jacobian 0.0762) is kept, and an
-            # invalid one is not remeshed (the job refuses it as mesh_invalid).
+            # The fallback level is terminal: the job keeps LMP-0002's level-2 mesh (min scaled Jacobian 0.0762),
+            # and refuses an invalid one as mesh_invalid instead of remeshing it.
             ({"elements": 12937, "invalid_elements": 0, "min_scaled_jacobian": 0.0762}, 2, 2, False),
             ({"elements": 10, "invalid_elements": 1, "min_scaled_jacobian": -0.2}, 2, 2, False),
         ]
