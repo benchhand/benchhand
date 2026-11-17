@@ -563,6 +563,14 @@ class ValidatorLayout(TempProject):
                 self.assertEqual(found[str(stray)]["severity"], "error")
                 self.assertTrue(found[str(stray)]["canonical_location"].endswith("/manufacturing/LMP-0004/part.step"))
 
+    def test_a_stray_3mf_names_part_3mf_as_its_canonical_file(self) -> None:
+        stray = write(self.hw / "print" / "LMP-0004_flat.3mf")
+        code, found = self.layout_findings()
+        self.assertEqual(code, 0)
+        item = found[str(stray)]
+        self.assertEqual((item["code"], item["severity"], item["canonical_location"]),
+                         ("layout.stray", "warning", "hw/versions/v1/manufacturing/LMP-0004/part.3mf"))
+
     def test_symlink_escape_is_an_error_at_every_stage(self) -> None:
         outside = write(self.root / "outside.md")
         (self.hw / "docs").mkdir(exist_ok=True)  # the migration note already lives there

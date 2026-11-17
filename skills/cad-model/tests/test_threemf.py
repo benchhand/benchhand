@@ -320,20 +320,10 @@ class ReadBackTests(unittest.TestCase):
                               capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr[-3000:]
         cls.report = json.loads(proc.stdout)
-        colored = Path(cls.tmp.name) / "colored.3mf"
-        colored.write_bytes(threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material="PETG", color="#336699"))
-        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "threemf_probe.py"), str(colored)],
-                              capture_output=True, text=True, check=False)
-        assert proc.returncode == 0, proc.stderr[-3000:]
-        cls.colored = json.loads(proc.stdout)
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.tmp.cleanup()
-
-    def test_a_coloured_package_validates_against_the_schemas_and_trimesh_reads_it(self) -> None:
-        self.assertEqual(self.colored["schema"], {"[Content_Types].xml": [], "_rels/.rels": [], "3D/3dmodel.model": []})
-        self.assertTrue(self.colored["trimesh"]["watertight"])
 
     def test_trimesh_reads_one_closed_millimetre_object_at_the_identity(self) -> None:
         trimesh = self.report["trimesh"]

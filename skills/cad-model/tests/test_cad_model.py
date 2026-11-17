@@ -2453,9 +2453,11 @@ class ManufacturingInputCacheTests(unittest.TestCase):
                          [("cad.readback@TST-0001", "pass"), ("export.3mf@TST-0001", "pass")])
         self.assertEqual([o["id"] for o in packet["expected"]], ["cad.readback@TST-0001", "export.3mf@TST-0001"])
         sealed = self.hw / "versions" / "v1" / "manufacturing" / "TST-0001" / "part.3mf"
+        sealed_sha = hashlib.sha256(sealed.read_bytes()).hexdigest()
         self.assertEqual(json.loads((self.hw / "checks" / "v1" / "cad" / "evidence" / "check.json").read_text(encoding="utf-8"))["artifacts"],
-                         [{"path": "hw/versions/v1/manufacturing/TST-0001/part.3mf",
-                           "sha256": hashlib.sha256(sealed.read_bytes()).hexdigest()}])
+                         [{"path": "hw/versions/v1/manufacturing/TST-0001/part.3mf", "sha256": sealed_sha}])
+        self.assertEqual(packet["dependencies"].get("export_3mf_tst_0001"), sealed_sha,
+                         "the packet's dependencies name the sealed part.3mf the export.3mf verdict read")
         evidence = sys.modules.get("cad_record_evidence")
         if evidence is None:
             spec = importlib.util.spec_from_file_location("cad_record_evidence",
