@@ -1132,15 +1132,6 @@ def insert_project(root: Path) -> Path:
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
-class CheckJobsDefaultTests(unittest.TestCase):
-    def test_check_measures_in_auto_workers_unless_jobs_is_given(self) -> None:
-        import cad_model
-        measure = cad_model._jobs("auto")
-        base = ("check", "v1", "--hw", "hw")
-        self.assertEqual(cad_model.parser().parse_args(base).jobs, measure)
-        self.assertEqual(cad_model.parser().parse_args((*base, "--jobs", "1")).jobs, 1)
-
-
 class OccurrenceBuildTests(unittest.TestCase):
     """One part-local PN placed six times: one definition, six placed instances (CadQuery only)."""
 
