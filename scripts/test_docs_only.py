@@ -1,4 +1,6 @@
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -216,6 +218,73 @@ class GitDiffTests(unittest.TestCase):
                 docs_only.git_diff(Path(tmp), "0" * 40, "1" * 40)
 
 
+class EntryPointTests(unittest.TestCase):
+    """Run docs_only.py as the workflow does: env in, one key=value line out in GITHUB_OUTPUT."""
+
+    def run_main(self, event: str, base: str, head: str, repo: Path) -> dict[str, str]:
+        script = repo / "scripts" / "docs_only.py"  # a copy: main() finds its repo from __file__
+        script.parent.mkdir(exist_ok=True)
+        shutil.copy(Path(docs_only.__file__), script)
+        output = repo.parent / "github_output"
+        output.write_text("")
+        subprocess.run(
+            [sys.executable, "-B", str(script)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env={
+                "PATH": os.environ["PATH"],
+                "GITHUB_OUTPUT": str(output),
+                "EVENT_NAME": event,
+                "BASE_SHA": base,
+                "HEAD_SHA": head,
+            },
+        )
+        return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+    def repo_with(self, tmp: str, changed: str) -> Path:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        run("git", "init", "-q", "-b", "main", cwd=repo)
+        run("git", "config", "user.email", "t@example.com", cwd=repo)
+        run("git", "config", "user.name", "t", cwd=repo)
+        (repo / "README.md").write_text("hello\n")
+        run("git", "add", "-A", cwd=repo)
+        run("git", "commit", "-qm", "base", cwd=repo)
+        run("git", "checkout", "-qb", "topic", cwd=repo)
+        (repo / changed).parent.mkdir(parents=True, exist_ok=True)
+        (repo / changed).write_text("changed\n")
+        run("git", "add", "-A", cwd=repo)
+        run("git", "commit", "-qm", "change", cwd=repo)
+        return repo
+
+    def test_a_docs_only_pull_request_writes_skip_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.repo_with(tmp, "docs/guide.md")
+            self.assertEqual(
+                self.run_main("pull_request", "main", "topic", repo), {"skip": "true"}
+            )
+
+    def test_a_code_path_pull_request_writes_skip_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.repo_with(tmp, "skills/cad-flow/scripts/run.py")
+            self.assertEqual(
+                self.run_main("pull_request", "main", "topic", repo), {"skip": "false"}
+            )
+
+    def test_a_push_writes_skip_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.repo_with(tmp, "docs/guide.md")
+            self.assertEqual(self.run_main("push", "main", "topic", repo), {"skip": "false"})
+
+    def test_a_diff_error_writes_skip_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self.repo_with(tmp, "docs/guide.md")
+            self.assertEqual(
+                self.run_main("pull_request", "0" * 40, "1" * 40, repo), {"skip": "false"}
+            )
+
+
 def evaluate(expression: str, result: str, skip: str) -> bool:
     """Evaluate the one boolean expression the skills job's SKIP variable may hold."""
     body = expression.strip().removeprefix("${{").removesuffix("}}").strip()
@@ -249,6 +318,17 @@ class WorkflowTests(unittest.TestCase):
         for (result, skip), expected in cases.items():
             with self.subTest(result=result, skip=skip):
                 self.assertEqual(evaluate(expression, result, skip), expected)
+
+    def test_the_output_key_main_writes_is_the_one_the_workflow_reads(self) -> None:
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        changes = workflow["jobs"]["changes"]
+        gate = [s for s in changes["steps"] if "scripts/docs_only.py" in s.get("run", "")]
+        self.assertEqual(len(gate), 1)
+        # the job output "skip" must come from the gate step's output "skip"
+        step_id = gate[0]["id"]
+        self.assertEqual(changes["outputs"], {"skip": f"${{{{ steps.{step_id}.outputs.skip }}}}"})
+        # and the skills job must read that job output under the same name
+        self.assertIn("needs.changes.outputs.skip", self.job["env"]["SKIP"])
 
     def test_the_job_runs_after_the_gate_even_when_the_gate_failed(self) -> None:
         self.assertEqual(self.job["needs"], "changes")
