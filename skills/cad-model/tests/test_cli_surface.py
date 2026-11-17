@@ -180,6 +180,16 @@ class MainTests(MainCase):
         _, args, _ = self.forwarded("run", "-5", "--label", "v1")
         self.assertEqual(args[0], Path("-5"))
 
+    def test_a_positional_that_starts_with_a_dash_and_holds_a_space_is_a_path(self) -> None:
+        for argv, expected in ((("run", "-alt hw", "--label", "v1"), (Path("-alt hw"), "v1", "auto", [])),
+                               (("latest", "-a b", "--label", "v1"), (Path("-a b"), "v1")),
+                               (("store", "gc", "-ab hw"), (Path("-ab hw"), False))):
+            with self.subTest(argv=argv):
+                _, args, _ = self.forwarded(*argv)
+                self.assertEqual(args, expected)
+        _, args, _ = self.forwarded("diff", "-a b", "-c d")
+        self.assertEqual(args, (Path("hw"), "-a b", "-c d"))
+
     def test_an_unknown_option_is_a_usage_error(self) -> None:
         for argv in (("run", "hw", "--label", "v1", "--bogus"), ("run", "hw", "--label", "v1", "-x"),
                      ("diff", "v1", "v2", "--hw")):
@@ -280,12 +290,24 @@ class MainTests(MainCase):
 
 
 class DeliberateChangeTests(MainCase):
-    """The one change the Click conversion makes on purpose. These FAIL on the argparse script and pass on the Click one."""
+    """The changes the Click conversion makes on purpose. These FAIL on the argparse script and pass on the Click one."""
 
     def test_an_abbreviated_option_is_a_usage_error(self) -> None:
         for argv in (("store", "gc", "hw", "--dry-r"), ("run", "hw", "--lab", "v1"), ("check", "v1", "--exa")):
             with self.subTest(argv=argv):
                 self.refused(*argv)
+
+    def test_help_wins_over_a_conflict_or_a_bad_choice_in_the_same_command_line(self) -> None:
+        for argv in (("check", "v1", "--cache", "c", "--no-cache", "--help"), ("store", "purge", "hw", "--help")):
+            with self.subTest(argv=argv):
+                code, out, _ = self.main(*argv)
+                self.assertEqual((code, "sage" in out, self.calls), (0, True, []))
+
+    def test_an_unknown_top_level_option_is_a_usage_error_beside_help(self) -> None:
+        for argv in (("--help", "--bogus"), ("--bogus", "--help")):
+            with self.subTest(argv=argv):
+                code, out, _ = self.main(*argv)
+                self.assertEqual((code, out, self.calls), (2, "", []))
 
 
 if __name__ == "__main__":
