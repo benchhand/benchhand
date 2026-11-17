@@ -320,6 +320,70 @@ class RefSiblingConstraints(FixtureTree):
         self.assertIn(gen_api.DOC_REL, err)
 
 
+class SchemaHashDrift(FixtureTree):
+    REL = "skills/cad-record/schemas/inherit.schema.json"
+    BASE_DOC = {
+        "$id": BASE + "inherit.schema.json",
+        "$defs": {"base": {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}}},
+        "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"a": {"maxLength": 9}}}],
+    }
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, self.REL, self.BASE_DOC)
+        code, _, err = run_main([], self.root)
+        self.assertEqual(code, 0, err)
+
+    def check(self) -> tuple[int, str]:
+        code, _, err = run_main(["--check"], self.root)
+        return code, err
+
+    def test_edits_the_renderer_does_not_show_still_fail_check_naming_the_schema(self) -> None:
+        edits = {
+            "refined inherited bound": lambda d: d["allOf"][1]["properties"]["a"].update(maxLength=5),
+            "unrendered keyword": lambda d: d.update({"$comment": "reworded"}),
+        }
+        for name, edit in edits.items():
+            with self.subTest(edit=name):
+                changed = json.loads(json.dumps(self.BASE_DOC))
+                edit(changed)
+                write_json(self.root, self.REL, changed)
+                code, err = self.check()
+                self.assertNotEqual(code, 0)
+                self.assertIn(self.REL, err)
+                self.assertIn("python3 scripts/gen_api.py", err)
+                self.assertEqual(run_main([], self.root)[0], 0)
+                self.assertEqual(self.check()[0], 0)
+                write_json(self.root, self.REL, self.BASE_DOC)
+                run_main([], self.root)
+
+    def test_a_whitespace_only_edit_fails_check(self) -> None:
+        path = self.root / self.REL
+        path.write_bytes(path.read_bytes() + b"\n")
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        self.assertIn(self.REL, err)
+
+    def test_regenerating_after_an_edit_passes_check(self) -> None:
+        path = self.root / self.REL
+        path.write_bytes(path.read_bytes() + b"\n")
+        self.assertEqual(run_main([], self.root)[0], 0)
+        self.assertEqual(self.check()[0], 0)
+
+    def test_an_added_schema_fails_check_naming_it(self) -> None:
+        rel = "skills/cad-concept/assets/schemas/extra.schema.json"
+        write_json(self.root, rel, {"$id": BASE + "extra.schema.json", "type": "object", "properties": {"x": {"type": "string"}}})
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        self.assertIn(rel, err)
+
+    def test_a_removed_schema_fails_check_naming_it(self) -> None:
+        (self.root / self.REL).unlink()
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        self.assertIn(self.REL, err)
+
+
 class Determinism(FixtureTree):
     def test_two_runs_are_byte_equal(self) -> None:
         self.assertEqual(gen_api.generate(self.root), gen_api.generate(self.root))

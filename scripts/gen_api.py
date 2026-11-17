@@ -15,6 +15,7 @@ each of them. The generator drops none.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import keyword
 import re
@@ -65,6 +66,7 @@ class Schema:
     rel: str
     id: str
     data: dict[str, Any]
+    sha256: str  # of the exact file bytes, so any edit needs a regeneration
 
 
 @dataclass
@@ -96,10 +98,11 @@ def load_schemas(root: Path) -> list[Schema]:
         if not folder.is_dir():
             raise ValueError(f"schema directory {rel_dir} does not exist")
         for path in sorted(folder.glob("*.schema.json")):
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = path.read_bytes()
+            data = json.loads(raw.decode("utf-8"))
             if not isinstance(data, dict) or not isinstance(data.get("$id"), str):
                 raise TypeError(f"{path.relative_to(root).as_posix()}: expected an object with a string $id")
-            schemas.append(Schema(path.relative_to(root).as_posix(), data["$id"], data))
+            schemas.append(Schema(path.relative_to(root).as_posix(), data["$id"], data, hashlib.sha256(raw).hexdigest()))
     ids = [s.id for s in schemas]
     if len(set(ids)) != len(ids):
         raise ValueError(f"duplicate $id among schemas: {sorted(i for i in set(ids) if ids.count(i) > 1)}")
@@ -481,7 +484,25 @@ def order_types(types: list[TypeDef]) -> tuple[list[TypeDef], set[tuple[str, str
     return order.done, order.quoted
 
 
-def render_api(types: list[TypeDef]) -> str:
+HASH_LINE = re.compile(r"schema-sha256 ([0-9a-f]{64}) (\S+)")
+
+
+def hash_lines(schemas: list[Schema]) -> list[str]:
+    return [f"schema-sha256 {s.sha256} {s.rel}" for s in sorted(schemas, key=lambda s: s.rel)]
+
+
+def schema_drift(expected: str, committed: str) -> list[str]:
+    """Name each schema whose recorded hash differs from the current file, and each schema the outputs lack or still list."""
+    now = {rel: digest for digest, rel in HASH_LINE.findall(expected)}
+    then = {rel: digest for digest, rel in HASH_LINE.findall(committed)}
+    return [
+        *[f"schema changed {rel}" for rel in sorted(now) if rel in then and now[rel] != then[rel]],
+        *[f"schema added {rel}" for rel in sorted(now.keys() - then.keys())],
+        *[f"schema removed {rel}" for rel in sorted(then.keys() - now.keys())],
+    ]
+
+
+def render_api(types: list[TypeDef], schemas: list[Schema]) -> str:
     ordered, quoted = order_types(types)
     body: list[str] = []
     for typedef in ordered:
@@ -492,6 +513,7 @@ def render_api(types: list[TypeDef]) -> str:
     names = sorted(t.name for t in types)
     head = [
         f"# {HEADER}",
+        *[f"# {line}" for line in hash_lines(schemas)],
         '"""Typed shapes of the CAD record and concept JSON Schemas.',
         "",
         "Standard library only and Python 3.11 compatible, so FreeCAD job code can import it. Each schema",
@@ -517,7 +539,7 @@ def md_cell(text: str) -> str:
 
 
 def render_doc(schemas: list[Schema], types: list[TypeDef]) -> str:
-    out = [f"<!-- {HEADER} -->", "", "# Schema reference", "",
+    out = [f"<!-- {HEADER}", *hash_lines(schemas), "-->", "", "# Schema reference", "",
            "Every type below is generated from the JSON Schemas listed in its section. The schemas stay authoritative;",
            "types show shape only, so the constraints a type cannot express are listed under each type.", ""]
     for schema in schemas:
@@ -550,7 +572,22 @@ def generate(root: Path) -> dict[str, str]:
     walker = Walker(schemas)
     walker.register_all()
     types = list(walker.types.values())
-    return {API_REL: render_api(types), DOC_REL: render_doc(schemas, types)}
+    return {API_REL: render_api(types, schemas), DOC_REL: render_doc(schemas, types)}
+
+
+def output_drift(root: Path, outputs: dict[str, str]) -> list[str]:
+    """Missing or stale outputs, plus each schema whose bytes differ from the hash the outputs record."""
+    drift: list[str] = []
+    for rel, text in outputs.items():
+        path = root / rel
+        if not path.is_file():
+            drift.append(f"missing {rel}")
+            continue
+        committed = path.read_text(encoding="utf-8")
+        if committed != text:
+            drift.append(f"stale {rel}")
+            drift += [d for d in schema_drift(text, committed) if d not in drift]
+    return drift
 
 
 def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
@@ -569,13 +606,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             path.write_text(text, encoding="utf-8")
             print(f"generated {rel}")
         return 0
-    drift = []
-    for rel, text in outputs.items():
-        path = root / rel
-        if not path.is_file():
-            drift.append(f"missing {rel}")
-        elif path.read_text(encoding="utf-8") != text:
-            drift.append(f"stale {rel}")
+    drift = output_drift(root, outputs)
     if drift:
         print("FAIL: generated files differ from the JSON Schemas:", file=sys.stderr)
         for item in drift:
