@@ -265,6 +265,102 @@ class Scenarios:
         self.assertEqual(names(self.ledger.ready(NO_GATES)), [])
         self.assertEqual([g.name for g in self.ledger.gates() if g.status == "open"], ["g1.v2"])
 
+    def test_a_void_onto_an_open_successor_moves_the_blocked_units_so_nothing_becomes_ready(self) -> None:
+        self.ledger.create_graph([work.UnitSpec("n1", "next"), work.UnitSpec("n2", "next")])
+        self.ledger.create_gate("g1", ["n1", "n2"])
+        self.ledger.add_gate_waiter("g1", "cad/n2")
+        self.ledger.create_gate("g2", ["n1"])  # an open successor that so far blocks one of the two units
+        self.ledger.void_gate("g1", "g2")
+        gates = {g.name: g for g in self.ledger.gates()}
+        self.assertEqual((gates["g1"].void, gates["g1"].status), (True, "closed"))
+        self.assertEqual((set(gates["g2"].blocks), gates["g2"].status), ({"n1", "n2"}, "open"))
+        self.assertIn("cad/n2", gates["g2"].waiters)
+        self.assertEqual(names(self.ledger.ready(NO_GATES)), [])
+        with self.assertRaises(work.ClaimError):
+            self.ledger.claim("n2", NO_GATES)
+
+    def test_a_void_onto_a_successor_that_blocks_another_stage_is_refused_and_retires_nothing(self) -> None:
+        self.ledger.create_graph([work.UnitSpec("n1", "next"), work.UnitSpec("m", "other")])
+        self.ledger.create_gate("g1", ["n1"])
+        self.ledger.create_gate("g3", ["m"])
+        with self.assertRaisesRegex(work.WorkError, "already blocks"):
+            self.ledger.void_gate("g1", "g3")
+        gates = {g.name: g for g in self.ledger.gates()}
+        self.assertEqual((gates["g1"].void, gates["g1"].status, gates["g1"].blocks), (False, "open", ("n1",)))
+        self.assertEqual((gates["g3"].status, gates["g3"].blocks), ("open", ("m",)))
+        self.assertEqual(names(self.ledger.ready(NO_GATES)), [])
+
+    VOID_FAULTS = ("gate_comment", "_gate_close", "reopen")  # backend steps a crash can interrupt
+
+    def test_a_void_interrupted_between_steps_finishes_on_a_rerun_with_the_same_end_state(self) -> None:
+        def crash(*args, **kwargs):
+            raise RuntimeError("crash")
+
+        for index, fault in enumerate(self.VOID_FAULTS):
+            with self.subTest(fault):
+                i, n, old, new = f"i{index}", f"n{index}", f"g{index}", f"g{index}.v2"
+                self.ledger.create_graph([work.UnitSpec(i, "layout"), work.UnitSpec(n, "next")])
+                self.ledger.claim(i, NO_GATES)
+                self.ledger.close(i)
+                self.ledger.create_gate(old, [n])
+                self.ledger.add_gate_waiter(old, f"cad/{n}")
+                work.resolve_gate(self.ledger, old, DECISION)
+                with mock.patch.object(self.ledger.backend, fault, side_effect=crash):
+                    try:
+                        self.ledger.void_gate(old, new, reopen=[i], reason="geometry changed")
+                    except RuntimeError:
+                        pass  # the process died here; a file backend never reaches the steps it does in one write
+                self.ledger.void_gate(old, new, reopen=[i], reason="geometry changed")  # the rerun
+                self.ledger.void_gate(old, new, reopen=[i], reason="geometry changed")  # and a rerun of the rerun
+                gates = {g.name: g for g in self.ledger.gates()}
+                self.assertEqual((gates[old].void, gates[old].status), (True, "closed"))
+                self.assertEqual((gates[new].void, gates[new].status), (False, "open"))
+                self.assertEqual((gates[new].blocks, gates[new].waiters), ((n,), (f"cad/{n}",)))
+                self.assertEqual(self.ledger.backend.gate_comments(new), ["supersedes %s: geometry changed" % old])
+                self.assertEqual(self.ledger.backend.gate_comments(old), [DECISION.note])
+                units = {u.unit: (u.status, u.assignee) for u in self.ledger.units()}
+                self.assertEqual((units[i], units[n]), (("open", None), ("open", None)))
+                self.assertNotIn(n, names(self.ledger.ready(frozenset({old}))))
+
+    def test_reopen_keeps_a_live_claim_across_a_second_void(self) -> None:
+        self.ledger.create_graph([work.UnitSpec("a", "layout")])
+        self.ledger.claim("a", NO_GATES)
+        self.ledger.close("a")
+        self.ledger.reopen("a")  # the first VOID
+        self.assertEqual(self.ledger.claim("a", NO_GATES, "cad/y").assignee, "cad/y")  # redispatched
+        self.ledger.reopen("a")  # a second VOID while the worker is live
+        held = next(i for i in self.ledger.units() if i.unit == "a")
+        self.assertEqual((held.status, held.assignee), ("in_progress", "cad/y"))
+        self.ledger.close("a", actor="cad/y")
+        self.ledger.reopen("a")
+        idle = next(i for i in self.ledger.units() if i.unit == "a")
+        self.assertEqual((idle.status, idle.assignee), ("open", None))
+
+    def accept(self, text: str) -> frozenset[str]:
+        (self.project / "hw").mkdir(exist_ok=True)
+        (self.project / "hw" / "product.yaml").write_text(text, encoding="utf-8")
+        return work.flow_gates_from_product(self.project)
+
+    def test_a_single_gate_named_differently_from_its_stage_binds_only_when_its_stage_is_approved(self) -> None:
+        for stage, gate in (("concept", "variant"), ("design_freeze", "freeze")):
+            with self.subTest(stage):
+                unit = f"after-{gate}"
+                self.ledger.create_graph([work.UnitSpec(unit, "next")])
+                self.ledger.create_gate(gate, [unit])
+                self.ledger.backend._gate_close(gate, "closed")
+                for text in ("", "flow:\n  gates:\n    intent: {state: approved, version: v1}\n"):
+                    accepted = self.accept(text)  # no entry for the stage, or an entry for another one
+                    self.assertNotIn(unit, names(self.ledger.ready(accepted)))
+                    with self.assertRaises(work.ClaimError):
+                        self.ledger.claim(unit, accepted)
+                    self.assertEqual([f.gate for f in self.ledger.findings(accepted) if f.gate == gate], [gate])
+                accepted = self.accept(f"flow:\n  gates:\n    {stage}: {{state: approved, version: v1}}\n")
+                self.assertEqual(accepted, frozenset({gate}))
+                self.assertIn(unit, names(self.ledger.ready(accepted)))
+                self.assertEqual(self.ledger.claim(unit, accepted).assignee, f"cad/{unit}")
+                self.assertEqual([f for f in self.ledger.findings(accepted) if f.gate == gate], [])
+                self.ledger.unclaim(unit, f"cad/{unit}")
+
     def test_no_operation_touches_core_hooks_path(self) -> None:
         steps = [
             lambda: self.ledger.create_graph(GRAPH),
@@ -350,6 +446,8 @@ class RealBdScenarios(Scenarios, unittest.TestCase):
         shutil.copytree(self.template, self.project, symlinks=True)
         self.offset = timedelta(0)
         self.ledger = work.Ledger.open(self.project, clock=lambda: work.utc_now() + self.offset)
+
+    VOID_FAULTS = ("_gate_close",)
 
     def hand_close(self, gate: str) -> None:
         gate_id = next(g.id for g in self.ledger.gates() if g.name == gate)
@@ -853,20 +951,32 @@ class FlowGatesTests(unittest.TestCase):
         cases = {
             "provisional": ("layout: {state: provisional, version: v2, provisional: DR-003}", {"layout.provisional"}),
             "approved two-step": (
-                "layout: {state: approved, version: v2, provisional: DR-003, approved: DR-004}",
-                {"layout.provisional", "layout.approval"},
+                "analysis: {state: approved, version: v2, provisional: DR-003, approved: DR-004}",
+                {"analysis.provisional", "analysis.approval"},
             ),
-            "approved single": ("intent: {state: approved, version: v1, approved: DR-001}", {"intent"}),
+            "intent": ("intent: {state: approved, version: v1, approved: DR-001}", {"intent"}),
+            "concept is the variant gate": ("concept: {state: approved, version: v1, approved: DR-002}", {"variant"}),
+            "design_freeze is the freeze gate": (
+                "design_freeze: {state: approved, version: v3, approved: DR-009}",
+                {"freeze"},
+            ),
+            "release": ("release: {state: approved, version: v3, approved: DR-010}", {"release"}),
             "several stages": (
                 "intent: {state: approved, version: v1, approved: DR-001}\n"
-                "    layout: {state: provisional, version: v2}",
-                {"intent", "layout.provisional"},
+                "    parts: {state: provisional, version: v2}",
+                {"intent", "parts.provisional"},
             ),
         }
         for label, (entries, expected) in cases.items():
             with self.subTest(label):
                 self.product(f"flow:\n  gates:\n    {entries}\n")
                 self.assertEqual(work.flow_gates_from_product(self.project), frozenset(expected))
+
+    def test_the_gated_stages_are_stages_of_the_product_schema(self) -> None:
+        schema = json.loads((HERE.parents[1] / "cad-record" / "schemas" / "product.schema.json").read_text("utf-8"))
+        stages = set(schema["$defs"]["stage"]["enum"])
+        self.assertLessEqual(set(work.SINGLE_GATES) | set(work.TWO_STEP_STAGES), stages)
+        self.assertEqual(set(work.SINGLE_GATES.values()), {"intent", "variant", "freeze", "release"})
 
     def test_every_other_shape_of_flow_gates_fails_closed_with_the_problem_named(self) -> None:
         cases = {
@@ -893,13 +1003,39 @@ class FlowGatesTests(unittest.TestCase):
                 "flow: {gates: {3: {state: approved}}}",
                 "flow.gates has a stage key that is not a name: 3",
             ),
-            "a stage with a space": ('flow: {gates: {"bad stage": {state: approved}}}', "not a name: 'bad stage'"),
+            "a ledger gate name": (
+                "flow: {gates: {layout.provisional.v2: {state: approved}}}",
+                "flow.gates.layout.provisional.v2 is not a gated stage",
+            ),
+            "a stage with a space": ('flow: {gates: {"bad stage": {state: approved}}}', "is not a gated stage"),
+            "an ungated stage": (
+                "flow: {gates: {ground: {state: approved}}}",
+                "flow.gates.ground is not a gated stage",
+            ),
+            "another ungated stage": ("flow: {gates: {bom: {state: approved}}}", "flow.gates.bom is not a gated stage"),
+            "a stage that does not exist": ("flow: {gates: {frozen: {state: approved}}}", "is not a gated stage"),
+            "a gate name for a stage": (
+                "flow: {gates: {variant: {state: approved}}}",
+                "flow.gates.variant is not a gated stage",
+            ),
+            "a provisional single gate": (
+                "flow: {gates: {intent: {state: provisional}}}",
+                "flow.gates.intent is a single-gate stage; its state can only be approved",
+            ),
         }
         for label, (text, message) in cases.items():
             with self.subTest(label):
                 self.product(text + "\n")
                 with self.assertRaisesRegex(work.WorkError, re.escape(message)):
                     work.flow_gates_from_product(self.project)
+
+    def test_the_cli_refuses_a_flow_gates_key_that_is_not_a_gated_stage(self) -> None:
+        self.product("flow:\n  gates:\n    layout.provisional.v2: {state: approved, version: v1}\n")
+        for command in (("ready",), ("claim", "b"), ("findings",)):
+            with self.subTest(command):
+                code, error = self.cli(*command)
+                self.assertEqual(code, 1)
+                self.assertIn("is not a gated stage", error["error"])
 
     def test_a_product_file_that_does_not_parse_is_an_error_not_an_empty_set(self) -> None:
         self.product("flow: [unclosed\n")

@@ -19,8 +19,10 @@ init    copies HW into <workspace>/hw/ without versions/, renders/, releases/, .
         records the unit's PNs and the sha256 of every copied file in <workspace>/baseline.json.
         It seeds the scratch part store with hard links to HW's stored objects and build records,
         so the scratch build reuses every unchanged part. An existing workspace is kept unless
-        --reset replaces it. A directory holding only status.json, the lease work.py wrote when the
-        unit was claimed, is not a workspace yet; init and --reset keep that lease.
+        --reset replaces it. A directory that is empty or holds only status.json, the lease work.py
+        wrote when the unit was claimed, is not a workspace yet; init and --reset keep that lease.
+        Any other directory without a baseline.json is refused with nothing deleted: init never
+        discards files unless --reset says so.
 build   runs cad-model `run` on the scratch hw/ under the next scratch label, cad-model `check`
         on that version, and cad-design form_check at --fidelity. HW itself is never passed to
         any of them, so HW/versions/ is neither created nor changed. Form findings are split
@@ -146,6 +148,11 @@ def load_baseline(work: Path) -> dict[str, Any]:
 LEASE_FILE = "status.json"  # the unit's lease, written by work.py; it outlives the workspace around it
 
 
+def holds_only_lease(work: Path) -> bool:
+    """Whether the unit's directory is empty or holds nothing but its lease, so init may build a workspace in it."""
+    return work.is_dir() and not work.is_symlink() and all(child.name == LEASE_FILE for child in work.iterdir())
+
+
 def clear_workspace(work: Path) -> None:
     """Remove everything in the unit's directory but its lease."""
     if work.exists() and not work.is_dir():
@@ -187,10 +194,13 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
     if not parts or bad:
         raise UsageError(f"--part needs one or more PNs matching {PN.pattern}; got {bad or 'none'}")
     work = workspace(hw, unit)
-    if (work / "baseline.json").is_file() and not reset:  # a claim alone leaves just the lease
-        baseline = load_baseline(work)
-        return 0, {"status": "exists", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
-                   "parts": baseline["parts"], "note": "kept the existing workspace; --reset replaces it"}
+    if work.exists() and not reset:
+        if holds_only_lease(work):  # a claim alone leaves just the lease: nothing to keep, nothing to lose
+            pass
+        else:  # a workspace, or what is left of one: load_baseline reads it, or refuses without touching a file
+            baseline = load_baseline(work)
+            return 0, {"status": "exists", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
+                       "parts": baseline["parts"], "note": "kept the existing workspace; --reset replaces it"}
     clear_workspace(work)
     work.parent.mkdir(parents=True, exist_ok=True)
     gitignore = work.parent / ".gitignore"

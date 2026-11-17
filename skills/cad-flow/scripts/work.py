@@ -58,7 +58,7 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Collection, Iterable, Iterator, Sequence
+from typing import Any, Callable, Collection, Iterable, Iterator, Mapping, Sequence
 
 MIN_BD = (1, 3, 1)  # 1.3.0 added leases and assignee-checked updates; 1.3.1 fixed `bd ready` fan-in
 LEASE_TTL = timedelta(minutes=5)  # bd 1.3.1 grants 5-minute leases and has no setting; the file backend matches
@@ -210,13 +210,27 @@ def store_lock(path: Path, make_backoff: Callable[[], Backoff]) -> Iterator[None
 # --- backend interface --------------------------------------------------------------------------------------------
 
 
-def check_successor(old: str, new: str, successor: Gate | None) -> None:
-    """Refuse a VOID successor that cannot take over: the same gate, or one that is already closed or void."""
-    if new == old:
+def check_successor(old: Gate, new: str, successor: Gate | None, stage_of: Mapping[str, str]) -> None:
+    """Refuse a VOID successor that cannot take over.
+
+    It must be a new name, or an open gate that blocks no unit from a stage that `old` does not block: such a gate
+    belongs to another part of the flow, and moving the units onto it would hide them behind the wrong approval.
+    """
+    if new == old.name:
         raise WorkError("the successor gate needs its own name")
-    if successor is not None and (successor.status == "closed" or successor.void):
+    if successor is None:
+        return
+    if successor.status == "closed" or successor.void:
         raise WorkError(
             f"gate {new} already exists and is {'void' if successor.void else 'closed'}; name a new successor"
+        )
+    foreign = {stage_of[u] for u in successor.blocks if u in stage_of} - {
+        stage_of[u] for u in old.blocks if u in stage_of
+    }
+    if foreign:
+        raise WorkError(
+            f"gate {new} already blocks units of stage {', '.join(sorted(foreign))} that gate {old.name} does not; "
+            "name a new successor"
         )
 
 
@@ -288,8 +302,11 @@ class Backend(ABC):
 
     @abstractmethod
     def gate_void(self, old: str, new: str, reason: str) -> None:
-        """Void `old` behind successor `new`: create `new` on the units `old` blocks, give it `old`'s waiters, mark
-        `old` void and close it. The caller has checked `new` (see `check_successor`); the file backend does all of
+        """Void `old` behind successor `new`, after `check_successor` accepts `new`.
+
+        `new` is created on the units `old` blocks, or, when it exists and is open, takes those units on; it gets
+        `old`'s waiters and a "supersedes" comment; only then is `old` marked void and closed. Every step skips what
+        is already done, so a rerun after a crash finishes the job and repeats nothing. The file backend does all of
         it in one write."""
 
     @abstractmethod
@@ -590,17 +607,28 @@ class BdBackend(Backend):
         return [item["text"] for item in self._bd("comments", self._gate(name).id, "--json") or ()]
 
     def gate_void(self, old: str, new: str, reason: str) -> None:
-        known = {gate.name: gate for gate in self.gates()}
+        units, gates = self._snapshot()
+        known = {gate.name: gate for gate in gates}
         if old not in known:
             raise WorkError(f"no gate {old!r} in the ledger")
-        check_successor(old, new, known.get(new))
-        previous, note = known[old], f"supersedes {old}: {reason}"
-        # The successor exists, with the waiters, before the old gate is retired: a failure leaves `old` as it was.
-        self.gate_create(new, previous.blocks, note)
+        previous, successor, note = known[old], known.get(new), f"supersedes {old}: {reason}"
+        check_successor(previous, new, successor, {item.unit: item.stage for item in units})
+        if not previous.blocks:
+            raise WorkError(f"gate {old} blocks no unit, so there is nothing to move to a successor")
+        # The successor holds the units and the waiters before the old gate is retired: a crash leaves `old` as it was.
+        if successor is None:
+            self.gate_create(new, previous.blocks, note)
+        else:
+            for unit in previous.blocks:
+                if unit not in successor.blocks:
+                    self.gate_block(new, unit)
         for waiter in previous.waiters:
-            self.gate_add_waiter(new, waiter)
-        self.gate_comment(new, note)
-        self._bd("label", "add", previous.id, VOID_LABEL, "--json")
+            if successor is None or waiter not in successor.waiters:
+                self.gate_add_waiter(new, waiter)
+        if note not in self.gate_comments(new):
+            self.gate_comment(new, note)
+        if not previous.void:
+            self._bd("label", "add", previous.id, VOID_LABEL, "--json")
         if previous.status == "open":
             self._gate_close(old, f"void: superseded by {new}")
 
@@ -814,8 +842,8 @@ class FileBackend(Backend):
 
     def reopen(self, unit: str, reason: str) -> None:
         with self._transaction() as data:
-            self._record(data, unit).pop("closed", None)
-            self._set_lease(unit, {})
+            if self._record(data, unit).pop("closed", None) is not None:
+                self._set_lease(unit, {})  # a unit that was not closed keeps its claim, live or stale
 
     def gates(self) -> list[Gate]:
         return [
@@ -870,23 +898,23 @@ class FileBackend(Backend):
         with self._transaction() as data:  # one write: a refusal or a failure leaves the ledger as it was
             previous = self._gate_record(data, old)
             existing = data["gates"].get(new)
-            check_successor(old, new, self._gate_of(new, existing) if existing else None)
+            stage_of = {name: record["stage"] for name, record in data["units"].items()}
+            check_successor(
+                self._gate_of(old, previous), new, self._gate_of(new, existing) if existing else None, stage_of
+            )
+            if not previous["blocks"]:
+                raise WorkError(f"gate {old} blocks no unit, so there is nothing to move to a successor")
             for unit in previous["blocks"]:
                 self._record(data, unit)
             note = f"supersedes {old}: {reason}"
             successor = data["gates"].setdefault(
                 _check_name("gate", new),
-                {
-                    "status": "open",
-                    "void": False,
-                    "reason": note,
-                    "blocks": list(previous["blocks"]),
-                    "waiters": [],
-                    "comments": [],
-                },
+                {"status": "open", "void": False, "reason": note, "blocks": [], "waiters": [], "comments": []},
             )
+            successor["blocks"] += [unit for unit in previous["blocks"] if unit not in successor["blocks"]]
             successor["waiters"] += [w for w in previous["waiters"] if w not in successor["waiters"]]
-            successor["comments"].append({"author": FLOW_ACTOR, "text": note, "created_at": _stamp(self.clock())})
+            if note not in [comment["text"] for comment in successor["comments"]]:
+                successor["comments"].append({"author": FLOW_ACTOR, "text": note, "created_at": _stamp(self.clock())})
             previous["void"] = True
             if previous["status"] == "open":
                 previous.update(status="closed", close_reason=f"void: superseded by {new}")
@@ -1025,14 +1053,13 @@ class Ledger:
     def void_gate(self, old: str, new: str, reopen: Sequence[str] = (), reason: str = "voided") -> None:
         """Void gate `old`: open successor `new` on the units it blocked, retire `old`, reopen `reopen`.
 
-        The successor is validated and created first, and the old gate is retired only then, so a refusal leaves the
-        ledger as it was. This resolves nothing: a void gate is never reported as a mismatch.
+        The backend validates the successor and creates it first, and retires the old gate only then, so a refusal
+        leaves the ledger as it was. The steps are separate writes on bd, and the reopens follow the gate write on
+        both backends. A crash between them leaves a ledger that is safe (units stay blocked behind the successor)
+        and incomplete; the same call again, with the same arguments, repeats nothing and finishes the rest.
+        This resolves nothing: a void gate is never reported as a mismatch.
         """
         _check_name("gate", new)
-        known = {gate.name: gate for gate in self.backend.gates()}
-        if old not in known:
-            raise WorkError(f"no gate {old!r} in the ledger")
-        check_successor(old, new, known.get(new))
         missing = sorted(set(reopen) - {item.unit for item in self.backend.units()})
         if missing:
             raise WorkError(f"cannot reopen unknown units: {', '.join(missing)}")
@@ -1075,6 +1102,11 @@ def resolve_gate(ledger: Ledger, name: str, decision: AcceptedDecision) -> None:
 
 
 GATE_STATES = ("provisional", "approved")  # the recorded states of the 01 flow schema; no entry is `unrecorded`
+# The gated stages and their ledger gates, from 02-process-design, "Beads work tracker": "Single gates: intent,
+# variant, freeze, release" are the gates of the stages intent, concept, design_freeze and release; every other
+# gated stage is two-step, with the gates "<stage>.provisional" and "<stage>.approval".
+SINGLE_GATES = {"intent": "intent", "concept": "variant", "design_freeze": "freeze", "release": "release"}
+TWO_STEP_STAGES = ("layout", "parts", "detail", "analysis")
 
 
 def _yaml_loader() -> Any:
@@ -1097,19 +1129,22 @@ def _yaml_loader() -> Any:
 def _bound_gates(stage: str, entry: dict[str, Any]) -> set[str]:
     """The ledger gates a recorded stage entry binds.
 
-    `provisional` binds the stage's provisional gate. `approved` binds the provisional and approval gates of a
-    two-step stage (its entry names the provisional decision) and the single gate, named for the stage, otherwise.
+    `provisional` binds the provisional gate of a two-step stage. `approved` binds its provisional and approval gates,
+    since 01 has a two-step approval cite the provisional decision, or the single gate of a single-gate stage.
     """
+    if stage in SINGLE_GATES:
+        return {SINGLE_GATES[stage]}
     if entry["state"] == "provisional":
         return {f"{stage}.provisional"}
-    return {f"{stage}.provisional", f"{stage}.approval"} if entry.get("provisional") else {stage}
+    return {f"{stage}.provisional", f"{stage}.approval"}
 
 
 def flow_gates_from_product(project: Path) -> frozenset[str]:
     """The ledger gates bound by flow.gates in <project>/hw/product.yaml, read only.
 
     No file, no `flow`, or no `gates` means nothing is approved yet. Otherwise `gates` must be the 01 schema's mapping
-    from stage to {state: provisional|approved, version, provisional, approved}; any other shape is a WorkError.
+    from a gated stage to {state: provisional|approved, version, provisional, approved}; any other shape, or a key
+    that is not a gated stage, is a WorkError.
     """
     path = project / "hw" / "product.yaml"
     if not path.is_file():
@@ -1127,14 +1162,19 @@ def flow_gates_from_product(project: Path) -> frozenset[str]:
         raise WorkError(f"{path}: flow.gates must be a mapping from stage to entry, not a {type(gates).__name__}")
     bound: set[str] = set()
     for stage, entry in gates.items():
-        if not isinstance(stage, str) or not NAME.fullmatch(stage):
+        if not isinstance(stage, str):
             raise WorkError(f"{path}: flow.gates has a stage key that is not a name: {stage!r}")
+        if stage not in SINGLE_GATES and stage not in TWO_STEP_STAGES:
+            gated = ", ".join((*SINGLE_GATES, *TWO_STEP_STAGES))
+            raise WorkError(f"{path}: flow.gates.{stage} is not a gated stage (the gated stages are {gated})")
         if not isinstance(entry, dict):
             raise WorkError(f"{path}: flow.gates.{stage} must be a mapping, not a {type(entry).__name__}")
         if "state" not in entry:
             raise WorkError(f"{path}: flow.gates.{stage} has no state")
         if entry["state"] not in GATE_STATES:
             raise WorkError(f"{path}: flow.gates.{stage}.state must be provisional or approved, not {entry['state']!r}")
+        if stage in SINGLE_GATES and entry["state"] != "approved":
+            raise WorkError(f"{path}: flow.gates.{stage} is a single-gate stage; its state can only be approved")
         bound |= _bound_gates(stage, entry)
     return frozenset(bound)
 
