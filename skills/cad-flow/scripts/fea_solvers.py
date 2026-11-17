@@ -121,8 +121,10 @@ def probe(freecadcmd: Path, *, environ: Mapping[str, str] | None = None,
     """Run the probe job in an isolated FreeCAD process, as the FEA job runs.
 
     The report has `freecad` (path and version of the running FreeCAD), `resource_dir` (its
-    App.getResourceDir()) and, for `calculix` and `gmsh`, either `path`, `version` and `source` or
-    `error`. Raises ProbeError when FreeCAD does not run the job.
+    App.getResourceDir()), `techdraw_templates` (`dir` and the `files` in it, listed in that process) and,
+    for `calculix` and `gmsh`, either `path`, `version` and `source` or `error`. Paths under an
+    AppImage's mount are gone once the probe's FreeCAD exits. Raises ProbeError, with the job's
+    traceback when it has one, when FreeCAD does not run the job.
     """
     runtime = _freecad_runtime()
     with tempfile.TemporaryDirectory(prefix="cad-fea-solvers-") as workdir:
@@ -134,4 +136,4 @@ def probe(freecadcmd: Path, *, environ: Mapping[str, str] | None = None,
             raise ProbeError(f"cannot start FreeCAD {freecadcmd}: {exc}") from exc
     if result is None:
         raise ProbeError(f"FreeCAD {freecadcmd} could not run the solver probe: {reason}")
-    return {key: result[key] for key in ("freecad", "resource_dir", *TOOLS)}
+    return {key: result[key] for key in ("freecad", "resource_dir", "techdraw_templates", *TOOLS)}

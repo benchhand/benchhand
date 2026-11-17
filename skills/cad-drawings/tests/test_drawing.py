@@ -153,13 +153,26 @@ class FreeCADDiscovery(unittest.TestCase):
         self.assertEqual(freecad_runtime.templates_dir(link),
                          command.resolve().parents[1] / "share" / "Mod" / "TechDraw" / "Templates")
 
-    def test_templates_of_a_wrapper_script_come_from_the_resource_dir_freecad_reports(self) -> None:
+    def test_templates_of_a_bundle_are_listed_on_the_host(self) -> None:
+        command = self.executable(self.root / "squashfs-root" / "usr" / "bin" / "freecadcmd")
+        templates = command.parents[1] / "share" / "Mod" / "TechDraw" / "Templates"
+        (templates / "ISO").mkdir(parents=True)
+        (templates / "ISO" / "A4.svg").write_text("<svg/>", encoding="utf-8")
+        with patch("fea_solvers.probe", side_effect=AssertionError("a bundle needs no probe")):
+            self.assertEqual(freecad_runtime.techdraw_templates(command),
+                             (str(templates.resolve()), frozenset({"ISO/A4.svg"})))
+
+    def test_templates_of_a_wrapper_script_are_listed_inside_freecad_while_its_mount_exists(self) -> None:
+        # An AppImage's resources live under a /tmp/.mount_* directory that ends with the FreeCAD process,
+        # so the probe lists the templates in that process and nothing reads the directory afterwards.
         wrapper = self.executable(self.root / "wrappers" / "freecadcmd")
-        report = {"resource_dir": str(self.root / "mount" / "usr" / "share") + "/"}
+        gone = self.root / "mount_gone" / "usr" / "share" / "Mod" / "TechDraw" / "Templates"
+        report = {"techdraw_templates": {"dir": str(gone), "files": ["ASME/ANSIA_Landscape.svg"]}}
         with patch("fea_solvers.probe", return_value=report) as probe:
-            found = freecad_runtime.templates_dir(wrapper)
+            found = freecad_runtime.techdraw_templates(wrapper)
         probe.assert_called_once_with(wrapper)
-        self.assertEqual(found, self.root / "mount" / "usr" / "share" / "Mod" / "TechDraw" / "Templates")
+        self.assertFalse(gone.exists())
+        self.assertEqual(found, (str(gone), frozenset({"ASME/ANSIA_Landscape.svg"})))
 
 class FreeCADConcurrency(unittest.TestCase):
     def setUp(self) -> None:
@@ -212,6 +225,16 @@ class FreeCADConcurrency(unittest.TestCase):
         script = self.root / "job.py"
         script.write_text(script_text, encoding="utf-8")
         return command, script
+
+    def test_a_failed_job_reports_its_error_with_its_traceback(self) -> None:
+        command, script = self.fake_freecad("import json, os\njob = json.load(open(os.environ['CAD_DRAWING_JOB']))\n"
+                                            "json.dump({'status': 'error', 'error': 'probe failed', "
+                                            "'traceback': 'Traceback (most recent call last):\\n  boom'}, "
+                                            "open(job['result'], 'w'))\n")
+        result, reason = freecad_runtime.run_job(command, script, {}, self.root, 10)
+        self.assertIsNone(result)
+        self.assertTrue(reason.startswith("probe failed"), reason)
+        self.assertIn("Traceback (most recent call last):\n  boom", reason)
 
     def test_a_job_without_a_result_reports_its_stdout_and_stderr(self) -> None:
         command, script = self.fake_freecad("import sys\nprint('stdout tail')\nprint('stderr tail', file=sys.stderr)\n"

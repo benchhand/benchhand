@@ -655,6 +655,24 @@ if len(sys.argv) > 1:
             self.assertIn("inside the SPOOLES equation solver", result["error"]["message"])
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
+    def test_gmsh_tools_mesh_with_the_gmsh_the_job_resolved(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-fea-gmsh-override-") as directory:
+            root = Path(directory)
+            step = self.make_cantilever_step(root)
+            calls = root / "gmsh-calls.log"
+            gmsh = root / "override" / "gmsh"  # $GMSH: logs its arguments, then runs FreeCAD's Gmsh from PATH
+            gmsh.parent.mkdir()
+            gmsh.write_text(f'#!/bin/sh\necho "$*" >> "{calls}"\nexec gmsh "$@"\n', encoding="utf-8")
+            gmsh.chmod(0o755)
+            case_path = root / "case.yaml"
+            case_path.write_text(f"step: {step}\n{CANTILEVER_TAIL}", encoding="utf-8")
+            with patch.dict(os.environ, {"GMSH": str(gmsh)}):
+                result, status = fea_static.run_job(case_path, load_case(case_path))
+            self.assertEqual(status, 0, result)
+            meshed = [line for line in calls.read_text(encoding="utf-8").splitlines() if line.endswith(".geo")]
+        self.assertEqual(len(meshed), 1, meshed)
+
+    @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
     def test_ccx_starts_with_one_thread_in_each_parallel_stage(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cad-fea-ccx-threads-") as directory:
             root = Path(directory)

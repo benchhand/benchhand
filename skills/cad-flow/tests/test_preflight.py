@@ -556,11 +556,28 @@ class FEASolverCheckTests(unittest.TestCase):
             command.write_text("#!/bin/sh\n", encoding="utf-8")
             command.chmod(0o755)
             with patch.object(preflight, "cad_tool_version", return_value=("1.1.4", "FreeCAD 1.1.4")), \
-                    patch.object(preflight.freecad_runtime, "templates_dir", return_value=Path(directory)), \
+                    patch.object(preflight.freecad_runtime, "techdraw_templates",
+                                 return_value=(directory, frozenset(preflight.EXPECTED_TEMPLATES))), \
                     patch.object(preflight.fea_solvers, "probe", **probe) as probed, patch("sys.stderr"):
                 checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""})
         self.assertEqual(probed.call_args.args[0], command)
         return next(check for check in checks if check.id == "fea-solvers")
+
+    def test_templates_listed_inside_freecad_pass_after_its_mount_is_gone(self) -> None:
+        # A FREECADCMD wrapper for an AppImage: the probe listed the templates under the process's mount.
+        gone = "/tmp/.mount_gone/usr/share/Mod/TechDraw/Templates"
+        probed = {**self.PROBED, "techdraw_templates": {"dir": gone, "files": list(preflight.EXPECTED_TEMPLATES)}}
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-fea-") as directory:
+            command = Path(directory) / "freecadcmd"
+            command.write_text("#!/bin/sh\n", encoding="utf-8")
+            command.chmod(0o755)
+            with patch.object(preflight, "cad_tool_version", return_value=("1.1.4", "FreeCAD 1.1.4")), \
+                    patch.object(preflight.fea_solvers, "probe", return_value=probed), patch("sys.stderr"):
+                checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""})
+        self.assertFalse(Path(gone).exists())
+        check = next(check for check in checks if check.id == "techdraw-templates")
+        self.assertEqual(check.status, "pass", check.detail)
+        self.assertIn(gone, check.detail)
 
     def test_probed_solvers_pass_with_their_versions_and_paths(self) -> None:
         check = self.solver_check({"return_value": self.PROBED})

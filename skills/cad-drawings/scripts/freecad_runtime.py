@@ -53,24 +53,35 @@ def templates_dir(freecadcmd: Path | None) -> Path:
 
     The macOS app and the Linux AppImage both keep FreeCAD's resources in ``<prefix>/share`` next
     to ``<prefix>/bin``; a symlink to the bundle's freecadcmd resolves to that layout. Without a
-    FreeCAD this is the macOS app's directory, which the caller then reports missing. A wrapper
-    script for ``freecadcmd`` lies outside the bundle: when the bundle layout is not beside it, the
-    directory comes from the resource directory that FreeCAD itself reports (fea_solvers.probe).
+    FreeCAD this is the macOS app's directory, which the caller then reports missing.
     """
     command = (freecadcmd or MACOS_FREECADCMD).resolve()
-    beside = command.parent.parent / "share" / "Mod" / "TechDraw" / "Templates"
+    return command.parent.parent / "share" / "Mod" / "TechDraw" / "Templates"
+
+
+def techdraw_templates(freecadcmd: Path | None) -> tuple[str, frozenset[str]]:
+    """TechDraw's template directory and the template files in it, as paths relative to it.
+
+    The files are listed while the directory exists: on the host for the bundle layout beside
+    ``freecadcmd`` (``templates_dir``), else inside FreeCAD by fea_solvers.probe. A wrapper script for
+    an AppImage lies outside the bundle, and the AppImage's /tmp/.mount_* directory ends with the
+    FreeCAD process, so its directory is reported but never read afterwards.
+    """
+    beside = templates_dir(freecadcmd)
+    command = (freecadcmd or MACOS_FREECADCMD).resolve()
     if freecadcmd is None or beside.is_dir() or not command.is_file():
-        return beside
+        files = frozenset(path.relative_to(beside).as_posix() for path in beside.rglob("*") if path.is_file())
+        return str(beside), files
     flow_scripts = Path(__file__).resolve().parents[2] / "cad-flow" / "scripts"
     if str(flow_scripts) not in sys.path:
         sys.path.insert(0, str(flow_scripts))
     import fea_solvers
 
     try:
-        resources = fea_solvers.probe(freecadcmd)["resource_dir"]
+        listed = fea_solvers.probe(freecadcmd)["techdraw_templates"]
     except fea_solvers.ProbeError:
-        return beside
-    return Path(resources) / "Mod" / "TechDraw" / "Templates"
+        return str(beside), frozenset()
+    return str(listed["dir"]), frozenset(listed["files"])
 
 
 class JobInterrupted(Exception):
@@ -328,5 +339,7 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
         job_path.unlink(missing_ok=True)
         result_path.unlink(missing_ok=True)
     if result.get("status") != "pass":
-        return None, result.get("error", f"FreeCAD {script.name} failed")
+        reason = str(result.get("error", f"FreeCAD {script.name} failed"))
+        # The job's traceback is in its result file, which is deleted above.
+        return None, f"{reason}\n{result['traceback']}" if result.get("traceback") else reason
     return result, ""

@@ -79,6 +79,17 @@ class ProbeFailures(unittest.TestCase):
             with self.assertRaisesRegex(fea_solvers.ProbeError, "cannot start FreeCAD"):
                 fea_solvers.probe(wrapper)
 
+    def test_a_probe_job_that_fails_reports_its_traceback(self) -> None:
+        # A stand-in that runs the probe job in a plain Python, where `import FreeCAD` fails.
+        with tempfile.TemporaryDirectory(prefix="cad-fea-solvers-") as directory:
+            command = Path(directory) / "freecadcmd"
+            command.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$1"\n', encoding="utf-8")
+            command.chmod(0o755)
+            with self.assertRaises(fea_solvers.ProbeError) as raised:
+                fea_solvers.probe(command)
+        self.assertIn("Traceback (most recent call last)", str(raised.exception))
+        self.assertIn("No module named 'FreeCAD'", str(raised.exception))
+
 
 @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
 class FreeCADProbe(unittest.TestCase):
@@ -89,6 +100,9 @@ class FreeCADProbe(unittest.TestCase):
         report = fea_solvers.probe(FREECADCMD)
         self.assertEqual(report["freecad"]["version"], "1.1.4")
         self.assertTrue(os.path.isabs(report["resource_dir"]), report)
+        templates = report["techdraw_templates"]
+        self.assertTrue(templates["dir"].startswith(report["resource_dir"].rstrip("/")), templates)
+        self.assertTrue({"ISO/A4_Landscape_ISO5457_minimal.svg", "ASME/ANSIA_Landscape.svg"} <= set(templates["files"]))
         for tool in ("calculix", "gmsh"):
             with self.subTest(tool=tool):
                 self.assertNotIn("error", report[tool])

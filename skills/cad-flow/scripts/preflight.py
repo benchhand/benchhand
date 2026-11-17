@@ -368,8 +368,9 @@ def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) 
 
     started = time.monotonic()
     print("[preflight] techdraw-templates: checking...", file=sys.stderr, flush=True)
-    templates = freecad_runtime.templates_dir(command)
-    missing = [item for item in EXPECTED_TEMPLATES if not (templates / item).is_file()]
+    # Listed while the directory exists: an AppImage's mount ends with the FreeCAD process that lists it.
+    templates, present = freecad_runtime.techdraw_templates(command)
+    missing = [item for item in EXPECTED_TEMPLATES if item not in present]
     okay = not missing
     detail = (f"Missing TechDraw templates under {templates}: {', '.join(missing)}." if missing else
               f"TechDraw templates found in {templates}: {', '.join(EXPECTED_TEMPLATES)}.")
