@@ -599,8 +599,8 @@ def _snapshot_record_hashes(record_dir: Path, case: dict[str, Any]) -> dict[str,
         if path.is_file():
             try:
                 document = YAML.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError) as error:
-                raise CaseError(f"cannot read version record snapshot {path}: {error}") from error
+            except (OSError, yaml.YAMLError) as exc:
+                raise CaseError(f"cannot read version record snapshot {path}: {exc}") from exc
             if not isinstance(document, dict):
                 raise CaseError(f"version record snapshot {path} must contain a mapping")
             hashes[f"record/{name}"] = hashlib.sha256(path.read_bytes()).hexdigest()
