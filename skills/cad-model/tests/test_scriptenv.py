@@ -112,7 +112,7 @@ class SharedCacheEnvironmentTests(unittest.TestCase):
 
     # This class holds the pin. A move to another Python or numpy changes these constants and the headers.
     PYTHON = ">=3.12,<3.15"
-    RUNNER_PYTHON = ">=3.12,<3.13"   # the kernel runners and their fixture copies (run_*.py) keep the interpreter their results were sealed on
+    RUNNER_PYTHON = ">=3.12,<3.13"   # the kernel runners and their run_*.py fixture copies stay on the Python of their sealed results
     NUMPY = "numpy==2.5.5"
 
     def headers(self) -> dict[Path, dict]:
