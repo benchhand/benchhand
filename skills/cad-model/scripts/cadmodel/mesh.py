@@ -13,8 +13,9 @@ from cadmodel import occ, threemf
 from cadmodel.motion import load_pose
 
 # Preview tessellation: chord deviation relative to the assembly diagonal, clamped; angular deflection in rad.
+# The cap sets the GLB-STEP agreement's floor (3 x the deflection + 0.005 mm): at 0.05 mm that is 0.155 mm.
 # A manufacturing STL takes the absolute deflections of its part's manufacturing policy instead.
-LINEAR_RELATIVE, LINEAR_MIN_MM, LINEAR_MAX_MM, ANGULAR_RAD = 5e-4, 0.01, 0.2, 0.25
+LINEAR_RELATIVE, LINEAR_MIN_MM, LINEAR_MAX_MM, ANGULAR_RAD = 5e-4, 0.01, 0.05, 0.25
 DEGENERATE_MM2 = 1e-12  # a welded triangle with no more area than this bounds nothing
 STL_HEADER, STL_RECORD = 84, 50  # binary STL: 80-byte header and uint32 count, then 50 bytes per triangle
 MATCH = ("a node belongs to the occurrence whose instance name it carries: `<PN> <title>` for a part placed "

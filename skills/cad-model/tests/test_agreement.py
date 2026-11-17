@@ -47,12 +47,19 @@ class AgreementTests(unittest.TestCase):
         self.assertEqual(self.status("flat_shifted_just_above_floor"), "fail")  # 0.13 mm
         self.assertEqual(self.status("flat_shifted_just_below_floor"), "pass")  # 0.12 mm
 
-    def test_the_floor_at_lamp_arms_deflection_is_three_times_it_plus_the_epsilon(self) -> None:
-        """Lamp-arm's GLB is written at 0.2 mm: floor = 3 x 0.2 + 0.005 = 0.605 mm. A coarser GLB widens the floor
-        in step, so a change to REACH_MARGIN, REFERENCE_FACTOR or EPS_MM shows here as a moved number."""
-        self.assertAlmostEqual(self.probe["cases"]["flat_shifted_above_lamp_arm_floor"]["tolerance_mm"], 0.605, places=9)
-        self.assertEqual(self.status("flat_shifted_above_lamp_arm_floor"), "fail")  # 0.61 mm
-        self.assertEqual(self.status("flat_shifted_below_lamp_arm_floor"), "pass")  # 0.60 mm
+    def test_the_floor_at_a_large_assemblys_deflection_is_three_times_it_plus_the_epsilon(self) -> None:
+        """A large assembly's GLB is written at the exporter's cap, 0.05 mm: floor = 3 x 0.05 + 0.005 = 0.155 mm.
+        A coarser GLB widens the floor in step, so a change to REACH_MARGIN, REFERENCE_FACTOR or EPS_MM shows here
+        as a moved number."""
+        self.assertAlmostEqual(self.probe["cases"]["flat_shifted_above_large_floor"]["tolerance_mm"], 0.155, places=9)
+        self.assertEqual(self.status("flat_shifted_above_large_floor"), "fail")  # 0.16 mm
+        self.assertEqual(self.status("flat_shifted_below_large_floor"), "pass")  # 0.15 mm
+
+    def test_the_exporter_caps_a_large_assemblys_deflection_at_the_floors_0_05_mm(self) -> None:
+        """The cap decides the floor above: lamp-arm's 0.0005 x diagonal would be 0.2 mm or more, and the exporter
+        records 0.05 mm in the manifest, which the check reads. A small part stays at its own 0.0005 x diagonal."""
+        self.assertEqual(self.probe["exporter_deflection_mm"]["large"], 0.05)
+        self.assertAlmostEqual(self.probe["exporter_deflection_mm"]["small"], 0.03, places=9)  # 60 mm diagonal
 
     def test_a_hole_eight_millimetres_off_does_not_agree(self) -> None:
         self.assertEqual(self.status("hole_moved_8_mm"), "fail")

@@ -21,10 +21,10 @@ from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from cadmodel import agreement  # noqa: E402
+from cadmodel import agreement, mesh  # noqa: E402
 
 LINEAR = 0.04  # the exporter's deflection in these cases, mm: what a 40 mm part gets (0.0005 of its diagonal)
-LAMP_ARM_LINEAR = 0.2  # the deflection of examples/lamp-arm's GLB, mm
+LARGE_LINEAR = 0.05  # the deflection of a large assembly's GLB, such as examples/lamp-arm's, mm
 EMPTY_POINTS, EMPTY_TRIANGLES = np.empty((0, 3)), np.empty((0, 3), dtype=np.int64)
 ROT = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
@@ -64,8 +64,8 @@ def cases() -> dict[str, Any]:
         "shifted_3_mm": verdict(clean, clean, shift=3.0),
         "flat_shifted_just_above_floor": verdict(plain, plain, shift=0.13),
         "flat_shifted_just_below_floor": verdict(plain, plain, shift=0.12),
-        "flat_shifted_above_lamp_arm_floor": verdict(plain, plain, shift=0.61, linear=LAMP_ARM_LINEAR),
-        "flat_shifted_below_lamp_arm_floor": verdict(plain, plain, shift=0.60, linear=LAMP_ARM_LINEAR),
+        "flat_shifted_above_large_floor": verdict(plain, plain, shift=0.16, linear=LARGE_LINEAR),
+        "flat_shifted_below_large_floor": verdict(plain, plain, shift=0.15, linear=LARGE_LINEAR),
         "hole_moved_8_mm": verdict(block(hole_x=8.0), clean),
         "hole_missing_in_mesh": verdict(block(hole_x=None), clean),
         "extra_hole_in_mesh": verdict(clean, block(hole_x=None)),
@@ -115,7 +115,14 @@ def abstentions(folder: Path) -> dict[str, Any]:
     return {"rows": rows, "no_deflection": {oid: row["status"] for oid, row in undeflected.items()}}
 
 
+def exporter_deflections() -> dict[str, float]:
+    """What the exporter's `mesh.deflection` gives a 60 mm-diagonal part and a 1.2 m-diagonal assembly."""
+    large = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 1000.0, 600.0, 300.0).Shape()
+    return {"small": mesh.deflection(block()), "large": mesh.deflection(large)}
+
+
 if __name__ == "__main__":
     folder = Path(sys.argv[1])
     glb = glb_case(folder)
-    print(json.dumps({"cases": cases(), "glb": glb, "abstentions": abstentions(folder)}))
+    print(json.dumps({"cases": cases(), "glb": glb, "abstentions": abstentions(folder),
+                      "exporter_deflection_mm": exporter_deflections()}))

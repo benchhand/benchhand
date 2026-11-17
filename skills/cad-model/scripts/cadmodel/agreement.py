@@ -37,8 +37,9 @@ Vec = tuple[float, float, float]
 Rot = tuple[Vec, Vec, Vec]
 EPS_MM = 5e-3           # float32 coordinates and the exporter's own rounding, on top of the deflections
 REFERENCE_FACTOR = 0.5  # the STEP reference is tessellated this much finer than the exporter's deflection
-REACH_MARGIN = 2.0      # the reach is this many times the two deflections' sum: on lamp-arm the worst clean point
-                        # sits at 0.92 of the sum (LMP-0001), so a bare sum would leave a 1.09x margin
+REACH_MARGIN = 2.0      # the reach is this many times the two deflections' sum: on lamp-arm (0.05 mm GLB) the worst
+                        # clean point sits at 1.19 of the sum (LMP-0004, a 1.2 mm fillet torus), so the reach and
+                        # EPS_MM leave a 1.74x margin; a bare sum would fail that clean part
 MAX_SAMPLES = 1500      # points checked per direction and occurrence
 CELLS = 8               # grid cells along the longest side of a mesh, for the triangle lookup
 SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contribute a sample point
