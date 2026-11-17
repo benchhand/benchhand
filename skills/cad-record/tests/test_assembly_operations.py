@@ -20,6 +20,7 @@ from modload import load_module as load  # noqa: E402
 
 
 ops = load("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
+assembly_data = load("cad_record_assembly_data", SCRIPTS / "assembly_data.py")
 fx = load("cad_record_mi_fixtures", HERE / "fixtures" / "manufacturing_intent.py")
 intent = fx.intent_module()
 
@@ -245,6 +246,47 @@ class JointTests(unittest.TestCase):
         wide = ops.check_joints(self.fasten(edge_distance={"criterion": between, "distance": fx.known(fx.quantity(lower=5, upper=7))}),
                                 record, intent.resolve_property)
         self.assertEqual(self.codes(wide), {"assembly.edge_distance": "fail"}, "a between criterion bounds the upper end too")
+
+
+class NeverInstalledTests(unittest.TestCase):
+    """An occurrence of the inventory that no operation names is not base: its installing operation is missing."""
+
+    PNS = ("TST-0101", "TST-0102", "TST-0103")
+    SEAT = {"id": "seat-bearing", "kind": "press_fit", "part": "TST-0102", "into": "TST-0101", "interface": "IF-001",
+            "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["outer_face", "seat_floor"]}}
+    COVER = {"id": "fit-cover", "kind": "join", "part": "TST-0103", "into": "TST-0101", "direction": [0, 0, -1],
+             "acceptance": {"kind": "standoff", "features": ["cover_foot", "housing_top"]}}
+
+    def check(self, items: list[dict], pns: tuple[str, ...] = PNS, with_inventory: bool = True):
+        inventory = assembly_data.normalize({"subassemblies": [{"id": "main", "title": "Main", "parts": list(pns)}]})
+        return ops.check_order(ops.normalize({"operations": items}), inventory if with_inventory else None)
+
+    def test_an_occurrence_no_operation_names_fails_the_product_order(self) -> None:
+        report = self.check([self.SEAT])
+        [finding] = report.findings
+        self.assertEqual((finding["code"], finding["subject"], finding["severity"]),
+                         ("assembly.never_installed", {"PN": "TST-0103"}, "critical"))
+        self.assertIn("TST-0103", finding["measured"]["text"])
+        row = report.outcome("assembly.order@product")
+        self.assertEqual((row["outcome"], row["findings"]), ("fail", [finding["id"]]))
+        self.assertEqual(report.outcome("assembly.order@op:seat-bearing")["outcome"], "pass")
+        for item in report.findings:
+            self.assertEqual(list(validator("finding").iter_errors(item)), [], item["id"])
+        for outcome in report.outcomes:
+            self.assertEqual(list(validator("obligation_outcome").iter_errors(outcome)), [], outcome["obligation"])
+
+    def test_every_occurrence_installed_or_receiving_passes(self) -> None:
+        report = self.check([self.SEAT, self.COVER])
+        self.assertEqual(report.findings, ())
+        self.assertEqual({row["obligation"] for row in report.outcomes},
+                         {"assembly.order@op:seat-bearing", "assembly.order@op:fit-cover"})
+
+    def test_each_missing_installer_is_named(self) -> None:
+        report = self.check([self.SEAT], pns=(*self.PNS, "TST-0104"))
+        self.assertEqual(sorted(f["subject"]["PN"] for f in report.findings), ["TST-0103", "TST-0104"])
+
+    def test_without_an_inventory_there_is_no_occurrence_to_miss(self) -> None:
+        self.assertEqual(self.check([self.SEAT], with_inventory=False).findings, ())
 
 
 if __name__ == "__main__":
