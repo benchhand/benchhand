@@ -453,7 +453,7 @@ class DocTreeLeakTests(unittest.TestCase):
             version = hw / "versions" / doc_support.VERSION
             version.mkdir(parents=True, exist_ok=True)
             (version / "manifest.json").write_text(json.dumps({"label": doc_support.VERSION, "manufacturing": {}}), encoding="utf-8")
-            documents = module.make_guide(hw, doc_support.VERSION, root / "docs")
+            documents = module.make_guide(hw, doc_support.VERSION, root / "guide")
             found.update({str(path.relative_to(root)): path.read_text(encoding="utf-8", errors="replace")
                           for path in sorted(root.rglob("*")) if path.is_file()})
             found.update({f"generated/{name}": text for name, text in documents.items()})
@@ -470,7 +470,7 @@ class DocTreeLeakTests(unittest.TestCase):
         for pair_id, token in tokens.items():
             mutant, twin = self.tree(pair_id, True), self.tree(pair_id, False)
             with self.subTest(pair=pair_id, token=token):
-                self.assertTrue([name for name in mutant if name.endswith("index.md")], "the guide is part of the tree")
+                self.assertTrue([name for name in mutant if name.startswith("generated/")], "the guide is part of the tree")
                 self.assertEqual([name for name, text in mutant.items() if token in text], [], "survives in the mutant")
                 self.assertTrue([name for name, text in twin.items() if token in text], "missing from the twin")
 

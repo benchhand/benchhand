@@ -62,7 +62,7 @@ def record_run(case: Callable[[bool], tuple[str, dict[str, Any]]]) -> Callable[[
         title, procurement = case(mutant)
         fx = doc_support.fixtures()
         with doc_support.workspace() as root:
-            # The interface joins the part to itself: the record has one part, and the interface is its mounting.
+            # The one interface joins the part to itself: it is the part's mounting.
             hw = fx.write_record(root / "hw", fx.record(parts=[bought(title, procurement)],
                                                         interfaces=[fx.interface("IF-001", PN, PN)]))
             return doc_support.pipeline(hw, root, JUDGED)
