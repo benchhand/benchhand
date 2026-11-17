@@ -78,6 +78,8 @@ REQUIRE_FREECAD = "CAD_REQUIRE_FREECAD"  # "1" makes a missing FreeCAD an error,
 sys.path.insert(0, str(FREECAD_RUNTIME))
 sys.path.insert(0, str(MODEL_SCRIPTS))
 sys.path.insert(0, str(CONCEPT_SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fea_solvers  # noqa: E402 - standard library only
 import freecad_runtime  # noqa: E402
 from cadmodel import scriptenv  # noqa: E402 - standard library only
 import serve as concept_serve  # noqa: E402 - standard library only
@@ -366,8 +368,9 @@ def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) 
 
     started = time.monotonic()
     print("[preflight] techdraw-templates: checking...", file=sys.stderr, flush=True)
-    templates = freecad_runtime.templates_dir(command)
-    missing = [item for item in EXPECTED_TEMPLATES if not (templates / item).is_file()]
+    # Listed while the directory exists: an AppImage's mount ends with the FreeCAD process that lists it.
+    templates, present = freecad_runtime.techdraw_templates(command)
+    missing = [item for item in EXPECTED_TEMPLATES if item not in present]
     okay = not missing
     detail = (f"Missing TechDraw templates under {templates}: {', '.join(missing)}." if missing else
               f"TechDraw templates found in {templates}: {', '.join(EXPECTED_TEMPLATES)}.")
@@ -375,7 +378,31 @@ def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) 
     checks.append(replace(_check("techdraw-templates", "TechDraw templates", "pass" if okay else "fail", detail,
                                  "" if okay else template_fix), elapsed_s=time.monotonic() - started))
     print(f"[preflight] techdraw-templates: {checks[-1].status} ({checks[-1].elapsed_s:.1f}s)", file=sys.stderr, flush=True)
+    checks.append(_fea_solvers_check(command, environ))
     return checks
+
+
+def _fea_solvers_check(command: Path, environ: Mapping[str, str]) -> Check:
+    """The CalculiX ccx and Gmsh that cad-analysis FEA runs, as FreeCAD resolves them in its own process."""
+    started = time.monotonic()
+    print("[preflight] fea-solvers: checking...", file=sys.stderr, flush=True)
+    labels = {"calculix": "CalculiX ccx", "gmsh": "Gmsh"}
+    try:
+        report = fea_solvers.probe(command, environ=environ)
+    except fea_solvers.ProbeError as error:
+        problems, found = [str(error)], []
+    else:
+        problems = [report[tool]["error"] for tool in labels if "error" in report[tool]]
+        found = [f"{label} {report[tool]['version']} at {report[tool]['path']} ({report[tool]['source']})"
+                 for tool, label in labels.items() if "error" not in report[tool]]
+    okay = not problems
+    detail = "; ".join(found) + "." if okay else " ".join(problems)
+    fix = (f"Install the complete {CAD_TOOL.name} {CAD_TOOL.required_version} bundle, which ships ccx and gmsh, "
+           "or set CCX and GMSH to their executables.")
+    check = replace(_check("fea-solvers", "FEA solvers (ccx, Gmsh)", "pass" if okay else "fail", detail,
+                           "" if okay else fix), elapsed_s=time.monotonic() - started)
+    print(f"[preflight] fea-solvers: {check.status} ({check.elapsed_s:.1f}s)", file=sys.stderr, flush=True)
+    return check
 
 
 def _cache_home(environ: Mapping[str, str]) -> Path:

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "mypy.ini"
 CHANGED_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
+    "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-analysis/scripts/fea_static.py",
     "skills/cad-design/scripts/form_check.py",
     "skills/cad-design/scripts/process_checks/__init__.py",
@@ -32,6 +33,7 @@ CHANGED_FILES = (
     "skills/cad-drawings/scripts/assembly_sheet.py",
     "skills/cad-record/scripts/check_packet.py",
     "skills/cad-fits/scripts/stackup.py",
+    "skills/cad-flow/scripts/fea_solvers.py",
     "skills/cad-flow/scripts/scratch.py",
     "skills/cad-model/scripts/cad_model.py",
     "skills/cad-model/scripts/cadmodel/build.py",
@@ -91,6 +93,8 @@ CHANGED_FILES = (
 )
 STRICT_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
+    "skills/cad-analysis/scripts/fea_part_selection.py",
+    "skills/cad-flow/scripts/fea_solvers.py",
     "skills/cad-design/scripts/process_checks/__init__.py",
     "skills/cad-design/scripts/process_checks/additive.py",
     "skills/cad-design/scripts/process_checks/core.py",

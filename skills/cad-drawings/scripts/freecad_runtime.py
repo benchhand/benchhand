@@ -59,6 +59,31 @@ def templates_dir(freecadcmd: Path | None) -> Path:
     return command.parent.parent / "share" / "Mod" / "TechDraw" / "Templates"
 
 
+def techdraw_templates(freecadcmd: Path | None) -> tuple[str, frozenset[str]]:
+    """TechDraw's template directory and the template files in it, as paths relative to it.
+
+    The files are listed while the directory exists: on the host for the bundle layout beside
+    ``freecadcmd`` (``templates_dir``), else inside FreeCAD by fea_solvers.probe. A wrapper script for
+    an AppImage lies outside the bundle, and the AppImage's /tmp/.mount_* directory ends with the
+    FreeCAD process, so its directory is reported but never read afterwards.
+    """
+    beside = templates_dir(freecadcmd)
+    command = (freecadcmd or MACOS_FREECADCMD).resolve()
+    if freecadcmd is None or beside.is_dir() or not command.is_file():
+        files = frozenset(path.relative_to(beside).as_posix() for path in beside.rglob("*") if path.is_file())
+        return str(beside), files
+    flow_scripts = Path(__file__).resolve().parents[2] / "cad-flow" / "scripts"
+    if str(flow_scripts) not in sys.path:
+        sys.path.insert(0, str(flow_scripts))
+    import fea_solvers
+
+    try:
+        listed = fea_solvers.probe(freecadcmd)["techdraw_templates"]
+    except fea_solvers.ProbeError:
+        return str(beside), frozenset()
+    return str(listed["dir"]), frozenset(listed["files"])
+
+
 class JobInterrupted(Exception):
     """The drawing run received SIGINT or SIGTERM and stopped its FreeCAD jobs."""
 
@@ -182,7 +207,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
     for process in processes:
         try:
             os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
@@ -191,7 +216,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
             try:
                 os.killpg(process.pid, 0)
                 alive = True
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         if not alive:
             break
@@ -199,7 +224,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
     for process in processes:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     for process in processes:
         try:
@@ -208,7 +233,7 @@ def _terminate_active_processes(processes: tuple[subprocess.Popen[str], ...] | N
             pass
 
 @contextmanager
-def _job_state_environment(workdir: Path):
+def job_state_environment(workdir: Path):
     """Give each FreeCAD invocation an isolated FreeCAD, Qt, config, cache and temp directory."""
     with tempfile.TemporaryDirectory(prefix="freecad-job-", dir=workdir) as name:
         root = Path(name)
@@ -231,33 +256,47 @@ def _job_state_environment(workdir: Path):
 FREECAD_JOB_PEAK_RSS_BYTES = 1_500 * 1024 * 1024
 
 
+def _group_alive(pgid: int) -> bool:
+    """Whether a process group of ours still has members; another user's group of that id is not ours."""
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         process.wait()
         return
     deadline = time.monotonic() + 2
-    while process.poll() is None and time.monotonic() < deadline:
+    while (process.poll() is None or _group_alive(process.pid)) and time.monotonic() < deadline:
         time.sleep(0.05)
-    else:
+    # A group keeps its id while any member lives, even after its leader is reaped, so a live group is
+    # still this one; once the group is gone, its id may name another process and gets no SIGKILL.
+    if process.poll() is None or _group_alive(process.pid):
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         process.wait()
 
 
 def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
-            timeout: float) -> tuple[dict[str, Any] | None, str]:
-    """Run one isolated FreeCAD process group and return its passing JSON result, or a reason."""
+            timeout: float, *, environ: Mapping[str, str] | None = None) -> tuple[dict[str, Any] | None, str]:
+    """Run one isolated FreeCAD process group and return its passing JSON result, or a reason.
+
+    The process gets `environ` (default os.environ) with the isolated FreeCAD state directories.
+    """
     run_id = uuid.uuid4().hex
     job_path = workdir / f"{script.stem}_{run_id}.job.json"
     result_path = workdir / f"{script.stem}_{run_id}.result.json"
@@ -266,23 +305,16 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
     try:
         if _CANCEL_JOBS.is_set():
             raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
-        with _job_state_environment(workdir) as isolation:
+        with job_state_environment(workdir) as isolation:
             try:
                 process = subprocess.Popen([str(freecadcmd), str(script)], cwd=workdir, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                            start_new_session=True,
-                                           env={**os.environ, **isolation, JOB_VARIABLE: str(job_path)})
-                with _ACTIVE_LOCK:
-                    if _CANCEL_JOBS.is_set():
-                        cancel = True
-                    else:
-                        _ACTIVE_PROCESSES.add(process)
-                        cancel = False
-                if cancel:
-                    _terminate_process_group(process)
-                    raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
+                                           env={**(os.environ if environ is None else environ), **isolation,
+                                                JOB_VARIABLE: str(job_path)})
+                _register_process(process)
                 try:
-                    _, stderr = process.communicate(timeout=timeout)
+                    stdout, stderr = process.communicate(timeout=timeout)
                 finally:
                     _terminate_process_group(process)
                     _unregister_process(process)
@@ -297,7 +329,8 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
                 raise
             _terminate_process_group(process)
             if not result_path.is_file():
-                return None, f"FreeCAD {script.name} wrote no result marker (exit {process.returncode}): {stderr[-1500:]}"
+                return None, (f"FreeCAD {script.name} wrote no result marker (exit {process.returncode}): "
+                              f"stderr: {stderr[-1500:]} stdout: {stdout[-1500:]}")
             try:
                 result = json.loads(result_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
@@ -306,5 +339,7 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
         job_path.unlink(missing_ok=True)
         result_path.unlink(missing_ok=True)
     if result.get("status") != "pass":
-        return None, result.get("error", f"FreeCAD {script.name} failed")
+        reason = str(result.get("error", f"FreeCAD {script.name} failed"))
+        # The job's traceback is in its result file, which is deleted above.
+        return None, f"{reason}\n{result['traceback']}" if result.get("traceback") else reason
     return result, ""

@@ -11,7 +11,6 @@ import contextlib
 import hashlib
 import json
 import math
-import re
 import subprocess
 import uuid
 import os
@@ -21,7 +20,7 @@ from typing import Any, cast
 import yaml
 
 import fea_conditions as conditions
-from fea_part_selection import OCCURRENCE_REF
+from fea_part_selection import OCCURRENCE_REF, selected_face_indices as _selected_face_indices
 from freecad_lookup import find_freecad
 import importlib.util
 import shutil
@@ -48,13 +47,24 @@ YAML = _load_module("cad_record_yaml_loader", SKILLS / "cad-record" / "scripts" 
 CHECK_PREFIX = "fea-"  # hw/checks/<V>/fea-<case>/: a case's engineering packet, beside its analysis bundle
 # The FreeCAD job runs in a private process group that dies with this process, Gmsh and ccx included.
 lifecycle = _load_module("cad_flow_process_lifecycle", SKILLS / "cad-flow" / "scripts" / "process_lifecycle.py")
+# The ccx and Gmsh FreeCAD runs, resolved inside FreeCAD (an AppImage's bundle is only visible there).
+SOLVERS = _load_module("cad_flow_fea_solvers", SKILLS / "cad-flow" / "scripts" / "fea_solvers.py")
+# Each FreeCAD job gets its own FreeCAD profile, so the user's FEM and import preferences never apply.
+RUNTIME = _load_module("freecad_runtime", SKILLS / "cad-drawings" / "scripts" / "freecad_runtime.py")
 
 POSE_TOL = 1e-6  # cad-motion's sweep reports pose values rounded to 6 decimals
 DEFAULT_TIMEOUT_SECONDS = 600.0  # a case's timeout_seconds overrides it
+# ccx 2.23 threads (manual section 2): FreeCAD's start_ccx sets OMP_NUM_THREADS to the CPU count, and these
+# take precedence over it for the equation solver, the stiffness assembly and the result calculation.
+CCX_ENVIRONMENT = {"CCX_NPROC_EQUATION_SOLVER": "1", "CCX_NPROC_STIFFNESS": "1", "CCX_NPROC_RESULTS": "1"}
 
 
 class CaseError(ValueError):
     """Invalid case input or unusable solver output."""
+
+
+class SolverUnavailable(CaseError):
+    """FreeCAD resolves no usable ccx or Gmsh."""
 
 
 def error(message: str, *, code: str = "invalid_case") -> dict[str, Any]:
@@ -95,25 +105,11 @@ def selector(value: Any, name: str) -> dict[str, Any]:
     return {"plane": plane}
 
 def selected_face_indices(face_count: int, selector: dict[str, Any], faces: Any = None) -> list[int]:
-    """Resolve a selector against a shape, failing when no face matches."""
-    if "indices" in selector:
-        indices = selector["indices"]
-    else:
-        plane = selector["plane"]
-        axis = plane["axis"].upper()
-        target = float(plane["value"])
-        tolerance = float(plane["tolerance"])
-        indices = []
-        for index, face in enumerate(faces or (), 1):
-            bounds = face.BoundBox
-            low, high = getattr(bounds, axis + "Min"), getattr(bounds, axis + "Max")
-            if abs(low - target) <= tolerance and abs(high - target) <= tolerance:
-                indices.append(index)
-    if not indices:
-        raise CaseError("face selector matched no faces")
-    if any(index > face_count for index in indices):
-        raise CaseError("face index is out of range")
-    return cast(list[int], indices)
+    """Resolve a selector against a shape, failing when no face matches; the FreeCAD job runs the same code."""
+    try:
+        return _selected_face_indices(face_count, selector, faces)
+    except ValueError as exc:
+        raise CaseError(str(exc)) from exc
 
 
 def load_case(path: Path) -> dict[str, Any]:
@@ -307,15 +303,13 @@ def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None 
             solver_versions: dict[str, dict[str, str]] | None = None,
             guard: Any = None) -> tuple[dict[str, Any], int]:
     """Run one case; `guard` (process_lifecycle.RunGuard) records the FreeCAD job's process group."""
-    timeout = case.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+    timeout = case.get("timeout_seconds")
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT_SECONDS
     versions = solver_versions or {}
     freecad = find_freecad()
     if freecad is None:
         return error("freecadcmd not found; set FREECADCMD or add it to PATH", code="freecad_unavailable"), 2
-    # The job runs the ccx whose version is recorded, resolved beside FreeCAD first, then on PATH.
-    calculix = (versions.get("calculix") or {}).get("path") or _solver_binary(freecad, "ccx")
-    if calculix is None:
-        return error("CalculiX ccx not found beside FreeCAD or on PATH", code="solver_unavailable"), 2
     run_id = uuid.uuid4().hex
     run_dir = run_directory(case_path, run_id, scratch_root)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -340,18 +334,23 @@ def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None 
         "output": str(marker_path),
         "phase_output": str(phase_path),
         "run_directory": str(run_dir),
-        "calculix": str(calculix),
+        "freecadcmd": str(freecad),
+        "solvers_module": str(Path(SOLVERS.__file__).resolve()),
+        "ccx_environment": CCX_ENVIRONMENT,
         "solver_versions": versions,
     }
     job_json = json.dumps(job)
-    script = f'''import json, os, re, shutil, sys, time, math
+    script = f'''import json, os, re, shutil, sys, time, math, traceback
 import FreeCAD as App, Part, Import, ObjectsFem
 from femmesh.gmshtools import GmshTools
 from femtools.ccxtools import CcxTools
 JOB=json.loads({job_json!r})
 sys.path.insert(0, os.path.dirname(JOB["selection_module"]))
-from fea_part_selection import select_occurrence, select_solid_index
+sys.path.insert(0, os.path.dirname(JOB["solvers_module"]))
+from fea_part_selection import MultipleSolids, SceneObject, select_occurrence, select_part_solid, selected_face_indices
+from fea_solvers import resolve_in_freecad
 from ccx_failure import ccx_failure
+CONTAINERS=("App::LinkGroup", "App::Part")
 class AnalysisError(RuntimeError):
     def __init__(self, error):
         super().__init__(error["message"]); self.error=error
@@ -359,17 +358,9 @@ def phase(name):
     # The parent names this phase if the job times out.
     with open(JOB["phase_output"], "w", encoding="utf-8") as f: json.dump({{"phase": name}}, f)
 def selected_faces(obj, selector):
-    if "indices" in selector:
-        indices=selector["indices"]
-    else:
-        p=selector["plane"]; axis=p["axis"].upper(); target=float(p["value"]); tol=float(p["tolerance"])
-        indices=[]
-        for i, face in enumerate(obj.Shape.Faces, 1):
-            bb=face.BoundBox
-            lo=getattr(bb, axis+"Min"); hi=getattr(bb, axis+"Max")
-            if abs(lo-target)<=tol and abs(hi-target)<=tol: indices.append(i)
-    if not indices: raise RuntimeError("face selector matched no faces")
-    if any(i > len(obj.Shape.Faces) for i in indices): raise RuntimeError("face index is out of range")
+    # obj is a top-level object, so its faces lie where Gmsh meshes them (at its global placement).
+    try: indices=selected_face_indices(len(obj.Shape.Faces), selector, obj.Shape.Faces)
+    except ValueError as e: raise RuntimeError(str(e))
     return [(obj, "Face%d" % i) for i in indices]
 def import_components(path, doc):
     # One object per STEP component, labelled by its component name (an explicit occurrence's ends
@@ -386,9 +377,16 @@ def placed_shape(obj):
     # The object's shape at its own placement, then at each enclosing assembly's, each applied once.
     shape=Part.getShape(obj); group=obj
     while True:
-        parents=[p for p in group.InList if p.TypeId in ("App::LinkGroup", "App::Part")]
+        parents=[p for p in group.InList if p.TypeId in CONTAINERS]
         if not parents: return shape
         group=parents[0]; shape=shape.copy(); shape.Placement=group.Placement.multiply(shape.Placement)
+def containers(obj, index):
+    # Indices of the containers enclosing obj, nearest first, as placed_shape walks them.
+    chain=[]; group=obj
+    while True:
+        parents=[p for p in group.InList if p.TypeId in CONTAINERS]
+        if not parents: return tuple(chain)
+        group=parents[0]; chain.append(index[group.Name])
 def selected_occurrence(doc):
     import_components(JOB["step"], doc); doc.recompute()
     objects=list(doc.Objects)
@@ -399,20 +397,32 @@ def selected_occurrence(doc):
     geom=doc.addObject("Part::Feature", "SelectedOccurrence"); geom.Shape=solids[0]
     return geom
 def selected_part(doc):
+    # Candidates are the Part::Feature leaves; the selected solid becomes a new top-level object at its placement
+    # in the STEP, so constraints, selectors and Gmsh all see one frame.
     Import.insert(JOB["step"], doc.Name); doc.recompute()
-    solids=[(o, solid) for o in doc.Objects if hasattr(o, "Shape") and not o.Shape.isNull()
-            for solid in o.Shape.Solids]
-    if not solids: raise RuntimeError("STEP contains no solid geometry")
-    names=[[name for name in (obj.Label, obj.Name) if name] for obj, _ in solids]
-    try: selected=select_solid_index(names, JOB.get("part"), JOB.get("solid_index"))
+    objects=list(doc.Objects); index={{o.Name: i for i, o in enumerate(objects)}}
+    scene=[]
+    for o in objects:
+        leaf=o.isDerivedFrom("Part::Feature") and not o.Shape.isNull()
+        scene.append(SceneObject(tuple(name for name in (o.Label, o.Name) if name), leaf,
+                                 tuple(float(s.Volume) for s in o.Shape.Solids) if leaf else (), containers(o, index)))
+    if not any(item.part_feature and item.volumes for item in scene): raise RuntimeError("STEP contains no solid geometry")
+    try: selected, solid=select_part_solid(scene, JOB.get("part"), JOB.get("solid_index"))
+    except MultipleSolids as e: raise AnalysisError({{"code":"part_multiple_solids", "message":str(e), "details":e.details}})
     except ValueError as e: raise RuntimeError(str(e))
-    source,solid=solids[selected]
-    if len(source.Shape.Solids) == 1: return source
-    geom=doc.addObject("Part::Feature", "SelectedPart")
-    geom.Label=source.Label
-    geom.Shape=solid
-    geom.Placement=source.Placement
+    geom=doc.addObject("Part::Feature", "SelectedPart"); geom.Shape=placed_shape(objects[selected]).Solids[solid]
     return geom
+def solvers():
+    # ccx and Gmsh as this FreeCAD process resolves them; a versioned run must find the versions it recorded.
+    tools=resolve_in_freecad(JOB["freecadcmd"])
+    for name, tool in tools.items():
+        if "error" in tool: raise AnalysisError({{"code":"solver_unavailable", "message":tool["error"]}})
+        recorded=(JOB["solver_versions"].get(name) or {{}}).get("version")
+        if recorded is not None and recorded != tool["version"]:
+            raise AnalysisError({{"code":"solver_changed", "message":"%s at %s is version %s, not the recorded %s" % (name, tool["path"], tool["version"], recorded)}})
+    # GmshTools runs the Gmsh its preference names; the preference lives in this job's private FreeCAD profile.
+    App.ParamGet("User parameter:BaseApp/Preferences/Mod/Fem/Gmsh").SetString("gmshBinaryPath", tools["gmsh"]["path"])
+    return tools
 def run():
     phase("import")
     doc=App.newDocument("StaticAnalysis")
@@ -435,6 +445,7 @@ def run():
             force.Force="%.12g N" % math.sqrt(fx*fx+fy*fy+fz*fz)
             force.Direction=(direction,["Edge1"]); force.Reversed=False; a.addObject(force)
         phase("mesh")
+        tools=solvers()
         mesh=ObjectsFem.makeMeshGmsh(doc, "GmshMesh"); a.addObject(mesh); mesh.Shape=geom; mesh.ElementDimension="3D"; mesh.ElementOrder="2nd"; mesh.HighOrderOptimize="Elastic"; mesh.CharacteristicLengthMax="%s mm" % JOB["mesh_size"]; mesh.CharacteristicLengthMin="%s mm" % (JOB["mesh_size"]*0.5); mesh.OptimizeStd=False; mesh.OptimizeNetgen=False; doc.recompute()
         gm=GmshTools(mesh); gm.prepare()
         gm.write_part_file()
@@ -458,11 +469,12 @@ def run():
         doc.recompute()
         nodes=int(mesh.FemMesh.NodeCount); elements=len(mesh.FemMesh.Volumes)
         if nodes <= 0 or elements <= 0: raise RuntimeError("Gmsh produced an empty mesh")
-        solver_started=time.perf_counter(); fea=CcxTools(solver); fea.reset_mesh_purge_results_checked(); fea.update_objects(); fea.setup_working_dir(solver.WorkingDir); fea.setup_ccx(JOB["calculix"])
-        if not fea.ccx_binary_present: raise RuntimeError("%s did not identify itself as CalculiX ccx" % JOB["calculix"])
+        solver_started=time.perf_counter(); fea=CcxTools(solver); fea.reset_mesh_purge_results_checked(); fea.update_objects(); fea.setup_working_dir(solver.WorkingDir); fea.setup_ccx(tools["calculix"]["path"])
+        if not fea.ccx_binary_present: raise RuntimeError("%s did not identify itself as CalculiX ccx" % tools["calculix"]["path"])
         problems=fea.check_prerequisites()
         if problems: raise RuntimeError("CalculiX prerequisites failed: %r" % problems)
         fea.write_inp_file(); phase("solve")
+        os.environ.update(JOB["ccx_environment"])  # start_ccx's ccx inherits this process environment
         # ccx creates spooles.out on entering the SPOOLES factorisation.
         failure=ccx_failure(fea.start_ccx(), fea.ccx_stdout, spooles_started=os.path.isfile(os.path.join(JOB["run_directory"], "spooles.out")), node_count=nodes)
         if failure: raise AnalysisError(failure)
@@ -490,13 +502,15 @@ def run():
 try: run()
 except Exception as e:
     failure=e.error if isinstance(e, AnalysisError) else {{"code":"analysis_failed", "message":str(e)}}
-    result={{"status":"error", "run_id":JOB["run_id"], "error":failure, "warnings":[]}}
+    result={{"status":"error", "run_id":JOB["run_id"], "error":failure, "warnings":[], "traceback":traceback.format_exc()}}
     with open(JOB["output"],"w",encoding="utf-8") as f: json.dump(result,f,indent=2); f.write("\\n")
 '''
     job_path.write_text(script, encoding="utf-8")
     try:
-        completed = lifecycle.run([str(freecad), str(job_path)], cwd=run_dir, timeout=timeout, capture_output=True,
-                                  text=True, guard=guard)
+        # The job's FreeCAD state lives beside the run directory, whose files are the solver evidence.
+        with RUNTIME.job_state_environment(run_dir.parent) as isolation:
+            completed = lifecycle.run([str(freecad), str(job_path)], cwd=run_dir, timeout=timeout,
+                                      capture_output=True, text=True, guard=guard, env={**os.environ, **isolation})
     except subprocess.TimeoutExpired:
         phase = _job_phase(phase_path)
         during = {
@@ -555,36 +569,22 @@ def _job_phase(path: Path) -> str | None:
         return None
 
 
-def _solver_binary(freecad: Path, name: str) -> Path | None:
-    candidates = [freecad.resolve().parent / name]
-    candidates.extend(Path(path) / name for path in os.environ.get("PATH", "").split(os.pathsep) if path)
-    return next((path for path in candidates if path.is_file() and os.access(path, os.X_OK)), None)
-
-
-def _tool_version(command: Path | None, args: tuple[str, ...]) -> str:
-    if command is None:
-        raise CaseError("required solver executable was not found")
-    try:
-        completed = subprocess.run([str(command), *args], capture_output=True, text=True, timeout=30, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise CaseError(f"cannot query solver version for {command}: {exc}") from exc
-    match = re.search(r"\b\d+(?:\.\d+){1,3}\b", completed.stdout + completed.stderr)
-    if match is None:
-        raise CaseError(f"cannot determine solver version for {command}")
-    return match.group(0)
-
-
 def solver_versions() -> dict[str, dict[str, str]]:
-    """Resolve tools beside FreeCAD first, then PATH; record each absolute path and version."""
+    """FreeCAD, Gmsh and ccx as FreeCAD resolves them (fea_solvers.probe): each absolute path and version."""
     freecad = find_freecad()
     if freecad is None:
         raise CaseError("freecadcmd not found; set FREECADCMD or add it to PATH")
-    gmsh = _solver_binary(freecad, "gmsh")
-    calculix = _solver_binary(freecad, "ccx")
+    try:
+        report = SOLVERS.probe(freecad)
+    except SOLVERS.ProbeError as exc:
+        raise SolverUnavailable(str(exc)) from exc
+    missing = [report[tool]["error"] for tool in ("calculix", "gmsh") if "error" in report[tool]]
+    if missing:
+        raise SolverUnavailable("; ".join(missing))
     return {
-        "freecad": {"path": str(freecad.resolve()), "version": _tool_version(freecad, ("--version",))},
-        "gmsh": {"path": str(gmsh), "version": _tool_version(gmsh, ("--version",))},
-        "calculix": {"path": str(calculix), "version": _tool_version(calculix, ("-v",))},
+        "freecad": {"path": str(freecad.resolve()), "version": report["freecad"]["version"]},
+        "gmsh": {"path": report["gmsh"]["path"], "version": report["gmsh"]["version"]},
+        "calculix": {"path": report["calculix"]["path"], "version": report["calculix"]["version"]},
     }
 
 
@@ -599,8 +599,8 @@ def _snapshot_record_hashes(record_dir: Path, case: dict[str, Any]) -> dict[str,
         if path.is_file():
             try:
                 document = YAML.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError) as error:
-                raise CaseError(f"cannot read version record snapshot {path}: {error}") from error
+            except (OSError, yaml.YAMLError) as exc:
+                raise CaseError(f"cannot read version record snapshot {path}: {exc}") from exc
             if not isinstance(document, dict):
                 raise CaseError(f"version record snapshot {path} must contain a mapping")
             hashes[f"record/{name}"] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -616,7 +616,7 @@ def _is_solver_evidence(relative_path: str) -> bool:
 def _producer_code_hashes() -> dict[str, str]:
     paths = (Path(__file__), Path(__file__).with_name("fea_part_selection.py"),
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
-             conditions.INTENT_PATH)
+             conditions.INTENT_PATH, Path(SOLVERS.__file__))
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
 
@@ -638,6 +638,7 @@ def _case_options(case: dict[str, Any]) -> dict[str, Any]:
             "threads": 1, "random_seed": 1, "random_factor_3d": 0,
             "optimize": False, "optimize_netgen": False, "high_order_optimize": 2,
             "calculix_matrix_solver": "spooles",
+            "calculix_environment": CCX_ENVIRONMENT,
         },
     }
 
@@ -796,6 +797,9 @@ def main(argv: list[str] | None = None) -> int:
     except lifecycle.LifecycleError as exc:
         refused = isinstance(exc, lifecycle.RunRefused)
         print(json.dumps(error(str(exc), code="run_refused" if refused else "process_supervision_unavailable")))
+        return 2
+    except SolverUnavailable as exc:
+        print(json.dumps(error(str(exc), code="solver_unavailable")))
         return 2
     except (CaseError, OSError, LAYOUT.LayoutError, CHECK_PACKET.PacketError) as exc:
         print(json.dumps(error(str(exc), code="invalid_case")))
