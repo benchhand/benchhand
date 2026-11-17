@@ -55,6 +55,7 @@ HERE = Path(__file__).resolve().parent
 sweep = _load("cad_motion_sweep", HERE / "sweep.py")
 pose, subsystems, continuous = sweep.pose, sweep.subsystems, sweep.continuous
 AGREED = ("rule_sha256", "partition_sha256", "source_version_manifest_sha256", "equivalence_sha256", "all_pair_ids")
+VERDICT_DATA = sweep.VERDICT_DATA  # a merge reads the data a sweep reads, through the same modules
 
 
 class MergeError(pose.MotionError):
@@ -132,7 +133,7 @@ def merged_recipe(provenance: dict[str, Any], case: str, inputs: list[Input]) ->
     merges, and this script's code with the modules it loads (code_shas), which decide the merge."""
     return {**provenance["equivalence"], "case": case, "subsystem": None,
             "merged_from": sorted(item.manifest_sha256 for item in inputs),
-            "merge_code": sweep.code_shas.closure(HERE / "merge_sweeps.py")}
+            "merge_code": sweep.code_shas.closure(HERE / "merge_sweeps.py", VERDICT_DATA)}
 
 
 def main(argv: list[str] | None = None) -> int:

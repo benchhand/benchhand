@@ -8,6 +8,8 @@ The modules come from the script's own sources, read statically and followed tra
 
 - `from pkg import name` and `import pkg.name`, where `pkg` is a package directory next to the
   importing file or above it inside the skills tree (cad-model's `cadmodel`).
+- `import name` of a script next to the importer, or of the one `name.py` in another skill's
+  `scripts/` folder that the importer put on `sys.path`.
 - A path expression that ends in a `.py` file: `Path(__file__)` with `.resolve()`, `.parent`,
   `.parents[n]`, `/ "part"` and `.with_name("file.py")`, directly or through a module-level name
   bound to such a path (`HERE`, `SKILLS`, `LAYOUT_PATH`, ...).
@@ -15,9 +17,15 @@ The modules come from the script's own sources, read statically and followed tra
   file exists next to the caller.
 
 These skills load their siblings in those forms, with `spec_from_file_location` on such a path or
-with a package import. Standard-library and third-party imports resolve to no file here, so the
-closure leaves them out. The recipes name the tool versions where those matter. A path expression
-that names a missing file is an error, so a renamed module cannot drop out of a recipe unnoticed.
+with an import. Standard-library imports and the packages in THIRD_PARTY resolve to no file here,
+so the closure leaves them out. The recipes name the tool versions where those matter. Any other
+import, a relative import, or a path expression that names a missing file is an error, so a module
+cannot drop out of a recipe unnoticed.
+
+Code is not all that decides a verdict: a producer also reads data files (schemas, layout.json, the
+ISO 286 tables). It declares them, and `closure(script, data)` hashes each declared file and every
+file under a declared folder into the same table. `referenced_data(script)` lists the data that
+the closure's modules name by a path expression, so a test can check that the declaration covers it.
 
 Standard library only. cad-record's `layout.code_shas` (#114) can take over this closure once it lands.
 """
@@ -27,14 +35,24 @@ from __future__ import annotations
 import ast
 import functools
 import hashlib
-from collections.abc import Iterator, Mapping
+import sys
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
 SKILLS = Path(__file__).resolve().parents[2]
 
 
+# The third-party packages these skills import. Any other import that is no skill module and no standard-library
+# module is an error, so a module that code_shas cannot place never drops out of a recipe unnoticed.
+THIRD_PARTY = frozenset({"OCP", "build123d", "cadquery", "defusedxml", "fcl", "jsonschema", "numpy", "referencing",
+                         "trimesh", "typing_extensions", "yaml"})
+# Modules hashed into a closure whose own loads it does not follow: preflight finds the FreeCAD command and
+# checks the whole install (viewer, browser, solvers), and none of that decides a producer's verdict.
+UNFOLLOWED = frozenset({"cad-flow/scripts/preflight.py"})
+
+
 class CodeShaError(ValueError):
-    """A module names a sibling file that does not exist."""
+    """A module names a file or module that code_shas cannot find."""
 
 
 def _read(path: Path) -> bytes:
@@ -104,45 +122,113 @@ def _path_targets(tree: ast.Module, file: Path) -> Iterator[Path]:
 
 
 def _package_root(folder: Path, package: str) -> Path | None:
-    """The folder that holds package directory `package`, searched from `folder` up to the skills tree."""
+    """The folder that holds package directory `package`: searched from `folder` up to the skills tree, else the one
+    skill `scripts/` folder that holds it (an importer that put that folder on sys.path)."""
     for candidate in (folder, *folder.parents):
         if (candidate / package / "__init__.py").is_file():
             return candidate
         if candidate == SKILLS:
             break
-    return None
+    found = sorted(path.parent.parent for path in SKILLS.glob(f"*/scripts/{package}/__init__.py"))
+    if len(found) > 1:
+        raise CodeShaError(f"package {package} imported in {folder} exists in {len(found)} skills: {found}")
+    return found[0] if found else None
 
 
-def _import_targets(tree: ast.Module, folder: Path) -> Iterator[Path]:
+def _script_module(folder: Path, name: str) -> Path | None:
+    """`name`.py imported as a top-level module from another skill's scripts folder (the importer put that folder
+    on sys.path): the one file of that name there, None when there is none."""
+    found = sorted(SKILLS.glob(f"*/scripts/{name}.py"))
+    if len(found) > 1:
+        raise CodeShaError(f"import {name} in {folder} matches {len(found)} skill scripts: {[str(f) for f in found]}")
+    return found[0] if found else None
+
+
+def _import_targets(tree: ast.Module, file: Path) -> Iterator[Path]:
+    folder = file.parent
     modules: list[tuple[list[str], list[str]]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+        if isinstance(node, ast.ImportFrom):
+            if node.level or not node.module:
+                raise CodeShaError(f"{file}:{node.lineno}: a relative import, which code_shas does not follow")
             modules.append((node.module.split("."), [alias.name for alias in node.names]))
         elif isinstance(node, ast.Import):
             modules += [(alias.name.split("."), []) for alias in node.names]
     for dotted, names in modules:
-        root = _package_root(folder, dotted[0])
+        top = dotted[0]
+        root = _package_root(folder, top)
         if root is None:
-            continue   # standard library or third party
+            if len(dotted) == 1 and (folder / f"{top}.py").is_file():
+                yield folder / f"{top}.py"   # the importer's own folder comes first on its sys.path
+                continue
+            if top in sys.stdlib_module_names or top in THIRD_PARTY:
+                continue
+            script = _script_module(folder, top) if len(dotted) == 1 else None
+            if script is None:
+                raise CodeShaError(f"{file}: `{'.'.join(dotted)}` is no skill module, standard-library module or "
+                                   f"listed third-party package (code_shas.THIRD_PARTY)")
+            yield script
+            continue
         package = root.joinpath(*dotted)
         if package.with_suffix(".py").is_file():
             yield package.with_suffix(".py")
             continue
+        if not (package / "__init__.py").is_file():
+            raise CodeShaError(f"{file}: `{'.'.join(dotted)}` names no module in {root}")
         yield package / "__init__.py"
         for name in names:
             if (package / f"{name}.py").is_file():
                 yield package / f"{name}.py"
 
 
-def closure(script: Path) -> dict[str, str]:
-    """{path under the skills tree: sha256} of `script` and every skill module it loads, transitively.
+def _data_files(entry: Path) -> list[Path]:
+    """A declared data file, or every file under a declared data folder."""
+    if entry.is_file():
+        return [entry]
+    if entry.is_dir():
+        return sorted(path for path in entry.rglob("*") if path.is_file() and "__pycache__" not in path.parts)
+    raise CodeShaError(f"{entry} is declared as data but does not exist")
+
+
+def referenced_data(script: Path) -> set[Path]:
+    """Every file or data folder under the skills tree that a module of `script`'s closure names by a path
+    expression: what its declared data must cover. It skips folders that hold Python modules, which are code."""
+    found: set[Path] = set()
+    for name in closure(script):
+        if name in UNFOLLOWED:
+            continue
+        path = SKILLS / name
+        tree = ast.parse(_read(path), filename=str(path))
+        names = _module_paths(tree, path)
+        inner = {id(node.left) for node in ast.walk(tree) if isinstance(node, ast.BinOp)} | \
+                {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Subscript)} | \
+                {id(node.value) for node in ast.walk(tree)
+                 if isinstance(node, ast.Attribute) and node.attr in ("parent", "parents", "with_name", "resolve", "absolute")}
+        for node in ast.walk(tree):
+            if id(node) in inner or not isinstance(node, (ast.BinOp, ast.Call, ast.Name)):
+                continue   # only a whole path expression, not the folders it starts from
+            target = _path(node, names, path)
+            if target is None or target.suffix == ".py":
+                continue
+            target = target.resolve()
+            if not target.is_relative_to(SKILLS) or target == SKILLS or not target.exists():
+                continue
+            if target.is_dir() and (any(target.glob("*.py")) or target.parent == SKILLS):
+                continue
+            found.add(target)
+    return found
+
+
+def closure(script: Path, data: Iterable[Path] = ()) -> dict[str, str]:
+    """{path under the skills tree: sha256} of `script`, every skill module it loads, transitively, and the declared
+    `data` the producer reads to reach its verdict (a folder stands for every file under it).
 
     Each process reads a script once (`_closure` caches it). The process loaded its code when it started."""
-    return dict(_closure(Path(script).resolve()))
+    return dict(_closure(Path(script).resolve(), tuple(Path(entry).resolve() for entry in data)))
 
 
 @functools.cache
-def _closure(script: Path) -> tuple[tuple[str, str], ...]:
+def _closure(script: Path, data: tuple[Path, ...]) -> tuple[tuple[str, str], ...]:
     found: dict[Path, bytes] = {}
     pending = [script]
     while pending:
@@ -152,16 +238,21 @@ def _closure(script: Path) -> tuple[tuple[str, str], ...]:
         if not path.is_file():
             raise CodeShaError(f"{path} is named as a module but does not exist")
         found[path] = _read(path)
+        if path.is_relative_to(SKILLS) and path.relative_to(SKILLS).as_posix() in UNFOLLOWED:
+            continue
         tree = ast.parse(found[path], filename=str(path))
-        for target in (*_path_targets(tree, path), *_import_targets(tree, path.parent)):
+        for target in (*_path_targets(tree, path), *_import_targets(tree, path)):
             target = target.resolve()
             if target not in found:
                 pending.append(target)
-    return tuple((path.relative_to(SKILLS).as_posix(), hashlib.sha256(data).hexdigest())
-                 for path, data in sorted(found.items()))
+    for entry in data:
+        for path in _data_files(entry):
+            found[path] = _read(path)
+    return tuple((path.relative_to(SKILLS).as_posix(), hashlib.sha256(content).hexdigest())
+                 for path, content in sorted(found.items()))
 
 
-def digest(script: Path) -> str:
-    """One sha256 over `closure(script)`."""
-    table = closure(script)
+def digest(script: Path, data: Iterable[Path] = ()) -> str:
+    """One sha256 over `closure(script, data)`."""
+    table = closure(script, data)
     return hashlib.sha256("".join(f"{name}\0{sha}\n" for name, sha in table.items()).encode()).hexdigest()

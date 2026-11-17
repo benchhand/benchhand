@@ -26,8 +26,10 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -153,6 +155,32 @@ def safe_project(root: Path, kernel: str) -> Path:
     for pn, case in SAFE_CASES.items():
         set_model(hw, pn, kernel, "safe_case.py", {"case": case}, f"Safe edit {case}", "PETG")
     return hw
+
+
+# One ISO 286 table value changed: IT6 up to 3 mm, 6 um -> 7 um (cad-fits/data/iso286.json).
+ISO286_IT6_EDIT = (b'"6": [6, ', b'"6": [7, ')
+
+
+@contextlib.contextmanager
+def code_edited(shas: Any, path: Path, change: tuple[bytes, bytes] | None = None) -> Iterator[None]:
+    """code_shas reads `path` edited: one comment line appended, or the one `change` (old, new) applied."""
+    target, read = path.resolve(), shas._read
+
+    def read_edited(candidate: Path) -> bytes:
+        data = read(candidate)
+        if Path(candidate).resolve() != target:
+            return data
+        if change is None:
+            return data + b"\n# edited\n"
+        assert data.count(change[0]) == 1, f"{path} does not hold {change[0]!r} once"
+        return data.replace(*change)
+
+    shas._closure.cache_clear()   # code_shas reads each script once per process
+    try:
+        with mock.patch.object(shas, "_read", read_edited):
+            yield
+    finally:
+        shas._closure.cache_clear()
 
 
 def cli(*args: str) -> tuple[subprocess.CompletedProcess[str], dict, float]:
@@ -2439,6 +2467,36 @@ class ManufacturingInputCacheTests(unittest.TestCase):
         row = checked["checks"]["build_volume"]["parts"]["TST-0001"]
         self.assertEqual((row["status"], row["approved"], row["envelope_source"]),
                          ("pass", True, "capability tst_printer envelope"))
+
+    def test_a_change_to_the_check_code_or_its_data_republishes_the_readback_packet(self) -> None:
+        """The readback bundle's recipe names the check code and VERDICT_DATA (#128). Unchanged, a publication
+        reuses the sealed bundle. After an edit to check.py, manufacture.py or one ISO 286 value it replaces
+        it. The check reports the same code fingerprint (evaluation.code_sha256), which an edit changes."""
+        proc, checked, _ = self.checks["v1"]
+        self.assertEqual(proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-2000:])
+        folder = self.hw / "versions" / "v1"
+        bundle_manifest = self.hw / "checks" / "v1" / "cad" / "manifest.json"
+        shas = check._code_shas()
+
+        def publish() -> tuple[bool, str]:
+            published = check.publish_readback(self.hw, "v1", folder, folder / "record", checked["checks"])
+            assert published is not None
+            return published["reused"], json.loads(bundle_manifest.read_text(encoding="utf-8"))["recipe_sha256"]
+
+        reused, sealed = publish()
+        self.assertTrue(reused, "the check's own publication with this code is reused")
+        self.assertEqual(checked["evaluation"]["code_sha256"], shas.digest(Path(check.__file__), check.VERDICT_DATA))
+        iso286 = HERE.parents[1] / "cad-fits" / "data" / "iso286.json"
+        try:
+            for path, change in ((SCRIPTS / "cadmodel" / "check.py", None), (SCRIPTS / "cadmodel" / "manufacture.py", None),
+                                 (iso286, ISO286_IT6_EDIT)):
+                with self.subTest(edited=path.name), code_edited(shas, path, change):
+                    reused, recipe = publish()
+                    self.assertEqual((reused, recipe != sealed), (False, True))
+                    self.assertNotEqual(shas.digest(Path(check.__file__), check.VERDICT_DATA),
+                                        checked["evaluation"]["code_sha256"])
+        finally:
+            self.assertEqual(publish()[1], sealed, "unedited, the recipe is the sealed one again")
 
     def test_the_check_publishes_the_readback_packet_evidence_reads(self) -> None:
         """check is the cad.readback producer: the passing version's sealed packet passes its expected

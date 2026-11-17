@@ -837,10 +837,20 @@ def export_artifacts(hw: Path, folder: Path, expected: Iterable[Any]) -> list[di
 
 
 def readback_recipe(layout: Any, packet: Mapping[str, Any]) -> dict[str, Any]:
-    """The cad.readback bundle's recipe: the packet it seals and the check code with the modules it loads
-    (code_shas). After a code change, the next check republishes the packet instead of keeping the old code's bundle."""
+    """The cad.readback bundle's recipe: the packet it seals and the check code with the modules it loads and
+    VERDICT_DATA (code_shas). After a code or data change, the next check republishes the packet instead of keeping
+    the old bundle."""
     return {"producer": READBACK_PRODUCER, "packet_sha256": hashlib.sha256(layout.canonical_json(packet)).hexdigest(),
-            "code": _code_shas().closure(Path(__file__))}
+            "code": _code_shas().closure(Path(__file__), VERDICT_DATA)}
+
+
+# The data files that decide the static check's verdict, hashed with its code (readback_recipe, `code_sha256`):
+# the ISO 286 tables of locating fits (fits.py:39, read at fits.py:51 through pair_policy), the bundle layout
+# (layout.py:34, read at layout.py:325), the record and packet schemas (check_packet.py:26, manufacturing_intent.py:36,
+# schema_registry.py:28-29) and the record version 1 density table (build.py:45, read at build.py:154).
+VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas",
+                SKILLS / "cad-model" / "assets" / "materials.yaml")
 
 
 def _code_shas() -> Any:
@@ -982,7 +992,8 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
     result = {"status": "fail" if blocking else "pass", "label": label, "pose": "nominal",
               "baseline": previous, "scope": scope, "blocking_failures": blocking, "warnings": warnings,
               "evaluation": {"mode": "exact" if exact else "fast", "mesh": description, "band_mm": measurer.rule.band_mm,
-                             "rule_sha256": measurer.rule.digest.hex(), "code_sha256": _code_shas().digest(Path(__file__))},
+                             "rule_sha256": measurer.rule.digest.hex(),
+                             "code_sha256": _code_shas().digest(Path(__file__), VERDICT_DATA)},
               "occurrences": {oid: o.pn for oid, o in occurrences.items()}, "checks": checks, "suspects": suspects,
               "timings_s": {"total_s": round(time.perf_counter() - started, 3),
                             "kernel_evaluations": counters.kernel_evaluations, "exact_hits": counters.exact_hits,

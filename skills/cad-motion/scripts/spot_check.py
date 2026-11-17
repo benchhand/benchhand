@@ -57,6 +57,12 @@ pose = _load("cad_motion_pose", HERE / "pose.py")
 code_shas = _load("cad_motion_code_shas", HERE / "code_shas.py")
 pair_measure = _load("cad_motion_pair_measure", HERE / "pair_measure.py")
 LISTED = 10  # largest |mesh - exact| deviations listed
+SKILLS = HERE.parents[1]
+# The data files that decide an audit, hashed with its code into its report (code_shas): the ISO 286 tables
+# (fits.py:39, read at fits.py:51 through pair_policy), the bundle layout (layout.py:34, read at layout.py:325) and
+# the manufacturing schema layout.py reads at :1045.
+VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
+                SKILLS / "cad-record" / "schemas" / "manufacturing.schema.json")
 
 
 def _bound(value: float | None) -> float:
@@ -139,7 +145,7 @@ def audit_provenance(provenance: Mapping[str, Any], rule: Any) -> dict[str, Any]
     """What decided this audit: the measuring rule of the swept bundle, the audit's own rule, and this script's
     code with the modules it loads (code_shas). The audit prints its report, and the report names that code."""
     return {"rule_sha256": {"sweep": provenance["rule_sha256"], "audit": rule.digest.hex()},
-            "code_sha256": code_shas.digest(HERE / "spot_check.py")}
+            "code_sha256": code_shas.digest(HERE / "spot_check.py", VERDICT_DATA)}
 
 
 def main(argv: list[str] | None = None) -> int:

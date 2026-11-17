@@ -238,6 +238,11 @@ EVIDENCE_SCHEMA = 1
 RESULT_SCHEMA = 2  # the evidence/ statistics and partition provenance that merge_sweeps.py and spot_check.py read
 DEFAULT_BAND_MM = 2.0  # fast mode: how far beyond its clearing threshold a request's proved bound must lie
 REEVALUATE_STEP = 0.1  # deg or mm: how far a suspect's re-evaluations move every independent joint
+# The data files that decide a sweep's verdict, hashed with its code (producer_hashes): the ISO 286 tables
+# (fits.py:39, read at fits.py:51 through pair_policy), the bundle layout (layout.py:34, read at layout.py:325) and
+# the manufacturing schema layout.py reads at :1045.
+VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
+                SKILLS / "cad-record" / "schemas" / "manufacturing.schema.json")
 
 
 def claim_run(hw: Path, scope: str) -> Any:
@@ -1177,9 +1182,9 @@ def option_argv(options: Mapping[str, Any], attach: Sequence[str]) -> list[str]:
 
 
 def producer_hashes() -> dict[str, str]:
-    """The code a published bundle depends on: this script and every skill module it loads (code_shas). A change
-    to any of them makes an old bundle unreusable."""
-    return cast(dict[str, str], code_shas.closure(HERE / "sweep.py"))
+    """The code a published bundle depends on: this script, every skill module it loads and VERDICT_DATA
+    (code_shas). A change to any of them makes an old bundle unreusable."""
+    return cast(dict[str, str], code_shas.closure(HERE / "sweep.py", VERDICT_DATA))
 
 
 def recipe_of(run: Run, rule: Any) -> dict[str, Any]:

@@ -93,6 +93,12 @@ intent_module = _load("cad_record_manufacturing_intent", SKILLS / "cad-record" /
 LAYOUT = pose.LAYOUT
 
 PRODUCER = "cad-motion play.py"
+# The data files that decide this producer's verdict, hashed with its code into the packet recipe (code_shas):
+# the ISO 286 tables (fits.py:39, read at fits.py:51 through pair_policy), the bundle layout (layout.py:34, read
+# at layout.py:325) and the schemas that validate the packet and the record (check_packet.py:26,
+# manufacturing_intent.py:36, schema_registry.py:28-29).
+VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas")
 SUBJECT = "motion-play"
 FAMILY = "motion.play"
 COMPONENTS = ("axial", "radial", "angular", "backlash")
@@ -649,7 +655,7 @@ def main(argv: list[str] | None = None) -> int:
         result, detail = assess(args, version, record_hw)
         recipe = {"options": {"steps": args.steps, "attach": list(args.attach)}, "dependencies": result["dependencies"],
                   "rule_sha256": pair_measure.RuleVersion.current().digest.hex(),
-                  "code": code_shas.closure(HERE / "play.py")}
+                  "code": code_shas.closure(HERE / "play.py", VERDICT_DATA)}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "play.json",
                                            recipe, out=args.out, replace=args.replace,
                                            record_version=intent_module.RECORD_VERSION)

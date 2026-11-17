@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""A producer's reuse key covers its own script and the modules it loads (#128).
+"""A producer's reuse key covers its own script, the modules it loads and the data it reads (#128).
 
 Each motion producer that publishes, or reports what decided a result, takes the sha256 of its code
-from code_shas.closure. Editing that code must change the recipe a rerun is matched by, so the rerun
-refuses (another recipe needs --replace) or recomputes instead of returning the old bundle. The edit
-is simulated by appending a comment to the bytes code_shas reads for one file. Kernel-free.
+and of its declared VERDICT_DATA from code_shas.closure. Editing either must change the recipe a
+rerun is matched by, so the rerun refuses (another recipe needs --replace) or recomputes instead of
+returning the old bundle. The edit is simulated by changing the bytes code_shas reads for one file.
+A guard checks that each producer's VERDICT_DATA covers every data file its code names. Kernel-free.
 """
 
 from __future__ import annotations
@@ -34,14 +35,23 @@ merge_sweeps = load("cad_motion_merge_sweeps", SCRIPTS / "merge_sweeps.py")
 play = load("cad_motion_play", SCRIPTS / "play.py")
 
 
+ISO286 = SKILLS / "cad-fits" / "data" / "iso286.json"
+ISO286_IT6_EDIT = (b'"6": [6, ', b'"6": [7, ')  # one table value: IT6 up to 3 mm, 6 um -> 7 um
+
+
 @contextlib.contextmanager
-def edited(path: Path) -> Iterator[None]:
-    """code_shas reads `path` with one comment line appended, as after an edit that changes no behavior."""
+def edited(path: Path, change: tuple[bytes, bytes] | None = None) -> Iterator[None]:
+    """code_shas reads `path` edited: one comment line appended, or the one `change` (old, new) applied."""
     target, read = path.resolve(), code_shas._read
 
     def read_edited(candidate: Path) -> bytes:
         data = read(candidate)
-        return data + b"\n# edited\n" if Path(candidate).resolve() == target else data
+        if Path(candidate).resolve() != target:
+            return data
+        if change is None:
+            return data + b"\n# edited\n"
+        assert data.count(change[0]) == 1, f"{path} does not hold {change[0]!r} once"
+        return data.replace(*change)
 
     code_shas._closure.cache_clear()   # code_shas reads each script once per process
     try:
@@ -58,11 +68,36 @@ def key(recipe: Any) -> str:
 
 class Case(unittest.TestCase):
     def assert_edit_changes(self, recipe_of: Any, *paths: Path) -> None:
+        """Each edit of `paths`, and one ISO 286 table value, changes the recipe."""
         before = key(recipe_of())
         self.assertEqual(key(recipe_of()), before, "the recipe is not stable without an edit")
-        for path in paths:
-            with self.subTest(edited=str(path.relative_to(SKILLS))), edited(path):
+        for path, change in (*((path, None) for path in paths), (ISO286, ISO286_IT6_EDIT)):
+            with self.subTest(edited=str(path.relative_to(SKILLS))), edited(path, change):
                 self.assertNotEqual(key(recipe_of()), before)
+
+
+def covered(path: Path, declared: tuple[Path, ...]) -> bool:
+    path = path.resolve()
+    return any(path == entry.resolve() or path.is_relative_to(entry.resolve()) for entry in declared)
+
+
+class DeclaredDataTests(unittest.TestCase):
+    def test_each_producer_declares_every_data_file_its_code_names(self) -> None:
+        for module, script in ((play, "play.py"), (sweep, "sweep.py"), (merge_sweeps, "merge_sweeps.py"),
+                               (spot_check, "spot_check.py")):
+            with self.subTest(producer=script):
+                missing = sorted(str(path.relative_to(SKILLS)) for path in code_shas.referenced_data(SCRIPTS / script)
+                                 if not covered(path, module.VERDICT_DATA))
+                self.assertEqual(missing, [], f"add these to {script} VERDICT_DATA")
+
+    def test_a_data_file_a_module_names_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory(dir=SKILLS / "cad-motion") as folder:
+            data = Path(folder) / "table.json"
+            data.write_text("{}", encoding="utf-8")
+            script = Path(folder) / "producer.py"
+            script.write_text('from pathlib import Path\nTABLE = Path(__file__).resolve().parent / "table.json"\n',
+                              encoding="utf-8")
+            self.assertEqual(code_shas.referenced_data(script), {data.resolve()})
 
 
 class PlayTests(Case):
@@ -132,6 +167,24 @@ class ClosureTests(unittest.TestCase):
         for name in ("cad-motion/scripts/play.py", "cad-motion/scripts/pose.py", "cad-motion/scripts/sweep.py",
                      "cad-fits/scripts/fits.py", "cad-record/scripts/yaml_loader.py"):
             self.assertIn(name, table)
+
+    def test_declared_data_is_hashed_with_the_code(self) -> None:
+        table = code_shas.closure(SCRIPTS / "sweep.py", sweep.VERDICT_DATA)
+        self.assertIn("cad-fits/data/iso286.json", table)
+        self.assertNotIn("cad-fits/data/iso286.json", code_shas.closure(SCRIPTS / "sweep.py"))
+
+    def test_an_import_code_shas_cannot_place_is_an_error(self) -> None:
+        for source, message in (("import no_such_module_anywhere\n", "no_such_module_anywhere"),
+                                ("from . import pose\n", "relative import")):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as folder:
+                script = Path(folder) / "producer.py"
+                script.write_text(source, encoding="utf-8")
+                with self.assertRaisesRegex(code_shas.CodeShaError, message):
+                    code_shas.closure(script)
+
+    def test_a_script_imported_from_another_skill_folder_is_followed(self) -> None:
+        table = code_shas.closure(SKILLS / "cad-model" / "scripts" / "cadmodel" / "fonts.py")
+        self.assertIn("cad-flow/scripts/preflight.py", table)
 
     def test_a_path_to_a_missing_module_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
