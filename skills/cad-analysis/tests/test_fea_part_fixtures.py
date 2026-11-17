@@ -9,6 +9,7 @@ only: the sizes, loads and material numbers are typical of the part type, with s
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import importlib.util
@@ -17,6 +18,7 @@ import json
 import math
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -156,6 +158,7 @@ BY_NAME = {f.name: f for f in FIXTURE_SET}
 # Timeouts in seconds, with clear headroom over the solves seen on dev (the slowest build, face listing and solve
 # took under a minute each): a loaded host must not turn a slow step into a failure.
 BUILD_TIMEOUT_S, FACES_TIMEOUT_S, SOLVE_TIMEOUT_S = 1800, 900, 1800
+SPECIFICATION_TIMEOUT_S = 300   # the specification tests in a child process: seconds when nothing stalls
 
 
 @dataclass(frozen=True)
@@ -246,6 +249,20 @@ def case_yaml(fixture: Fixture, faces: Faces) -> dict[str, Any]:
             "mesh_size": fixture.mesh_size, "timeout_seconds": SOLVE_TIMEOUT_S}
 
 
+def fea_parts_table() -> tuple[dict[str, str], set[str]]:
+    """fea_parts.py's PARTS table (part name to builder function name) and the functions it defines, read from its
+    source. Importing it would need cadquery, which only the gated solves install."""
+    tree = ast.parse((FIXTURES / "fea_parts.py").read_text(encoding="utf-8"))
+    functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    tables = [node.value for node in tree.body if isinstance(node, ast.Assign)
+              and [getattr(target, "id", None) for target in node.targets] == ["PARTS"]]
+    if len(tables) != 1 or not isinstance(tables[0], ast.Dict):
+        raise AssertionError("fea_parts.py needs exactly one `PARTS = {...}` table")
+    parts = {ast.literal_eval(key): value.id if isinstance(value, ast.Name) else ast.dump(value)
+             for key, value in zip(tables[0].keys, tables[0].values) if key is not None}
+    return parts, functions
+
+
 class Specification(unittest.TestCase):
     """What every fixture promises, without FreeCAD or cadquery."""
 
@@ -268,9 +285,11 @@ class Specification(unittest.TestCase):
 
     def test_names_and_part_numbers_are_unique_and_the_parts_exist(self) -> None:
         self.assertEqual(len({f.pn for f in FIXTURE_SET}), len(FIXTURE_SET))
-        listed = json.loads(subprocess.run([UV, "run", "--script", str(FIXTURES / "fea_parts.py"), "--list"], capture_output=True,
-                                           text=True, check=True).stdout) if UV else sorted(BY_NAME)
-        self.assertEqual(sorted(BY_NAME), listed)
+        parts, functions = fea_parts_table()
+        self.assertEqual(sorted(BY_NAME), sorted(parts))
+        for name, builder in parts.items():
+            with self.subTest(part=name):
+                self.assertIn(builder, functions)
 
     def test_each_part_uses_a_profile_its_route_can_have(self) -> None:
         for fixture in FIXTURE_SET:
@@ -309,6 +328,28 @@ class Specification(unittest.TestCase):
             record, _ = fea_conditions.read_record(hw / "versions" / "v1" / "record")
             self.assertEqual(sorted(record.parts), sorted(f.pn for f in FIXTURE_SET))
             self.assertEqual(sorted(record.materials), sorted(PROFILES))
+
+
+class SpecificationNeedsNoKernel(unittest.TestCase):
+    """The specification tests run without the cadquery environment: a `uv` that never returns cannot stall them."""
+
+    def test_the_specification_finishes_with_a_uv_that_hangs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "uv"
+            stub.write_text("#!/bin/sh\nexec sleep 600\n", encoding="utf-8")
+            stub.chmod(0o755)
+            env = {**os.environ, "PATH": f"{tmp}{os.pathsep}{os.environ.get('PATH', '')}"}
+            child = subprocess.Popen([sys.executable, "-B", "-m", "unittest", "test_fea_part_fixtures.Specification"],
+                                     cwd=Path(__file__).resolve().parent, env=env, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True, start_new_session=True)
+            try:
+                _, stderr = child.communicate(timeout=SPECIFICATION_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)   # the child and the stub it started
+                child.communicate()
+                self.fail(f"the specification tests did not finish in {SPECIFICATION_TIMEOUT_S} s")
+        self.assertEqual(child.returncode, 0, stderr[-2000:])
+        self.assertRegex(stderr, r"(?m)^OK$")
 
 
 @unittest.skipUnless(FREECAD_PRESENT and UV, "the solves need FreeCAD 1.1.4 freecadcmd and uv (for cadquery)")
