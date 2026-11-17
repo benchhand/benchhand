@@ -196,7 +196,7 @@ def _read_outcomes(path: Travel, pending: list[tuple[int, float]], outcomes: Seq
 
 
 def _classify_engagements(path: Travel, fitted: set[int], overlap: dict[int, dict[float, float | None]],
-                          lower: dict[tuple[int, float], float], engaged: dict[str, bool],
+                          lower: dict[tuple[int, float], float], incoming: Mapping[str, bool], outgoing: dict[str, bool],
                           seen: set[tuple[int, float]], min_step_mm: float) -> list[tuple[int, float]]:
     """Sort the samples of each fitted partner into engagement and collisions. Record the missing length, and return
     the positions to sample before the end of an engagement shows."""
@@ -204,12 +204,12 @@ def _classify_engagements(path: Travel, fitted: set[int], overlap: dict[int, dic
     for index in sorted(fitted):
         occurrence = path.obstacles[index][0]
         verdict = engagement_module.classify(
-            overlap[index], tail_mm=path.tail_mm, engaged=path.tail_mm == 0.0 or engaged.get(occurrence, False),
+            overlap[index], tail_mm=path.tail_mm, engaged=path.tail_mm == 0.0 or incoming.get(occurrence, False),
             cap_mm=path.engagement[occurrence], min_step_mm=min_step_mm, threshold=pose.INTERFERENCE_MM3)
         resample.extend((index, s) for s in verdict.needs)
         if verdict.needs:
             continue  # the end of the run needs more samples first
-        engaged[occurrence] = verdict.reached_start
+        outgoing[occurrence] = verdict.reached_start
         if verdict.exempt:
             path.engaged_mm[occurrence] = round(path.tail_mm + verdict.extent, 6)
         for s in verdict.exempt:
@@ -227,9 +227,20 @@ def _classify_engagements(path: Travel, fitted: set[int], overlap: dict[int, dic
 
 def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step_mm: float,
              engaged: dict[str, bool] | None = None) -> None:
-    """Sample and refine `path`; sets its status (see the module docstring). Run the legs of one insertion from the
-    last to the first. `engaged` carries from each leg to the next whether an engagement reached its start."""
+    """Sample and refine `path`. Run the legs of one insertion from the last to the first. `engaged` carries from each
+    leg to the next whether an engagement reached its start. A leg reads it as it was at the leg's start and writes it
+    when the leg is done, so refining a leg cannot change what the leg reads."""
     engaged = {} if engaged is None else engaged
+    outgoing: dict[str, bool] = {}
+    try:
+        _sample_path(session, measurer, path, step_mm, min_step_mm, dict(engaged), outgoing)
+    finally:
+        engaged.update(outgoing)
+
+
+def _sample_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step_mm: float,
+                 incoming: Mapping[str, bool], outgoing: dict[str, bool]) -> None:
+    """Sample and refine `path`; sets its status (see the module docstring)."""
     path.travel_mm = separation_travel(measurer, path) if path.leg_mm is None else path.leg_mm
     if path.travel_mm == 0.0:
         path.status = "clear"
@@ -253,7 +264,7 @@ def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step
         outcomes = session.measure(requests)
         path.samples += len(requests)
         _read_outcomes(path, pending, outcomes, fitted, overlap, lower)
-        resample = _classify_engagements(path, fitted, overlap, lower, engaged, seen, min_step_mm)
+        resample = _classify_engagements(path, fitted, overlap, lower, incoming, outgoing, seen, min_step_mm)
         if path.collisions:
             path.status = "collision"
             return
