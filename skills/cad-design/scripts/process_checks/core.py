@@ -186,7 +186,7 @@ class Geometry:
 
     `facts` is form_check.py's probe dict (PROBE_FORMAT): `frame` (bed: exported in its approved additive
     pose, build direction +Z, bed at z 0; model: the native frame), `solids`, `shells`, `volume_mm3`,
-    `bbox_mm{min,max}`, `centre_mm`, `bed{z_mm, contact_area_mm2, contact_min, contact_max}`, `faces[{id, type,
+    `bbox_mm{min,max}`, `centre_mm`, `bed{z_mm, contact_area_mm2, contact_hull, contact_extent}`, `faces[{id, type,
     area_mm2, features, down{max_angle_deg, area_mm2, angles[[deg, mm2]], kind, span_mm, start{bed_mm2,
     part_mm2, features}}, normals[[x,y,z]], visible{direction: fraction}}]`, `holes[{id, diameter_mm, axis,
     position, depth_mm, through, features, floor_mm}]`, `corners[{radius_mm, axis, length_mm, features}]`,

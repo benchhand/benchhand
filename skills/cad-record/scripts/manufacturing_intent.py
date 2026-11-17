@@ -83,7 +83,7 @@ STAGES = ("ground", "intent", "specify", "concept", "layout", "parts", "detail",
 # Units: name -> (dimension, scale to the dimension's base unit, offset). base = value * scale + offset.
 UNITS: Mapping[str, tuple[str, float, float]] = types.MappingProxyType({
     "mm": ("length", 1e-3, 0.0), "um": ("length", 1e-6, 0.0), "m": ("length", 1.0, 0.0),
-    "mm3": ("volume", 1e-9, 0.0),
+    "mm2": ("area", 1e-6, 0.0), "mm3": ("volume", 1e-9, 0.0),
     "deg": ("angle", math.pi / 180.0, 0.0), "rad": ("angle", 1.0, 0.0),
     "N": ("force", 1.0, 0.0), "kN": ("force", 1e3, 0.0),
     "N_mm": ("torque", 1e-3, 0.0), "N_m": ("torque", 1.0, 0.0),
