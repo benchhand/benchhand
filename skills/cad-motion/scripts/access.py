@@ -17,8 +17,10 @@ operation (the parts present then):
     kept; the start is taken as reachable), else the default, reported as such: a straight line along
     its `direction` (rotated from the receiving occurrence's model frame into the assembly frame) from
     beyond the separating plane of every present part to its installed pose; a disassemble operation
-    moves it the other way. The receiving part and the parts interfaces.yaml declares fitted or
-    inserted with the moving part are in contact by design and are not obstacles.
+    moves it the other way. The receiving part is in contact by design and is not an obstacle. The
+    parts interfaces.yaml declares fitted or inserted with the moving part are obstacles too, except over
+    the final engagement: from the installed pose back to the first sample at which the two do not
+    interfere. Interference with one beyond that (earlier on the path) is a collision.
   - each tool: a `tool_access` entry whose envelope fact cites an artifact, a STEP solid of the tool
     and holder in the operated part's model frame at the engaged pose, moves along its `approach`
     (receiving occurrence's frame) to that pose, past every present part except the operated one.
@@ -81,9 +83,9 @@ ACCESS_METHOD = ("part paths (the declared insertion legs, else the default stra
                  "translation (1-Lipschitz) bound between samples (cad-motion access.py)")
 ACCESS_COVERAGE = ("the part's declared insertion path, else the default straight line along its direction from the "
                    "separating plane, and each tool envelope's approach, in the declared assembly state at the nominal joint "
-                   "pose; contact with the receiving part, fitted partners and the operated part is by design and not "
-                   "checked; a declared path's start is taken as reachable; curved paths, tool posture, hands, forces and "
-                   "other poses are not covered")
+                   "pose; contact with the receiving part and the operated part, and with a fitted partner over its final "
+                   "engagement, is by design and not checked; a declared path's start is taken as reachable; curved paths, tool "
+                   "posture, hands, forces and other poses are not covered")
 ROUTES = {"straight_default": "the default straight path along the direction", "declared_path": "the declared insertion path",
           "approach": "the declared tool approach"}
 RULE_SOURCE = {"kind": "policy", "reference": "cad-motion access path clearance rule", "origin": "cad-agent",
@@ -124,7 +126,8 @@ class Travel:
     """One straight path: `moving` (a definition key) placed `world` at arrival, arriving along unit
     `direction` (assembly frame), past `obstacles` [(occurrence, definition key, world placement)].
     `leg_mm` is a declared leg's length; None travels from beyond the separating plane. `route` is a
-    ROUTES key: what the path is."""
+    ROUTES key: what the path is. `fitted` names the obstacles that are the moving part's fitted partners:
+    contact with one is by design only over the final engagement (see `engagement_end`)."""
 
     label: str
     moving: str
@@ -132,6 +135,7 @@ class Travel:
     direction: tuple[float, float, float]
     obstacles: list[tuple[str, str, Any]]
     leg_mm: float | None = None
+    fitted: frozenset[str] = frozenset()
     route: str = "straight_default"
     travel_mm: float = 0.0
     status: str = "unknown"  # clear, collision or unknown
@@ -158,6 +162,18 @@ def separation_travel(measurer: Any, path: Travel) -> float:
     return max(0.0, ahead - behind) + SEPARATION_MARGIN_MM
 
 
+def engagement_end(overlaps: Mapping[float, float | None]) -> float:
+    """Where the final engagement with a fitted partner ends: the first sampled position, going back from
+    the installed pose (s = 0), at which the two do not interfere. `overlaps` maps each sampled s to the
+    shared volume; None is a sample that was not measured and does not end the engagement. Interference
+    beyond that position is contact the engagement does not explain."""
+    for s in sorted(overlaps):
+        value = overlaps[s]
+        if value is not None and value <= pose.INTERFERENCE_MM3:
+            return s
+    return math.inf
+
+
 def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step_mm: float) -> None:
     """Sample and refine `path`; sets its status (see the module docstring)."""
     path.travel_mm = separation_travel(measurer, path) if path.leg_mm is None else path.leg_mm
@@ -167,6 +183,9 @@ def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step
     count = max(1, math.ceil(path.travel_mm / step_mm))
     positions = sorted({path.travel_mm * i / count for i in range(count + 1)})
     lower: dict[tuple[int, float], float] = {}  # (obstacle index, s) -> distance lower bound
+    overlap: dict[int, dict[float, float | None]] = {}  # fitted obstacle index -> s -> shared volume
+    fitted = {index for index, (occurrence, _, _) in enumerate(path.obstacles) if occurrence in path.fitted}
+    seen: set[tuple[int, float]] = set()
     pending = [(index, s) for index in range(len(path.obstacles)) for s in positions]
     open_segments: dict[int, list[tuple[float, float]]] = {
         index: list(zip(positions, positions[1:])) or [(0.0, 0.0)] for index in range(len(path.obstacles))}
@@ -182,16 +201,32 @@ def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step
         for (index, s), outcome in zip(pending, outcomes):
             occurrence = path.obstacles[index][0]
             if isinstance(outcome, pair_measure.Measured):
-                if outcome.overlap_mm3 > pose.INTERFERENCE_MM3:
+                if index in fitted:
+                    overlap.setdefault(index, {})[s] = outcome.overlap_mm3
+                elif outcome.overlap_mm3 > pose.INTERFERENCE_MM3:
                     path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
                                             "overlap_mm3": round(outcome.overlap_mm3, 6)})
                 lower[(index, s)] = outcome.distance_mm
             elif isinstance(outcome, (pair_measure.Cleared, pair_measure.Pruned)):
+                if index in fitted:
+                    overlap.setdefault(index, {})[s] = 0.0
                 lower[(index, s)] = outcome.lower_mm
             else:
+                if index in fitted:
+                    overlap.setdefault(index, {})[s] = None
                 path.failures.append(f"{occurrence} at {s:.6f} mm: "
                                      f"{outcome.message if outcome is not None else 'not measured before the deadline'}")
                 lower[(index, s)] = -math.inf
+        for index in sorted(fitted):
+            end = engagement_end(overlap.get(index, {}))
+            occurrence = path.obstacles[index][0]
+            for s, value in sorted(overlap.get(index, {}).items()):
+                if s < end:
+                    lower[(index, s)] = math.inf  # engaged by design: no clearance to prove
+                elif value is not None and value > pose.INTERFERENCE_MM3 and (index, s) not in seen:
+                    seen.add((index, s))
+                    path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
+                                            "overlap_mm3": round(value, 6)})
         if path.collisions:
             path.status = "collision"
             return
@@ -247,11 +282,12 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
             continue
         rotation = world[frame]
 
+        def partners(names: Iterable[str], moving: str) -> frozenset[str]:
+            return frozenset(name for name in names if tuple(sorted((name, moving))) in fitted)
+
         def obstacles(names: Iterable[str], moving: str | None) -> list[tuple[str, str, Any]]:
             found = []
             for name in sorted(names):
-                if moving is not None and tuple(sorted((name, moving))) in fitted:
-                    continue
                 if name not in world or chain.pn(name) not in definitions:
                     entry.unknown.append(f"{op.id}: obstacle {name} has no geometry")
                     continue
@@ -264,13 +300,15 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
                 entry.unknown.append(f"{op.id}: {moving} has no geometry")
             elif request.path is not None:
                 entry.paths.extend(declared_legs(op.id, chain.pn(moving), world[moving], rotation, request.path,
-                                                 obstacles(request.path_obstacles, moving)))
+                                                 obstacles(request.path_obstacles, moving),
+                                                 partners(request.path_obstacles, moving)))
             else:
                 direction = _rotate(rotation, request.direction)
                 if request.removal:
                     direction = (-direction[0], -direction[1], -direction[2])
                 entry.paths.append(Travel(f"{op.id}/part", chain.pn(moving), world[moving], direction,
-                                         obstacles(request.path_obstacles, moving)))
+                                         obstacles(request.path_obstacles, moving),
+                                         fitted=partners(request.path_obstacles, moving)))
         operated = request.part
         for number, tool in enumerate(request.tools):
             if not tool.declared or tool.approach is None or (op.id, number) not in tools:
@@ -286,18 +324,20 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
 
 
 def declared_legs(ident: str, moving: str, installed: Any, frame: Any, points: Sequence[Sequence[float]],
-                  obstacles: list[tuple[str, str, Any]]) -> list[Travel]:
+                  obstacles: list[tuple[str, str, Any]], fitted: frozenset[str] = frozenset()) -> list[Travel]:
     """The straight legs of a declared insertion path: `points` (start, then via) are the moving part's
     offsets from its `installed` placement in the receiving occurrence's frame (`frame`'s rotation);
-    the last leg ends at the installed pose. Each leg is a Travel of its own length, arriving at its end."""
+    the last leg ends at the installed pose. Each leg is a Travel of its own length, arriving at its end.
+    Only the last leg ends in the final engagement, so only it exempts the `fitted` partners."""
     offsets = [_rotate(frame, p) for p in points] + [(0.0, 0.0, 0.0)]
     legs = []
     for number, (start, end) in enumerate(zip(offsets, offsets[1:]), start=1):
         length = math.dist(start, end)
         dx, dy, dz = ((e - s) / length for s, e in zip(start, end))
         arrival = pose.Rigid(pose.Rigid.identity().rot, end) @ installed
+        last = number == len(offsets) - 1
         legs.append(Travel(f"{ident}/part/leg{number}", moving, arrival, (dx, dy, dz), list(obstacles),
-                           leg_mm=length, route="declared_path"))
+                           leg_mm=length, fitted=fitted if last else frozenset(), route="declared_path"))
     return legs
 
 
