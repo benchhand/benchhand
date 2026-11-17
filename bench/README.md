@@ -42,7 +42,9 @@ Before the first model call, the harness starts `opencode serve` in the run's en
 - `skill.list`: every skill, with its path.
 - `agent.list` and `command.list`: the agent and command names.
 
-The run continues only when every config source and skill path lies inside the throwaway home or the scratch project, or is a built-in `skill://` skill. Every agent and command must be a built-in or one the harness installed, and every installed skill must be listed. Otherwise the run records `isolation_failed`, spends nothing and exits 4. OpenCode loads skill sources one at a time, so the check waits until the skill list holds still for three polls. Without `OPENCODE_TEST_HOME`, the same check reports the skills in `~/.agents/skills`.
+The run continues only when every config source and skill path lies inside the throwaway home or the scratch project, or is a built-in `skill://` skill. Every agent and command must be a built-in or one the harness installed, and every installed skill must be listed. The cache directory OpenCode reports (`opencode debug paths cache`) and `XDG_CACHE_HOME` must both lie inside the run home. Otherwise the run records `isolation_failed`, spends nothing and exits 4. OpenCode loads skill sources one at a time, so the check waits until the skill list holds still for three polls. Without `OPENCODE_TEST_HOME`, the same check reports the skills in `~/.agents/skills`.
+
+Each run has its own config, data, state and cache directories in the throwaway home. Entries from the user's own directories are linked in, except `opencode`, `cad-viewer` and `cad-flow`. Those stay private, so the lead's viewer sessions and `preflight.py --warm` record land in the run home. `UV_CACHE_DIR` stays on the user's uv cache: it holds packages, not user state, and a private copy would download every wheel again in each run. At the end of a run, the harness stops each viewer and each running warm-up through the pid that the run's private records name. Nothing else is signalled unless the run itself started its process group.
 
 ### Failed tool calls
 
@@ -59,6 +61,18 @@ OpenCode's shell tool reports stdout and stderr merged in one text, so the tail 
 ### Questions the script cannot answer
 
 An ask that matches no intent gets the default answer, which records a bounded assumption and continues. Markdown headings are never asks, though a heading that names a gate gives an approval request below it its meaning. A "Decision for you:" or "Please choose:" label followed by option bullets is one ask, and its options are recorded with it. The record counts these asks in `metrics.questions_unmatched` and lists each one in `unmatched_questions`, with its turn. When the lead presents a gate and asks for approval in the same message as an unmatched question, the run fails as `fail:unmatched-at-gate`, and the harness sends no reply. A gate prompt is a message with an ask that matches a gate intent, or one that asks for approval while it names a gate or a freeze.
+
+### Gate prompts and the record's stage
+
+From commit a0df35c on, a gate counts only when it fits the record's state at the end of the lead's turn:
+
+- INTENT, only while `flow.stage` is `ground` or `intent`;
+- VARIANT, only while `flow.stage` is `concept`;
+- the LAYOUT freeze, only once `hw/versions/` holds a version built at `layout`.
+
+At another stage, the harness matches the ask to the other intents instead of that gate. A GROUND reply that names a later gate is then no gate prompt, so its open questions can no longer fail the run as `fail:unmatched-at-gate`. Commit-timing and flow-profile questions are not stage gates. Each dialogue entry records `stage` and `has_l1`.
+
+This changes what `metrics.gates_answered`, `metrics.questions_unmatched_at_gate` and the `fail:unmatched-at-gate` outcome count. Results from runs before a0df35c use the old definition, so compare gate metrics only between runs on the same definition. The first run on the new definition is named here once it exists.
 
 Each run commits its record to `bench/results`, appends `spend.jsonl` and pushes. It then deletes its scratch directory. `--mode fixture` builds a fixture instead. It starts from an empty project, or from `--seed-hw`, stops at the LAYOUT freeze, and copies the frozen `hw/` into the case.
 
