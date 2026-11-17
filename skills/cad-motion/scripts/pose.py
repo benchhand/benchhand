@@ -1248,7 +1248,7 @@ def _add_shape(tool: Any, shape: Any) -> Any:
     from OCP.XCAFDoc import XCAFDoc_Area, XCAFDoc_Centroid, XCAFDoc_Volume
 
     label = tool.AddShape(shape, False)
-    # A located shape becomes an instance of a prototype label; the writer reads the properties off the prototype,
+    # A located shape becomes an instance of a prototype label. The writer reads the properties off the prototype,
     # which holds the definition in its own frame.
     prototype = TDF_Label()
     target = prototype if tool.GetReferredShape_s(label, prototype) else label

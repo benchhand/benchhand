@@ -39,7 +39,7 @@ class StepValidationTests(unittest.TestCase):
         self.assertEqual(sorted(VALIDATION.findall(text)), KINDS)
 
     def test_located_part_is_validated_too(self) -> None:
-        # a shape that carries a placement is written as an instance of its definition
+        # a shape that carries a placement becomes an instance of its definition
         text = self.write("located.step", "located")
         self.assertEqual(sorted(VALIDATION.findall(text)), KINDS)
 
