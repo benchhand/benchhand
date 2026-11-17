@@ -107,10 +107,10 @@ class RegistryTests(unittest.TestCase):
         corpus.load_families()
 
 
-def write_family(directory: Path, name: str, mutant: str = "fail", twin: str = "pass") -> None:
+def write_family(directory: Path, name: str, mutant: str = "fail", twin: str = "pass", known_gap: str | None = None) -> None:
     (directory / f"{name}.py").write_text(
         "from corpus import Family, Pair\n"
-        f"FAMILY = Family('{name}', 'c', (Pair('p', 'd', lambda m: '{mutant}' if m else '{twin}'),))\n")
+        f"FAMILY = Family('{name}', 'c', (Pair('p', 'd', lambda m: '{mutant}' if m else '{twin}', known_gap={known_gap!r}),))\n")
 
 
 def write_baseline(directory: Path, name: str, detection: float = 1.0, false_positive: float = 0.0, ran: int = 1) -> None:
@@ -298,6 +298,86 @@ class PacketVerdictGuardTests(unittest.TestCase):
                                                           "bad.py:5 calls check_order"])
 
 
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class PacketRefusalTests(unittest.TestCase):
+    """A packet that the schema or evidence refuses is a miss with its reason, never a verdict."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import support
+
+        cls.support = support
+        cls.record, pc = support.printed_record()
+        # with no geometry the checks give every obligation the outcome unknown, so the packet result is unknown
+        cls.packet = pc.assess(cls.record, {}, today=support.TODAY).packet({"version_manifest": "0" * 64, "producer_code": "0" * 64})
+
+    def pair_result(self, packet: dict) -> corpus.PairResult:
+        def run(is_mutant: bool) -> str:
+            return self.support.release_verdict(self.record, packet, "process.fdm.", today=self.support.TODAY)
+
+        return corpus.run_pair(corpus.Pair("p", "d", run))
+
+    def test_a_schema_invalid_packet_is_rejected_with_the_schema_reason(self) -> None:
+        result = self.pair_result({"schema_version": 1})
+        self.assertIsNone(result.error)
+        self.assertTrue((result.rejected or "").startswith("schema: packet does not match manufacturing-check-result.schema.json"),
+                        result.rejected)
+
+    def test_a_schema_valid_packet_that_contradicts_its_outcomes_is_rejected_with_the_evidence_reason(self) -> None:
+        self.assertEqual(self.packet["result"], "unknown")
+        lying = {**self.packet, "result": "pass"}
+        result = self.pair_result(lying)
+        self.assertIsNone(result.error)
+        self.assertIn("evidence: ", result.rejected or "")
+        self.assertIn("its result 'pass' is not what its outcomes show (unknown)", result.rejected or "")
+
+    def test_a_rejected_packet_is_a_miss_in_the_family_row_never_a_detection(self) -> None:
+        def run(is_mutant: bool) -> str:
+            return self.support.release_verdict(self.record, {"schema_version": 1}, "process.fdm.")
+
+        row = corpus.evaluate([corpus.Family("f", "c", (corpus.Pair("p", "d", run),))])[0]
+        self.assertEqual((row["ran"], row["rejected"], row["errors"], row["detected"], row["abstained"], row["missed"]),
+                         (1, 1, 0, 0, 0, 1))
+
+
+@unittest.skipUnless(DEPS and shutil.which("uv"), "pyyaml, jsonschema and uv are required")
+class NativeExitCodeTests(unittest.TestCase):
+    """cad_model documents exit 0 and 1 (and 2 for usage). A build or check killed by a signal is a harness error, not an abstention."""
+
+    def verdict_row(self, run_code: int, check_code: int, manifest: bool) -> dict:
+        import support
+
+        def fake(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            step = argv[5]  # uv run --quiet --script <cad_model.py> <step> ...
+            if step == "run":
+                if manifest:
+                    target = Path(argv[6]) / "versions" / "v1" / "manifest.json"
+                    target.parent.mkdir(parents=True)
+                    target.write_text("{}", encoding="utf-8")
+                return subprocess.CompletedProcess(argv, run_code, "", "")
+            return subprocess.CompletedProcess(argv, check_code, "", "")
+
+        def run(is_mutant: bool) -> str:
+            return support.readback_verdict("KERNEL = 'cadquery'\nPARAMS = {}\n")
+
+        with mock.patch("subprocess.run", fake):
+            return corpus.evaluate([corpus.Family("f", "c", (corpus.Pair("p", "d", run),))])[0]
+
+    def test_a_build_killed_by_a_signal_is_an_error_and_a_miss_not_an_abstention(self) -> None:
+        row = self.verdict_row(-9, 0, manifest=False)
+        self.assertEqual((row["errors"], row["abstained"], row["missed"]), (1, 0, 1))
+        self.assertIn("cad_model run exited -9", row["results"][0]["error"])
+
+    def test_a_check_killed_by_a_signal_is_an_error_and_a_miss_not_an_abstention(self) -> None:
+        row = self.verdict_row(0, -9, manifest=True)
+        self.assertEqual((row["errors"], row["abstained"], row["missed"]), (1, 0, 1))
+        self.assertIn("cad_model check exited -9", row["results"][0]["error"])
+
+    def test_a_build_that_refuses_the_part_with_exit_1_and_no_version_is_unevidenced_not_an_error(self) -> None:
+        row = self.verdict_row(1, 0, manifest=False)
+        self.assertEqual((row["errors"], row["abstained"], row["results"][0]["mutant"]), (0, 1, "unknown"))
+
+
 class DependencyGuardTests(unittest.TestCase):
     """A family whose tool is absent skips its pairs: neither an error nor a verdict."""
 
@@ -328,6 +408,25 @@ class CommandTests(unittest.TestCase):
             write_family(directory, name)
         return subprocess.run([sys.executable, str(CORPUS / "rates.py"), "--families-dir", str(directory), "--out",
                                str(Path(tmp) / "r.json"), *args], capture_output=True, text=True, check=False)
+
+    def test_a_known_gap_pair_is_listed_on_the_console_and_counted_as_a_miss_in_the_report(self) -> None:
+        why = "fails because the span is measured along the roof"
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "families"
+            directory.mkdir()
+            write_family(directory, "alpha", known_gap=why)
+            write_family(directory, "beta")
+            out = Path(tmp) / "r.json"
+            done = subprocess.run([sys.executable, str(CORPUS / "rates.py"), "--families-dir", str(directory), "--out", str(out)],
+                                  capture_output=True, text=True, check=False)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual([line for line in done.stdout.splitlines() if line.startswith("known gap:")],
+                             [f"known gap: alpha/p: {why}"])
+            alpha, beta = json.loads(out.read_text())["families"]
+        self.assertEqual((alpha["ran"], alpha["detected"], alpha["missed"], alpha["known_gaps"], alpha["detection_rate"]),
+                         (1, 0, 1, 1, 0.0))
+        self.assertEqual((alpha["results"][0]["mutant"], alpha["results"][0]["known_gap"]), ("fail", why))
+        self.assertEqual((beta["detected"], beta["known_gaps"]), (1, 0))
 
     def test_the_rate_command_writes_json_and_prints_its_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

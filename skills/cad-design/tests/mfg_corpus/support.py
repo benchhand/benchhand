@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -66,10 +67,8 @@ def state_verdict(record: Any, produced: Sequence[Any], version: str, manifest_s
     version's producer packets (ProducerPacket objects of evidence): fail if any failed, pass if all passed, else unknown. Evidence
     refusing a packet (packet.invalid) raises Rejected: a miss with the reason, not a verdict. A record with no such
     obligation also raises it: the release asks nothing of the check."""
-    from datetime import date
-
     assessment = _evidence().assess(record, version=version, manifest_sha256=manifest_sha256, packets=list(produced),
-                                    today=today or date(2026, 6, 1))
+                                    today=today or TODAY)
     refused = [f.message for f in assessment.findings if f.code == "packet.invalid"]
     if refused:
         raise Rejected("evidence: " + "; ".join(refused))
@@ -121,15 +120,13 @@ def solids() -> Any:
     return load("mfg_corpus_access_fixture", MOTION_FIXTURES / "access_fixture.py")
 
 
-def printed_verdict(shape: Any, prefix: str, supports: Mapping[str, Any] | None = None, frame: str = "bed") -> Outcome:
-    """What a release concludes about the obligations whose id starts with `prefix` (e.g. "process.fdm.support@") for one
-    printed part. The path is form_check.check_version's: `shape` probed by form_check.probe with the plan the record
-    asks for and the build axis a bed placement gives, assessed by the process checks into the packet, validated against
-    its schema, then assessed by cad-record evidence."""
-    import tempfile
-    from datetime import date
+TODAY = date(2026, 6, 1)
 
-    require("OCP")
+
+def printed_record(supports: Mapping[str, Any] | None = None) -> tuple[Any, Any]:
+    """(the record, the process_checks module) of one printed part on the TEST profile, with the support plan the record asks for."""
+    import tempfile
+
     require("yaml")
     require("jsonschema")
     import capability_profile
@@ -139,7 +136,6 @@ def printed_verdict(shape: Any, prefix: str, supports: Mapping[str, Any] | None 
             sys.path.insert(0, str(folder))
     import process_checks as pc
 
-    form_check = load("cad_design_form_check", SKILLS / "cad-design" / "scripts" / "form_check.py")
     fx = load("cad_record_mi_fixtures", SKILLS / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
     route = [fx.operation("print", "fdm", capability_profile.PRINTER, output_state="printed", orientation=dict(APPROVED),
                           supports=dict(supports or {"strategy": "none"}))]
@@ -154,14 +150,24 @@ def printed_verdict(shape: Any, prefix: str, supports: Mapping[str, Any] | None 
     errors = [f"{p.code} {p.path}: {p.message}" for p in problems if p.severity == "error"]
     if errors:
         raise ValueError(f"the corpus record is invalid: {errors}")
-    today = date(2026, 6, 1)
+    return record, pc
+
+
+def printed_verdict(shape: Any, prefix: str, supports: Mapping[str, Any] | None = None, frame: str = "bed") -> Outcome:
+    """What a release concludes about the obligations whose id starts with `prefix` (e.g. "process.fdm.support@") for one
+    printed part. The path is form_check.check_version's: `shape` probed by form_check.probe with the plan the record
+    asks for and the build axis a bed placement gives, assessed by the process checks into the packet, validated against
+    its schema, then assessed by cad-record evidence."""
+    require("OCP")
+    record, pc = printed_record(supports)
+    form_check = load("cad_design_form_check", SKILLS / "cad-design" / "scripts" / "form_check.py")
     build_axis = [0.0, 0.0, 1.0] if frame == "bed" else None  # form_check.version_geometry: R^T z of a bed placement
-    facts = form_check.probe(shape, frame=frame, locators={}, plan=pc.probe_plan(record, PN, "main", today=today),
+    facts = form_check.probe(shape, frame=frame, locators={}, plan=pc.probe_plan(record, PN, "main", today=TODAY),
                              build_axis=build_axis)
     evidence = ({"path": f"hw/versions/{BUILD}/manufacturing/{PN}/part.step", "sha256": "0" * 64},)
-    packet = pc.assess(record, {(PN, "main"): pc.Geometry(PN, "main", facts, evidence)}, today=today).packet(
+    packet = pc.assess(record, {(PN, "main"): pc.Geometry(PN, "main", facts, evidence)}, today=TODAY).packet(
         {"version_manifest": MANIFEST_SHA256, "producer_code": "0" * 64})
-    return release_verdict(record, packet, prefix, today=today)
+    return release_verdict(record, packet, prefix, today=TODAY)
 
 
 # --- assembly access (cad-motion/scripts/access.py on the access fixture's geometry) -----------------------------
@@ -264,14 +270,14 @@ def readback_verdict(model_source: str) -> Outcome:
         build = subprocess.run(["uv", "run", "--quiet", "--script", cad_model, "run", str(hw), "--label", "v1"],
                                capture_output=True, text=True, timeout=1800, check=False)
         manifest = hw / "versions" / "v1" / "manifest.json"
-        if build.returncode == 2 or (build.returncode == 0) != manifest.is_file():
+        if build.returncode not in (0, 1) or (build.returncode == 0) != manifest.is_file():
             raise RuntimeError(f"cad_model run exited {build.returncode}: {(build.stdout + build.stderr)[-1500:]}")
         if not manifest.is_file():  # the build refused the part: no version exists, so no packet and nothing a release can cite
             return state_verdict(record, [], "v1", MANIFEST_SHA256, ("cad.readback@",))
         check = subprocess.run(["uv", "run", "--quiet", "--script", cad_model, "check", "v1", "--hw", str(hw)],
                                capture_output=True, text=True, timeout=1800, check=False)
-        if check.returncode == 2:
-            raise RuntimeError(f"cad_model check exited 2: {(check.stdout + check.stderr)[-1500:]}")
+        if check.returncode not in (0, 1):
+            raise RuntimeError(f"cad_model check exited {check.returncode}: {(check.stdout + check.stderr)[-1500:]}")
         sha = hashlib.sha256(manifest.read_bytes()).hexdigest()
         found, findings = _evidence().collect_packets(hw, "v1", sha)
         if findings:
