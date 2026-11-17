@@ -13,6 +13,7 @@ Calibration characteristics read (scope: material, and orientation where given):
   profile_deviation         mm, gear flank or cam profile deviation (scope.feature flank or cam)
   elephant_foot             mm, first-layer flare of bed-contact features
   warp                      mm, flatness deviation of a bed footprint up to scope.size
+  min_bed_contact_area      mm2, the smallest reliable first-layer contact: criterion contact area >= upper
 """
 
 from __future__ import annotations
@@ -95,29 +96,62 @@ def orientation(ctx: Context) -> Result:
                               recheck=[f"process.{kind}.orientation", f"process.{kind}.support"], earliest_stage="detail"))
         parts.append((FAIL, "no first-layer contact"))
     else:
-        parts.append((PASS, f"first-layer contact {contact:.3g} mm2"))
-        centre, low, high = g.facts.get("centre_mm"), bed.get("contact_min"), bed.get("contact_max")
-        if centre and low and high:
-            inside = low[0] - EPS <= centre[0] <= high[0] + EPS and low[1] - EPS <= centre[1] <= high[1] + EPS
-            if inside:
-                parts.append((PASS, "centre of volume above the bed contact box"))
-            else:
-                supports = ctx.operation.supports
-                supported = isinstance(supports, Mapping) and supports.get("strategy") != "none"
-                findings.append(Draft(f"process.{kind}.stability", "minor" if supported else "major",
-                                      PASS if supported else FAIL,
-                                      text(f"centre of volume at x {centre[0]:.3f}, y {centre[1]:.3f} outside the contact box"),
-                                      policy("centre_of_volume", "equals", "inside the bed contact footprint"),
-                                      g.method("centre of volume against the bed contact bounding box"),
-                                      "the contact bounding box over-states the convex footprint; print forces are not modelled",
-                                      "the part can tip or peel during printing" if not supported
-                                      else "stability relies on the planned supports",
-                                      remedy=None if supported else "reorient, widen the base or plan stabilising supports or a brim",
-                                      recheck=[f"process.{kind}.orientation"], earliest_stage="detail"))
-                parts.append((PASS if supported else FAIL, "stability relies on supports" if supported else "unstable pose"))
+        parts.append(_contact_area(ctx, g, contact, findings))
+        centre = g.facts.get("centre_mm")
+        if centre and _outside_hull(centre, bed.get("contact_hull") or ()):
+            supports = ctx.operation.supports
+            supported = isinstance(supports, Mapping) and supports.get("strategy") != "none"
+            findings.append(Draft(f"process.{kind}.stability", "minor" if supported else "major",
+                                  PASS if supported else FAIL,
+                                  text(f"centre of volume at x {centre[0]:.3f}, y {centre[1]:.3f} outside the contact hull"),
+                                  policy("centre_of_volume", "equals", "inside the convex hull of the bed contact faces"),
+                                  g.method("centre of volume against the convex hull of the bed contact faces"),
+                                  "the hull is of the faces' outlines with curved edges sampled; print forces are not modelled",
+                                  "the part can tip or peel during printing" if not supported
+                                  else "stability relies on the planned supports",
+                                  remedy=None if supported else "reorient, widen the base or plan stabilising supports or a brim",
+                                  recheck=[f"process.{kind}.orientation"], earliest_stage="detail"))
+            parts.append((PASS if supported else FAIL, "stability relies on supports" if supported else "unstable pose"))
+        elif centre:
+            parts.append((PASS, "centre of volume above the bed contact hull"))
     parts.append(_envelope(ctx, g, findings))
     _layer_note(ctx, g, findings)
     return combine(method, parts, findings)
+
+
+def _outside_hull(point: Any, hull: Any) -> bool:
+    """Whether the x, y of `point` lies outside the counter-clockwise convex polygon `hull`. A hull of fewer
+    than three points has no interior, so everything is outside. A point on the boundary is inside."""
+    if len(hull) < 3:
+        return True
+    for i, (x1, y1) in enumerate(hull):
+        x2, y2 = hull[(i + 1) % len(hull)]
+        cross = (x2 - x1) * (point[1] - y1) - (y2 - y1) * (point[0] - x1)
+        if cross < -EPS * math.hypot(x2 - x1, y2 - y1):  # a distance below -1e-9 mm outside this edge
+            return True
+    return False
+
+
+def _contact_area(ctx: Context, g: Geometry, contact: float, findings: list[Draft]) -> tuple[str, str]:
+    """The bed contact area against the calibrated minimum (`min_bed_contact_area`, mm2: area >= upper)."""
+    kind = _k(ctx)
+    cal = ctx.calibrated("min_bed_contact_area")
+    measured = {"value": round(contact, 6), "units": "mm2"}
+    if not cal.known:
+        findings.append(Draft(f"process.{kind}.contact_area_uncalibrated", "minor", UNKNOWN, measured,
+                              cal.criterion("bed_contact_area", ">="), g.method("planar faces at the lowest z"),
+                              "; ".join(cal.reasons), "whether the first layer holds the part to the bed is unassessed",
+                              remedy="calibrate the smallest reliable bed contact area", recheck=[f"process.{kind}.orientation"]))
+        return UNKNOWN, "bed contact area not calibrated"
+    need = cal.bounds("mm2")[1]
+    if contact >= need - 1e-9:
+        return PASS, f"first-layer contact {contact:.3g} mm2 >= {need:g} mm2"
+    findings.append(Draft(f"process.{kind}.contact_area", "major", FAIL, measured,
+                          cal.criterion("bed_contact_area", ">=", need), g.method("planar faces at the lowest z"),
+                          "face areas are exact", "the first layer is smaller than the calibrated minimum: the part can peel or shift",
+                          remedy="enlarge the bed contact, or add a brim or raft", recheck=[f"process.{kind}.orientation"],
+                          earliest_stage="detail"))
+    return FAIL, "bed contact below the calibrated minimum"
 
 
 def _envelope(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, str]:
@@ -683,8 +717,8 @@ def thermal_distortion(ctx: Context) -> Result:
     findings: list[Draft] = []
     parts: list[tuple[str, str]] = []
     bed = g.facts.get("bed") or {}
-    low, high = bed.get("contact_min"), bed.get("contact_max")
-    footprint = max(high[0] - low[0], high[1] - low[1]) if low and high else 0.0
+    hull = bed.get("contact_hull") or ()
+    footprint = max(max(p[i] for p in hull) - min(p[i] for p in hull) for i in (0, 1)) if hull else 0.0
     warp = ctx.calibrated("warp")
     if not warp.known:
         findings.append(Draft(f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint),

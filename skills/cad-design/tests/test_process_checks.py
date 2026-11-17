@@ -148,8 +148,7 @@ def facts(*, frame: str = "bed", faces: tuple = (), holes: tuple = (), corners: 
     mapped.update(features or {})
     return {"format": 1, "frame": frame, "build_axis_native": [0.0, 0.0, 1.0] if frame == "bed" else None,
             "solids": 1, "shells": shells, "volume_mm3": 1000.0, "bbox_mm": {"min": [0, 0, 0], "max": [30, 20, 30]},
-            "centre_mm": [5.0, 5.0, 10.0], "bed": {"z_mm": 0.0, "contact_area_mm2": contact, "contact_min": [0, 0],
-                                                   "contact_max": [10, 10]},
+            "centre_mm": [5.0, 5.0, 10.0], "bed": {"z_mm": 0.0, "contact_area_mm2": contact, "contact_hull": [[0, 0], [10, 0], [10, 10], [0, 10]]},
             "faces": list(faces), "holes": list(holes), "corners": list(corners), "pins": [], "bends": [], "walls": walls,
             "features": mapped, "unmapped": [], "prismatic_axis": None}
 
@@ -223,6 +222,63 @@ def printed(pn: str, supports: Any, *, calibrations: list | None = None, critica
 SHELF = facts(faces=(face("f1", bed=True, normals=((0, 0, -1),)),
                      face("f10", features=("shelf_underside",), down_=down(90.0, 200.0)),
                      face("f12", features=("shelf_top",))))
+
+
+CONTACT = calibration("bed_contact_coupon", "min_bed_contact_area", POLYMER, 20.0, 25.0, "mm2")
+TRIANGLE = [[0, 0], [10, 0], [0, 10]]  # its bounding box is the 10 mm square, twice its area
+
+
+def stable(centre: list[float], hull: list, contact: float = 100.0) -> dict[str, Any]:
+    data = facts(contact=contact)
+    data["centre_mm"] = [*centre, 10.0]
+    data["bed"]["contact_hull"] = hull
+    return data
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class BedStabilityTests(Checks):
+    """The center of volume against the convex hull of the bed contact, and the contact area against its calibrated minimum."""
+
+    OBLIGATION = "process.fdm.orientation@TST-0101/print"
+
+    def orient(self, data: dict[str, Any], calibrations: list | None = None) -> Any:
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[CONTACT] if calibrations is None else calibrations)
+        return self.assess(documents, geometry("TST-0101", data))
+
+    def test_a_centre_over_the_hull_passes(self) -> None:
+        result = self.orient(stable([2.0, 2.0], TRIANGLE))
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "pass")
+
+    def test_a_centre_in_the_bounding_box_but_off_the_hull_fails(self) -> None:
+        result = self.orient(stable([8.0, 8.0], TRIANGLE))  # x + y = 16 > 10: beyond the hypotenuse, inside the 10 mm box
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.stability")["severity"], "major")
+
+    def test_a_centre_on_the_hull_boundary_passes(self) -> None:
+        result = self.orient(stable([5.0, 5.0], TRIANGLE))
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "pass")
+
+    def test_a_contact_below_the_calibrated_minimum_fails(self) -> None:
+        result = self.orient(stable([2.0, 2.0], TRIANGLE, contact=10.0))
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "fail")
+        found = self.finding(result, "process.fdm.contact_area")
+        self.assertEqual((found["measured"]["value"], found["criterion"]["value"], found["criterion"]["units"]), (10.0, 25.0, "mm2"))
+
+    def test_a_contact_at_the_calibrated_minimum_passes(self) -> None:
+        result = self.orient(stable([2.0, 2.0], TRIANGLE, contact=25.0))
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "pass")
+
+    def test_an_uncalibrated_contact_area_is_unknown_never_pass(self) -> None:
+        result = self.orient(stable([2.0, 2.0], TRIANGLE), calibrations=[])
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "unknown")
+        self.assertEqual(self.finding(result, "process.fdm.contact_area_uncalibrated")["criterion"]["status"], "unknown")
+
+    def test_the_warp_footprint_is_the_larger_extent_of_the_contact_hull(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(15))
+        small = self.orient(stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]]), calibrations=[CONTACT, warp])
+        self.assertEqual(small.by_code("process.fdm.warp_scope"), [])
+        large = self.orient(stable([2.0, 2.0], [[0, 0], [10, 0], [10, 18], [0, 18]]), calibrations=[CONTACT, warp])
+        self.assertEqual(self.finding(large, "process.fdm.warp_scope")["measured"]["value"], 18.0)
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")

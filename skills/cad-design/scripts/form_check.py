@@ -796,6 +796,52 @@ def _locator_width(locator: dict[str, Any]) -> float | None:
     return None
 
 
+def _outline_points(face: Any) -> list[tuple[float, float]]:
+    """x, y of the edge ends of `face`, and of 32 samples along each curved edge."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.GeomAbs import GeomAbs_Line
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+
+    from cadmodel import occ
+
+    points: list[tuple[float, float]] = []
+    explorer = TopExp_Explorer(face, TopAbs_EDGE)
+    while explorer.More():
+        edge = occ.downcast(explorer.Current(), "EDGE")
+        explorer.Next()
+        if BRep_Tool.Degenerated_s(edge):
+            continue
+        curve = BRepAdaptor_Curve(edge)
+        first, last = curve.FirstParameter(), curve.LastParameter()
+        steps = 1 if curve.GetType() == GeomAbs_Line else 32
+        for i in range(steps + 1):
+            point = curve.Value(first + (last - first) * i / steps)
+            points.append((point.X(), point.Y()))
+    return points
+
+
+def _convex_hull(points: list[tuple[float, float]]) -> list[list[float]]:
+    """Counter-clockwise convex hull of `points` (Andrew's monotone chain), as rounded [x, y]. The hull drops
+    collinear points, so a footprint of zero area gives two points or fewer."""
+    unique = sorted({(round(x, 6) + 0.0, round(y, 6) + 0.0) for x, y in points})
+    if len(unique) <= 2:
+        return [list(p) for p in unique]
+
+    def chain(seq: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for p in seq:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1])
+                                     - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 1e-9:
+                out.pop()
+            out.append(p)
+        return out
+
+    lower, upper = chain(unique), chain(unique[::-1])
+    return [list(p) for p in lower[:-1] + upper[:-1]]
+
+
 def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     """The process-check facts of one solid (see process_checks Geometry); face ids are s<index>f<n>."""
     from cadmodel import holes as holes_module
@@ -953,16 +999,11 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
                                     and _distance(tuple(walls["location_mm"]), face) <= PROBE_TOL_MM
                                     for f in rows[n]["features"]})
     bed_faces = [row for row in rows if row.get("bed")]
-    bed_low = bed_high = None
-    for n, row in enumerate(rows):
-        if row.get("bed"):
-            f_low, f_high = occ.bbox(faces[n])
-            bed_low = [min(bed_low[0], f_low[0]), min(bed_low[1], f_low[1])] if bed_low else [f_low[0], f_low[1]]
-            bed_high = [max(bed_high[0], f_high[0]), max(bed_high[1], f_high[1])] if bed_high else [f_high[0], f_high[1]]
+    hull = _convex_hull([p for n, row in enumerate(rows) if row.get("bed") for p in _outline_points(faces[n])])
     return {"solids": 1, "shells": occ.count(solid, "SHELL"), "volume_mm3": round(volume, 6),
             "bbox_mm": {"min": rounded_xyz_tuple(low), "max": rounded_xyz_tuple(high)}, "centre_mm": rounded_xyz_tuple(centre),
             "bed": {"z_mm": round(bed_z, 6), "contact_area_mm2": round(sum(r["area_mm2"] for r in bed_faces), 6),
-                    "contact_min": bed_low, "contact_max": bed_high},
+                    "contact_hull": hull},
             "faces": rows, "holes": found_holes, "corners": corners, "pins": pins, "bends": bends, "walls": walls,
             "features": features, "prismatic_axis": _prismatic_axis(rows, low, high)}
 

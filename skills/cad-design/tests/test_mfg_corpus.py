@@ -382,8 +382,9 @@ class DependencyGuardTests(unittest.TestCase):
     """A family whose tool is absent skips its pairs: neither an error nor a verdict."""
 
     NEEDS = {"yaml": {"assembly_operations_order", "access_assembly", "additive_min_feature", "additive_stability",
-                      "additive_support_overhang_bridge"},
-             "OCP": {"additive_min_feature", "additive_stability", "additive_support_overhang_bridge"}}
+                      "additive_support_overhang_bridge", "stability_contact_hull"},
+             "OCP": {"additive_min_feature", "additive_stability", "additive_support_overhang_bridge",
+                     "stability_contact_hull"}}
 
     def test_pairs_skip_when_their_module_is_absent(self) -> None:
         """Absent for real: find_spec says so and `import <module>` raises ImportError, with any cached submodule gone."""
