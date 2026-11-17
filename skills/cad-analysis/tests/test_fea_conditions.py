@@ -348,9 +348,23 @@ class QualifiedProfile(SourcedFEACase):
         self.assertEqual(self.outcomes(report)[f"engineering.strength@{PN}"], "unknown")
         self.assertIn("reaches 50 N", report["engineering"]["outcomes"][1]["uncertainty"])
 
+    def test_an_effective_isotropic_decision_needs_status_approved(self) -> None:
+        """The same rule as for a convergence decision: a provisional or void decision is not evidence."""
+        part = bracket("tst_polymer_fdm", [fx.operation("print", "fdm", fx.unknown("no capability in this fixture"))])
+        self.build(documents(profiles=[printed()], part=part))
+        model = {"decision": "DR-003", "justification": "TST: Z-direction values bound the layer-normal load path"}
+        path = self.case({"conditions": {**DRY_23C, "orientation": "Z"}, "effective_isotropic": model})
+        for status in (None, "Status: PROVISIONAL", "Status: VOID", "Status: DRAFT", "Status: approved", "Status: APPROVED "):
+            with self.subTest(status=status):
+                self.solved.clear()
+                text = (f"{status}\n\n" if status is not None else "") + "# DR-003: effective isotropic model\n"
+                (self.hw / "decisions" / "DR-003.md").write_text(text, encoding="utf-8")
+                self.assertEqual(self.refused(path), ["material.anisotropy"])
+
     def test_an_approved_effective_isotropic_model_analyses_printed_material_at_its_orientation(self) -> None:
         part = bracket("tst_polymer_fdm", [fx.operation("print", "fdm", fx.unknown("no capability in this fixture"))])
         self.build(documents(profiles=[printed()], part=part))
+        (self.hw / "decisions" / "DR-003.md").write_text("Status: APPROVED\n\n# DR-003: effective isotropic model\n", encoding="utf-8")
         model = {"decision": "DR-003", "justification": "TST: Z-direction values bound the layer-normal load path"}
         status, report = self.call(self.case({"conditions": {**DRY_23C, "orientation": "Z"}, "effective_isotropic": model}))
         self.assertEqual(status, 0, report)

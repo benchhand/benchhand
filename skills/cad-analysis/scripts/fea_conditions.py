@@ -52,8 +52,10 @@ FORMING = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": 
 LEVEL = "simulation_supported"
 DECISION = re.compile(r"DR-[0-9]{3}")
 REQUIREMENT = re.compile(r"REQ-[0-9]{3}")
-# A mesh convergence decision counts only when its first line is exactly this and it holds a study block.
+# A decision (mesh convergence, effective isotropic model) counts only when its first line is exactly this.
 APPROVED = "Status: APPROVED"
+
+
 STUDY_BLOCK = re.compile(r"```mesh-convergence[ \t]*\r?\n(.*?)```", re.S)
 MONITORED = ("max_von_mises_mpa", "max_displacement_mm")  # what a study must show settled
 MIN_REFINEMENTS = 3
@@ -71,6 +73,11 @@ LIMITS = (
     "a yield safety factor is not a fatigue, creep, wear, impact, buckling or service-life margin",
     "simulation-supported evidence at most, never physical validation",
 )
+
+
+def is_approved(text: str) -> bool:
+    """A decision is approved only when its first line is exactly `Status: APPROVED`."""
+    return text.split("\n", 1)[0].rstrip("\r") == APPROVED
 
 
 class Refused(ValueError):
@@ -373,6 +380,10 @@ class _Assessor:
             return {"model": "unsupported", "reasons": reasons}
         self.decision(model["decision"], f"decision_{model['decision'].lower().replace('-', '_')}", "material.anisotropy",
                       "material.effective_isotropic")
+        decided = self.hw / "decisions" / f"{model['decision']}.md"
+        if decided.is_file() and not is_approved(decided.read_text(encoding="utf-8", errors="replace")):
+            self.refuse("material.anisotropy", f"{model['decision']} is not approved: its first line must be exactly "
+                                               f"'{APPROVED}', because a provisional decision is not evidence")
         return {"model": "effective_isotropic", "reasons": reasons, "orientation": conditions["orientation"],
                 "decision": model["decision"], "justification": model["justification"]}
 
@@ -638,7 +649,7 @@ def read_study(text: str, ref: str) -> tuple[dict[str, Any] | None, list[str]]:
     """The study block of a convergence decision, or why the decision proves nothing: it is not approved (its
     first line is not exactly `Status: APPROVED`) or holds no readable study."""
     problems = []
-    if text.split("\n", 1)[0].rstrip("\r") != APPROVED:
+    if not is_approved(text):
         problems.append(f"{ref} is not approved: its first line must be exactly '{APPROVED}'")
     block = STUDY_BLOCK.search(text)
     if block is None:
