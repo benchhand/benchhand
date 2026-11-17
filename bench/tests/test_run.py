@@ -95,6 +95,19 @@ class ConverseTests(unittest.TestCase):
         driver = FakeDriver(self.paths, [(0, None, "What loads apply?"), (1, None, ""), (1, None, "")])
         self.assertEqual(run.converse(driver, SCRIPT, "bench", "start", CAPS).outcome, "error")
 
+    def test_a_provider_error_in_the_recorded_export_ends_the_run_as_a_provider_outage_at_once(self) -> None:
+        outage = json.loads((DATA / "export-provider-auth-outage.json").read_text(encoding="utf-8"))
+
+        class OutageDriver(FakeDriver):
+            def export(self, session: str, sanitize: bool = False) -> dict:
+                return outage if self.invocations[-1].exit_code else super().export(session, sanitize)
+
+        driver = OutageDriver(self.paths, [(0, None, "What loads apply?"), (1, None, ""), (0, None, "")])
+        conversation = run.converse(driver, SCRIPT, "bench", "start", CAPS)
+        self.assertEqual(conversation.outcome, "aborted:provider-outage")
+        self.assertEqual(len(driver.invocations), 2)
+        self.assertIn("credential", conversation.entries[-1]["provider_error"])
+
     def test_a_stop_gate_the_lead_approved_without_being_answered_fails_the_run(self) -> None:
         class SelfApprovingDriver(FakeDriver):
             def send(self, message: str, deadline: float) -> run.Invocation:

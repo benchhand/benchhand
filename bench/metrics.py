@@ -312,6 +312,17 @@ def child_session_ids(export: Mapping[str, Any]) -> list[str]:
     return ids
 
 
+def last_provider_error(export: Mapping[str, Any]) -> str | None:
+    """The message of a provider error (`provider.auth`, `provider.*`) that ended the session's last turn, if any."""
+    for message in reversed(list(export.get("messages") or ())):
+        error = message.get("error")
+        if isinstance(error, Mapping) and str(error.get("type", "")).startswith("provider."):
+            return f"{error.get('type')}: {error.get('message', '')}"
+        if message.get("type") == "user":
+            return None
+    return None
+
+
 def last_assistant_text(export: Mapping[str, Any]) -> str:
     """Text of the lead's last reply since the last user message: the question or gate it stopped at."""
     messages = list(export.get("messages") or ())

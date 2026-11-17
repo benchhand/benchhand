@@ -1,0 +1,91 @@
+{
+ "info": {
+  "id": "ses_e1538360bffehYCeMYis1pQF82",
+  "outcome": "failed"
+ },
+ "messages": [
+  {
+   "id": "msg_1eb01f04e001Q5G4dHeFD7mjl5",
+   "time": {
+    "created": 1794944135262,
+    "completed": 1794944146298
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "global.anthropic.claude-opus-5-5",
+    "providerID": "amazon-bedrock",
+    "variant": "default"
+   },
+   "content": [],
+   "snapshot": {
+    "start": "06a2b90403d41739d332a2da1e72877da81d8f25",
+    "end": "06a2b90403d41739d332a2da1e72877da81d8f25",
+    "files": []
+   },
+   "finish": "error",
+   "error": {
+    "type": "provider.auth",
+    "message": "AWS default credential chain failed: Could not load credentials from any providers"
+   }
+  },
+  {
+   "id": "msg_1eb021b7f001SDhc69CYIZFtcN",
+   "time": {
+    "created": 1794944146303
+   },
+   "type": "idle",
+   "outcome": "failed",
+   "error": {
+    "type": "provider.auth",
+    "message": "AWS default credential chain failed: Could not load credentials from any providers"
+   }
+  },
+  {
+   "id": "msg_1eb0226b6001XdOYekESqJXyxm",
+   "time": {
+    "created": 1794944150042
+   },
+   "text": "[redacted:text:msg_1eb0226b6001XdOYekESqJXyxm]",
+   "files": [],
+   "type": "user"
+  },
+  {
+   "id": "msg_1eb022a2e001zLxUJN3thAHubQ",
+   "time": {
+    "created": 1794944150071,
+    "completed": 1794944166040
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "global.anthropic.claude-opus-5-5",
+    "providerID": "amazon-bedrock",
+    "variant": "default"
+   },
+   "content": [],
+   "snapshot": {
+    "start": "06a2b90403d41739d332a2da1e72877da81d8f25",
+    "end": "06a2b90403d41739d332a2da1e72877da81d8f25",
+    "files": []
+   },
+   "finish": "error",
+   "error": {
+    "type": "provider.auth",
+    "message": "AWS default credential chain failed: Could not load credentials from any providers"
+   }
+  },
+  {
+   "id": "msg_1eb02689f001Sbh0eUNMsRl31q",
+   "time": {
+    "created": 1794944166047
+   },
+   "type": "idle",
+   "outcome": "failed",
+   "error": {
+    "type": "provider.auth",
+    "message": "AWS default credential chain failed: Could not load credentials from any providers"
+   }
+  }
+ ]
+}

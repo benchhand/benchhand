@@ -566,7 +566,14 @@ def converse(driver: Driver, script: dialogue.Script, mode: str, opening: str, c
             return conversation
         if driver.session is None:
             raise BenchError("opencode run printed no session id; see the raw turn files")
-        text = metrics.last_assistant_text(driver.export(driver.session))
+        export = driver.export(driver.session)
+        text = metrics.last_assistant_text(export)
+        provider_error = metrics.last_provider_error(export) if invocation.exit_code else None
+        if provider_error is not None:  # an outage, not the lead's or the script's failure: end at once
+            record_turn(conversation, invocation, text, None)
+            conversation.entries[-1]["provider_error"] = provider_error
+            conversation.outcome = "aborted:provider-outage"
+            return conversation
         failures = failures + 1 if invocation.exit_code else 0
         hw = driver.paths.project / "hw"
         can_stop = acceptance.latest_at_stage(built_versions(hw), TARGET_STAGE[mode]) is not None
