@@ -33,6 +33,7 @@ STRUCTURED_KEYS = frozenset({
 _TOKEN = re.compile(r"[^\s\"'`()\[\]{}<>,;=|]+")
 _EXTENSION = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,7}$")
 _URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$")
+_EVIDENCE_ID = re.compile(r"\bEV-[0-9]{3}\b")
 _LOCATION = re.compile(r"[:#].*$")
 _MANAGED_VERSION = re.compile(r"^hw/versions/v[1-9][0-9]*/.+")
 
@@ -200,3 +201,29 @@ def _text_problems(paths: ProjectPaths, node: Mapping[str, Any], listed: Sequenc
 def disposition_problems(paths: ProjectPaths, disposition: Mapping[str, Any]) -> list[PathProblem]:
     """The text-field problems of one finding disposition (it lists no artifacts, so only the inside rule applies)."""
     return _text_problems(paths, {k: v for k, v in disposition.items() if k != "producer"}, None)
+
+
+def evidence_refs(entry: Mapping[str, Any]) -> list[str]:
+    """The other evidence ids that the prose of `entry` names, in order of first mention."""
+    own = entry.get("id")
+    found: dict[str, None] = {}
+    for _, text in _strings(entry):
+        found.update((ident, None) for ident in _EVIDENCE_ID.findall(text) if ident != own)
+    return list(found)
+
+
+def dependents(entries: Sequence[Mapping[str, Any]], refused: Iterable[str]) -> dict[str, list[str]]:
+    """The entries that rest on a refused entry, directly or through other dependents, with the refused or
+    dependent entries each names. The loop runs to a fixed point, so a cycle among accepted entries taints nobody."""
+    roots = set(refused)
+    tainted = set(roots)
+    refs = {str(e.get("id")): evidence_refs(e) for e in entries}
+    changed = True
+    while changed:
+        changed = False
+        for ident, cited in refs.items():
+            if ident not in tainted and any(c in tainted for c in cited):
+                tainted.add(ident)
+                changed = True
+    return {ident: [c for c in cited if c in tainted] for ident, cited in refs.items()
+            if ident in tainted and ident not in roots}

@@ -181,6 +181,72 @@ class NotAPath(Project):
         problems = self.refusal(self.entry(method="read back hw/versions/v3/assembly.step"))
         self.assertEqual([p.code for p in problems], ["evidence.uncited_artifact"])
 
+class DependentEvidence(Project):
+    """EV-004 and EV-005 of the bench fixture rest on "EV-003 method", so a refused EV-003 must not leave them accepted."""
+
+    def results(self, entries: list[dict[str, Any]]) -> tuple[dict[str, str], list[Any]]:
+        record = mi.normalize_record({**{rel: doc for rel, doc in fx.tst_record().items() if not rel.startswith("_")},
+                                      "manufacturing/evidence.yaml": {"entries": entries}})
+        rows = evidence._rows(self.hw / "verification.csv")
+        result = evidence.assess(record, version="v1", manifest_sha256=V1, today=TODAY, paths=self.paths,
+                                 approved=lambda decision: True, verification=rows)
+        shown = {e["id"]: e["result"] for row in result.verification for e in row["evidence"]}
+        return shown, [f for f in result.findings if f.code == "evidence.refused_dependency"]
+
+    def chain(self) -> list[dict[str, Any]]:
+        return [self.entry("EV-002", method=VETOED_METHOD), self.entry("EV-003", method=VETOED_METHOD),
+                self.entry("EV-004", method="Full sweep clear. The per-face measurement (EV-003 method) gives 0.000 mm."),
+                self.entry("EV-005", method="Same measurement as EV-003; minimum clearance is 2.000 mm.")]
+
+    def test_entries_that_rest_on_a_refused_entry_are_unknown_and_name_it(self) -> None:
+        shown, found = self.results(self.chain())
+        self.assertEqual(shown, {"EV-002": "unknown", "EV-003": "unknown", "EV-004": "unknown", "EV-005": "unknown"})
+        self.assertEqual({f.path.rsplit("/", 1)[1]: f.message for f in found}.keys(), {"EV-004", "EV-005"})
+        for finding in found:
+            self.assertEqual(finding.severity, "error")
+            self.assertIn("EV-003", finding.message)
+
+    def test_the_dependency_is_transitive(self) -> None:
+        entries = self.chain() + [self.entry("EV-006", method="Margin follows from EV-005.")]
+        shown, found = self.results(entries)
+        self.assertEqual(shown["EV-006"], "unknown")
+        self.assertIn("EV-005", next(f.message for f in found if f.path.endswith("EV-006")))
+
+    def test_an_entry_that_rests_on_an_accepted_entry_stays_accepted(self) -> None:
+        entries = [self.entry("EV-002"), self.entry("EV-003", method="Same measurement as EV-002.")]
+        shown, found = self.results(entries)
+        self.assertEqual(shown, {"EV-002": "pass", "EV-003": "pass"})
+        self.assertEqual(found, [])
+
+    def test_a_cycle_between_accepted_entries_stays_accepted_and_one_refused_member_taints_the_other(self) -> None:
+        shown, _ = self.results([self.entry("EV-002", method="see EV-003"), self.entry("EV-003", method="see EV-002")])
+        self.assertEqual(shown, {"EV-002": "pass", "EV-003": "pass"})
+        shown, _ = self.results([self.entry("EV-002", method="see EV-003"),
+                                 self.entry("EV-003", method="see EV-002 and .cad-work/x.json")])
+        self.assertEqual(shown, {"EV-002": "unknown", "EV-003": "unknown"})
+
+    def test_the_ledger_findings_report_the_dependents(self) -> None:
+        acceptance.write_ledger(self.hw, self.chain())
+        findings = evidence.ledger_findings(impact.read_record(self.hw), approved=lambda _: True, today=TODAY,
+                                            paths=self.paths)
+        self.assertEqual({f.path.rsplit("/", 1)[1] for f in findings if f.code == "evidence.refused_dependency"},
+                         {"EV-004", "EV-005"})
+
+    def test_the_acceptance_inventory_refuses_the_dependents(self) -> None:
+        acceptance.write_ledger(self.hw, [self.entry("EV-003", method=VETOED_METHOD),
+                                          self.entry("EV-004", method="Same measurement as EV-003.")])
+        with self.assertRaisesRegex(evidence.EvidenceError, "EV-004.*EV-003"):
+            evidence.acceptance_inventory(self.hw, impact.read_record(self.hw))
+
+
+class FiguresWithoutAPath(Project):
+    """What the rule cannot see: figures that come from a result the text never names."""
+
+    def test_measured_figures_with_no_path_in_the_text_raise_no_finding(self) -> None:
+        entry = self.entry(method="Minimum clearance 2.000 mm over 0 to 75 deg, measured on the sealed STEP.",
+                           artifacts=["hw/versions/v3/assembly.step"])
+        self.assertEqual(self.refusal(entry), [])
+
 
 class AcceptancePoints(Project):
     def test_the_acceptance_inventory_refuses_scratch_text(self) -> None:

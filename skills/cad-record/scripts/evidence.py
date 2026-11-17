@@ -756,10 +756,15 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
     # ledger entries
     entry_results: dict[str, str] = {}
     untargeted: dict[tuple[str, str], list[str]] = {}
+    judged = {str(e.get("id")): _entry(e, record, by_id, version, manifest_sha256, geometry or {}, approved, today,
+                                       artifact_sha, paths) for e in record.evidence}
+    reliant = _reliant(record, {i for i, (_, _, f) in judged.items() if any(x.code in _PATH_CODES for x in f)})
     for entry in record.evidence:
         ident = str(entry.get("id"))
-        result, reasons, entry_findings = _entry(entry, record, by_id, version, manifest_sha256, geometry or {},
-                                                 approved, today, artifact_sha, paths)
+        result, reasons, entry_findings = judged[ident]
+        if ident in reliant:
+            result, reasons = "unknown", (f"{ident} rests on refused evidence {', '.join(reliant[ident])}",)
+            entry_findings = [*entry_findings, _reliant_finding(ident, reliant[ident])]
         findings.extend(entry_findings)
         entry_results[ident] = result
         targets = _entry_targets(entry, record, expected)
@@ -867,6 +872,20 @@ def project_paths(hw: Path) -> Any:
 
 def _path_findings(problems: Iterable[Any], where: str, ident: Any, obligation: str | None = None) -> list[Finding]:
     return [Finding(problem.code, where, f"{ident}: {problem.message}", obligation=obligation) for problem in problems]
+
+
+_PATH_CODES = frozenset({"evidence.scratch_path", "evidence.uncited_artifact"})
+
+
+def _reliant(record: Any, refused: set[str]) -> dict[str, list[str]]:
+    """The ledger entries that name a refused entry, directly or through others, with the entries each names."""
+    return cited_paths.dependents(list(record.evidence), refused) if refused else {}
+
+
+def _reliant_finding(ident: str, names: Sequence[str]) -> Finding:
+    return Finding("evidence.refused_dependency", f"hw/manufacturing/evidence.yaml#/entries/{ident}",
+                   f"{ident} relies on {', '.join(names)}, which the record refuses. Its evidence earns no credit until "
+                   "the dependency is promoted into the record")
 
 
 def _entry_targets(entry: Mapping[str, Any], record: Any, expected: Sequence[Any]) -> list[str]:
@@ -1075,9 +1094,13 @@ def ledger_findings(record: Any, *, approved: Callable[[str | None], bool], toda
 
 def _ledger_path_findings(record: Any, paths: Any) -> list[Finding]:
     findings = []
+    refused = set()
     for entry in record.evidence:
-        findings += _path_findings(cited_paths.entry_problems(paths, entry),
-                                   f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}", entry.get("id"))
+        problems = cited_paths.entry_problems(paths, entry)
+        if problems:
+            refused.add(str(entry.get("id")))
+        findings += _path_findings(problems, f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}", entry.get("id"))
+    findings += [_reliant_finding(ident, names) for ident, names in _reliant(record, refused).items()]
     for disposition in record.dispositions:
         findings += _path_findings(cited_paths.disposition_problems(paths, disposition),
                                    f"hw/manufacturing/findings.yaml#/dispositions/{disposition.get('finding')}",
