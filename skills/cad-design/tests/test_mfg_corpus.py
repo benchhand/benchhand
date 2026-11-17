@@ -64,6 +64,22 @@ class RateTests(unittest.TestCase):
         self.assertIn("twin boom", row["results"][0]["error"])
         self.assertIsNone(row["results"][0]["mutant"])
 
+    def test_a_rejected_packet_is_a_miss_with_its_reason_not_a_detection(self) -> None:
+        def refused(is_mutant: bool) -> str:
+            raise corpus.Rejected("packet.invalid: it gives an obligation two outcomes")
+
+        row = self.rows(corpus.Pair("a", "d", refused), pair("b", "fail"))
+        self.assertEqual((row["rejected"], row["errors"], row["detected"], row["missed"]), (1, 0, 1, 1))
+        self.assertIn("two outcomes", row["results"][0]["rejected"])
+
+    def test_a_known_gap_is_a_miss_whatever_the_mutant_returns_and_its_twin_still_counts(self) -> None:
+        row = self.rows(corpus.Pair("a", "d", lambda m: "fail", known_gap="fails for the wrong reason"),
+                        corpus.Pair("b", "d", lambda m: "unknown" if m else "pass", known_gap="abstains for the wrong reason"),
+                        pair("c", "fail"))
+        self.assertEqual((row["ran"], row["detected"], row["abstained"], row["missed"], row["known_gaps"]), (3, 1, 0, 2, 2))
+        self.assertEqual((row["detection_rate"], row["false_positive_rate"]), (0.3333, 0.3333))
+        self.assertEqual(row["results"][0]["known_gap"], "fails for the wrong reason")
+
     def test_a_family_with_nothing_run_has_no_rate(self) -> None:
         row = self.rows(corpus.Pair("a", "d", skipping))
         self.assertIsNone(row["detection_rate"])
@@ -231,6 +247,55 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual([p.code for p in problems if p.severity == "error"], [])
         found = {c["characteristic"] for c in capability_profile.capabilities()[0]["calibrations"]}
         self.assertEqual(found, {"overhang_angle", "bridge_span", "min_wall", "min_feature"})
+
+
+INNER_CHECKS = frozenset({"check_order", "check_joints", "check_version", "check_record", "assess", "probe",
+                          "assess_printed", "access_outcomes", "load"})  # inner check functions, and the old helpers that called them
+ALLOWED_IMPORTS = frozenset({"corpus", "support", "doc_support", "OCP"})
+
+
+def inner_check_uses(directory: Path) -> list[str]:
+    """Where a family module imports or calls a check below the packet: a check function by name, subprocess (a check script
+    run for its own report), or any module that is neither the standard library nor the corpus helpers. Families take
+    their verdicts from support.py / doc_support.py, which run the real path to the packet and evidence."""
+    import ast
+
+    found = []
+    for path in sorted(directory.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, (ast.Import, ast.ImportFrom, ast.Call)):
+                continue
+            roots: list[str] = []
+            if isinstance(node, ast.Import):
+                roots = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                roots = [node.module.split(".")[0]]
+                found += [f"{path.name}:{node.lineno} imports {alias.name}" for alias in node.names if alias.name in INNER_CHECKS]
+            found += [f"{path.name}:{node.lineno} imports {root}" for root in roots
+                      if root == "subprocess" or (root not in sys.stdlib_module_names and root not in ALLOWED_IMPORTS)]
+            if isinstance(node, ast.Call):
+                callee = node.func
+                name = callee.id if isinstance(callee, ast.Name) else callee.attr if isinstance(callee, ast.Attribute) else ""
+                if name in INNER_CHECKS:
+                    found.append(f"{path.name}:{node.lineno} calls {name}")
+    return found
+
+
+class PacketVerdictGuardTests(unittest.TestCase):
+    """A verdict is what the packet and evidence conclude, so a family may not run an inner check itself."""
+
+    def test_no_shipped_family_imports_or_calls_a_check_below_the_packet(self) -> None:
+        self.assertEqual(inner_check_uses(corpus.FAMILIES_DIR), [])
+
+    def test_the_guard_names_a_family_that_calls_the_check_directly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "bad.py").write_text(
+                "import subprocess\nfrom support import check_order, verdict\n\n"
+                "def run(mutant):\n    return verdict(check_order([]).values())\n", encoding="utf-8")
+            self.assertEqual(inner_check_uses(Path(tmp)), ["bad.py:1 imports subprocess", "bad.py:2 imports check_order",
+                                                          "bad.py:5 calls check_order"])
 
 
 class DependencyGuardTests(unittest.TestCase):
