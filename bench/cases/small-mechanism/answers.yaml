@@ -35,15 +35,26 @@ slots:
   maintenance: The lever comes off by removing one retaining ring and pulling the pin.
   appearance: Plain, any single colour.
 intents:
+  - id: latched-load
+    match: ['what does the latch hold', '\b(door|lid|keeper)\b.*\?', '\bpull(s)? on the lever\b', 'when (it is|it.s) latched']
+    answer: >-
+      It holds a hinged cabinet door shut against a keeper on the frame. When latched, the door can
+      pull on the lever with up to 10 N; the 30 N hand load is the larger case.
+  - id: detent
+    match: ['\ba detent\b', '\bdetent or\b', '\bstay put\b', '\bsnap\b', 'hold (its|the) position']
+    answer: No detent or snap; the two hard stops are all it needs.
   - id: pin
     match: ['\bpin\b.*\b(length|diameter|groove|type|source|designation|material)', 'retaining ring', 'DIN 6799',
-            '\bE-?clip\b', '\bcirclip\b']
+            '\bE-?clip\b', '\bcirclip\b', '\bpin sit\b', 'lightly pressed', 'loose in the .*cheeks']
     answer: >-
       Ø6 mm steel grooved pin, 30 mm long, with a groove for a DIN 6799 size 5 retaining ring near
-      each end; source a catalogue grooved pin and its ring by designation. Each ring bears on the
-      outside face of a bracket cheek.
+      each end; source a catalogue grooved pin and its ring by designation. The pin sits free in the
+      cheek holes with clearance, held axially only by the rings, and each ring bears on the outside
+      face of a bracket cheek.
   - id: panel-screws
-    match: ['\bM4\b', '\bpanel\b', 'mount(ing)? (screws?|holes?)']
+    match: ['\bM4\b', '\bpanel\b', 'mount(ing)? (screws?|holes?)', '\bcountersunk\b', '\bpan[- ]head\b',
+            'screws\b.*\bBOM\b', 'hole spacing', '\bfootprint\b']
     answer: >-
       Two ISO 7380 M4 × 12 button head screws hold the bracket to a 3 mm steel panel with M4 rivet
-      nuts, 40 mm apart along the bracket's length.
+      nuts, 40 mm apart along the bracket's length. The screws belong in this BOM; the rivet nuts are
+      already in the panel. No other footprint limit applies.

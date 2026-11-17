@@ -51,6 +51,7 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(record["argv"], ["cd", ".", "&&", "uv", "run", "--script", "$CAD_SKILLS/cad-flow/scripts/run.py",
                                           "cad-recheck/scripts/stamp.py", "--verify"])
         self.assertEqual(record["exit_code"], 2)
+        self.assertTrue(record["compound"])  # `cd ... && uv run ...`: the exit code may be another part's
         self.assertEqual(record["output_tail"], output.replace(f"{PROJECT}/", ""))
         self.assertEqual(record["session"], export["info"]["id"])
 
@@ -76,6 +77,10 @@ class CollectTests(unittest.TestCase):
             with self.subTest(command=command, code=code):
                 export = with_command(recorded_export(), command, "x", code)
                 self.assertEqual(len(toolerrors.collect([export], PROJECT, SCRATCH, HOME)), int(kept))
+
+    def test_a_single_tool_command_is_not_compound(self) -> None:
+        export = with_command(recorded_export(), "uv run --script run.py cad-record/scripts/validate.py .", "x", 1)
+        self.assertFalse(toolerrors.collect([export], PROJECT, SCRATCH, HOME)[0]["compound"])
 
     def test_the_tail_is_the_last_four_kilobytes(self) -> None:
         export = with_command(recorded_export(), STAMP, "a" * 5000 + "END", 2)

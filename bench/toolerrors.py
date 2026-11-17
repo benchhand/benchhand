@@ -24,6 +24,7 @@ COVERED = re.compile(r"(?:^|[\s/])(?:" + "|".join(re.escape(name) for name in NA
                      r"|\brun\.py\s+(?:\S*/)?cad-[a-z-]+/scripts/[\w./-]+\.py")
 EXIT_LINE = re.compile(r"^Exit code: -?\d+\s*$", re.MULTILINE)
 SAVED_OUTPUT = re.compile(r"full output saved to ([^\s\]]+)")
+COMPOUND = re.compile(r"&&|\|\||[;|]|<<|\n")
 SECRETS = (
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL), "[redacted:private-key]"),
     (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[redacted:aws-key-id]"),
@@ -131,6 +132,8 @@ def collect(sources: Iterable[Mapping[str, Any]], project: Path, scratch: Path, 
             "session": session, "call": key,
             "argv": [redact(relative(arg, roots)) for arg in _argv(command)],
             "exit_code": code, "streams": "merged",
+            # In a compound command the exit code may come from another part than the covered tool.
+            "compound": bool(COMPOUND.search(command)),
             "output_tail": tail(redact(relative(output, roots))),
             "truncated": bool(metadata.get("truncated")),
         })

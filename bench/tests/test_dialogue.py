@@ -225,6 +225,15 @@ class DecisionBlockTests(unittest.TestCase):
 
 
 class RoutingTests(unittest.TestCase):
+    def test_the_recorded_small_mechanism_ground_questions_reach_their_answers(self) -> None:
+        # The second small-mechanism build answered 12 of its 30 GROUND questions with the default.
+        reply = dialogue.respond(case_script("small-mechanism"), recorded_text("events-ground-small-mechanism.jsonl"), "fixture")
+        routes = {ask.text: ask.intent for ask in reply.asks}
+        self.assertEqual(routes["What kind of use is this?"], "service-class")
+        self.assertEqual(routes["Does anything pull on the lever when it's latched?"], "latched-load")
+        self.assertEqual(routes["Should it stay put at 0° or 75° (a detent or snap), or are the two hard stops all it needs?"], "detent")
+        self.assertEqual(routes["Do you have a Ø6 H7 reamer (or the size you plan to ream to)?"], "equipment")
+        self.assertEqual([ask.text for ask in reply.unmatched], ["Is that right?"])
     def test_regression_every_q004_question_routes_to_environment(self) -> None:
         # Recorded wall-bracket GROUND row Q-004 asks about solvents, the rail's coating and the bracket's
         # anodising against corrosion; its finish question went to accuracy and the rail one to the rail answer.
@@ -235,6 +244,18 @@ class RoutingTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_regression_the_recorded_variant_gate_reply_instruction_belongs_to_the_gate(self) -> None:
+        # The second small-mechanism fixture build failed as unmatched-at-gate: "Reply with a variant (A, B or C),
+        # or ask for a change ..." is the VARIANT gate's own reply instruction, not a separate question.
+        reply = dialogue.respond(case_script("small-mechanism"), recorded_text("events-gate-small-mechanism-variant.jsonl"),
+                                 "fixture", can_stop=False)
+        self.assertEqual([ask.intent for ask in reply.asks], ["variant-gate", "variant-gate"])
+        self.assertTrue(reply.at_gate)
+        self.assertFalse(reply.unmatched_at_gate)
+
+    def test_a_reply_instruction_with_no_gate_named_before_it_is_not_given_a_gate(self) -> None:
+        reply = dialogue.respond(SCRIPT, "Reply with your preferred thread pitch.", "bench")
+        self.assertEqual([ask.intent for ask in reply.asks], [None])
     def test_regression_the_recorded_intent_gate_with_a_please_answer_lead_in_is_answered_not_failed(self) -> None:
         # The small-mechanism fixture build failed here: "Please answer:" introduces the numbered asks, and the
         # matcher took it for an unmatched question at the INTENT gate.

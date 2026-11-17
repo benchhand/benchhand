@@ -50,6 +50,13 @@ OPTION_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)")
 MARKUP = re.compile(r"^[\s>*#\-+|—–]*(?:\d+[.)]\s*)?|[*`]+")
 GATE_WORD = re.compile(r"\b(gate|freeze)\b", re.IGNORECASE)
 APPROVAL_ASK = re.compile(r"\bapprov(?:e|al)\b", re.IGNORECASE)
+# The reply instruction a lead puts under a gate ("Reply with a variant (A, B or C)").
+REPLY_INSTRUCTION = re.compile(r"^(?:reply|respond|answer|choose|pick|select|say)\b", re.IGNORECASE)
+
+
+def _gate_ask(text: str) -> bool:
+    """An ask that answers whatever gate the message names: an approval request or a reply instruction."""
+    return bool(APPROVAL_ASK.search(text) or REPLY_INSTRUCTION.match(text))
 FOLLOW_UP = re.compile(r"^(?:or|and|also|if so|if not|otherwise)\b", re.IGNORECASE)
 STOP_NOTE = ("This ends the session: record this decision as instructed, commit, and stop. "
              "Do not start the next stage.")
@@ -265,7 +272,7 @@ def find_asks(text: str) -> list[Found]:
             found = [(0, cleaned)]
         for position, piece in found:
             follow_up = position > 0 and (FOLLOW_UP.match(piece) is not None or len(piece.split()) <= 3)
-            context = pieces[position - 1] if follow_up else (gate_line if APPROVAL_ASK.search(piece) else None)
+            context = pieces[position - 1] if follow_up else (gate_line if _gate_ask(piece) else None)
             if piece not in (ask.text for ask in asks):
                 asks.append(Found(piece, context))
         if GATE_WORD.search(cleaned):
@@ -289,7 +296,7 @@ def classify(script: Script, ask: str, context: str | None = None) -> Ask:
     the gate. Otherwise the first intent that matches the ask, else, for a follow-up, the sentence before it."""
     gates: Sequence[Intent] = tuple(intent for intent in script.intents if intent.kind == "gate")
     order: tuple[tuple[Sequence[Intent], str | None], ...]
-    if APPROVAL_ASK.search(ask):
+    if _gate_ask(ask):
         order = ((gates, ask), (gates, context), (script.intents, ask), (script.intents, context))
     else:
         order = ((script.intents, ask), (script.intents, context))

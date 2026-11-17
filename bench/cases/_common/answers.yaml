@@ -103,7 +103,7 @@ intents:
   # --- GROUND slots: shared patterns, answered by each case's `slots` --------------------------
   # Listed most specific first; a case that leaves a slot out gets the default answer.
   - id: service-class
-    match: ['service[ _]class', '\buse class\b', '\bprototype\b', '\bend[- ]use\b', '\bproduction\b', '\bdemonstrat', 'fit[ /-]assembly',
+    match: ['service[ _]class', '\buse class\b', '\bkind of use\b', '\bprototype\b', '\bend[- ]use\b', '\bproduction\b', '\bdemonstrat', 'fit[ /-]assembly',
             'appearance (model|concept)', 'intended (service|use)\b.*\b(class|maturity)']
   - id: rigor
     match: ['\brigou?r\b', '\bmaker\b', '\bregulated\b', 'documentation depth']
@@ -113,7 +113,7 @@ intents:
   - id: pn-prefix
     match: ['part[- ]number', '\bPN\b', '\bprefix\b', '\bnaming\b', '\bproduct id\b']
   - id: equipment
-    match: ['\bprinters?\b', '\bwho (runs|operates)\b', '\bequipment\b', '\bmachines?\b', '\bbureau\b', '\boutsourc', '\bin-house\b', '\bcapabilit',
+    match: ['\bprinters?\b', '\bwho (runs|operates)\b', '\breamer\b', '\bequipment\b', '\bmachines?\b', '\bbureau\b', '\boutsourc', '\bin-house\b', '\bcapabilit',
             '\bnozzle\b', 'build (volume|plate|envelope)', '\bstock\b', '\boperators?\b', '\bcalibrat', '\bslicer\b',
             '\bmeasur(e|ing|ement)\b.*\b(capabilit|equipment|tools?)']
   - id: material
@@ -136,7 +136,7 @@ intents:
     match: ['\baccura', '\brepeatab', '\bfinish\b', '\btolerances?\b', 'dimensional stability', '\bsurface\b']
   - id: consequences
     match: ['\bconsequence', '\bfail(ure|s)?\b', '\bstandards?\b', '\bsafety\b', '\bregulat', 'who (supervises|approves|signs)',
-            '\bforbidden\b', '\bhazard']
+            '\bforbidden\b', '\bhazard', '\binjur', '\bnuisance\b']
   - id: quantity
     match: ['\bquantit', '\bhow many\b', '\bbudget\b', '\bcost\b', 'lead time', '\bdeadline\b', 'batch size']
   - id: maintenance
