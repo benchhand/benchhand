@@ -102,7 +102,10 @@ def _stop_message(returncode: int, errors: list[str]) -> str:
 def applied_loads(inp: str) -> dict[str, int]:
     """Each force constraint of a FreeCAD-written ccx input, mapped to the number of distinct nodes its *CLOAD
     lines load with a nonzero component. FreeCAD names the constraint in the `** <name>` comment before its
-    *CLOAD, and writes one `node, degree of freedom, load` line per loaded component."""
+    *CLOAD, and writes one `node, degree of freedom, load` line per loaded component. This reads that form only:
+    FreeCAD 1.1.4's writer (femsolver/calculix/write_constraint_force.py) emits neither node sets nor
+    continuation records. So the count takes a node-set name for one target, without expanding the set, and
+    reads each line alone."""
     loads: dict[str, set[str]] = {}
     comment, current = None, None
     for line in inp.splitlines():

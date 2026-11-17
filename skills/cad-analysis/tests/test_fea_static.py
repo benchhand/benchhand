@@ -763,13 +763,46 @@ if len(sys.argv) > 1:
             self.assertEqual(details["degrees_of_freedom"], 3 * details["node_count"])
             self.assertIn("inside the SPOOLES equation solver", result["error"]["message"])
 
-    def real_solvers(self) -> dict[str, dict[str, str]]:
-        """The ccx and Gmsh FreeCAD resolves when $CCX and $GMSH are unset: the tools a stand-in hands on to."""
-        environ = {key: value for key, value in os.environ.items() if key not in ("CCX", "GMSH")}
-        found = fea_static.SOLVERS.probe(FREECADCMD, environ=environ)
-        for tool in ("calculix", "gmsh"):
-            self.assertIn("path", found[tool], found)
-        return found
+    def stand_in(self, root: Path, tool: str, body: str) -> Path:
+        """A $CCX or $GMSH stand-in at root/<tool>: it runs `body`, then hands its arguments on to the real tool.
+        It finds that tool when it runs, beside the executable of the FreeCAD process that started it (where the
+        macOS app and an extracted or mounted AppImage keep ccx and gmsh), else on PATH. A path probed earlier could
+        be inside an AppImage mount that ended with the probe."""
+        path = root / tool
+        path.write_text(f'''#!{sys.executable}
+import os, shutil, subprocess, sys
+def parent_and_executable(pid):
+    if os.path.exists("/proc/%d/exe" % pid):
+        with open("/proc/%d/stat" % pid, encoding="utf-8") as stat:
+            parent = int(stat.read().rsplit(")", 1)[1].split()[1])
+        return parent, os.path.realpath("/proc/%d/exe" % pid)
+    found = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True).stdout.split(None, 1)
+    return (int(found[0]), os.path.realpath(found[1].strip())) if len(found) == 2 else (0, "")
+def real_tool(name):
+    pid = os.getppid()
+    while pid > 1:
+        parent, executable = parent_and_executable(pid)
+        beside = os.path.join(os.path.dirname(executable), name)
+        if os.path.basename(executable).lower().startswith("freecad") and os.access(beside, os.X_OK):
+            return beside
+        pid = parent
+    here = os.path.dirname(os.path.realpath(sys.argv[0]))
+    path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if os.path.realpath(p) != here)
+    return shutil.which(name, path=path) or sys.exit("%s: no %s beside a FreeCAD process or on PATH" % (sys.argv[0], name))
+real = real_tool({tool!r})
+with open({str(root / (tool + "-calls.log"))!r}, "a", encoding="utf-8") as log:
+    log.write(" ".join([real, *sys.argv[1:]]) + "\\n")
+{body}
+os.execv(real, [real, *sys.argv[1:]])
+''', encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    @staticmethod
+    def solve_calls(root: Path) -> list[str]:
+        """The ccx stand-in's solve calls: FreeCAD passes `-i <name>` to solve and `-v` to read the version."""
+        calls = (root / "ccx-calls.log").read_text(encoding="utf-8").splitlines()
+        return [line for line in calls if any(arg.strip() == "-i" for arg in line.split(" "))]
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
     def test_a_load_that_reaches_no_mesh_node_is_an_error_not_a_pass(self) -> None:
@@ -795,9 +828,7 @@ json.dump([i + 1 for i, f in enumerate(faces) if f.Surface.__class__.__name__ ==
             self.assertTrue(bore.is_file(), generated.stdout + generated.stderr)
             bore_faces = json.loads(bore.read_text(encoding="utf-8"))
             self.assertTrue(bore_faces)
-            gmsh = root / "gmsh"  # meshes second-order elements straight-sided (`Mesh.SecondOrderLinear` 1, no optimization)
-            gmsh.write_text(f'''#!{sys.executable}
-import os, re, sys
+            gmsh = self.stand_in(root, "gmsh", '''import re
 for arg in sys.argv[1:]:
     if arg.endswith(".geo"):  # the bias campaign's straight-sided settings, set where the job's .geo sets them
         text = open(arg, encoding="utf-8").read()
@@ -805,10 +836,8 @@ for arg in sys.argv[1:]:
             text, found = re.subn(r"(?m)^Mesh[.]%s[ \\t]*=[^;]*;" % key, "Mesh.%s = %d;" % (key, value), text)
             if not found:
                 text = text.replace("Mesh  3;", "Mesh.%s = %d;\\nMesh  3;" % (key, value), 1)
-        open(arg, "w", encoding="utf-8").write(text)
-os.execv({self.real_solvers()["gmsh"]["path"]!r}, [{self.real_solvers()["gmsh"]["path"]!r}, *sys.argv[1:]])
-''', encoding="utf-8")
-            gmsh.chmod(0o755)
+        open(arg, "w", encoding="utf-8").write(text)''')
+            ccx = self.stand_in(root, "ccx", "")  # records each call, so the test sees whether the job asked ccx to solve
             case_path = root / "case.yaml"
             case_path.write_text(f"""step: {step}
 material: {{E: 210000, nu: 0.3, density: 7850, yield: 355}}
@@ -816,12 +845,16 @@ fixed_faces: {{plane: {{axis: z, value: 0, tolerance: 0.000001}}}}
 loads: [{{selector: {{indices: {bore_faces}}}, force: [0, 0, 25000]}}]
 mesh_size: 10
 """, encoding="utf-8")
-            with patch.dict(os.environ, {"GMSH": str(gmsh)}):
+            with patch.dict(os.environ, {"GMSH": str(gmsh), "CCX": str(ccx)}):
                 result, status = fea_static.run_job(case_path, load_case(case_path))
             self.assertEqual(status, 2, result)
             self.assertEqual(result["error"]["code"], "load_not_applied", result)
             self.assertEqual(result["error"]["details"]["loads"], [{"constraint": "FaceForce0", "force_n": 25000.0, "nodes": 0}])
             self.assertNotIn("max_von_mises_mpa", result)
+            self.assertTrue((root / "ccx-calls.log").is_file(), "the job never ran the ccx stand-in, not even its version probe")
+            self.assertEqual(self.solve_calls(root), [], "ccx was asked to solve an input whose load reaches no node")
+            meshed = [line for line in (root / "gmsh-calls.log").read_text(encoding="utf-8").splitlines() if line.endswith(".geo")]
+            self.assertEqual(len(meshed), 1, meshed)  # the stand-in meshed, so the empty load is the straight-sided one
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
     def test_a_zero_result_under_a_nonzero_load_is_an_error_not_a_pass(self) -> None:
@@ -830,11 +863,7 @@ mesh_size: 10
         with tempfile.TemporaryDirectory(prefix="cad-fea-zero-result-") as directory:
             root = Path(directory)
             step = self.make_cantilever_step(root)
-            real = self.real_solvers()["calculix"]["path"]
-            ccx = root / "ccx"
-            ccx.write_text(f'''#!{sys.executable}
-import os, sys
-flag = next((i for i, arg in enumerate(sys.argv) if arg.strip() == "-i"), None)  # FreeCAD passes "-i " (ccxtools)
+            ccx = self.stand_in(root, "ccx", '''flag = next((i for i, arg in enumerate(sys.argv) if arg.strip() == "-i"), None)  # "-i " (ccxtools)
 if flag is not None:
     path = sys.argv[flag + 1] + ".inp"
     kept, loads = [], False
@@ -846,10 +875,7 @@ if flag is not None:
         elif loads and line[:1].isdigit():
             continue
         kept.append(line)
-    open(path, "w", encoding="utf-8").write("\\n".join(kept) + "\\n")
-os.execv({real!r}, [{real!r}, *sys.argv[1:]])
-''', encoding="utf-8")
-            ccx.chmod(0o755)
+    open(path, "w", encoding="utf-8").write("\\n".join(kept) + "\\n")''')
             case_path = root / "case.yaml"
             case_path.write_text(f"step: {step}\n{CANTILEVER_TAIL}", encoding="utf-8")
             with patch.dict(os.environ, {"CCX": str(ccx)}):
@@ -859,6 +885,7 @@ os.execv({real!r}, [{real!r}, *sys.argv[1:]])
             self.assertEqual(result["error"]["details"]["applied_force_n"], 50.0)
             self.assertEqual((result["error"]["details"]["max_von_mises_mpa"],
                               result["error"]["details"]["max_displacement_mm"]), (0.0, 0.0))
+            self.assertEqual(len(self.solve_calls(root)), 1)  # ccx solved once: the refusal reads its result
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
     def test_gmsh_tools_mesh_with_the_gmsh_the_job_resolved(self) -> None:
