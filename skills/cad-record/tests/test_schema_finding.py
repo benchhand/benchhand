@@ -65,9 +65,9 @@ class FindingSchema(unittest.TestCase):
     def test_only_the_code_and_message_are_required(self) -> None:
         self.assertEqual(errors({"code": "fit_unverified", "message": "no inspection verifies the fit"}), [])
 
-    def test_every_severity_word_a_producer_emits_is_accepted(self) -> None:
-        # check-packet vocabulary (manufacturing.schema.json severity), validate.py/layout.json report words
-        for word in ("critical", "major", "minor", "info", "error", "warning", "stage"):
+    def test_every_canonical_severity_word_is_accepted(self) -> None:
+        # the check-packet vocabulary (manufacturing.schema.json severity)
+        for word in ("critical", "major", "minor", "info"):
             with self.subTest(severity=word):
                 self.assertEqual(errors(mutated(severity=word)), [])
 
@@ -97,6 +97,11 @@ class HonestMistakes(unittest.TestCase):
 
     def test_a_misspelled_severity(self) -> None:
         for word in ("critcal", "Major", "warn", "fatal", ""):
+            with self.subTest(severity=word):
+                self.rejects(mutated(severity=word), "severity")
+
+    def test_a_legacy_severity_word_of_validate_or_layout(self) -> None:
+        for word in ("error", "warning", "stage"):
             with self.subTest(severity=word):
                 self.rejects(mutated(severity=word), "severity")
 
@@ -218,11 +223,12 @@ def reasons(document: Any) -> list[str]:
 
 
 EXPECTED_REASONS: dict[str, list[str]] = {
-    "validate.finding": ["missing code", "unexpected path"],
-    "validate.coded": ["unexpected action", "unexpected canonical_location", "unexpected path"],
-    "manufacturing_intent.problem": ["unexpected action", "unexpected canonical_location", "unexpected path"],
-    "evidence.finding": ["unexpected action", "unexpected canonical_location", "unexpected obligation",
-                         "unexpected path"],
+    "validate.finding": ["missing code", "severity: enum", "unexpected path"],
+    "validate.coded": ["severity: enum", "unexpected action", "unexpected canonical_location", "unexpected path"],
+    "manufacturing_intent.problem": ["severity: enum", "unexpected action", "unexpected canonical_location",
+                                     "unexpected path"],
+    "evidence.finding": ["severity: enum", "unexpected action", "unexpected canonical_location",
+                         "unexpected obligation", "unexpected path"],
     "drawing_intent.with_feature": ["unexpected feature"],
     "assembly_check.with_sheet": ["unexpected sheet"],
     "build.finding": ["missing code", "unexpected check", "unexpected pn", "unexpected type", "unexpected where"],

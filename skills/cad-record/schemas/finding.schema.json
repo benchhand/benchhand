@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://srobroek.com/cad/schemas/finding.schema.json",
   "title": "CAD finding",
-  "description": "One finding as a CAD tool reports it in the tool-result envelope. The stable `code` is the rule identity (a later SARIF ruleId). `severity` is critical, major, minor or info; `error`, `warning` and `stage` are the words validate.py and layout.json emit today and stay until their producers migrate (error maps to major, warning to minor, stage to info)",
+  "description": "One finding as a CAD tool reports it in the tool-result envelope. The stable `code` is the rule identity (a later SARIF ruleId). `severity` is critical, major, minor or info",
   "type": "object",
   "additionalProperties": false,
   "required": ["code", "message"],
   "properties": {
     "code": {"description": "A stable finding code such as process.fdm.overhang or fit_unverified: lower-case words joined by underscores, optionally dotted into a namespace", "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$", "examples": ["process.fdm.overhang", "fit_unverified"]},
-    "severity": {"enum": ["critical", "major", "minor", "info", "error", "warning", "stage"]},
+    "severity": {"description": "Canonical words only. Of the legacy words only warning has a same-effect canonical word: it maps to info, as neither blocks (validate.py NONBLOCKING, emit.py NONBLOCKING_SEVERITIES). The blocking effect of error and stage has no canonical equivalent yet and is unresolved: see the open questions on PR 137", "enum": ["critical", "major", "minor", "info"]},
     "outcome": {"description": "A check's result; unknown is never a pass", "enum": ["pass", "fail", "unknown", "not_applicable"]},
     "subject": {
       "description": "The part and feature the finding is about",
