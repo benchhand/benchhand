@@ -132,10 +132,10 @@ class Version1Record(VersionOneCase):
         self.assert_version_1()
         plan = migrate.plan(self.hw, TODAY)
         self.assertEqual(plan.status, "pending")
-        # Planning order is requirements.yaml, then each part.yaml; product.yaml is last.
+        # Planning order is requirements.yaml, then each part.yaml, and product.yaml last.
         self.assertEqual([c.path for c in plan.changes[:2]], ["hw/requirements.yaml", "hw/parts/LMP-0001/part.yaml"])
         partial = migrate.Plan(plan.hw, plan.status, plan.source_version, plan.changes[:2], plan.questions, plan.unknown, plan.findings)
-        migrate.apply(partial)  # requirements and the part written; product.yaml still version 1
+        migrate.apply(partial)  # requirements and the part written, product.yaml still version 1
         self.assert_version_1()
         rest = migrate.plan(self.hw, TODAY)
         self.assertEqual(rest.status, "pending")

@@ -124,7 +124,7 @@ class Normalization(unittest.TestCase):
     def test_a_legacy_record_reads_with_explicit_unknowns_and_one_migration_problem(self) -> None:
         hw = temp_hw(self)
         shutil.copytree(fx.V1_MINIMAL, hw)
-        # The fixture has no interfaces, so give the copy one to read; it carries no functional block, as in version 1.
+        # The fixture has no interfaces, so give the copy one to read. It carries no functional block, as in version 1.
         interface = {"id": "IF-001", "from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
         (hw / "interfaces.yaml").write_text(yaml.safe_dump({"interfaces": [interface]}), encoding="utf-8")
         record = mi.load_record(hw)

@@ -19,7 +19,7 @@ import yaml
 from test_migrate import TODAY, V1_MINIMAL, fx, mi, migrate
 
 # preferences, use_case_kept and blocks_present: regenerated when the input gained an interface (IF-001) so that
-# the functional-block branch of plan_interfaces is exercised; the refusal digests are unchanged.
+# the functional-block branch of plan_interfaces runs. The refusal digests are unchanged.
 GOLDEN = {
     'blocks_present': 'pending:4144d70a19d2dad06f96630d3e94722cb26c4ff7c7b41d67640ef60dba34074e',
     'lamp': 'pending:6b36118a2f3afe40d71a075daea512bc03d7cbe0dc44bb989892f377e241d01e',
@@ -86,8 +86,8 @@ class Version1Variants(PlanOutcome):
         self.edit("interfaces.yaml", lambda d: d.update(interfaces=[interface]))
 
     def migrated_then(self, change: Any) -> None:
-        """Migrate a copy that has an interface, hand-edit the interface's functional block so a rewrite shows, then
-        undo the version bump (and more, by `change`): the state an interrupted run leaves."""
+        """Migrate a copy that has an interface. Hand-edit the interface's functional block so a rewrite shows.
+        Then undo the version bump and more, by `change`. This is the state an interrupted run leaves."""
         self.add_interface()
         migrate.apply(migrate.plan(self.hw, TODAY))
         self.edit("interfaces.yaml", lambda d: d["interfaces"][0]["functional"]["critical"].update(reason=KEPT))
@@ -104,7 +104,7 @@ class Version1Variants(PlanOutcome):
         self.add_interface()
         self.edit("requirements.yaml", lambda d: d.update(preferences=[]))
         changes = {c.path: c for c in migrate.plan(self.hw, TODAY).changes}
-        # 11 use-case questions, 1 for the absent operations, 1 for the part, 1 for the interface; preferences are there.
+        # 11 use-case questions, 1 for the absent operations, 1 for the part, 1 for the interface. Preferences are there.
         self.assertEqual(changes["hw/requirements.yaml"].summary, ["adds assumptions, open_questions (14 open questions)"])
         self.assertEqual(changes["hw/interfaces.yaml"].summary, ["adds functional (critical and functions unknown) to IF-001"])
         self.check("preferences")
@@ -128,7 +128,7 @@ class Version1Variants(PlanOutcome):
         self.assert_version_1()
         self.assertEqual(migrate.plan(self.hw, TODAY).status, "pending", "the interrupted run replans, or the check below is vacuous")
         # The first run asked 14 questions (11 use case, operations, part, interface). The replan has the operations in
-        # place, so it needs Q-001 to Q-013; dropping the last stored one (Q-014) would change nothing, so drop Q-013.
+        # place, so it needs Q-001 to Q-013. Dropping the last stored one (Q-014) would change nothing, so drop Q-013.
         self.edit("requirements.yaml", lambda d: d.update(open_questions=[q for q in d["open_questions"] if q["id"] != "Q-013"]))
         self.check("missing_question")
 
