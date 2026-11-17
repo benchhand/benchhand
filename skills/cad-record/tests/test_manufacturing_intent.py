@@ -501,6 +501,66 @@ class Capabilities(unittest.TestCase):
         self.assertEqual(mi.capability_limit(template, "hole_diameter_deviation", material="tst_polymer_printed").status, "refused")
 
 
+# The obligations of fx.tst_record(), a record with no load-bearing interface, as enumerated before engineering.stop_reaction existed.
+TST_RECORD_OBLIGATIONS = (
+    'assembly.access@op:fit_bearing',
+    'assembly.joint@op:fit_bearing',
+    'assembly.order@op:fit_bearing',
+    'cad.readback@TST-0001',
+    'cad.readback@TST-0002',
+    'cad.readback@TST-0004',
+    'contact.wear@TST-0002',
+    'engineering.anisotropy@TST-0001',
+    'engineering.creep@TST-0001',
+    'engineering.stiffness@TST-0001',
+    'engineering.strength@TST-0001',
+    'export.3mf@TST-0001',
+    'feature.fit@TST-0001#pivot_bore',
+    'feature.inspection@TST-0001#pivot_bore',
+    'intent.critical_surfaces@TST-0002',
+    'intent.use_case@product',
+    'interface.acceptance.physically_validated@IF-001#running_clearance',
+    'interface.fit@IF-001',
+    'interface.stack@IF-001',
+    'motion.play@IF-001',
+    'motion.play@TST-0002',
+    'optical.route@TST-0004',
+    'optical.transmission@TST-0004',
+    'process.cnc.access@TST-0002/turn',
+    'process.cnc.features@TST-0002/turn',
+    'process.cnc.precision@TST-0002/turn',
+    'process.cnc.setup@TST-0002/turn',
+    'process.cnc.stock@TST-0002/turn',
+    'process.fdm.geometry@TST-0001/print',
+    'process.fdm.orientation@TST-0001/print',
+    'process.fdm.support@TST-0001/print',
+    'process.fdm.thermal_distortion@TST-0001/print',
+    'process.fdm.trial@TST-0001/print',
+    'process.laser.features@TST-0004/cut',
+    'process.laser.fit_coupon@TST-0004/cut',
+    'process.laser.kerf@TST-0004/cut',
+    'process.laser.material@TST-0004/cut',
+    'process.laser.nesting@TST-0004/cut',
+    'process.laser.thermal@TST-0004/cut',
+    'process.reaming.access@TST-0001/ream',
+    'process.reaming.allowance@TST-0001/ream',
+    'purchase.availability@TST-0003/buy',
+    'purchase.dimensions@TST-0003/buy',
+    'purchase.identity@TST-0003/buy',
+    'purchase.mounting@TST-0003/buy',
+    'purchase.rating@TST-0003/buy',
+    'requirement.simulation_supported@REQ-001',
+    'route.consistency@TST-0001',
+    'route.consistency@TST-0002',
+    'route.consistency@TST-0004',
+    'route.operation_plan@TST-0001/print',
+    'route.operation_plan@TST-0001/ream',
+    'route.operation_plan@TST-0002/turn',
+    'route.operation_plan@TST-0004/cut',
+)
+
+
+
 class RequiredChecks(unittest.TestCase):
     def obligations(self, documents: dict[str, Any]) -> dict[str, Any]:
         return {o.id: o for o in mi.required_checks(mi.normalize_record(documents))}
@@ -603,6 +663,19 @@ class RequiredChecks(unittest.TestCase):
         self.assertNotIn("motion.play@IF-001", self.obligations(documents))
         functional["play"] = {"radial": fx.known(fx.quantity(0.02))}
         self.assertIn("motion.play@IF-001", self.obligations(documents), "declared play is checked whatever the function")
+
+    def test_a_record_without_a_load_bearing_interface_owes_exactly_the_earlier_obligations(self) -> None:
+        self.assertEqual(sorted(self.obligations(fx.tst_record())), list(TST_RECORD_OBLIGATIONS))
+
+    def test_a_loaded_structural_interface_adds_exactly_its_stop_reaction(self) -> None:
+        def with_interface(functions: list[dict[str, str]]) -> set[str]:
+            documents = fx.tst_record()
+            documents["interfaces.yaml"]["interfaces"].append(fx.interface("IF-011", "TST-0001", "TST-0002", "other", {
+                "critical": fx.known(True), "functions": functions, "loads": ["head_load"]}))
+            return set(self.obligations(documents))
+        loaded, unloaded = with_interface([{"function": "structural"}]), with_interface([{"function": "locating"}])
+        self.assertEqual(loaded - unloaded, {"engineering.stop_reaction@IF-011"})
+        self.assertEqual(unloaded - loaded, set())
 
     def test_a_critical_structural_interface_that_carries_a_load_needs_its_stop_reaction(self) -> None:
         """engineering.stop_reaction for a critical structural interface with use-case loads or a known contact
