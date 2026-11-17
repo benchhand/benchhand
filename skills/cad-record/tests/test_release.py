@@ -550,6 +550,18 @@ class Pruning(ReleaseCase):
         with self.assertRaisesRegex(layout.LayoutError, "manifest version 9"):
             prune.plan(hw, "A", "v3")
 
+    def test_a_missing_or_older_release_manifest_schema_refuses_the_plan_and_changes_nothing(self) -> None:
+        hw = self.released()
+        manifest_path = hw / "releases" / "B" / "manifest.json"
+        for label, document, named in (("missing schema", {"product_id": "lamp-arm", "rev": "B", "files": ["hw/bom.csv"]}, "None"),
+                                       ("schema 2", {"schema_version": 2, "product_id": "lamp-arm", "rev": "B"}, "2")):
+            with self.subTest(manifest=label):
+                write(manifest_path, json.dumps(document))
+                before = tree(hw)
+                with self.assertRaisesRegex(layout.LayoutError, f"manifest version {named}"):
+                    prune.plan(hw, "A", "v3")
+                self.assertEqual(tree(hw), before, "a refused plan changes no file")
+
 
 class Documents(ReleaseCase):
     def guide(self, hw: Path, *extra: str) -> None:
