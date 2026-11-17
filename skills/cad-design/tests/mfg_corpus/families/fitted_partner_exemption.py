@@ -1,7 +1,7 @@
 """assembly.access: the fitted-partner exemption covers the final engagement only.
 
-A pin pressed into a sleeve already seated in the housing touches the sleeve by design while it is
-engaged; the same contact earlier on the insertion path is a blocked path. Mutant: the sleeve carries a
+A pin pressed into a sleeve already seated in the housing touches the sleeve by design while the pin
+engages it. The same contact earlier on the insertion path is a blocked path. Mutant: the sleeve carries a
 gantry over the pin, which the pin meets before it reaches the sleeve. Twin: the same sleeve without the
 gantry, the pin still interfering with the sleeve bore over its final engagement. Both go through access.py.
 """

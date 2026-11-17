@@ -165,7 +165,7 @@ def separation_travel(measurer: Any, path: Travel) -> float:
 def engagement_end(overlaps: Mapping[float, float | None]) -> float:
     """Where the final engagement with a fitted partner ends: the first sampled position, going back from
     the installed pose (s = 0), at which the two do not interfere. `overlaps` maps each sampled s to the
-    shared volume; None is a sample that was not measured and does not end the engagement. Interference
+    shared volume. None marks a sample that was not measured. It does not end the engagement. Interference
     beyond that position is contact the engagement does not explain."""
     for s in sorted(overlaps):
         value = overlaps[s]
