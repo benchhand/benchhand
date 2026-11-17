@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 import unittest

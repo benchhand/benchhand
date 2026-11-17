@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from modload import result_payload  # noqa: E402
 
 
