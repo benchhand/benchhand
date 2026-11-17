@@ -32,6 +32,9 @@ figures, the lower bound and the pivot load bound (reaction plus the applied for
 
 With --version the packet is published to hw/checks/<V>/stop-reaction/ (bundle.checks): result.json
 (schemas/manufacturing-check-result.schema.json) and evidence/stop-reaction.json.
+An end within the effective contact tolerance counts as the stop, and the statics run on the closest opposite-facing
+parallel planar faces there. The tolerance is the larger of STOP_CONTACT_TOLERANCE_MM and the largest clearance of a
+fit the interface declares as `<size> <HOLE/SHAFT>`; the evidence records it, its source and the gap at each limit.
 Exit 0 = every obligation passes or is not applicable, 1 = a failure or an unknown, 2 = usage or input error.
 """
 
@@ -45,6 +48,7 @@ import math
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +70,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 SKILLS = Path(__file__).resolve().parents[2]
 pose = _load_module("cad_motion_pose", SKILLS / "cad-motion" / "scripts" / "pose.py")
+fits = _load_module("cad_fits_fits", SKILLS / "cad-fits" / "scripts" / "fits.py")
 check_packet = _load_module("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
 intent = _load_module("cad_record_manufacturing_intent", SKILLS / "cad-record" / "scripts" / "manufacturing_intent.py")
 LAYOUT = pose.LAYOUT
@@ -74,6 +79,10 @@ PRODUCER = "cad-analysis stop_reaction.py"
 SUBJECT = "stop-reaction"
 FAMILY = "engineering.stop_reaction"
 CONTACT_MM = 1e-4  # parts at or under this distance touch; planes this close are coincident
+# A joint limit whose parts are this close counts as the stop. A stop with a small gap in the model then gets a
+# reaction. The value is a tunable. Issue #165 moves it into the tool-settings schema. The effective tolerance
+# is the larger of it and the interface's declared fit clearance.
+STOP_CONTACT_TOLERANCE_MM = 0.2
 NORMAL_TOL = 1e-6  # |n1 . n2 + 1| under this: opposite-facing faces
 MIN_AREA_MM2 = 1e-6
 CURVE_SAMPLES = 64  # points per curved edge when its outline is read
@@ -231,19 +240,26 @@ def pivot_between(chain: Any, first: str, second: str) -> tuple[Pivot | None, st
     return Pivot(joint, who, second if who == first else first), ""
 
 
-def contact_faces(fixed: Any, moving: Any) -> list[tuple[Any, Vec]]:
-    """(overlap face, outward normal of the fixed part's face) for each pair of touching, opposite-facing planar faces."""
+def contact_faces(fixed: Any, moving: Any, tolerance: float) -> list[tuple[Any, Vec]]:
+    """(overlap face, outward normal of the fixed part's face) for the closest opposite-facing parallel planar faces
+    of the two parts, at most `tolerance` apart. The moving face moves onto the fixed face's plane first, so a
+    stop with a small gap in the model gives the same overlap as one that touches."""
     moving_planes = [(face, plane_of(face)) for face in faces(moving)]
-    found = []
+    found: list[tuple[float, Any, Vec]] = []
     for fixed_face in faces(fixed):
         fixed_plane = plane_of(fixed_face)
         if fixed_plane is None:
             continue
         for moving_face, moving_plane in moving_planes:
-            if (moving_plane is not None and abs(dot(fixed_plane[1], moving_plane[1]) + 1.0) <= NORMAL_TOL
-                    and abs(dot(sub(moving_plane[0], fixed_plane[0]), fixed_plane[1])) <= CONTACT_MM):
-                found += [(face, fixed_plane[1]) for face in overlap(fixed_face, moving_face)]
-    return found
+            if moving_plane is None or abs(dot(fixed_plane[1], moving_plane[1]) + 1.0) > NORMAL_TOL:
+                continue
+            offset = dot(sub(moving_plane[0], fixed_plane[0]), fixed_plane[1])
+            if abs(offset) > tolerance:
+                continue
+            carried = pose.placed(moving_face, pose.Rigid.translation(fixed_plane[1], -offset))
+            found += [(abs(offset), face, fixed_plane[1]) for face in overlap(fixed_face, carried)]
+    closest = min((offset for offset, _, _ in found), default=0.0)
+    return [(face, normal) for offset, face, normal in found if offset <= closest + CONTACT_MM]
 
 
 def patch_of(contact: Sequence[tuple[Any, Vec]], origin: Vec, axis: Vec, sign: float) -> statics.Patch | None:
@@ -301,6 +317,24 @@ def recorded_load_n(interface: Any) -> float | None:
     return float(quantity.to("N").bounds[1]) if quantity.dimension == "force" else None
 
 
+def contact_tolerance(interface: Any) -> tuple[float, str]:
+    """(the effective contact tolerance in mm, its source): the larger of STOP_CONTACT_TOLERANCE_MM and the largest
+    clearance of a fit the interface declares as `<size> <HOLE/SHAFT>` (ISO 286 through cad-fits). A declared fit
+    without a size, or outside the tables, declares no clearance."""
+    best, source = STOP_CONTACT_TOLERANCE_MM, "constant"
+    for entry in (interface.raw.get("limits") or {}).values():
+        text = str(entry.get("fit") or "").strip() if isinstance(entry, Mapping) else ""
+        size, _, designation = text.partition(" ")
+        try:
+            result = fits.evaluate(Decimal(size), designation.strip())
+        except (ArithmeticError, ValueError):
+            continue  # no size, a malformed designation or a size outside the tables (cad-fits FitError is a ValueError)
+        clearance = result.get("fit", {}).get("max_clearance_um", 0) / 1000.0
+        if clearance > best:
+            best, source = clearance, f"fit {text} clearance"
+    return best, source
+
+
 # --------------------------------------------------------------------------- one interface
 
 
@@ -328,16 +362,17 @@ def end_geometry(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, value
     return {"origin": origin, "axis": axis, "reach": reach, **shapes}
 
 
-def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: str) -> dict[str, Any]:
-    """The geometry at one joint limit and, when the parts touch there, the patch. At `min` the load pushes the
-    joint down and the stop resists with a positive moment about the axis; at `max` the reverse."""
+def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: str, tolerance: float) -> dict[str, Any]:
+    """The geometry at one joint limit and, when the parts are within `tolerance` of each other there, the patch.
+    At `min` the load pushes the joint down and the stop resists with a positive moment about the axis; at `max`
+    the reverse."""
     value = pivot.joint.min if label == "min" else pivot.joint.max
     geometry = end_geometry(chain, definitions, pivot, value)
     gap = separation(geometry["moving"], geometry["fixed"])
-    contact = gap <= CONTACT_MM
+    contact = gap <= tolerance
     patch = None
     if contact:
-        faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"])
+        faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)
         patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
     return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"]}
 
@@ -372,8 +407,10 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
     force, loads, why = applied_force(record, interface)
     if force is None:
         return unresolved(if_id, "unknown", f"{if_id}: {why}", pivot=pivot.joint.id)
-    states = [assess_end(chain, definitions, pivot, label) for label in ("min", "max")]
+    tolerance, source = contact_tolerance(interface)
+    states = [assess_end(chain, definitions, pivot, label, tolerance) for label in ("min", "max")]
     detail: dict[str, Any] = {"pivot": pivot.joint.id, "moving": chain.ref(pivot.moving), "fixed": chain.ref(pivot.fixed),
+                              "contact_tolerance": {"mm": tolerance, "source": source},
                               "loads": loads, "peak_force_n": force, "ends": {}}
     for state in states:
         detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
@@ -382,17 +419,27 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
     stops = [state for state in states if state["touching"]]
     if not stops:
         gaps = ", ".join(f"{state['label']} {state['gap']:.4g} mm" for state in states)
-        reason = f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id} (gaps: {gaps}): not a stop"
+        reason = (f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id} "
+                  f"(gaps: {gaps}; tolerance {tolerance:.4g} mm): not a stop")
         return Assessment(if_id, "not_applicable", [reason], {}, {"outcome": "not_applicable", "reason": reason, **detail})
-    recorded = recorded_load_n(interface)
+    flat = [state["label"] for state in stops if state["patch"] is None]
+    if flat:
+        reason = (f"{if_id}: at the {' and '.join(flat)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, "
+                  "but no parallel opposite-facing planar faces are that close, so no contact patch can be taken")
+        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+    return judge_stops(if_id, stops, force, recorded_load_n(interface), detail)
+
+
+def judge_stops(if_id: str, stops: Sequence[Mapping[str, Any]], force: float, recorded: float | None,
+                detail: dict[str, Any]) -> Assessment:
+    """The reaction at each stop against the recorded contact load, and the worst outcome."""
     detail["recorded_contact_load_n"] = recorded
     reactions: dict[str, statics.Reaction] = {}
     for state in stops:
-        patch = state["patch"] or statics.Patch(0.0, 0.0, 0.0, 0.0, 0.0)  # touching faces that are not planar: no arm
-        reactions[state["label"]] = statics.reaction(force, state["reach"], patch, recorded)
+        reactions[state["label"]] = statics.reaction(force, state["reach"], state["patch"], recorded)
         detail["ends"][state["label"]]["reaction"] = reaction_report(reactions[state["label"]])
-    states_seen = {r.outcome for r in reactions.values()}
-    outcome = "fail" if "fail" in states_seen else "unknown" if "unknown" in states_seen else "pass"
+    seen = {r.outcome for r in reactions.values()}
+    outcome = "fail" if "fail" in seen else "unknown" if "unknown" in seen else "pass"
     detail["outcome"] = outcome
     return Assessment(if_id, outcome, [r.message for r in reactions.values() if r.outcome != "pass"], reactions, detail)
 

@@ -4,7 +4,7 @@
 # ///
 """Write the latch stop test geometry as STEP AP242: an OCP copy of the small-mechanism latch lever.
 
-Usage: uv run --script stop_fixture.py OUT_DIR
+Usage: uv run --script stop_fixture.py OUT_DIR [LATCHED_GAP_MM]
 
 Every part is modelled in place (assembly zero, identity placement), millimetres. The pivot axis is the Y axis
 through the origin; the lever turns about -Y from 0 deg (latched, lying along +X) to 75 deg (open, pointing up):
@@ -15,6 +15,8 @@ through the origin; the lever turns about -Y from 0 deg (latched, lying along +X
 
 The latched stop is touched across arms 7..13 mm from the axis, the open stop across arms 0..7 mm, as in the
 latch lever whose hand-estimated stop reaction (240 N, mid-span) hid that the nearest edge carries 2400/7 N.
+
+LATCHED_GAP_MM (default 0) lowers the latched stop's top face by that much, so the lever at 0 deg stops short of it.
 
 OUT_DIR/parts/<PN>.step.
 """
@@ -61,23 +63,23 @@ def fused(*shapes):
     return BRepBuilderAPI_Copy(result).Shape()
 
 
-def shapes() -> dict[str, object]:
+def shapes(latched_gap: float = 0.0) -> dict[str, object]:
     base = box(-30, -14, -16, 30, 14, -8)
-    latched_stop = box(7, -4, -8, 13, 4, -3)  # top face at z -3: the lever's underside rests on it at 0 deg
+    latched_stop = box(7, -4, -8, 13, 4, -3 - latched_gap)  # top face at z -3: the lever's underside rests on it at 0 deg
     open_stop = turned(box(0, -4, 3, 7, 4, 9), OPEN_DEGREES)  # its face lies in the lever's top plane at 75 deg
     post = box(-12, -4, -8, -4, 4, 10)
     return {"TST-0301": fused(base, latched_stop, open_stop, post), "TST-0302": box(0, -4, -3, 80, 4, 3)}
 
 
-def main(out: Path) -> int:
+def main(out: Path, latched_gap: float = 0.0) -> int:
     (out / "parts").mkdir(parents=True, exist_ok=True)
-    for pn, shape in shapes().items():
+    for pn, shape in shapes(latched_gap).items():
         pose.write_part_step(out / "parts" / f"{pn}.step", pose.Part(pn, f"{pn} {TITLES[pn]}", shape))
     return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         print(__doc__, file=sys.stderr)
         sys.exit(2)
-    sys.exit(main(Path(sys.argv[1])))
+    sys.exit(main(Path(sys.argv[1]), float(sys.argv[2]) if len(sys.argv) == 3 else 0.0))

@@ -673,9 +673,10 @@ class RequiredChecks(unittest.TestCase):
             documents["interfaces.yaml"]["interfaces"].append(fx.interface("IF-011", "TST-0001", "TST-0002", "other", {
                 "critical": fx.known(True), "functions": functions, "loads": ["head_load"]}))
             return set(self.obligations(documents))
-        loaded, unloaded = with_interface([{"function": "structural"}]), with_interface([{"function": "locating"}])
-        self.assertEqual(loaded - unloaded, {"engineering.stop_reaction@IF-011"})
-        self.assertEqual(unloaded - loaded, set())
+        # Any critical interface owes its fit and stack checks, written out here so an error in the generator shows.
+        generic = set(TST_RECORD_OBLIGATIONS) | {"interface.fit@IF-011", "interface.stack@IF-011"}
+        self.assertEqual(with_interface([{"function": "locating"}]), generic)
+        self.assertEqual(with_interface([{"function": "structural"}]), generic | {"engineering.stop_reaction@IF-011"})
 
     def test_a_critical_structural_interface_that_carries_a_load_needs_its_stop_reaction(self) -> None:
         """engineering.stop_reaction for a critical structural interface with use-case loads or a known contact
