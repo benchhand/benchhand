@@ -805,9 +805,8 @@ def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]
     if not manifest.is_file():
         return  # check_flow reports a frozen version that is not built
     path = str(hw / "product.yaml")
-    packets, _ = evidence.collect_packets(hw, frozen["version"], hashlib.sha256(manifest.read_bytes()).hexdigest())
     try:
-        digest = evidence.acceptance_digest(evidence.acceptance_inventory(hw, record, packets))
+        _, digest = evidence.version_acceptance(hw, frozen["version"], record)
     except evidence.EvidenceError as error:
         findings.append(finding(path, f"flow/frozen/evidence_sha256: the acceptance inventory cannot be formed: {error}",
                                 code="record.evidence_anchor", canonical_location=None,

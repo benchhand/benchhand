@@ -322,6 +322,13 @@ def _exited(process: Supervised) -> bool:
         return True
 
 
+def exited(process: Supervised) -> bool:
+    """Whether the supervised command is over, without reaping its supervisor. Poll with this
+    rather than `poll()`, then call `terminate_group`, which kills what the command left in its
+    group while the unreaped supervisor still holds the group id."""
+    return _exited(process)
+
+
 def _signal_group(process: Supervised, sig: int) -> None:
     # Once the supervisor is reaped its id is free. While another process holds it, our group is
     # gone, since no new process gets an id that is still a group id.

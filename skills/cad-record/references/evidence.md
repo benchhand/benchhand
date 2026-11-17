@@ -30,6 +30,24 @@ The finding severity enum is defined above. Findings retain their own severity/o
 Producer packets remain immutable. `manufacturing/findings.yaml` contains dispositions tied to the exact producer bundle and manifest hash, status, reason, decision and any replacement evidence. Resolution requires newly applicable evidence; acceptance or decline does not convert FAIL/UNKNOWN to PASS. A waiver is scoped to subject, criterion, operating envelope, expiry or change, reason, consequence and approving authority; forbidden safety, regulatory and geometry failures cannot be waived. A permitted trial waiver remains explicitly `waived` and untested.
 `evidence.py check --hw hw --version vN` assesses expected obligations from the current record, sealed check packets and accepted evidence ledger. `digest` computes the acceptance inventory digest used by the freeze anchor. Results distinguish pass, fail, waived, not applicable, stale, planned and unknown; none can be promoted by a CSV status. The gate packet includes selection status and digest. `gate.selection` blocks unsupported or contradictory choices, stale confirmations and, at design freeze/release, missing material/process selection. An approved confirmation is checked against its decision (`gate.selection_approval`). `impact.py --hw hw --since-version vM --version vN` reports changed fingerprint domains, stale obligations/evidence, reopened decisions, the earliest affected stage, and whether the existing selection input digest changed; it never passes results forward automatically. The recheck stamp recomputes the obligation and selection gates from the staged record. Its installed hook includes the selection evaluator, so `--passed` cannot mask a changed or unresolved decision.
 
+`evidence.py run --hw hw --version vN --scope commit|full [--stage S]` runs the producers that the scope needs. Then it prints the packet that `check` prints for the same inputs.
+
+- The report follows `schemas/evidence-run.schema.json`.
+- The full scope needs `--stage`, the stage of the gate it checks. A provisional approval has already moved `flow.stage` on. Without `--stage` the run is a usage error with exit 2.
+- The commit scope uses `flow.stage` when `--stage` is absent.
+- The run refuses a version that is not built or fails its manifest, with exit 1. Build it again.
+
+The run works in this order:
+
+- It starts with `validate.py`.
+- It runs the producer steps that `MATRIX` marks for the scope.
+  - `commit` holds a batch's fast checks.
+  - `full` holds the full check after the provisional gate.
+- A step marked C runs only while an obligation that it covers is stale or open and due at the stage.
+- The commit steps run in parallel through `cad-flow/scripts/run.py`. The full scope runs its steps one after another.
+- The run reads the results in the fail-fast order. At the first blocking result it stops the producers that still run.
+- A producer that exits 0 without a JSON report gave no result.
+
 The freeze records `flow.frozen.evidence_sha256` from the evidence digest plus the approving decision. Release manifest v3 seals the acceptance inventory, evidence policy, material/process route and service scope/limits. Old v1/v2 releases remain inspectable in their original format; they are historical, not re-certified by the new policy.
 
 ## Freshness, impact and release claims

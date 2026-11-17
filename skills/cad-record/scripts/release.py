@@ -399,13 +399,12 @@ def check_acceptance(release: Release, frozen: Any) -> None:
     try:
         assessment, packets = evidence.build_assessment(hw, release.version,
                                                         today=datetime.fromisoformat(release.released_at[:10]).date())
-        inventory = evidence.acceptance_inventory(hw, assessment.record, packets)
+        inventory, digest = evidence.version_acceptance(hw, release.version, assessment.record, packets)
     except (evidence.EvidenceError, layout.LayoutError, OSError, ValueError) as error:
         release.refuse("hw/product.yaml", "acceptance", f"the acceptance inventory cannot be formed: {error}")
         return
     if assessment.record.version != intent.RECORD_VERSION:
         return  # validate.py reports record.migration_required, which refuses the release
-    digest = evidence.acceptance_digest(inventory)
     if digest != frozen["evidence_sha256"]:
         release.refuse("hw/product.yaml", "acceptance", f"flow.frozen.evidence_sha256 is not the acceptance digest as it "
                        f"stands ({digest}): the evidence changed after the freeze; freeze again or open a change")

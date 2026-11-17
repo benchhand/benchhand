@@ -6,7 +6,8 @@
 """Write or verify the CAD design recheck record for the staged index.
 
 A stamp records the staged hw/ tree hash, the stage and the evidence packet `evidence.py check` wrote
-for it (cad-record): its expected checks, each one's status and the digest of the record inputs it
+for it (cad-record), or the packet of an `evidence.py run` report (a run that stopped has none): its
+expected checks, each one's status and the digest of the record inputs it
 read. Only a record version 2 record stamps; a version 1 record refuses at or after the threshold
 until migrate.py migrates it. A packet that is not the assessment of the staged record, lacks an
 expected check or is partial never stamps; `--passed` stamps only a packet whose stage gate, recomputed
@@ -14,7 +15,8 @@ here from its statuses and from the staged record's selection report (cad-record
 the digest of the staged selection inputs), passes, so a stale, failed or unknown due check, or a
 recorded final choice the selection does not support, cannot be stamped as passed.
 `--verify` reads the staged index: the record inputs, the stamp and its packet, never the work tree
-beyond the layout audit. flow.recheck_from is the threshold and may only stay or move earlier than
+beyond the layout audit. It is the whole pre-commit check: a commit that stages no hw/ change passes.
+flow.recheck_from is the threshold and may only stay or move earlier than
 HEAD's: raising it would suppress the checks of the stages it skips.
 """
 
@@ -217,9 +219,16 @@ def tool_versions() -> dict[str, str]:
 
 def load_checks(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        checks = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise RuntimeError(f"cannot read checks JSON {path}: {error}") from error
+    if isinstance(checks, dict) and checks.get("kind") == evidence.RUN_KIND:  # an `evidence.py run` report
+        packet = checks.get("packet")
+        if not isinstance(packet, dict):
+            raise RuntimeError(f"the evidence run stopped at {checks.get('stopped_at')} ({checks.get('status')}): it has no "
+                               "evidence packet; fix the cause and run it again")
+        return packet
+    return checks
 
 
 def require_complete(checks: Any, path: Path) -> None:
@@ -293,6 +302,10 @@ def main() -> int:
         start = Path.cwd()
         root = project_root(start)
         if args.verify:
+            # What the pre-commit hook skipped: a commit that stages no hw/ change needs no stamp.
+            if not git("diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB", "--", "hw/", cwd=root).strip():
+                print(json.dumps({"passed": True, "required": False, "reason": "no staged hw/ change"}))
+                return 0
             try:
                 product_data = git("show", ":hw/product.yaml", cwd=root).decode("utf-8")
             except (RuntimeError, UnicodeError) as error:

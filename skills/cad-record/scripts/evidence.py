@@ -9,6 +9,8 @@ built on it; waivers; and the acceptance digest a freeze and a release anchor.
 
     uv run --script evidence.py check  --hw HW --version vN [--stage STAGE] [--out .cad-work/evidence.json]
     uv run --script evidence.py digest --hw HW --version vN
+    uv run --script evidence.py run    --hw HW --version vN --scope commit|full [--stage STAGE]   (--stage is required for full)
+                                       [--since-version vM] [--out .cad-work/evidence-run.json]
 
 Evidence levels are independent facets, never an ordinal badge: CAD-valid, geometrically
 manufacturable, process planned, simulation-supported and physically validated can each differ per
@@ -38,6 +40,19 @@ freeze or release with no material and process selection recorded blocks like an
 its evidence_sha256, which a record version 2 freeze records in product.yaml flow.frozen and a
 release seals: exit 0, or 2 when the inventory cannot be formed.
 
+`run` produces the evidence a scope needs and then the same packet `check` prints
+(schemas/evidence-run.schema.json). It runs validate.py in process, then the producer steps that
+MATRIX marks for the scope and that apply to the version and stage: `commit`, the fail-fast checks
+of a batch's new version, and `full`, the full check after the provisional gate. A step marked C runs
+only while an obligation it covers (FAMILY_PRODUCERS) is stale or open and due at the stage. fail_fast.py plans and runs the steps: in parallel through cad-flow run.py,
+read in the fail-fast order, stopping the producers still running at the first blocking result;
+the full scope runs them one after another. Exit 0 when every step passes (and, in the full scope,
+the packet's gate passes); 1 when a step blocks, the gate of a full run blocks, the record is
+record version 1 or the version is not built or fails its manifest (refused: build it again); 2 on a
+usage error, a stray run (its stop commands are listed) or a producer that gave no result (an exit
+status other than 0 and 1, or an exit 0 without a JSON report). `check` stays separate: it recomputes the
+packet without producers.
+
 The module itself is standard library only; load it by path as `cad_record_evidence` (dataclasses
 look it up in sys.modules). The CLI reads the record with PyYAML.
 """
@@ -53,6 +68,7 @@ import json
 import os
 import posixpath
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -81,6 +97,7 @@ impact = _load_module("cad_record_impact", SCRIPTS / "impact.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
 operations = _load_module("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
+SKILLS = SCRIPTS.parents[1]
 
 STAGES = mi.STAGES
 LEVELS = mi.EVIDENCE_LEVELS
@@ -1191,6 +1208,17 @@ def acceptance_digest(inventory: Mapping[str, str]) -> str:
     return _canonical_sha({"schema": INVENTORY_SCHEMA, "files": sorted([path, sha] for path, sha in inventory.items())})
 
 
+def version_acceptance(hw: Path, version: str, record: Any,
+                       packets: Sequence[ProducerPacket] | None = None) -> tuple[dict[str, str], str]:
+    """The acceptance inventory of built `version` for `record` and its evidence_sha256: what `digest`
+    prints, a freeze anchors, validate.py checks and a release seals. `packets` defaults to the
+    version's producer packets (collect_packets). EvidenceError as acceptance_inventory."""
+    if packets is None:
+        packets, _ = collect_packets(hw, version, _sha256(layout.version_dir(hw, version) / layout.MANIFEST))
+    inventory = acceptance_inventory(hw, record, packets)
+    return inventory, acceptance_digest(inventory)
+
+
 # --- the stamped packet ------------------------------------------------------------------------------------------
 
 _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved", "release.waiver_forbidden",
@@ -1239,6 +1267,274 @@ def packet_blocking(data: Mapping[str, Any], *, record: Any, stage: str, selecti
     found += [f"{item.get('code')}: {item.get('message')}" for item in ((data.get("gate") or {}).get("findings") or ())
               if isinstance(item, Mapping) and item.get("severity") == "error" and item.get("code") not in recomputed]
     return found
+
+
+# --- the evidence run --------------------------------------------------------------------------------------------
+
+# The producer x iteration matrix (issue #23, 02-process-design), narrowed to the steps `run` executes
+# and the scopes cad-flow calls: Cm the commit batch of vN (its fail-fast checks, cad-flow SKILL.md
+# and references/flow.md), Fl the full check after the provisional gate. Marks: R required. C only
+# while an obligation the producer covers is stale or open and due. - not in that scope. The commit
+# batch also renders and runs the default motion render, because the provisional gate cites them.
+COLUMNS = ("Cm", "Fl")
+SCOPE_COLUMN: Mapping[str, str] = {"commit": "Cm", "full": "Fl"}
+
+
+@dataclass(frozen=True)
+class MatrixRow:
+    label: str
+    cells: tuple[str, str]  # one mark per COLUMNS
+
+    def mark(self, column: str) -> str:
+        return self.cells[COLUMNS.index(column)]
+
+
+MATRIX: Mapping[str, MatrixRow] = {
+    "validate": MatrixRow("validate.py", ("R", "R")),
+    "form": MatrixRow("form_check.py at F1 (layout), F2 (parts), F3 (detail on)", ("C", "R")),
+    "static.changed": MatrixRow("cad-model check --changed-only", ("R", "-")),
+    "static.all": MatrixRow("cad-model check, every pair", ("-", "R")),
+    "sweep.smoke": MatrixRow("sweep.py --smoke --changed-only, once a joint moves", ("R", "-")),
+    "sweep.full": MatrixRow("sweep.py, every pose, once a joint moves", ("-", "R")),
+    "render": MatrixRow("render.py with its visibility check", ("R", "-")),
+    "motion.default": MatrixRow("motion.py render --case default, once a joint moves", ("R", "R")),
+}
+
+# The producers that show each obligation family, by family prefix (the longest matching prefix decides).
+FAMILY_PRODUCERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cad.", ("static.changed", "static.all")),
+    ("process.", ("form",)), ("purchase.", ("form",)), ("route.", ("form",)), ("optical.route", ("form",)),
+)
+RUN_KIND = "cad-evidence-run"
+RUN_SCHEMA_VERSION = 1
+RUN_PY = SKILLS / "cad-flow" / "scripts" / "run.py"
+_MOTION_STEPS = ("sweep.smoke", "sweep.full", "motion.default")
+# The smoke sweep publishes its own bundle (hw/motion/<V>/sweep-smoke): its recipe differs from the
+# full sweep's, which keeps sweep.py's default case, so neither run refuses the other's bundle.
+SMOKE_CASE = "sweep-smoke"
+
+
+def producers_of(family: str) -> tuple[str, ...]:
+    """The producers that show obligations of `family`. A family no producer shows gives none."""
+    best = max((prefix for prefix, _ in FAMILY_PRODUCERS if family.startswith(prefix)), key=len, default=None)
+    return dict(FAMILY_PRODUCERS)[best] if best is not None else ()
+
+
+def _due(obligation: Any, stage: str) -> bool:
+    return stage in ("design_freeze", "release") or STAGES.index(obligation.stage) <= STAGES.index(stage)
+
+
+def stale_producers(assessment: Assessment, stage: str) -> set[str]:
+    """The producers of every obligation due at `stage` that is not resolved (stale, failed, unknown or
+    not started). A physical validation does not count, since no producer can show it."""
+    found: set[str] = set()
+    for obligation in assessment.expected:
+        if obligation.level != PHYSICAL and _due(obligation, stage) \
+                and assessment.statuses[obligation.id].result not in RESOLVED:
+            found.update(producers_of(obligation.family))
+    return found
+
+
+def _moves(manifest: Mapping[str, Any]) -> bool:
+    """Whether a version has an independent movable joint (not fixed, not coupled). True when its
+    manifest records no joints, so the motion producers decide."""
+    joints = manifest.get("joints")
+    if not isinstance(joints, list):
+        return True
+    return any(isinstance(j, Mapping) and j.get("type") != "fixed" and j.get("nominal") is not None for j in joints)
+
+
+def _not_applicable(stage: str, manifest: Mapping[str, Any]) -> dict[str, str]:
+    skipped = {}
+    if STAGES.index(stage) < STAGES.index("layout"):
+        skipped["form"] = "the form check starts at layout"
+    if not _moves(manifest):
+        skipped.update(dict.fromkeys(_MOTION_STEPS, "the version has no independent movable joint"))
+    return skipped
+
+
+def _fidelity(stage: str) -> str:
+    index = STAGES.index(stage)
+    return "F1" if index <= STAGES.index("layout") else "F2" if index == STAGES.index("parts") else "F3"
+
+
+def producer_argv(hw: Path, version: str, stage: str, since: str | None,
+                  attach: Sequence[str] = ()) -> dict[str, list[str]]:
+    """The command of each producer step, through cad-flow run.py. The sweeps rebuild the assembly chain from
+    the snapshot and their own `--attach` arguments, so `attach` is the built manifest's attachments."""
+    def through(script: str, *args: str) -> list[str]:
+        return [sys.executable, str(RUN_PY), script, *args]
+
+    hw_arg, baseline = str(hw), (["--since-version", since] if since else [])
+    attached = [argument for spec in attach for argument in ("--attach", spec)]
+    return {
+        "form": through("cad-design/scripts/form_check.py", "--hw", hw_arg, "--version", version, "--fidelity", _fidelity(stage)),
+        "static.changed": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg, "--changed-only", *baseline),
+        "static.all": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg),
+        "sweep.smoke": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version, "--case", SMOKE_CASE,
+                               "--smoke", "--changed-only", *attached, *baseline),
+        "sweep.full": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version, *attached),
+        "render": through("cad-render/scripts/render.py", hw_arg, "--version", version),
+        "motion.default": through("cad-motion/scripts/motion.py", "render", "--hw", hw_arg, "--version", version, "--case",
+                                  "default", "--outputs", "glb,sheet"),
+    }
+
+
+def run_plan(hw: Path, version: str, scope: str, stage: str, assessment: Assessment, *,
+             since_version: str | None = None) -> Any:
+    """The plan of `scope` for built `version` at `stage`, from the version's assessment."""
+    hw = Path(hw).resolve()
+    _, folder, _ = layout.built_version(hw, version)
+    manifest = json.loads((folder / layout.MANIFEST).read_text(encoding="utf-8"))
+    column = {ident: row.mark(SCOPE_COLUMN[scope]) for ident, row in MATRIX.items()}
+    return _fail_fast().plan(scope, column, producer_argv(hw, version, stage, since_version, manifest.get("attach") or ()),
+                             not_applicable=_not_applicable(stage, manifest), stale=stale_producers(assessment, stage))
+
+
+class _Producer:
+    """A producer started under cad-flow process_lifecycle, its output in the run's scratch folder."""
+
+    def __init__(self, lifecycle: Any, process: Any, stdout: Path, project: Path) -> None:
+        self.lifecycle, self.process, self.stdout, self.project = lifecycle, process, stdout, project
+
+    def ended(self) -> bool:
+        return bool(self.lifecycle.exited(self.process))  # never reaps: terminate_group does, after the group
+
+    def stop(self) -> int:
+        return int(self.lifecycle.terminate_group(self.process))
+
+    def result(self) -> dict[str, Any]:
+        data = _producer_report(self.stdout)
+        return {"stdout": self.stdout.relative_to(self.project).as_posix(), "reported": isinstance(data, Mapping),
+                "status": data.get("status") if isinstance(data, Mapping) else None}
+
+
+def _emit() -> Any:
+    # Loaded only by `run`, like fail_fast: the copies that validate.py and the cad-recheck hook make hold no emit.py.
+    return _load_module("cad_record_emit", SCRIPTS / "emit.py")
+
+
+def _producer_report(stdout: Path) -> Any:
+    """The result a producer printed on `stdout`: its payload, read out of the tool-result envelope."""
+    try:
+        return _emit().unwrap(json.loads(stdout.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+
+
+def _lifecycle() -> Any:
+    return _load_module("cad_flow_process_lifecycle", SKILLS / "cad-flow" / "scripts" / "process_lifecycle.py")
+
+
+def _fail_fast() -> Any:
+    # Loaded only by `run`: validate.py and the cad-recheck hook load evidence.py from a copy that
+    # holds only the siblings they read.
+    return _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
+
+
+def _judge(project: Path, stage: str, expected: Sequence[Any]) -> Callable[[Any, int | None, Any], str]:
+    """A step's status from its exit status. A producer that exits 0 without one JSON object on its
+    stdout gave no result. form_check.py exits 1 on every open obligation it owns, due or not: its
+    step fails only on a fidelity failure, a failed outcome, an open obligation due at `stage` or a
+    report this cannot read."""
+    due = {obligation.id for obligation in expected if _due(obligation, stage)}
+    status_of = _fail_fast().status_of
+
+    def judge(step: Any, code: int | None, result: Any) -> str:
+        status = str(status_of(code))
+        if status == "pass" and not (isinstance(result, Mapping) and result.get("reported") is True):
+            return "no_result"
+        if step.id != "form" or status != "fail" or not isinstance(result, Mapping) or not result.get("stdout"):
+            return status
+        report = _producer_report(project / str(result["stdout"]))
+        manufacturing = report.get("manufacturing") if isinstance(report, Mapping) else None
+        if not isinstance(report, Mapping) or report.get("status") == "fail" or not isinstance(manufacturing, Mapping) \
+                or not isinstance(manufacturing.get("open"), list):
+            return status
+        blocking = [item for item in manufacturing["open"]
+                    if not isinstance(item, Mapping) or item.get("outcome") != "unknown" or item.get("obligation") in due]
+        return status if blocking else "pass"
+
+    return judge
+
+
+def _spawner(hw: Path, version: str, scope: str) -> Callable[[Any], _Producer]:
+    lifecycle, emit, project = _lifecycle(), _emit(), Path(hw).parent
+    folder = layout.scratch_path(hw, project / layout.SCRATCH / "evidence-run" / f"{version}-{scope}-{os.urandom(4).hex()}",
+                                 "the run folder")
+
+    def spawn(step: Any) -> _Producer:
+        folder.mkdir(parents=True, exist_ok=True)
+        stdout = folder / f"{step.id}.out"
+        with stdout.open("wb") as out, (folder / f"{step.id}.err").open("wb") as err:
+            process = lifecycle.spawn(step.argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, cwd=project,
+                                      env=emit.json_env())
+        return _Producer(lifecycle, process, stdout, project)
+
+    return spawn
+
+
+def _strays(hw: Path) -> list[dict[str, Any]]:
+    """Recorded runs of `hw` that ended and left processes behind, or that fail verification."""
+    lifecycle = _lifecycle()
+    try:
+        return [stray.to_json() for stray in lifecycle.strays(hw) if stray.state != "running"]
+    except lifecycle.Unsupported as error:
+        return [{"record": None, "state": "unverifiable", "reason": str(error), "stop": []}]
+
+
+def _validate_step(hw: Path) -> tuple[int, dict[str, Any]]:
+    validate = _validate()
+    blocking = validate.blocking(validate.validate_project(hw))
+    return (1 if blocking else 0), {"blocking": len(blocking), "findings": [dict(item) for item in blocking[:20]]}
+
+
+def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_version: str | None = None,
+        spawn: Callable[[Any], Any] | None = None, strays: Callable[[], Sequence[Mapping[str, Any]]] | None = None,
+        today: date | None = None) -> tuple[int, dict[str, Any]]:
+    """`evidence.py run`: (exit status, report). `spawn` and `strays` default to cad-flow
+    process_lifecycle. A ValueError is a usage error (an unknown scope or stage)."""
+    hw = Path(hw).resolve()
+    if scope not in SCOPE_COLUMN:
+        raise ValueError(f"unknown scope {scope!r}; one of {', '.join(SCOPE_COLUMN)}")
+    report: dict[str, Any] = {"kind": RUN_KIND, "schema_version": RUN_SCHEMA_VERSION, "status": "refused", "scope": scope,
+                              "stage": stage, "version": version, "version_manifest_sha256": None, "record_sha256": None,
+                              "steps": [], "stopped_at": None, "packet": None}
+    try:
+        label, folder, _ = layout.built_version(hw, version)
+    except layout.LayoutError as error:
+        return 1, {**report, "findings": [Finding("run.not_built", "hw/versions", f"{error}; the version is not built or is "
+                                                  "stale: build the version again (cad-model run)").as_dict()]}
+    _, record = impact.read_inputs(hw)
+    if scope == "full" and stage is None:
+        # A provisional approval moves flow.stage past the gate that this check belongs to.
+        raise ValueError("the full scope needs --stage, the stage of the gate it checks: flow.stage may be past it")
+    stage = stage or (impact.plain(record.product).get("flow") or {}).get("stage")
+    if not isinstance(stage, str) or stage not in STAGES:
+        raise ValueError(f"product.yaml flow.stage {stage!r} is not a stage; pass --stage")
+    report.update(stage=stage, version=label, version_manifest_sha256=_sha256(folder / layout.MANIFEST),
+                  record_sha256=record_digest(record_inputs(hw)))
+    if record.version != mi.RECORD_VERSION:
+        problem = mi.migration_problem(record.product)
+        message = problem.message if problem is not None else "the record is not record version 2"
+        action = f"; {problem.action}" if problem is not None and problem.action else ""
+        return 1, {**report, "findings": [Finding(mi.MIGRATION_REQUIRED, "hw/product.yaml", message + action).as_dict()]}
+    assessment, _ = build_assessment(hw, label, today)
+    work = run_plan(hw, label, scope, stage, assessment, since_version=since_version)
+    outcome = _fail_fast().execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),
+                                   strays=strays or (lambda: _strays(hw)), judge=_judge(hw.parent, stage, assessment.expected))
+    report.update(status=outcome.status, steps=[step.as_dict() for step in outcome.steps], stopped_at=outcome.stopped_at)
+    if outcome.strays:
+        report["strays"] = [dict(item) for item in outcome.strays]
+        report["stop_commands"] = [command for item in outcome.strays for command in item.get("stop") or ()]
+    if outcome.status != "pass":
+        return outcome.exit, report
+    assessment, _ = build_assessment(hw, label, today)
+    report["packet"] = assessment.packet(stage, record_digest(record_inputs(hw)))
+    if scope == "full" and not report["packet"]["gate"]["passed"]:
+        report["status"] = "fail"
+        return 1, report
+    return 0, report
 
 
 # --- CLI ---------------------------------------------------------------------------------------------------------
@@ -1315,13 +1611,30 @@ def main(argv: list[str] | None = None) -> int:
     digest = commands.add_parser("digest", help="print the acceptance inventory and evidence_sha256 of a built version")
     digest.add_argument("--hw", type=Path, required=True)
     digest.add_argument("--version", required=True)
+    runner = commands.add_parser("run", help="run the producer steps of a scope, then print the evidence packet")
+    runner.add_argument("--hw", type=Path, required=True)
+    runner.add_argument("--version", required=True)
+    runner.add_argument("--scope", required=True, choices=tuple(SCOPE_COLUMN))
+    runner.add_argument("--stage", choices=STAGES, help="the gate to apply: required for --scope full, and for commit it is "
+                        "product.yaml flow.stage when omitted")
+    runner.add_argument("--since-version", help="the baseline of the changed-only steps; their own default when omitted")
+    runner.add_argument("--out", type=Path, help="also write the run report here, under .cad-work/")
     args = parser.parse_args(argv)
     try:
         hw = args.hw.resolve()
+        if args.command == "run":
+            target = layout.scratch_path(hw, args.out, "--out") if args.out is not None else None
+            code, report = run(hw, args.version, args.scope, stage=args.stage, since_version=args.since_version)
+            text = json.dumps(report, indent=2, ensure_ascii=False)
+            if target is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text + "\n", encoding="utf-8")
+            print(text)
+            return code
         assessment, packets = build_assessment(hw, args.version)
         if args.command == "digest":
-            inventory = acceptance_inventory(hw, assessment.record, packets)
-            print(json.dumps({"version": assessment.version, "evidence_sha256": acceptance_digest(inventory),
+            inventory, evidence_sha256 = version_acceptance(hw, str(assessment.version), assessment.record, packets)
+            print(json.dumps({"version": assessment.version, "evidence_sha256": evidence_sha256,
                               "inventory": inventory, "status": "ok"}, indent=2))
             return 0
         flow = impact.plain(assessment.record.product).get("flow") or {}
