@@ -37,9 +37,16 @@ Producer packets remain immutable. `manufacturing/findings.yaml` contains dispos
 - The commit scope uses `flow.stage` when `--stage` is absent.
 - The run refuses a version that is not built or fails its manifest, with exit 1. Build it again.
 
-The run starts with `validate.py`. Then it runs the producer steps that `MATRIX` marks for the scope: `commit` for a batch's fast checks, `full` for the full check after the provisional gate. A step marked C runs only while an obligation that it covers is stale or open and due at the stage.
+The run works in this order:
 
-The commit steps run in parallel through `cad-flow/scripts/run.py`. The run reads their results in the fail-fast order and stops the producers that still run at the first blocking result. The full scope runs its steps one after another. A producer that exits 0 without a JSON report gave no result.
+- It starts with `validate.py`.
+- It runs the producer steps that `MATRIX` marks for the scope.
+  - `commit` holds a batch's fast checks.
+  - `full` holds the full check after the provisional gate.
+- A step marked C runs only while an obligation that it covers is stale or open and due at the stage.
+- The commit steps run in parallel through `cad-flow/scripts/run.py`. The full scope runs its steps one after another.
+- The run reads the results in the fail-fast order. At the first blocking result it stops the producers that still run.
+- A producer that exits 0 without a JSON report gave no result.
 
 The freeze records `flow.frozen.evidence_sha256` from the evidence digest plus the approving decision. Release manifest v3 seals the acceptance inventory, evidence policy, material/process route and service scope/limits. Old v1/v2 releases remain inspectable in their original format; they are historical, not re-certified by the new policy.
 
