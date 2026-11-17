@@ -37,9 +37,21 @@ class DesignReaction(unittest.TestCase):
         self.assertIn("FEA contact case", result.message)
         self.assertIn("design record", result.message)
 
+    def test_an_edge_on_the_axis_within_rounding_is_unbounded(self) -> None:
+        # Posing and the Boolean carry rounding of the order 1e-15 mm; an edge that close to the axis is on it.
+        result = reaction(30.0, 80.0, Patch.strip(1e-9, 7.0))
+        self.assertEqual((result.status, result.outcome), ("unbounded", "unknown"))
+
     def test_an_arm_past_the_axis_is_unbounded_too(self) -> None:
         result = reaction(30.0, 80.0, Patch.strip(-2.0, 5.0))
         self.assertEqual((result.status, result.outcome), ("unbounded", "unknown"))
+        self.assertAlmostEqual(result.rigid_lower_n, 480.0, places=9)  # 2400 / 5
+
+    def test_a_patch_wholly_behind_the_axis_has_no_lower_bound_either(self) -> None:
+        result = reaction(30.0, 80.0, Patch.strip(-5.0, -2.0))
+        self.assertEqual((result.status, result.outcome, result.rigid_lower_n), ("unbounded", "unknown", None))
+        self.assertIsNone(result.uniform_n)
+        self.assertIsNone(result.compliant_n)
 
     def test_an_unbounded_stop_stays_unknown_whatever_is_recorded(self) -> None:
         result = reaction(30.0, 80.0, Patch.strip(0.0, 7.0), recorded_n=900.0)
