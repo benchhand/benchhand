@@ -60,6 +60,9 @@ def option_values(command: str, *names: str) -> list[str]:
                 values.append(words[index + 1])
             elif name.startswith("--") and word.startswith(name + "="):
                 values.append(word.removeprefix(name + "="))
+            elif not name.startswith("--") and word.startswith(name) and len(word) > len(name):
+                # an attached short option: `-wpkg==1` or `-w=pkg==1`
+                values.append(word[len(name) :].removeprefix("="))
     return values
 
 
@@ -142,6 +145,9 @@ class InlinePinTests(unittest.TestCase):
         "short flag": "uv run -w pyyaml==6.0.3 python x",
         "continuation": "uv run --with \\\n  pyyaml==6.0.3 python x",
         "newline between": "uv run --with\npyyaml==6.0.3 python x",
+        "attached short": "uv run -wpyyaml==6.0.3 python x",
+        "attached short equals": "uv run -w=pyyaml==6.0.3 python x",
+        "attached short quoted": "uv run -w'pyyaml==6.0.3' python x",
         "specifier": "uv run --with 'pyyaml>=6' python x",
     }
 
