@@ -29,7 +29,8 @@ intents:
     answer: I select the variant you recommend. VARIANT gate approved.
   - id: intent-gate
     kind: gate
-    match: ['(?-i:\bINTENT\b)', 'approve\b.*\b(selection|route|material|process)', '\b(selection|route)\b.*\bapprov']
+    match: ['(?-i:\bINTENT\b)', 'approve\b.*\b(selection|route|material|process)', '\b(selection|route)\b.*\bapprov',
+            'approve\b.*\b(selected|chosen|recommended) (option|candidate|route)']
     answer: >-
       I approve the recommended material and process selection for every part, as assessed.
       INTENT gate approved.

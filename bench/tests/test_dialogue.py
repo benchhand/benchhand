@@ -327,6 +327,17 @@ class StageGuardTests(unittest.TestCase):
                                  can_stop=True, gates=self.CONCEPT)
         self.assertFalse(reply.stops)
 
+    def test_regression_the_recorded_intent_prompt_naming_the_selected_option_is_the_intent_gate(self) -> None:
+        # …T003143-ebc5 asked "Do you approve the printed PETG bracket and lever ... as the selected option, and the
+        # assumptions ASM-001 to ASM-008?" at flow.stage intent. No gate intent matched, only the material answer
+        # was sent, and the lead recorded DR-003 APPROVED from it.
+        reply = dialogue.respond(case_script("small-mechanism"),
+                                 recorded_text("events-gate-small-mechanism-intent-selected-option.jsonl"), "fixture",
+                                 can_stop=False, gates=dialogue.GateContext("intent", has_l1=False))
+        self.assertEqual([ask.intent for ask in reply.asks if ask.text.startswith("Do you approve")], ["intent-gate"])
+        self.assertTrue(reply.at_gate)
+        self.assertIn("INTENT gate approved", reply.message)
+
     def test_the_parts_gate_counts_only_once_an_l2_version_exists(self) -> None:
         # Synthetic: no recorded run has reached a PARTS gate yet. The provisional gate advances flow.stage past
         # parts before the human gate, so the binding is a version built at parts, as for the LAYOUT freeze.
