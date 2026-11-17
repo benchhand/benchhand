@@ -128,8 +128,10 @@ def _fit_pair(fit: dict[str, Any], assembly: Any, where: str) -> tuple[tuple[str
 
 
 def _fits(hw: Path, interfaces: list[Any], assembly: Any,
-          kind: str) -> Iterator[tuple[dict[str, Any], str, tuple[str, str], dict[str, Any] | None, str]]:
-    """(interface, designation, sorted occurrence pair, endpoints or None, source) of each `limits.<kind>` fit."""
+          kind: str) -> Iterator[tuple[dict[str, Any], str, tuple[str, str], dict[str, Any] | None, str,
+                                         float | None]]:
+    """(interface, designation, sorted occurrence pair, endpoints or None, source, engagement_length_mm
+    or None) of each `limits.<kind>` fit."""
     path = hw / "interfaces.yaml"
     for index, interface in enumerate(interfaces):
         if not isinstance(interface, dict):
@@ -143,27 +145,30 @@ def _fits(hw: Path, interfaces: list[Any], assembly: Any,
         if not isinstance(fit, dict) or not isinstance(fit.get("fit"), str):
             raise PolicyError(f"{where}: expected fit and two distinct part references")
         pair, endpoints = _fit_pair(fit, assembly, where)
-        yield interface, fit["fit"], pair, endpoints, source
+        yield interface, fit["fit"], pair, endpoints, source, fit.get("engagement_length_mm")
 
 
 def _fit_entry(interface: dict[str, Any], designation: str, pair: tuple[str, str],
-               endpoints: dict[str, Any] | None, source: str, **extra: Any) -> dict[str, Any]:
+               endpoints: dict[str, Any] | None, source: str, engagement_length_mm: float | None = None,
+               **extra: Any) -> dict[str, Any]:
     entry = {"pair": list(pair), "fit": designation, **extra, "interface": interface.get("id"), "source": source}
+    if engagement_length_mm is not None:
+        entry["engagement_length_mm"] = engagement_length_mm
     if endpoints is not None:
         entry["endpoints"] = endpoints
     return entry
 
 
 def declared_press_fits(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
-    """Press-fit declarations as {pair, fit, classification, interface, source[, endpoints]}.
+    """Press-fit declarations as {pair, fit, classification, interface, source[, endpoints, engagement_length_mm]}.
 
     `pair` is the sorted occurrence ids. A fit names its parts as a `pair` or as feature-specific
     `hole` and `shaft` endpoints; an endpoint declaration is reported with its `endpoints`.
     """
     path = hw / "interfaces.yaml"
-    return [_fit_entry(interface, designation, pair, endpoints, source,
+    return [_fit_entry(interface, designation, pair, endpoints, source, engagement,
                        classification=_classify(designation, f"{path}:{source}"))
-            for interface, designation, pair, endpoints, source in _fits(hw, interfaces, assembly, "press_fit")]
+            for interface, designation, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "press_fit")]
 
 
 def _classify(designation: str, where: str) -> str:
@@ -188,12 +193,13 @@ def declared_locating_fits(hw: Path, interfaces: list[Any], assembly: Any) -> li
     else `unclassified`: a dowel or vendor limit locates without a fit class this table covers."""
     path = hw / "interfaces.yaml"
     declared = []
-    for interface, designation, pair, endpoints, source in _fits(hw, interfaces, assembly, "locating_fit"):
+    for interface, designation, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "locating_fit"):
         try:
             classified = _classify(designation, f"{path}:{source}")
         except PolicyError:
             classified = "unclassified"
-        declared.append(_fit_entry(interface, designation, pair, endpoints, source, classification=classified))
+        declared.append(_fit_entry(interface, designation, pair, endpoints, source, engagement,
+                                   classification=classified))
     return declared
 
 
@@ -206,7 +212,7 @@ def declared_running_fits(hw: Path, interfaces: list[Any], assembly: Any) -> lis
 
 def declared_heat_sets(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
     """Heat-set inserts, `limits.heat_set: [{pair: [host, insert], hole_d, insert, source}]`, as
-    {pair, host, insert, hole_d, interface, source} with `pair` the sorted occurrence ids and `host`
+    {pair, host, insert, hole_d, interface, source[, engagement_length_mm]} with `pair` the sorted occurrence ids and `host`
     the host's occurrence id."""
     path = hw / "interfaces.yaml"
     declared = []
@@ -229,7 +235,9 @@ def declared_heat_sets(hw: Path, interfaces: list[Any], assembly: Any) -> list[d
             where = f"{path}:{source}"
             declared.append({"pair": list(_pair(pair, assembly, where)), "host": assembly.attachable(pair[0], f"{where}: "),
                              "insert": entry["insert"], "hole_d": hole_d, "interface": interface.get("id"),
-                             "source": source})
+                             "source": source,
+                             **({"engagement_length_mm": entry["engagement_length_mm"]}
+                                if entry.get("engagement_length_mm") is not None else {})})
     return declared
 
 
