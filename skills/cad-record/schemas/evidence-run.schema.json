@@ -9,7 +9,7 @@
     "kind": {"const": "cad-evidence-run"},
     "schema_version": {"const": 1},
     "status": {"description": "pass: every step passed (and, in the full scope, the packet's gate); fail: a step or the full scope's gate blocked; no_result: a producer gave no result or a stray run was found; refused: the version is not built or the record is record version 1", "enum": ["pass", "fail", "no_result", "refused"]},
-    "scope": {"enum": ["inner", "commit", "provisional", "full"]},
+    "scope": {"enum": ["commit", "full"]},
     "stage": {"description": "the gate the packet applies; null only when the run was refused before reading it", "type": ["string", "null"]},
     "version": {"type": "string"},
     "version_manifest_sha256": {"$ref": "#/$defs/sha256_or_null"},
@@ -30,7 +30,7 @@
         "id": {"enum": ["validate", "form", "static.changed", "static.all", "sweep.smoke", "sweep.full", "render", "motion.default"]},
         "argv": {"description": "the producer command; null for the in-process validator", "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
         "exit": {"description": "the exit status; null for a step that did not run", "type": ["integer", "null"]},
-        "status": {"description": "carried is reserved for a hash-proven full-sweep carry-forward", "enum": ["pass", "fail", "no_result", "skipped", "stopped", "carried"]},
+        "status": {"enum": ["pass", "fail", "no_result", "skipped", "stopped"]},
         "result": {"description": "what the step reported: the validator's blocking findings, a producer's stdout file and status, why a step was skipped or could not start", "type": ["object", "null"]},
         "seconds": {"type": ["number", "null"], "minimum": 0}
       }

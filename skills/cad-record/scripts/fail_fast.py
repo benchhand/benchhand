@@ -35,12 +35,12 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-SCOPES = ("inner", "commit", "provisional", "full")
+SCOPES = ("commit", "full")
 # The fail-fast read order: the record validator, the form check, static interference, the smoke
 # or full sweep, renders, the default motion render.
 STEP_ORDER = ("validate", "form", "static.changed", "static.all", "sweep.smoke", "sweep.full", "render", "motion.default")
 RUNS = frozenset({"R", "C"})  # matrix marks that put a step in a run
-STATUSES = ("pass", "fail", "no_result", "skipped", "stopped", "carried")  # carried: reserved for a carried sweep
+STATUSES = ("pass", "fail", "no_result", "skipped", "stopped")
 BLOCKING = frozenset({"fail", "no_result"})
 EXIT = {"pass": 0, "fail": 1, "no_result": 2}
 POLL_SECONDS = 0.05

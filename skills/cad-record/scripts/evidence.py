@@ -9,7 +9,7 @@ built on it; waivers; and the acceptance digest a freeze and a release anchor.
 
     uv run --script evidence.py check  --hw HW --version vN [--stage STAGE] [--out .cad-work/evidence.json]
     uv run --script evidence.py digest --hw HW --version vN
-    uv run --script evidence.py run    --hw HW --version vN --scope inner|commit|provisional|full [--stage STAGE]
+    uv run --script evidence.py run    --hw HW --version vN --scope commit|full [--stage STAGE]
                                        [--since-version vM] [--out .cad-work/evidence-run.json]
 
 Evidence levels are independent facets, never an ordinal badge: CAD-valid, geometrically
@@ -42,14 +42,15 @@ release seals: exit 0, or 2 when the inventory cannot be formed.
 
 `run` produces the evidence a scope needs and then the same packet `check` prints
 (schemas/evidence-run.schema.json). It runs validate.py in process, then the producer steps that
-MATRIX marks for the scope (inner, commit, provisional, full) and that apply to the version and
-stage. A step marked C runs only while an obligation it covers (FAMILY_PRODUCERS) is stale or open
-and due at the stage. fail_fast.py plans and runs the steps: in parallel through cad-flow run.py,
+MATRIX marks for the scope and that apply to the version and stage: `commit`, the fail-fast checks
+of a batch's new version, and `full`, the full check after the provisional gate. A step marked C runs
+only while an obligation it covers (FAMILY_PRODUCERS) is stale or open and due at the stage. fail_fast.py plans and runs the steps: in parallel through cad-flow run.py,
 read in the fail-fast order, stopping the producers still running at the first blocking result;
 the full scope runs them one after another. Exit 0 when every step passes (and, in the full scope,
 the packet's gate passes); 1 when a step blocks, the gate of a full run blocks, the record is
-record version 1 or the version is not built (refused); 2 on a usage error, a stray run (its stop
-commands are listed) or a producer that gave no result. `check` stays separate: it recomputes the
+record version 1 or the version is not built or fails its manifest (refused: build it again); 2 on a
+usage error, a stray run (its stop commands are listed) or a producer that gave no result (an exit
+status other than 0 and 1, or an exit 0 without a JSON report). `check` stays separate: it recomputes the
 packet without producers.
 
 The module itself is standard library only; load it by path as `cad_record_evidence` (dataclasses
@@ -1207,6 +1208,17 @@ def acceptance_digest(inventory: Mapping[str, str]) -> str:
     return _canonical_sha({"schema": INVENTORY_SCHEMA, "files": sorted([path, sha] for path, sha in inventory.items())})
 
 
+def version_acceptance(hw: Path, version: str, record: Any,
+                       packets: Sequence[ProducerPacket] | None = None) -> tuple[dict[str, str], str]:
+    """The acceptance inventory of built `version` for `record` and its evidence_sha256: what `digest`
+    prints, a freeze anchors, validate.py checks and a release seals. `packets` defaults to the
+    version's producer packets (collect_packets). EvidenceError as acceptance_inventory."""
+    if packets is None:
+        packets, _ = collect_packets(hw, version, _sha256(layout.version_dir(hw, version) / layout.MANIFEST))
+    inventory = acceptance_inventory(hw, record, packets)
+    return inventory, acceptance_digest(inventory)
+
+
 # --- the stamped packet ------------------------------------------------------------------------------------------
 
 _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved", "release.waiver_forbidden",
@@ -1259,61 +1271,39 @@ def packet_blocking(data: Mapping[str, Any], *, record: Any, stage: str, selecti
 
 # --- the evidence run --------------------------------------------------------------------------------------------
 
-# The producer x iteration matrix (issue #23, 02-process-design). Columns: In the designer's inner
-# loop on scratch, Cm a batch commit of vN, Pv the provisional (fast) scope, Fl the approval's full
-# scope, Fz the freeze, Rl the release. Marks: R required; C only while an obligation the producer
-# covers is stale or open and due; O optional; reads (it reads what an earlier scope produced); -
-# skipped. `run` executes the fail_fast.STEP_ORDER rows of the In, Cm, Pv and Fl columns. The other
-# rows and columns record the rest of the process for the gate rules.
-COLUMNS = ("In", "Cm", "Pv", "Fl", "Fz", "Rl")
-SCOPE_COLUMN: Mapping[str, str] = {"inner": "In", "commit": "Cm", "provisional": "Pv", "full": "Fl"}
+# The producer x iteration matrix (issue #23, 02-process-design), narrowed to the steps `run` executes
+# and the scopes cad-flow calls: Cm the commit batch of vN (its fail-fast checks, cad-flow SKILL.md
+# and references/flow.md), Fl the full check after the provisional gate. Marks: R required; C only
+# while an obligation the producer covers is stale or open and due; - not in that scope. The commit
+# batch also renders and runs the default motion render, because the provisional gate cites them.
+COLUMNS = ("Cm", "Fl")
+SCOPE_COLUMN: Mapping[str, str] = {"commit": "Cm", "full": "Fl"}
 
 
 @dataclass(frozen=True)
 class MatrixRow:
     label: str
-    cells: tuple[str, str, str, str, str, str]  # one mark per COLUMNS
-    note: str = ""
+    cells: tuple[str, str]  # one mark per COLUMNS
 
     def mark(self, column: str) -> str:
         return self.cells[COLUMNS.index(column)]
 
 
 MATRIX: Mapping[str, MatrixRow] = {
-    "validate": MatrixRow("validate.py", ("R", "R", "R", "R", "R", "R")),
-    "build": MatrixRow("cad-model run", ("R", "R", "-", "-", "-", "-"), "from layout; never part of a run"),
-    "static.changed": MatrixRow("cad-model check --changed-only", ("R", "R", "reads", "-", "-", "-")),
-    "static.all": MatrixRow("cad-model check, every pair", ("-", "-", "-", "R", "-", "-")),
-    "form": MatrixRow("form_check.py at F1 (layout), F2 (parts), F3 (detail on)", ("R", "C", "reads", "R", "-", "-"),
-                      "inner: the unit's PNs; commit: changed PNs; full: every due obligation"),
-    "sweep.smoke": MatrixRow("sweep.py --smoke --changed-only", ("C", "R", "reads", "-", "-", "-"),
-                             "inner: when a moving pair changed; commit: once a joint moves"),
-    "sweep.full": MatrixRow("sweep.py, every pose", ("-", "-", "-", "R", "R", "-"),
-                            "full: at layout and analysis; at parts and detail a hash-proven carry-forward, else R; "
-                            "freeze: R or carried"),
-    "motion.default": MatrixRow("motion.py render --case default", ("-", "-", "R", "R", "-", "-")),
-    "render": MatrixRow("render.py, 4 views", ("O", "-", "R", "-", "-", "-"), "inner: when visibility-bound"),
-    "drawings.part": MatrixRow("part drawings", ("R", "C", "-", "R", "C", "-"),
-                               "inner: completeness of the unit's own PNs at detail; commit: from detail; full: at detail"),
-    "drawings.assembly": MatrixRow("assembly drawing", ("-", "-", "-", "R", "C", "-"), "full: at detail"),
-    "bom": MatrixRow("bom.py", ("-", "R", "R", "R", "R", "R"), "commit: from layout"),
-    "stackup": MatrixRow("stackup.py", ("R", "R", "R", "R", "R", "-"), "inner: at detail; commit: from detail"),
-    "fea": MatrixRow("FEA case", ("O", "-", "-", "R", "C", "-"),
-                     "inner: the analyst's coarse-mesh smoke run; full: at analysis, C at reconcile"),
-    "selection": MatrixRow("sourcing and selection.py", ("-", "C", "-", "R", "-", "-"), "full: at intent and parts"),
-    "evidence": MatrixRow("evidence.py check", ("R", "-", "R", "R", "R", "R"),
-                          "inner: scratch scope; provisional: --stage; release: inside release.py"),
-    "stamp": MatrixRow("cad-recheck stamp", ("-", "R", "-", "R", "R", "-"), "commit: at git commit"),
-    "release": MatrixRow("build_guide.py and release.py", ("-", "-", "-", "-", "O", "R"), "freeze: a preview"),
+    "validate": MatrixRow("validate.py", ("R", "R")),
+    "form": MatrixRow("form_check.py at F1 (layout), F2 (parts), F3 (detail on)", ("C", "R")),
+    "static.changed": MatrixRow("cad-model check --changed-only", ("R", "-")),
+    "static.all": MatrixRow("cad-model check, every pair", ("-", "R")),
+    "sweep.smoke": MatrixRow("sweep.py --smoke --changed-only, once a joint moves", ("R", "-")),
+    "sweep.full": MatrixRow("sweep.py, every pose, once a joint moves", ("-", "R")),
+    "render": MatrixRow("render.py with its visibility check", ("R", "-")),
+    "motion.default": MatrixRow("motion.py render --case default, once a joint moves", ("R", "R")),
 }
 
-# The producers that show each obligation family, by family prefix (the longest matching prefix
-# decides): a MATRIX row, or access and play (cad-motion access.py, play.py), which no scope runs.
+# The producers that show each obligation family, by family prefix (the longest matching prefix decides).
 FAMILY_PRODUCERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("cad.", ("static.changed", "static.all")),
     ("process.", ("form",)), ("purchase.", ("form",)), ("route.", ("form",)), ("optical.route", ("form",)),
-    ("assembly.access", ("access",)), ("assembly.order", ("access",)), ("motion.play", ("play",)),
-    ("interface.stack", ("stackup",)), ("engineering.", ("fea",)),
 )
 RUN_KIND = "cad-evidence-run"
 RUN_SCHEMA_VERSION = 1
@@ -1354,21 +1344,6 @@ def _moves(manifest: Mapping[str, Any]) -> bool:
     return any(isinstance(j, Mapping) and j.get("type") != "fixed" and j.get("nominal") is not None for j in joints)
 
 
-def _moving_inputs_changed(hw: Path, manifest: Mapping[str, Any], snapshot: Path, since: str | None) -> bool:
-    """Whether a part's geometry or interfaces, or a joint, changed since built version `since`; True
-    without `since`, since nothing proves them unchanged."""
-    if since is None:
-        return True
-    _, before_folder, before_snapshot = layout.built_version(hw, since)
-    before_manifest = json.loads((before_folder / layout.MANIFEST).read_text(encoding="utf-8"))
-    if before_manifest.get("joints") != manifest.get("joints"):
-        return True
-    changed = impact.changed_domains(
-        impact.subject_fingerprints(impact.read_record(before_snapshot, ledgers_from=hw), impact.version_geometry(before_manifest)),
-        impact.subject_fingerprints(impact.read_record(snapshot, ledgers_from=hw), impact.version_geometry(manifest)))
-    return any({"geometry", "interface"} & set(domains) for domains in changed.values())
-
-
 def _not_applicable(stage: str, manifest: Mapping[str, Any]) -> dict[str, str]:
     skipped = {}
     if STAGES.index(stage) < STAGES.index("layout"):
@@ -1406,17 +1381,11 @@ def run_plan(hw: Path, version: str, scope: str, stage: str, assessment: Assessm
              since_version: str | None = None) -> Any:
     """The fail_fast.Plan of `scope` for built `version` at `stage`, given the version's assessment."""
     hw = Path(hw).resolve()
-    _, folder, snapshot = layout.built_version(hw, version)
+    _, folder, _ = layout.built_version(hw, version)
     manifest = json.loads((folder / layout.MANIFEST).read_text(encoding="utf-8"))
-    column = {ident: row.mark(SCOPE_COLUMN[scope]) for ident, row in MATRIX.items()} if scope in SCOPE_COLUMN else {}
-    stale = stale_producers(assessment, stage)
-    if column.get("sweep.smoke") == "C" and _moving_inputs_changed(hw, manifest, snapshot, since_version):
-        stale.add("sweep.smoke")
-    # TODO(2b, issue #23 04-full-sweep): the hash-proven full-sweep carry-forward plugs in here. At the
-    # parts and detail approvals and at the freeze, a carry that passes proof checks 1-5 turns sweep.full
-    # into a `carried` step recording carried_from and the proof hashes; anything unproved runs the sweep.
+    column = {ident: row.mark(SCOPE_COLUMN[scope]) for ident, row in MATRIX.items()}
     return _fail_fast().plan(scope, column, producer_argv(hw, version, stage, since_version),
-                             not_applicable=_not_applicable(stage, manifest), stale=stale)
+                             not_applicable=_not_applicable(stage, manifest), stale=stale_producers(assessment, stage))
 
 
 class _Producer:
@@ -1436,7 +1405,7 @@ class _Producer:
             data = json.loads(self.stdout.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = None
-        return {"stdout": self.stdout.relative_to(self.project).as_posix(),
+        return {"stdout": self.stdout.relative_to(self.project).as_posix(), "reported": isinstance(data, Mapping),
                 "status": data.get("status") if isinstance(data, Mapping) else None}
 
 
@@ -1451,14 +1420,17 @@ def _fail_fast() -> Any:
 
 
 def _judge(project: Path, stage: str, expected: Sequence[Any]) -> Callable[[Any, int | None, Any], str]:
-    """A step's status from its exit status, except for the form check. form_check.py exits 1 on
-    every open obligation it owns, due or not. Its step fails only on a fidelity failure, a failed
-    outcome, an open obligation due at `stage` or a report this cannot read."""
+    """A step's status from its exit status. A producer that exits 0 without one JSON object on its
+    stdout gave no result. form_check.py exits 1 on every open obligation it owns, due or not: its
+    step fails only on a fidelity failure, a failed outcome, an open obligation due at `stage` or a
+    report this cannot read."""
     due = {obligation.id for obligation in expected if _due(obligation, stage)}
     status_of = _fail_fast().status_of
 
     def judge(step: Any, code: int | None, result: Any) -> str:
         status = str(status_of(code))
+        if status == "pass" and not (isinstance(result, Mapping) and result.get("reported") is True):
+            return "no_result"
         if step.id != "form" or status != "fail" or not isinstance(result, Mapping) or not result.get("stdout"):
             return status
         try:
@@ -1520,8 +1492,8 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
     try:
         label, folder, _ = layout.built_version(hw, version)
     except layout.LayoutError as error:
-        return 1, {**report, "findings": [Finding("run.not_built", "hw/versions",
-                                                  f"{error}; build the version first (cad-model run)").as_dict()]}
+        return 1, {**report, "findings": [Finding("run.not_built", "hw/versions", f"{error}; the version is not built or is "
+                                                  "stale: build the version again (cad-model run)").as_dict()]}
     _, record = impact.read_inputs(hw)
     stage = stage or (impact.plain(record.product).get("flow") or {}).get("stage")
     if not isinstance(stage, str) or stage not in STAGES:
@@ -1646,8 +1618,8 @@ def main(argv: list[str] | None = None) -> int:
             return code
         assessment, packets = build_assessment(hw, args.version)
         if args.command == "digest":
-            inventory = acceptance_inventory(hw, assessment.record, packets)
-            print(json.dumps({"version": assessment.version, "evidence_sha256": acceptance_digest(inventory),
+            inventory, evidence_sha256 = version_acceptance(hw, str(assessment.version), assessment.record, packets)
+            print(json.dumps({"version": assessment.version, "evidence_sha256": evidence_sha256,
                               "inventory": inventory, "status": "ok"}, indent=2))
             return 0
         flow = impact.plain(assessment.record.product).get("flow") or {}

@@ -14,10 +14,13 @@ from __future__ import annotations
 import copy
 import io
 import json
+import shutil
+import socket
+import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -36,6 +39,7 @@ from modload import load_module as load  # noqa: E402
 acceptance = load("cad_record_acceptance_fixtures", HERE / "fixtures" / "acceptance.py")
 fx, mi, evidence, impact = acceptance.fx, acceptance.mi, acceptance.evidence, acceptance.impact
 check_packet = load("cad_record_check_packet", HERE.parent / "scripts" / "check_packet.py")
+fail_fast = load("cad_record_fail_fast", HERE.parent / "scripts" / "fail_fast.py")
 TODAY = date(2026, 6, 1)
 V1 = "a" * 64
 APPROVED = frozenset({"DR-001", "DR-002", "DR-003"})
@@ -725,7 +729,7 @@ class SelectionGate(unittest.TestCase):
 
 
 class Producer:
-    """A fake producer step that has passed."""
+    """A fake producer step that passed and reported a JSON result."""
 
     def ended(self) -> bool:
         return True
@@ -734,11 +738,20 @@ class Producer:
         return 0
 
     def result(self) -> dict[str, Any]:
-        return {"status": "pass"}
+        return {"status": "pass", "reported": True}
 
 
-class EvidenceRun(unittest.TestCase):
-    """`evidence.py run` on the TST record built as v1 (no independent movable joint), its producers faked."""
+def launcher(path: Path, body: str) -> Path:
+    """A stand-in for cad-flow run.py: `body` runs with sys.argv[1] the producer script it was asked for."""
+    path.write_text("import json, sys\n" + body, encoding="utf-8")
+    return path
+
+
+PASSING = "print(json.dumps({'status': 'pass'}))\n"
+
+
+class BuiltRecord(unittest.TestCase):
+    """The TST record built as v1, with no independent movable joint."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-evidence-run-test-")
@@ -768,9 +781,19 @@ class EvidenceRun(unittest.TestCase):
     def pass_every_producer_obligation(self) -> None:
         acceptance.publish_packet(self.hw, "v1", acceptance.producer_packet(impact.read_record(self.hw), "v1"))
 
+
+class EvidenceRun(BuiltRecord):
+    """`evidence.py run` with its producers faked."""
+
+    def test_every_matrix_row_is_a_step_some_scope_runs(self) -> None:
+        self.assertEqual(set(evidence.MATRIX), set(fail_fast.STEP_ORDER))
+        for ident, row in evidence.MATRIX.items():
+            with self.subTest(ident):
+                self.assertTrue({"R", "C"} & set(row.cells), f"{ident} runs in no scope")
+
     def test_the_packet_of_a_run_is_the_packet_check_prints_for_the_same_inputs(self) -> None:
         self.pass_every_producer_obligation()
-        code, report = self.run_scope("provisional", "parts")
+        code, report = self.run_scope("commit", "parts")
         out = io.StringIO()
         with redirect_stdout(out):
             evidence.main(["check", "--hw", str(self.hw), "--version", "v1", "--stage", "parts"])
@@ -788,10 +811,10 @@ class EvidenceRun(unittest.TestCase):
             materials.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
         cases = {  # the TST record's form-check obligations are due from parts
-            "not yet due": ("layout", lambda: None, ["static.changed"]),
-            "due and unknown": ("parts", lambda: None, ["form", "static.changed"]),
-            "due and passed": ("parts", self.pass_every_producer_obligation, ["static.changed"]),
-            "passed, then a material changed": ("parts", material_changed, ["form", "static.changed"]),
+            "not yet due": ("layout", lambda: None, ["static.changed", "render"]),
+            "due and unknown": ("parts", lambda: None, ["form", "static.changed", "render"]),
+            "due and passed": ("parts", self.pass_every_producer_obligation, ["static.changed", "render"]),
+            "passed, then a material changed": ("parts", material_changed, ["form", "static.changed", "render"]),
         }
         for label, (stage, change, spawned) in cases.items():
             with self.subTest(label):
@@ -800,7 +823,8 @@ class EvidenceRun(unittest.TestCase):
                 self.spawned = []
                 code, report = self.run_scope("commit", stage)
                 self.assertEqual((code, self.spawned), (0, spawned))
-                self.assertEqual([s["status"] for s in report["steps"] if s["id"] == "sweep.smoke"], ["skipped"])
+                self.assertEqual({s["id"]: s["status"] for s in report["steps"] if s["id"].startswith(("sweep", "motion"))},
+                                 {"sweep.smoke": "skipped", "motion.default": "skipped"})
 
     def test_a_flow_edit_stales_no_producer_packet(self) -> None:
         self.pass_every_producer_obligation()
@@ -813,43 +837,16 @@ class EvidenceRun(unittest.TestCase):
         _, after = self.run_scope("commit", "parts")
         self.assertNotEqual(before["record_sha256"], after["record_sha256"], "flow is a record input")
         self.assertEqual(after["packet"]["statuses"], before["packet"]["statuses"])
-        self.assertEqual(self.spawned, ["static.changed"], "the form check is not due again")
+        self.assertNotIn("form", self.spawned, "the form check is not due again")
 
-    def test_a_version_that_is_not_built_is_refused_and_runs_nothing(self) -> None:
+    def test_a_version_that_is_not_built_or_fails_its_manifest_is_refused_as_stale_and_runs_nothing(self) -> None:
         code, report = evidence.run(self.hw, "v2", "commit", stage="parts", spawn=self.spawn, strays=list)
         self.assertEqual((code, report["status"], report["steps"], report["packet"], self.spawned), (1, "refused", [], None, []))
         self.assertEqual([f["code"] for f in report["findings"]], ["run.not_built"])
-
-    def test_by_default_each_producer_runs_through_run_py_with_its_output_in_scratch(self) -> None:
-        launcher = self.hw.parent / "run.py"
-        launcher.write_text("import json, sys\nprint(json.dumps({'status': 'fail', 'argv': sys.argv[1:]}))\nsys.exit(1)\n",
-                            encoding="utf-8")
-        with mock.patch.object(evidence, "RUN_PY", launcher):
-            code, report = evidence.run(self.hw, "v1", "commit", stage="layout")
-        self.assertEqual((code, report["status"], report["stopped_at"], report["packet"]), (1, "fail", "static.changed", None))
-        step = next(item for item in report["steps"] if item["id"] == "static.changed")
-        self.assertEqual((step["id"], step["exit"], step["argv"][1:3]), ("static.changed", 1, [str(launcher), "cad-model/scripts/cad_model.py"]))
-        self.assertEqual(step["result"]["status"], "fail")
-        output = self.hw.parent / step["result"]["stdout"]
-        self.assertEqual(output.parent.parent, self.hw.parent / ".cad-work" / "evidence-run")
-        self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["argv"][0], "cad-model/scripts/cad_model.py")
-
-    def test_a_form_check_open_only_on_obligations_not_yet_due_does_not_block(self) -> None:
-        parts = next(o.id for o in mi.required_checks(impact.read_record(self.hw))
-                     if o.family.startswith("process.") and o.stage == "parts")
-        launcher = self.hw.parent / "run.py"  # form_check.py exits 1 on any open obligation it owns
-        launcher.write_text(
-            "import json, sys\n"
-            "if sys.argv[1] != 'cad-design/scripts/form_check.py':\n"
-            "    print(json.dumps({'status': 'pass'})); sys.exit(0)\n"
-            f"print(json.dumps({{'status': 'pass', 'manufacturing': {{'status': 'unknown', "
-            f"'open': [{{'obligation': {parts!r}, 'outcome': 'unknown'}}]}}}}))\n"
-            "sys.exit(1)\n", encoding="utf-8")
-        for stage, status, code in (("layout", "pass", 0), ("parts", "fail", 1)):
-            with self.subTest(stage), mock.patch.object(evidence, "RUN_PY", launcher):
-                exit_status, report = evidence.run(self.hw, "v1", "inner", stage=stage, strays=list)
-                form = next(item for item in report["steps"] if item["id"] == "form")
-                self.assertEqual((form["exit"], form["status"], exit_status), (1, status, code))
+        (self.hw / "versions" / "v1" / "record" / "product.yaml").write_text("edited\n", encoding="utf-8")
+        code, report = self.run_scope("commit", "parts")
+        self.assertEqual((code, report["status"], self.spawned), (1, "refused", []))
+        self.assertIn("stale: build the version again", report["findings"][0]["message"])
 
     def test_a_version_1_record_is_refused_and_runs_nothing(self) -> None:
         product = self.hw / "product.yaml"
@@ -880,6 +877,88 @@ class EvidenceRun(unittest.TestCase):
             _, report = self.run_scope(scope, "layout")
             cases[ident] = case(next(step["argv"] for step in report["steps"] if step["id"] == ident))
         self.assertNotEqual(cases["sweep.smoke"], cases["sweep.full"])
+
+
+class EvidenceRunProducers(BuiltRecord):
+    """`evidence.py run` starting real processes through a stand-in for cad-flow run.py."""
+
+    def run_with(self, body: str, scope: str, stage: str) -> tuple[int, dict[str, Any]]:
+        with mock.patch.object(evidence, "RUN_PY", launcher(self.hw.parent / "run.py", body)):
+            return evidence.run(self.hw, "v1", scope, stage=stage, strays=list)
+
+    def test_each_producer_runs_through_run_py_with_its_output_in_scratch(self) -> None:
+        code, report = self.run_with("print(json.dumps({'status': 'fail', 'argv': sys.argv[1:]}))\nsys.exit(1)\n",
+                                     "commit", "layout")
+        self.assertEqual((code, report["status"], report["stopped_at"], report["packet"]), (1, "fail", "static.changed", None))
+        step = next(item for item in report["steps"] if item["id"] == "static.changed")
+        self.assertEqual((step["exit"], step["argv"][1:3]), (1, [str(self.hw.parent / "run.py"), "cad-model/scripts/cad_model.py"]))
+        self.assertEqual(step["result"]["status"], "fail")
+        output = self.hw.parent / step["result"]["stdout"]
+        self.assertEqual(output.parent.parent, self.hw.parent / ".cad-work" / "evidence-run")
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["argv"][0], "cad-model/scripts/cad_model.py")
+
+    def test_a_producer_that_exits_0_without_a_json_report_gives_no_result(self) -> None:
+        for label, body in (("empty", ""), ("not json", "print('done')\n"), ("not an object", "print('[1]')\n")):
+            with self.subTest(label):
+                code, report = self.run_with(body, "commit", "layout")
+                step = next(item for item in report["steps"] if item["id"] == "static.changed")
+                self.assertEqual((step["exit"], step["status"], code, report["status"]), (0, "no_result", 2, "no_result"))
+
+    def test_a_form_check_open_only_on_obligations_not_yet_due_does_not_block(self) -> None:
+        parts = next(o.id for o in mi.required_checks(impact.read_record(self.hw))
+                     if o.family.startswith("process.") and o.stage == "parts")
+        body = ("if sys.argv[1] != 'cad-design/scripts/form_check.py':\n    print(json.dumps({'status': 'pass'})); sys.exit(0)\n"
+                f"print(json.dumps({{'status': 'pass', 'manufacturing': {{'status': 'unknown', "
+                f"'open': [{{'obligation': {parts!r}, 'outcome': 'unknown'}}]}}}}))\nsys.exit(1)\n")  # form_check.py exits 1
+        for stage, status, stopped in (("layout", "pass", None), ("parts", "fail", "form")):
+            with self.subTest(stage):
+                _, report = self.run_with(body, "full", stage)
+                form = next(item for item in report["steps"] if item["id"] == "form")
+                self.assertEqual((form["exit"], form["status"], report["stopped_at"]), (1, status, stopped))
+
+
+class EvidenceRunCli(BuiltRecord):
+    """`evidence.py run` through its command line."""
+
+    def main(self, *args: str) -> tuple[int, Any]:
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch.object(evidence, "RUN_PY", launcher(self.hw.parent / "run.py", PASSING)):
+            code = evidence.main(["run", "--hw", str(self.hw), "--version", "v1", *args])
+        return code, json.loads(out.getvalue())
+
+    def test_run_prints_its_report_writes_it_under_cad_work_and_exits_with_its_status(self) -> None:
+        target = self.hw.parent / ".cad-work" / "runs" / "commit.json"
+        code, report = self.main("--scope", "commit", "--stage", "layout", "--out", str(target))
+        self.assertEqual((code, report["kind"], report["status"], report["scope"]), (0, "cad-evidence-run", "pass", "commit"))
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), report)
+
+    def test_an_out_path_outside_cad_work_is_a_usage_error_before_any_producer_starts(self) -> None:
+        code, report = self.main("--scope", "commit", "--stage", "layout", "--out", str(self.hw / "run.json"))
+        self.assertEqual((code, report["status"]), (2, "error"))
+        self.assertIn("--out must be under", report["message"])
+        self.assertFalse((self.hw.parent / ".cad-work" / "evidence-run").exists())
+
+    def test_an_unknown_scope_is_a_usage_error(self) -> None:
+        for scope in ("inner", "provisional"):
+            with self.subTest(scope), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                evidence.main(["run", "--hw", str(self.hw), "--version", "v1", "--scope", scope])
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_a_stray_run_ends_the_run_with_no_result_and_its_stop_command(self) -> None:
+        sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+        self.addCleanup(lambda: (sleeper.kill(), sleeper.wait()))
+        ended = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True, check=True)
+        lifecycle = evidence._lifecycle()
+        record = lifecycle.runs_dir(self.hw) / "orphan.json"
+        record.parent.mkdir(parents=True)
+        record.write_text(json.dumps({"schema": 1, "kind": "sweep", "run_id": "orphan", "host": socket.gethostname(),
+                                      "pid": int(ended.stdout), "identity": "ended", "pgid": None, "argv": [], "started": "",
+                                      "groups": [{"pgid": sleeper.pid, "identity": lifecycle.identity(sleeper.pid)}]}),
+                          encoding="utf-8")
+        code, report = self.main("--scope", "commit", "--stage", "layout")
+        self.assertEqual((code, report["status"], report["stop_commands"]), (2, "no_result", [f"kill -TERM -- -{sleeper.pid}"]))
+        self.assertEqual({s["status"] for s in report["steps"] if s["argv"] is not None} - {"skipped"}, {"stopped"})
+        self.assertIsNone(sleeper.poll(), "the run signals no stray")
 
 
 if __name__ == "__main__":

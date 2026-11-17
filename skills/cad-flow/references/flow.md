@@ -54,7 +54,7 @@ Lay out every clearance at its required minimum plus the margin: the interface's
 
 ## Fail-fast check order
 
-Check each version a commit batch builds cheapest first. Steps 1-4 are the fast checks; step 5 is the full check. Start each fast check once its input exists and run independent ones in parallel: `validate.py` reads only the record, so it runs beside the build; the form check and steps 2-4 need the built version and run in parallel once it exists. Read the results in step order. A failure stops the batch: stop the fast checks still running by their process groups, fix the cause, and build the next version. Never start step 5 on a version with a failed fast check. Run each command through `"$CAD_SKILLS/cad-flow/scripts/run.py"` as `cad-flow` shows.
+Check each version a commit batch builds cheapest first. Steps 1-4 are the fast checks; step 5 is the full check. `evidence.py run --hw hw --version vN --scope commit` runs steps 1-4 and `--scope full` runs step 5. Each one runs `validate.py` in process, then the checks: the commit ones in parallel and the full ones one after another. It reads their results in step order and stops the checks still running at the first failure. Fix the cause and build the next version. Never start step 5 on a version with a failed fast check.
 
 1. Build the changed parts: `cad-model run hw --label vN`. Run the record validator `validate.py <project-dir>`, which enforces migration, recorded selection and evidence gates. From L2, run the form check on the built version; legacy `--parts-dir` diagnostics do not establish route manufacturability. Record-v2 process-dispatched checks and `cad-motion` access/play producers publish packets for their own obligations. Missing handlers, coverage, capability or required packets are UNKNOWN, not PASS. See the skill-specific manufacturing references for commands and findings.
 2. Static interference on the changed pairs: `cad-model check vN --hw hw --changed-only [--since-version vM]`. The baseline defaults to the previous built version; without one, every pair is selected.
@@ -66,9 +66,7 @@ A changed-only check or a smoke sweep is fast-check evidence only. Its result re
 
 ## Checks by iteration
 
-Each producer runs at the iteration below and not earlier. "Only when stale" means `impact.py` marks the evidence family stale or open, and due at this stage. Unaffected parts keep their evidence. Every command runs by hand today.
-
-<!-- TODO(stage-machine): `evidence.py run --scope inner|commit|provisional|full` will choose these steps from the obligations; until it exists, run the commands the owning skills document. -->
+Each producer runs at the iteration below and not earlier. "Only when stale" means `impact.py` marks the evidence family stale or open, and due at this stage. Unaffected parts keep their evidence. `evidence.py run --scope commit` runs the commit checks below that its matrix holds: `validate.py`, the form check, static `--changed-only`, the smoke sweep, the renders and the default motion render. `--scope full` runs the full gate's `validate.py`, form check, static check over every pair, full sweep and motion render. Every other command runs by hand.
 
 **Inner loop.** A designer iterates in a scratch workspace on the unit's own PNs.
 - Always run:
