@@ -97,8 +97,8 @@ class VersionManifestSchema(unittest.TestCase):
 
 
 class OccurrenceInputSchema(unittest.TestCase):
-    """The occurrence inputs (part-map.json and manifest.json) are read as schema 2 only, through the readers
-    that consume them: cad-render's loader and the shared `built_occurrences`."""
+    """cad-render's loader and the shared `built_occurrences` accept schema 2 occurrence inputs
+    (part-map.json and manifest.json) and refuse every other schema."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -945,7 +945,7 @@ class VisibilityChecks(unittest.TestCase):
         self.assertEqual(render.visibility_checks(path, self.by_pn, self.records), ([], None))
 
     def test_a_version_that_names_no_record_version_2_is_refused_not_checked_against_the_live_file(self) -> None:
-        requirements(self.hw, FRONT)  # today's text must not stand in for a version that has no snapshot
+        requirements(self.hw, FRONT)  # the live hw/requirements.yaml must not stand in for a version with no snapshot
         for label, record_version in (("no record_version", None), ("record_version 1", 1)):
             with self.subTest(manifest=label):
                 self.version.manifest.pop("record_version", None)
