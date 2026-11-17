@@ -1244,18 +1244,16 @@ def _add_shape(tool: Any, shape: Any) -> Any:
     from OCP.BRepGProp import BRepGProp
     from OCP.GProp import GProp_GProps
     from OCP.TDF import TDF_Label
-    from OCP.TopLoc import TopLoc_Location
     from OCP.XCAFDoc import XCAFDoc_Area, XCAFDoc_Centroid, XCAFDoc_Volume
 
     label = tool.AddShape(shape, False)
-    # A located shape becomes an instance of a prototype label. The writer reads the properties off the prototype,
-    # which holds the definition in its own frame.
+    # A located shape becomes an instance of a prototype label. The writer reads the properties off the prototype.
+    # The values describe the geometry as written, placement included.
     prototype = TDF_Label()
     target = prototype if tool.GetReferredShape_s(label, prototype) else label
-    own = shape.Located(TopLoc_Location())
     volume, area = GProp_GProps(), GProp_GProps()
-    BRepGProp.VolumeProperties_s(own, volume)
-    BRepGProp.SurfaceProperties_s(own, area)
+    BRepGProp.VolumeProperties_s(shape, volume)
+    BRepGProp.SurfaceProperties_s(shape, area)
     XCAFDoc_Volume.Set_s(target, volume.Mass())
     XCAFDoc_Area.Set_s(target, area.Mass())
     XCAFDoc_Centroid.Set_s(target, volume.CentreOfMass())

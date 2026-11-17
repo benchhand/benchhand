@@ -14,6 +14,7 @@ PROBE = HERE / "fixtures" / "step_header_probe.py"
 
 VALIDATION = re.compile(r"PROPERTY_DEFINITION\('geometric validation property',\s*'([a-z ]+)'")
 KINDS = ["centroid", "surface area", "volume"]
+CENTRE = re.compile(r"'centre point',\s*\(([^)]*)\)")
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to write STEP through OCP")
@@ -42,6 +43,10 @@ class StepValidationTests(unittest.TestCase):
         # a shape that carries a placement becomes an instance of its definition
         text = self.write("located.step", "located")
         self.assertEqual(sorted(VALIDATION.findall(text)), KINDS)
+        # the centroid describes the geometry as written: the 10 x 20 x 30 box moved 50 along x
+        centre = CENTRE.search(text)
+        assert centre is not None
+        self.assertEqual([round(float(v), 6) for v in centre.group(1).split(",")], [55.0, 10.0, 15.0])
 
     def test_assembly_step_validates_the_one_definition_and_keeps_its_structure(self) -> None:
         text = self.write("assembly.step", "assembly")
