@@ -1800,6 +1800,9 @@ Source: `/properties/legend`
 Constraints not expressed by the type:
 
 - additionalProperties: false
+- `kind`: propertyNames: {"$ref":"#/$defs/kind"}
+- `mutability`: propertyNames: {"$ref":"#/$defs/mutability"}
+- `role`: propertyNames: {"$ref":"#/$defs/role"}
 
 ### LayoutManufacturing
 

@@ -2523,6 +2523,11 @@ class LayoutLegend(TypedDict):
 
     Not expressible as types (see the schema):
     - additionalProperties: false
+
+    Field notes:
+    - kind: propertyNames: {"$ref":"#/$defs/kind"}
+    - mutability: propertyNames: {"$ref":"#/$defs/mutability"}
+    - role: propertyNames: {"$ref":"#/$defs/role"}
     """
     kind: Required[LayoutGlossary]
     mutability: Required[LayoutGlossary]
