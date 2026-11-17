@@ -197,11 +197,11 @@ def screen_words(command: click.Command, ctx: click.Context, args: Sequence[str]
             break
         if word in helps:
             return [*screened, word]
-        if not option_like(word):
+        name, equals, value = word.partition("=")
+        param = options.get(name) if word.startswith("-") else None
+        if param is None and not option_like(word):
             positionals.append(word)
             continue
-        name, equals, value = word.partition("=")
-        param = options.get(name)
         if param is None:
             unknown = unknown or name
         elif param.is_flag:
