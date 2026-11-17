@@ -26,6 +26,8 @@ import sys
 import tempfile
 import time
 import unittest
+import xml.etree.ElementTree as ET
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
@@ -2378,6 +2380,53 @@ class CadQueryLooseComponentTests(LooseComponentChecks, unittest.TestCase):
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class Build123dLooseComponentTests(LooseComponentChecks, unittest.TestCase):
     kernel = "build123d"
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
+class ManufacturingColorTests(unittest.TestCase):
+    """A record version 2 part (CadQuery only) whose intent.color reaches part.3mf: v1 has no color, v2 sets
+    #FF8000 and nothing else. The color remakes the manufacturing outputs and never the B-rep."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        mp = projects()
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.hw = hw = mp.loose_project(Path(cls.tmp.name) / "hw", "cadquery", [])
+        cls.runs = {"v1": cli("run", str(hw), "--label", "v1")}
+        mp.rewrite_part(hw, color="#FF8000")
+        cls.runs["v2"] = cli("run", str(hw), "--label", "v2")
+        cls.checked = cli("check", "v2", "--hw", str(hw))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def model(self, label: str) -> str:
+        path = self.hw / "versions" / label / "manufacturing" / "TST-0001" / "part.3mf"
+        with zipfile.ZipFile(path) as archive:
+            return archive.read("3D/3dmodel.model").decode("utf-8")
+
+    def test_the_part_color_is_a_basematerials_display_color_in_part_3mf(self) -> None:
+        for label in ("v1", "v2"):
+            self.assertEqual(self.runs[label][0].returncode, 0, label + self.runs[label][0].stderr[-3000:])
+        self.assertNotIn("basematerials", self.model("v1"))
+        bases = [base.attrib for base in ET.fromstring(self.model("v2")).iter("{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}base")]
+        self.assertEqual([base["displaycolor"] for base in bases], ["#FF8000FF"])
+
+    def test_the_export_3mf_obligation_passes_for_the_colored_part(self) -> None:
+        proc, checked, _ = self.checked
+        self.assertEqual(proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-2000:])
+        packet = json.loads((self.hw / "checks" / "v2" / "cad" / "result.json").read_text(encoding="utf-8"))
+        self.assertIn(("export.3mf@TST-0001", "pass"), [(o["obligation"], o["outcome"]) for o in packet["outcomes"]])
+
+    def test_changing_only_the_color_changes_the_outputs_recipe_and_remakes_the_export(self) -> None:
+        manifests = {label: json.loads((self.hw / "versions" / label / "manifest.json").read_text(encoding="utf-8"))
+                     for label in ("v1", "v2")}
+        self.assertEqual(self.runs["v2"][1]["cache"], {"parts": {"built": 0, "reused": 1},
+                                                       "manufacturing": {"built": 1, "reused": 0}})
+        self.assertEqual([manifest["manufacturing"]["TST-0001"]["color"] for manifest in manifests.values()],
+                         [None, "#FF8000"])
+        self.assertNotEqual(self.model("v1"), self.model("v2"))
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")

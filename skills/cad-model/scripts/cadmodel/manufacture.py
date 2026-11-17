@@ -234,10 +234,8 @@ def sha256(path: Path) -> str:
 
 
 def _color(plan: Plan) -> str | None:
-    """The part's sRGB `#RRGGBB` (PartIntent.color), or None. STUB(feat/fdm-color PartIntent.color): until
-    that branch lands PartIntent has no `color`, so every part reads as uncoloured."""
-    color = getattr(plan.part.intent, "color", None) if plan.part is not None else None
-    return color if isinstance(color, str) else None
+    """The part's sRGB `#RRGGBB` (PartIntent.color, in either hex case), or None when it names none."""
+    return plan.part.intent.color if plan.part is not None else None
 
 
 def outputs_recipe(entry: Mapping[str, Any], state: Any, features: Any, identity: Any) -> dict[str, Any]:

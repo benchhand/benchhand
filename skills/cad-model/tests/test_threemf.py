@@ -132,7 +132,7 @@ class ColourTests(unittest.TestCase):
 
 
 def plan(color: str | None = None, material: str = "PETG") -> manufacture.Plan:
-    """A plan with the fields `facts` reads. `color` stands in for package B's PartIntent.color."""
+    """A plan with the fields `facts` reads. `color` is the part's PartIntent.color."""
     policy = types.SimpleNamespace(relationship="same", state="installed", reason=None, decision=None,
                                    volume_rel_tolerance=0.0, volume_abs_tolerance_mm3=0.0, linear_deflection_mm=0.1,
                                    angular_deflection_rad=0.1, volume_tolerance_mm3=lambda volume: 0.0,
