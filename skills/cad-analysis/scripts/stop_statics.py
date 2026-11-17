@@ -68,19 +68,21 @@ def reaction(force_n: float, load_arm_mm: float, patch: Patch, recorded_n: float
     moment = force_n * load_arm_mm
     uniform = moment * patch.area / patch.first if patch.first > 0 else None
     compliant = moment * patch.first / patch.second if patch.first > 0 and patch.second > 0 else None
-    informational = dict(moment_n_mm=moment, uniform_n=uniform, compliant_n=compliant)
+    lower = moment / patch.max_arm if patch.max_arm > 0 else None
+
+    def result(status: str, outcome: str, severity: str, design: float | None, message: str) -> Reaction:
+        pin_load = design + force_n if design is not None else None
+        return Reaction(status, outcome, severity, moment, design, lower, uniform, compliant, pin_load, message)
+
     if patch.min_arm <= ON_AXIS_MM:
-        message = (f"the contact reaches the pivot axis (smallest arm {patch.min_arm:.4g} mm), so a rigid stop has no "
-                   "bounded reaction: model the contact in an FEA contact case and approve it in a design record")
-        lower = moment / patch.max_arm if patch.max_arm > 0 else None
-        return Reaction(UNBOUNDED, "unknown", "critical", design_n=None, rigid_lower_n=lower, pin_load_n=None,
-                        message=message, **informational)
+        return result(UNBOUNDED, "unknown", "critical", None,
+                      f"the contact reaches the pivot axis (smallest arm {patch.min_arm:.4g} mm), so a rigid stop has no "
+                      "bounded reaction: model the contact in an FEA contact case and approve it in a design record")
     design = moment / patch.min_arm
-    common = dict(design_n=design, rigid_lower_n=moment / patch.max_arm, pin_load_n=design + force_n, **informational)
     if recorded_n is not None and recorded_n < design * (1.0 - RECORDED_TOLERANCE):
-        message = (f"the recorded contact load {recorded_n:.4g} N is below the design reaction {design:.4g} N "
-                   f"(M {moment:.4g} N*mm over the smallest arm {patch.min_arm:.4g} mm)")
-        return Reaction(UNDERSTATED, "fail", "major", message=message, **common)
-    message = (f"design reaction {design:.4g} N (M {moment:.4g} N*mm over the smallest arm {patch.min_arm:.4g} mm); "
-               f"the pivot carries {design + force_n:.4g} N")
-    return Reaction(BOUNDED, "pass", "info", message=message, **common)
+        return result(UNDERSTATED, "fail", "major", design,
+                      f"the recorded contact load {recorded_n:.4g} N is below the design reaction {design:.4g} N "
+                      f"(M {moment:.4g} N*mm over the smallest arm {patch.min_arm:.4g} mm)")
+    return result(BOUNDED, "pass", "info", design,
+                  f"design reaction {design:.4g} N (M {moment:.4g} N*mm over the smallest arm {patch.min_arm:.4g} mm); "
+                  f"the pivot carries {design + force_n:.4g} N")
