@@ -486,6 +486,13 @@ class QualificationBypasses(SourcedFEACase):
                 self.build(documents(direction=direction))
                 self.assert_unproven(self.solve(self.loads_case(([2], [0, 0, -50]))), loads=True)
 
+    def test_a_malformed_vector_direction_keeps_the_verdict_unknown(self) -> None:
+        for direction in ((0, 0), (0, 0, 0), (0, 0, "down"), (0, 0, -1, 0)):
+            with self.subTest(direction=direction):
+                self.solved.clear()
+                self.build(documents(direction=direction))
+                self.assert_unproven(self.solve(self.loads_case(([2], [0, 0, -50]))), loads=True)
+
     def test_text_forms_of_a_service_direction_are_read_as_vectors(self) -> None:
         for direction in ("0 0 -1", "[0, 0, -1]", "(0,0,-2)", "-Z", "-z"):
             with self.subTest(direction=direction):

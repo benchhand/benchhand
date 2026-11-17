@@ -543,6 +543,9 @@ class _Assessor:
         for item in (use_case.get("loads") if isinstance(use_case, Mapping) else None) or ():
             if isinstance(item, Mapping) and item.get("id") == ref:
                 fact = item.get("direction")
+                if isinstance(fact, list):   # the form cad-record #64 requires: a bare [x, y, z]
+                    return _parse_direction(" ".join(str(part) for part in fact)) if len(fact) == 3 and all(
+                        isinstance(part, (int, float)) and not isinstance(part, bool) for part in fact) else None
                 if isinstance(fact, Mapping) and fact.get("status") == "known" and isinstance(fact.get("value"), str):
                     return _parse_direction(fact["value"])
         return None
