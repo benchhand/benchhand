@@ -33,6 +33,8 @@ Vec = tuple[float, float, float]
 Rot = tuple[Vec, Vec, Vec]
 EPS_MM = 5e-3           # float32 coordinates and the exporter's own rounding, on top of the deflections
 REFERENCE_FACTOR = 0.5  # the STEP reference is tessellated this much finer than the exporter's deflection
+REACH_MARGIN = 2.0      # the reach is this many times the two deflections' sum: on lamp-arm the worst clean point
+                        # sits at 0.92 of the sum (LMP-0001), so a bare sum would leave a 1.09x margin
 MAX_SAMPLES = 1500      # points checked per direction and occurrence
 CELLS = 8               # grid cells along the longest side of a mesh, for the triangle lookup
 SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contribute a sample point
@@ -290,8 +292,9 @@ def _off(points: np.ndarray, surface: _Surface) -> tuple[float, int]:
 def compare(glb: Mesh, step: Mesh, linear_mm: float) -> dict[str, Any]:
     """Whether `glb` and `step` (both in the assembly frame) are one shape. A sample of one mesh is within its own
     deflection of the true surface and the other mesh within its: `linear_mm` for the GLB, REFERENCE_FACTOR of
-    it for the STEP reference; so the sum, plus EPS_MM, bounds the sample's distance to the other mesh."""
-    reach = linear_mm * (1.0 + REFERENCE_FACTOR) + EPS_MM
+    it for the STEP reference; their sum bounds the sample's distance to the other mesh, REACH_MARGIN times that
+    sum plus EPS_MM is the reach."""
+    reach = REACH_MARGIN * linear_mm * (1.0 + REFERENCE_FACTOR) + EPS_MM
     if not len(glb.triangles) or not len(step.triangles):
         return {"status": "unknown", "tolerance_mm": reach,
                 "reason": f"the {'GLB mesh' if not len(glb.triangles) else 'STEP shape'} has no triangles to compare"}

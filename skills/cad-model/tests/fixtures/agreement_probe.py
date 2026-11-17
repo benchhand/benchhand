@@ -23,7 +23,7 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from cadmodel import agreement  # noqa: E402
 
-LINEAR = 0.1  # the exporter's deflection in these cases, mm
+LINEAR = 0.04  # the exporter's deflection in these cases, mm: what a 40 mm part gets (0.0005 of its diagonal)
 EMPTY_POINTS, EMPTY_TRIANGLES = np.empty((0, 3)), np.empty((0, 3), dtype=np.int64)
 ROT = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 

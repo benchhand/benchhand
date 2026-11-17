@@ -37,7 +37,10 @@ HERE = Path(__file__).resolve().parent
 CORPUS = HERE.parent
 SKILLS = CORPUS.parents[2]
 sys.path.insert(0, str(SKILLS / "cad-model" / "scripts"))
+sys.path.insert(0, str(CORPUS))
 from cadmodel import build, check, mesh  # noqa: E402
+from corpus import OUTCOMES  # noqa: E402
+from support import verdict as shared_verdict  # noqa: E402
 
 FIXTURES = CORPUS / "fixtures" / "oracles"
 PARTS = {"TST-0001": ("Base block", "base", "block.py"), "TST-0002": ("Mounting plate", "plate", "plate.py"),
@@ -164,9 +167,8 @@ def apply(fault: dict[str, Any], glb: Path, variant_glb: Path | None) -> None:
 
 
 def verdict(result: dict[str, Any]) -> str:
-    if result["status"] == "fail":
-        return "fail"
-    return "unknown" if any(c["status"] == "unknown" for c in result["checks"].values()) else "pass"
+    """The check's rows as one corpus verdict (support.verdict): a warn or skipped row says nothing either way."""
+    return shared_verdict(c["status"] if c["status"] in OUTCOMES else "pass" for c in result["checks"].values())
 
 
 def main(case_path: Path, work: Path) -> int:
