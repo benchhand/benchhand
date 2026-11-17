@@ -95,6 +95,9 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("optical.", _JUDGED | {"material", "process", "route", "finish"}),
     ("engineering.", _JUDGED | {"use_case", "geometry", "material", "condition", "load", "environment", "orientation",
                                 "process", "route", "finish"}),
+    # A stop's reaction reads the interface's recorded contact load and load references, which `engineering.` leaves out.
+    ("engineering.stop_reaction", _JUDGED | {"use_case", "geometry", "material", "condition", "load", "environment",
+                                             "orientation", "process", "route", "finish", "interface"}),
     ("feature.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                             "condition", "interface"}),
     ("interface.", _JUDGED | {"geometry", "interface", "material", "condition", "process", "route", "capability", "finish",
