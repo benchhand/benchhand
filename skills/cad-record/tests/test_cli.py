@@ -462,6 +462,18 @@ class WordScreenTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(self.screen("--out", value), ["--out", value])
 
+    def test_the_equals_form_of_a_registered_option_takes_a_value_with_a_space(self) -> None:
+        self.assertEqual(self.screen("--out=my report.json", "--pair=a b"), ["--out=my report.json", "--pair=a b"])
+        self.assertEqual(self.screen("a", "--out=my report.json"), ["--out=my report.json", "--", "a"])
+
+    def test_a_value_with_a_space_in_a_separate_word_stays_a_value(self) -> None:
+        self.assertEqual(self.screen("--out", "my report.json", "hw"), ["--out", "my report.json", "--", "hw"])
+
+    def test_an_equals_word_with_an_unregistered_name_follows_the_space_rule(self) -> None:
+        self.assertEqual(self.screen("--bogus=a b"), ["--", "--bogus=a b"])
+        with self.assertRaises(click.NoSuchOption):
+            self.screen("--bogus=ab")
+
     def test_the_equals_form_takes_any_value_and_is_converted(self) -> None:
         self.assertEqual(self.screen("--out=--flag", "--count=3"), ["--out=--flag", "--count=3"])
         with self.assertRaises(click.BadParameter):

@@ -176,6 +176,26 @@ class MainTests(MainCase):
         self.forwarded("diff", "v1", "v2", "--out=--json")
         self.assertEqual(self.emitted[0]["out"], Path("--json"))
 
+    def test_the_equals_form_of_a_registered_option_takes_a_value_with_a_space(self) -> None:
+        self.forwarded("diff", "v1", "v2", "--out=my report.json")
+        self.assertEqual(self.emitted[0]["out"], Path("my report.json"))
+        _, args, _ = self.forwarded("diff", "v1", "v2", "--hw=my hw")
+        self.assertEqual(args, (Path("my hw"), "v1", "v2"))
+        _, args, kwargs = self.forwarded("check", "v1", "--hw=my hw", "--cache=my cache", "--out=my report.json")
+        self.assertEqual((args[0], args[5], self.emitted[0]["out"]), (Path("my hw"), Path("my cache"),
+                                                                       Path("my report.json")))
+
+    def test_a_value_with_a_space_in_a_separate_word_arrives_whole(self) -> None:
+        self.forwarded("diff", "v1", "v2", "--out", "my report.json")
+        self.assertEqual(self.emitted[0]["out"], Path("my report.json"))
+        _, args, _ = self.forwarded("check", "v1", "--hw", "my hw", "--cache", "my cache")
+        self.assertEqual((args[0], args[5]), (Path("my hw"), Path("my cache")))
+
+    def test_an_equals_word_with_an_unregistered_name_is_not_an_option_value(self) -> None:
+        for argv in (("diff", "v1", "v2", "--bogus=a b"), ("diff", "v1", "v2", "--bogus=ab")):
+            with self.subTest(argv=argv):
+                self.refused(*argv)
+
     def test_a_numeric_hardware_positional_that_starts_with_a_dash_is_a_path(self) -> None:
         _, args, _ = self.forwarded("run", "-5", "--label", "v1")
         self.assertEqual(args[0], Path("-5"))
