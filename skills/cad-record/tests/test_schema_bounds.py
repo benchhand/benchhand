@@ -71,6 +71,7 @@ class Case:
     default: Any = NODEFAULT
     canon: str = "mm"  # unit of the bounds and band (quantity, fact)
     band_pointer: str | None = None
+    default_pointer: str | None = None  # where the default sits when not on the bounded node
     cli: str | None = None
     env: str | None = None
 
@@ -118,7 +119,8 @@ CASES: tuple[Case, ...] = (
     number(10, "build_volume.y_mm", PRODUCT, f"{BUILD}/y_mm", "(0, 2000]", {"min": 20, "max": 500}),
     number(10, "build_volume.z_mm", PRODUCT, f"{BUILD}/z_mm", "(0, 2000]", {"min": 20, "max": 500}),
     number(11, "build_volume.margin_mm", PRODUCT, f"{BUILD}/margin_mm", "[0, 1000]", {"max": 20}, default=0),
-    number(12, "general_tolerance", PRODUCT, "/properties/general_tolerance/oneOf/0", "(0, 5]", {"min": 0.01, "max": 0.5}),
+    number(12, "general_tolerance", PRODUCT, "/properties/general_tolerance/oneOf/0", "(0, 5]", {"min": 0.01, "max": 0.5},
+           default="ISO 2768-m", default_pointer="/properties/general_tolerance"),
     number(13, "profile_tolerance_mm", DRAWING, "/$defs/feature_intent/properties/profile_tolerance_mm", "(0, 5]",
            {"max": 0.5}),
     number(14, "zone_mm", DRAWING, "/$defs/geometric_tolerance/properties/zone_mm", "(0, 10]", {"min": 0.01, "max": 1}),
@@ -147,7 +149,7 @@ CASES: tuple[Case, ...] = (
     number(25, "mesh_size", FEA, "/properties/mesh_size", "[0.05, 1000]",
            {"relative_to": "part_extent_mm", "min": 0.005, "max": 0.1}),
     number(26, "timeout_seconds", FEA, "/properties/timeout_seconds", "[10, 86400]", {"max": 3600}, default=600),
-    number(27, "required_safety_factor", FEA, "/properties/required_safety_factor", "[1, 10]", {"max": 5}),
+    number(27, "required_safety_factor", FEA, "/properties/required_safety_factor", "[1, 10]", {"max": 5}, default=2.0),
     number(28, "material.E", FEA, f"{MATERIAL}/E", "(0, 1200000]", None),
     number(28, "material.density", FEA, f"{MATERIAL}/density", "(0, 25000]", {"min": 500}),
     number(28, "material.yield", FEA, f"{MATERIAL}/yield", "(0, 5000]", None),
@@ -183,7 +185,7 @@ CASES: tuple[Case, ...] = (
            {"min": 30}, shape="int", default=1800),
     number(41, "preflight.startup_timeout_s", TOOLS, "/properties/preflight/properties/startup_timeout_s", "[1, 7200]",
            {"min": 30}, shape="int", default=60),
-    number(42, "render.raster_threads", TOOLS, "/properties/render/properties/raster_threads", "1", None, shape="enum",
+    number(42, "render.raster_threads", TOOLS, "/properties/render/properties/raster_threads", "1", None, shape="enum", default="1",
            env="CAD_RENDER_RASTER_THREADS"),
     number(43, "calibration.samples", "manufacturing-capabilities.schema.json",
            "/$defs/calibration/properties/result/properties/samples", "[1, ]", {"min": 3}, shape="int"),
@@ -231,6 +233,20 @@ CASES: tuple[Case, ...] = (
 BY_NAME = {case.name: case for case in CASES}
 # Rows of the audit table that live only in the product.yaml `flow.profile` schema, which flow PR 1 owns
 FLOW_PROFILE_ROWS = {1, 2, 4, 5, 6, 7}
+# Fields that state a fact about a real material, machine or part: they have no default
+FACTS = {
+    "build_volume.x_mm", "build_volume.y_mm", "build_volume.z_mm",
+    "profile_tolerance_mm", "zone_mm", "limit_um", "edge_limits", "deviation_mm", "heat_set.hole_d", "heat_set.depth_min",
+    "limits.linear_mm", "limits.angular_deg", "volume_rel_tolerance", "volume_abs_tolerance_mm3",
+    "material.E", "material.density", "material.yield", "material.nu", "calibration.samples", "calibration.bridge_span",
+    "calibration.overhang_angle", "calibration.min_wall", "calibration.deviation", "nozzle_diameter", "layer_height",
+    "hotend_max_temperature", "bed_max_temperature", "max_speed", "travel_x", "travel_y", "travel_z", "spindle_max_speed",
+    "power", "pump_pressure", "press_brake_force", "modulus", "density", "temperature", "poisson_ratio", "min_clearance_mm",
+    "tol", "tol_plus", "tol_minus", "confidence", "weight", "min_visible_fraction", "crank_radius_mm", "rod_length_mm",
+    "period_deg", "mass_target", "bom.mass",
+}
+# Tunables whose default needs a decision, because neither the code, the tests nor the docs give a value
+UNDECIDED = {"mesh_size", "min_wall_mm.cnc", "coverage_factor"}
 # The absurd values the audit lists, in each case's own unit. The schema must refuse all of them
 ABSURD: tuple[tuple[str, str, Any], ...] = (
     ("calibrated bridge of 500 mm", "calibration.bridge_span", 500),
@@ -345,7 +361,17 @@ class Rows(unittest.TestCase):
     def test_a_default_is_recorded_where_the_code_has_one(self) -> None:
         for case in (c for c in CASES if c.default is not NODEFAULT):
             with self.subTest(case.name):
-                self.assertEqual(node(case.schema, case.pointer)["default"], case.default)
+                self.assertEqual(node(case.schema, case.default_pointer or case.pointer)["default"], case.default)
+
+    def test_only_a_fact_or_an_undecided_tunable_has_no_default(self) -> None:
+        """A tunable has a default. A fact about a real material, machine or part stays unknown until sourced."""
+        without = {case.name for case in CASES if case.default is NODEFAULT}
+        self.assertEqual(without - FACTS, UNDECIDED)
+
+    def test_a_fact_has_no_default_in_its_schema(self) -> None:
+        for case in (c for c in CASES if c.name in FACTS):
+            with self.subTest(case.name):
+                self.assertNotIn("default", node(case.schema, case.default_pointer or case.pointer))
 
 
 class Bands(unittest.TestCase):

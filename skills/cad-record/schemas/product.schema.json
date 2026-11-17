@@ -15,7 +15,8 @@
     "units": {"const": "mm"},
     "regime": {"type": "string", "enum": ["iso", "asme"]},
     "general_tolerance": {
-      "description": "The general tolerance a drawing states for dimensions without their own: a linear value in mm or a standard label such as ISO 2768-m, chosen by the user; never defaulted. Unknown, with the open question that would settle it, until recorded; validate.py refuses a drawing while it is unknown",
+      "description": "The general tolerance a drawing states for dimensions without their own: a linear value in mm or a standard label such as ISO 2768-m. A tunable, so it defaults to ISO 2768-m and the user changes it. Unknown, with the open question that would settle it, is also valid; validate.py refuses a drawing while it is unknown",
+      "default": "ISO 2768-m",
       "oneOf": [{"description": "a linear value in mm", "type": "number", "exclusiveMinimum": 0, "maximum": 5, "x-plausible": {"min": 0.01, "max": 0.5}}, {"type": "string", "minLength": 1},
                 {"$ref": "manufacturing.schema.json#/$defs/fact_unknown"}]},
     "license": {
@@ -38,7 +39,7 @@
       "dependentRequired": {"change": ["frozen"]}
     },
     "build_volume": {
-      "description": "A printer envelope for cad-model's legacy build-volume diagnostic. Fitting it is not printability; a capability profile's envelope and an approved orientation govern manufacturability",
+      "description": "A printer envelope for cad-model's legacy build-volume diagnostic. The sizes are facts about the machine, not tunables, so they have no default: they come from the active capability profile's envelope. Margin is a tunable. Fitting it is not printability; a capability profile's envelope and an approved orientation govern manufacturability",
       "type": "object", "additionalProperties": false,
       "required": ["x_mm", "y_mm", "z_mm"],
       "properties": {
