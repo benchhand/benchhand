@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -20,6 +21,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = Path(__file__).with_name("complexity-baseline.json")
 RULES = ("C901", "PLR0912", "PLR0915")
+# E902 is selected so unreadable files surface as diagnostics instead of silent warnings.
+SELECTED = (*RULES, "E902")
+IO_WARNING = re.compile(r"^warning: Failed to ", re.MULTILINE)
 
 Finding = dict[str, Any]
 
@@ -34,25 +38,42 @@ def ruff_bin() -> str:
     return str(find_ruff_bin())
 
 
+def _valid_diagnostic(item: object) -> bool:
+    """Every field `collect` reads has the expected type."""
+    if not isinstance(item, dict):
+        return False
+    location = item.get("location")
+    return (
+        isinstance(item.get("code"), str)
+        and isinstance(item.get("filename"), str)
+        and isinstance(item.get("message"), str)
+        and isinstance(location, dict)
+        and isinstance(location.get("row"), int)
+        and not isinstance(location.get("row"), bool)
+    )
+
+
 def parse_ruff_output(returncode: int, stdout: str, stderr: str) -> list[Finding]:
     if returncode not in (0, 1):
         raise RatchetError(f"ruff exited {returncode}: {stderr.strip()}")
+    if IO_WARNING.search(stderr):
+        raise RatchetError(f"ruff skipped a file: {stderr.strip()}")
     if not stdout.strip():
         raise RatchetError("ruff produced no JSON output (expected at least `[]`)")
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise RatchetError(f"ruff output is not valid JSON: {exc}") from exc
-    if not isinstance(data, list) or not all(
-        isinstance(item, dict) and {"code", "filename", "location"} <= item.keys() for item in data
-    ):
-        raise RatchetError("ruff JSON is not a list of diagnostics")
+    if not isinstance(data, list) or not all(_valid_diagnostic(item) for item in data):
+        raise RatchetError("ruff JSON is not a list of well-formed diagnostics")
+    if any(item["code"] == "E902" for item in data):
+        raise RatchetError("ruff could not read a file (E902); the count would be understated")
     return data
 
 
 def run_ruff() -> list[Finding]:
     cmd = [
-        ruff_bin(), "check", "--isolated", "--no-cache", "--select", ",".join(RULES),
+        ruff_bin(), "check", "--isolated", "--no-cache", "--select", ",".join(SELECTED),
         "--output-format", "json", str(ROOT),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)

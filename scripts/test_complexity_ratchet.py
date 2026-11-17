@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -206,14 +207,14 @@ class FunctionNameTest(RatchetCase):
 class RuffBoundaryTest(RatchetCase):
     """What ruff prints, mocked at the subprocess call, can never read as zero findings."""
 
-    def run_with_ruff(self, returncode: int, stdout: str, *args: str) -> int:
+    def run_with_ruff(self, returncode: int, stdout: str, *args: str, stderr: str = "boom") -> int:
         self.baseline.write_text(
             json.dumps(
                 {"counts": dict.fromkeys(cr.RULES, 1), "offenders": ["C901 a.py::f"]}
             )
         )
         before = self.baseline.read_text()
-        proc = subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="boom")
+        proc = subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
         with (
             mock.patch.object(cr, "ruff_bin", return_value="ruff"),
             mock.patch.object(cr.subprocess, "run", return_value=proc),
@@ -241,6 +242,53 @@ class RuffBoundaryTest(RatchetCase):
         for stdout in ("{not json", '{"code": "C901"}', '["C901"]', "[{}]"):
             with self.subTest(stdout=stdout):
                 self.assertNotEqual(self.run_with_ruff(1, stdout, "--update"), 0)
+
+    def test_e902_io_error_diagnostic_fails_with_exit_2(self) -> None:
+        diag = {
+            "code": "E902",
+            "filename": str(self.root / "a.py"),
+            "message": "stream did not contain valid UTF-8",
+            "location": {"row": 1, "column": 1},
+        }
+        self.assertEqual(self.run_with_ruff(1, json.dumps([diag])), 2)
+        self.assertEqual(self.run_with_ruff(1, json.dumps([diag]), "--update"), 2)
+
+    def test_io_error_warning_on_stderr_fails_with_exit_2(self) -> None:
+        stderr = "warning: Failed to lint /repo/a.py: stream did not contain valid UTF-8\n"
+        self.assertEqual(self.run_with_ruff(0, "[]", stderr=stderr), 2)
+        self.assertEqual(self.run_with_ruff(0, "[]", "--update", stderr=stderr), 2)
+
+    def test_diagnostic_with_bad_field_types_fails_with_exit_2(self) -> None:
+        good = {"code": "C901", "filename": "/repo/a.py", "message": "m", "location": {"row": 1}}
+        bad_fields = {
+            "no location": {k: v for k, v in good.items() if k != "location"},
+            "no row": {**good, "location": {"column": 1}},
+            "row not int": {**good, "location": {"row": "1"}},
+            "row bool": {**good, "location": {"row": True}},
+            "location not dict": {**good, "location": [1]},
+            "code not str": {**good, "code": 901},
+            "filename not str": {**good, "filename": None},
+            "message not str": {**good, "message": None},
+        }
+        for label, diag in bad_fields.items():
+            with self.subTest(label):
+                self.assertEqual(self.run_with_ruff(1, json.dumps([diag])), 2)
+                self.assertEqual(self.run_with_ruff(1, json.dumps([diag]), "--update"), 2)
+
+    @unittest.skipUnless(shutil.which("ruff"), "needs ruff on PATH")
+    def test_real_ruff_invalid_utf8_file_fails_with_exit_2(self) -> None:
+        (self.root / "bad.py").write_bytes(b'x = "\xff\xfe"\n')
+        self.baseline.write_text(json.dumps({"counts": dict.fromkeys(cr.RULES, 0), "offenders": []}))
+        before = self.baseline.read_text()
+        with (
+            mock.patch.object(cr, "ruff_bin", return_value=shutil.which("ruff")),
+            mock.patch.object(cr, "ROOT", self.root),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = cr.main(["--baseline", str(self.baseline), "--update"], root=self.root)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.baseline.read_text(), before)
 
     def test_genuine_empty_list_is_zero_findings(self) -> None:
         self.baseline.write_text(
