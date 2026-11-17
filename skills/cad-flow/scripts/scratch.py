@@ -213,7 +213,7 @@ def run_tool(argv: list[str], log: Path) -> tuple[int, dict[str, Any] | None]:
     except FileNotFoundError as error:
         raise UsageError("uv is not on PATH") from error
     try:
-        return done.returncode, json.loads(done.stdout)
+        return done.returncode, emit.unwrap(json.loads(done.stdout))
     except ValueError:
         with log.open("a", encoding="utf-8") as stderr:
             stderr.write(done.stdout)

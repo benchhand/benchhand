@@ -1244,7 +1244,8 @@ def main() -> int:
     if args.report is not None and not args.migration_plan:
         parser.error("--report needs --migration-plan")
     if not args.project_dir.exists() or not args.project_dir.is_dir():
-        print(json.dumps({"ok": False, "findings": [finding(str(args.project_dir), "project directory does not exist")]}))
+        emit.emit({"ok": False, "findings": [finding(str(args.project_dir), "project directory does not exist")]},
+                  tool="validate", name="validate", code=2, json_flag=args.json)
         return 2
     if args.migration_plan:
         hw = (args.project_dir / "hw" if (args.project_dir / "hw").is_dir() else args.project_dir).resolve()
@@ -1253,15 +1254,18 @@ def main() -> int:
             try:
                 target = layout.scratch_path(hw, args.report, "--report")
             except layout.LayoutError as error:
-                print(json.dumps({"ok": False, "findings": [finding(str(args.report), str(error))]}))
+                emit.emit({"ok": False, "findings": [finding(str(args.report), str(error))]},
+                          tool="validate", name="validate", code=2, json_flag=args.json)
                 return 2
-        text = json.dumps(migration_plan(args.project_dir), indent=2)
+        plan = migration_plan(args.project_dir)
         if target is None:
-            print(text)
+            emit.emit(plan, tool="validate --migration-plan", name="migration-plan", code=0, json_flag=args.json,
+                      scratch=emit.work_dir(hw))
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text + "\n", encoding="utf-8")
-            print(json.dumps({"report": layout.relative(hw, target)}))
+            target.write_text(emit.envelope_text(plan) + "\n", encoding="utf-8")
+            emit.emit({"report": layout.relative(hw, target)}, tool="validate --migration-plan", name="migration-plan",
+                      code=0, json_flag=args.json)
         return 0
     findings = validate_project(args.project_dir)
     failures = blocking(findings)
@@ -1277,5 +1281,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        print(json.dumps({"ok": False, "findings": [finding("validate.py", f"infrastructure error: {error}")]}))
+        emit.emit({"ok": False, "findings": [finding("validate.py", f"infrastructure error: {error}")]},
+                  tool="validate", name="validate", code=2)
         raise SystemExit(2)

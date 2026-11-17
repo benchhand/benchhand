@@ -320,9 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001 - an unexpected failure is no result, never a check failure
         traceback.print_exc()
         return 2
-    out = getattr(args, "out", None)
-    if out:
-        out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    out = getattr(args, "out", None) or None
     hw = getattr(args, "hw", None) or Path.cwd() / "hw"
     emit.emit(result, tool=f"cad_model {args.command}", name=f"cad_model-{args.command}", code=code,
               scratch=emit.work_dir(hw), out=out, facts={"label": result.get("label")}, json_flag=args.json)

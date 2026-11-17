@@ -1651,10 +1651,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         code, summary = run_motion(args) if args.motion is not None else run(args)
     except InfraError as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}))
+        emit.emit({"status": "error", "error": str(exc)}, tool="render", name="render", code=2, json_flag=args.json)
         return 2
     except Exception as exc:  # an unexpected failure is infrastructure, never a quality verdict
-        print(json.dumps({"status": "error", "error": f"{type(exc).__name__}: {exc}"}))
+        emit.emit({"status": "error", "error": f"{type(exc).__name__}: {exc}"}, tool="render", name="render", code=2,
+                  json_flag=args.json)
         return 2
     failures = [f"{view}: {', '.join(map(str, found))}" for view, found in (summary.get("failures") or {}).items()]
     emit.emit(summary, tool="render", name="render", code=code, scratch=emit.work_dir(args.hw), json_flag=args.json,

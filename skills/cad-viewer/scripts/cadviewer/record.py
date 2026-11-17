@@ -37,6 +37,25 @@ def _layout() -> Any:
 
 
 @functools.cache
+def _emit() -> Any:
+    """cad-record's output emitter, which reads the tool-result envelope of a cad-model check file."""
+    name = "cad_record_emit"
+    if name not in sys.modules:
+        path = LAYOUT_PY.with_name("emit.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ViewerError(f"cannot load {path}")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+def read_check(path: Path) -> Any:
+    """The cad-model check report in `path`: the payload of its envelope, or an older bare report as it is."""
+    return _emit().unwrap(read_json(path))
+
+
+@functools.cache
 def _yaml_loader() -> Any:
     """cad-record's shared YAML reader (yaml.safe_load on libyaml); it needs PyYAML, so it loads on first use."""
     name = "cad_record_yaml_loader"

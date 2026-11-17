@@ -221,7 +221,7 @@ def _run_json(command: list[str], log: Path, timeout: float, what: str) -> tuple
     except FileNotFoundError as error:
         raise pose.MotionError(f"{what}: uv is not on PATH") from error
     try:
-        return proc.returncode, json.loads(proc.stdout)
+        return proc.returncode, emit.unwrap(json.loads(proc.stdout))
     except json.JSONDecodeError:
         tail = "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-15:])
         raise pose.MotionError(f"{what} exited {proc.returncode} without a JSON result (log: {log}):\n{tail}") from None
@@ -494,13 +494,14 @@ def command_render(args: argparse.Namespace) -> int:
     return 0
 
 
-def _emit(result: Mapping[str, Any], hw: Path, command: str, code: int, json_flag: bool,
+def _emit(result: Mapping[str, Any], hw: Path | None, command: str, code: int, json_flag: bool,
           blocking: Any = None) -> None:
     """Print a plan or render result: in full, or as a summary of it in compact mode (cad-record emit.py)."""
     facts = {"version": result.get("version"), "case": result.get("case"), "summary": result.get("summary"),
              "bundle": result.get("bundle"), "error": result.get("error")}
-    emit.emit(result, tool=f"motion {command}", name=f"motion-{command}", code=code, scratch=emit.work_dir(hw),
-              facts=facts, blocking=blocking, json_flag=json_flag)
+    scratch = None if hw is None else emit.work_dir(hw)
+    emit.emit(result, tool=f"motion {command}", name=f"motion-{command}", code=code, scratch=scratch, facts=facts,
+              blocking=blocking, json_flag=json_flag)
 
 
 def place(ctx: Context, files: Mapping[str, Path], result: Mapping[str, Any], params: Mapping[str, str],
@@ -554,10 +555,10 @@ def main(argv: list[str] | None = None) -> int:
         _emit(failure.report, args.hw, args.command, 1, args.json)
         return 1
     except plan.PlanError as error:
-        print(json.dumps({"status": "error", "problems": error.problems}, indent=2))
+        _emit({"status": "error", "problems": error.problems}, None, args.command, 2, args.json)
         return 2
     except (pose.MotionError, motion_glb.GlbError, OSError, LAYOUT.LayoutError, LAYOUT.PublishConflict) as error:
-        print(json.dumps({"status": "error", "error": str(error)}, indent=2))
+        _emit({"status": "error", "error": str(error)}, None, args.command, 2, args.json)
         return 2
 
 

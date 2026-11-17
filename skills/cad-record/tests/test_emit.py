@@ -20,7 +20,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 SKILLS = HERE.parents[1]
 sys.path.insert(0, str(HERE.parents[2] / "scripts"))
-from modload import load_module  # noqa: E402
+from modload import load_module, result_payload  # noqa: E402
 
 emit = load_module("cad_record_emit", SKILLS / "cad-record" / "scripts" / "emit.py")
 RUN_PY = SKILLS / "cad-flow" / "scripts" / "run.py"
@@ -39,13 +39,14 @@ class EmitterTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.result = {"status": "fail", "label": "v3", "blocking_failures": [f"rule-{n}" + "-" * 60 for n in range(8)]}
-        self.text = json.dumps(self.result, indent=2)
+        self.text = json.dumps({"schema": "tool-result/1", "status": "fail", "findings": self.result["blocking_failures"],
+                                "payload": self.result}, indent=2)
 
     def agent(self, **kwargs: object) -> str:
         with mock.patch.dict(os.environ, {emit.ENV: "compact"}):
             return emitted(self.result, tool="tool", name="tool", code=1, **kwargs)
 
-    def test_plain_mode_prints_the_indented_json_and_nothing_else(self) -> None:
+    def test_json_mode_prints_the_indented_envelope_and_nothing_else(self) -> None:
         with mock.patch.dict(os.environ, {emit.ENV: "json"}, clear=True):
             self.assertEqual(emitted(self.result, tool="tool", name="tool", code=1, scratch=self.root),
                              self.text + "\n")
@@ -86,7 +87,7 @@ class EmitterTests(unittest.TestCase):
     def test_the_validation_hook_sees_the_result_and_schema_id_before_anything_prints(self) -> None:
         with mock.patch.object(emit, "validate_result") as hook:
             emitted(self.result, tool="tool", name="tool", code=1, schema_id="tool-result/1")
-        hook.assert_called_once_with(self.result, "tool-result/1")
+        hook.assert_called_once_with(emit.envelope(self.result), "tool-result/1")
 
     def test_the_summary_names_verdict_exit_five_blockers_the_rest_and_the_full_file(self) -> None:
         out = self.agent(scratch=self.root, facts={"label": "v3", "empty": None})
@@ -97,25 +98,26 @@ class EmitterTests(unittest.TestCase):
 
     def test_a_result_no_longer_than_its_summary_is_printed_in_full(self) -> None:
         self.result = {"status": "pass", "label": "v1"}
-        self.assertEqual(self.agent(scratch=self.root), json.dumps(self.result, indent=2) + "\n")
-        self.assertEqual(list(self.root.iterdir()), [])
+        far = self.root / ("d" * 200)  # a long path makes the summary the longer text
+        shown = self.agent(scratch=far)
+        self.assertEqual(json.loads(shown)["payload"], self.result)
+        self.assertFalse(far.exists())
 
     def test_the_full_file_holds_exactly_what_plain_mode_prints(self) -> None:
         self.agent(scratch=self.root)
         self.assertEqual(next(self.root.glob("tool-*.json")).read_text(encoding="utf-8"), self.text + "\n")
 
-    def test_an_out_file_that_holds_the_result_is_the_named_path_and_nothing_is_copied(self) -> None:
+    def test_compact_mode_names_the_out_file_which_holds_the_envelope_and_copies_nothing(self) -> None:
         out = self.root / "report.json"
-        out.write_text(self.text + "\n", encoding="utf-8")
         self.assertIn(f"full JSON: {out.resolve()}", self.agent(scratch=self.root / "scratch", out=out))
+        self.assertEqual(out.read_text(encoding="utf-8"), self.text + "\n")
         self.assertFalse((self.root / "scratch").exists())
 
-    def test_an_out_file_with_other_content_is_not_the_full_json(self) -> None:
-        out = self.root / "packet.json"
-        out.write_text("{}\n", encoding="utf-8")
-        shown = self.agent(scratch=self.root / "scratch", out=out)
-        self.assertNotIn(str(out.resolve()), shown)
-        self.assertIn(str((self.root / "scratch").resolve()), shown)
+    def test_json_mode_writes_the_out_file_too(self) -> None:
+        out = self.root / "report.json"
+        with mock.patch.dict(os.environ, {emit.ENV: "json"}):
+            shown = emitted(self.result, tool="tool", name="tool", code=1, out=out)
+        self.assertEqual((shown, out.read_text(encoding="utf-8")), (self.text + "\n", self.text + "\n"))
 
     def test_without_a_place_to_write_the_full_json_is_printed(self) -> None:
         self.assertEqual(self.agent(), self.text + "\n")
@@ -138,6 +140,27 @@ class EmitterTests(unittest.TestCase):
     def test_a_finding_is_described_by_identity_subject_and_message(self) -> None:
         self.assertEqual(emit.describe({"check": "min_wall", "part": "P-1", "message": "thin", "x": 1}),
                          "min_wall: P-1: thin")
+
+    def test_the_envelope_carries_status_findings_and_the_payload_untouched(self) -> None:
+        cases = [({"status": "pass", "findings": [{"code": "a"}]}, "pass", [{"code": "a"}]),
+                 ({"ok": False, "findings": []}, "fail", []),
+                 ({"status": "fail", "blocking_failures": ["x"]}, "fail", ["x"]),
+                 ({"status": "pass"}, "pass", [])]
+        for payload, status, findings in cases:
+            with self.subTest(payload=payload):
+                self.assertEqual(emit.envelope(payload),
+                                 {"schema": "tool-result/1", "status": status, "findings": findings, "payload": payload})
+
+    def test_unwrap_returns_the_payload_of_an_envelope_and_any_other_document_as_it_is(self) -> None:
+        payload = {"status": "pass", "x": 1}
+        self.assertEqual(emit.unwrap(json.loads(emit.envelope_text(payload))), payload)
+        self.assertEqual(emit.unwrap(payload), payload)
+        self.assertEqual(emit.unwrap({"payload": 1}), {"payload": 1})
+
+    def test_the_test_helper_accepts_an_envelope_and_rejects_a_bare_document(self) -> None:
+        self.assertEqual(result_payload(emit.envelope_text({"ok": True})), {"ok": True})
+        with self.assertRaises(AssertionError):
+            result_payload('{"ok": true}')
 
     def test_verdict_falls_back_to_ok(self) -> None:
         self.assertEqual([emit.verdict_of(r) for r in ({"ok": True}, {"ok": False}, {"status": "warn"}, {})],

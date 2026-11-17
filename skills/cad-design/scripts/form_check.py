@@ -1302,6 +1302,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--replace, --out and --on need --version")
     pose = load_pose()
     sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
+
+    def fail(error: Exception, named: bool = False) -> int:
+        message = f"{type(error).__name__}: {error}" if named else str(error)
+        emit.emit({"status": "error", "error": message}, tool="form_check", name="form_check", code=2, json_flag=args.json)
+        return 2
+
     try:
         with pose.stdout_to_stderr():
             if args.version is None:
@@ -1310,17 +1316,14 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 report, code = check_version(args, pose)
     except (pose.MotionError, RecordError) as error:
-        print(json.dumps({"status": "error", "error": str(error)}))
-        return 2
+        return fail(error)
     except Exception as error:
         layout, packets = sys.modules.get("cad_record_layout"), sys.modules.get("cad_record_check_packet")
         if (layout is not None and isinstance(error, layout.LayoutError)) or (
                 packets is not None and isinstance(error, packets.PacketError)):
-            print(json.dumps({"status": "error", "error": str(error)}))
-            return 2
+            return fail(error)
         traceback.print_exc(file=sys.stderr)
-        print(json.dumps({"status": "error", "error": f"{type(error).__name__}: {error}"}))
-        return 2
+        return fail(error, named=True)
     manufacturing = report.get("manufacturing") or {}
     blocking = [*emit.blocking_of(report), *manufacturing.get("problems", []),
                 *manufacturing.get("findings", [])]
