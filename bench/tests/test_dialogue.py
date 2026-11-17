@@ -178,6 +178,22 @@ class AbbreviationTests(unittest.TestCase):
 
 
 class OfferTests(unittest.TestCase):
+    def test_regression_a_ground_reply_instruction_followed_by_narrative_approves_no_gate(self) -> None:
+        # The third small-mechanism build failed in GROUND: "Reply with answers or corrections, or "accept the
+        # suggestions". After that I'll ... and the layout build with its checks and LAYOUT freeze gate." was taken
+        # whole as a reply instruction and matched the LAYOUT freeze intent.
+        script = case_script("small-mechanism")
+        reply = dialogue.respond(script, recorded_text("events-ground-small-mechanism-reply-line.jsonl"), "fixture", can_stop=False)
+        self.assertFalse(reply.at_gate)
+        self.assertEqual([ident for ident in reply.answered if ident.endswith("gate") or ident == "layout-freeze"], [])
+        instruction = [ask for ask in reply.asks if ask.text.startswith("Reply with answers")]
+        self.assertEqual([(ask.text, ask.intent) for ask in instruction],
+                         [('Reply with answers or corrections, or "accept the suggestions".', "accept-suggestions")])
+
+    def test_an_imperative_line_keeps_its_following_imperatives_and_drops_narrative(self) -> None:
+        self.assertEqual(dialogue.extract_asks("Approve or name changes. Please also confirm these assumptions: A, B. "
+                                               "Then I build v3."),
+                         ["Approve or name changes. Please also confirm these assumptions: A, B."])
     def test_regression_the_recorded_commit_offer_without_a_question_mark_is_a_commit_timing_ask(self) -> None:
         # Recorded fdm-enclosure turn 2, "## Not committed to git": "I can commit once L2 passes, or commit the
         # layout state now if you prefer." The lead offered a choice; the matcher nudged instead.

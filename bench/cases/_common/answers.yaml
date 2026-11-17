@@ -44,6 +44,10 @@ intents:
     kind: question
     match: ['confirm\b.*\bASM-\d+', '\bassumptions?\b.*\b(confirm|correct|change|accept)', '(confirm|accept)\b.*\bassumptions?\b']
     answer: I confirm the bounded assumptions as you recorded them; I have no changes.
+  - id: accept-suggestions
+    kind: question
+    match: ['accept (the|your|all) (suggestions|proposals|defaults)', 'use your (suggestions|proposals?)']
+    answer: Where my answers above say nothing, accept your suggestions.
   # --- workflow and setup ------------------------------------------------------------------
   - id: flow-profile
     kind: question

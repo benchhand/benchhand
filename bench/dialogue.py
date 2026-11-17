@@ -58,6 +58,8 @@ def _gate_ask(text: str) -> bool:
     """An ask that answers whatever gate the message names: an approval request or a reply instruction."""
     return bool(APPROVAL_ASK.search(text) or REPLY_INSTRUCTION.match(text))
 FOLLOW_UP = re.compile(r"^(?:or|and|also|if so|if not|otherwise)\b", re.IGNORECASE)
+GATE_NOW = re.compile(r"\b(?:is (?:now )?open|needs your (?:approval|decision|choice)|(?:is )?(?:now )?waiting for your|awaits your)\b",
+                      re.IGNORECASE)
 # A choice offered as a statement: "..., or commit the layout state now if you prefer."
 OFFER = re.compile(r"\bif you(?: prefer|'d rather|’d rather| would rather| want)\b[.!]?$", re.IGNORECASE)
 STOP_NOTE = ("This ends the session: record this decision as instructed, commit, and stop. "
@@ -211,6 +213,17 @@ def split_sentences(line: str) -> list[str]:
     return [piece for piece in pieces if piece]
 
 
+def _imperative_run(pieces: Sequence[str]) -> tuple[int, str]:
+    """The request sentences of a line that asks without "?": from the first sentence that asks, while the next
+    ones also ask ("Approve or name changes. Please also confirm ..."). Narrative after it ("After that I'll ...
+    the LAYOUT freeze gate.") is not part of the ask."""
+    start = next((index for index, piece in enumerate(pieces) if ASK_LINE.search(piece)), 0)
+    end = start + 1
+    while end < len(pieces) and ASK_LINE.search(pieces[end]):
+        end += 1
+    return start, " ".join(pieces[start:end])
+
+
 @dataclass(frozen=True)
 class Found:
     """One ask in the lead's text: its words, the text that gives it meaning, and a choice's options."""
@@ -273,15 +286,21 @@ def find_asks(text: str) -> list[Found]:
             found = [(position, piece) for position, piece in enumerate(pieces) if OFFER.search(piece)]
         lead_in = cleaned.endswith(":") and len(cleaned.split()) <= 3  # "Please answer:" introduces the asks below
         if not found and ASK_LINE.search(cleaned) and not lead_in:
-            found = [(0, cleaned)]
+            found = [_imperative_run(pieces)]
         for position, piece in found:
             follow_up = position > 0 and (FOLLOW_UP.match(piece) is not None or len(piece.split()) <= 3)
             context = pieces[position - 1] if follow_up else (gate_line if _gate_ask(piece) else None)
             if piece not in (ask.text for ask in asks):
                 asks.append(Found(piece, context))
-        if GATE_WORD.search(cleaned):
+        if GATE_WORD.search(cleaned) and (found or _announces_gate(pieces)):  # not a passing or future mention
             gate_line = cleaned
     return asks
+
+
+def _announces_gate(pieces: Sequence[str]) -> bool:
+    """A sentence that presents a gate now ("The INTENT gate is open and needs your approval"), not one that
+    mentions it in passing or for later ("the variant gate and the layout stage haven't started")."""
+    return any(GATE_WORD.search(piece) and GATE_NOW.search(piece) for piece in pieces)
 
 
 def asks_in_context(text: str) -> list[tuple[str, str | None]]:
