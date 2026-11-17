@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import gen_api  # noqa: E402
+import gen_api
 
 BASE = "https://srobroek.com/cad/schemas/"
 REPO = Path(__file__).resolve().parents[1]

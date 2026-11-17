@@ -98,7 +98,7 @@ def load_schemas(root: Path) -> list[Schema]:
         for path in sorted(folder.glob("*.schema.json")):
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or not isinstance(data.get("$id"), str):
-                raise ValueError(f"{path.relative_to(root).as_posix()}: expected an object with a string $id")
+                raise TypeError(f"{path.relative_to(root).as_posix()}: expected an object with a string $id")
             schemas.append(Schema(path.relative_to(root).as_posix(), data["$id"], data))
     ids = [s.id for s in schemas]
     if len(set(ids)) != len(ids):
@@ -188,32 +188,51 @@ class Walker:
             return "Any"
         if node is False:
             return "Never"
-        if "$ref" in node:
-            return self.ref_name(schema, node)
+        for handler in (self.inline_ref, self.inline_value, self.inline_union, self.inline_all_of, self.inline_typed):
+            result = handler(schema, pointer, node)
+            if result is not None:
+                return result
+        return "Any"
+
+    def inline_ref(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str | None:
+        return self.ref_name(schema, node) if "$ref" in node else None
+
+    def inline_value(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str | None:
         if "const" in node:
             return literal([node["const"]]) or "Any"
         if "enum" in node:
             return literal(node["enum"]) or self.scalar_for(node["enum"])
+        return None
+
+    def inline_union(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str | None:
         for key in ("oneOf", "anyOf"):
             members = node.get(key, [])
             if any(self.structural(m) for m in members):
                 return self.union([self.expr(schema, f"{pointer}/{key}/{i}", m) for i, m in enumerate(members)])
-        if "allOf" in node:
-            for i, member in enumerate(node["allOf"]):
-                if self.structural(member):
-                    return self.expr(schema, f"{pointer}/allOf/{i}", member)
+        return None
+
+    def inline_all_of(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str | None:
+        for i, member in enumerate(node.get("allOf", [])):
+            if self.structural(member):
+                return self.expr(schema, f"{pointer}/allOf/{i}", member)
+        return None
+
+    def inline_typed(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str:
         kind = node.get("type")
         if isinstance(kind, list):
             return self.union([self.inline(schema, pointer, {**node, "type": k}) for k in kind])
         if kind == "array" or (kind is None and ("items" in node or "prefixItems" in node)):
-            if "prefixItems" in node:
-                return "tuple[" + ", ".join(self.expr(schema, f"{pointer}/prefixItems/{i}", m) for i, m in enumerate(node["prefixItems"])) + "]"
-            return "list[" + (self.expr(schema, f"{pointer}/items", node["items"]) if "items" in node else "Any") + "]"
+            return self.inline_array(schema, pointer, node)
         if kind == "object":
             extra = node.get("additionalProperties")
             value = self.expr(schema, f"{pointer}/additionalProperties", extra) if isinstance(extra, dict) else "Any"
             return f"dict[str, {value}]"
         return SCALARS.get(kind, "Any") if isinstance(kind, str) else "Any"
+
+    def inline_array(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str:
+        if "prefixItems" in node:
+            return "tuple[" + ", ".join(self.expr(schema, f"{pointer}/prefixItems/{i}", m) for i, m in enumerate(node["prefixItems"])) + "]"
+        return "list[" + (self.expr(schema, f"{pointer}/items", node["items"]) if "items" in node else "Any") + "]"
 
     @staticmethod
     def scalar_for(values: list[Any]) -> str:
@@ -374,60 +393,69 @@ def render_alias(typedef: TypeDef) -> list[str]:
 NAME = re.compile(r"[A-Za-z_]\w*")
 
 
-def order_types(types: list[TypeDef]) -> tuple[list[TypeDef], set[tuple[str, str]]]:
-    """Return the definition order, so every annotation evaluates at import, and the (type, field)
-    pairs that close a cycle and need quotes. TypedDict ignores Required and NotRequired inside a
-    string annotation, so the module cannot defer all annotations."""
-    by_name = {t.name: t for t in types}
-    done: list[TypeDef] = []
-    emitted: set[str] = set()
-    state: set[str] = set()
-    waits: dict[str, str] = {}
-    pending: dict[str, list[TypeDef]] = {}
-    quoted: set[tuple[str, str]] = set()
+class TypeOrder:
+    """Depth-first definition order, so every annotation evaluates at import. `quoted` collects the
+    fields that close a cycle. TypedDict ignores Required and NotRequired inside a string
+    annotation, so the module cannot defer all annotations."""
 
-    def emit(typedef: TypeDef) -> None:
-        done.append(typedef)
-        emitted.add(typedef.name)
-        for waiting in pending.pop(typedef.name, []):
-            emit(waiting)
+    def __init__(self, types: list[TypeDef]) -> None:
+        self.by_name = {t.name: t for t in types}
+        self.done: list[TypeDef] = []
+        self.emitted: set[str] = set()
+        self.state: set[str] = set()
+        self.waits: dict[str, str] = {}
+        self.pending: dict[str, list[TypeDef]] = {}
+        self.quoted: set[tuple[str, str]] = set()
+        for typedef in sorted(types, key=lambda t: t.name):
+            self.visit(typedef)
 
-    def visit(typedef: TypeDef) -> None:
-        state.add(typedef.name)
-        wait = ""
-        if typedef.fields is None:
-            for word in NAME.findall(typedef.alias):
-                if word not in by_name:
-                    continue
-                if word == typedef.name:
-                    raise ValueError(f"type alias {typedef.name} refers to itself")
-                if word not in state:
-                    visit(by_name[word])
-                if word in emitted:
-                    continue
-                # The alias needs a class that is still open: emit the alias right after that class.
-                wait = word if by_name[word].fields is not None else waits.get(word, "")
-                if not wait:
-                    raise ValueError(f"type alias {typedef.name} is part of an alias cycle with {word}")
-        else:
-            for f in typedef.fields:
-                for word in NAME.findall(f.expr):
-                    if word not in by_name:
-                        continue
-                    if word not in state:
-                        visit(by_name[word])
-                    if word not in emitted:
-                        quoted.add((typedef.name, f.name))
+    def emit(self, typedef: TypeDef) -> None:
+        self.done.append(typedef)
+        self.emitted.add(typedef.name)
+        for waiting in self.pending.pop(typedef.name, []):
+            self.emit(waiting)
+
+    def dependencies(self, expr: str) -> list[str]:
+        return [word for word in NAME.findall(expr) if word in self.by_name]
+
+    def visit(self, typedef: TypeDef) -> None:
+        if typedef.name in self.state:
+            return
+        self.state.add(typedef.name)
+        wait = self.visit_alias(typedef) if typedef.fields is None else self.visit_class(typedef)
         if wait:
-            waits[typedef.name] = wait
-            pending.setdefault(wait, []).append(typedef)
+            self.waits[typedef.name] = wait
+            self.pending.setdefault(wait, []).append(typedef)
         else:
-            emit(typedef)
+            self.emit(typedef)
 
-    for typedef in sorted(types, key=lambda t: t.name):
-        if typedef.name not in state:
-            visit(typedef)
-    return done, quoted
+    def visit_class(self, typedef: TypeDef) -> str:
+        for f in typedef.fields or []:
+            for word in self.dependencies(f.expr):
+                self.visit(self.by_name[word])
+                if word not in self.emitted:
+                    self.quoted.add((typedef.name, f.name))
+        return ""
+
+    def visit_alias(self, typedef: TypeDef) -> str:
+        """Return the class this alias must follow, or an empty string to emit the alias now."""
+        wait = ""
+        for word in self.dependencies(typedef.alias):
+            if word == typedef.name:
+                raise ValueError(f"type alias {typedef.name} refers to itself")
+            self.visit(self.by_name[word])
+            if word in self.emitted:
+                continue
+            # The alias needs a class that is still open: emit the alias right after that class.
+            wait = word if self.by_name[word].fields is not None else self.waits.get(word, "")
+            if not wait:
+                raise ValueError(f"type alias {typedef.name} is part of an alias cycle with {word}")
+        return wait
+
+
+def order_types(types: list[TypeDef]) -> tuple[list[TypeDef], set[tuple[str, str]]]:
+    order = TypeOrder(types)
+    return order.done, order.quoted
 
 
 def render_api(types: list[TypeDef]) -> str:
@@ -508,7 +536,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     args = parser.parse_args(argv)
     try:
         outputs = generate(root)
-    except (OSError, ValueError, KeyError) as error:
+    except (OSError, ValueError, TypeError, KeyError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
     if not args.check:
