@@ -1,0 +1,232 @@
+{
+  "run_id": "small-mechanism-fixture-build-20261117T210251-6ad5",
+  "case": "small-mechanism",
+  "arm": "fixture-build",
+  "mode": "fixture",
+  "started": "2026-11-17T17:02:58+00:00",
+  "finished": "2026-11-17T17:57:54+00:00",
+  "producer_model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
+  "agent": "build",
+  "judge_model": "amazon-bedrock/global.openai.gpt-6.1-sol",
+  "outcome": "fail:unmatched-at-gate",
+  "accepted": null,
+  "isolation": {
+    "passed": true,
+    "findings": [],
+    "loaded": {
+      "config_sources": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/opencode.json",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode"
+      ],
+      "skills": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-analysis/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-bom/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-concept/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-design/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-drawings/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-fits/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-flow/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-model/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-motion/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-recheck/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-record/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-render/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-review-dfm/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-review-mech/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T210251-6ad5/home/.config/opencode/skills/cad-viewer/SKILL.md",
+        "skill://browser/SKILL.md",
+        "skill://opencode/SKILL.md",
+        "skill://report/SKILL.md"
+      ],
+      "agents": [
+        "build",
+        "cad-analyst",
+        "cad-clerk",
+        "cad-concept-designer",
+        "cad-dfm-reviewer",
+        "cad-mech-reviewer",
+        "cad-part-designer",
+        "cad-sourcing-researcher",
+        "compaction",
+        "explore",
+        "general",
+        "plan",
+        "summary",
+        "title"
+      ],
+      "commands": [
+        "cad-flow",
+        "goal",
+        "init",
+        "review"
+      ]
+    }
+  },
+  "repo_commit": "24087f39071fd7335357123a2b8539d39b95420e",
+  "spend": {
+    "producer_usd": 10.728158,
+    "judge_usd": 0.0,
+    "total_usd": 10.728158,
+    "opencode_reported_usd": 10.728158,
+    "currency": "USD"
+  },
+  "version": null,
+  "metrics": {
+    "model_turns": 185,
+    "lead_model_turns": 81,
+    "subagent_model_turns": 104,
+    "subagent_sessions": 5,
+    "tool_calls": 246,
+    "tool_calls_by_tool": {
+      "edit": 26,
+      "execute": 1,
+      "glob": 8,
+      "grep": 3,
+      "read": 27,
+      "shell": 95,
+      "skill": 4,
+      "subagent": 5,
+      "webfetch": 29,
+      "websearch": 21,
+      "write": 27
+    },
+    "failed_builds": 0,
+    "lead_model_time_s": 1212.951,
+    "lead_tool_time_s": 1270.346,
+    "subagent_model_time_s": 1524.113,
+    "subagent_tool_time_s": 180.235,
+    "input_tokens": 19331800,
+    "uncached_input_tokens": 396,
+    "cached_input_tokens": 18689372,
+    "cache_write_tokens": 642032,
+    "output_tokens": 188927,
+    "reasoning_tokens": 0,
+    "spend_usd": 10.728158,
+    "spend_by_model_usd": {
+      "amazon-bedrock/global.anthropic.claude-opus-5-5": 10.728158
+    },
+    "opencode_reported_cost_usd": 10.728158,
+    "unpriced_models": [],
+    "subagent_dispatches": 5,
+    "subagent_redispatches": 0,
+    "subagent_followups": 0,
+    "redispatched_units": [],
+    "dispatches_by_agent": {
+      "cad-concept-designer": 3,
+      "cad-sourcing-researcher": 2
+    },
+    "harness_turns": 3,
+    "active_wall_s": 2232.9,
+    "human_wait_events": 2,
+    "human_wait_s": 780.0,
+    "nudges": 0,
+    "questions_asked": 33,
+    "questions_matched": 20,
+    "questions_unmatched": 13,
+    "questions_unmatched_at_gate": 1,
+    "gates_answered": 1,
+    "profile_questions_asked": 0,
+    "profile_asked": false,
+    "tool_errors": 1
+  },
+  "unmatched_questions": [
+    {
+      "turn": 1,
+      "text": "What kind of use is this?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "What does the latch hold?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "A door, lid or keeper?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Does anything pull on the lever when it's latched?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Should it stay put at 0\u00b0 or 75\u00b0 (a detent or snap), or are the two hard stops all it needs?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "A nuisance only, or can something fall, open or cause injury?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Is that right?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Countersunk or pan-head screws?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Are the screws part of this BOM?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Is there a required hole spacing or bracket footprint?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Should the pin sit loose in the bracket cheeks, or be lightly pressed?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Do you have a \u00d86 H7 reamer (or the size you plan to ream to)?",
+      "at_gate": false
+    },
+    {
+      "turn": 3,
+      "text": "Reply with a variant (A, B or C), or ask for a change such as \"C with the screws on the centreline\". I'll record your choice, export the handoff and start L1 LAYOUT.",
+      "at_gate": true
+    }
+  ],
+  "hard_checks": {
+    "passed": false,
+    "failed": [
+      "l1_version",
+      "layout_frozen"
+    ],
+    "checks": [
+      {
+        "name": "l1_version",
+        "passed": false,
+        "detail": "latest layout version: None",
+        "exit_code": null
+      },
+      {
+        "name": "validate",
+        "passed": true,
+        "detail": "validate.py exit 0",
+        "exit_code": 0
+      },
+      {
+        "name": "layout_frozen",
+        "passed": false,
+        "detail": "flow.stage concept; approved LAYOUT freeze DRs []",
+        "exit_code": null
+      }
+    ]
+  },
+  "verdicts": null,
+  "machine": {
+    "peak_load1": 209.47,
+    "min_available_gb": 9.42
+  },
+  "leftover_processes_killed": 0
+}
