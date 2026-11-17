@@ -32,6 +32,7 @@ CHANGED_FILES = (
     "skills/cad-drawings/scripts/assembly_drawing.py",
     "skills/cad-drawings/scripts/assembly_sheet.py",
     "skills/cad-record/scripts/check_packet.py",
+    "skills/cad-record/scripts/cli.py",
     "skills/cad-fits/scripts/stackup.py",
     "skills/cad-flow/scripts/fea_solvers.py",
     "skills/cad-flow/scripts/scratch.py",
@@ -121,6 +122,7 @@ STRICT_FILES = (
     "skills/cad-record/scripts/impact.py",
     "skills/cad-record/scripts/selection.py",
     "skills/cad-record/scripts/check_packet.py",
+    "skills/cad-record/scripts/cli.py",
     "skills/cad-record/scripts/schema_registry.py",
     "skills/cad-record/scripts/yaml_loader.py",
 )
