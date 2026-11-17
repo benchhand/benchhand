@@ -308,7 +308,7 @@ class PacketRefusalTests(unittest.TestCase):
 
         cls.support = support
         cls.record, pc = support.printed_record()
-        # with no geometry the checks give every obligation the outcome unknown, so the packet result is unknown
+        # with no geometry the checks give every obligation the outcome unknown, so the packet result reads unknown
         cls.packet = pc.assess(cls.record, {}, today=support.TODAY).packet({"version_manifest": "0" * 64, "producer_code": "0" * 64})
 
     def pair_result(self, packet: dict) -> corpus.PairResult:
