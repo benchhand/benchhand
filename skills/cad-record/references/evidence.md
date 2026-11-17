@@ -48,7 +48,7 @@ The run works in this order:
 - The run reads the results in the fail-fast order. At the first blocking result it stops the producers that still run.
 - A producer that exits 0 without a JSON report gave no result.
 
-The freeze records `flow.frozen.evidence_sha256` from the evidence digest plus the approving decision. Release manifest v3 seals the acceptance inventory, evidence policy, material/process route and service scope/limits. Old v1/v2 releases remain inspectable in their original format; they are historical, not re-certified by the new policy.
+The freeze records `flow.frozen.evidence_sha256` from the evidence digest plus the approving decision. Release manifest v3 seals the acceptance inventory, evidence policy, material/process route and service scope/limits. Only release manifest v3 is read.
 
 ## Where cited files live
 

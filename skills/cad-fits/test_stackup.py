@@ -519,6 +519,47 @@ class StackupCliTests(unittest.TestCase):
             self.assertEqual(manifest["recipe"]["options"]["intent_version"], 2)
             self.assertEqual(output["check_bundle"], "hw/checks/v1/stack-closing-gap")
 
+    def assembly_stack(self) -> dict:
+        """A PN-subject stack of two sourced assembly contributors that passes: 0.2 mm +/- 0.1 against 0.0 to 0.4."""
+        source = {"kind": "user", "reference": "TST stack input", "origin": "TST fixture user"}
+        return {"intent_version": 2, "id": "STK-021", "title": "PN stack", "units": "mm",
+                "subject": {"PN": "TST-0001", "feature": "pivot_bore"}, "dimension_state": "assembled",
+                "consequence": "performance", "relevant": ["assembly"],
+                "requirement": {"min": 0.0, "max": 0.4, "method": "worst_case", "source": source},
+                "contributors": [{"id": "A", "category": "assembly", "nominal": 50.2, "tol": 0.05, "direction": 1, "source": source},
+                                 {"id": "B", "category": "assembly", "nominal": 50.0, "tol": 0.05, "direction": -1, "source": source}]}
+
+    def test_a_snapshot_that_is_not_record_version_2_is_refused_and_nothing_is_published(self) -> None:
+        for label, change in (("absent", lambda text: text.replace("record_version: 2\n", "")),
+                              ("unknown", lambda text: text.replace("record_version: 2", "record_version: 3")),
+                              ("non-mapping", lambda text: "- not\n- a mapping\n")):
+            with self.subTest(snapshot=label), tempfile.TemporaryDirectory() as directory:
+                hw = fx.write_record(Path(directory) / "project" / "hw", closing_gap_documents())
+                case = write_case(hw, "pn-stack", self.assembly_stack())
+                snapshot_version(hw)
+                product = hw / "versions" / "v1" / "record" / "product.yaml"
+                product.write_text(change(product.read_text(encoding="utf-8")), encoding="utf-8")
+                version = hw / "versions" / "v1"  # reseal the manifest over the edited snapshot, so only the version is wrong
+                files = {path.relative_to(version).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                         for path in version.rglob("*") if path.is_file() and path.name != "manifest.json"}
+                (version / "manifest.json").write_text(json.dumps({"label": "v1", "files": files}), encoding="utf-8")
+                args = ["uv", "run", "--quiet", "--script", str(SCRIPT), str(case), "--hw", str(hw), "--version", "v1"]
+                proc = subprocess.run(args, capture_output=True, text=True, check=False, timeout=300)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("record_version", proc.stderr)
+                self.assertFalse((hw / "analysis" / "v1").exists(), "no analysis bundle")
+                self.assertFalse((hw / "checks").exists(), "no check packet")
+
+    def test_the_same_pn_stack_passes_against_a_record_version_2_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", closing_gap_documents())
+            case = write_case(hw, "pn-stack", self.assembly_stack())
+            snapshot_version(hw)
+            proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), str(case), "--hw", str(hw),
+                                   "--version", "v1"], capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertTrue((hw / "analysis" / "v1" / "pn-stack").is_dir())
+
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory) / "project"

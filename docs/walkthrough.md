@@ -38,7 +38,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 ## GROUND
 
-**Type:** `Establish the product purpose and users, intended-use service class (concept, fit/assembly prototype, supervised functional demo, working prototype, production, safety-critical/regulated), operating environment, loads and motion, service life, required accuracy/finish, consequences/standards, quantity/cost/lead time, maintenance, operators/equipment and willingness to outsource. Keep service class separate from rigor (maker/pro/regulated documentation depth); prototype is service class, never rigor. For each unknown, identify its owner and whether it changes material/process choice or safety. Inspect the existing record; for a v1 record, run the migration dry run and review the exact per-file diff.`
+**Type:** `Establish the product purpose and users, intended-use service class (concept, fit/assembly prototype, supervised functional demo, working prototype, production, safety-critical/regulated), operating environment, loads and motion, service life, required accuracy/finish, consequences/standards, quantity/cost/lead time, maintenance, operators/equipment and willingness to outsource. Keep service class separate from rigor (maker/pro/regulated documentation depth); prototype is service class, never rigor. For each unknown, identify its owner and whether it changes material/process choice or safety. Inspect the existing record.`
 
 **Review:** requirements, preferences, assumptions and open questions separately; cited sources; evidence and scope gaps. Capability availability is not a product requirement. Do not infer operating conditions from illustrative CAD geometry or a lamp example.
 

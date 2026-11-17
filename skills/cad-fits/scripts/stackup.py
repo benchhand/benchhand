@@ -189,6 +189,9 @@ def compute(stack: dict[str, Any], record: Any = None, *, case: str | None = Non
     version = stack.get("intent_version")
     if version != INTENT_VERSION or isinstance(version, bool):
         raise StackError(f"intent_version must be {INTENT_VERSION}, got {version!r}")
+    problem = None if record is None else _intent_module().version_problem(record.product)
+    if problem is not None:
+        raise StackError(f"{problem.code}: {problem.message}")
     return _IntentStack(stack, record, case, on, decisions).evaluate()
 
 
