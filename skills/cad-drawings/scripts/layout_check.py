@@ -88,10 +88,18 @@ def _apply(m: Matrix, x: float, y: float) -> tuple[float, float]:
 _NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 
 
+# Argument counts of the supported functions (SVG 1.1 section 7.6; CSS Transforms 1 section 10): a count
+# outside these is an error in the transform list, which this parser reports as a ValueError.
+_ARITY = {"translate": (1, 2), "scale": (1, 2), "rotate": (1, 3), "matrix": (6,)}
+
+
 def parse_transform(text: str | None) -> Matrix:
+    """The matrix of an SVG transform list; raises ValueError for an unsupported function or a bad argument count."""
     matrix = IDENTITY
     for name, args in re.findall(r"(\w+)\s*\(([^)]*)\)", text or ""):
         v = [float(n) for n in re.findall(_NUMBER, args)]
+        if name in _ARITY and len(v) not in _ARITY[name]:
+            raise ValueError(f"SVG transform {name}() takes {' or '.join(map(str, _ARITY[name]))} numbers, got {len(v)}")
         if name == "translate":
             step = (1.0, 0.0, 0.0, 1.0, v[0], v[1] if len(v) > 1 else 0.0)
         elif name == "scale":
@@ -101,7 +109,7 @@ def parse_transform(text: str | None) -> Matrix:
             step = (math.cos(a), math.sin(a), -math.sin(a), math.cos(a), 0.0, 0.0)
             if len(v) == 3:
                 step = _multiply(_multiply((1.0, 0.0, 0.0, 1.0, v[1], v[2]), step), (1.0, 0.0, 0.0, 1.0, -v[1], -v[2]))
-        elif name == "matrix" and len(v) == 6:
+        elif name == "matrix":
             step = (v[0], v[1], v[2], v[3], v[4], v[5])
         else:
             raise ValueError(f"unsupported SVG transform: {name}")
