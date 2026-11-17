@@ -73,7 +73,9 @@ From commit a0df35c on, a gate counts only when it fits the record's state at th
 - INTENT, only while `flow.stage` is `ground` or `intent`;
 - VARIANT, only while `flow.stage` is `concept`;
 - the LAYOUT freeze, only once `hw/versions/` holds a version built at `layout`;
-- the PARTS gate, only once `hw/versions/` holds a version built at `parts` (from commit 7564291 on). The provisional gate moves `flow.stage` past `parts` before the human PARTS gate, so the binding reads the version's own stage, as for the LAYOUT freeze.
+- the PARTS gate, only once `hw/versions/` holds a version built at `parts` (from commit 7564291 on).
+
+Both gates are bound to a built version, not to `flow.stage`, for one reason. The provisional gate moves `flow.stage` to the next stage before the human gate is shown: to `parts` before the LAYOUT freeze, and to `detail` before the PARTS gate. A literal check on the stage would therefore reject the real prompt.
 
 At another stage, the harness matches the ask to the other intents instead of that gate. A GROUND reply that names a later gate is then no gate prompt, so its open questions can no longer fail the run as `fail:unmatched-at-gate`. Commit-timing, flow-profile and SPECIFY approval questions are not stage-bound. Each dialogue entry records `stage`, `has_l1` and `has_l2`.
 
