@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -769,8 +770,15 @@ if len(sys.argv) > 1:
         macOS app and an extracted or mounted AppImage keep ccx and gmsh), else on PATH. A path probed earlier could
         be inside an AppImage mount that ended with the probe."""
         path = root / tool
-        path.write_text(f'''#!{sys.executable}
-import os, shutil, subprocess, sys
+        script = root / f"{tool}.stand-in.py"
+        # A shell front: it sets FreeCAD's PYTHONHOME, PYTHONPATH and LD_LIBRARY_PATH (a mounted AppImage sets its
+        # own) aside, so they never steer this test's Python, and the real tool gets them back as FreeCAD set them.
+        names = ("PYTHONHOME", "PYTHONPATH", "LD_LIBRARY_PATH")
+        saved = "".join(f'CAD_HAD_{n}=${{{n}+1}} CAD_{n}=${{{n}-}}; export CAD_HAD_{n} CAD_{n}; unset {n}\n' for n in names)
+        path.write_text(f'''#!/bin/sh
+{saved}exec {shlex.quote(sys.executable)} {shlex.quote(str(script))} "$@"
+''', encoding="utf-8")
+        script.write_text(f'''import os, shutil, subprocess, sys
 def parent_and_executable(pid):
     if os.path.exists("/proc/%d/exe" % pid):
         with open("/proc/%d/stat" % pid, encoding="utf-8") as stat:
@@ -793,6 +801,10 @@ real = real_tool({tool!r})
 with open({str(root / (tool + "-calls.log"))!r}, "a", encoding="utf-8") as log:
     log.write(" ".join([real, *sys.argv[1:]]) + "\\n")
 {body}
+for name in {names!r}:
+    if os.environ.pop("CAD_HAD_" + name, ""):
+        os.environ[name] = os.environ.get("CAD_" + name, "")
+    os.environ.pop("CAD_" + name, None)
 os.execv(real, [real, *sys.argv[1:]])
 ''', encoding="utf-8")
         path.chmod(0o755)
