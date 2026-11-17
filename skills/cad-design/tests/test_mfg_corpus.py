@@ -450,7 +450,8 @@ class DocTreeLeakTests(unittest.TestCase):
         module = doc_support.load("cad_record_build_guide", doc_support.RECORD / "scripts" / "build_guide.py")
         found: dict[str, str] = {}
 
-        def capture(hw: Path, root: Path, judged: tuple[str, ...] = ()) -> str:
+        def capture(hw: Path, *prefixes: str) -> str:
+            root = hw.parent
             version = hw / "versions" / doc_support.VERSION
             version.mkdir(parents=True, exist_ok=True)
             (version / "manifest.json").write_text(json.dumps({"label": doc_support.VERSION, "manufacturing": {}}), encoding="utf-8")
@@ -460,7 +461,7 @@ class DocTreeLeakTests(unittest.TestCase):
             found.update({f"generated/{name}": text for name, text in documents.items()})
             return "pass"
 
-        with mock.patch.object(doc_support, "pipeline", capture):
+        with mock.patch.object(doc_support, "record_verdict", capture):
             family_pair("doc_purchased_designation", pair_id).run(mutant)
         return found
 

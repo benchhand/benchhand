@@ -6,8 +6,8 @@ does not test them.
 
 The record is a small synthetic one: a single purchased part, one interface, a BOM and the generic fixture requirement. It has
 no decision text, notes or free-text requirement that could repeat an identifier. Each mutant differs from its twin only by
-the defect. The pipeline judges the `purchase.identity` obligation next to validate.py, the order check, the build guide
-generator and the manufacturing plan.
+the defect. A release judges the `purchase.identity` obligation: the process checks assess the record into a packet, and the
+evidence assessment of cad-record concludes from it.
 
 Two pairs cover the title fallback of the purchase handler. With an empty designation field, a title that states a standard
 designation with its size passes (the handler adds an advisory, which the unit tests assert). A title that names the standard
@@ -22,7 +22,7 @@ from typing import Any
 import doc_support
 from corpus import Family, Outcome, Pair
 
-JUDGED = ("purchase.identity@",)
+PREFIXES = ("purchase.identity@",)
 PN = "TST-0003"
 SIZE = "5\u00d70.6"
 STANDARD_DESIGNATION = f"DIN 471 \u2013 {SIZE}"
@@ -56,7 +56,7 @@ def bought(title: str, procurement: dict[str, Any]) -> dict[str, Any]:
 
 
 def record_run(case: Callable[[bool], tuple[str, dict[str, Any]]]) -> Callable[[bool], Outcome]:
-    """A pair's `run`: `case(mutant)` gives the part's title and procurement block, the pipeline judges the record."""
+    """A pair's `run`: `case(mutant)` gives the part's title and procurement block, and a release judges the record."""
 
     def run(mutant: bool) -> Outcome:
         title, procurement = case(mutant)
@@ -65,7 +65,7 @@ def record_run(case: Callable[[bool], tuple[str, dict[str, Any]]]) -> Callable[[
             # The one interface joins the part to itself: it is the part's mounting.
             hw = fx.write_record(root / "hw", fx.record(parts=[bought(title, procurement)], decisions=(),
                                                         interfaces=[fx.interface("IF-001", PN, PN)]))
-            return doc_support.pipeline(hw, root, JUDGED)
+            return doc_support.record_verdict(hw, *PREFIXES)
 
     return run
 
