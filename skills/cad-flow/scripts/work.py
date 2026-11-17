@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pyyaml>=6.0"]
+# dependencies = ["pyyaml==6.0.3"]
 # ///
 """Work ledger of the cad-flow lead: units, dependencies, claims, leases, evidence comments and human gates.
 
@@ -35,9 +35,10 @@ Gates are mirrors: flow.py decides, work.py records. The CLI has no way to resol
 `resolve_gate`, which flow.py calls with an accepted decision, closes one.
 
 `ready` and `claim` take the accepted-gate set from flow.gates in <project>/hw/product.yaml (read only; an
-absent file or key means nothing is approved yet). A gate closed in the ledger without an entry there keeps the
-units behind it blocked, and `findings` reports it as `ledger.gate_unbound`, as it reports the reverse.
-PyYAML, to read product.yaml, is the one dependency outside the standard library.
+absent file or key means nothing is approved yet). flow.gates maps a gated stage to
+{state: provisional|approved, version, provisional, approved}; any other shape is an error. A gate closed in the
+ledger that flow.gates does not bind keeps the units behind it blocked, and `findings` reports it as
+`ledger.gate_unbound`, as it reports the reverse. The cad-record YAML loader, which needs PyYAML, reads the file.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -1072,35 +1074,69 @@ def resolve_gate(ledger: Ledger, name: str, decision: AcceptedDecision) -> None:
 # --- the accepted-gate set ----------------------------------------------------------------------------------------
 
 
-def flow_gates_from_product(project: Path) -> frozenset[str]:
-    """The names in flow.gates of <project>/hw/product.yaml, read only; no file or no key: nothing is approved yet.
+GATE_STATES = ("provisional", "approved")  # the recorded states of the 01 flow schema; no entry is `unrecorded`
 
-    flow.gates is a mapping keyed by gate name, or a list of names or of mappings with a `gate` or `name` key.
+
+def _yaml_loader() -> Any:
+    """cad-record's shared YAML reader, loaded by path once per process (as harness/generate.py does)."""
+    name = "cad_record_yaml_loader"
+    if name not in sys.modules:
+        path = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "yaml_loader.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise WorkError(f"the YAML loader {path} was not found")
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except ImportError as error:
+            raise WorkError("reading flow.gates needs PyYAML; run work.py with `uv run --script`") from error
+        sys.modules[name] = module
+    return sys.modules[name]
+
+
+def _bound_gates(stage: str, entry: dict[str, Any]) -> set[str]:
+    """The ledger gates a recorded stage entry binds.
+
+    `provisional` binds the stage's provisional gate. `approved` binds the provisional and approval gates of a
+    two-step stage (its entry names the provisional decision) and the single gate, named for the stage, otherwise.
+    """
+    if entry["state"] == "provisional":
+        return {f"{stage}.provisional"}
+    return {f"{stage}.provisional", f"{stage}.approval"} if entry.get("provisional") else {stage}
+
+
+def flow_gates_from_product(project: Path) -> frozenset[str]:
+    """The ledger gates bound by flow.gates in <project>/hw/product.yaml, read only.
+
+    No file, no `flow`, or no `gates` means nothing is approved yet. Otherwise `gates` must be the 01 schema's mapping
+    from stage to {state: provisional|approved, version, provisional, approved}; any other shape is a WorkError.
     """
     path = project / "hw" / "product.yaml"
     if not path.is_file():
         return frozenset()
+    loader = _yaml_loader()
     try:
-        import yaml
-    except ImportError as error:
-        raise WorkError("reading flow.gates needs PyYAML; run work.py with `uv run --script`") from error
-    try:
-        product = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        product = loader.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, loader.yaml.YAMLError) as error:
         raise WorkError(f"cannot read {path}: {error}") from error
     flow = product.get("flow") if isinstance(product, dict) else None
     gates = flow.get("gates") if isinstance(flow, dict) else None
     if gates is None:
         return frozenset()
-    if isinstance(gates, dict):
-        names = list(gates)
-    elif isinstance(gates, list):
-        names = [item.get("gate", item.get("name")) if isinstance(item, dict) else item for item in gates]
-    else:
-        raise WorkError(f"{path}: flow.gates must be a mapping or a list, not {type(gates).__name__}")
-    if not all(isinstance(name, str) and NAME.fullmatch(name) for name in names):
-        raise WorkError(f"{path}: flow.gates holds an entry that is not a gate name")
-    return frozenset(names)
+    if not isinstance(gates, dict):
+        raise WorkError(f"{path}: flow.gates must be a mapping from stage to entry, not a {type(gates).__name__}")
+    bound: set[str] = set()
+    for stage, entry in gates.items():
+        if not isinstance(stage, str) or not NAME.fullmatch(stage):
+            raise WorkError(f"{path}: flow.gates has a stage key that is not a name: {stage!r}")
+        if not isinstance(entry, dict):
+            raise WorkError(f"{path}: flow.gates.{stage} must be a mapping, not a {type(entry).__name__}")
+        if "state" not in entry:
+            raise WorkError(f"{path}: flow.gates.{stage} has no state")
+        if entry["state"] not in GATE_STATES:
+            raise WorkError(f"{path}: flow.gates.{stage}.state must be provisional or approved, not {entry['state']!r}")
+        bound |= _bound_gates(stage, entry)
+    return frozenset(bound)
 
 
 # --- command line -------------------------------------------------------------------------------------------------

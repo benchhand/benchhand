@@ -18,6 +18,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -824,7 +825,13 @@ class ScratchLeaseTests(unittest.TestCase):
 
 
 class FlowGatesTests(unittest.TestCase):
-    """The accepted-gate set the CLI hands to the guard: flow.gates of hw/product.yaml, read only."""
+    """The accepted-gate set the CLI hands to the guard: flow.gates of hw/product.yaml, read only.
+
+    The 01 schema: `gates` maps a gated stage to {state: provisional|approved, version, provisional, approved};
+    a stage with no entry is `unrecorded`. Both recorded states bind: `provisional` binds the stage's provisional
+    gate, `approved` the provisional gate and the approval gate of a two-step stage (it has a `provisional`
+    decision) or the one gate of a single-gate stage.
+    """
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -835,35 +842,69 @@ class FlowGatesTests(unittest.TestCase):
     def product(self, text: str) -> None:
         (self.project / "hw" / "product.yaml").write_text(text, encoding="utf-8")
 
-    def test_no_file_no_flow_or_no_gates_means_nothing_is_approved_yet(self) -> None:
+    def test_no_file_no_flow_no_gates_or_an_empty_mapping_means_nothing_is_approved_yet(self) -> None:
         self.assertEqual(work.flow_gates_from_product(self.project), frozenset())
-        for text in ("id: p\n", "flow: {stage: ground}\n", "flow: {gates: {}}\n", "flow: {gates: []}\n", ""):
+        for text in ("id: p\n", "flow: {stage: ground}\n", "flow: {gates: {}}\n", "flow: {gates: null}\n", ""):
             with self.subTest(text):
                 self.product(text)
                 self.assertEqual(work.flow_gates_from_product(self.project), frozenset())
 
-    def test_gates_may_be_a_mapping_or_a_list_of_names_or_entries(self) -> None:
-        for text in (
-            "flow:\n  gates:\n    layout.provisional: {decision: DR-001}\n    layout.approval: {}\n",
-            "flow:\n  gates: [layout.provisional, layout.approval]\n",
-            "flow:\n  gates:\n    - gate: layout.provisional\n    - name: layout.approval\n",
-        ):
-            with self.subTest(text):
-                self.product(text)
-                self.assertEqual(
-                    work.flow_gates_from_product(self.project), frozenset({"layout.provisional", "layout.approval"})
-                )
+    def test_provisional_and_approved_entries_bind_the_gates_of_their_stage(self) -> None:
+        cases = {
+            "provisional": ("layout: {state: provisional, version: v2, provisional: DR-003}", {"layout.provisional"}),
+            "approved two-step": (
+                "layout: {state: approved, version: v2, provisional: DR-003, approved: DR-004}",
+                {"layout.provisional", "layout.approval"},
+            ),
+            "approved single": ("intent: {state: approved, version: v1, approved: DR-001}", {"intent"}),
+            "several stages": (
+                "intent: {state: approved, version: v1, approved: DR-001}\n"
+                "    layout: {state: provisional, version: v2}",
+                {"intent", "layout.provisional"},
+            ),
+        }
+        for label, (entries, expected) in cases.items():
+            with self.subTest(label):
+                self.product(f"flow:\n  gates:\n    {entries}\n")
+                self.assertEqual(work.flow_gates_from_product(self.project), frozenset(expected))
 
-    def test_a_malformed_product_file_is_an_error_not_an_empty_set(self) -> None:
-        for text in (
-            "flow: [unclosed\n",
-            "flow: {gates: yes}\n",
-            "flow: {gates: [{oops: 1}]}\n",
-            "flow: {gates: [3]}\n",
-        ):
-            with self.subTest(text), self.assertRaises(work.WorkError):
-                self.product(text)
-                work.flow_gates_from_product(self.project)
+    def test_every_other_shape_of_flow_gates_fails_closed_with_the_problem_named(self) -> None:
+        cases = {
+            "a list": (
+                "flow: {gates: [layout.provisional]}",
+                "flow.gates must be a mapping from stage to entry, not a list",
+            ),
+            "a list of entries": ("flow: {gates: [{gate: layout}]}", "not a list"),
+            "a scalar": ("flow: {gates: yes}", "flow.gates must be a mapping from stage to entry, not a bool"),
+            "a string": ("flow: {gates: approved}", "not a str"),
+            "a bare state": ("flow: {gates: {layout: approved}}", "flow.gates.layout must be a mapping, not a str"),
+            "a list entry": ("flow: {gates: {layout: [approved]}}", "flow.gates.layout must be a mapping, not a list"),
+            "a null entry": ("flow: {gates: {layout: null}}", "flow.gates.layout must be a mapping, not a NoneType"),
+            "no state": ("flow: {gates: {layout: {version: v1}}}", "flow.gates.layout has no state"),
+            "state open": (
+                "flow: {gates: {layout: {state: open}}}",
+                "flow.gates.layout.state must be provisional or approved, not 'open'",
+            ),
+            "state unrecorded": ("flow: {gates: {layout: {state: unrecorded}}}", "not 'unrecorded'"),
+            "state case": ("flow: {gates: {layout: {state: Approved}}}", "not 'Approved'"),
+            "state number": ("flow: {gates: {layout: {state: 3}}}", "not 3"),
+            "state null": ("flow: {gates: {layout: {state: null}}}", "not None"),
+            "a number as stage": (
+                "flow: {gates: {3: {state: approved}}}",
+                "flow.gates has a stage key that is not a name: 3",
+            ),
+            "a stage with a space": ('flow: {gates: {"bad stage": {state: approved}}}', "not a name: 'bad stage'"),
+        }
+        for label, (text, message) in cases.items():
+            with self.subTest(label):
+                self.product(text + "\n")
+                with self.assertRaisesRegex(work.WorkError, re.escape(message)):
+                    work.flow_gates_from_product(self.project)
+
+    def test_a_product_file_that_does_not_parse_is_an_error_not_an_empty_set(self) -> None:
+        self.product("flow: [unclosed\n")
+        with self.assertRaisesRegex(work.WorkError, "cannot read"):
+            work.flow_gates_from_product(self.project)
 
     def cli(self, *argv: str) -> tuple[int, object]:
         out, err = io.StringIO(), io.StringIO()
@@ -871,20 +912,33 @@ class FlowGatesTests(unittest.TestCase):
             code = work.main(["--project", str(self.project), *argv])
         return code, json.loads(out.getvalue() or err.getvalue())
 
-    def test_cli_ready_and_claim_hold_a_hand_closed_gate_until_flow_gates_lists_it(self) -> None:
+    def test_cli_ready_and_claim_hold_a_hand_closed_gate_until_flow_gates_records_its_state(self) -> None:
         ledger = work.Ledger.open(self.project)
         ledger.create_graph([work.UnitSpec("b", "layout")])
-        ledger.create_gate("g1", ["b"])
-        ledger.backend._gate_close("g1", "closed by hand")
+        ledger.create_gate("layout.provisional", ["b"])
+        ledger.backend._gate_close("layout.provisional", "closed by hand")
         self.assertEqual(self.cli("ready"), (0, []))
         code, error = self.cli("claim", "b")
         self.assertEqual(code, 1)
         self.assertIn("not ready", error["error"])
         self.assertEqual([f["code"] for f in self.cli("findings")[1]], [work.GATE_UNBOUND])
-        self.product("flow:\n  gates:\n    g1: {}\n")
+        self.product("flow:\n  gates:\n    layout: {state: provisional, version: v1, provisional: DR-001}\n")
         self.assertEqual([u["unit"] for u in self.cli("ready")[1]], ["b"])
         self.assertEqual(self.cli("claim", "b")[1]["assignee"], "cad/b")
         self.assertEqual(self.cli("findings"), (0, []))
+
+    def test_an_approval_gate_closed_while_flow_gates_says_provisional_is_unbound(self) -> None:
+        ledger = work.Ledger.open(self.project)
+        ledger.create_graph([work.UnitSpec("n", "analysis")])
+        ledger.create_gate("layout.provisional", ["n"])
+        ledger.create_gate("layout.approval", ["n"])
+        ledger.backend._gate_close("layout.provisional", "DR-001")
+        ledger.backend._gate_close("layout.approval", "closed by hand")
+        self.product("flow:\n  gates:\n    layout: {state: provisional, version: v1, provisional: DR-001}\n")
+        self.assertEqual(
+            [f.gate for f in ledger.findings(work.flow_gates_from_product(self.project))], ["layout.approval"]
+        )
+        self.assertEqual(self.cli("ready"), (0, []))
 
 
 class SurfaceTests(unittest.TestCase):
