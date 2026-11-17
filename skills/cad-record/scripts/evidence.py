@@ -1401,12 +1401,22 @@ class _Producer:
         return int(self.lifecycle.terminate_group(self.process))
 
     def result(self) -> dict[str, Any]:
-        try:
-            data = json.loads(self.stdout.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = None
+        data = _producer_report(self.stdout)
         return {"stdout": self.stdout.relative_to(self.project).as_posix(), "reported": isinstance(data, Mapping),
                 "status": data.get("status") if isinstance(data, Mapping) else None}
+
+
+def _emit() -> Any:
+    # Loaded only by `run`, like fail_fast: the copies that validate.py and the cad-recheck hook make hold no emit.py.
+    return _load_module("cad_record_emit", SCRIPTS / "emit.py")
+
+
+def _producer_report(stdout: Path) -> Any:
+    """The result a producer printed on `stdout`: its payload, read out of the tool-result envelope."""
+    try:
+        return _emit().unwrap(json.loads(stdout.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
 
 
 def _lifecycle() -> Any:
@@ -1433,10 +1443,7 @@ def _judge(project: Path, stage: str, expected: Sequence[Any]) -> Callable[[Any,
             return "no_result"
         if step.id != "form" or status != "fail" or not isinstance(result, Mapping) or not result.get("stdout"):
             return status
-        try:
-            report = json.loads((project / str(result["stdout"])).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return status
+        report = _producer_report(project / str(result["stdout"]))
         manufacturing = report.get("manufacturing") if isinstance(report, Mapping) else None
         if not isinstance(report, Mapping) or report.get("status") == "fail" or not isinstance(manufacturing, Mapping) \
                 or not isinstance(manufacturing.get("open"), list):
@@ -1449,7 +1456,7 @@ def _judge(project: Path, stage: str, expected: Sequence[Any]) -> Callable[[Any,
 
 
 def _spawner(hw: Path, version: str, scope: str) -> Callable[[Any], _Producer]:
-    lifecycle, project = _lifecycle(), Path(hw).parent
+    lifecycle, emit, project = _lifecycle(), _emit(), Path(hw).parent
     folder = layout.scratch_path(hw, project / layout.SCRATCH / "evidence-run" / f"{version}-{scope}-{os.urandom(4).hex()}",
                                  "the run folder")
 
@@ -1457,7 +1464,8 @@ def _spawner(hw: Path, version: str, scope: str) -> Callable[[Any], _Producer]:
         folder.mkdir(parents=True, exist_ok=True)
         stdout = folder / f"{step.id}.out"
         with stdout.open("wb") as out, (folder / f"{step.id}.err").open("wb") as err:
-            process = lifecycle.spawn(step.argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, cwd=project)
+            process = lifecycle.spawn(step.argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, cwd=project,
+                                      env=emit.json_env())
         return _Producer(lifecycle, process, stdout, project)
 
     return spawn

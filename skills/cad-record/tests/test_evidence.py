@@ -747,6 +747,47 @@ def launcher(path: Path, body: str) -> Path:
     return path
 
 
+PRODUCER = """# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+import importlib.util
+import sys
+from pathlib import Path
+
+SKILLS = Path(__file__).resolve().parents[2]
+spec = importlib.util.spec_from_file_location("emit", SKILLS / "cad-record" / "scripts" / "emit.py")
+emit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(emit)
+hw = Path(sys.argv[sys.argv.index("--hw") + 1] if "--hw" in sys.argv else sys.argv[1])  # render.py takes hw first
+result = %(result)s
+result.setdefault("notes", ["a long note that makes the result longer than its compact summary"] * 30)
+emit.emit(result, tool="fake", name="fake", code=%(code)d, scratch=emit.work_dir(hw))
+sys.exit(%(code)d)
+"""
+
+
+def real_skills(root: Path, producers: dict[str, tuple[str, dict[str, Any], int]]) -> Path:
+    """A skills tree with the real cad-flow run.py, its scriptenv and the real emit.py, and fake producers
+    that print through emit.py as the real ones do: `producers` maps a script path to (label, result, exit)."""
+    skills = HERE.parents[1]
+    tree = root / "skills"
+    for source in (skills / "cad-flow" / "scripts" / "run.py", skills / "cad-record" / "scripts" / "emit.py",
+                   skills / "cad-model" / "scripts" / "cadmodel" / "__init__.py",
+                   skills / "cad-model" / "scripts" / "cadmodel" / "scriptenv.py"):
+        target = tree / source.relative_to(skills)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    passing = {"status": "pass"}
+    for script in ("cad-design/scripts/form_check.py", "cad-model/scripts/cad_model.py", "cad-render/scripts/render.py",
+                   "cad-motion/scripts/sweep.py", "cad-motion/scripts/motion.py"):
+        _, result, code = producers.get(script, ("", passing, 0))
+        target = tree / script
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(PRODUCER % {"result": repr(result), "code": code}, encoding="utf-8")
+    return tree / "cad-flow" / "scripts" / "run.py"
+
+
 PASSING = "print(json.dumps({'status': 'pass'}))\n"
 
 
@@ -915,6 +956,29 @@ class EvidenceRunProducers(BuiltRecord):
                 _, report = self.run_with(body, "full", stage)
                 form = next(item for item in report["steps"] if item["id"] == "form")
                 self.assertEqual((form["exit"], form["status"], report["stopped_at"]), (1, status, stopped))
+
+    def run_real(self, producers: dict[str, tuple[str, dict[str, Any], int]], scope: str, stage: str) -> tuple[int, dict[str, Any]]:
+        """`evidence.run` with the real run.py (default output mode) and producers that print through emit.py."""
+        run_py = real_skills(self.hw.parent / "tree", producers)
+        with mock.patch.object(evidence, "RUN_PY", run_py):
+            return evidence.run(self.hw, "v1", scope, stage=stage, strays=list)
+
+    def test_a_passing_static_check_through_the_real_launcher_gives_pass(self) -> None:
+        code, report = self.run_real({}, "commit", "layout")
+        statuses = {item["id"]: item["status"] for item in report["steps"]}
+        self.assertEqual((code, report["status"], statuses["static.changed"]), (0, "pass", "pass"))
+        self.assertEqual(report["steps"][0]["status"], "pass")
+
+    def test_a_form_report_open_only_on_obligations_not_yet_due_does_not_block_through_the_real_launcher(self) -> None:
+        parts = next(o.id for o in mi.required_checks(impact.read_record(self.hw))
+                     if o.family.startswith("process.") and o.stage == "parts")
+        form = {"status": "pass", "manufacturing": {"status": "unknown", "open": [{"obligation": parts, "outcome": "unknown"}]}}
+        producers = {"cad-design/scripts/form_check.py": ("form", form, 1)}  # form_check.py exits 1
+        for stage, status, stopped in (("layout", "pass", None), ("parts", "fail", "form")):
+            with self.subTest(stage):
+                _, report = self.run_real(producers, "full", stage)
+                step = next(item for item in report["steps"] if item["id"] == "form")
+                self.assertEqual((step["exit"], step["status"], report["stopped_at"]), (1, status, stopped))
 
 
 class EvidenceRunCli(BuiltRecord):
