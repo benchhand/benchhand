@@ -716,25 +716,43 @@ def _worst_status(statuses: Iterable[str]) -> str:
     return "fail" if "fail" in found else "unknown" if "unknown" in found else "pass"
 
 
+def agreement_scope(occurrences: Mapping[str, Any], changes: Any | None) -> set[str]:
+    """The occurrence ids whose GLB mesh is compared with the STEP. Every one, in a full check and in a
+    changed-only check without a baseline. With a baseline (`changes`, incremental.ChangeSet), the occurrences
+    of a PN whose geometry changed, and the added and the moved occurrences: a mutation of a changed part is
+    caught, an unchanged part at its old place is left to the full check, which the report's `scope.complete`
+    already says a changed-only check is not."""
+    if changes is None or changes.baseline is None:
+        return set(occurrences)
+    return {oid for oid, built in occurrences.items()
+            if built.pn in changes.geometry or oid in changes.added or oid in changes.moved}
+
+
+def agreement_result(rows: Mapping[str, Mapping[str, Any]], skipped: Iterable[str], linear: float | None) -> dict[str, Any]:
+    """The `glb_step_agreement` check from its per-occurrence rows; `skipped` names the occurrences a changed-only
+    check left out (empty in a full check)."""
+    return {"status": _worst_status(r["status"] for r in rows.values()), "blocking": True,
+            "linear_deflection_mm": linear, "skipped": sorted(skipped), "occurrences": dict(sorted(rows.items()))}
+
+
 def glb_step_agreement(folder: Path, manifest: Mapping[str, Any], part_map: Mapping[str, Any], step: Any,
-                       occurrences: Iterable[str]) -> dict[str, Any]:
-    """Per occurrence: its GLB node depicts the assembly STEP's shape at the STEP's placement (cadmodel.agreement).
-    The GLB is read without the manifest's help: a mesh of another model, scale or place fails here though it
-    is a closed solid and the STEP matches the kernel. `unknown` where the data cannot judge."""
+                       examined: Iterable[str], skipped: Iterable[str] = ()) -> dict[str, Any]:
+    """Per examined occurrence: its GLB node depicts the assembly STEP's shape at the STEP's placement
+    (cadmodel.agreement). The GLB is read without the manifest's help: a mesh of another model, scale or place
+    fails here though it is a closed solid and the STEP matches the kernel. `unknown` where the data cannot judge."""
     names = mesh.node_names(part_map)
     definitions = {pn: part.shape for pn, part in step.definitions.items()}
     placements = {}
-    wanted = set(occurrences)
+    wanted = set(examined)
     for component in step.components:
         oid = component.occurrence if component.occurrence is not None else component.pn
         if oid in wanted and component.pn in definitions:
             placements[oid] = agreement.Placement(component.pn, component.location.rot, component.location.trans)
     linear = (manifest.get("glb") or {}).get("linear_deflection_mm")
-    rows = agreement.occurrences(folder / "assembly.glb", names, definitions, placements, linear)
+    rows = agreement.occurrences(folder / "assembly.glb", names, definitions, placements, linear) if wanted else {}
     for oid in wanted - set(rows):
         rows[oid] = {"status": "unknown", "reason": "assembly.step has no component for this occurrence"}
-    return {"status": _worst_status(r["status"] for r in rows.values()), "blocking": True,
-            "linear_deflection_mm": linear, "occurrences": dict(sorted(rows.items()))}
+    return agreement_result(rows, skipped, linear)
 
 
 def declared_dimensions(heat_sets: Iterable[Mapping[str, Any]], host_pns: Mapping[str, str],
@@ -1034,6 +1052,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                      "reason": "a changed-only check measures only the changed pairs; connection needs every pair"}
         pair_scope = chosen
         requirement_scope = [item for item in requirements if tuple(item["pair"]) in selection.selected]
+    in_scope = agreement_scope(occurrences, changes)
     checks = {
         "step_readback": step_readback(folder, manifest, parts, step, occurrences),
         "brep_validity": brep_validity(parts, manifest),
@@ -1046,7 +1065,8 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
         "build_volume": build_volume(record, printed, manifest.get("manufacturing"), manufacturing["parts"]),
         "slivers_tolerances": slivers_and_tolerances(parts),
         "mesh_watertight": mesh_watertight(folder, part_map, occurrences),
-        "glb_step_agreement": glb_step_agreement(folder, manifest, part_map, step, occurrences),
+        "glb_step_agreement": glb_step_agreement(folder, manifest, part_map, step, in_scope,
+                                                 set(occurrences) - in_scope),
         "declared_dimensions": declared_dimensions(
             heat_sets, {oid: o.pn for oid, o in occurrences.items()}, build.read_json(folder / "metrics.json")["parts"]),
         "artifact_integrity": artifact_integrity(folder),

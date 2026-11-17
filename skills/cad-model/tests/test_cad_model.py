@@ -1448,6 +1448,30 @@ class CheckRuleTests(unittest.TestCase):
     def test_no_declared_dimension_leaves_nothing_to_judge(self) -> None:
         self.assertEqual(check.declared_dimensions([], {}, {})["status"], "pass")
 
+    def test_agreement_covers_every_occurrence_unless_a_changed_only_check_names_what_changed(self) -> None:
+        built = {"a1": mock.Mock(pn="A"), "a2": mock.Mock(pn="A"), "b": mock.Mock(pn="B"), "c": mock.Mock(pn="C")}
+
+        def examined(changes: object | None) -> list[str]:
+            return sorted(check.agreement_scope(built, changes))
+
+        def changes(**kept: tuple[str, ...]) -> mock.Mock:
+            return mock.Mock(baseline=object(), geometry=(), added=(), moved=(), **kept)
+
+        self.assertEqual(examined(None), ["a1", "a2", "b", "c"])
+        self.assertEqual(examined(mock.Mock(baseline=None, geometry=(), added=(), moved=())), ["a1", "a2", "b", "c"])
+        self.assertEqual(examined(changes(geometry=("A",))), ["a1", "a2"])  # a changed definition: all its occurrences
+        self.assertEqual(examined(changes(moved=("b",), added=("c",))), ["b", "c"])
+        self.assertEqual(examined(changes()), [])  # nothing changed: nothing to re-judge
+        self.assertEqual(examined(changes(geometry=("GONE",), added=("never-built",))), [])
+
+    def test_a_check_that_examined_no_occurrence_passes_with_those_it_skipped_listed(self) -> None:
+        self.assertEqual(check.agreement_result({}, ["a1"], 0.2)["status"], "pass")
+        rows = {"a1": {"status": "unknown", "reason": "x"}}
+        result = check.agreement_result(rows, ["b"], 0.2)
+        self.assertEqual((result["status"], result["skipped"]), ("unknown", ["b"]))
+        self.assertEqual(check.agreement_result({"a1": {"status": "fail"}, "a2": {"status": "unknown"}}, [], 0.2)["status"],
+                         "fail")
+
     def test_build_volume_accepts_axis_permutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = fdm_record(tmp, "build_volume: {x_mm: 35, y_mm: 10, z_mm: 5, margin_mm: 0}\n")

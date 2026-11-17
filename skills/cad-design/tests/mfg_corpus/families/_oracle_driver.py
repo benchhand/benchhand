@@ -5,7 +5,9 @@
 # ///
 """Build one corpus case with cad-model and run `cad_model.py check`'s function on it; print the verdict as JSON.
 
-A case is `{"model": {...}, "fault": {...} | null}`. `model` sets the parameters of the three fixture parts
+A case is `{"model": {...}, "fault": {...} | null, "changed_only": bool}`; with `changed_only` the clean default
+project is built as v1 first, then `model` as v2, and v2 gets a changed-only check against v1. `model` sets the
+parameters of the three fixture parts
 (base, plate, insert) and the heat-set declaration; `fault` is the one honest exporter slip the sealed
 assembly.glb carries instead of the mesh of the sealed assembly.step (the GLB is the only output that
 differs; the STEP, the manifest and the metrics are the kernel's own). Fault kinds:
@@ -58,11 +60,16 @@ ASSEMBLY = """joints:
 
 
 def write_project(hw: Path, model: dict[str, Any]) -> None:
-    import re
-
     hw.mkdir(parents=True)
     (hw / "product.yaml").write_text("id: oracles\n", encoding="utf-8")
     (hw / "assembly.yaml").write_text(ASSEMBLY, encoding="utf-8")
+    write_models(hw, model)
+
+
+def write_models(hw: Path, model: dict[str, Any]) -> None:
+    """The heat-set declaration and the three part models and records of `model`, over any earlier ones."""
+    import re
+
     (hw / "interfaces.yaml").write_text(INTERFACES.format(hole_d=model["hole_d"]), encoding="utf-8")
     for pn, (title, key, template) in PARTS.items():
         source = (FIXTURES / template).read_text(encoding="utf-8")
@@ -71,7 +78,7 @@ def write_project(hw: Path, model: dict[str, Any]) -> None:
         params = {**eval(match.group(1), {}), **model[key]}  # noqa: S307 - a literal dict of this repo's own fixture
         source = source.replace(match.group(0), f"PARAMS = {params!r}", 1)
         folder = hw / "parts" / pn
-        folder.mkdir(parents=True)
+        folder.mkdir(parents=True, exist_ok=True)
         (folder / "model.py").write_text(source, encoding="utf-8")
         (folder / "part.yaml").write_text(
             f"PN: {pn}\nrev: X1\ntitle: {title}\nmaterial: PETG\nprocess: cnc\nfinish: none\nmass_target: 100\n"
@@ -173,7 +180,12 @@ def main(case_path: Path, work: Path) -> int:
         build.run(variant_hw, "v1", "auto", [])
         variant_glb = variant_hw / "versions" / "v1" / "assembly.glb"
     hw = work / "hw"
-    write_project(hw, model)
+    changed_only = bool(case.get("changed_only"))
+    label = "v2" if changed_only else "v1"
+    write_project(hw, with_defaults(None) if changed_only else model)
+    if changed_only:  # v1 is the clean default project; v2 is built from `model` and checked against it
+        build.run(hw, "v1", "auto", [])
+        write_models(hw, model)
     real = mesh.write_glb
 
     def faulty(step: Path, glb: Path) -> dict[str, Any]:
@@ -183,11 +195,11 @@ def main(case_path: Path, work: Path) -> int:
         return info
 
     with mock.patch.object(mesh, "write_glb", faulty):
-        code, built = build.run(hw, "v1", "auto", [])
+        code, built = build.run(hw, label, "auto", [])
     if code != 0:
         print(json.dumps({"error": "build failed", "build": built}), file=sys.stderr)
         return 2
-    _code, result = check.check(hw, "v1", None, [], {})
+    _code, result = check.check(hw, label, None, [], {}, changed_only=changed_only)
     flagged = sorted(n for n, c in result["checks"].items() if c["status"] in ("fail", "unknown"))
     print(json.dumps({"outcome": verdict(result), "blocking": result["blocking_failures"],
                       "flagged": {n: result["checks"][n]["status"] for n in flagged}}))

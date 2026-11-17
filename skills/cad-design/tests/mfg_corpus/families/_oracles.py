@@ -21,8 +21,8 @@ DRIVER = FAMILIES_DIR / "_oracle_driver.py"
 _CACHE: dict[str, Outcome] = {}
 
 
-def verdict(model: dict[str, Any] | None, fault: dict[str, Any] | None) -> Outcome:
-    key = json.dumps({"model": model, "fault": fault}, sort_keys=True)
+def verdict(model: dict[str, Any] | None, fault: dict[str, Any] | None, changed_only: bool = False) -> Outcome:
+    key = json.dumps({"model": model, "fault": fault, "changed_only": changed_only}, sort_keys=True)
     if key not in _CACHE:
         uv = shutil.which("uv")
         if uv is None:
@@ -39,7 +39,12 @@ def verdict(model: dict[str, Any] | None, fault: dict[str, Any] | None) -> Outco
     return _CACHE[key]
 
 
-def case(model: dict[str, Any] | None = None, fault: dict[str, Any] | None = None) -> Callable[[bool], Outcome]:
+def case(model: dict[str, Any] | None = None, fault: dict[str, Any] | None = None, *,
+         changed_only: bool = False) -> Callable[[bool], Outcome]:
+    """With `changed_only`, `model` is the change under test (v2 against a clean v1), so the twin keeps it and
+    differs from the mutant by the fault alone; otherwise the twin is the unmodified project."""
     def run(mutant: bool) -> Outcome:
-        return verdict(model, fault) if mutant else verdict(None, None)
+        if mutant:
+            return verdict(model, fault, changed_only)
+        return verdict(model, None, True) if changed_only else verdict(None, None)
     return run
