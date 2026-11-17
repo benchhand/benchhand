@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -471,6 +472,9 @@ class DocTreeLeakTests(unittest.TestCase):
             mutant, twin = self.tree(pair_id, True), self.tree(pair_id, False)
             with self.subTest(pair=pair_id, token=token):
                 self.assertTrue([name for name in mutant if name.startswith("generated/")], "the guide is part of the tree")
+                for variant in (mutant, twin):
+                    self.assertEqual([name for name in variant if "decisions" in name], [], "the record has no decision file")
+                    self.assertEqual([name for name, text in variant.items() if re.search(r"DR-\d", text)], [], "nothing cites a decision")
                 self.assertEqual([name for name, text in mutant.items() if token in text], [], "survives in the mutant")
                 self.assertTrue([name for name, text in twin.items() if token in text], "missing from the twin")
 

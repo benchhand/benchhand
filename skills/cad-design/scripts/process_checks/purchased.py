@@ -23,7 +23,7 @@ _FIT = r"(?:\s*[a-zA-Z]{1,2}\d{1,2})?"  # a tolerance class after the diameter: 
 _SIZE = rf"(?:[M#]\d+(?:\.\d+)?(?:-\d+)?(?:{_TIMES})?|\d+(?:[./]\d+)*(?:-\d+)?{_FIT}{_TIMES})(?!\d)"
 # A bare nominal size (ISO 7089 - 5 - 200 HV) follows the standard number after a space, so a part of a multi-part
 # standard number (EN 10025-2) is not read as one.
-_BARE = r"\d{1,4}(?:\.\d+)?(?![\d./-])"
+_BARE = r"\d{1,4}(?:\.\d+)?(?=\s|$|[,;)])"
 STANDARD_DESIGNATION = re.compile(
     rf"(?<![A-Za-z])(?P<bodies>(?:{_BODY})(?:[ /]+(?:{_BODY}))*)\s+(?P<number>{_NUMBER})"
     rf"(?:(?:\s*[-\u2013\u2014]\s*|\s+){_SIZE}|\s+(?:[-\u2013\u2014]\s+)?{_BARE})")

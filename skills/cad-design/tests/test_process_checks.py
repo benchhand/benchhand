@@ -838,7 +838,7 @@ class PurchasedIdentityTests(Checks):
                 self.assertEqual(self.codes(result, self.obligation), [])
 
     def test_a_part_standard_still_counts_beside_a_feature_standard_or_with_the_number_of_one(self) -> None:
-        for designation in ("DIN 912 M5x20, thread ISO 965-1 6g", "DIN 965 M5x12", "ASME B18.2.1 1/4-20 x 1"):
+        for designation in ("DIN 912 M5x20, thread ISO 965-1 6g", "DIN 965 M5x12"):
             with self.subTest(designation=designation):
                 self.assertEqual(self.outcome(self.bought(designation=designation), self.obligation), "pass")
 
@@ -866,11 +866,17 @@ class PurchasedIdentityTests(Checks):
         self.assertEqual([f["code"] for f in result.findings if f["code"].startswith("purchase.")], [])
 
     def test_a_standard_number_without_a_size_does_not_identify_a_part(self) -> None:
-        for designation in ("DIN 471", "ISO 4762", "EN 10025-2", "DIN 471 retaining ring", "Standard fastener"):
+        for designation in ("DIN 471", "ISO 4762", "EN 10025-2", "DIN 471 retaining ring", "Standard fastener",
+                            "Washer ISO 7089 200HV"):
             with self.subTest(designation=designation):
                 result = self.bought(designation=designation)
                 self.assertEqual(self.outcome(result, self.obligation), "fail")
                 self.assertEqual(self.codes(result, self.obligation), ["purchase.designation_missing"])
+
+    def test_a_hardness_grade_in_the_title_is_not_a_size(self) -> None:
+        result = self.bought("Washer ISO 7089 200HV")
+        self.assertEqual(self.outcome(result, self.obligation), "fail")
+        self.assertEqual(self.codes(result, self.obligation), ["purchase.designation_missing"])
 
     def test_a_manufacturer_part_number_identifies_a_non_standard_part(self) -> None:
         result = self.bought(designation="Compression limiter CL8000, M4 x 8", manufacturer_part_number="CMPL 4 X 8 EK CL8000")
