@@ -508,33 +508,33 @@ class _Assessor:
         wanted = list(service.get("loads") or ())
         if not wanted or self.mi.is_fact(loads):
             return [f"{part.pn}'s service loads are unknown"]
-        gaps = []
-        for ref in wanted:
-            load = known.get(ref)
-            magnitude = load.magnitude if load is not None else None
-            if magnitude is None or not magnitude.known or not isinstance(magnitude.value, self.mi.Quantity) \
-                    or magnitude.value.dimension != "force":
-                gaps.append(f"service load {ref}'s force magnitude is unknown")
-                continue
-            peak = magnitude.value.to("N").bounds[1]
-            applied = _sum_vectors(item["force"] for item in self.case["loads"] if item.get("load") == ref)
-            direction = self.service_direction(ref)
-            if direction is None:
-                gaps.append(f"service load {ref}'s direction is not stated as a vector (such as '0 0 -1' or '-Z'), so "
-                             "the direction of the case's forces cannot be checked against it")
-                if _norm(applied) < peak * (1 - 1e-9):
-                    gaps.append(f"the case's forces for service load {ref} add up to {_norm(applied):g} N, which reaches "
-                                f"{peak:g} N")
-                continue
-            along = _dot(applied, direction)
-            across = _norm(tuple(a - along * d for a, d in zip(applied, direction)))
-            if along < peak * (1 - 1e-9):
-                gaps.append(f"the case applies {max(along, 0.0):g} N along service load {ref}'s direction "
-                            f"{_text(direction)}, which reaches {peak:g} N (its forces add up to {_text(applied)} N)")
-            elif across > LOAD_CROSS_TOLERANCE * peak:
-                gaps.append(f"the case's forces for service load {ref} point {across:g} N across its direction "
-                            f"{_text(direction)}; more than {LOAD_CROSS_TOLERANCE:.0%} of the {peak:g} N it reaches")
-        return gaps
+        return [gap for ref in wanted for gap in self.load_gaps_of(ref, known.get(ref))]
+
+    def load_gaps_of(self, ref: str, load: Any) -> list[str]:
+        """Why the case's forces for one service load fall short of it (empty when they reach it)."""
+        magnitude = load.magnitude if load is not None else None
+        if magnitude is None or not magnitude.known or not isinstance(magnitude.value, self.mi.Quantity) \
+                or magnitude.value.dimension != "force":
+            return [f"service load {ref}'s force magnitude is unknown"]
+        peak = magnitude.value.to("N").bounds[1]
+        applied = _sum_vectors(item["force"] for item in self.case["loads"] if item.get("load") == ref)
+        direction = self.service_direction(ref)
+        if direction is None:
+            gaps = [f"service load {ref}'s direction is not stated as a vector (such as '0 0 -1' or '-Z'), so "
+                    "the direction of the case's forces cannot be checked against it"]
+            if _norm(applied) < peak * (1 - 1e-9):
+                gaps.append(f"the case's forces for service load {ref} add up to {_norm(applied):g} N, which reaches "
+                            f"{peak:g} N")
+            return gaps
+        along = _dot(applied, direction)
+        across = _norm(tuple(a - along * d for a, d in zip(applied, direction)))
+        if along < peak * (1 - 1e-9):
+            return [f"the case applies {max(along, 0.0):g} N along service load {ref}'s direction "
+                    f"{_text(direction)}, which reaches {peak:g} N (its forces add up to {_text(applied)} N)"]
+        if across > LOAD_CROSS_TOLERANCE * peak:
+            return [f"the case's forces for service load {ref} point {across:g} N across its direction "
+                    f"{_text(direction)}; more than {LOAD_CROSS_TOLERANCE:.0%} of the {peak:g} N it reaches"]
+        return []
 
     def service_direction(self, ref: str) -> tuple[float, float, float] | None:
         """The unit vector of a service load's direction fact, or None when it is absent or not a vector."""
@@ -620,12 +620,18 @@ def _parse_direction(text: str) -> tuple[float, float, float] | None:
 
 
 def _selector_key(selector: Any) -> str:
-    """A selector in a form two equal selectors share: sorted indices, or the plane's own fields."""
+    """A selector in a form two equal selectors share: sorted indices, or a plane whose numbers are compared by
+    value (0 and 0.0, 1e-06 and 0.000001 select the same plane)."""
     if isinstance(selector, Mapping) and isinstance(selector.get("indices"), list):
         try:
             return json.dumps({"indices": sorted(selector["indices"])}, sort_keys=True)
         except TypeError:
             pass
+    plane = selector.get("plane") if isinstance(selector, Mapping) else None
+    if isinstance(plane, Mapping):
+        numbers = {key: (float(value) + 0.0 if isinstance(value, (int, float)) and not isinstance(value, bool) else value)
+                   for key, value in plane.items()}   # + 0.0 turns -0.0 into 0.0
+        return json.dumps({"plane": numbers}, sort_keys=True, default=str)
     return json.dumps(selector, sort_keys=True, default=str)
 
 
@@ -715,24 +721,29 @@ def _load_problems(study_loads: Any, case_loads: Any) -> list[str]:
     return []
 
 
-def _refinement_problems(rows: Any, mesh_size: float, tolerance: float | None) -> list[str]:
-    if not isinstance(rows, list) or len(rows) < MIN_REFINEMENTS:
-        return [f"the study needs at least {MIN_REFINEMENTS} refinement results, coarse to fine"]
+def _refinement_series(rows: list[Any]) -> tuple[list[float], dict[str, list[float]]] | str:
+    """The sizes and the monitored series of the refinement rows, or why a row is unusable."""
     sizes: list[float] = []
     series: dict[str, list[float]] = {name: [] for name in MONITORED}
     for index, row in enumerate(rows):
         message = f"refinement {index + 1} needs a positive size_mm and positive {' and '.join(MONITORED)}"
-        if not isinstance(row, Mapping):
-            return [message]
-        size = _number(row.get("size_mm"))
-        if size is None or size <= 0:
-            return [message]
-        for name in MONITORED:
-            value = _number(row.get(name))
-            if value is None or value <= 0:
-                return [message]
-            series[name].append(value)
+        size = _number(row.get("size_mm")) if isinstance(row, Mapping) else None
+        values = [_number(row.get(name)) if isinstance(row, Mapping) else None for name in MONITORED]
+        if size is None or size <= 0 or any(value is None or value <= 0 for value in values):
+            return message
         sizes.append(size)
+        for name, value in zip(MONITORED, values):
+            series[name].append(value)   # type: ignore[arg-type]
+    return sizes, series
+
+
+def _refinement_problems(rows: Any, mesh_size: float, tolerance: float | None) -> list[str]:
+    if not isinstance(rows, list) or len(rows) < MIN_REFINEMENTS:
+        return [f"the study needs at least {MIN_REFINEMENTS} refinement results, coarse to fine"]
+    parsed = _refinement_series(rows)
+    if isinstance(parsed, str):
+        return [parsed]
+    sizes, series = parsed
     if any(coarse <= fine for coarse, fine in zip(sizes, sizes[1:])):
         return ["the refinement sizes must strictly decrease from coarse to fine"]
     here = [i for i, size in enumerate(sizes) if abs(size - mesh_size) <= 1e-9 * max(mesh_size, 1.0)]

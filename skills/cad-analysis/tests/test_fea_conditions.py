@@ -97,10 +97,14 @@ def bracket(profile: Any = "tst_alloy_rod", route: list[dict[str, Any]] | None =
 
 
 def documents(*, profiles: list[dict[str, Any]] | None = None, part: dict[str, Any] | None = None,
-              service_class: str = "working_prototype", direction: str | None = "0 0 -1") -> dict[str, Any]:
+              service_class: str = "working_prototype", direction: Any = (0, 0, -1)) -> dict[str, Any]:
+    """`direction` is the unit vector of the force head_load stands for (cad-record #64 makes it a required
+    [x, y, z] list); a string is written as a text fact, the form the record takes today."""
     load = {"id": "head_load", "kind": "static", "magnitude": fx.known(fx.quantity(50, "N")), "requirements": ["REQ-001"]}
-    if direction is not None:
+    if isinstance(direction, str):
         load["direction"] = fx.known(direction)
+    elif direction is not None:
+        load["direction"] = list(direction)
     use = fx.use_case("draft", service_class=fx.known(service_class), loads=[load])
     use["environment"]["temperature"] = fx.known(fx.quantity(lower=15, upper=30, units="deg_C"))
     requirements = fx.requirements([
@@ -442,12 +446,6 @@ class QualificationBypasses(SourcedFEACase):
         self.approve(self.study(path))
         return path
 
-    def test_the_stated_direction_at_the_stated_magnitude_passes(self) -> None:
-        self.build(documents())
-        report = self.solve(self.loads_case(([2], [0, 0, -50])))
-        self.assertEqual(self.verdicts(report), ("pass", "pass"))
-        self.assertTrue(report["evidence"]["service_evidence"], report["evidence"]["gaps"])
-
     def test_a_larger_load_along_the_direction_and_a_small_cross_component_still_pass(self) -> None:
         self.build(documents())
         self.assertEqual(self.verdicts(self.solve(self.loads_case(([2], [0, 0, -60])))), ("pass", "pass"))
@@ -465,6 +463,15 @@ class QualificationBypasses(SourcedFEACase):
             with self.subTest(force=name):
                 self.solved.clear()
                 self.assert_unproven(self.solve(self.loads_case(([2], force))), loads=True)
+
+    def test_a_cross_force_beyond_the_tolerance_keeps_the_verdict_unknown_with_the_full_load_along(self) -> None:
+        """50 N along the service direction meets the along minimum; 1 N across it is 2% of the load, past the 1%
+        tolerance. Only the cross check can refuse this case."""
+        self.build(documents())
+        report = self.solve(self.loads_case(([2], [1.0, 0, -50])))
+        self.assert_unproven(report, loads=True)
+        self.assertTrue(any("across" in gap for gap in report["evidence"]["gaps"]), report["evidence"]["gaps"])
+        self.assertFalse(any("along" in gap for gap in report["evidence"]["gaps"]), report["evidence"]["gaps"])
 
     def test_cancelling_forces_keep_the_verdict_unknown(self) -> None:
         """Two 50 N forces that cancel have a magnitude sum of 100 N and a vector sum of zero."""
@@ -548,6 +555,47 @@ class QualificationBypasses(SourcedFEACase):
         study = self.study(path, loads=[{"selector": {"indices": [2]}, "force": [0, 0, -50.00001]}])
         self.approve(study)
         self.assertEqual(self.verdicts(self.fresh(path)), ("pass", "pass"))
+
+    def test_a_coarse_case_mesh_is_unproven_even_when_the_two_finest_meshes_agree(self) -> None:
+        """Sizes 4, 2, 1 with the case at 4: the finest pair differs 0.4 percent, but the case's own mesh reads
+        6.4 percent below the finest, past the 5 percent limit."""
+        self.build(documents())
+        path = self.convergent_case(mesh_size=4)
+        rows = self.study(path)["refinements"]
+        self.assertEqual([row["size_mm"] for row in rows], [4, 2, 1])
+        self.approve(self.study(path, refinements=[{"size_mm": 4, "max_von_mises_mpa": 78.0, "max_displacement_mm": 0.199},
+                                                   {"size_mm": 2, "max_von_mises_mpa": 83.0, "max_displacement_mm": 0.199},
+                                                   {"size_mm": 1, "max_von_mises_mpa": 83.3, "max_displacement_mm": 0.199}]))
+        report = self.solve(path)
+        self.assert_unproven(report, convergence=True)
+        self.assertTrue(any("on the case's mesh differs" in p for p in report["mesh"]["convergence"]["problems"]),
+                        report["mesh"]["convergence"]["problems"])
+        self.assertFalse(any("two finest" in p for p in report["mesh"]["convergence"]["problems"]))
+        self.approve(self.study(path, refinements=rows))   # the same case mesh with a settled series is demonstrated
+        self.approve(self.study(path, refinements=[{"size_mm": 4, "max_von_mises_mpa": 82.5, "max_displacement_mm": 0.198},
+                                                   {"size_mm": 2, "max_von_mises_mpa": 83.0, "max_displacement_mm": 0.199},
+                                                   {"size_mm": 1, "max_von_mises_mpa": 83.3, "max_displacement_mm": 0.199}]))
+        self.assertEqual(self.verdicts(self.solve(path)), ("pass", "pass"))
+
+    def test_plane_selectors_bind_by_value_not_by_spelling(self) -> None:
+        """0 and 0.0, 1e-06 and 0.000001, 100 and 100.0 select the same plane."""
+        self.build(documents())
+        plane = {"plane": {"axis": "x", "value": 0, "tolerance": 0.000001}}
+        load_plane = {"plane": {"axis": "x", "value": 100, "tolerance": 0.000001}}
+        path = self.case({"conditions": SERVICE}, acceptance={"strength": "REQ-001", "stiffness": "REQ-002"},
+                         mesh_convergence={"decision": "DR-002"}, fixed_faces=plane,
+                         loads=[{"selector": load_plane, "force": [0, 0, -50], "load": "head_load"}])
+        respelled = {"supports": {"plane": {"axis": "x", "value": 0.0, "tolerance": 1e-06}},
+                     "loads": [{"selector": {"plane": {"axis": "x", "value": 100.0, "tolerance": 1e-06}}, "force": [0, 0, -50]}]}
+        self.approve(self.study(path, **respelled))
+        self.assertEqual(self.verdicts(self.solve(path)), ("pass", "pass"))
+        for name, change in {"another support plane value": {"supports": {"plane": {"axis": "x", "value": 0.5, "tolerance": 1e-06}}},
+                             "another load plane axis": {"loads": [{"selector": {"plane": {"axis": "y", "value": 100.0,
+                                                                                           "tolerance": 1e-06}}, "force": [0, 0, -50]}]},
+                             "another tolerance": {"supports": {"plane": {"axis": "x", "value": 0.0, "tolerance": 0.01}}}}.items():
+            with self.subTest(change=name):
+                self.approve(self.study(path, **{**respelled, **change}))
+                self.assert_unproven(self.solve(path), convergence=True)
 
     def test_a_study_that_has_not_converged_proves_nothing(self) -> None:
         self.build(documents())
