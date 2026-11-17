@@ -2246,32 +2246,35 @@ class HoleMetricsTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the OCP environment")
-class MeasuresTests(unittest.TestCase):
-    """manufacture._Measures (fixtures/measures_probe.py): one shape costs one OCCT pass, and
-    only that shape takes its measurement."""
+class InspectMeasurementTests(unittest.TestCase):
+    """manufacture.inspect on one part whose components hold different shapes (fixtures/inspect_probe.py):
+    each shape read back in the call reports its own volume and box."""
 
     @classmethod
     def setUpClass(cls) -> None:
-        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "measures_probe.py")],
-                              capture_output=True, text=True, check=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "inspect_probe.py"), tmp],
+                                  capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr[-2000:]
         cls.report = json.loads(proc.stdout)
 
-    def test_two_different_shapes_get_their_own_values(self) -> None:
-        unit, big = self.report["unit"], self.report["big"]
-        self.assertAlmostEqual(unit["volume"], 1.0, places=9)
-        self.assertAlmostEqual(big["volume"], 24.0, places=9)
-        assert_vectors(self, unit["box"][1], [1.0, 1.0, 1.0], 9)
-        assert_vectors(self, big["box"][1], [2.0, 3.0, 4.0], 9)
+    def test_each_component_shape_reports_its_own_volume_and_box(self) -> None:
+        want = {"A": (1.0, [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]), "B": (24.0, [0.0, 0.0, 0.0], [2.0, 3.0, 4.0]),
+                "C": (1.0, [5.0, 0.0, 0.0], [6.0, 1.0, 1.0])}
+        self.assertEqual(sorted(self.report["components"]), sorted(want))
+        for ident, (volume, low, high) in want.items():
+            row = self.report["components"][ident]
+            with self.subTest(component=ident):
+                self.assertAlmostEqual(row["step"]["volume_mm3"], volume, places=9)
+                for check in (row["step"], row["placement"]):
+                    assert_vectors(self, check["bbox_mm"]["min"], low, 9)
+                    assert_vectors(self, check["bbox_mm"]["max"], high, 9)
 
-    def test_a_moved_or_reversed_shape_is_not_the_shape_it_came_from(self) -> None:
-        assert_vectors(self, self.report["moved"]["box"][0], [5.0, 0.0, 0.0], 9)
-        self.assertAlmostEqual(self.report["reversed"]["volume"], -1.0, places=9)
-
-    def test_one_shape_is_measured_once_however_often_it_is_asked(self) -> None:
-        # Two rounds over five Python objects, of which the first two are one shape: four distinct shapes.
-        self.assertEqual(self.report["passes"], {"bbox": 4, "volume": 4})
-        self.assertEqual(self.report["unit_again"], self.report["unit"])
+    def test_the_whole_part_keeps_its_own_measurement_beside_its_components(self) -> None:
+        step = self.report["part"]["step"]
+        self.assertAlmostEqual(step["volume_mm3"], 1.0, places=9)
+        assert_vectors(self, step["bbox_mm"]["max"], [1.0, 1.0, 1.0], 9)
+        assert_vectors(self, self.report["part"]["placement"]["bbox_mm"]["max"], [1.0, 1.0, 1.0], 9)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the OCP environment")
