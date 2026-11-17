@@ -8,7 +8,7 @@
   "required": ["code", "message"],
   "properties": {
     "code": {"description": "A stable finding code such as process.fdm.overhang or fit_unverified: lower-case words joined by underscores, optionally dotted into a namespace", "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$", "examples": ["process.fdm.overhang", "fit_unverified"]},
-    "severity": {"description": "Canonical words only. Of the legacy words only warning has a same-effect canonical word: it maps to info, as neither blocks (validate.py NONBLOCKING, emit.py NONBLOCKING_SEVERITIES). The blocking effect of error and stage has no canonical equivalent yet and is unresolved: see the open questions on PR 137", "enum": ["critical", "major", "minor", "info"]},
+    "severity": {"description": "How bad the finding is, not whether it blocks: one shared blocking rule that every gate calls decides that, and under it minor and info are the non-blocking set. Canonical words only. Target mapping for the producers: error to major, layout stage to major or minor by layout_strict, no severity to major, warning to minor (warning is retired). That mapping keeps today's blocking effect only once the shared rule and the producers have migrated. Until then the only stand-alone same-effect mapping is warning to info", "enum": ["critical", "major", "minor", "info"]},
     "outcome": {"description": "A check's result; unknown is never a pass", "enum": ["pass", "fail", "unknown", "not_applicable"]},
     "subject": {
       "description": "The part and feature the finding is about",
