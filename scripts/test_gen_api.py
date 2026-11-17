@@ -324,9 +324,17 @@ class SchemaHashDrift(FixtureTree):
     REL = "skills/cad-record/schemas/inherit.schema.json"
     BASE_DOC = {
         "$id": BASE + "inherit.schema.json",
-        "$defs": {"base": {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}}},
+        "$defs": {
+            "base": {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}},
+            "Strs": {"type": "array", "items": {"type": "string"}},
+        },
         "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"a": {"maxLength": 9}}}],
+        "properties": {"names": {"$ref": "#/$defs/Strs"}},
     }
+
+    def rendered_body(self) -> dict[str, str]:
+        """The generated outputs without their schema-hash header lines."""
+        return {rel: "\n".join(line for line in text.splitlines() if "schema-sha256" not in line) for rel, text in gen_api.generate(self.root).items()}
 
     def setUp(self) -> None:
         super().setUp()
@@ -342,12 +350,15 @@ class SchemaHashDrift(FixtureTree):
         edits = {
             "refined inherited bound": lambda d: d["allOf"][1]["properties"]["a"].update(maxLength=5),
             "unrendered keyword": lambda d: d.update({"$comment": "reworded"}),
+            "items constraint beside a ref": lambda d: d["properties"]["names"].update(items={"minLength": 1}),
         }
         for name, edit in edits.items():
             with self.subTest(edit=name):
                 changed = json.loads(json.dumps(self.BASE_DOC))
                 edit(changed)
+                before = self.rendered_body()
                 write_json(self.root, self.REL, changed)
+                self.assertEqual(self.rendered_body(), before, "the edit must be invisible to the renderer")
                 code, err = self.check()
                 self.assertNotEqual(code, 0)
                 self.assertIn(self.REL, err)
