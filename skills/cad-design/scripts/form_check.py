@@ -737,7 +737,8 @@ def _face_samples(face: Any) -> list[tuple[tuple[float, float, float], tuple[flo
 
 
 class _Edge(NamedTuple):
-    """One non-degenerate edge of a face: a rounded midpoint key, the midpoint, the chord, both ends and whether it is a line."""
+    """One non-degenerate edge of a face: a rounded midpoint key, the midpoint, the chord, both ends, whether it is a
+    line and, for a circular arc, its radius (else 0)."""
 
     key: tuple[float, ...]
     mid: tuple[float, float, float]
@@ -745,13 +746,14 @@ class _Edge(NamedTuple):
     start: tuple[float, float, float]
     end: tuple[float, float, float]
     straight: bool
+    radius: float = 0.0
 
 
 def _edges(face: Any) -> list[_Edge]:
     """Each non-degenerate edge of `face`."""
     from OCP.BRep import BRep_Tool
     from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.GeomAbs import GeomAbs_Line
+    from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Line
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
 
@@ -768,7 +770,9 @@ def _edges(face: Any) -> list[_Edge]:
         first, last = curve.FirstParameter(), curve.LastParameter()
         mid = _xyz(curve.Value((first + last) / 2.0))
         start, end = _xyz(curve.Value(first)), _xyz(curve.Value(last))
-        found.append(_Edge(tuple(round(c, 5) for c in mid), mid, _sub(end, start), start, end, curve.GetType() == GeomAbs_Line))
+        radius = curve.Circle().Radius() if curve.GetType() == GeomAbs_Circle else 0.0
+        found.append(_Edge(tuple(round(c, 5) for c in mid), mid, _sub(end, start), start, end, curve.GetType() == GeomAbs_Line,
+                           radius))
     return found
 
 
@@ -801,12 +805,51 @@ def _runs(anchors: list[_Edge]) -> list[_Edge]:
     return runs
 
 
-def _strip_gap(a: _Edge, b: _Edge, roof: list[_Edge]) -> float | None:
-    """The distance between `a` and `b` when they are the two opposite sides of the strip that is the roof, else None.
+def _near(p: Sequence[float], q: Sequence[float]) -> bool:
+    return _norm(_sub(p, q)) <= PROBE_TOL_MM
 
-    They must be parallel lines of one length that overlap along their whole length. The rest of the roof outline,
-    each edge sampled at both ends and its middle, must stay inside the band between them and outside the stretch
-    between their ends. Round corners and caps and straight end edges pass. An indentation, a boss or a hole fails."""
+
+def _wire_count(face: Any) -> int:
+    from OCP.TopAbs import TopAbs_WIRE
+    from OCP.TopExp import TopExp_Explorer
+
+    explorer, wires = TopExp_Explorer(face, TopAbs_WIRE), 0
+    while explorer.More():
+        wires += 1
+        explorer.Next()
+    return wires
+
+
+def _on_run(edge: _Edge, run: _Edge, along: Sequence[float]) -> bool:
+    """Whether the line `edge` lies on the line edge `run`, between its ends."""
+    length = _norm(run.chord)
+    return edge.straight and all(
+        _norm(_cross(_sub(p, run.start), along)) <= PROBE_TOL_MM and -PROBE_TOL_MM <= _dot(_sub(p, run.start), along) <= length + PROBE_TOL_MM
+        for p in (edge.start, edge.end))
+
+
+def _joins(edge: _Edge, p: Sequence[float], q: Sequence[float]) -> bool:
+    return (_near(edge.start, p) and _near(edge.end, q)) or (_near(edge.start, q) and _near(edge.end, p))
+
+
+def _is_end(edge: _Edge, a: _Edge, gap: float, along: Sequence[float]) -> bool:
+    """Whether `edge` closes the strip at an end of `a`: a straight edge, or a convex half circle of radius gap / 2."""
+    if edge.straight:
+        return True
+    length = _norm(a.chord)
+    foot = _dot(_sub(edge.start, a.start), along)
+    top = _dot(_sub(edge.mid, a.start), along)
+    low = abs(foot) <= PROBE_TOL_MM and top <= -gap / 2.0 + PROBE_TOL_MM
+    high = abs(foot - length) <= PROBE_TOL_MM and top >= length + gap / 2.0 - PROBE_TOL_MM
+    return abs(edge.radius - gap / 2.0) <= PROBE_TOL_MM and (low or high)
+
+
+def _strip_gap(a: _Edge, b: _Edge, roof: list[_Edge]) -> float | None:
+    """The distance between `a` and `b` when the roof outline is exactly four parts in order, else None.
+
+    The parts are the two runs `a` and `b` (parallel lines of one length that overlap along their whole length) and
+    two end edges that join their ends. Each end edge is one straight edge across, or one convex circular arc of
+    radius gap / 2 (a half circle). Any other edge, notch, hole, corner arc or other cap shape leaves it None."""
     length, other = _norm(a.chord), _norm(b.chord)
     if not (a.straight and b.straight) or min(length, other) <= PROBE_TOL_MM:
         return None
@@ -814,40 +857,32 @@ def _strip_gap(a: _Edge, b: _Edge, roof: list[_Edge]) -> float | None:
     if _norm(_cross(along, b.chord)) > ROOF_PARALLEL_TOL * other:
         return None
     offset = _sub(b.start, a.start)
-    skew = _sub(offset, tuple(_dot(offset, along) * c for c in along))
-    gap = _norm(skew)
-    if gap <= PROBE_TOL_MM:
+    gap = _norm(_sub(offset, tuple(_dot(offset, along) * c for c in along)))
+    reach = sorted(_dot(_sub(p, a.start), along) for p in (b.start, b.end))
+    if gap <= PROBE_TOL_MM or abs(reach[0]) > PROBE_TOL_MM or abs(reach[1] - length) > PROBE_TOL_MM:
         return None
-    across = tuple(c / gap for c in skew)
-    ends = sorted(_dot(_sub(p, a.start), along) for p in (b.start, b.end))
-    low, high = max(0.0, ends[0]), min(length, ends[1])
-    if abs(length - (high - low)) > PROBE_TOL_MM or abs(other - (high - low)) > PROBE_TOL_MM:
+    ends = [edge for edge in roof if not _on_run(edge, a, along) and not _on_run(edge, b, along)]
+    if len(ends) != 2 or not all(_is_end(edge, a, gap, along) for edge in ends):
         return None
-    for edge in roof:
-        points = [(_dot(_sub(p, a.start), along), _dot(_sub(p, a.start), across)) for p in (edge.start, edge.mid, edge.end)]
-        if any(v < -PROBE_TOL_MM or v > gap + PROBE_TOL_MM for _, v in points):
-            return None
-        on_side = all(abs(v) <= PROBE_TOL_MM for _, v in points) or all(abs(v - gap) <= PROBE_TOL_MM for _, v in points)
-        within = all(low - PROBE_TOL_MM <= u <= high + PROBE_TOL_MM for u, _ in points)
-        beyond = all(u <= low + PROBE_TOL_MM for u, _ in points) or all(u >= high - PROBE_TOL_MM for u, _ in points)
-        if not (beyond or (on_side and within)):
-            return None
-    return gap
+    first, second = ends
+    chained = any(_joins(c1, a.start, bp) and _joins(c2, a.end, bq) for c1, c2 in ((first, second), (second, first))
+                  for bp, bq in ((b.start, b.end), (b.end, b.start)))
+    return gap if chained else None
 
 
-def _roof_span(roof: list[_Edge], held: set[tuple[float, ...]]) -> tuple[str, float | None]:
-    """(kind, span_mm) of a horizontal ceiling with outline `roof`, held at the edges whose keys are in `held`.
+def _roof_span(roof: list[_Edge], held: set[tuple[float, ...]], wires: int) -> tuple[str, float | None]:
+    """(kind, span_mm) of a horizontal ceiling with outline `roof` of `wires` wires, held at the edges whose keys are in `held`.
 
     Filament crosses the roof between opposing anchors, so the span is the gap between the closest pair of anchor
-    runs (contiguous collinear anchor edges joined) that are the two opposite sides of a roof that is just that strip.
-    Anchors that all touch or a lone anchor run hold a cantilever: an "overhang". Any other roof (an L, a ring
-    around a pillar, a taper, a notch, a boss or hole) is a "bridge" of unknown span: the best single filament
-    direction is not worked out here."""
+    runs (contiguous collinear anchor edges joined) when the roof is exactly that strip: one wire, the two runs, and
+    two straight or half-circle ends. Anchors that all touch or a lone anchor run hold a cantilever: an "overhang".
+    Any other roof (an L, a ring around a pillar, a taper, a notch, a boss, a hole, rounded corners) is a "bridge" of
+    unknown span: the best single filament direction is not worked out here."""
     anchors = _runs([edge for edge in roof if edge.key in held])
     pairs = list(itertools.combinations(anchors, 2))
     if not any(not _touch(a, b) for a, b in pairs):
         return "overhang", None
-    gaps = [gap for a, b in pairs if (gap := _strip_gap(a, b, roof)) is not None]
+    gaps = [gap for a, b in pairs if wires == 1 and (gap := _strip_gap(a, b, roof)) is not None]
     return "bridge", min(gaps, default=None)
 
 
@@ -1015,7 +1050,8 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
             kind = "island"  # a local lowest region off the bed: supports must start under it
         elif row["type"] == "plane" and row.get("normal", [0, 0, 0])[2] < -1.0 + 1e-6:
             # A horizontal ceiling: anchored where a neighbour continues downward, it bridges between opposing anchors.
-            kind, span = _roof_span(edges_of[n], {edge.key for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM})
+            held = {edge.key for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM}
+            kind, span = _roof_span(edges_of[n], held, _wire_count(faces[n]))
         row["down"] = {"area_mm2": round(sum(angles.values()), 6), "max_angle_deg": float(max(angles)),
                        "angles": [[float(a), round(v, 6)] for a, v in sorted(angles.items())], "kind": kind,
                        "span_mm": None if span is None else round(span, 6),

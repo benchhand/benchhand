@@ -18,7 +18,8 @@ Shapes (mm, the frame they are probed in):
   pocket_* a 60 x 60 x 30 block with a pocket open to the bed, its flat roof at z 10: l (two 30 x 4 arms), trapezoid
           (parallel sides 10 and 6), ring (an annulus around a pillar), boss (a 30 x 6 roof around a 7.5 x 4 boss),
           notch (a 30 x 4 roof with a 3 x 2 notch in a short end), stadium (a 30 x 4 roof with round ends), hole (a 30 x 4
-          roof with a 3 mm vertical hole through it)
+          roof with a 3 mm vertical hole through it), rounded (a 30 x 4 roof with R1 corners), stadium_hole (the stadium
+          with a 1 mm hole through a round end), stadium_notch (the stadium with a notch confined to a round end)
   pair    two 10 x 10 x 2 plates 20 mm apart: one component of two equivalent members
 Usage: uv run --script process_probe.py
 stdout: {case: probe facts (process_checks Geometry)}.
@@ -104,6 +105,10 @@ def bore(ident, point, normal, kind="bore"):
                     "patches": [{"support_type": "cylinder", "point_mm": list(point), "normal": list(normal)}]}}
 
 
+# a 30 x 4 stadium pocket tool: a 26 x 4 box with a R2 cylinder at each end, from z -1 to 10
+STADIUM = unified(fuse(fuse(box(12, 10, -1, 38, 14, 10), cylinder((12, 12, -1), (0, 0, 1), 2, 11)),
+                       cylinder((38, 12, -1), (0, 0, 1), 2, 11)))
+
 def turned_disc(radius, height, seam_degrees):
     seam = math.radians(seam_degrees)
     axes = gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(math.cos(seam), math.sin(seam), 0))
@@ -145,12 +150,15 @@ CASES = {
                     "bed", plane("roof", (37.5, 30, 10), (0, 0, -1)), {}),
     "pocket_notch": (cut(box(0, 0, 0, 60, 60, 30), prism([(10, 10), (40, 10), (40, 14), (10, 14), (10, 13), (13, 13), (13, 11),
                                                           (10, 11)], -1, 10)), "bed", plane("roof", (30, 12, 10), (0, 0, -1)), {}),
-    "pocket_stadium": (cut(box(0, 0, 0, 60, 60, 30),
-                           unified(fuse(fuse(box(12, 10, -1, 38, 14, 10), cylinder((12, 12, -1), (0, 0, 1), 2, 11)),
-                                        cylinder((38, 12, -1), (0, 0, 1), 2, 11)))), "bed",
-                       plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_stadium": (cut(box(0, 0, 0, 60, 60, 30), STADIUM), "bed", plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_hole": (cut(cut(box(0, 0, 0, 60, 60, 30), box(10, 10, -1, 40, 14, 10)), cylinder((25, 12, 5), (0, 0, 1), 1.5, 30)), "bed",
                     plane("roof", (12, 12, 10), (0, 0, -1)), {}),
+    "pocket_rounded": (cut(box(0, 0, 0, 60, 60, 30), rounded_pocket(10, 10, -1, 40, 14, 10, 1.0)), "bed",
+                       plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_stadium_hole": (cut(cut(box(0, 0, 0, 60, 60, 30), STADIUM), cylinder((39, 12, 5), (0, 0, 1), 0.5, 30)), "bed",
+                            plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_stadium_notch": (cut(box(0, 0, 0, 60, 60, 30), cut(STADIUM, box(39.2, 11, -2, 41, 13, 12))), "bed",
+                             plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_boss": (cut(box(0, 0, 0, 60, 60, 30), cut(box(10, 27, -1, 40, 33, 10), box(21.25, 28, -2, 28.75, 32, 11))), "bed",
                     plane("roof", (12, 28, 10), (0, 0, -1)), {}),
     "pair": (occ.compound([box(0, 0, 0, 10, 10, 2), box(30, 0, 0, 40, 10, 2)]), "bed", {}, {}),
