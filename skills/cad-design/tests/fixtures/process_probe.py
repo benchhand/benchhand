@@ -21,7 +21,9 @@ Shapes (mm, the frame they are probed in):
           roof with a 3 mm vertical hole through it), rounded (a 30 x 4 roof with R1 corners), stadium_hole (the stadium
           with a 1 mm hole through a round end), stadium_notch (the stadium with a notch confined to a round end),
           flared (a 30 x 4 roof whose one end flares out in two concave R1 arcs), scooped (the same roof with the corner
-          arcs not tangent), oversize (the same roof with corner radii 2.5 and 0.5 at one end, 2.5 above gap / 2)
+          arcs not tangent), oversize (the same roof with corner radii 2.5 and 0.5 at one end, 2.5 above gap / 2),
+          elliptic (a 30 x 4 roof with a half-ellipse end), elliptic_thin (the same at a width of 0.0015 mm), reversed
+          (a plain 30 x 4 roof whose second long edge runs back toward the first)
   pair    two 10 x 10 x 2 plates 20 mm apart: one component of two equivalent members
 Usage: uv run --script process_probe.py
 stdout: {case: probe facts (process_checks Geometry)}.
@@ -111,6 +113,23 @@ def filleted_pocket(x0, y0, z0, x1, y1, z1, radii):
             fillet.Add(radii[(round(low[0], 6), round(low[1], 6))], edge)
         explorer.Next()
     return fillet.Shape()
+
+
+def elliptic_strip(x0, y0, x1, width, bulge, z0, z1):
+    """A strip tool from x0 to x1 and y0 to y0 + width, its x0 end a half ellipse that bulges `bulge` toward -x."""
+    from math import pi
+
+    from OCP.gp import gp_Elips
+
+    def edge(p, q):
+        return BRepBuilderAPI_MakeEdge(gp_Pnt(*p, 0), gp_Pnt(*q, 0)).Edge()
+
+    ellipse = gp_Elips(gp_Ax2(gp_Pnt(x0, y0 + width / 2, 0), gp_Dir(0, 0, 1), gp_Dir(-1, 0, 0)), bulge, width / 2)
+    wire = BRepBuilderAPI_MakeWire()
+    for part in (edge((x0, y0), (x1, y0)), edge((x1, y0), (x1, y0 + width)), edge((x1, y0 + width), (x0, y0 + width)),
+                 BRepBuilderAPI_MakeEdge(ellipse, -pi / 2, pi / 2).Edge()):
+        wire.Add(part)
+    return extruded(wire.Wire(), z0, z1)
 
 
 def unified(shape):
@@ -216,6 +235,12 @@ CASES = {
                        plane("roof", (25, 12, 10), (0, 0, -1)), {}),
     "pocket_oversize": (cut(box(0, 0, 0, 60, 60, 30), filleted_pocket(10, 10, -1, 40, 14, 10, {(10.0, 10.0): 2.5, (10.0, 14.0): 0.5})),
                         "bed", plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_reversed": (cut(box(0, 0, 0, 60, 60, 30), extruded(outline((10, 10), ((40, 10),), ((40, 14),), ((10, 14),), ((10, 10),)), -1, 10)),
+                        "bed", plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_elliptic": (cut(box(0, 0, 0, 60, 60, 30), elliptic_strip(10, 10, 40, 4.0, 3.0, -1, 10)), "bed",
+                        plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_elliptic_thin": (cut(box(0, 0, 0, 60, 60, 30), elliptic_strip(10, 10, 40, 0.0015, 1.0, -1, 10)), "bed",
+                             plane("roof", (25, 10.00075, 10), (0, 0, -1)), {}),
     "pocket_boss": (cut(box(0, 0, 0, 60, 60, 30), cut(box(10, 27, -1, 40, 33, 10), box(21.25, 28, -2, 28.75, 32, 11))), "bed",
                     plane("roof", (12, 28, 10), (0, 0, -1)), {}),
     "pair": (occ.compound([box(0, 0, 0, 10, 10, 2), box(30, 0, 0, 40, 10, 2)]), "bed", {}, {}),

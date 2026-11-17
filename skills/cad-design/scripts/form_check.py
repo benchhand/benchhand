@@ -821,10 +821,11 @@ def _wire_count(face: Any) -> int:
 
 
 def _on_run(edge: _Edge, run: _Edge, along: Sequence[float]) -> bool:
-    """Whether the line `edge` lies on the line edge `run`, between its ends."""
+    """Whether the line `edge` lies on the line edge `run`, between its ends, in either direction of `run`."""
+    base = min((run.start, run.end), key=lambda p: _dot(p, along))
     length = _norm(run.chord)
     return edge.straight and all(
-        _norm(_cross(_sub(p, run.start), along)) <= PROBE_TOL_MM and -PROBE_TOL_MM <= _dot(_sub(p, run.start), along) <= length + PROBE_TOL_MM
+        _norm(_cross(_sub(p, base), along)) <= PROBE_TOL_MM and -PROBE_TOL_MM <= _dot(_sub(p, base), along) <= length + PROBE_TOL_MM
         for p in (edge.start, edge.end))
 
 
@@ -833,7 +834,8 @@ def _joins(edge: _Edge, p: Sequence[float], q: Sequence[float]) -> bool:
 
 
 def _is_end(edge: _Edge, a: _Edge, gap: float, along: Sequence[float]) -> bool:
-    """Whether `edge` closes the strip at an end of `a`: a straight edge, or a convex half circle of radius gap / 2."""
+    """Whether `edge` closes the strip at an end of `a`: a straight edge, or a convex half circle of radius gap / 2.
+    Only a circle has a radius above 0, so another curve never passes the radius comparison."""
     if edge.straight:
         return True
     length = _norm(a.chord)
@@ -841,7 +843,7 @@ def _is_end(edge: _Edge, a: _Edge, gap: float, along: Sequence[float]) -> bool:
     top = _dot(_sub(edge.mid, a.start), along)
     low = abs(foot) <= PROBE_TOL_MM and top <= -gap / 2.0 + PROBE_TOL_MM
     high = abs(foot - length) <= PROBE_TOL_MM and top >= length + gap / 2.0 - PROBE_TOL_MM
-    return abs(edge.radius - gap / 2.0) <= PROBE_TOL_MM and (low or high)
+    return edge.radius > 0.0 and abs(edge.radius - gap / 2.0) <= PROBE_TOL_MM and (low or high)
 
 
 class _Frame(NamedTuple):
@@ -862,7 +864,7 @@ def _corner_arc(arc: _Edge, foot: Sequence[float], frame: _Frame) -> bool:
     """Whether `arc` is a convex corner arc of radius at most gap / 2 that starts at `foot`, the end of a run, tangent to
     that run and, at its other end, to an end edge across the strip."""
     radius = arc.radius
-    if arc.straight or radius <= PROBE_TOL_MM or radius > frame.gap / 2.0 + PROBE_TOL_MM:
+    if arc.straight or radius <= PROBE_TOL_MM or radius > frame.gap / 2.0 + PROBE_TOL_MM:  # radius 0: not a circle
         return False
     far = arc.end if _near(arc.start, foot) else arc.start
     (u, v), (far_u, far_v), (mid_u, mid_v) = frame.at(foot), frame.at(far), frame.at(arc.mid)

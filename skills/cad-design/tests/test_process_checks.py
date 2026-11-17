@@ -1183,6 +1183,9 @@ class ProbeGeometryTests(Checks):
             ("pocket_rounded", ("bridge", 4.0)),  # 4 x 30 with R1 corners: straight ends with a tangent corner arc each side
             ("pocket_flared", ("bridge", None)),  # one end flares out in two concave R1 arcs
             ("pocket_scooped", ("bridge", None)),  # R1 corner arcs that are not tangent to the sides
+            ("pocket_reversed", ("bridge", 4.0)),  # a plain 4 x 30 roof whose long edges run in opposite directions
+            ("pocket_elliptic", ("bridge", None)),  # a half-ellipse end is not a circle
+            ("pocket_elliptic_thin", ("bridge", None)),  # the same at 0.0015 mm wide: radius 0 is within tolerance of gap / 2
             ("pocket_oversize", ("bridge", None)),  # corner arcs of radius 2.5 and 0.5 on a 4 mm gap: 2.5 is above gap / 2
             ("pocket_stadium_hole", ("bridge", None)),  # the stadium with a 1 mm hole through a round end
             ("pocket_stadium_notch", ("bridge", None)),  # the stadium with a notch confined to a round end
@@ -1192,7 +1195,8 @@ class ProbeGeometryTests(Checks):
             ("pocket_boss", ("bridge", None)),  # 30 x 6 around a 7.5 x 4 boss: never the 5 mm gap
         ):
             with self.subTest(case):
-                roof = self.face_of(case, "roof")["down"]
+                # the locator can also match a wall closer than the tolerance (the 0.0015 mm strip), so take the face with a down fact
+                roof = next(f["down"] for f in self.probed[case]["faces"] if "roof" in f["features"] and "down" in f)
                 self.assertEqual((roof["kind"], roof["span_mm"]), expected)
 
     def test_the_pocket_corners_reach_and_visibility_are_measured(self) -> None:
