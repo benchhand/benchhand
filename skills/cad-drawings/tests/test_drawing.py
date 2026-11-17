@@ -755,6 +755,8 @@ class SheetExportParts(unittest.TestCase):
             second = sheet_export.supported_codepoints(fc, {"codepoints": [65, 90, 66]}, Path("."), 5)
             third = sheet_export.supported_codepoints(fc, {"codepoints": [66, vector]}, Path("."), 5)
         self.assertEqual(asked, [sorted(sheet_export.OSIFONT_CODEPOINTS), [vector]])
+        probed = [codepoint for call in asked for codepoint in call]
+        self.assertEqual(len(probed), len(set(probed)))   # no codepoint is asked about twice
         self.assertEqual((first, second, third), (frozenset({65}), frozenset({65, 66}), frozenset({66, vector})))
 
     def probe_threads(self, jobs: list[tuple[str, list[int]]], fake_run_job) -> list:
