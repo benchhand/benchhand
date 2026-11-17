@@ -4,7 +4,10 @@ producers already emit it. Every validation goes through the schema registry."""
 
 from __future__ import annotations
 
+import ast
 import copy
+import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -13,6 +16,9 @@ from typing import Any
 SKILL = Path(__file__).resolve().parents[1]
 SCHEMAS = SKILL / "schemas"
 SCRIPTS = SKILL / "scripts"
+SKILLS = SKILL.parent
+FORM_CHECK = SKILLS / "cad-design" / "scripts" / "form_check.py"
+PRODUCER_FINDINGS = Path(__file__).resolve().parent / "fixtures" / "producer_findings.py"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import load_module as load  # noqa: E402
@@ -167,6 +173,33 @@ class HonestMistakes(unittest.TestCase):
             with self.subTest(pointer=pointer):
                 self.rejects(mutated(pointer=pointer), "pointer")
 
+    def test_a_value_of_the_wrong_type_for_a_text_or_object_field(self) -> None:
+        cases = {
+            "code": [7, ["fit_unverified"], None],
+            "subject": ["TST-0001", ["TST-0001"], None],
+            "location": ["hw/product.yaml", ["hw/product.yaml", 12], None],
+            "remedy": [5, ["chamfer it"], None],
+            "source": [6, ["step"], None],
+        }
+        for field, values in cases.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    self.rejects({**GOOD, field: value}, field)
+
+    def test_a_nested_value_of_the_wrong_type(self) -> None:
+        cases = {
+            "subject/PN": {**GOOD, "subject": {"PN": 12}},
+            "subject/feature": {**GOOD, "subject": {"PN": "TST-0001", "feature": 3}},
+            "location/file": {**GOOD, "location": {"file": 4}},
+            "location/line": {**GOOD, "location": {"file": "hw/product.yaml", "line": 1.5}},
+        }
+        for where, document in cases.items():
+            with self.subTest(field=where):
+                self.rejects(document, where)
+
+    def test_a_subject_key_that_is_not_pn_or_feature(self) -> None:
+        self.rejects(mutated(subject={"PN": "TST-0001", "part": "TST-0001"}), "part")
+
     def test_an_unknown_top_level_field(self) -> None:
         self.rejects(mutated(severty="major"), "severty")
 
@@ -175,14 +208,32 @@ class HonestMistakes(unittest.TestCase):
 
 
 # --- producers -----------------------------------------------------------------------------------------------
-# One entry per finding shape a producer emits. A shape built by a call runs the producer's own code, so it cannot
-# drift. A dict literal copies the complete shape the cited lines build, because that producer needs FreeCAD, a
-# whole project or the cad-drawings import path.
+# One entry per finding shape a producer emits. Every shape comes from the producer's own code, except form_check's,
+# which needs FreeCAD to run: those are literals tied to form_check.py by `FormCheckDrift`. The shapes built outside
+# this process come from fixtures/producer_findings.py, run in a subprocess, so the producer modules and their sys.path
+# entries stay out of the test run.
 
+
+def emitted_findings() -> dict[str, dict[str, Any]]:
+    run = subprocess.run([sys.executable, "-B", str(PRODUCER_FINDINGS)], capture_output=True, text=True, check=False)
+    if run.returncode != 0:
+        raise RuntimeError(f"{PRODUCER_FINDINGS.name} exited {run.returncode}: {run.stderr[-2000:]}")
+    return json.loads(run.stdout)  # type: ignore[no-any-return]
+
+
+EMITTED = emitted_findings()
 OPERATIONS = {"id": "fit-bearing", "kind": "press_fit", "part": "TST-0003", "into": "TST-0001", "interface": "IF-001",
               "direction": [0, 0, -2], "acceptance": {"kind": "seated", "features": ["bearing_face", "seat_floor"]},
               "tools": ["arbor press"], "predecessors": ["ghost"]}
 [ORDER_FINDING] = assembly_operations.check_order(assembly_operations.normalize({"operations": [OPERATIONS]})).findings
+
+# form_check.py:1105 min_wall is not in BLOCKING_CHECKS (:102), so :1143 sets blocking False. brep_invalid (:1082) is in
+# it, so blocking is True, and it is the only finding with a `source` key.
+FORM_CHECK_FINDINGS: dict[str, dict[str, Any]] = {
+    "form_check.min_wall": {"check": "min_wall", "part": "TST-0001", "thickness_mm": 0.4, "location_mm": [1.0, 2.0, 3.0],
+                            "min_mm": 0.8, "blocking": False},
+    "form_check.brep_invalid": {"check": "brep_invalid", "part": "TST-0001", "source": "step", "blocking": True},
+}
 
 PRODUCERS: dict[str, dict[str, Any]] = {
     # cad-record validate.py:71 finding(): path, message, severity (error|warning|info)
@@ -190,54 +241,24 @@ PRODUCERS: dict[str, dict[str, Any]] = {
     # validate.py:71 with a code: a layout or design-rule finding adds code, canonical_location and action
     "validate.coded": validate.finding("hw/stray.txt", "a path no layout entry accepts", severity="warning",
                                        code="layout.stray", canonical_location=None, action="move it"),
-    # manufacturing_intent.py:236 Problem.finding(): path#/pointer folded into one string
+    # manufacturing_intent.py:235 Problem.finding(): path#/pointer folded into one string
     "manufacturing_intent.problem": validate.intent.Problem(
         "intent.schema", "hw/manufacturing/intent.yaml", "parts/0", "parts/0: 'rev' is a required property").finding(),
-    # evidence.py:167 Finding.as_dict()
+    # evidence.py:157 Finding.as_dict()
     "evidence.finding": evidence.Finding("evidence.stale", "hw/checks/v1", "the check is older than the model",
                                          obligation="OBL-1").as_dict(),
-    # cad-drawings drawing_intent.py:1480 finding(code, message): bare, no keyword
-    "drawing_intent.bare": {"code": "datum_invalid", "message": "geometric tolerance GT-1 uses undeclared datums ['Z']"},
-    # drawing_intent.py:106 finding(code, message, feature=...)
-    "drawing_intent.with_feature": {
-        "code": "fit_unverified", "feature": "pivot_bore",
-        "message": "pivot_bore: H7 is a desired limit, and no inspection in TST-0001's route checks pivot_bore as made"},
-    # drawing_intent.py:1210 finding(exc.code, message, dimension=...). IntentError.code is invalid_drawing_intent
-    "drawing_intent.with_dimension": {"code": "invalid_drawing_intent", "dimension": "d1",
-                                      "message": "dimension d1: the request names no feature"},
-    # cad-drawings assembly_drawing.py:443 assembly_check.finding(code, message) (defined at assembly_check.py:78)
-    "assembly_check.bare": {"code": "invalid_input", "message": "the assembly names no drawing"},
-    # assembly_drawing.py:240 finding(exc.code, message, sheet=...). CompositionError code is sheet_no_fit (assembly_sheet.py:170)
-    "assembly_check.with_sheet": {"code": "sheet_no_fit", "sheet": 2,
-                                  "message": "sheet 2: no allowed sheet fits the assembly views legibly: A3: too wide"},
+    # cad-drawings drawing_intent.py:72 finding() at 1480 (bare), 106 via finished_state_findings and 1210 (dimension=)
+    "drawing_intent.bare": EMITTED["drawing_intent.bare"],
+    "drawing_intent.with_feature": EMITTED["drawing_intent.with_feature"],
+    "drawing_intent.with_dimension": EMITTED["drawing_intent.with_dimension"],
+    # cad-drawings assembly_check.py:78 finding() at assembly_drawing.py:443 (bare) and :240 (sheet=)
+    "assembly_check.bare": EMITTED["assembly_check.bare"],
+    "assembly_check.with_sheet": EMITTED["assembly_check.with_sheet"],
     # cad-model cadmodel/build.py:82 finding(pn, check, message, kind, where): no code, no severity, `pn` not `PN`
-    "build.finding": {"pn": "TST-0001", "check": "build", "type": "ContractError", "message": "no solid", "where": None},
-    # cad-design form_check.py:1105 min_wall: not in BLOCKING_CHECKS (:102), so :1143 sets blocking False
-    "form_check.min_wall": {"check": "min_wall", "part": "TST-0001", "thickness_mm": 0.4, "location_mm": [1.0, 2.0, 3.0],
-                            "min_mm": 0.8, "blocking": False},
-    # form_check.py:1082 brep_invalid is in BLOCKING_CHECKS, so blocking is True. It is the only finding with a `source` key
-    "form_check.brep_invalid": {"check": "brep_invalid", "part": "TST-0001", "source": "step", "blocking": True},
-    # cad-design process_checks/dispatch.py:174-209 _findings() around additive.py:348-360 _unsupported(), an overhang
-    # result. The subject comes from Context.subject (core.py:317-323: PN, operation, feature). It also sets obligation and alternatives
-    "packet.process_overhang": {
-        "id": "f_0123456789abcdef", "code": "process.fdm.overhang", "severity": "major", "outcome": "fail",
-        "subject": {"PN": "TST-0001", "operation": "print", "feature": "mount_slot"},
-        "measured": {"value": 62.5, "units": "deg"},
-        "criterion": {"property": "overhang_angle", "operator": "<=", "value": 45, "units": "deg",
-                      "source": {"kind": "policy", "reference": "cad-agent manufacturing-intent dispatch policy (cad-design process_checks)",
-                                 "origin": "cad-agent plugin",
-                                 "document": "skills/cad-design/scripts/process_checks/__init__.py"}},
-        "method": {"name": "sampled down-facing normals", "tool": "cad-design form_check.py process_checks 1"},
-        "uncertainty": "sampled normals; edge anchoring approximates bridges",
-        "consequence": "a overhang beyond the calibrated unsupported limit with support strategy none sags or fails to print",
-        "recheck": {"families": ["process.fdm.support"], "scope": [{"PN": "TST-0001", "operation": "print", "feature": "mount_slot"}],
-                    "earliest_stage": "detail"},
-        "obligation": "process.fdm.overhang@PN:TST-0001",
-        "remedy": "plan supports on reachable non-critical surfaces, or reorient (preferred over splitting)",
-        "alternatives": [{"text": "local relief: a chamfer or teardrop under the overhang",
-                          "tradeoffs": "changes the geometry; needs the design owner's approval"},
-                         {"text": "split the part", "tradeoffs": "adds joints, datums, fasteners, a tolerance stack and load paths"}],
-    },
+    "build.finding": EMITTED["build.finding"],
+    **FORM_CHECK_FINDINGS,
+    # cad-design process_checks/dispatch.py:174-209 _findings(), called through process_checks.assess on a printed part
+    "packet.process_overhang": EMITTED["packet.process_overhang"],
     # cad-record assembly_operations.py:404-426 _finding() via check_order() (cad-motion access.py:339-384 emits the same
     # keys, with severity critical or major): a packet finding about an assembly operation
     "packet.assembly_operation": ORDER_FINDING,
@@ -291,6 +312,40 @@ EXPECTED_REASONS: dict[str, list[str]] = {
                                   "unexpected criterion", "unexpected id", "unexpected measured", "unexpected method",
                                   "unexpected obligation", "unexpected recheck", "unexpected uncertainty"],
 }
+
+
+def form_check_dicts() -> list[ast.Dict]:
+    """Every dict literal in form_check.py that names a `check`: the findings it builds."""
+    tree = ast.parse(FORM_CHECK.read_text(encoding="utf-8"))
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Dict)
+            and any(isinstance(key, ast.Constant) and key.value == "check" for key in node.keys)]
+
+
+def form_check_blocking_checks() -> set[str]:
+    """The names in form_check.py's BLOCKING_CHECKS constant, read without importing the module."""
+    tree = ast.parse(FORM_CHECK.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "BLOCKING_CHECKS" for t in node.targets):
+            call = node.value
+            assert isinstance(call, ast.Call)
+            return set(ast.literal_eval(call.args[0]))
+    raise AssertionError("form_check.py defines no BLOCKING_CHECKS")
+
+
+class FormCheckDrift(unittest.TestCase):
+    """The literal form_check findings keep the keys and blocking flag form_check.py builds, so they cannot drift."""
+
+    def test_each_literal_has_the_keys_of_a_dict_form_check_builds(self) -> None:
+        built = [frozenset(key.value for key in node.keys if isinstance(key, ast.Constant)) for node in form_check_dicts()]
+        for name, finding in FORM_CHECK_FINDINGS.items():
+            with self.subTest(finding=name):
+                self.assertIn(frozenset(finding) - {"blocking"}, built)
+
+    def test_each_literal_blocks_exactly_when_form_check_says(self) -> None:
+        blocking = form_check_blocking_checks()
+        for name, finding in FORM_CHECK_FINDINGS.items():
+            with self.subTest(finding=name):
+                self.assertEqual(finding["blocking"], finding["check"] in blocking)
 
 
 class ProducerConformance(unittest.TestCase):
