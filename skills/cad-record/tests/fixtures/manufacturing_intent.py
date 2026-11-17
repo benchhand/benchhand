@@ -462,6 +462,6 @@ def add_v1_operations(hw: Path) -> None:
 
 def migrated_copy(src_hw: Path, dst_hw: Path, today: date | None = None) -> Path:
     """Copy the record at `src_hw` to `dst_hw` unchanged (the examples are record version 2), as a test fixture
-    for code that reads current records. The name and `today` stay for tests written when this migrated."""
+    for code that reads current records. The name and the unused date parameter stay for tests written when this migrated."""
     shutil.copytree(src_hw, dst_hw)
     return dst_hw
