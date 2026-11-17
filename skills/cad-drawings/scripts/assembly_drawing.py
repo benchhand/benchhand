@@ -385,6 +385,24 @@ def run(args: argparse.Namespace, freecadcmd: Path, jobs: int = 1) -> tuple[dict
     return result, package.exit_code
 
 
+def _launch_preconditions() -> Path | int:
+    """The FreeCAD command, or the exit code 2 of a refusal whose report is already printed.
+
+    A bad SOURCE_DATE_EPOCH is refused first: the recipe names the epoch, so it stops the run before anything is
+    read or launched. Then FreeCAD itself must be found."""
+    try:
+        sheet_export.pdf_timestamp()
+    except sheet_export.ExportError as exc:
+        print(json.dumps({"status": "error", "findings": [assembly_check.finding("invalid_source_date_epoch", str(exc))]}))
+        return 2
+    freecadcmd = freecad_runtime.find_freecadcmd()
+    if freecadcmd is None or not freecadcmd.is_file():
+        print(json.dumps({"status": "error", "findings": [assembly_check.finding(
+            "freecad_unavailable", f"FreeCAD not found ({freecadcmd}); set FREECADCMD or put freecadcmd on PATH")]}))
+        return 2
+    return freecadcmd
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("hw", type=Path, help="hardware design record directory (hw/)")
@@ -398,16 +416,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--timeout must be positive")
     if args.jobs is not None and args.jobs < 1:
         parser.error("--jobs must be a positive integer")
-    try:
-        sheet_export.pdf_timestamp()   # the recipe names this epoch; a bad SOURCE_DATE_EPOCH stops the run first
-    except sheet_export.ExportError as exc:
-        print(json.dumps({"status": "error", "findings": [assembly_check.finding("invalid_source_date_epoch", str(exc))]}))
-        return 2
-    freecadcmd = freecad_runtime.find_freecadcmd()
-    if freecadcmd is None or not freecadcmd.is_file():
-        print(json.dumps({"status": "error", "findings": [assembly_check.finding(
-            "freecad_unavailable", f"FreeCAD not found ({freecadcmd}); set FREECADCMD or put freecadcmd on PATH")]}))
-        return 2
+    freecadcmd = _launch_preconditions()
+    if isinstance(freecadcmd, int):
+        return freecadcmd
     try:
         hw = args.hw.resolve()
         hw = hw / "hw" if hw.name != "hw" and (hw / "hw").is_dir() else hw
