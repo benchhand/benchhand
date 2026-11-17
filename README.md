@@ -132,7 +132,7 @@ Run each skill test file separately with the pinned test dependencies:
 ```sh
 for test in skills/*/test_*.py skills/*/tests/test_*.py; do
   [ -f "$test" ] || continue
-  uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 \
+  uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 --with hypothesis==6.170.15 \
     python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")"
 done
 uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
