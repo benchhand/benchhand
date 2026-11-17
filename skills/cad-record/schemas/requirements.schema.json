@@ -16,7 +16,7 @@
           "id": {"$ref": "manufacturing.schema.json#/$defs/preference_id"},
           "text": {"$ref": "manufacturing.schema.json#/$defs/text"},
           "source": {"$ref": "manufacturing.schema.json#/$defs/source"},
-          "weight": {"type": "number", "exclusiveMinimum": 0},
+          "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000, "x-plausible": {"max": 100}},
           "criterion": {"$ref": "manufacturing.schema.json#/$defs/criterion"},
           "subjects": {"type": "array", "minItems": 1, "items": {"$ref": "manufacturing.schema.json#/$defs/subject"}}
         }

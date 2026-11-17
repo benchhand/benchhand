@@ -24,7 +24,7 @@
           },
           "min_clearance_mm": {
             "description": "The smallest distance the pair may come to, at the nominal pose and at every swept pose",
-            "type": "number", "exclusiveMinimum": 0
+            "type": "number", "exclusiveMinimum": 0, "maximum": 5, "x-plausible": {"max": 1}
           },
           "margin_mm": {
             "description": "This requirement's margin above min_clearance_mm, overriding product.yaml design.clearance_margin_mm",

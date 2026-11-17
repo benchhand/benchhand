@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srobroek.com/cad/schemas/stackup.schema.json",
+  "title": "CAD tolerance stack-up bounds (cad-fits stackup.py, legacy and intent stack files)",
+  "description": "The numeric bounds of a stack file; stackup.py checks its structure. The contributor tolerances are magnitudes in mm. Hard bounds are errors; x-plausible bands are warnings (plausibility.<field>)",
+  "type": "object",
+  "properties": {
+    "contributors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tol": {"description": "Symmetric +/- tolerance, mm", "type": "number", "minimum": 0, "maximum": 5, "x-plausible": {"max": 1}},
+          "tol_plus": {"description": "Upper tolerance magnitude, mm", "type": "number", "minimum": 0, "maximum": 5, "x-plausible": {"max": 1}},
+          "tol_minus": {"description": "Lower tolerance magnitude, mm", "type": "number", "minimum": 0, "maximum": 5, "x-plausible": {"max": 1}}
+        }
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "properties": {
+        "coverage_factor": {"description": "k of a justified RSS: 1.96 covers 95 percent, 3 covers 99.7 percent", "type": "number", "minimum": 1, "maximum": 6, "x-plausible": {"min": 1.96, "max": 3.5}}
+      }
+    }
+  }
+}
