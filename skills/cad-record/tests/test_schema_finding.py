@@ -20,6 +20,7 @@ from modload import load_module as load  # noqa: E402
 registry = load("cad_record_schema_registry", SCRIPTS / "schema_registry.py")
 validate = load("cad_record_validate", SCRIPTS / "validate.py")
 evidence = load("cad_record_evidence", SCRIPTS / "evidence.py")
+assembly_operations = load("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
 SCHEMA_ID = "https://srobroek.com/cad/schemas/finding.schema.json"
 
 GOOD = {
@@ -80,6 +81,11 @@ class FindingSchema(unittest.TestCase):
         for code in ("layout.stray", "intent.schema", "motion.play_collision", "section_hatch", "invalid_drawing_intent"):
             with self.subTest(code=code):
                 self.assertEqual(errors(mutated(code=code)), [])
+
+    def test_value_takes_a_value_of_any_type(self) -> None:
+        for value in (1.5, 0, "62.5 deg", True, [1, "a", None], {"angle_deg": 62.5}, None):
+            with self.subTest(value=value):
+                self.assertEqual(errors({**GOOD, "value": value}), [])
 
     def test_the_schema_examples_include_a_minimal_and_a_full_finding(self) -> None:
         examples = registry.schema(SCHEMAS, "finding.schema.json")["examples"]
@@ -145,6 +151,22 @@ class HonestMistakes(unittest.TestCase):
     def test_a_message_that_is_not_text(self) -> None:
         self.rejects(mutated(message=["a", "b"]), "message")
 
+    def test_an_empty_feature_remedy_source_or_message(self) -> None:
+        cases = {
+            "subject/feature": mutated(subject={"PN": "TST-0001", "feature": ""}),
+            "remedy": mutated(remedy=""),
+            "source": mutated(source=""),
+            "message": mutated(message=""),
+        }
+        for where, document in cases.items():
+            with self.subTest(field=where):
+                self.rejects(document, where)
+
+    def test_a_pointer_that_is_not_text(self) -> None:
+        for pointer in (3, ["parts", 0], {"path": "parts/0"}, True):
+            with self.subTest(pointer=pointer):
+                self.rejects(mutated(pointer=pointer), "pointer")
+
     def test_an_unknown_top_level_field(self) -> None:
         self.rejects(mutated(severty="major"), "severty")
 
@@ -153,8 +175,14 @@ class HonestMistakes(unittest.TestCase):
 
 
 # --- producers -----------------------------------------------------------------------------------------------
-# One entry per finding shape a producer emits. A shape built with `finding(...)` calls the producer's own code.
-# A dict literal copies what the cited line builds, because that producer needs FreeCAD or a whole project.
+# One entry per finding shape a producer emits. A shape built by a call runs the producer's own code, so it cannot
+# drift. A dict literal copies the complete shape the cited lines build, because that producer needs FreeCAD, a
+# whole project or the cad-drawings import path.
+
+OPERATIONS = {"id": "fit-bearing", "kind": "press_fit", "part": "TST-0003", "into": "TST-0001", "interface": "IF-001",
+              "direction": [0, 0, -2], "acceptance": {"kind": "seated", "features": ["bearing_face", "seat_floor"]},
+              "tools": ["arbor press"], "predecessors": ["ghost"]}
+[ORDER_FINDING] = assembly_operations.check_order(assembly_operations.normalize({"operations": [OPERATIONS]})).findings
 
 PRODUCERS: dict[str, dict[str, Any]] = {
     # cad-record validate.py:71 finding(): path, message, severity (error|warning|info)
@@ -168,34 +196,51 @@ PRODUCERS: dict[str, dict[str, Any]] = {
     # evidence.py:167 Finding.as_dict()
     "evidence.finding": evidence.Finding("evidence.stale", "hw/checks/v1", "the check is older than the model",
                                          obligation="OBL-1").as_dict(),
-    # cad-drawings drawing_intent.py:72 finding(code, message): bare, no location keywords
-    "drawing_intent.bare": {"code": "fit_unverified", "message": "bore: H7 is a desired limit and nothing inspects it"},
-    # drawing_intent.py:668 finding(code, message, feature=...): `where` keywords ride on the finding
-    "drawing_intent.with_feature": {"code": "feature_not_found", "message": "mount_slot is not in the model",
-                                    "feature": "mount_slot"},
-    # cad-drawings assembly_check.py:78 finding(code, message): bare
+    # cad-drawings drawing_intent.py:1480 finding(code, message): bare, no keyword
+    "drawing_intent.bare": {"code": "datum_invalid", "message": "geometric tolerance GT-1 uses undeclared datums ['Z']"},
+    # drawing_intent.py:106 finding(code, message, feature=...)
+    "drawing_intent.with_feature": {
+        "code": "fit_unverified", "feature": "pivot_bore",
+        "message": "pivot_bore: H7 is a desired limit, and no inspection in TST-0001's route checks pivot_bore as made"},
+    # drawing_intent.py:1210 finding(exc.code, message, dimension=...). IntentError.code is invalid_drawing_intent
+    "drawing_intent.with_dimension": {"code": "invalid_drawing_intent", "dimension": "d1",
+                                      "message": "dimension d1: the request names no feature"},
+    # cad-drawings assembly_drawing.py:443 assembly_check.finding(code, message) (defined at assembly_check.py:78)
     "assembly_check.bare": {"code": "invalid_input", "message": "the assembly names no drawing"},
-    # cad-drawings assembly_drawing.py:240 finding(code, message, sheet=...)
-    "assembly_check.with_sheet": {"code": "sheet_overflow", "message": "sheet 2: the parts list does not fit", "sheet": 2},
-    # cad-model cadmodel/build.py:82 finding(pn, check, message): no code, no severity, `pn` not `PN`
+    # assembly_drawing.py:240 finding(exc.code, message, sheet=...). CompositionError code is sheet_no_fit (assembly_sheet.py:170)
+    "assembly_check.with_sheet": {"code": "sheet_no_fit", "sheet": 2,
+                                  "message": "sheet 2: no allowed sheet fits the assembly views legibly: A3: too wide"},
+    # cad-model cadmodel/build.py:82 finding(pn, check, message, kind, where): no code, no severity, `pn` not `PN`
     "build.finding": {"pn": "TST-0001", "check": "build", "type": "ContractError", "message": "no solid", "where": None},
-    # cad-design form_check.py:1082 and :1142: `check`, `part`, `blocking` and check-specific numbers, with no message
-    "form_check.finding": {"check": "min_wall", "part": "TST-0001", "thickness_mm": 0.4, "location_mm": [1, 2, 3],
-                           "min_mm": 0.8, "blocking": True},
-    # cad-design process_checks/dispatch.py:189 packet finding (manufacturing.schema.json finding)
-    "packet.finding": {
-        "id": "obl_1_process_fdm_overhang_1", "code": "process.fdm.overhang", "subject": {"PN": "TST-0001", "feature": "slot"},
-        "severity": "major", "outcome": "fail", "measured": {"value": 62.5, "units": "deg"},
-        "criterion": {"property": "overhang", "operator": "<=", "value": 45, "units": "deg"},
-        "method": {"name": "STEP face normals", "tool": "form_check"}, "uncertainty": "none stated",
-        "consequence": "unsupported overhang sags", "remedy": "chamfer it",
-        "recheck": {"families": ["feature.fit"], "earliest_stage": "detail"},
+    # cad-design form_check.py:1105 min_wall: not in BLOCKING_CHECKS (:102), so :1143 sets blocking False
+    "form_check.min_wall": {"check": "min_wall", "part": "TST-0001", "thickness_mm": 0.4, "location_mm": [1.0, 2.0, 3.0],
+                            "min_mm": 0.8, "blocking": False},
+    # form_check.py:1082 brep_invalid is in BLOCKING_CHECKS, so blocking is True. It is the only finding with a `source` key
+    "form_check.brep_invalid": {"check": "brep_invalid", "part": "TST-0001", "source": "step", "blocking": True},
+    # cad-design process_checks/dispatch.py:174-209 _findings() around additive.py:348-360 _unsupported(), an overhang
+    # result. The subject comes from Context.subject (core.py:317-323: PN, operation, feature). It also sets obligation and alternatives
+    "packet.process_overhang": {
+        "id": "f_0123456789abcdef", "code": "process.fdm.overhang", "severity": "major", "outcome": "fail",
+        "subject": {"PN": "TST-0001", "operation": "print", "feature": "mount_slot"},
+        "measured": {"value": 62.5, "units": "deg"},
+        "criterion": {"property": "overhang_angle", "operator": "<=", "value": 45, "units": "deg",
+                      "source": {"kind": "policy", "reference": "cad-agent manufacturing-intent dispatch policy (cad-design process_checks)",
+                                 "origin": "cad-agent plugin",
+                                 "document": "skills/cad-design/scripts/process_checks/__init__.py"}},
+        "method": {"name": "sampled down-facing normals", "tool": "cad-design form_check.py process_checks 1"},
+        "uncertainty": "sampled normals; edge anchoring approximates bridges",
+        "consequence": "a overhang beyond the calibrated unsupported limit with support strategy none sags or fails to print",
+        "recheck": {"families": ["process.fdm.support"], "scope": [{"PN": "TST-0001", "operation": "print", "feature": "mount_slot"}],
+                    "earliest_stage": "detail"},
+        "obligation": "process.fdm.overhang@PN:TST-0001",
+        "remedy": "plan supports on reachable non-critical surfaces, or reorient (preferred over splitting)",
+        "alternatives": [{"text": "local relief: a chamfer or teardrop under the overhang",
+                          "tradeoffs": "changes the geometry; needs the design owner's approval"},
+                         {"text": "split the part", "tradeoffs": "adds joints, datums, fasteners, a tolerance stack and load paths"}],
     },
-    # cad-record assembly_operations.py:409 / cad-motion access.py:356: packet finding on an assembly operation
-    "packet.assembly_operation": {
-        "id": "op_1_access_unknown", "code": "assembly.access_unknown", "subject": {"assembly_operation": "op_1"},
-        "severity": "major", "outcome": "unknown", "message": "access was not measured",
-    },
+    # cad-record assembly_operations.py:404-426 _finding() via check_order() (cad-motion access.py:339-384 emits the same
+    # keys, with severity critical or major): a packet finding about an assembly operation
+    "packet.assembly_operation": ORDER_FINDING,
 }
 
 # Producers whose emitted shape validates as it is, sorted. A producer that changes shape moves between lists.
@@ -230,14 +275,21 @@ EXPECTED_REASONS: dict[str, list[str]] = {
     "evidence.finding": ["severity: enum", "unexpected action", "unexpected canonical_location",
                          "unexpected obligation", "unexpected path"],
     "drawing_intent.with_feature": ["unexpected feature"],
+    "drawing_intent.with_dimension": ["unexpected dimension"],
     "assembly_check.with_sheet": ["unexpected sheet"],
     "build.finding": ["missing code", "unexpected check", "unexpected pn", "unexpected type", "unexpected where"],
-    "form_check.finding": ["missing code", "missing message", "unexpected blocking", "unexpected check",
-                           "unexpected location_mm", "unexpected min_mm", "unexpected part",
-                           "unexpected thickness_mm"],
-    "packet.finding": ["unexpected consequence", "unexpected criterion", "unexpected id", "unexpected measured",
-                       "unexpected method", "unexpected recheck", "unexpected uncertainty", "missing message"],
-    "packet.assembly_operation": ["unexpected id", "subject: unexpected assembly_operation"],
+    "form_check.min_wall": ["missing code", "missing message", "unexpected blocking", "unexpected check",
+                            "unexpected location_mm", "unexpected min_mm", "unexpected part",
+                            "unexpected thickness_mm"],
+    "form_check.brep_invalid": ["missing code", "missing message", "unexpected blocking", "unexpected check",
+                                "unexpected part"],
+    "packet.process_overhang": ["missing message", "subject: unexpected operation", "unexpected alternatives",
+                                "unexpected consequence", "unexpected criterion", "unexpected id", "unexpected measured",
+                                "unexpected method", "unexpected obligation", "unexpected recheck",
+                                "unexpected uncertainty"],
+    "packet.assembly_operation": ["missing message", "subject: unexpected assembly_operation", "unexpected consequence",
+                                  "unexpected criterion", "unexpected id", "unexpected measured", "unexpected method",
+                                  "unexpected obligation", "unexpected recheck", "unexpected uncertainty"],
 }
 
 
