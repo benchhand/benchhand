@@ -386,9 +386,12 @@ def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
                                if ref is not None))
     everyone = set(inventory.ids) if inventory is not None else set(named)
     base = frozenset(everyone - installed)
-    # The record names no base. The first uninstalled occurrence the sequence names is the base. The rest float.
-    ground = next((ref for ref in named if ref in base), None) if inventory is not None else None
-    floating = frozenset(base - {ground}) if inventory is not None and resolved else frozenset()
+    # The record names no base. The first uninstalled occurrence the sequence names is the base, or the first
+    # occurrence of the inventory when the sequence names none (an empty known sequence). The rest float.
+    ground = None
+    if inventory is not None:
+        ground = next((ref for ref in (*named, *inventory.ids) if ref in base), None)
+    floating = frozenset(base - {ground}) if inventory is not None else frozenset()
     present = set(base)
     closed: dict[str, str] = {}
     steps = []

@@ -321,6 +321,17 @@ class NeverInstalledTests(unittest.TestCase):
         chain = {**self.SEAT, "id": "mount-cover", "part": "TST-0103", "into": "TST-0102"}
         self.assertEqual(self.check([self.SEAT, chain]).findings, ())
 
+    def test_an_empty_known_sequence_over_two_parts_leaves_one_floating(self) -> None:
+        report = self.check([], pns=("TST-0101", "TST-0102"))
+        [finding] = report.findings
+        self.assertEqual(finding["code"], "assembly.never_installed")
+        self.assertEqual(report.outcome("assembly.order@product")["outcome"], "fail")
+
+    def test_an_empty_known_sequence_over_one_part_is_its_base(self) -> None:
+        report = self.check([], pns=("TST-0101",))
+        self.assertEqual(report.findings, ())
+        self.assertEqual(report.outcome("assembly.order@product")["outcome"], "pass")
+
     def test_without_an_inventory_there_is_no_occurrence_to_miss(self) -> None:
         self.assertEqual(self.check([self.SEAT], with_inventory=False).findings, ())
 
@@ -348,6 +359,13 @@ class NeverInstalledPacketTests(unittest.TestCase):
         self.assertIn("assembly.order@product", {o.id for o in expected})
         self.assertEqual(result.statuses["assembly.order@product"].result, "fail")
         self.assertNotIn("packet.invalid", {f.code for f in result.findings})
+
+    def test_removing_the_sole_installer_of_a_two_part_assembly_fails_the_product_order(self) -> None:
+        self.PNS = ("TST-0101", "TST-0102")  # the operation is the sole installer, so removing it empties the list
+        full = self.assessed([self.SEAT])[1]
+        self.assertEqual(full.statuses["assembly.order@product"].result, "pass")
+        _, result = self.assessed([])
+        self.assertEqual(result.statuses["assembly.order@product"].result, "fail")
 
     def test_a_complete_sequence_passes_the_product_order_obligation(self) -> None:
         cover = NeverInstalledTests.COVER
