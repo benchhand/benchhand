@@ -24,7 +24,7 @@ GOLDEN = {
     'blocks_present': 'pending:4144d70a19d2dad06f96630d3e94722cb26c4ff7c7b41d67640ef60dba34074e',
     'lamp': 'pending:6b36118a2f3afe40d71a075daea512bc03d7cbe0dc44bb989892f377e241d01e',
     'missing_file': 'refused:09b3aedef2fae20db529d5d9e0697c50c74100c2394b1211ee77ecc30c31ede3',
-    'missing_question': 'refused:5a4b00b06fe5db33a42593aadfdf92979fc4dea7b926a94401de624fb78a7e36',
+    'missing_question': 'refused:af778ab0eefdbe56a767f2985edc40ceb88da14536441491414f60904d7be225',
     'no_interface_id': 'refused:a4e4f9d8b254e4dade7aac7f9afe12e4b9b56c46ac94b5369b11851d2b32dc78',
     'no_operations': 'pending:0ca25ee48f3a76a06eb6c0bbab223134e2110f4b24f46cdfa0e19da334015bd3',
     'no_product': 'refused:2d8d8cc2b3d3028be4b727a95807fb4807c7df1dd7241c73c8972d6b6b50e0eb',
@@ -123,6 +123,15 @@ class Version1Variants(PlanOutcome):
         self.assert_functional_kept()
         self.check("blocks_present")
 
+    def test_existing_open_questions_missing_a_migrated_id(self) -> None:
+        self.migrated_then(lambda d: d.pop("record_version"))
+        self.assert_version_1()
+        self.assertEqual(migrate.plan(self.hw, TODAY).status, "pending", "the interrupted run replans, or the check below is vacuous")
+        # The first run asked 14 questions (11 use case, operations, part, interface). The replan has the operations in
+        # place, so it needs Q-001 to Q-013; dropping the last stored one (Q-014) would change nothing, so drop Q-013.
+        self.edit("requirements.yaml", lambda d: d.update(open_questions=[q for q in d["open_questions"] if q["id"] != "Q-013"]))
+        self.check("missing_question")
+
     def test_an_interface_without_an_id(self) -> None:
         self.assert_version_1()
         interface = {"from": "base_sub", "to": "base_sub", "type": "motion", "description": "TST interface"}
@@ -141,15 +150,6 @@ class Version1Variants(PlanOutcome):
 
 
 class Variants(PlanOutcome):
-    def migrated_then(self, change: Any) -> None:
-        migrate.apply(migrate.plan(self.hw, TODAY))
-        self.edit("product.yaml", change)
-
-    def test_existing_open_questions_missing_a_migrated_id(self) -> None:
-        self.migrated_then(lambda d: d.pop("record_version"))
-        self.edit("requirements.yaml", lambda d: d["open_questions"].pop())
-        self.check("missing_question")
-
     def test_no_product(self) -> None:
         (self.hw / "product.yaml").unlink()
         self.check("no_product")
