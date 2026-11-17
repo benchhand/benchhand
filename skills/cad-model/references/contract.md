@@ -157,7 +157,7 @@ For a part made as installed, the sum of the multiplicities is also the solid co
 |---|---|---|
 | `scripts/run_cadquery.py` | cadquery 2.8.0, cadquery-ocp 7.9.3.1.1, vtk 9.6.2 | 3.12 |
 | `scripts/run_build123d.py` | build123d 0.13.0, cadquery-ocp-novtk 8.0.1.1.0, bd_warehouse 0.4.0 | 3.12 |
-| `scripts/cad_model.py` (orchestrator) | cadquery-ocp-novtk 8.0.1.1.0, pyyaml, trimesh 4, numpy | 3.11-3.14 |
+| `scripts/cad_model.py` (orchestrator) | cadquery-ocp-novtk 8.0.1.1.0, pyyaml, trimesh 4, numpy | 3.12-3.14 |
 
 The OCP builds of the two kernels clash, so each runner has its own uv environment.
 `cadmodel.scriptenv` starts each runner as a subprocess:

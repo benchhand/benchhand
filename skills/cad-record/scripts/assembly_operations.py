@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.12,<3.15"
 # dependencies = []
 # ///
 """Assembly operations: the one normalizer of a record's installation, closure, fastening, adjustment,

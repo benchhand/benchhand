@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.12,<3.15"
 # dependencies = []
 # ///
 """The canonical hw/ layout: resolve, classify and audit paths, and publish sealed bundles.

@@ -8,7 +8,7 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
 
 ## Requirements
 
-- Python 3.11 or later.
+- Python 3.12 or later for the host scripts. Code that runs inside `freecadcmd` uses the Python 3.11 that FreeCAD bundles, so it stays compatible with 3.11. `scripts/freecad_job_modules.txt` lists that code.
 - [uv](https://docs.astral.sh/uv/).
 - FreeCAD 1.1.4 with `freecadcmd` and TechDraw templates. Install the official release from [FreeCAD 1.1.4](https://github.com/FreeCAD/FreeCAD/releases/tag/1.1.4).
   - macOS: use the arm64 or x86_64 DMG. Place FreeCAD.app in `/Applications`.

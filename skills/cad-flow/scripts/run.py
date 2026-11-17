@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = []
 # ///
 """Launch any CAD PEP 723 script in uv's environment shared by its dependencies.

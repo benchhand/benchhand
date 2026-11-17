@@ -1,0 +1,31 @@
+# Modules that run inside freecadcmd, which bundles Python 3.11 in FreeCAD 1.1.4.
+# They must stay compatible with Python 3.11; every other script targets 3.12 or later.
+# One path per line. A reviewed list: scripts/import_check.py --manifest compiles and imports each entry on 3.11.
+#
+# Job scripts that freecadcmd starts: freecad_runtime.run_job runs the first three and
+# fea_solvers.probe runs the fourth. fea_static.py writes the fifth job into the module, so the
+# modules that job imports are listed by name below.
+skills/cad-drawings/scripts/techdraw_job.py
+skills/cad-drawings/scripts/export_job.py
+skills/cad-drawings/scripts/assembly_techdraw_job.py
+skills/cad-flow/scripts/fea_solvers_job.py
+
+# Imported by those jobs (techdraw_job and assembly_techdraw_job import freecad_views;
+# techdraw_job also imports feature_geometry and feature_recognition).
+skills/cad-drawings/scripts/freecad_views.py
+skills/cad-drawings/scripts/feature_geometry.py
+skills/cad-drawings/scripts/feature_recognition.py
+
+# feature_recognition imports drawing_intent, which loads cad-fits and cad-record by path.
+skills/cad-drawings/scripts/drawing_intent.py
+skills/cad-fits/scripts/fits.py
+skills/cad-record/scripts/manufacturing_intent.py
+# manufacturing_intent loads these two by path.
+skills/cad-record/scripts/yaml_loader.py
+skills/cad-record/scripts/schema_registry.py
+
+# The job that fea_static.py generates imports these and runs fea_solvers.resolve_in_freecad;
+# fea_solvers_job imports fea_solvers too.
+skills/cad-analysis/scripts/fea_part_selection.py
+skills/cad-analysis/scripts/ccx_failure.py
+skills/cad-flow/scripts/fea_solvers.py

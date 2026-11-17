@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11,<3.15"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["defusedxml>=0.7.1", "pyyaml>=6.0"]
 # ///
 """Generate a structured GitBuilding guide, an OKH manifest and a DIN SPEC 3105-1 checklist from a

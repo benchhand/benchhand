@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["pillow==13.0.0"]
 # ///
 """Compare two cad-render bundles or scratch directories by decisions and PNG pixel parity."""
