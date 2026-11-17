@@ -1175,6 +1175,11 @@ class ProbeGeometryTests(Checks):
             ("beam_three", ("bridge", 4.0)),  # 4 x 28, held on both long sides and one end
             ("beam_ends", ("bridge", 30.0)),  # 4 x 30, held on the two short ends only: the bridge runs along it
             ("beam_corner", ("overhang", None)),  # 18 x 18, held on two adjacent sides only
+            ("beam_split_long", ("bridge", 4.0)),  # 4 x 30, long sides each two contiguous edges, ends free
+            ("beam_split_four", ("bridge", 4.0)),  # 4 x 26, long sides each two contiguous edges, ends held
+            ("pocket_notch", ("bridge", None)),  # 4 x 30 with a 3 x 2 notch in a short end: 95% of the strip
+            ("pocket_stadium", ("bridge", 4.0)),  # 4 x 30 with round ends
+            ("pocket_hole", ("bridge", None)),  # 4 x 30 with a vertical hole through the roof
             ("pocket_l", ("bridge", None)),  # two 30 x 4 arms
             ("pocket_trapezoid", ("bridge", None)),  # parallel sides 10 and 6
             ("pocket_ring", ("bridge", None)),  # an annulus around a pillar
@@ -1218,83 +1223,6 @@ class ProbeGeometryTests(Checks):
         pair = self.probed["pair"]
         self.assertEqual((pair["solids"], pair["shells"]), (2, 2))
         self.assertEqual(len({f["id"][:2] for f in pair["faces"]}), 2)
-
-
-def _edge(start: tuple[float, ...], end: tuple[float, ...], mid: tuple[float, ...] | None = None) -> Any:
-    """A straight roof edge, or with `mid` an arc through it."""
-    form_check = _module("cad_design_form_check", FORM_CHECK)
-    middle = mid or tuple((a + b) / 2 for a, b in zip(start, end))
-    return form_check._Edge(key=start + end, mid=middle, chord=tuple(b - a for a, b in zip(start, end)),
-                            start=start, end=end, straight=mid is None)
-
-
-def _outline(points: list[tuple[float, float]], anchored: list[int]) -> list[Any]:
-    """The anchored edges (by index, edge i runs from point i to point i+1) of a closed polygon roof at z 20."""
-    ring = points + points[:1]
-    return [_edge((*ring[i], 20.0), (*ring[i + 1], 20.0)) for i in anchored]
-
-
-RECT_4X30 = [(0.0, 0.0), (30.0, 0.0), (30.0, 4.0), (0.0, 4.0)]  # edges: 0 bottom long, 1 right end, 2 top long, 3 left end
-L_SHAPE = [(0.0, 0.0), (30.0, 0.0), (30.0, 4.0), (4.0, 4.0), (4.0, 30.0), (0.0, 30.0)]  # two 30 x 4 arms, area 224
-TRAPEZOID = [(0.0, 0.0), (10.0, 0.0), (8.0, 4.0), (2.0, 4.0)]  # parallel sides 10 and 6 apart by 4, area 32
-RECT_6X30 = [(0.0, 0.0), (30.0, 0.0), (30.0, 6.0), (0.0, 6.0)]
-BOSS_7X4 = [(11.25, 1.0), (18.75, 1.0), (18.75, 5.0), (11.25, 5.0)]  # a 7.5 x 4 boss centred in the 30 x 6 roof, area left 150
-
-
-def _circle(radius: float) -> Any:
-    return _edge((radius, 0.0, 20.0), (radius, 0.0, 20.0), mid=(-radius, 0.0, 20.0))
-
-
-class RoofSpanTests(unittest.TestCase):
-    """form_check._roof_span: the span of a flat roof is the gap between its opposing anchors, not its length."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.span = staticmethod(_module("cad_design_form_check", FORM_CHECK)._roof_span)
-
-    def test_a_strip_is_bridged_across_its_width(self) -> None:
-        for name, area, anchors, expected in (
-            ("anchored on all four sides", 120.0, _outline(RECT_4X30, [0, 1, 2, 3]), 4.0),
-            ("anchored on the long sides only", 120.0, _outline(RECT_4X30, [0, 2]), 4.0),
-            ("anchored on two long sides and one end", 120.0, _outline(RECT_4X30, [0, 2, 3]), 4.0),
-            ("anchored on the short ends only", 120.0, _outline(RECT_4X30, [1, 3]), 30.0),
-            ("a 12 mm beam gap between two posts", 120.0, _outline([(0.0, 0.0), (12.0, 0.0), (12.0, 10.0), (0.0, 10.0)], [1, 3]), 12.0),
-        ):
-            with self.subTest(name):
-                kind, span = self.span(area, anchors)
-                self.assertEqual(kind, "bridge")
-                self.assertAlmostEqual(span, expected, places=6)
-
-    def test_a_stadium_roof_with_round_ends_is_bridged_across_its_width(self) -> None:
-        anchors = [_edge((2.0, 0.0, 20.0), (28.0, 0.0, 20.0)), _edge((28.0, 4.0, 20.0), (2.0, 4.0, 20.0)),
-                   _edge((28.0, 0.0, 20.0), (28.0, 4.0, 20.0), mid=(30.0, 2.0, 20.0)),
-                   _edge((2.0, 4.0, 20.0), (2.0, 0.0, 20.0), mid=(0.0, 2.0, 20.0))]
-        kind, span = self.span(26.0 * 4.0 + math.pi * 4.0, anchors)
-        self.assertEqual(kind, "bridge")
-        self.assertAlmostEqual(span, 4.0, places=6)
-
-    def test_a_roof_held_on_one_side_or_on_two_adjacent_sides_is_an_overhang(self) -> None:
-        for name, anchors in (("one side", _outline(RECT_4X30, [0])), ("two adjacent sides", _outline(RECT_4X30, [0, 1])),
-                              ("no side", [])):
-            with self.subTest(name):
-                self.assertEqual(self.span(120.0, anchors), ("overhang", None))
-
-    def test_a_roof_around_a_boss_is_never_measured_from_unrelated_anchors(self) -> None:
-        """The outer edge and the far boss edge are 5 mm apart but overlap only 7.5 mm: the end regions are 6 mm wide."""
-        anchors = _outline(RECT_6X30, [0, 1, 2, 3]) + _outline(BOSS_7X4, [0, 1, 2, 3])
-        self.assertEqual(self.span(150.0, anchors), ("bridge", None))
-
-    def test_a_roof_with_a_hole_through_it_has_a_bridge_of_unknown_span(self) -> None:
-        self.assertEqual(self.span(120.0, _outline(RECT_4X30, [0, 1, 2, 3]), True), ("bridge", None))
-
-    def test_a_roof_that_is_not_one_strip_has_a_bridge_of_unknown_span(self) -> None:
-        for name, area, anchors in (
-            ("L-shape", 224.0, _outline(L_SHAPE, [0, 1, 2, 3, 4, 5])),
-            ("ring around a pillar", math.pi * (10.0**2 - 5.0**2), [_circle(10.0), _circle(5.0)]),
-            ("trapezoid", 32.0, _outline(TRAPEZOID, [0, 1, 2, 3])),
-        ):
-            with self.subTest(name):
-                self.assertEqual(self.span(area, anchors), ("bridge", None))
 
 
 # --- every component end to end: U3's loose project, built and checked -------------------------------------------------

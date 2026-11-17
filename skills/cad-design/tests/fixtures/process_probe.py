@@ -12,9 +12,13 @@ Shapes (mm, the frame they are probed in):
   disc    a 100 mm disc, 5 mm thick, on the bed; its cylinder seam is turned 5.625 degrees off +X
   slot    a 40 x 30 x 30 block on the bed with a 4 mm wide, 30 mm long square slot through it along Y, its flat roof at z 14
   beam_*  a beam at z 20..25 over posts, its flat roof at z 20: long (a 4 x 30 roof held by two posts), three (the same
-          with an end wall), ends (a 4 x 30 roof held by two end posts), corner (an 18 x 18 roof held by two adjacent walls)
+          with an end wall), ends (a 4 x 30 roof held by two end posts), corner (an 18 x 18 roof held by two adjacent walls),
+          split_long and split_four (long and a 4 x 26 roof held on four sides, each post made of two boxes so the roof
+          edge along it is two contiguous edges)
   pocket_* a 60 x 60 x 30 block with a pocket open to the bed, its flat roof at z 10: l (two 30 x 4 arms), trapezoid
-          (parallel sides 10 and 6), ring (an annulus around a pillar), boss (a 30 x 6 roof around a 7.5 x 4 boss)
+          (parallel sides 10 and 6), ring (an annulus around a pillar), boss (a 30 x 6 roof around a 7.5 x 4 boss),
+          notch (a 30 x 4 roof with a 3 x 2 notch in a short end), stadium (a 30 x 4 roof with round ends), hole (a 30 x 4
+          roof with a 3 mm vertical hole through it)
   pair    two 10 x 10 x 2 plates 20 mm apart: one component of two equivalent members
 Usage: uv run --script process_probe.py
 stdout: {case: probe facts (process_checks Geometry)}.
@@ -36,6 +40,7 @@ from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolyg
 from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet  # noqa: E402
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakePrism  # noqa: E402
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Vec  # noqa: E402
+from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain  # noqa: E402
 import math  # noqa: E402
 from OCP.TopAbs import TopAbs_EDGE  # noqa: E402
 from OCP.TopExp import TopExp_Explorer  # noqa: E402
@@ -58,6 +63,13 @@ def prism(points, z0, z1):
         wire.Add(gp_Pnt(x, y, z0))
     wire.Close()
     return BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(wire.Wire()).Face(), gp_Vec(0, 0, z1 - z0)).Shape()
+
+
+def unified(shape):
+    """`shape` with coplanar and co-cylindrical faces merged."""
+    merge = ShapeUpgrade_UnifySameDomain(shape, True, True, True)
+    merge.Build()
+    return merge.Shape()
 
 
 def fuse(a, b):
@@ -117,6 +129,13 @@ CASES = {
                   plane("roof", (2, 25, 20), (0, 0, -1)), {}),
     "beam_corner": (fuse(fuse(box(0, 0, 0, 2, 20, 20), box(0, 0, 0, 20, 2, 20)), box(0, 0, 20, 20, 20, 25)), "bed",
                     plane("roof", (10, 10, 20), (0, 0, -1)), {}),
+    "beam_split_long": (fuse(fuse(fuse(fuse(box(0, 0, 0, 10, 15, 20), box(0, 15, 0, 10, 30, 20)), box(14, 0, 0, 24, 15, 20)),
+                                box(14, 15, 0, 24, 30, 20)), box(0, 0, 20, 24, 30, 25)), "bed",
+                        plane("roof", (12, 7, 20), (0, 0, -1)), {}),
+    "beam_split_four": (fuse(fuse(fuse(fuse(fuse(fuse(box(0, 0, 0, 10, 15, 20), box(0, 15, 0, 10, 30, 20)),
+                                                box(14, 0, 0, 24, 15, 20)), box(14, 15, 0, 24, 30, 20)),
+                                      box(10, 0, 0, 14, 2, 20)), box(10, 28, 0, 14, 30, 20)), box(0, 0, 20, 24, 30, 25)), "bed",
+                        plane("roof", (12, 7, 20), (0, 0, -1)), {}),
     "pocket_l": (cut(box(0, 0, 0, 60, 60, 30), prism([(10, 10), (40, 10), (40, 14), (14, 14), (14, 40), (10, 40)], -1, 10)),
                  "bed", plane("roof", (12, 12, 10), (0, 0, -1)), {}),
     "pocket_trapezoid": (cut(box(0, 0, 0, 60, 60, 30), prism([(10, 10), (20, 10), (18, 14), (12, 14)], -1, 10)), "bed",
@@ -124,6 +143,14 @@ CASES = {
     "pocket_ring": (cut(box(0, 0, 0, 60, 60, 30), cut(cylinder((30, 30, -1), (0, 0, 1), 10, 11),
                                                       cylinder((30, 30, -2), (0, 0, 1), 5, 13))),
                     "bed", plane("roof", (37.5, 30, 10), (0, 0, -1)), {}),
+    "pocket_notch": (cut(box(0, 0, 0, 60, 60, 30), prism([(10, 10), (40, 10), (40, 14), (10, 14), (10, 13), (13, 13), (13, 11),
+                                                          (10, 11)], -1, 10)), "bed", plane("roof", (30, 12, 10), (0, 0, -1)), {}),
+    "pocket_stadium": (cut(box(0, 0, 0, 60, 60, 30),
+                           unified(fuse(fuse(box(12, 10, -1, 38, 14, 10), cylinder((12, 12, -1), (0, 0, 1), 2, 11)),
+                                        cylinder((38, 12, -1), (0, 0, 1), 2, 11)))), "bed",
+                       plane("roof", (25, 12, 10), (0, 0, -1)), {}),
+    "pocket_hole": (cut(cut(box(0, 0, 0, 60, 60, 30), box(10, 10, -1, 40, 14, 10)), cylinder((25, 12, 5), (0, 0, 1), 1.5, 30)), "bed",
+                    plane("roof", (12, 12, 10), (0, 0, -1)), {}),
     "pocket_boss": (cut(box(0, 0, 0, 60, 60, 30), cut(box(10, 27, -1, 40, 33, 10), box(21.25, 28, -2, 28.75, 32, 11))), "bed",
                     plane("roof", (12, 28, 10), (0, 0, -1)), {}),
     "pair": (occ.compound([box(0, 0, 0, 10, 10, 2), box(30, 0, 0, 40, 10, 2)]), "bed", {}, {}),
