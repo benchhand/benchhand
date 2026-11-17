@@ -1233,11 +1233,18 @@ def _set_name(label: Any, text: str) -> None:
     TDataStd_Name.Set_s(label, TCollection_ExtendedString(text))
 
 
+# The FILE_NAME time of every written STEP. A constant keeps STEP bytes a function of the shape alone, so no
+# cache key or recipe needs the environment (SOURCE_DATE_EPOCH is ignored here on purpose).
+STEP_TIMESTAMP = "1980-01-01T00:00:00"
+
+
 def _write_document(path: Path, doc: Any, tool: Any) -> None:
+    from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
     from OCP.IFSelect import IFSelect_RetDone
     from OCP.Interface import Interface_Static
     from OCP.STEPCAFControl import STEPCAFControl_Controller, STEPCAFControl_Writer
     from OCP.STEPControl import STEPControl_AsIs, STEPControl_Controller
+    from OCP.TCollection import TCollection_HAsciiString
     from OCP.XSControl import XSControl_WorkSession
 
     tool.UpdateAssemblies()
@@ -1251,7 +1258,11 @@ def _write_document(path: Path, doc: Any, tool: Any) -> None:
         writer = STEPCAFControl_Writer(XSControl_WorkSession(), False)
         writer.SetNameMode(True)
         writer.SetColorMode(True)
-        if not writer.Transfer(doc, STEPControl_AsIs) or writer.Write(str(path)) != IFSelect_RetDone:
+        if not writer.Transfer(doc, STEPControl_AsIs):
+            raise MotionError(f"cannot write {path}")
+        # OCCT stamps FILE_NAME with the wall clock; the header entity of the transferred model takes ours
+        APIHeaderSection_MakeHeader(writer.ChangeWriter().Model(False)).SetTimeStamp(TCollection_HAsciiString(STEP_TIMESTAMP))
+        if writer.Write(str(path)) != IFSelect_RetDone:
             raise MotionError(f"cannot write {path}")
 
 
