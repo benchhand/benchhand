@@ -101,11 +101,32 @@ def case_path(hw: Path, case: str, layout: Any) -> Path:
     return Path(layout.resolve(hw, "record.motion_case", ID=case)) / "plan.yaml"
 
 
+def _yaml_loader() -> Any:
+    """cad-record's shared YAML reader (yaml.safe_load on libyaml) under `cad_record_yaml_loader`."""
+    import importlib.util
+    import sys
+
+    name = "cad_record_yaml_loader"
+    if name not in sys.modules:
+        path = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "yaml_loader.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{path} not found")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[name]
+            raise
+    return sys.modules[name]
+
+
 def read_plan(path: Path) -> Any:
     import yaml
 
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return _yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise PlanError([f"no plan at {path}"]) from None
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:

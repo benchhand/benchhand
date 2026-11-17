@@ -149,6 +149,12 @@ LAYOUT = _load_module("cad_record_layout", Path(__file__).resolve().parents[2] /
 # cad-record's occurrence normalizer, the one reader of assembly.yaml occurrences, and the coupling laws.
 assembly_data = _load_module("cad_record_assembly_data", ASSEMBLY_DATA_PATH)
 coupling = _load_module("cad_motion_coupling", COUPLING_PATH)
+YAML_LOADER_PATH = ASSEMBLY_DATA_PATH.with_name("yaml_loader.py")
+
+
+def yaml_loader() -> Any:
+    """cad-record's shared YAML reader (yaml.safe_load on libyaml); it needs PyYAML, so it loads on first use."""
+    return _load_module("cad_record_yaml_loader", YAML_LOADER_PATH)
 
 # --------------------------------------------------------------------------- rigid transforms
 
@@ -430,7 +436,7 @@ def _part_records(hw: Path) -> dict[str, dict[str, Any]]:
     records = {}
     for record in sorted((hw / "parts").glob("*/part.yaml")):
         try:
-            data = yaml.safe_load(record.read_text(encoding="utf-8"))
+            data = yaml_loader().safe_load(record.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError):
             continue
         if isinstance(data, dict):
@@ -443,7 +449,7 @@ def load_assembly(hw: Path, record_hw: Path | None = None) -> Assembly:
     record_hw = record_hw or hw
     path = record_hw / "assembly.yaml"
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise MotionError(f"cannot read {path}: {error}") from error
     if not isinstance(data, dict) or not isinstance(data.get("joints"), list):
@@ -1282,7 +1288,7 @@ def product_id(hw: Path) -> str:
     import yaml
 
     try:
-        data = yaml.safe_load((hw / "product.yaml").read_text(encoding="utf-8"))
+        data = yaml_loader().safe_load((hw / "product.yaml").read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return "assembly"
     return str(data["id"]) if isinstance(data, dict) and data.get("id") else "assembly"

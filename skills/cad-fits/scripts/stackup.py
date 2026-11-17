@@ -97,7 +97,6 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
-from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -291,16 +290,11 @@ def _legacy(stack: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- intent stacks (version 2)
 
 
-@cache
 def _validator(definition: str) -> Any:
-    """A Draft 2020-12 validator of one shared manufacturing.schema.json definition, offline."""
-    from jsonschema import Draft202012Validator  # noqa: PLC0415 - only intent stacks need it
-    from referencing import Registry, Resource  # noqa: PLC0415
-
-    resources = [(contents["$id"], Resource.from_contents(contents))
-                 for contents in (json.loads(p.read_text(encoding="utf-8")) for p in sorted(SCHEMAS.glob("*.schema.json")))]
-    registry = Registry().with_resources(resources)
-    return Draft202012Validator({"$ref": f"{MANUFACTURING_SCHEMA_ID}#/$defs/{definition}"}, registry=registry)
+    """A Draft 2020-12 validator of one shared manufacturing.schema.json definition, offline, from
+    cad-record's shared schema registry (only intent stacks need it, and jsonschema)."""
+    schemas = _shared_module("cad_record_schema_registry", SKILLS / "cad-record" / "scripts" / "schema_registry.py")
+    return schemas.ref_validator(SCHEMAS, f"{MANUFACTURING_SCHEMA_ID}#/$defs/{definition}")
 
 
 def _check_shared(definition: str, value: Any, where: str) -> None:
@@ -1065,9 +1059,10 @@ def _positive_semidefinite(ids: list[str], rho: Mapping[frozenset[str], float]) 
 def load_stack(path: Path) -> Any:
     import yaml  # imported here so `compute` stays importable without the script environment
 
+    loader = _shared_module("cad_record_yaml_loader", SKILLS / "cad-record" / "scripts" / "yaml_loader.py")
     with path.open(encoding="utf-8") as handle:
         try:
-            return yaml.safe_load(handle)
+            return loader.safe_load(handle)
         except yaml.YAMLError as error:
             raise StackError(f"invalid YAML: {error}") from error
 

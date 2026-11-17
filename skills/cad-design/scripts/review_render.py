@@ -60,9 +60,15 @@ COLORS = {"fdm": "#3a3f44", "cnc": "#c4c9cf", "purchased": "#6f747a"}
 HEAD_COLOR = "#e8e2d6"  # LMP-0004 printed in a light PETG so the shade reads against the dark base
 SCREW_COLOR = "#2b2b2b"
 VIEWPORT = (1400, 1000)
+# ocp_viewer 1.2.0's page logs this once its websocket is open, just before it registers as the
+# server's browser; a model shown before that registration is dropped.
+VIEWER_CONNECTED = "WebSocket connection established"
+CONNECT_TIMEOUT_MS = 120_000
+FRAME_TIMEOUT_S = 60.0  # a show must reach a new, settled canvas frame within this time
+SETTLE_INTERVAL_MS = 350  # between the two canvas captures that must match
 CAD_MODEL_SCRIPTS = SKILL.parent / "cad-model" / "scripts"
 sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
-from cadmodel import scriptenv  # noqa: E402 - standard library helper
+from cadmodel import record as cadmodel_record, scriptenv  # noqa: E402 - standard library helpers
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -86,6 +92,23 @@ def port_open(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) == 0
 
 
+def settled_frame(page: Any, previous: bytes) -> bytes:
+    """The canvas PNG once it differs from `previous` and two consecutive captures match.
+
+    A show is drawn when the canvas leaves the frame before it and stops changing. RuntimeError
+    when that takes longer than FRAME_TIMEOUT_S."""
+    canvas = page.locator("canvas").first
+    deadline = time.monotonic() + FRAME_TIMEOUT_S
+    last = None
+    while time.monotonic() < deadline:
+        current = canvas.screenshot()
+        if current != previous and current == last:
+            return current
+        last = current
+        page.wait_for_timeout(SETTLE_INTERVAL_MS)
+    raise RuntimeError(f"the viewer canvas did not settle on a new frame within {FRAME_TIMEOUT_S:.0f} s")
+
+
 def build_parts(kernel: str, out: Path) -> Path:
     parts = out / kernel / "parts"
     command = scriptenv.script_command(HERE / "build_reference.py", "--kernel", kernel, "--out", str(parts))
@@ -96,9 +119,8 @@ def build_parts(kernel: str, out: Path) -> Path:
 
 
 def process_of(hw: Path) -> dict[str, str]:
-    import yaml
-
-    return {r.parent.name: yaml.safe_load(r.read_text(encoding="utf-8")).get("process", "")
+    loader = cadmodel_record.load_yaml_loader()
+    return {r.parent.name: loader.safe_load(r.read_text(encoding="utf-8")).get("process", "")
             for r in sorted((hw / "parts").glob("*/part.yaml"))}
 
 
@@ -189,9 +211,11 @@ def render(args: argparse.Namespace) -> dict[str, Any]:
             browser = playwright.chromium.launch(headless=True, args=CHROMIUM_ARGS)
             try:
                 page = browser.new_page(viewport={"width": VIEWPORT[0], "height": VIEWPORT[1]})
-                page.goto(f"http://127.0.0.1:{port}", wait_until="load")
+                with page.expect_console_message(lambda message: message.text == VIEWER_CONNECTED,
+                                                 timeout=CONNECT_TIMEOUT_MS):
+                    page.goto(f"http://127.0.0.1:{port}", wait_until="load")
                 page.wait_for_selector("canvas")
-                time.sleep(2.0)
+                frame = settled_frame(page, b"")  # the splash, drawn and still: every show must change it
                 for kernel, root in roots.items():
                     shapes, names, colors, state = scene(root, args.hw, args.pose, pose)
                     folder = args.out / kernel
@@ -201,9 +225,9 @@ def render(args: argparse.Namespace) -> dict[str, Any]:
                         show(*shapes, names=names, colors=colors, port=port, position=position, target=target,
                              zoom=zoom, up="Z", ortho=False, reset_camera=Camera.RESET, tools=False, glass=True,
                              grid=(False, False, False), axes=False, black_edges=False)
-                        time.sleep(3.0)
+                        frame = settled_frame(page, frame)
                         path = folder / f"{view}.png"
-                        page.locator("canvas").first.screenshot(path=str(path))
+                        path.write_bytes(frame)
                         pngs[kernel][view] = str(path)
             finally:
                 browser.close()

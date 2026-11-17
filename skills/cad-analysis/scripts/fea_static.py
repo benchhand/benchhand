@@ -44,6 +44,7 @@ def _load_module(name: str, path: Path) -> Any:
 SKILLS = Path(__file__).resolve().parents[2]
 LAYOUT = _load_module("cad_record_layout", SKILLS / "cad-record" / "scripts" / "layout.py")
 CHECK_PACKET = _load_module("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
+YAML = _load_module("cad_record_yaml_loader", SKILLS / "cad-record" / "scripts" / "yaml_loader.py")  # yaml.safe_load on libyaml
 CHECK_PREFIX = "fea-"  # hw/checks/<V>/fea-<case>/: a case's engineering packet, beside its analysis bundle
 # The FreeCAD job runs in a private process group that dies with this process, Gmsh and ccx included.
 lifecycle = _load_module("cad_flow_process_lifecycle", SKILLS / "cad-flow" / "scripts" / "process_lifecycle.py")
@@ -117,7 +118,7 @@ def selected_face_indices(face_count: int, selector: dict[str, Any], faces: Any 
 
 def load_case(path: Path) -> dict[str, Any]:
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = YAML.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise CaseError(f"cannot read case YAML: {exc}") from exc
     if not isinstance(raw, dict):
@@ -597,7 +598,7 @@ def _snapshot_record_hashes(record_dir: Path, case: dict[str, Any]) -> dict[str,
         path = record_dir / name
         if path.is_file():
             try:
-                document = yaml.safe_load(path.read_text(encoding="utf-8"))
+                document = YAML.safe_load(path.read_text(encoding="utf-8"))
             except (OSError, yaml.YAMLError) as error:
                 raise CaseError(f"cannot read version record snapshot {path}: {error}") from error
             if not isinstance(document, dict):
@@ -703,7 +704,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise CaseError(f"version {version}: record snapshot is missing part {case['part']}")
             if case.get("part") and case["_material_form"] == "explicit":
                 try:
-                    part_record = yaml.safe_load((record_dir / "parts" / case["part"] / "part.yaml").read_text(encoding="utf-8"))
+                    part_record = YAML.safe_load((record_dir / "parts" / case["part"] / "part.yaml").read_text(encoding="utf-8"))
                 except (OSError, yaml.YAMLError) as exc:
                     raise CaseError(f"cannot read version part snapshot for {case['part']}: {exc}") from exc
                 if not isinstance(part_record, dict):

@@ -73,6 +73,7 @@ validate = _load_module("cad_record_validate", Path(__file__).resolve().parent /
 layout = validate.layout
 prune = _load_module("cad_record_prune", Path(__file__).resolve().parent / "prune.py")
 generated_docs = _load_module("cad_record_generated_docs", Path(__file__).resolve().parent / "generated_docs.py")
+yaml_loader = validate.yaml_loader
 
 MANIFEST = layout.MANIFEST
 SCHEMA_VERSION = 3
@@ -125,7 +126,7 @@ def sha256(path: Path) -> str:
 
 def _yaml(path: Path) -> Any:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return yaml_loader.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return None
 

@@ -58,6 +58,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 intent = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
+yaml_loader = _load_module("cad_record_yaml_loader", SCRIPTS / "yaml_loader.py")  # yaml.safe_load on libyaml
 
 SOURCE_VERSION, TARGET_VERSION = intent.LEGACY_RECORD_VERSION, intent.RECORD_VERSION
 REASON = "not recorded before record version 2"
@@ -176,7 +177,7 @@ def _read(hw: Path, rel: str) -> tuple[str, str] | None:
 
 def _parse(text: str, rel: str) -> Any:
     try:
-        return yaml.safe_load(text)
+        return yaml_loader.safe_load(text)
     except yaml.YAMLError as error:
         raise Refused(f"hw/{rel} does not parse: {error}") from None
 
@@ -467,7 +468,7 @@ class _Migration:
         for rel, content in NEW_FILES.items():
             if not (self.hw / rel).exists():
                 self.changes.append(Change(f"hw/{rel}", "create", None, content, ["creates it with nothing recorded"]))
-                self.data[rel] = yaml.safe_load(content)
+                self.data[rel] = yaml_loader.safe_load(content)
         self.unknown.insert(0, "capabilities, material profiles and selection: none recorded (hw/manufacturing/)")
 
     def plan_product(self) -> None:

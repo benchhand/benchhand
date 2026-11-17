@@ -60,8 +60,10 @@ CHANGED_FILES = (
     "skills/cad-record/scripts/migrate.py",
     "skills/cad-record/scripts/prune.py",
     "skills/cad-record/scripts/release.py",
+    "skills/cad-record/scripts/schema_registry.py",
     "skills/cad-record/scripts/selection.py",
     "skills/cad-record/scripts/validate.py",
+    "skills/cad-record/scripts/yaml_loader.py",
     "skills/cad-render/scripts/render.py",
     "skills/cad-design/scripts/build_reference.py",
     "skills/cad-fits/scripts/fits.py",
@@ -105,6 +107,8 @@ STRICT_FILES = (
     "skills/cad-record/scripts/impact.py",
     "skills/cad-record/scripts/selection.py",
     "skills/cad-record/scripts/check_packet.py",
+    "skills/cad-record/scripts/schema_registry.py",
+    "skills/cad-record/scripts/yaml_loader.py",
 )
 
 

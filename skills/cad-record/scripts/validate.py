@@ -22,7 +22,6 @@ from typing import Any, cast
 
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
-from referencing import Registry, Resource
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import assembly_data  # noqa: E402 - the sibling module, beside this script in the skill
@@ -48,6 +47,9 @@ layout = _load_module("cad_record_layout", Path(__file__).resolve().parent / "la
 # evidence model on it: waivers, typed verification and the acceptance digest.
 intent = _load_module("cad_record_manufacturing_intent", Path(__file__).resolve().parent / "manufacturing_intent.py")
 evidence = _load_module("cad_record_evidence", Path(__file__).resolve().parent / "evidence.py")
+# The one YAML reader (libyaml when PyYAML has it) and the bundled schemas' shared registry and validators.
+yaml_loader = _load_module("cad_record_yaml_loader", Path(__file__).resolve().parent / "yaml_loader.py")
+schema_registry = _load_module("cad_record_schema_registry", Path(__file__).resolve().parent / "schema_registry.py")
 # cad-motion's pose.py and plan.py, loaded only for a record with authored motion cases.
 MOTION_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts"
 
@@ -94,7 +96,7 @@ def blocking(findings: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
 def load_yaml(path: Path, findings: list[dict[str, str]]) -> Any:
     try:
         with path.open(encoding="utf-8") as stream:
-            return yaml.safe_load(stream)
+            return yaml_loader.safe_load(stream)
     except (OSError, yaml.YAMLError) as error:
         findings.append(finding(str(path), f"cannot read YAML: {error}"))
         return None
@@ -108,26 +110,18 @@ def load_json(path: Path, findings: list[dict[str, str]]) -> Any:
         return None
 
 
-@functools.cache
-def schema_registry() -> Registry:
-    """Every bundled schema by its $id, so `drawing.schema.json#/$defs/...` references resolve offline."""
-    resources = []
-    for path in sorted(SCHEMAS.glob("*.schema.json")):
-        contents = json.loads(path.read_text(encoding="utf-8"))
-        resources.append((contents["$id"], Resource.from_contents(contents)))
-    return Registry().with_resources(resources)
-
-
 def validate_document(
     data: Any, schema_name: str, path: str, findings: list[dict[str, str]]
 ) -> bool:
+    """Validate `data` against `schemas/<schema_name>`, with format checks, through the validator
+    schema_registry keeps for this checkout's schemas; each error becomes a finding at its JSON pointer."""
     schema_path = SCHEMAS / schema_name
     try:
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        schema_registry.schema(SCHEMAS, schema_name)
     except (OSError, json.JSONDecodeError) as error:
         findings.append(finding(str(schema_path), f"cannot load schema: {error}"))
         return False
-    validator = Draft202012Validator(schema, registry=schema_registry(), format_checker=FormatChecker())
+    validator = schema_registry.document_validator(SCHEMAS, schema_name, formats=True)
     errors = sorted(validator.iter_errors(data), key=lambda item: list(item.absolute_path))
     for item in errors:
         location = "/".join(str(part) for part in item.absolute_path)

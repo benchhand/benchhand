@@ -51,7 +51,7 @@ uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.
 
 Commit only when it exits 0. Exit 0 means the stamp matches the staged `hw/` tree, or the staged stage is below `flow.recheck_from`. Exit 2 means do not commit, and stderr gives the reason. This is the same check the hook runs.
 
-`stamp.py` parses staged YAML with `yaml.safe_load` and declares `pyyaml>=6.0` for `uv run --script`; keep that PEP 723 dependency declaration when changing its dependencies.
+`stamp.py` parses staged YAML with cad-record's `yaml_loader.safe_load` (`yaml.safe_load` on libyaml's C parser) and declares `pyyaml>=6.0` for `uv run --script`; keep that PEP 723 dependency declaration when changing its dependencies.
 
 ## Changed parts and dependents
 

@@ -53,7 +53,7 @@ REFERENCE = EXAMPLE / "reference"
 CADQUERY_PARTS = DEFAULT_HW / "parts"
 CAD_MODEL_SCRIPTS = SKILL.parent / "cad-model" / "scripts"
 sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
-from cadmodel import scriptenv  # noqa: E402 - standard library helper
+from cadmodel import record as cadmodel_record, scriptenv  # noqa: E402 - standard library helpers
 ENV_MARKER = "CAD_DESIGN_BUILD_ENV"
 
 
@@ -70,11 +70,10 @@ def reexec_in_script_env(argv: list[str]) -> int:
 
 def part_titles(hw: Path) -> dict[str, str]:
     """Read STEP product titles from each part record in the design record."""
-    import yaml
-
+    loader = cadmodel_record.load_yaml_loader()
     titles = {}
     for record in sorted((hw / "parts").glob("*/part.yaml")):
-        data = yaml.safe_load(record.read_text(encoding="utf-8"))
+        data = loader.safe_load(record.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("title"), str):
             titles[record.parent.name] = data["title"]
     return titles

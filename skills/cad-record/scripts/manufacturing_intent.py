@@ -21,7 +21,6 @@ enumerated before any producer runs. The field contracts are schemas/manufacturi
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 import types
@@ -787,11 +786,31 @@ def migration_problem(product: Mapping[str, Any] | None, path: str = "hw/product
 
 # --- reading documents -----------------------------------------------------------------------------------------
 
+def _sibling(name: str, filename: str) -> Any:
+    """A cad-record module beside this one, loaded once by path and registered in sys.modules as `name`."""
+    import importlib.util  # noqa: PLC0415 - needed only to read or check files
+    import sys  # noqa: PLC0415
+
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / filename)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{filename} not found beside {Path(__file__).name}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[name]
+            raise
+    return sys.modules[name]
+
+
 def read_documents(hw: Path) -> tuple[dict[str, Any], list[Problem]]:
     """Every record document below `hw` by its path below hw/ (DOCUMENT_SCHEMAS), parsed with PyYAML,
     and a problem for each one that does not parse. Absent files are absent."""
     import yaml  # noqa: PLC0415 - optional dependency, needed only to read files
 
+    loader = _sibling("cad_record_yaml_loader", "yaml_loader.py")
     hw = Path(hw)
     documents: dict[str, Any] = {}
     problems: list[Problem] = []
@@ -801,7 +820,7 @@ def read_documents(hw: Path) -> tuple[dict[str, Any], list[Problem]]:
                 continue
             rel = path.relative_to(hw).as_posix()
             try:
-                documents[rel] = yaml.safe_load(path.read_text(encoding="utf-8"))
+                documents[rel] = loader.safe_load(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
                 problems.append(Problem("intent.schema", f"hw/{rel}", "", f"cannot read YAML: {error}"))
     return documents, problems
@@ -817,19 +836,13 @@ def schema_for(rel: str) -> str | None:
 
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """JSON-schema problems of every document (needs jsonschema), offline: every bundled schema resolves by $id."""
-    from jsonschema import Draft202012Validator  # noqa: PLC0415 - optional dependency
-    from referencing import Registry, Resource  # noqa: PLC0415
-
-    resources = [(contents["$id"], Resource.from_contents(contents))
-                 for contents in (json.loads(p.read_text(encoding="utf-8")) for p in sorted(SCHEMAS.glob("*.schema.json")))]
-    registry = Registry().with_resources(resources)
+    schemas = _sibling("cad_record_schema_registry", "schema_registry.py")
     problems = []
     for rel, document in sorted(documents.items()):
         name = schema_for(rel)
         if name is None:
             continue
-        schema = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
-        validator = Draft202012Validator(schema, registry=registry)
+        validator = schemas.document_validator(SCHEMAS, name)
         for error in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
             pointer = "/".join(str(part) for part in error.absolute_path)
             problems.append(Problem("intent.schema", f"hw/{rel}", pointer, f"{pointer + ': ' if pointer else ''}{error.message}"))

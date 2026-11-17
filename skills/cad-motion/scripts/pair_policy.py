@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, cast
 
 FITS_SCRIPT = Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py"
+YAML_LOADER_SCRIPT = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "yaml_loader.py"
 
 
 class PolicyError(ValueError):
@@ -52,13 +53,27 @@ def _fits_module() -> Any:
     return module
 
 
+@cache
+def _yaml_loader() -> Any:
+    """cad-record's shared YAML reader (yaml.safe_load on libyaml) under `cad_record_yaml_loader`."""
+    module = sys.modules.get("cad_record_yaml_loader")
+    if module is None:
+        spec = importlib.util.spec_from_file_location("cad_record_yaml_loader", YAML_LOADER_SCRIPT)
+        if spec is None or spec.loader is None:
+            raise PolicyError(f"cannot load the YAML reader at {YAML_LOADER_SCRIPT}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    return module
+
+
 def read_interfaces(hw: Path) -> list[Any]:
     """The interfaces list of hw/interfaces.yaml; empty when the file is absent."""
     import yaml
 
     path = hw / "interfaces.yaml"
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = _yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return []
     except (OSError, yaml.YAMLError) as error:

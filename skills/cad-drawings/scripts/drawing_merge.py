@@ -114,7 +114,8 @@ def merge(hw: Path, version_dir: Path, pn: str, draft: Mapping[str, Any]) -> tup
         return report("refused", unreviewed, 1)
     before = record_path.read_text(encoding="utf-8")
     merged = replace_drawing(before, block)
-    old, new = yaml.safe_load(before) or {}, yaml.safe_load(merged)
+    loader = drawing_contract.yaml_loader()
+    old, new = loader.safe_load(before) or {}, loader.safe_load(merged)
     if new.get("drawing") != block or {k: v for k, v in new.items() if k != "drawing"} != \
             {k: v for k, v in old.items() if k != "drawing"}:
         return report("error", [{"code": "invalid_input", "message": f"{record_path} does not round-trip the merge"}], 2)
@@ -151,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     api = drawing_contract.layout_api()
     try:
         _, version_dir, _ = api.built_version(hw, args.version or "latest")
-        draft = yaml.safe_load(args.draft.read_text(encoding="utf-8"))
+        draft = drawing_contract.yaml_loader().safe_load(args.draft.read_text(encoding="utf-8"))
     except (api.LayoutError, OSError, ValueError, KeyError, yaml.YAMLError) as exc:
         print(json.dumps({"status": "error", "part": args.part, "findings": [{"code": "invalid_input",
                                                                               "message": str(exc)}]}, indent=2))
