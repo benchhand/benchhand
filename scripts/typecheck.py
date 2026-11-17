@@ -90,6 +90,16 @@ CHANGED_FILES = (
     "skills/cad-viewer/scripts/cadviewer/__init__.py",
     "skills/cad-viewer/scripts/viewer.py",
     "scripts/typecheck.py",
+    "skills/cad-design/tests/mfg_corpus/capability_profile.py",
+    "skills/cad-design/tests/mfg_corpus/corpus.py",
+    "skills/cad-design/tests/mfg_corpus/rates.py",
+    "skills/cad-design/tests/mfg_corpus/support.py",
+    "skills/cad-design/tests/mfg_corpus/families/access_assembly.py",
+    "skills/cad-design/tests/mfg_corpus/families/additive_min_feature.py",
+    "skills/cad-design/tests/mfg_corpus/families/additive_stability.py",
+    "skills/cad-design/tests/mfg_corpus/families/additive_support_overhang_bridge.py",
+    "skills/cad-design/tests/mfg_corpus/families/assembly_operations_order.py",
+    "skills/cad-design/tests/mfg_corpus/families/form_check_kernel_validity.py",
 )
 STRICT_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",

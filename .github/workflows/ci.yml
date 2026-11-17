@@ -205,6 +205,7 @@ jobs:
         if: env.SKIP != 'true'
         env:
           SHARD: ${{ matrix.shard }}
+          MFG_CORPUS_RATCHET_IN_CI_STEP: ${{ matrix.shard == 'rest' && '1' || '' }}
           JOB_INDEX: ${{ strategy.job-index }}
           JOBS: ${{ strategy.job-total }}
         run: |
@@ -234,3 +235,7 @@ jobs:
           done
           echo "$failed of ${#files[@]} test files failed in shard $SHARD"
           [ "$failed" -eq 0 ]
+
+      - name: Mutation corpus rates and baseline ratchet
+        if: matrix.shard == 'freecad-gated'
+        run: uv run --script skills/cad-design/tests/mfg_corpus/rates.py --check-baseline
