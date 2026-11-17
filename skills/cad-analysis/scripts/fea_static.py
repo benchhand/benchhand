@@ -355,8 +355,11 @@ class AnalysisError(RuntimeError):
     def __init__(self, error):
         super().__init__(error["message"]); self.error=error
 def phase(name):
-    # The parent names this phase if the job times out.
-    with open(JOB["phase_output"], "w", encoding="utf-8") as f: json.dump({{"phase": name}}, f)
+    # The parent names this phase if the job times out. It reads the file after it kills the job, so the file is
+    # written beside its path and renamed into place.
+    partial=JOB["phase_output"] + ".partial"
+    with open(partial, "w", encoding="utf-8") as f: json.dump({{"phase": name}}, f)
+    os.replace(partial, JOB["phase_output"])
 def selected_faces(obj, selector):
     # obj is a top-level object, so its faces lie where Gmsh meshes them (at its global placement).
     try: indices=selected_face_indices(len(obj.Shape.Faces), selector, obj.Shape.Faces)
