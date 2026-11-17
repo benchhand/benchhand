@@ -359,6 +359,15 @@ class EngagementAccessTests(unittest.TestCase):
         self.assertEqual(self.outcome("split-within", "bead", {"press_fit": self.press(7.0)}, split), "pass")
         self.assertEqual(self.outcome("split-short", "bead", {"press_fit": self.press(6.5)}, split), "fail")
 
+    def test_the_engagement_length_is_the_travel_over_which_interference_lasts(self) -> None:
+        """The bore is 8 mm deep. The long pin's press band runs 0.3 mm above the bore mouth, which adds no
+        interference, so the bore depth is enough and 0.3 mm less fails. The 6 mm press pin overlaps the bore for
+        6 mm at its installed pose but interferes for 8 mm of travel, so declaring the overlap fails."""
+        cases = (("long", 8.0, "pass"), ("long", 7.7, "fail"), ("press", 8.0, "pass"), ("press", 6.0, "fail"))
+        for pin, length, expected in cases:
+            with self.subTest(pin=pin, engagement_length_mm=length):
+                self.assertEqual(self.outcome(f"travel-{pin}-{length}", pin, {"press_fit": self.press(length)}), expected)
+
     def test_a_heat_set_exempts_interference_only_over_its_own_engagement_length(self) -> None:
         def heat_set(length: float | None) -> dict:
             entry = {"pair": [SLEEVE, PIN], "hole_d": 10, "insert": "TST insert"}

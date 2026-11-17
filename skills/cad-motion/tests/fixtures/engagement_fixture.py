@@ -12,6 +12,8 @@ All parts are modelled in place (assembly_zero, identity placement), millimetres
   TST-0104 pin      z 8..14 at the installed pose; the variants differ in the interfering part of the pin
 OUT_DIR/press/parts/ has a pin of r 5.05 over its whole length. It interferes with the sleeve bore (r 5) for 8 mm
 of travel back from the installed pose, the sleeve top (z 16) minus the pin foot (z 8).
+OUT_DIR/long/parts/ has a pin of r 5.05 from z 8 to 16.3: its press band runs 0.3 mm above the bore mouth (z 16), like
+a pin with a head gap. Its interference lasts 8 mm of travel, the same as the press pin's.
 OUT_DIR/bead/parts/ has a shank of r 4.9 (0.1 mm clear of the bore) and a 0.2 mm press bead of r 5.05 at z 9..9.2.
 Its interference with the sleeve lasts 7 mm of travel, the sleeve top minus the bead foot.
 """
@@ -33,7 +35,7 @@ TITLES = {"TST-0101": "Housing", "TST-0102": "Sleeve", "TST-0104": "Pin"}
 
 
 def pins() -> dict[str, object]:
-    return {"press": base.cylinder(0, 0, 8, 5.05, 6),
+    return {"press": base.cylinder(0, 0, 8, 5.05, 6), "long": base.cylinder(0, 0, 8, 5.05, 8.3),
             "bead": base.fuse(base.cylinder(0, 0, 8, 4.9, 6), base.cylinder(0, 0, 9, 5.05, 0.2))}
 
 

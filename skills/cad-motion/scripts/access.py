@@ -20,8 +20,9 @@ operation (the parts present then):
     moves it the other way. The receiving part is in contact by design and is not an obstacle. A part that
     interfaces.yaml declares a press fit or heat-set with the moving part is an obstacle too, except over
     its engagement: the unbroken interference that starts at the installed pose, continues across waypoints
-    and is capped at that declaration's engagement_length_mm (cad-motion engagement.py). Interference
-    elsewhere on the path is a collision. An engagement with no declared length keeps the path unknown.
+    and is capped at that declaration's engagement_length_mm (cad-motion engagement.py). The length is the
+    travel over which the interfering surface still overlaps its partner: for a press fit the bore depth, an
+    entry chamfer may be ignored, and for a heat-set the embedded length of the insert. Interference elsewhere on the path is a collision. An engagement with no declared length keeps the path unknown.
     A running or locating fit never exempts interference.
   - each tool: a `tool_access` entry whose envelope fact cites an artifact, a STEP solid of the tool
     and holder in the operated part's model frame at the engaged pose, moves along its `approach`

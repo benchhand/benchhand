@@ -3,8 +3,14 @@
 A press fit or heat-set insert touches its partner over the last stretch of the insertion path.
 `classify` sorts the shared-volume samples of one leg against one such partner. The engagement is
 the unbroken run of interfering samples that starts at the installed pose and carries on across waypoints.
-The declared engagement_length_mm caps it. Interference outside the engagement is a collision. A run
-with no declared length stays unknown and never counts as exempt. Pure arithmetic: access.py does the geometry.
+The declared engagement_length_mm caps it, plus one minimum step. Interference outside the engagement is a
+collision. A run with no declared length stays unknown and never counts as exempt.
+
+The length is the travel back from the installed pose over which the interfering surface still overlaps its
+partner, from the foot of that surface to where it leaves the bore or hole. For a press fit declare the bore depth.
+Ignore an entry chamfer: it shortens the measured run, so the declared depth only gives it a little slack.
+A head gap outside the bore adds none, and the overlap at the installed pose is not the length: a pin shorter
+than the bore interferes until its foot leaves the mouth. For a heat-set it is the embedded length of the insert. Pure arithmetic: access.py does the geometry.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ def classify(samples: Mapping[float, float | None], *, tail_mm: float, engaged: 
     """Classify `samples`, which map the distance s back from the leg's end (mm) to the shared volume (mm3), or None.
 
     `tail_mm` is the path length from the leg's end to the installed pose, `engaged` says the run reached the
-    leg's end, `cap_mm` is the declared engagement length (None when absent). A sample past the cap by more
+    leg's end, `cap_mm` is the declared engagement length (None when absent), measured as the module docstring says. A sample past the cap by more
     than `min_step_mm` collides, the resolution of the run's end."""
     positions = sorted(samples)
 
