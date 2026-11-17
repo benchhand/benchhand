@@ -501,6 +501,8 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
             interfaces = pair_policy.read_interfaces(record_hw)
             caps = engagement_caps(pair_policy.declared_press_fits(record_hw, interfaces, assembly),
                                    pair_policy.declared_heat_sets(record_hw, interfaces, assembly))
+            for reader in (pair_policy.declared_running_fits, pair_policy.declared_locating_fits):
+                reader(record_hw, interfaces, assembly)  # a malformed clearance fit is still an input error
         except pair_policy.PolicyError as error:
             raise AccessError(str(error)) from error
         values = chain.complete({})

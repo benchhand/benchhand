@@ -157,8 +157,9 @@ class GeometricAccessTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.folder.cleanup()
 
-    def project(self, name: str, items: list[dict]) -> Path:
+    def project(self, name: str, items: list[dict], extra_interfaces: tuple[dict, ...] = ()) -> Path:
         documents = access_record(items)
+        documents["interfaces.yaml"]["interfaces"].extend(extra_interfaces)
         hw = fx.write_record(self.root / name / "hw", documents)
         source = hw / "manufacturing" / "sources" / "socket.step"
         source.parent.mkdir(parents=True, exist_ok=True)
@@ -252,6 +253,22 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertEqual(codes, {"assembly.closed_before_install", "assembly.part_path_blocked"})
         path = next(f for f in result["findings"] if f["code"] == "assembly.part_path_blocked")
         self.assertIn("TST-0103", path["consequence"])
+
+    def test_a_malformed_running_or_locating_fit_is_an_input_error_though_it_never_exempts(self) -> None:
+        """A misspelled key gets the reader's input error, as it did before this fit kind lost its exemption."""
+        typos = {"running_fit": {"fit": "5 f7", "pairs": ["TST-0103", "TST-0104"]},
+                 "locating_fit": {"fitt": "5 H7/f7", "pair": ["TST-0103", "TST-0104"]}}
+        for kind, declaration in typos.items():
+            with self.subTest(kind=kind):
+                items = operations("blocked_socket.yaml", self.socket_sha)
+                bad = fx.interface("IF-009", "TST-0103", "TST-0104", "mounting", limits={kind: declaration})
+                hw = self.project(f"typo-{kind}", items, (bad,))
+                attach = [arg for pn in PNS[1:] for arg in ("--attach", f"{pn}=TST-0101")]
+                proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw),
+                                       *self.parts_args(), *attach], capture_output=True, text=True, timeout=1800,
+                                      check=False)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn(f"interfaces.yaml#/interfaces/1/limits/{kind}", proc.stderr)
 
     def test_a_tool_known_by_name_only_keeps_access_unknown(self) -> None:
         items = reordered(operations("blocked_socket.yaml", self.socket_sha),
