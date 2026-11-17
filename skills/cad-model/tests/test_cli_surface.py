@@ -90,7 +90,7 @@ class CliSurfaceTests(unittest.TestCase):
 
 
 class MainCase(unittest.TestCase):
-    """`main(argv)` in this process: what it accepts, refuses and forwards, with the builders replaced by recorders.
+    """`main(argv)` in this process: what it accepts, what it refuses, and what it hands on, with recorders for the builders.
 
     Needs no uv and no kernel: the part builder, check, diff and store are stand-ins that note their arguments."""
 

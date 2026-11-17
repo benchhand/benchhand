@@ -180,12 +180,12 @@ def _option_like(text: str) -> bool:
 
 
 class _Command(click.Command):
-    """A command whose argument grammar is argparse's, which the scripts' callers were written against.
+    """A command that reads its arguments as argparse did.
 
-    Click takes the next word as an option's value whatever it looks like, checks only the last of a repeated
-    scalar option, and reads a negative number as an unknown option. This screens the words first, in order:
-    a value that looks like an option is refused, every occurrence of a typed option is converted, a help flag
-    ends the screening (so a later bad word cannot hide the help), and an unknown option is refused at the end."""
+    Click takes the next word as an option's value whatever it looks like. It checks only the last of a repeated
+    scalar option, and it reads a negative number as an unknown option. `_screen` walks the words in order.
+    It refuses a value that looks like an option, converts every occurrence of a typed option, and stops at a
+    help flag so that a later bad word cannot hide the help. It refuses an unknown option last."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -314,7 +314,7 @@ def store(**params: Any) -> int:
 def main(argv: list[str] | None = None) -> int:
     try:
         code = cli.main(args=argv, standalone_mode=False)
-    except click.Abort as error:  # Click turns a Ctrl-C into Abort; argparse let the KeyboardInterrupt through
+    except click.Abort as error:  # Click turns a Ctrl-C into Abort. Hand the KeyboardInterrupt on, as argparse did.
         raise error.__cause__ if isinstance(error.__cause__, KeyboardInterrupt) else error
     except click.ClickException as error:
         error.show()
