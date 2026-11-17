@@ -308,9 +308,14 @@ def spawn(argv: Sequence[str | os.PathLike[str]], **popen: Any) -> Supervised:
 
 
 def _exited(process: Supervised) -> bool:
-    """Whether the supervisor has exited, without reaping it."""
+    """Whether the supervisor has exited. It stays unreaped where os.waitid exists.
+
+    Without os.waitid (macOS before Python 3.13), Popen.poll reaps the supervisor and records its
+    status, so _signal_group takes its reaped branch and Popen.wait returns the recorded status."""
     if process.returncode is not None:
         return True
+    if not hasattr(os, "waitid"):
+        return process.poll() is not None
     try:
         return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
     except ChildProcessError:
