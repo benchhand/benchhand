@@ -148,6 +148,17 @@ class RecordedGroundTests(unittest.TestCase):
         self.assertNotIn("at 300 N?", [ask.text for ask in reply.asks])
 
 
+class AbbreviationTests(unittest.TestCase):
+    def test_a_question_with_an_abbreviation_inside_is_one_ask(self) -> None:
+        for abbreviation in ("e.g.", "i.e.", "etc.", "vs.", "cf."):
+            with self.subTest(abbreviation=abbreviation):
+                question = f"Will you also load-test a first bracket, {abbreviation} at 300 N?"
+                self.assertEqual(dialogue.extract_asks(f"Q-011 | {question}"), [f"Q-011 | {question}"])
+
+    def test_a_sentence_ending_in_a_period_still_splits_before_the_next_question(self) -> None:
+        self.assertEqual(dialogue.extract_asks("The rail is bare. Which finish do you want?"), ["Which finish do you want?"])
+
+
 class GateTests(unittest.TestCase):
     def test_regression_the_recorded_intent_gate_with_a_please_answer_lead_in_is_answered_not_failed(self) -> None:
         # The small-mechanism fixture build failed here: "Please answer:" introduces the numbered asks, and the
