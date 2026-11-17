@@ -112,7 +112,7 @@ def load_lifecycle() -> Any:
 
 
 class _Converter(click.ParamType[Any, Any]):
-    """A value type from a function that raises `argparse.ArgumentTypeError` (cad-motion's `jobs_argument` does)."""
+    """A value type from a function that raises argparse's ArgumentTypeError (cad-motion's `jobs_argument` does)."""
 
     def __init__(self, name: str, convert: Callable[[str], Any]) -> None:
         self.name = name
