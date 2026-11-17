@@ -107,7 +107,7 @@ Each producer runs at the iteration below and not earlier. "Only when stale" mea
   - the BOM, fits and stack-up
   - the form, static and smoke results
 - It runs `evidence.py check` for the gate's stage and records them in the provisional decision.
-- After it writes the decision and advances `flow.stage`, run `evidence.py check --stage <gate stage>` again, because `product.yaml` is a record input and an earlier packet is refused. The commit's stamp is at the gate stage just passed, one stage behind `flow.stage`; `stamp.py --verify` accepts that stage or `flow.stage`, never one below `flow.recheck_from`.
+- After it writes the decision and advances `flow.stage`, run `evidence.py check --stage <gate stage>` again, because `product.yaml` is a record input and the check refuses an earlier packet. The commit's stamp is at the gate stage just passed, one stage behind `flow.stage`; `stamp.py --verify` accepts that stage or `flow.stage`, never one below `flow.recheck_from`.
 
 **Full gate (approval).** The full check on the same vN, before the human gate.
 - Always run:
