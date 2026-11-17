@@ -1,0 +1,719 @@
+{
+  "status": "pass",
+  "label": "v2",
+  "pose": "nominal",
+  "baseline": "v1",
+  "scope": {
+    "kind": "all_pairs",
+    "complete": true
+  },
+  "blocking_failures": [],
+  "warnings": [],
+  "evaluation": {
+    "mode": "fast",
+    "mesh": "linear 0.02 mm, angular 0.2 rad",
+    "band_mm": 2.0,
+    "rule_sha256": "75ed0692f447150421f8ab6b40f7a49ecfa07ea733b4ec40e3c5c5ca727813a9"
+  },
+  "occurrences": {
+    "bracket": "WB-0001",
+    "screw-upper": "WB-0002",
+    "screw-lower": "WB-0002",
+    "wood-screw-rear": "WB-0003",
+    "wood-screw-front": "WB-0003"
+  },
+  "checks": {
+    "step_readback": {
+      "status": "pass",
+      "blocking": true,
+      "schema": {
+        "assembly.step": "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF {1 0 10303 442 1 1 4 }",
+        "parts/WB-0001.step": "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF {1 0 10303 442 1 1 4 }",
+        "parts/WB-0002.step": "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF {1 0 10303 442 1 1 4 }",
+        "parts/WB-0003.step": "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF {1 0 10303 442 1 1 4 }"
+      },
+      "top_product": "wall-bracket v2",
+      "top_product_found": true,
+      "unexpected_products": [],
+      "definitions": 3,
+      "components": 5,
+      "unbound_components": [],
+      "missing_occurrences": [],
+      "tolerance_rel": 1e-06,
+      "placement_tolerance_mm": 1e-06,
+      "parts": {
+        "WB-0001": {
+          "expected_name": "WB-0001 Shelf bracket",
+          "part_step_name": "WB-0001 Shelf bracket",
+          "assembly_name": "WB-0001 Shelf bracket",
+          "kernel_volume_mm3": 138074.3000445456,
+          "part_step_volume_mm3": 138074.3000445366,
+          "assembly_volume_mm3": 138074.30004453863,
+          "part_step_rel_error": 6.53429888015127e-14,
+          "assembly_rel_error": 5.058812036246144e-14,
+          "kernel_solids": 1,
+          "part_step_solids": 1,
+          "ok": true
+        },
+        "WB-0002": {
+          "expected_name": "WB-0002 Socket head cap screw ISO 4762 M6x20-8.8",
+          "part_step_name": "WB-0002 Socket head cap screw ISO 4762 M6x20-8.8",
+          "assembly_name": "WB-0002 Socket head cap screw ISO 4762 M6x20-8.8",
+          "kernel_volume_mm3": 971.7736704007984,
+          "part_step_volume_mm3": 971.7736704007998,
+          "assembly_volume_mm3": 971.7736704007336,
+          "part_step_rel_error": 1.4038680962581793e-15,
+          "assembly_rel_error": 6.668373457226351e-14,
+          "kernel_solids": 1,
+          "part_step_solids": 1,
+          "ok": true
+        },
+        "WB-0003": {
+          "expected_name": "WB-0003 Countersunk wood screw 4x16",
+          "part_step_name": "WB-0003 Countersunk wood screw 4x16",
+          "assembly_name": "WB-0003 Countersunk wood screw 4x16",
+          "kernel_volume_mm3": 212.45543918676572,
+          "part_step_volume_mm3": 212.455439186821,
+          "assembly_volume_mm3": 212.45543918682125,
+          "part_step_rel_error": 2.601967972848177e-13,
+          "assembly_rel_error": 2.614007927478323e-13,
+          "kernel_solids": 1,
+          "part_step_solids": 1,
+          "ok": true
+        }
+      },
+      "occurrences": {
+        "bracket": {
+          "ref": "@bracket",
+          "PN": "WB-0001",
+          "component": "WB-0001 Shelf bracket [@bracket]",
+          "placement_error_mm": 0.0,
+          "rotation_error": 0.0,
+          "ok": true
+        },
+        "screw-upper": {
+          "ref": "@screw-upper",
+          "PN": "WB-0002",
+          "component": "WB-0002 Socket head cap screw ISO 4762 M6x20-8.8 [@screw-upper]",
+          "placement_error_mm": 0.0,
+          "rotation_error": 6.123233995737e-17,
+          "ok": true
+        },
+        "screw-lower": {
+          "ref": "@screw-lower",
+          "PN": "WB-0002",
+          "component": "WB-0002 Socket head cap screw ISO 4762 M6x20-8.8 [@screw-lower]",
+          "placement_error_mm": 0.0,
+          "rotation_error": 6.123233995737e-17,
+          "ok": true
+        },
+        "wood-screw-rear": {
+          "ref": "@wood-screw-rear",
+          "PN": "WB-0003",
+          "component": "WB-0003 Countersunk wood screw 4x16 [@wood-screw-rear]",
+          "placement_error_mm": 0.0,
+          "rotation_error": 0.0,
+          "ok": true
+        },
+        "wood-screw-front": {
+          "ref": "@wood-screw-front",
+          "PN": "WB-0003",
+          "component": "WB-0003 Countersunk wood screw 4x16 [@wood-screw-front]",
+          "placement_error_mm": 0.0,
+          "rotation_error": 0.0,
+          "ok": true
+        }
+      }
+    },
+    "brep_validity": {
+      "status": "pass",
+      "blocking": true,
+      "parts": {
+        "WB-0001": {
+          "valid": true,
+          "kernel_valid": true,
+          "kernel_errors": [],
+          "step_valid": true,
+          "step_errors": []
+        },
+        "WB-0002": {
+          "valid": true,
+          "kernel_valid": true,
+          "kernel_errors": [],
+          "step_valid": true,
+          "step_errors": []
+        },
+        "WB-0003": {
+          "valid": true,
+          "kernel_valid": true,
+          "kernel_errors": [],
+          "step_valid": true,
+          "step_errors": []
+        }
+      }
+    },
+    "solid_structure": {
+      "status": "pass",
+      "blocking": true,
+      "unknown_parts": [],
+      "parts": {
+        "WB-0001": {
+          "solids": 1,
+          "shells": 1,
+          "expected_solids": 1,
+          "baseline": "v1",
+          "ok": true
+        },
+        "WB-0002": {
+          "solids": 1,
+          "shells": 1,
+          "expected_solids": 1,
+          "baseline": "v1",
+          "ok": true
+        },
+        "WB-0003": {
+          "solids": 1,
+          "shells": 1,
+          "expected_solids": 1,
+          "baseline": "v1",
+          "ok": true
+        }
+      }
+    },
+    "interference": {
+      "status": "pass",
+      "blocking": true,
+      "selection": "all",
+      "threshold_mm3": 0.001,
+      "unknown_pairs": [],
+      "unknown_allowed": [],
+      "declared_pairs": [],
+      "declared_heat_sets": [],
+      "declared_locating_fits": [],
+      "declared_fit_findings": [],
+      "min_clearance": {
+        "pair": [
+          "bracket",
+          "screw-lower"
+        ],
+        "clearance_mm": 0.0
+      },
+      "pairs": [
+        {
+          "pair": [
+            "screw-lower",
+            "screw-upper"
+          ],
+          "refs": [
+            "@screw-lower",
+            "@screw-upper"
+          ],
+          "clearance_mm": null,
+          "interference_mm3": null,
+          "method": "box",
+          "lower_mm": 21.999999799999998,
+          "upper_mm": null,
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "screw-lower",
+            "wood-screw-front"
+          ],
+          "refs": [
+            "@screw-lower",
+            "@wood-screw-front"
+          ],
+          "clearance_mm": null,
+          "interference_mm3": null,
+          "method": "box",
+          "lower_mm": 228.31084048270685,
+          "upper_mm": null,
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "screw-lower",
+            "wood-screw-rear"
+          ],
+          "refs": [
+            "@screw-lower",
+            "@wood-screw-rear"
+          ],
+          "clearance_mm": null,
+          "interference_mm3": null,
+          "method": "box",
+          "lower_mm": 187.03165480720105,
+          "upper_mm": null,
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "screw-upper",
+            "wood-screw-front"
+          ],
+          "refs": [
+            "@screw-upper",
+            "@wood-screw-front"
+          ],
+          "clearance_mm": null,
+          "interference_mm3": null,
+          "method": "box",
+          "lower_mm": 218.83564585030476,
+          "upper_mm": null,
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "screw-upper",
+            "wood-screw-rear"
+          ],
+          "refs": [
+            "@screw-upper",
+            "@wood-screw-rear"
+          ],
+          "clearance_mm": null,
+          "interference_mm3": null,
+          "method": "box",
+          "lower_mm": 175.33978416982268,
+          "upper_mm": null,
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "wood-screw-front",
+            "wood-screw-rear"
+          ],
+          "refs": [
+            "@wood-screw-front",
+            "@wood-screw-rear"
+          ],
+          "clearance_mm": null,
+          "interference_mm3": null,
+          "method": "box",
+          "lower_mm": 36.9999998,
+          "upper_mm": null,
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        }
+      ],
+      "joint_pairs": [
+        {
+          "pair": [
+            "bracket",
+            "screw-lower"
+          ],
+          "refs": [
+            "@bracket",
+            "@screw-lower"
+          ],
+          "clearance_mm": 0.0,
+          "interference_mm3": 0.0,
+          "method": "exact",
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "bracket",
+            "screw-upper"
+          ],
+          "refs": [
+            "@bracket",
+            "@screw-upper"
+          ],
+          "clearance_mm": 0.0,
+          "interference_mm3": 0.0,
+          "method": "exact",
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "bracket",
+            "wood-screw-front"
+          ],
+          "refs": [
+            "@bracket",
+            "@wood-screw-front"
+          ],
+          "clearance_mm": 0.0,
+          "interference_mm3": 0.0,
+          "method": "exact",
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        },
+        {
+          "pair": [
+            "bracket",
+            "wood-screw-rear"
+          ],
+          "refs": [
+            "@bracket",
+            "@wood-screw-rear"
+          ],
+          "clearance_mm": 0.0,
+          "interference_mm3": 0.0,
+          "method": "exact",
+          "interferes": false,
+          "allowed": false,
+          "ok": true
+        }
+      ]
+    },
+    "pair_clearance": {
+      "status": "pass",
+      "blocking": true,
+      "requirements": []
+    },
+    "connection": {
+      "status": "pass",
+      "blocking": true,
+      "contact_mm": 0.01,
+      "float_gap_mm": 2.0,
+      "parts": {
+        "bracket": {
+          "status": "touching",
+          "nearest": "screw-lower",
+          "distance_mm": 0.0,
+          "joint_connected": false,
+          "joint": null,
+          "ok": true
+        },
+        "screw-lower": {
+          "status": "touching",
+          "nearest": "bracket",
+          "distance_mm": 0.0,
+          "joint_connected": false,
+          "joint": null,
+          "ok": true
+        },
+        "screw-upper": {
+          "status": "touching",
+          "nearest": "bracket",
+          "distance_mm": 0.0,
+          "joint_connected": false,
+          "joint": null,
+          "ok": true
+        },
+        "wood-screw-front": {
+          "status": "touching",
+          "nearest": "bracket",
+          "distance_mm": 0.0,
+          "joint_connected": false,
+          "joint": null,
+          "ok": true
+        },
+        "wood-screw-rear": {
+          "status": "touching",
+          "nearest": "bracket",
+          "distance_mm": 0.0,
+          "joint_connected": false,
+          "joint": null,
+          "ok": true
+        }
+      },
+      "fixed_joints": [
+        {
+          "joint": "J-002",
+          "pair": [
+            "bracket",
+            "screw-lower"
+          ],
+          "distance_mm": 0.0,
+          "ok": true
+        },
+        {
+          "joint": "J-001",
+          "pair": [
+            "bracket",
+            "screw-upper"
+          ],
+          "distance_mm": 0.0,
+          "ok": true
+        },
+        {
+          "joint": "J-004",
+          "pair": [
+            "bracket",
+            "wood-screw-front"
+          ],
+          "distance_mm": 0.0,
+          "ok": true
+        },
+        {
+          "joint": "J-003",
+          "pair": [
+            "bracket",
+            "wood-screw-rear"
+          ],
+          "distance_mm": 0.0,
+          "ok": true
+        }
+      ]
+    },
+    "build_volume": {
+      "status": "pass",
+      "blocking": false,
+      "diagnostic": true,
+      "blocking_failures": [],
+      "warned": [],
+      "note": "a diagnostic: fitting an envelope is geometry only, never process feasibility; the part's route, capability profile and approved orientation decide whether it can be made",
+      "parts": {},
+      "message": "product.yaml does not declare build_volume"
+    },
+    "slivers_tolerances": {
+      "status": "pass",
+      "blocking": false,
+      "sliver_face_mm2": 0.001,
+      "loose_tolerance_mm": 0.01,
+      "parts": {
+        "WB-0001": {
+          "min_face_area_mm2": 23.122121930421166,
+          "sliver_faces": 0,
+          "max_tolerance_mm": 1e-07,
+          "loose": false,
+          "ok": true
+        },
+        "WB-0002": {
+          "min_face_area_mm2": 8.660254037844,
+          "sliver_faces": 0,
+          "max_tolerance_mm": 1e-07,
+          "loose": false,
+          "ok": true
+        },
+        "WB-0003": {
+          "min_face_area_mm2": 0.5026548245743669,
+          "sliver_faces": 0,
+          "max_tolerance_mm": 1e-07,
+          "loose": false,
+          "ok": true
+        }
+      }
+    },
+    "mesh_watertight": {
+      "status": "pass",
+      "blocking": true,
+      "parts": {
+        "bracket": {
+          "watertight": true,
+          "triangles": 2080,
+          "collapsed_triangles": 0,
+          "euler_number": -6
+        },
+        "screw-lower": {
+          "watertight": true,
+          "triangles": 428,
+          "collapsed_triangles": 0,
+          "euler_number": 2
+        },
+        "screw-upper": {
+          "watertight": true,
+          "triangles": 428,
+          "collapsed_triangles": 0,
+          "euler_number": 2
+        },
+        "wood-screw-front": {
+          "watertight": true,
+          "triangles": 664,
+          "collapsed_triangles": 0,
+          "euler_number": 2
+        },
+        "wood-screw-rear": {
+          "watertight": true,
+          "triangles": 664,
+          "collapsed_triangles": 0,
+          "euler_number": 2
+        }
+      }
+    },
+    "artifact_integrity": {
+      "status": "pass",
+      "blocking": true,
+      "problems": []
+    },
+    "manufacturing": {
+      "status": "pass",
+      "blocking": true,
+      "complete": true,
+      "blocking_failures": [],
+      "parts": {
+        "WB-0001": {
+          "status": "pass",
+          "complete": true,
+          "blocking_failures": [],
+          "checks": {
+            "outputs": {
+              "status": "pass",
+              "blocking": true,
+              "failed": [],
+              "required": [
+                "manufacturing.json",
+                "part.step"
+              ],
+              "present": [
+                "manufacturing.json",
+                "part.step"
+              ],
+              "changed": []
+            },
+            "record": {
+              "status": "pass",
+              "blocking": true,
+              "failed": [],
+              "record": {
+                "PN": "WB-0001",
+                "rev": "X1",
+                "material": "6061-T6 aluminium plate (ASTM B209)",
+                "process": "cnc",
+                "finish": "As machined, deburred, no coating"
+              }
+            },
+            "native": {
+              "status": "pass",
+              "blocking": true,
+              "failed": [],
+              "kernel_volume_mm3": 138074.3000445456,
+              "kernel_solids": 1,
+              "kernel_valid": true,
+              "kernel_errors": []
+            },
+            "identity": {
+              "status": "pass",
+              "blocking": true,
+              "failed": [],
+              "installed_volume_mm3": 138074.3000445456,
+              "manufacture_volume_mm3": 138074.3000445456,
+              "difference_mm3": 0.0,
+              "allowed_mm3": 0.00013807430004454563,
+              "installed_solids": 1,
+              "manufacture_solids": 1
+            },
+            "step": {
+              "status": "pass",
+              "blocking": true,
+              "failed": [],
+              "schema": "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF {1 0 10303 442 1 1 4 }",
+              "units": [
+                "mm"
+              ],
+              "product": "WB-0001 Shelf bracket",
+              "errors": [],
+              "solids": 1,
+              "shells": 1,
+              "volume_mm3": 138074.30004453863,
+              "rel_error": 5.058812036246144e-14,
+              "tolerance_rel": 1e-06,
+              "bbox_mm": {
+                "min": [
+                  0.0,
+                  -9.0,
+                  -120.0
+                ],
+                "max": [
+                  250.0,
+                  9.0,
+                  0.0
+                ]
+              }
+            },
+            "placement": {
+              "status": "pass",
+              "blocking": true,
+              "failed": [],
+              "approved": false,
+              "bed": null,
+              "build_volume": null,
+              "decision": null,
+              "determinant": 1.0,
+              "frame": "model",
+              "method": "identity",
+              "operation": null,
+              "orientation": "identity",
+              "pose": "model_frame",
+              "reason": null,
+              "transform": [
+                [
+                  1.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0,
+                  0.0
+                ]
+              ],
+              "bbox_mm": {
+                "min": [
+                  0.0,
+                  -9.0,
+                  -120.0
+                ],
+                "max": [
+                  250.0,
+                  9.0,
+                  0.0
+                ]
+              }
+            },
+            "components": {
+              "status": "pass",
+              "blocking": true,
+              "failed": [],
+              "components": {
+                "main": {
+                  "status": "pass",
+                  "checks": {}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "suspects": [],
+  "timings_s": {
+    "total_s": 0.886,
+    "kernel_evaluations": 0,
+    "exact_hits": 4,
+    "decision_hits": 4,
+    "bucket_hits": 0,
+    "cleared": {
+      "box": 6,
+      "mesh": 0,
+      "mesh (exact suspect)": 0,
+      "cache-bound": 0
+    },
+    "reevaluations": 0
+  },
+  "packet": {
+    "bundle": "hw/checks/v2/cad",
+    "reused": true,
+    "result": "pass",
+    "complete": true
+  }
+}
