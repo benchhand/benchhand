@@ -1127,7 +1127,7 @@ class BrowserRender(unittest.TestCase):
 
     def test_an_opaque_window_hides_the_target_and_a_transparent_one_shows_it(self) -> None:
         self.hw.mkdir(parents=True, exist_ok=True)
-        requirements(self.hw, FRONT)  # before the builds: each version snapshots the requirements it is built with
+        requirements(self.hw, FRONT)  # before the builds: a version snapshots the requirements file present at build time
         box_version.write(self.hw, "v1", BOXES, box_parts("opaque"), record_version=2)
         box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=2)
         reports = {}
