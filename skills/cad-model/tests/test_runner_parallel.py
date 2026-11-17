@@ -30,6 +30,12 @@ def build(params):
     s = params["size"]
     return cq.Solid.makeBox(s, s + 1, s + 2)
 """
+TWIN = """import cadquery as cq
+KERNEL = "cadquery"
+PARAMS = {}
+def build(params):
+    return cq.Solid.makeBox(3, 4, 5).moved(cq.Location(cq.Vector(5, 0, 0)))
+"""
 BROKEN = """KERNEL = "cadquery"
 PARAMS = {}
 def build(params):
@@ -203,16 +209,25 @@ class ParallelBuilds(unittest.TestCase):
         )
         seen = [json.loads(path.read_text()) for path in self.where.iterdir()]
         self.assertTrue(seen)
-        for entry in (
-            seen
-        ):  # the group build._stop kills is the runner's
+        for entry in seen:  # the group build._stop kills is the runner's
             self.assertEqual(entry["pgrp"], entry["runner_pgrp"], entry)
-            self.assertNotEqual(entry["pgrp"], os.getpgrp(), "run_kernels starts a session of its own")
+            self.assertNotEqual(
+                entry["pgrp"], os.getpgrp(), "run_kernels starts a session of its own"
+            )
             self.assertNotEqual(entry["pid"], entry["ppid"])
         self.assertFalse(
             list(self.root.rglob("__pycache__")),
             "workers must not write bytecode beside model.py",
         )
+
+    def test_step_occurrence_ids_do_not_depend_on_which_worker_built_what(self) -> None:
+        # OCCT numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE per process: every part must start at '1'
+        parts = self.request("twins", [(f"TST-{i:04d}", TWIN) for i in range(1, 9)])
+        result = self.run_with("2", "twins", parts)
+        for pn in result["parts"]:
+            text = (self.root / "twins" / f"{pn}.step").read_text()
+            self.assertIn("NEXT_ASSEMBLY_USAGE_OCCURRENCE('1'", text, pn)
+            self.assertNotRegex(text, r"NEXT_ASSEMBLY_USAGE_OCCURRENCE\('[2-9]'", pn)
 
     def test_a_bad_jobs_value_is_a_bad_request(self) -> None:
         with self.assertRaisesRegex(build.UsageError, "CAD_MODEL_BUILD_JOBS"):
