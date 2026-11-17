@@ -249,17 +249,22 @@ def case_yaml(fixture: Fixture, faces: Faces) -> dict[str, Any]:
             "mesh_size": fixture.mesh_size, "timeout_seconds": SOLVE_TIMEOUT_S}
 
 
-def fea_parts_table() -> tuple[dict[str, str], set[str]]:
+def fea_parts_table(source: str | None = None) -> tuple[dict[str, str], set[str]]:
     """fea_parts.py's PARTS table (part name to builder function name) and the functions it defines, read from its
-    source. Importing it would need cadquery, which only the gated solves install."""
-    tree = ast.parse((FIXTURES / "fea_parts.py").read_text(encoding="utf-8"))
+    source (`source` replaces the file). Importing it would need cadquery, which only the gated solves install."""
+    tree = ast.parse((FIXTURES / "fea_parts.py").read_text(encoding="utf-8") if source is None else source)
     functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
     tables = [node.value for node in tree.body if isinstance(node, ast.Assign)
               and [getattr(target, "id", None) for target in node.targets] == ["PARTS"]]
     if len(tables) != 1 or not isinstance(tables[0], ast.Dict):
         raise AssertionError("fea_parts.py needs exactly one `PARTS = {...}` table")
-    parts = {ast.literal_eval(key): value.id if isinstance(value, ast.Name) else ast.dump(value)
-             for key, value in zip(tables[0].keys, tables[0].values) if key is not None}
+    parts: dict[str, str] = {}
+    for key, value in zip(tables[0].keys, tables[0].values):
+        # A `**other` entry has no key. It, a computed key and a computed builder all hide names from this reader.
+        if not (isinstance(key, ast.Constant) and isinstance(key.value, str) and isinstance(value, ast.Name)):
+            entry = ast.unparse(value) if key is None else f"{ast.unparse(key)}: {ast.unparse(value)}"
+            raise AssertionError(f"PARTS must be a literal dict of name: builder, not `{'**' if key is None else ''}{entry}`")
+        parts[key.value] = value.id
     return parts, functions
 
 
@@ -290,6 +295,11 @@ class Specification(unittest.TestCase):
         for name, builder in parts.items():
             with self.subTest(part=name):
                 self.assertIn(builder, functions)
+
+    def test_a_parts_table_that_is_not_a_literal_name_to_builder_dict_is_refused(self) -> None:
+        for entry in ("**OTHER", "NAME: l_bracket", "'l_bracket': BUILDERS['l_bracket']", "'l_bracket': lambda: None"):
+            with self.subTest(entry=entry), self.assertRaisesRegex(AssertionError, "PARTS must be a literal dict"):
+                fea_parts_table(f"def l_bracket(): pass\nPARTS = {{'keyed_shaft': l_bracket, {entry}}}\n")
 
     def test_each_part_uses_a_profile_its_route_can_have(self) -> None:
         for fixture in FIXTURE_SET:
