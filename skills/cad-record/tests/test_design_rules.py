@@ -347,7 +347,7 @@ class VisibilityBindings(LampRecord):
 
 
 class SchemaDefaults(unittest.TestCase):
-    """The schema defaults equal the values these rules apply, read from the module. Until the config loader makes
+    """Each default in a schema equals the value these rules apply, read from the module. Until the config loader makes
     the schema the single source, a change to one without the other fails here."""
 
     def schema(self, name: str) -> Any:
