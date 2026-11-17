@@ -148,7 +148,7 @@ def main(argv: list[str]) -> int:
         print(f"usage: fea_parts.py NAME OUT.step [PN] | --list (names: {', '.join(sorted(PARTS))})", file=sys.stderr)
         return 2
     shape = PARTS[argv[0]]()
-    if len(argv) == 3:   # a versioned case names the part it analyses, so the STEP names its solid by product number
+    if len(argv) == 3:   # a versioned case names the part it analyzes, so the STEP names its solid by product number
         cq.Assembly().add(shape, name=argv[2]).save(str(Path(argv[1])), exportType="STEP")
     else:
         cq.exporters.export(shape, str(Path(argv[1])), exportType="STEP")

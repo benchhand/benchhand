@@ -1,7 +1,7 @@
 """FreeCAD job: list the faces of a part's STEP in the order fea_static numbers them (1-based).
 
-Run with `freecadcmd list_faces.py`; reads FEA_FACES_STEP and writes JSON to FEA_FACES_OUT. Each row has the
-surface kind, the centre of mass, the area, the bounding box and, for a cylinder, its radius and axis.
+Run with `freecadcmd list_faces.py`. It reads FEA_FACES_STEP and writes JSON to FEA_FACES_OUT. Each row has the
+surface kind, the center of mass, the area, the bounding box and, for a cylinder, its radius and axis.
 """
 
 import json

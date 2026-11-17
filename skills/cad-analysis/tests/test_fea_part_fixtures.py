@@ -72,7 +72,7 @@ def profile(ident: str, form: str, process: str | None, *, E: float, nu: float, 
     return data
 
 
-# Typical room-temperature values of the grade; the sources are synthetic fixtures, not citations.
+# Typical room-temperature values of the grade. The sources are synthetic fixtures and no real citations.
 PROFILES = {
     "steel_s355": profile("steel_s355", "wrought", None, E=210000, nu=0.30, density=7850, yield_mpa=355),
     "al_6061_t6": profile("al_6061_t6", "sheet", None, E=68900, nu=0.33, density=2700, yield_mpa=276),
@@ -89,7 +89,7 @@ def plane(axis: str, value: float) -> Callable[[Faces], Selector]:
 
 
 def cylinders(radius: float, **where: Any) -> Callable[[Faces], Selector]:
-    """The cylindrical faces of this radius (to 0.01 mm), optionally limited to a centre-of-mass box."""
+    """The cylindrical faces of this radius (to 0.01 mm), optionally limited to a center-of-mass box."""
     def pick(faces: Faces) -> Selector:
         chosen = [f["index"] for f in faces if f["kind"] == "Cylinder" and abs(f["radius"] - radius) < 0.01
                   and all(lo <= f["centre"]["xyz".index(axis)] <= hi for axis, (lo, hi) in where.items())]
@@ -100,7 +100,7 @@ def cylinders(radius: float, **where: Any) -> Callable[[Faces], Selector]:
 
 
 def flank(radius_range: tuple[float, float], angle_range: tuple[float, float]) -> Callable[[Faces], Selector]:
-    """A planar face whose centre lies in a radius and angle window around the Z axis (a gear tooth flank)."""
+    """A planar face whose center lies in a radius and angle window around the Z axis (a gear tooth flank)."""
     def pick(faces: Faces) -> Selector:
         chosen = []
         for f in faces:
@@ -160,7 +160,7 @@ BUILD_TIMEOUT_S, FACES_TIMEOUT_S, SOLVE_TIMEOUT_S = 1800, 900, 1800
 
 @dataclass(frozen=True)
 class Expected:
-    """Broad bounds on the solve's peak von Mises stress and peak displacement, from a hand calculation made
+    """Broad bounds on the peak von Mises stress and peak displacement, from a hand calculation made
     from the geometry and the load alone, never from a solver result. The stress band runs from 0.3 to 8 times the
     nominal: the peak sits at a fully fixed support or a hole, where the solver sees a singularity or a stress
     concentration the hand number leaves out. The displacement band is 0.3 to 3 times the nominal unless stated."""
@@ -313,7 +313,7 @@ class Specification(unittest.TestCase):
 
 @unittest.skipUnless(FREECAD_PRESENT and UV, "the solves need FreeCAD 1.1.4 freecadcmd and uv (for cadquery)")
 class Solves(unittest.TestCase):
-    """Each fixture is built, its faces resolved in FreeCAD's numbering, and solved once; it publishes a bundle."""
+    """Each fixture gets built, its faces get resolved in FreeCAD's numbering, and it solves once. A bundle follows."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -358,7 +358,7 @@ class Solves(unittest.TestCase):
         with patch("sys.stdout", output):
             status = fea_static.main([str(path), "--hw", str(self.hw), "--version", "v1"])
         report = json.loads(output.getvalue())
-        self.assertIn(status, (0, 1), report)   # 1 is a missed margin: the bundle is published all the same
+        self.assertIn(status, (0, 1), report)   # 1 is a missed margin. The bundle appears all the same
         bundle = self.hw / "analysis" / "v1" / fixture.name
         manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
         results = json.loads((bundle / "results.json").read_text(encoding="utf-8"))
