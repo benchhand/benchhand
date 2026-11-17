@@ -8,6 +8,7 @@ The config loader is a local stand-in (fixtures/config_loader_standin.py) until 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from collections.abc import Mapping
@@ -212,6 +213,12 @@ class LazyTests(unittest.TestCase):
         for argv, environ, expected in cases:
             with self.subTest(argv=argv, environ=environ):
                 self.assertIs(cli.needs_click(argv, environ), expected)
+
+    def test_the_process_environment_is_accepted_when_some_fields_have_no_env_var(self) -> None:
+        with mock.patch.dict("os.environ", {"CAD_BAND": "3"}):
+            self.assertTrue(Harness().cli.needs_click(["run"], os.environ))
+        with mock.patch.dict("os.environ", clear=True):
+            self.assertFalse(Harness().cli.needs_click(["run"], os.environ))
 
 
 class FieldTests(unittest.TestCase):

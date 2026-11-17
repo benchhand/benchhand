@@ -141,7 +141,8 @@ class SchemaCLI:
         for field in self.fields:
             flags |= {flag for flag in (field.flag, field.negative) if flag}
         given = any(arg.split("=", 1)[0] in flags for arg in argv)
-        return given or any(field.schema.get("x-env") in environ for field in self.fields)
+        names = [field.schema["x-env"] for field in self.fields if "x-env" in field.schema]
+        return given or any(name in environ for name in names)
 
     def params(self) -> list[click.Option]:
         return [_option(field) for field in self.fields]
