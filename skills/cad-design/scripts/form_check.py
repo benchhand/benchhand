@@ -1259,7 +1259,7 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
     else:
         geometry = version_geometry(pc, record, folder, label, manifest, today)
         packet = pc.assess(record, geometry, today=today).packet(
-            label, {"version_manifest": _sha256(manifest_path), "producer_code": code})
+            {"version_manifest": _sha256(manifest_path), "producer_code": code})
         load_check_packet().validate(packet)  # never seal or hand on a packet that breaks its schema
         if args.out:
             bundle = layout.scratch_path(args.hw, args.out, "--out")

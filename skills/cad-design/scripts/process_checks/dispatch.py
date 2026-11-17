@@ -117,10 +117,10 @@ class Assessment:
     def by_code(self, code: str) -> list[dict[str, Any]]:
         return [f for f in self.findings if f["code"] == code]
 
-    def packet(self, version: str, dependencies: Mapping[str, str], *, scope: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        """The manufacturing-check-result.schema.json packet of this assessment for built `version`."""
+    def packet(self, dependencies: Mapping[str, str], *, scope: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """The manufacturing-check-result.schema.json packet of this assessment."""
         pns = sorted({o.subject["PN"] for o in self.expected if o.subject.get("PN")})
-        return {"schema_version": 1, "record_version": intent().RECORD_VERSION, "producer": PRODUCER, "version": version,
+        return {"schema_version": 1, "record_version": intent().RECORD_VERSION, "producer": PRODUCER,
                 "scope": scope or ([{"PN": pn} for pn in pns] or [{"product": True}]),
                 "expected": [o.as_dict() for o in self.expected], "outcomes": [dict(o) for o in self.outcomes],
                 "findings": [dict(f) for f in self.findings], "dependencies": dict(sorted(dependencies.items())),

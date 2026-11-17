@@ -460,7 +460,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
             detail["paths"][entry.operation.id] = [p.report() for p in entry.paths]
     detail["limits"] = [ACCESS_COVERAGE, "the order check covers the declared sequence only"]
     expected = [o for o in intent_module.required_checks(record) if o.family in FAMILIES]
-    return check_packet.build(record, expected, PRODUCER, version, outcomes, findings, dependencies), detail
+    return check_packet.build(record, expected, PRODUCER, outcomes, findings, dependencies), detail
 
 
 def main(argv: list[str] | None = None) -> int:

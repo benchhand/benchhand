@@ -816,7 +816,7 @@ def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
     packets = _script("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
     layout = load_layout()
     dependencies = {"version_manifest": hashlib.sha256((folder / layout.MANIFEST).read_bytes()).hexdigest()}
-    packet = packets.build(record, expected, READBACK_PRODUCER, label, readback_outcomes(expected, checks), [], dependencies)
+    packet = packets.build(record, expected, READBACK_PRODUCER, readback_outcomes(expected, checks), [], dependencies)
     recipe = {"producer": READBACK_PRODUCER, "packet_sha256": hashlib.sha256(layout.canonical_json(packet)).hexdigest()}
     detail = {"artifact_integrity": checks["artifact_integrity"]["status"],
               "brep_validity": checks["brep_validity"]["parts"], "step_readback": checks["step_readback"]["parts"],
