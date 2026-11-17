@@ -117,6 +117,7 @@ STRICT_FILES = (
     "skills/cad-design/scripts/process_checks/shaping.py",
     "skills/cad-design/scripts/process_checks/sheet.py",
     "skills/cad-model/scripts/cadmodel/components.py",
+    "skills/cad-model/scripts/cadmodel/threemf.py",
     "skills/cad-record/scripts/assembly_operations.py",
     "skills/cad-record/scripts/evidence.py",
     "skills/cad-record/scripts/impact.py",

@@ -739,6 +739,8 @@ def nominal_placements(manifest: Mapping[str, Any], record: Path | None,
 
 
 READBACK_FAMILY = "cad.readback"
+EXPORT_FAMILY = "export.3mf"  # judged by the same sealed-version check, so published in the same packet
+READBACK_FAMILIES = (READBACK_FAMILY, EXPORT_FAMILY)
 READBACK_SUBJECT = "cad"  # hw/checks/<V>/cad/: this check's required-check packet
 READBACK_PRODUCER = "cad-model check"
 READBACK_METHOD = ("cad-model check of the sealed version: kernel and STEP read-back B-rep validity, the STEP read-back's "
@@ -746,6 +748,27 @@ READBACK_METHOD = ("cad-model check of the sealed version: kernel and STEP read-
                    "and STEP checks and each component's binding on the sealed outputs")
 READBACK_COVERAGE = ("the sealed definition and manufacturing outputs only: process capability, fits, assembly and "
                      "service are other checks")
+EXPORT_METHOD = ("cad-model check of the sealed part.3mf: a 3MF Core 1.4.0 package the strict reader accepts, one closed "
+                 "millimetre object, its volume and box against the STEP read-back, the material name and the colour")
+EXPORT_COVERAGE = ("the sealed part.3mf against its STEP read-back and the record's material and colour only: a "
+                   "slicer's reading of it and the printed part are not checked")
+
+
+def _export_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any]:
+    """The export.3mf outcome of one part: its part.3mf check (and each component's) decides, and a sealed file that
+    changed fails it, and a part with no part.3mf check stays unknown."""
+    pn = obligation.subject["PN"]
+    row = checks["manufacturing"]["parts"].get(pn)
+    status = ((row or {})["checks"].get("threemf") or {}).get("status") if row is not None else None
+    failed = [] if checks["artifact_integrity"]["status"] != "fail" else [
+        "the version's sealed files no longer match its manifest (artifact_integrity)"]
+    if status == "fail":
+        failed.append(f"{pn} part.3mf check fails")
+    outcome: dict[str, Any] = {"obligation": obligation.id, "outcome": "fail" if failed else "pass" if status == "pass" else "unknown",
+                               "level": obligation.level, "method": EXPORT_METHOD, "coverage": EXPORT_COVERAGE}
+    if failed or status != "pass":
+        outcome["uncertainty"] = "; ".join(failed or [f"{pn} has no part.3mf check to read"])
+    return outcome
 
 
 def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -757,6 +780,9 @@ def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any]) -> lis
     made = checks["manufacturing"]["parts"]
     rows = []
     for obligation in expected:
+        if obligation.family == EXPORT_FAMILY:
+            rows.append(_export_outcome(obligation, checks))
+            continue
         pn, component = obligation.subject["PN"], obligation.subject.get("component")
         failed: list[str] = []
         unknown: list[str] = []
@@ -798,6 +824,18 @@ def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any]) -> lis
     return rows
 
 
+def export_artifacts(hw: Path, folder: Path, expected: Iterable[Any]) -> list[dict[str, str]]:
+    """The {path, sha256} pair of the sealed part.3mf behind each export.3mf obligation of `expected`. The path is
+    project-relative under hw/, as an evidence artifact. A part without a sealed part.3mf adds no pair."""
+    layout = load_layout()
+    pairs = []
+    for obligation in expected:
+        path = folder / "manufacturing" / obligation.subject["PN"] / "part.3mf"
+        if obligation.family == EXPORT_FAMILY and path.is_file():
+            pairs.append({"path": layout.relative(hw, path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    return pairs
+
+
 def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
                      checks: Mapping[str, Any]) -> dict[str, Any] | None:
     """Publish the cad.readback packet of a record version 2 version to hw/checks/<V>/cad/ (bundle.checks,
@@ -812,17 +850,21 @@ def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
     if found.version != intent.RECORD_VERSION:
         return None
     record = found.intent
-    expected = [o for o in intent.required_checks(record) if o.family == READBACK_FAMILY]
+    expected = [o for o in intent.required_checks(record) if o.family in READBACK_FAMILIES]
     packets = _script("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
     layout = load_layout()
     dependencies = {"version_manifest": hashlib.sha256((folder / layout.MANIFEST).read_bytes()).hexdigest()}
+    artifacts = export_artifacts(hw, folder, expected)
+    for artifact in artifacts:  # a part.3mf the packet judged: its bytes are an input of the verdict
+        dependencies["export_3mf_" + artifact["path"].split("/")[-2].lower().replace("-", "_")] = artifact["sha256"]
     packet = packets.build(record, expected, READBACK_PRODUCER, readback_outcomes(expected, checks), [], dependencies)
     recipe = {"producer": READBACK_PRODUCER, "packet_sha256": hashlib.sha256(layout.canonical_json(packet)).hexdigest()}
     detail = {"artifact_integrity": checks["artifact_integrity"]["status"],
               "brep_validity": checks["brep_validity"]["parts"], "step_readback": checks["step_readback"]["parts"],
               "manufacturing": {pn: {name: (row["checks"].get(name) or {}).get("status")
                                      for name in ("native", "identity", "step", "components")}
-                                for pn, row in checks["manufacturing"]["parts"].items()}}
+                                for pn, row in checks["manufacturing"]["parts"].items()},
+              "artifacts": artifacts}
     output, status = packets.emit(layout, hw, label, READBACK_SUBJECT, READBACK_PRODUCER, packet, detail, "check.json",
                                   recipe, out=None, replace=True, record_version=intent.RECORD_VERSION)
     return {"bundle": layout.relative(hw, Path(output["bundle"])), "reused": output["reused"], "result": status,

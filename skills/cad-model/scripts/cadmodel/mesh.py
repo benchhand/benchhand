@@ -1,5 +1,5 @@
 """Binary glTF from the assembly STEP, the occurrence -> mesh-node map, mesh watertightness, and the binary
-STL of a manufactured part with its read-back report."""
+STL and welded triangles (for the 3MF) of a manufactured part, with the STL read-back report."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import struct
 from pathlib import Path
 from typing import Any, Mapping
 
-from cadmodel import occ
+from cadmodel import occ, threemf
 from cadmodel.motion import load_pose
 
 # Preview tessellation: chord deviation relative to the assembly diagonal, clamped; angular deflection in rad.
@@ -197,6 +197,45 @@ def write_stl(shape: Any, path: Path, linear_mm: float, angular_rad: float) -> N
     with load_pose().stdout_to_stderr():
         if not writer.Write(shape, str(path)):
             raise occ.GeometryError(f"cannot write {path}")
+
+
+def surface(shape: Any, linear_mm: float, angular_rad: float) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
+    """The triangles `write_stl` writes for `shape`, as welded vertices and outward-wound index triples.
+
+    The faces use the same absolute deflections as the STL. A face with a reversed orientation gets its
+    winding flipped. The function rounds each vertex to the 3MF precision (`threemf.DECIMALS`) and then
+    welds it by position (`welded`), so the indices share edges exactly where the text will."""
+    import numpy as np
+    import trimesh
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_REVERSED
+    from OCP.TopLoc import TopLoc_Location
+
+    BRepMesh_IncrementalMesh(shape, linear_mm, False, angular_rad, True)
+    points: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int]] = []
+    for sub in occ.subshapes(shape, "FACE"):
+        face = occ.downcast(sub, "FACE")
+        location = TopLoc_Location()
+        triangulation = BRep_Tool.Triangulation_s(face, location)
+        if triangulation is None:
+            continue
+        transform, base = location.Transformation(), len(points)
+        for number in range(1, triangulation.NbNodes() + 1):
+            point = triangulation.Node(number).Transformed(transform)
+            points.append((point.X(), point.Y(), point.Z()))
+        flip = face.Orientation() == TopAbs_REVERSED
+        for number in range(1, triangulation.NbTriangles() + 1):
+            a, b, c = (index - 1 + base for index in triangulation.Triangle(number).Get())
+            faces.append((a, c, b) if flip else (a, b, c))
+    if not faces:
+        raise occ.GeometryError("the shape has no triangulated face")
+    rounded = np.round(np.array(points, dtype=float), threemf.DECIMALS) + 0.0  # + 0.0: no negative zero
+    welded_mesh, _ = welded(trimesh.Trimesh(vertices=rounded, faces=np.array(faces), process=False))
+    welded_mesh.remove_unreferenced_vertices()
+    return ([(float(x), float(y), float(z)) for x, y, z in welded_mesh.vertices.tolist()],
+            [(int(a), int(b), int(c)) for a, b, c in welded_mesh.faces.tolist()])
 
 
 def _shells(faces: Any, vertices: int) -> int:

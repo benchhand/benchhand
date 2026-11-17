@@ -2,7 +2,8 @@
 
 `run` writes hw/versions/<V>/manufacturing/<PN>/ for every custom-made part (cad-record layout
 `custom_made`) whose primary process has an output contract: part.step (AP242, exact B-rep,
-millimetres), part.stl for an additive part (binary STL, millimetres) and manufacturing.json. A part
+millimetres), part.stl for an additive part (binary STL, millimetres), part.3mf for an FDM part (3MF Core 1.4.0,
+millimetres) and manufacturing.json. A part
 whose process has none (`other`) still builds; its entry records its manufacturing coverage as unknown
 and no file is invented. The state is the installed definition, or the `build_manufacture(params)`
 shape of a part whose part.yaml declares `manufacture.relationship: different`.
@@ -33,17 +34,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
-from cadmodel import components, mesh, occ, orientation, provenance, stepfile, store
+from cadmodel import components, mesh, occ, orientation, provenance, stepfile, store, threemf
 from cadmodel.motion import load_pose
 from cadmodel.record import Snapshot, load_intent, load_layout, load_yaml_loader
 
 SIDECAR = "manufacturing.json"
 SIDECAR_SCHEMA = 2  # 2 adds intent, components, component_outputs and the export pose
-OUTPUTS_FORMAT = 2  # bump when what make writes changes without any keyed input changing
+OUTPUTS_FORMAT = 3  # 3 adds part.3mf. Bump it when what make writes changes and no keyed input does
 BED_MM = 1e-6  # bed contact, and how far a measured bound may pass a reserved extent
 FLOAT32_EPS = 2.0 ** -23  # STL stores float32 coordinates
 COMPONENT_DIR = "components"
-PART_FILES = ("part.step", "part.stl")
+PART_FILES = ("part.step", "part.stl", "part.3mf")
 
 
 @dataclass(frozen=True)
@@ -232,14 +233,27 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _color(plan: Plan) -> str | None:
+    """The part's sRGB `#RRGGBB` (PartIntent.color), or None. STUB(feat/fdm-color PartIntent.color): until
+    that branch lands PartIntent has no `color`, so every part reads as uncoloured."""
+    color = getattr(plan.part.intent, "color", None) if plan.part is not None else None
+    return color if isinstance(color, str) else None
+
+
+def outputs_recipe(entry: Mapping[str, Any], state: Any, features: Any, identity: Any) -> dict[str, Any]:
+    """What `make` keys a part's outputs by (`store.key`). The entry holds the material and color that part.3mf writes."""
+    return {"format": OUTPUTS_FORMAT, "kind": "manufacturing", "entry": entry, "state": state, "features": features,
+            "process": identity}
+
+
 def facts(plan: Plan, product: str, installed: Mapping[str, Any], native: Mapping[str, Any], path: str) -> dict[str, Any]:
     """The declared claims of one part's outputs, before export: identity, state, tolerance, intent and inputs."""
     record, policy = plan.record, plan.policy
     procurement = value if isinstance(value := record.get("procurement"), Mapping) else {}
     return {
         "schema_version": SIDECAR_SCHEMA, "PN": plan.pn, "rev": record.get("rev"), "title": record.get("title"),
-        "product": product, "material": record.get("material"), "process": record.get("process"),
-        "finish": record.get("finish"),
+        "product": product, "material": record.get("material"), "color": _color(plan),
+        "process": record.get("process"), "finish": record.get("finish"),
         "eligibility": {"make_buy": record.get("make_buy"), "procurement_mode": procurement.get("mode")},
         "state": {"relationship": policy.relationship, "name": policy.state, "reason": policy.reason,
                   "decision": policy.decision,
@@ -310,7 +324,8 @@ def _place(shape: Any, chosen: orientation.Pose, volume: orientation.BuildVolume
 
 
 def _write(folder: Path, entry: Mapping[str, Any], shape: Any, placement: Any) -> None:
-    """part.step of `shape` moved by `placement`, and part.stl tessellated from its read-back when the entry has a mesh."""
+    """part.step of `shape` moved by `placement`, and, when the entry has a mesh, part.stl and part.3mf (when listed)
+    tessellated from its read-back."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
 
     pose_module = load_pose()
@@ -321,8 +336,12 @@ def _write(folder: Path, entry: Mapping[str, Any], shape: Any, placement: Any) -
         written, problem = read_part(folder / "part.step", entry["PN"])
         if written is None:
             raise occ.GeometryError(f"cannot tessellate {folder / 'part.step'}: {problem}")
-        mesh.write_stl(written.shape, folder / "part.stl", entry["mesh"]["linear_deflection_mm"],
-                       entry["mesh"]["angular_deflection_rad"])
+        linear, angular = entry["mesh"]["linear_deflection_mm"], entry["mesh"]["angular_deflection_rad"]
+        mesh.write_stl(written.shape, folder / "part.stl", linear, angular)
+        if "part.3mf" in entry["outputs"]:
+            vertices, triangles = mesh.surface(written.shape, linear, angular)
+            threemf.write(folder / "part.3mf", vertices, triangles, name=entry["product"], material=entry["material"],
+                         color=entry["color"])
 
 
 def _component_facts(plan: Plan, bound: components.Bound, placement: Mapping[str, Any], files: list[str]) -> dict[str, Any]:
@@ -463,6 +482,8 @@ def inspect(target: Path, entry: Mapping[str, Any], record: Mapping[str, Any], e
     if entry["mesh"] is not None:
         checks["mesh"] = (_mesh(target / "part.stl", entry, part.shape) if "part.stl" in present and part is not None
                           else _judge({"present_with_readable_step": False}))
+    if "part.3mf" in entry["outputs"]:
+        checks["threemf"] = _threemf_files(target, entry, present, part.shape if part is not None else None)
     checks["placement"] = _placement(entry, entry["placement"], part.shape if part is not None else None)
     if entry.get("components"):  # sidecar schema 2; earlier versions hold one unbound output
         checks["components"] = _components(target, entry, present, part.shape if part is not None else None)
@@ -534,6 +555,56 @@ def _mesh(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
                   **report, step_shells=shells, step_volume_mm3=step_volume, volume_error_mm3=volume_error,
                   volume_bound_mm3=bound, linear_deflection_mm=deflection,
                   angular_deflection_rad=entry["mesh"]["angular_deflection_rad"])
+
+
+def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
+    """Judge the 3MF against the STEP it came from. The reader accepts the package (its parts, ids and
+    indices resolve). It holds one millimetre mesh object, built once with no transform, closed and consistently
+    wound outward by its indices. It names the part's material and shows its color. Its volume is within the
+    declared chord deviation of the exact solid (at most area x deflection), and so is each box face. The check
+    repairs nothing."""
+    try:
+        model = threemf.read(path)
+    except (threemf.ThreeMFError, OSError) as error:
+        return _judge({"readable": False}, message=f"cannot read {path.name}: {error}")
+    if len(model.objects) != 1 or len(model.build) != 1:
+        return _judge({"one_object": False}, objects=len(model.objects), build_items=len(model.build))
+    (obj,), (item,) = model.objects, model.build
+    report = threemf.measure(obj.vertices, obj.triangles)
+    deflection = entry["mesh"]["linear_deflection_mm"]
+    step_volume, area = occ.volume(shape), occ.area(shape)
+    low, high = _box(shape)
+    slack = 10.0 ** -threemf.DECIMALS  # the writer rounds each coordinate to this
+    bound = area * (deflection + slack)
+    volume_error = abs(report["volume_mm3"] - step_volume)
+    m_low, m_high = report["bbox_mm"]["min"], report["bbox_mm"]["max"]
+    return _judge({"millimetres": model.unit == threemf.UNIT, "one_object": True, "no_transform": item.transform is None,
+                   "material_named": obj.metadata.get(threemf.MATERIAL_METADATA) == entry["material"],
+                   "color_matches": obj.color == (f"{color.upper()}FF" if (color := entry.get("color")) else None),
+                   "watertight": report["watertight"], "winding_consistent": report["winding_consistent"],
+                   "outward": report["volume_mm3"] > 0, "volume_within_deflection": volume_error <= bound,
+                   "box_within_deflection": all(low[i] - slack <= m_low[i] <= low[i] + deflection + slack
+                                                and high[i] - deflection - slack <= m_high[i] <= high[i] + slack
+                                                for i in range(3))},
+                  **report, standard=threemf.VERSION, material=obj.metadata.get(threemf.MATERIAL_METADATA),
+                  step_volume_mm3=step_volume, volume_error_mm3=volume_error, volume_bound_mm3=bound,
+                  linear_deflection_mm=deflection)
+
+
+def _threemf_files(target: Path, entry: Mapping[str, Any], present: list[str], shape: Any) -> dict[str, Any]:
+    """`_threemf` of part.3mf and of each component's own part.3mf, each against its own STEP read back."""
+    rows: dict[str, dict[str, Any]] = {}
+    if "part.3mf" in present and shape is not None:
+        rows["part.3mf"] = _threemf(target / "part.3mf", entry, shape)
+    else:
+        rows["part.3mf"] = _judge({"present_with_readable_step": False})
+    for name in entry.get("component_outputs") or []:
+        if not name.endswith("/part.3mf"):
+            continue
+        part, _ = read_part(target / name.replace("part.3mf", "part.step"), entry["PN"]) if name in present else (None, None)
+        rows[name] = _threemf(target / name, entry, part.shape) if part is not None else _judge(
+            {"present_with_readable_step": False})
+    return _judge({name: row["status"] == "pass" for name, row in rows.items()}, files=rows)
 
 
 def _placement(entry: Mapping[str, Any], placement: Mapping[str, Any], shape: Any) -> dict[str, Any]:
@@ -648,9 +719,7 @@ def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered:
                       _relative(hw, label, pn))
         target = work / entry["path"]
         located = features.get(pn)
-        outputs_key = store.key({"format": OUTPUTS_FORMAT, "kind": "manufacturing", "entry": entry,
-                                 "state": state_shas.get(pn) if different else None, "features": located,
-                                 "process": identity})
+        outputs_key = store.key(outputs_recipe(entry, state_shas.get(pn) if different else None, located, identity))
         cached = parts_store.record(outputs_key)
         if cached is not None and all(parts_store.place(sha, target / name) for name, sha in cached["objects"].items()):
             entry.update(cached["derived"])

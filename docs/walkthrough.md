@@ -156,4 +156,4 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Files:** release package `hw/releases/<REV>/` with its manifest, definition and manufacturing outputs, selected drawings and evidence, BOM, verification snapshot, and docs. `hw/decisions/DR-###.md` records gate approval.
 
-The deliverable is a verified CAD release: STEP AP242, engineering drawings, EBOM, verification evidence, and documentation. It excludes slicer, CAM, and machine-tool output.
+The deliverable is a verified CAD release: STEP AP242, engineering drawings, EBOM, verification evidence, and documentation. An FDM part also gets a 3MF that carries geometry, orientation and material name only. The release excludes slicer, CAM, and machine-tool output.

@@ -118,9 +118,9 @@ A catalogue buy returns false.
 `manufacture_policy(part)` returns the contract of a custom-made part record:
 
 - `outputs`: the file names under `manufacturing/<PN>/` for its process. FDM gets `part.step`,
-  `part.stl` and `manufacturing.json`. CNC and made-to-drawing parts get `part.step` and
+  `part.stl`, `part.3mf` and `manufacturing.json`. CNC and made-to-drawing parts get `part.step` and
   `manufacturing.json`.
-- `linear_deflection_mm` and `angular_deflection_rad`: the STL tessellation, 0.05 mm and 0.1 rad
+- `linear_deflection_mm` and `angular_deflection_rad`: the STL and 3MF tessellation, 0.05 mm and 0.1 rad
   by default. part.yaml `manufacture.mesh` overrides them.
 - `relationship`, `state`, `reason` and `decision`: from part.yaml `manufacture`.
 - `volume_tolerance_mm3(installed_volume)`: the allowed volume difference. A part made in its

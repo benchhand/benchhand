@@ -47,7 +47,7 @@ TRIGGER
 8. On COMMIT, record the design entry with batch, changes, artifacts, checks, and outcomes. If the user wants more detail, continue in the stage. Otherwise show renders and present the stage's gates.
    When the cad-recheck hook is not installed (`install-hook.py` exits 3 because the system or global git config sets `core.hooksPath`, or exits 2), run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify` from the project directory after staging each commit of `hw/` changes. Exit 2 means do not commit. Fix the stderr reason and verify again.
 9. Keep gate evidence in the design record. Record a provisional gate yourself only with its fast-check evidence: a decision in `hw/decisions/DR-###.md` whose first line is `Status: PROVISIONAL`, temporary until the full check, then advance `product.yaml` `flow.stage` so the next stage can start. A failing full check, a MAJOR light-review finding, or a change the user names at the human gate voids it. Record a `Status: VOID` decision that supersedes it. Set `flow.stage` back to the voided stage and rebuild that stage and every later stage built on that version. List the sweep's unproved between-sample intervals at the human gate. The user accepts them with a DR or asks for a finer run, as `references/flow.md` describes.
-10. Finish at a CAD-only release: STEP AP242, drawings, EBOM, verification matrix, and documentation. Do not produce slicer, CAM, or machine-tool output.
+10. Finish at a CAD-only release: STEP AP242, drawings, EBOM, verification matrix, and documentation. An FDM part's 3MF carries geometry, orientation and material name only. Do not produce slicer, CAM, or machine-tool output.
 
 ## Delegation
 
