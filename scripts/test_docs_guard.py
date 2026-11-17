@@ -90,6 +90,10 @@ INSTALLER = (
     "names harness/install.py in the expected command; the installer is mocked. setup.py:170"
     " checks that the file exists, which is why docs_only keeps install.py out of the safe set"
 )
+ROOT_NOTE = (
+    "a file outside hw/ in a temporary project that the test stages to show --verify ignores it; never a"
+    " file of this repository"
+)
 LAYOUT = (
     "compares references/layout.md with layout.py's output; docs_only keeps that one file out"
     " of the safe set"
@@ -110,6 +114,7 @@ ALLOWED = [
     Allow('skills/cad-flow/tests/test_setup.py', 'PlanTests.test_requested_harness_is_planned_but_not_implicit', 'harness/install.py', INSTALLER),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.provisional_gate', 'DR-001.md', HW),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.test_frozen_pre_freeze_stage_refuses_a_stray_file', 'hw/stray.md', HW),
+    Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.test_verify_passes_a_commit_that_stages_no_hw_change_and_checks_one_that_does', 'notes.md', ROOT_NOTE, 2),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.test_frozen_pre_freeze_stage_refuses_a_stray_file', 'stray.md', HW, 2),
     Allow('skills/cad-record/tests/fixtures/acceptance.py', 'decision', '.md', HW),
     Allow('skills/cad-record/tests/fixtures/manufacturing_intent.py', 'write_record', '.md', HW),
