@@ -36,7 +36,7 @@ slots:
   appearance: Plain, any single colour.
 intents:
   - id: latched-load
-    match: ['what does the latch hold', '\b(door|lid|keeper)\b.*\?', '\bpull(s)? on the lever\b', 'when (it is|it.s) latched']
+    match: ['what does the latch hold', 'what does the lever latch', '\b(door|lid|keeper)\b.*\?', '\bpull(s)? on the lever\b', 'when (it is|it.s) latched']
     answer: >-
       It holds a hinged cabinet door shut against a keeper on the frame. When latched, the door can
       pull on the lever with up to 10 N; the 30 N hand load is the larger case.
@@ -53,7 +53,7 @@ intents:
       face of a bracket cheek.
   - id: panel-screws
     match: ['\bM4\b', '\bpanel\b', 'mount(ing)? (screws?|holes?)', '\bcountersunk\b', '\bpan[- ]head\b',
-            'screws\b.*\bBOM\b', 'hole spacing', '\bfootprint\b']
+            'screws\b.*\bBOM\b', 'hole spacing', '\bfootprint\b', 'screw length']
     answer: >-
       Two ISO 7380 M4 × 12 button head screws hold the bracket to a 3 mm steel panel with M4 rivet
       nuts, 40 mm apart along the bracket's length. The screws belong in this BOM; the rivet nuts are

@@ -273,6 +273,23 @@ class RoutingTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_regression_a_ground_question_naming_a_gate_as_a_time_reference_is_not_that_gate(self) -> None:
+        # The fifth small-mechanism build failed in GROUND: "Release claims: for this session we stop at the LAYOUT
+        # freeze, but what should an eventual release be allowed to claim?" matched the LAYOUT freeze intent, so the
+        # GROUND reply counted as a gate prompt and its two unmatched questions as unmatched at a gate.
+        reply = dialogue.respond(case_script("small-mechanism"),
+                                 recorded_text("events-ground-small-mechanism-time-reference.jsonl"), "fixture", can_stop=False)
+        self.assertFalse(reply.at_gate)
+        self.assertEqual([ask.intent for ask in reply.asks if ask.text.startswith("Release claims")], ["release-scope"])
+        self.assertEqual([ask.text for ask in reply.unmatched], [])
+
+    def test_a_time_reference_does_not_hide_a_real_gate_request(self) -> None:
+        script = case_script("wall-bracket")
+        for text, intent in (("Do you approve the LAYOUT freeze on v2?", "layout-freeze"),
+                             ("Before the PARTS gate, do you approve the PARTS gate for v5?", "parts-gate"),
+                             ("Which variant do you pick before the LAYOUT freeze?", "variant-gate")):
+            with self.subTest(text=text):
+                self.assertEqual(dialogue.classify(script, text).intent, intent)
     def test_regression_the_recorded_lettered_option_choice_is_the_variant_gate(self) -> None:
         # The fourth small-mechanism build presented the VARIANT gate as "Which option, A, B or C, should go to
         # layout?"; no intent matched, the default "use your recommended option" was sent, and the lead

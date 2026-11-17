@@ -49,6 +49,8 @@ DECISION_LABEL = re.compile(r"^(?:decision for you|please choose|please decide|y
 OPTION_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)")
 MARKUP = re.compile(r"^[\s>*#\-+|—–]*(?:\d+[.)]\s*)?|[*`]+")
 GATE_WORD = re.compile(r"\b(gate|freeze)\b", re.IGNORECASE)
+TIME_REFERENCE = re.compile(r"\b(?:before|after|until|till|at|by|past|beyond) (?:the )?(?:[\w-]+ ){0,3}(?:gate|freeze)\b",
+                            re.IGNORECASE)
 APPROVAL_ASK = re.compile(r"\bapprov(?:e|al)\b", re.IGNORECASE)
 # The reply instruction a lead puts under a gate ("Reply with a variant (A, B or C)").
 REPLY_INSTRUCTION = re.compile(r"^(?:reply|respond|answer|choose|pick|select|say)\b", re.IGNORECASE)
@@ -327,9 +329,16 @@ def classify(script: Script, ask: str, context: str | None = None) -> Ask:
         if text is None:
             continue
         for intent in candidates:
-            if intent.matches(text):
+            target = without_time_references(text) if intent.kind == "gate" else text
+            if intent.matches(target):
                 return Ask(ask, intent.id, intent.kind, intent.profile)
     return Ask(ask, None, None, False)
+
+
+def without_time_references(text: str) -> str:
+    """The text without gates named only as a point in time ("we stop at the LAYOUT freeze", "before the PARTS
+    gate"), so a GROUND question that mentions a gate does not match it."""
+    return TIME_REFERENCE.sub(" ", text)
 
 
 def presents_gate(asks: Sequence[Ask], text: str) -> bool:
