@@ -48,8 +48,32 @@ jobs:
       - name: Scoped Python type check
         run: uv run --no-project --locked --script scripts/typecheck.py
 
+  changes:
+    name: Skill shard gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.gate.outputs.skip }}
+    steps:
+      # The full history gives the base...head diff its merge base.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # skip=true only on a pull request whose changed paths no skill test reads (docs_only.py).
+      - name: Decide whether the skill shards can be skipped
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/docs_only.py
+
   skills:
     name: Skill tests (${{ matrix.shard }})
+    needs: changes
+    # Run even when the gate job failed: a missing output is not "true", so every shard runs.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -91,10 +115,21 @@ jobs:
         freecad-gated skills/cad-drawings/tests/test_part_drawings.py
         freecad-gated skills/cad-drawings/tests/test_section_hatch.py
         freecad-gated skills/cad-flow/tests/test_scratch.py
+    # Every step below is gated on the same condition, so a skipped shard still reports success.
     steps:
+      - name: Skip the shard
+        if: needs.changes.outputs.skip == 'true'
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          echo "::notice::shard $SHARD skipped: this pull request changes only paths no skill test reads"
+          echo "Shard $SHARD skipped: the pull request changes only docs, agents, harness (except install.py), SKILL.md and references (except cad-record's layout.md)." >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.skip != 'true'
 
       - name: Collect PEP 723 dependency headers
+        if: needs.changes.outputs.skip != 'true'
         run: |
           python3 - > skills-pep723-headers.txt <<'PY'
           import re
@@ -117,23 +152,26 @@ jobs:
           PY
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: needs.changes.outputs.skip != 'true'
         with:
           enable-cache: true
           cache-dependency-glob: skills-pep723-headers.txt
 
       - name: Drop script environments restored from the uv cache
+        if: needs.changes.outputs.skip != 'true'
         # A restored environment keeps the versions it was resolved with; a new one gets today's.
         run: rm -rf -- "$(uv cache dir)/environments-v2"
 
       - name: Cache the FreeCAD AppImage
         id: freecad-cache
+        if: needs.changes.outputs.skip != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.FREECAD_DIR }}/download
           key: freecad-${{ env.FREECAD_APPIMAGE }}
 
       - name: Download the FreeCAD AppImage
-        if: steps.freecad-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.skip != 'true' && steps.freecad-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$FREECAD_DIR/download"
           curl --fail --location --silent --show-error --retry 3 --output-dir "$FREECAD_DIR/download" \
@@ -141,10 +179,12 @@ jobs:
             --remote-name "$FREECAD_RELEASE/$FREECAD_APPIMAGE-SHA256.txt"
 
       - name: Verify the FreeCAD AppImage
+        if: needs.changes.outputs.skip != 'true'
         working-directory: ${{ env.FREECAD_DIR }}/download
         run: sha256sum --check "$FREECAD_APPIMAGE-SHA256.txt"
 
       - name: Install FreeCAD 1.1.4
+        if: needs.changes.outputs.skip != 'true'
         working-directory: ${{ env.FREECAD_DIR }}
         run: |
           chmod +x "download/$FREECAD_APPIMAGE"
@@ -156,6 +196,7 @@ jobs:
           grep -q 'FreeCAD 1\.1\.4' version.txt
 
       - name: Skill tests
+        if: needs.changes.outputs.skip != 'true'
         env:
           SHARD: ${{ matrix.shard }}
           JOB_INDEX: ${{ strategy.job-index }}
