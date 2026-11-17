@@ -51,8 +51,8 @@ class Project(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.hw = fx.write_record(self.root / "hw", fx.tst_record())
         (self.root / "notes").mkdir()
-        (self.root / "notes" / "method.md").write_text("tracked note\n", encoding="utf-8")
-        (self.root / "notes" / "untracked.md").write_text("untracked note\n", encoding="utf-8")
+        (self.root / "notes" / "method.txt").write_text("tracked note\n", encoding="utf-8")
+        (self.root / "notes" / "untracked.txt").write_text("untracked note\n", encoding="utf-8")
         (self.root / ".cad-work" / "layout").mkdir(parents=True)
         (self.root / ".cad-work" / "layout" / "regional_v1.py").write_text("print()\n", encoding="utf-8")
         (self.hw / ".cad").mkdir()
@@ -67,7 +67,7 @@ class Project(unittest.TestCase):
         (self.hw / "versions" / "v3.partial").mkdir()
         (self.hw / "versions" / "v3.partial" / "assembly.step").write_text("ISO-10303-21;\n", encoding="utf-8")
         git(self.root, "init", "-q")
-        git(self.root, "add", "hw/product.yaml", "hw/verification.csv", "notes/method.md")
+        git(self.root, "add", "hw/product.yaml", "hw/verification.csv", "notes/method.txt")
         git(self.root, "add", "-f", "hw/.cad/builds.json")  # tracked on purpose: only the scratch rule may refuse it
         git(self.root, "commit", "-q", "-m", "fixture")
         self.record = impact.read_record(self.hw)
@@ -130,9 +130,9 @@ class OutsideTheRecord(Project):
             "var folders": "see /var/folders/ab/cd/result.json",
             "hw/.cad scratch": "see hw/.cad/builds.json",
             "dotdot into scratch": "see hw/../.cad-work/layout/regional_v1.py",
-            "untracked file in a git project": "see notes/untracked.md",
+            "untracked file in a git project": "see notes/untracked.txt",
             "unsealed version": "see hw/versions/v3.partial/assembly.step",
-            "missing file": "see notes/absent.md",
+            "missing file": "see notes/absent.txt",
         }
         for name, method in cases.items():
             with self.subTest(name):
@@ -157,7 +157,7 @@ class OutsideTheRecord(Project):
     def test_a_disposition_reason_is_scanned(self) -> None:
         disposition = {"finding": "f1", "status": "declined", "decision": "DR-001",
                        "producer": {"bundle": "hw/checks/v1/lever", "manifest_sha256": V1},
-                       "reason": "declined, see /tmp/review.md"}
+                       "reason": "declined, see /tmp/review.txt"}
         problems = paths_module.disposition_problems(self.paths, disposition)
         self.assertEqual([p.code for p in problems], ["evidence.scratch_path"])
 
@@ -171,7 +171,7 @@ class NotAPath(Project):
                 self.assertEqual(self.refusal(self.entry(method=prose)), [], prose)
 
     def test_a_tracked_in_tree_path_passes(self) -> None:
-        self.assertEqual(self.refusal(self.entry(method="rationale in notes/method.md:3.")), [])
+        self.assertEqual(self.refusal(self.entry(method="rationale in notes/method.txt:3.")), [])
 
     def test_a_sealed_version_path_the_entry_lists_passes(self) -> None:
         entry = self.entry(method="read back hw/versions/v3/assembly.step", artifacts=["hw/versions/v3/assembly.step"])
@@ -274,10 +274,10 @@ class OutsideGit(unittest.TestCase):
             root = Path(name).resolve()
             (root / "hw").mkdir()
             (root / "notes").mkdir()
-            (root / "notes" / "a.md").write_text("a\n", encoding="utf-8")
+            (root / "notes" / "a.txt").write_text("a\n", encoding="utf-8")
             paths = evidence.project_paths(root / "hw")
             self.assertIsNone(paths.tracked)
-            self.assertIsNone(paths.judge("notes/a.md").problem)
+            self.assertIsNone(paths.judge("notes/a.txt").problem)
             self.assertIsNotNone(paths.judge(".cad-work/x.json").problem)
             self.assertIsNotNone(paths.judge("../x.json").problem)
 
