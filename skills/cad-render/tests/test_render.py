@@ -1126,9 +1126,10 @@ class BrowserRender(unittest.TestCase):
         return proc.returncode, result_payload(proc.stdout)
 
     def test_an_opaque_window_hides_the_target_and_a_transparent_one_shows_it(self) -> None:
-        box_version.write(self.hw, "v1", BOXES, box_parts("opaque"))
-        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"))
-        requirements(self.hw, FRONT)
+        self.hw.mkdir(parents=True, exist_ok=True)
+        requirements(self.hw, FRONT)  # before the builds: each version snapshots the requirements it is built with
+        box_version.write(self.hw, "v1", BOXES, box_parts("opaque"), record_version=2)
+        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=2)
         reports = {}
         for label in ("v1", "v2"):
             code, summary = self.render("--version", label, "--views", "front",
@@ -1149,10 +1150,10 @@ class BrowserRender(unittest.TestCase):
 
     def test_an_unchanged_part_view_is_copied_and_a_changed_one_rendered(self) -> None:
         views = ("--views", "iso", PART_VIEW)
-        box_version.write(self.hw, "v1", BOXES, box_parts())
+        box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=2)
         code, first = self.render("--version", "v1", *views)
         self.assertEqual((code, first["reused"]), (0, {}))
-        box_version.write(self.hw, "v2", {**BOXES, OTHER: GROWN_OTHER}, box_parts())
+        box_version.write(self.hw, "v2", {**BOXES, OTHER: GROWN_OTHER}, box_parts(), record_version=2)
         code, second = self.render("--version", "v2", *views)
         self.assertEqual((code, second["reused"]), (0, {PART_VIEW: "v1"}))
         self.assertEqual(sorted(name for name in second["view_wall_s"] if not name.endswith("_s")), ["iso"])
@@ -1160,7 +1161,7 @@ class BrowserRender(unittest.TestCase):
         self.assertNotEqual(Path(second["pngs"]["iso"]).read_bytes(), Path(first["pngs"]["iso"]).read_bytes())
         record = json.loads((Path(second["out_dir"]) / "render.json").read_text(encoding="utf-8"))["views"][PART_VIEW]
         self.assertEqual(record["reused"]["bundle"], "hw/renders/v1/assembly")
-        box_version.write(self.hw, "v3", {**BOXES, OTHER: GROWN_OTHER, TARGET: GROWN_TARGET}, box_parts())
+        box_version.write(self.hw, "v3", {**BOXES, OTHER: GROWN_OTHER, TARGET: GROWN_TARGET}, box_parts(), record_version=2)
         code, third = self.render("--version", "v3", *views)
         self.assertEqual((code, third["reused"]), (0, {}))
         self.assertIn(PART_VIEW, third["view_wall_s"])
