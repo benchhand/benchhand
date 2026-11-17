@@ -50,6 +50,34 @@ The run works in this order:
 
 The freeze records `flow.frozen.evidence_sha256` from the evidence digest plus the approving decision. Release manifest v3 seals the acceptance inventory, evidence policy, material/process route and service scope/limits. Old v1/v2 releases remain inspectable in their original format; they are historical, not re-certified by the new policy.
 
+## Where cited files live
+
+Evidence must be reproducible from the record. Each file an accepted entry cites lies inside the project root. Git tracks it, or it sits in a record-managed result: a sealed `hw/versions/<V>/` or a bundle such as `hw/checks/<V>/<S>/evidence/`.
+
+The rule refuses these with `evidence.scratch_path`:
+
+- scratch: `.cad-work/` and `hw/.cad/`
+- temp directories and `~/`
+- anything outside the root
+
+The rule checks these fields:
+
+- structured paths: `artifacts`, `bundle`, `source.artifact`
+- ledger prose: `method`, `tool`, `producer`, `note`
+- more ledger prose: `coverage`, `uncertainty`, `reason`
+- nested prose: `physical.*`, `waiver.*`, `criterion.conditions`
+
+A token is a path only with a path shape:
+
+- a scratch prefix
+- an absolute path
+- a `..` segment
+- a file extension after a `/`
+
+A record result that the text cites but `artifacts` omit gets `evidence.uncited_artifact`.
+
+To fix either code, promote the file into the record and list it in `artifacts` with its sha256. A good place is `hw/checks/<V>/<S>/evidence/`. Or cite a tracked packet.
+
 ## Freshness, impact and release claims
 
 A prior result carries only when its exact subject, geometry/configuration, requirements, criterion, conditions, capability, sources and dependency fingerprints still apply. Missing dependency metadata is unknown and requires rerun or a documented assessed carry-forward into a current version; old bundles and seals are never edited. `impact.py --since-version vM` reports changes across use case, part/component geometry, route/orientation/material, loads, requirements, interfaces, profiles, capability, selection digest, evidence and decisions. It lists stale obligations and reopened decisions with earliest affected stage; it does not change the stamp threshold or automatically pass old results. A selection digest change requires a new assessment and confirmation through the approval gate. Re-evaluate from the earliest stage that accepted the changed fact.

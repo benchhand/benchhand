@@ -61,6 +61,7 @@ CHANGED_FILES = (
     "skills/cad-record/scripts/build_guide.py",
     "skills/cad-record/scripts/design_rules.py",
     "skills/cad-record/scripts/evidence.py",
+    "skills/cad-record/scripts/evidence_paths.py",
     "skills/cad-record/scripts/fail_fast.py",
     "skills/cad-record/scripts/impact.py",
     "skills/cad-record/scripts/layout.py",
