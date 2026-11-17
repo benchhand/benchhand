@@ -334,8 +334,10 @@ class Walker:
 
     def inline_notes(self, schema: Schema, node: Any, label: str = "") -> list[str]:
         """Notes for a property or alias node, including constraints on inline nested schemas."""
-        if not isinstance(node, dict) or self.pure_ref(node):
+        if not isinstance(node, dict):
             return []
+        if self.pure_ref(node):
+            return [label + n for n in self.node_notes(node)]
         notes = [label + n for n in self.node_notes(node) if not (label == "" and n == "additionalProperties: false" and self.is_object(schema, "", node))]
         if self.is_object(schema, "", node):
             return []

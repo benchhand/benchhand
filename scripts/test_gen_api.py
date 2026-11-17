@@ -290,6 +290,36 @@ class ReviewRound1(FixtureTree):
         self.assertEqual(result.stdout.strip(), "['gone']")
 
 
+class RefSiblingConstraints(FixtureTree):
+    def schema(self, reach: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        return {
+            "$id": BASE + "refs.schema.json",
+            "type": "object",
+            "properties": {"reach": reach, "code": {"$ref": "#/$defs/Tag", "pattern": "^t-"}},
+            "$defs": {"Pos": {"type": "number"}, "Tag": {"type": "string"}},
+        }
+
+    def test_constraints_beside_a_ref_are_documented_and_the_type_stays_the_alias(self) -> None:
+        write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos", "maximum": 10}))
+        outputs = gen_api.generate(self.root)
+        api = outputs[gen_api.API_REL]
+        self.assertIn("\n    reach: NotRequired[RefsPos]\n", api)
+        self.assertIn("\n    code: NotRequired[RefsTag]\n", api)
+        for rel, text in outputs.items():
+            for fragment in ("reach: maximum: 10", 'code: pattern: "^t-"') if rel == gen_api.API_REL else ("`reach`: maximum: 10", '`code`: pattern: "^t-"'):
+                with self.subTest(output=rel, fragment=fragment):
+                    self.assertIn(fragment, text)
+
+    def test_check_reports_drift_when_a_bound_is_added_beside_a_ref(self) -> None:
+        write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos"}))
+        self.assertEqual(run_main([], self.root)[0], 0)
+        write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos", "maximum": 10}))
+        code, _, err = run_main(["--check"], self.root)
+        self.assertNotEqual(code, 0)
+        self.assertIn(gen_api.API_REL, err)
+        self.assertIn(gen_api.DOC_REL, err)
+
+
 class Determinism(FixtureTree):
     def test_two_runs_are_byte_equal(self) -> None:
         self.assertEqual(gen_api.generate(self.root), gen_api.generate(self.root))
