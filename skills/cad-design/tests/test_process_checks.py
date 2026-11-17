@@ -1117,7 +1117,7 @@ class OtherRouteKindTests(Checks):
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
 class DispatchContractTests(Checks):
-    """The closed table answers every route kind's families except physical evidence; a version 1 record is
+    """The closed table answers every route kind's families except physical evidence; a record of an unsupported version is
     not assessable; a handler cannot link a failing finding to an obligation it did not fail."""
 
     def test_the_table_covers_every_check_family_but_physical_evidence(self) -> None:

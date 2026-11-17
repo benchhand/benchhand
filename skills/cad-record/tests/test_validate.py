@@ -25,7 +25,7 @@ EXAMPLE = LAMP_EXAMPLE / "hw"
 VALIDATOR = SKILL / "scripts" / "validate.py"
 PLACEHOLDER_INTENT = "".join(f"  {name}: {{status: unknown, reason: not recorded yet}}\n" for name in (
     "functions", "material_profile", "service", "critical_surfaces", "route"))
-# The functional block a record version 2 interface needs, all unknown (as migrate.py writes it, without questions).
+# The functional block a record version 2 interface needs, all unknown (without questions).
 PLACEHOLDER_FUNCTIONAL = ("functional: {critical: {status: unknown, reason: not recorded yet}, "
                           "functions: {status: unknown, reason: not recorded yet}}")
 
@@ -48,7 +48,7 @@ def tree(root: Path) -> dict[str, bytes]:
 
 
 class ValidateProject(unittest.TestCase):
-    """The lamp example migrated to record version 2 (migrate.py), edited one fact at a time."""
+    """The lamp example (record version 2), edited one fact at a time."""
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="cad-record-test-")

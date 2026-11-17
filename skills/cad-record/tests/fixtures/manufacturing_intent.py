@@ -273,8 +273,8 @@ def record(*, parts: list[dict[str, Any]] | None = None, interfaces: list[dict[s
 
 
 def current_documents(documents: dict[str, Any]) -> dict[str, Any]:
-    """A hand-written record version 1 test fixture ({path below hw/: document}) as record version 2 in migrate.py's
-    shape: every manufacturing-intent field an explicit unknown, legacy drawing.operations moved to operations.
+    """A hand-written test fixture without the record version 2 blocks ({path below hw/: document}) as record version 2:
+    every manufacturing-intent field an explicit unknown, drawing.operations moved to operations.
     For fixtures about other record contracts, which read the same in both versions."""
     out = copy.deepcopy(documents)
     out["product.yaml"] = {**out["product.yaml"], "record_version": 2}
@@ -300,7 +300,7 @@ def current_documents(documents: dict[str, Any]) -> dict[str, Any]:
 
 
 def upgrade_record(hw: Path) -> Path:
-    """Rewrite the hand-written record version 1 test fixture below `hw` as record version 2 (current_documents)."""
+    """Rewrite the hand-written test fixture below `hw` as record version 2 (current_documents)."""
     hw = Path(hw)
     names = ["product.yaml", "requirements.yaml", "interfaces.yaml", "assembly.yaml",
              *(p.relative_to(hw).as_posix() for p in sorted(hw.glob("parts/*/part.yaml")))]
