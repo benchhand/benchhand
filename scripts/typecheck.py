@@ -102,6 +102,7 @@ CHANGED_FILES = (
     "skills/cad-design/tests/mfg_corpus/families/additive_stability.py",
     "skills/cad-design/tests/mfg_corpus/families/additive_support_overhang_bridge.py",
     "skills/cad-design/tests/mfg_corpus/families/assembly_operations_order.py",
+    "skills/cad-design/tests/mfg_corpus/families/fdm_horizontal_hole.py",
     "skills/cad-design/tests/mfg_corpus/families/form_check_kernel_validity.py",
 )
 STRICT_FILES = (
