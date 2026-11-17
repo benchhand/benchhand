@@ -1,6 +1,6 @@
 # /// script
-# requires-python = ">=3.11,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy>=1.26", "python-fcl==0.7.0.11"]
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy==2.5.5", "python-fcl==0.7.0.11"]
 # ///
 """Build, check, and diff versions of a hardware design from its part model scripts.
 

@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11,<3.15"
+# requires-python = ">=3.12,<3.13"
 # dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "pyyaml>=6.0"]
 # ///
 """Build a FreeCAD 1.1.4 Assembly from the joint record, simulate it headless, and check the frames:
