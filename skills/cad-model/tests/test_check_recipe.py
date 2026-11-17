@@ -3,8 +3,9 @@
 
 publish_readback reuses a sealed bundle whose recipe equals the new one. The recipe names the check
 code (check.py and the modules it loads, manufacture.py among them) and VERDICT_DATA, so after an
-edit to either a rerun republishes the packet instead of keeping the bundle the old code sealed. The
-edit is simulated by changing the bytes code_shas reads for one file. Kernel-free; the publication
+edit to either a rerun republishes the packet instead of keeping the bundle the old code sealed.
+Each test copies the skills tree, edits one file of the copy and reads readback_recipe and the
+reported code fingerprint from the copy (fixtures/check_recipe_key.py). Kernel-free; the publication
 itself is covered in test_cad_model.ManufacturingInputCacheTests.
 """
 
@@ -12,16 +13,21 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import json
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from collections.abc import Iterator
 from pathlib import Path
-from unittest import mock
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-SKILLS = Path(__file__).resolve().parents[2]
+HERE = Path(__file__).resolve().parent
+SCRIPTS = HERE.parent / "scripts"
+SKILLS = HERE.parents[1]
+PROBE = HERE / "fixtures" / "check_recipe_key.py"
 sys.path.insert(0, str(SCRIPTS))
-from cadmodel import check, record  # noqa: E402 - imports without the kernel
+from cadmodel import check  # noqa: E402 - imports without the kernel
 
 _spec = importlib.util.spec_from_file_location("cad_motion_code_shas", SKILLS / "cad-motion" / "scripts" / "code_shas.py")
 assert _spec is not None and _spec.loader is not None
@@ -31,31 +37,37 @@ if code_shas is None:
     sys.modules[_spec.name] = code_shas
     _spec.loader.exec_module(code_shas)
 
-PACKET = {"producer": check.READBACK_PRODUCER, "complete": True, "outcomes": []}
-ISO286 = SKILLS / "cad-fits" / "data" / "iso286.json"
 ISO286_IT6_EDIT = (b'"6": [6, ', b'"6": [7, ')  # one table value: IT6 up to 3 mm, 6 um -> 7 um
+PROBE_TIMEOUT_S = 300
+
+
+def copy_skills(root: Path) -> Path:
+    """A copy of the skills tree under `root`."""
+    return Path(shutil.copytree(SKILLS, root / "skills", ignore=shutil.ignore_patterns("__pycache__")))
 
 
 @contextlib.contextmanager
-def edited(path: Path, change: tuple[bytes, bytes] | None = None) -> Iterator[None]:
-    """code_shas reads `path` edited: one comment line appended, or the one `change` (old, new) applied."""
-    target, read = path.resolve(), code_shas._read
-
-    def read_edited(candidate: Path) -> bytes:
-        data = read(candidate)
-        if Path(candidate).resolve() != target:
-            return data
-        if change is None:
-            return data + b"\n# edited\n"
-        assert data.count(change[0]) == 1, f"{path} does not hold {change[0]!r} once"
-        return data.replace(*change)
-
-    code_shas._closure.cache_clear()   # code_shas reads each script once per process
+def edited(tree: Path, relative: str, change: tuple[bytes, bytes] | None = None) -> Iterator[None]:
+    """`relative` in the copy `tree` edited for the duration: one comment line appended, or `change` (old, new)
+    applied once."""
+    path = tree / relative
+    original = path.read_bytes()
+    if change is None:
+        path.write_bytes(original + b"\n# edited\n")
+    else:
+        assert original.count(change[0]) == 1, f"{relative} does not hold {change[0]!r} once"
+        path.write_bytes(original.replace(*change))
     try:
-        with mock.patch.object(code_shas, "_read", read_edited):
-            yield
+        yield
     finally:
-        code_shas._closure.cache_clear()
+        path.write_bytes(original)
+
+
+def probe(tree: Path, *args: str) -> dict:
+    done = subprocess.run([sys.executable, "-B", str(PROBE), str(tree), *args], capture_output=True, text=True,
+                          check=False, timeout=PROBE_TIMEOUT_S)
+    assert done.returncode == 0, done.stderr[-2000:]
+    return json.loads(done.stdout)
 
 
 def covered(path: Path, declared: tuple[Path, ...]) -> bool:
@@ -64,19 +76,23 @@ def covered(path: Path, declared: tuple[Path, ...]) -> bool:
 
 
 class ReadbackRecipeTests(unittest.TestCase):
-    def test_editing_the_check_code_or_its_data_changes_the_readback_recipe(self) -> None:
-        layout = record.load_layout()
-        before = layout.recipe_sha256(check.readback_recipe(layout, PACKET))
-        self.assertEqual(layout.recipe_sha256(check.readback_recipe(layout, PACKET)), before)
-        for path, change in ((SCRIPTS / "cadmodel" / "check.py", None), (SCRIPTS / "cadmodel" / "manufacture.py", None),
-                             (SCRIPTS / "cadmodel" / "occ.py", None), (ISO286, ISO286_IT6_EDIT),
-                             (SKILLS / "cad-model" / "assets" / "materials.yaml", None)):
-            with self.subTest(edited=path.name), edited(path, change):
-                self.assertNotEqual(layout.recipe_sha256(check.readback_recipe(layout, PACKET)), before)
+    def test_editing_the_check_code_or_its_data_changes_the_readback_recipe_and_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            tree = copy_skills(Path(folder))
+            before = probe(tree)
+            self.assertEqual(probe(tree), before, "the recipe is not stable without an edit")
+            for relative, change in (("cad-model/scripts/cadmodel/check.py", None),
+                                     ("cad-model/scripts/cadmodel/manufacture.py", None),
+                                     ("cad-model/scripts/cadmodel/occ.py", None),
+                                     ("cad-fits/data/iso286.json", ISO286_IT6_EDIT),
+                                     ("cad-model/assets/materials.yaml", None)):
+                with self.subTest(edited=relative), edited(tree, relative, change):
+                    after = probe(tree)
+                    self.assertNotEqual(after["readback"], before["readback"])
+                    self.assertNotEqual(after["code_sha256"], before["code_sha256"])
 
     def test_the_declared_data_covers_every_data_file_the_check_code_names(self) -> None:
-        check_py = SCRIPTS / "cadmodel" / "check.py"
-        missing = sorted(str(path.relative_to(SKILLS)) for path in code_shas.referenced_data(check_py)
+        missing = sorted(str(path.relative_to(SKILLS)) for path in code_shas.referenced_data(Path(check.__file__))
                          if not covered(path, check.VERDICT_DATA))
         self.assertEqual(missing, [], "add these to check.VERDICT_DATA")
 

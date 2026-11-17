@@ -4,26 +4,25 @@
 Each motion producer that publishes, or reports what decided a result, takes the sha256 of its code
 and of its declared VERDICT_DATA from code_shas.closure. Editing either must change the recipe a
 rerun is matched by, so the rerun refuses (another recipe needs --replace) or recomputes instead of
-returning the old bundle. The edit is simulated by changing the bytes code_shas reads for one file.
-A guard checks that each producer's VERDICT_DATA covers every data file its code names. Kernel-free.
+returning the old bundle. The tests copy the skills tree, edit one file of the copy and read every
+producer's key from the copy (fixtures/recipe_keys.py). A guard checks that each producer's
+VERDICT_DATA covers every data file its code names. Kernel-free.
 """
 
 from __future__ import annotations
 
-import contextlib
-import io
+import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
-from collections.abc import Iterator
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
-from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 SKILLS = HERE.parents[1]
+PROBE = HERE / "fixtures" / "recipe_keys.py"
 sys.path.insert(0, str(SKILLS.parent / "scripts"))
 from modload import load_module as load  # noqa: E402
 
@@ -34,46 +33,77 @@ spot_check = load("cad_motion_spot_check", SCRIPTS / "spot_check.py")
 merge_sweeps = load("cad_motion_merge_sweeps", SCRIPTS / "merge_sweeps.py")
 play = load("cad_motion_play", SCRIPTS / "play.py")
 
-
-ISO286 = SKILLS / "cad-fits" / "data" / "iso286.json"
+ISO286 = "cad-fits/data/iso286.json"
 ISO286_IT6_EDIT = (b'"6": [6, ', b'"6": [7, ')  # one table value: IT6 up to 3 mm, 6 um -> 7 um
+PROBE_TIMEOUT_S = 300
+# Each edit of the copied tree, and the producer keys it must change.
+EDITS = {
+    "cad-motion/scripts/play.py": ("play",),
+    "cad-motion/scripts/plan.py": ("play",),
+    "cad-motion/scripts/sweep.py": ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
+    "cad-fits/scripts/fits.py": ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
+    "cad-record/scripts/assembly_data.py": ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
+    "cad-motion/scripts/merge_sweeps.py": ("merge_sweeps",),
+    "cad-motion/scripts/spot_check.py": ("spot_check",),
+    ISO286: ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
+}
 
 
-@contextlib.contextmanager
-def edited(path: Path, change: tuple[bytes, bytes] | None = None) -> Iterator[None]:
-    """code_shas reads `path` edited: one comment line appended, or the one `change` (old, new) applied."""
-    target, read = path.resolve(), code_shas._read
-
-    def read_edited(candidate: Path) -> bytes:
-        data = read(candidate)
-        if Path(candidate).resolve() != target:
-            return data
-        if change is None:
-            return data + b"\n# edited\n"
-        assert data.count(change[0]) == 1, f"{path} does not hold {change[0]!r} once"
-        return data.replace(*change)
-
-    code_shas._closure.cache_clear()   # code_shas reads each script once per process
-    try:
-        with mock.patch.object(code_shas, "_read", read_edited):
-            yield
-    finally:
-        code_shas._closure.cache_clear()
+def probe(tree: Path) -> dict[str, str]:
+    done = subprocess.run([sys.executable, "-B", str(PROBE), str(tree)], capture_output=True, text=True,
+                          check=False, timeout=PROBE_TIMEOUT_S)
+    assert done.returncode == 0, done.stderr[-2000:]
+    return json.loads(done.stdout)
 
 
-def key(recipe: Any) -> str:
-    """The reuse key: layout matches a bundle by the sha256 of its canonical recipe."""
-    return pose.LAYOUT.recipe_sha256(recipe)
+class EditTests(unittest.TestCase):
+    """The keys of the producers in a copy of the skills tree, unedited and after each edit in EDITS."""
 
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        tree = Path(shutil.copytree(SKILLS, Path(cls.tmp.name) / "skills", ignore=shutil.ignore_patterns("__pycache__")))
+        cls.before, cls.again = probe(tree), probe(tree)
+        cls.after: dict[str, dict[str, str]] = {}
+        for relative in EDITS:
+            path = tree / relative
+            original = path.read_bytes()
+            if relative == ISO286:
+                assert original.count(ISO286_IT6_EDIT[0]) == 1, "the ISO 286 edit no longer matches one value"
+                path.write_bytes(original.replace(*ISO286_IT6_EDIT))
+            else:
+                path.write_bytes(original + b"\n# edited\n")
+            try:
+                cls.after[relative] = probe(tree)
+            finally:
+                path.write_bytes(original)
 
-class Case(unittest.TestCase):
-    def assert_edit_changes(self, recipe_of: Any, *paths: Path) -> None:
-        """Each edit of `paths`, and one ISO 286 table value, changes the recipe."""
-        before = key(recipe_of())
-        self.assertEqual(key(recipe_of()), before, "the recipe is not stable without an edit")
-        for path, change in (*((path, None) for path in paths), (ISO286, ISO286_IT6_EDIT)):
-            with self.subTest(edited=str(path.relative_to(SKILLS))), edited(path, change):
-                self.assertNotEqual(key(recipe_of()), before)
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def assert_changes(self, producer: str) -> None:
+        self.assertEqual(self.again[producer], self.before[producer], "the key is not stable without an edit")
+        edits = [relative for relative, producers in EDITS.items() if producer in producers]
+        self.assertIn(ISO286, edits)
+        for relative in edits:
+            with self.subTest(edited=relative):
+                self.assertNotEqual(self.after[relative][producer], self.before[producer])
+
+    def test_editing_play_its_modules_or_its_data_changes_its_packet_recipe(self) -> None:
+        self.assert_changes("play")
+
+    def test_editing_sweep_its_modules_or_its_data_changes_its_bundle_recipe(self) -> None:
+        self.assert_changes("sweep")
+
+    def test_editing_sweep_its_modules_or_its_data_changes_the_equivalence_a_merge_checks(self) -> None:
+        self.assert_changes("sweep_equivalence")
+
+    def test_editing_merge_sweeps_or_its_data_changes_the_merged_bundle_recipe(self) -> None:
+        self.assert_changes("merge_sweeps")
+
+    def test_editing_spot_check_or_its_data_changes_what_its_report_says_decided_it(self) -> None:
+        self.assert_changes("spot_check")
 
 
 def covered(path: Path, declared: tuple[Path, ...]) -> bool:
@@ -100,67 +130,6 @@ class DeclaredDataTests(unittest.TestCase):
             self.assertEqual(code_shas.referenced_data(script), {data.resolve()})
 
 
-class PlayTests(Case):
-    def recipe(self) -> dict[str, Any]:
-        captured: list[dict[str, Any]] = []
-
-        def emit(*args: Any, **kwargs: Any) -> tuple[dict[str, Any], str]:
-            captured.append(args[8])
-            return {}, "pass"
-
-        with tempfile.TemporaryDirectory() as hw, \
-                mock.patch.object(play, "assess", return_value=({"dependencies": {"record": "0" * 64}}, {})), \
-                mock.patch.object(play.check_packet, "emit", emit), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(play.main(["--hw", hw, "--step", str(Path(hw) / "assembly.step")]), 0)
-        [recipe] = captured
-        return recipe
-
-    def test_editing_play_or_a_module_it_loads_changes_its_packet_recipe(self) -> None:
-        self.assert_edit_changes(self.recipe, SCRIPTS / "play.py", SCRIPTS / "plan.py")
-
-
-def sweep_recipe() -> dict[str, Any]:
-    """sweep.recipe_of for a default sweep of a stand-in version."""
-    with tempfile.TemporaryDirectory() as hw, mock.patch.object(pose, "input_sha256", return_value="0" * 64):
-        args = sweep.build_parser().parse_args(["--hw", hw, "--version", "v1"])
-        return sweep.recipe_of(SimpleNamespace(args=args, change=None, version_dir=Path(hw)),
-                               SimpleNamespace(digest=b"rule"))
-
-
-class SweepTests(Case):
-    def recipe(self) -> dict[str, Any]:
-        return sweep_recipe()
-
-    def test_editing_sweep_or_a_module_it_loads_changes_its_bundle_recipe(self) -> None:
-        self.assert_edit_changes(self.recipe, SCRIPTS / "sweep.py", SKILLS / "cad-fits" / "scripts" / "fits.py",
-                                 SKILLS / "cad-record" / "scripts" / "assembly_data.py")
-
-    def test_editing_sweep_or_a_module_it_loads_changes_the_equivalence_a_merge_checks(self) -> None:
-        self.assert_edit_changes(lambda: sweep.equivalence_of(self.recipe()), SCRIPTS / "sweep.py",
-                                 SKILLS / "cad-fits" / "scripts" / "fits.py")
-
-
-class MergeTests(Case):
-    def setUp(self) -> None:
-        # The sweep sealed the recipe its inputs share. At merge time code_shas reads only the merge's own code.
-        self.provenance = {"equivalence": sweep.equivalence_of(sweep_recipe())}
-        self.inputs = [SimpleNamespace(manifest_sha256="1" * 64), SimpleNamespace(manifest_sha256="2" * 64)]
-
-    def recipe(self) -> dict[str, Any]:
-        return merge_sweeps.merged_recipe(self.provenance, "sweep", self.inputs)
-
-    def test_editing_merge_sweeps_changes_the_merged_bundle_recipe(self) -> None:
-        self.assert_edit_changes(self.recipe, SCRIPTS / "merge_sweeps.py")
-
-
-class SpotCheckTests(Case):
-    def provenance(self) -> dict[str, Any]:
-        return spot_check.audit_provenance({"rule_sha256": "0" * 64}, SimpleNamespace(digest=b"audit"))
-
-    def test_editing_spot_check_changes_what_its_report_says_decided_it(self) -> None:
-        self.assert_edit_changes(self.provenance, SCRIPTS / "spot_check.py")
-
-
 class ClosureTests(unittest.TestCase):
     def test_a_script_covers_itself_and_the_sibling_files_it_loads(self) -> None:
         table = code_shas.closure(SCRIPTS / "play.py")
@@ -170,8 +139,8 @@ class ClosureTests(unittest.TestCase):
 
     def test_declared_data_is_hashed_with_the_code(self) -> None:
         table = code_shas.closure(SCRIPTS / "sweep.py", sweep.VERDICT_DATA)
-        self.assertIn("cad-fits/data/iso286.json", table)
-        self.assertNotIn("cad-fits/data/iso286.json", code_shas.closure(SCRIPTS / "sweep.py"))
+        self.assertIn(ISO286, table)
+        self.assertNotIn(ISO286, code_shas.closure(SCRIPTS / "sweep.py"))
 
     def test_an_import_code_shas_cannot_place_is_an_error(self) -> None:
         for source, message in (("import no_such_module_anywhere\n", "no_such_module_anywhere"),

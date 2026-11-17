@@ -38,6 +38,7 @@ import hashlib
 import sys
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
+from typing import cast
 
 SKILLS = Path(__file__).resolve().parents[2]
 
@@ -59,35 +60,50 @@ def _read(path: Path) -> bytes:
     return path.read_bytes()
 
 
+def _string(node: ast.AST) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _call_path(node: ast.Call, names: Mapping[str, Path], file: Path) -> Path | None:
+    """`Path(x)`, `<path>.resolve()`, `<path>.absolute()` or `<path>.with_name("name")`."""
+    if isinstance(node.func, ast.Name):
+        return _path(node.args[0], names, file) if node.func.id == "Path" and len(node.args) == 1 else None
+    if not isinstance(node.func, ast.Attribute):
+        return None
+    base = _path(node.func.value, names, file)
+    if base is None:
+        return None
+    if node.func.attr in ("resolve", "absolute") and not node.args:
+        return base
+    name = _string(node.args[0]) if node.func.attr == "with_name" and len(node.args) == 1 else None
+    return None if name is None else base.with_name(name)
+
+
+def _parents_path(node: ast.Subscript, names: Mapping[str, Path], file: Path) -> Path | None:
+    """`<path>.parents[n]`."""
+    if not (isinstance(node.value, ast.Attribute) and node.value.attr == "parents"
+            and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int)):
+        return None
+    base = _path(node.value.value, names, file)
+    return None if base is None else base.parents[node.slice.value]
+
+
 def _path(node: ast.AST, names: Mapping[str, Path], file: Path) -> Path | None:
     """The path `node` evaluates to, for the path forms in the module docstring. Any other expression gives None."""
     if isinstance(node, ast.Name):
         return file if node.id == "__file__" else names.get(node.id)
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id == "Path" and len(node.args) == 1:
-            return _path(node.args[0], names, file)
-        if isinstance(node.func, ast.Attribute):
-            base = _path(node.func.value, names, file)
-            if base is None:
-                return None
-            if node.func.attr in ("resolve", "absolute") and not node.args:
-                return base
-            if node.func.attr == "with_name" and len(node.args) == 1 and isinstance(node.args[0], ast.Constant) \
-                    and isinstance(node.args[0].value, str):
-                return base.with_name(node.args[0].value)
-        return None
+        return _call_path(node, names, file)
+    if isinstance(node, ast.Subscript):
+        return _parents_path(node, names, file)
     if isinstance(node, ast.Attribute) and node.attr == "parent":
         base = _path(node.value, names, file)
         return None if base is None else base.parent
-    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents" \
-            and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int):
-        base = _path(node.value.value, names, file)
-        return None if base is None else base.parents[node.slice.value]
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and isinstance(node.right, ast.Constant) \
-            and isinstance(node.right.value, str):
-        base = _path(node.left, names, file)
-        return None if base is None else base / node.right.value
-    return None
+    part = _string(node.right) if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) else None
+    if part is None:
+        return None
+    base = _path(cast(ast.BinOp, node).left, names, file)
+    return None if base is None else base / part
 
 
 def _module_paths(tree: ast.Module, file: Path) -> dict[str, Path]:
@@ -144,41 +160,50 @@ def _script_module(folder: Path, name: str) -> Path | None:
     return found[0] if found else None
 
 
-def _import_targets(tree: ast.Module, file: Path) -> Iterator[Path]:
-    folder = file.parent
-    modules: list[tuple[list[str], list[str]]] = []
+def _imports(tree: ast.Module, file: Path) -> Iterator[tuple[list[str], list[str]]]:
+    """(dotted module, imported names) of every import in `tree`. A relative import is an error."""
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             if node.level or not node.module:
                 raise CodeShaError(f"{file}:{node.lineno}: a relative import, which code_shas does not follow")
-            modules.append((node.module.split("."), [alias.name for alias in node.names]))
+            yield node.module.split("."), [alias.name for alias in node.names]
         elif isinstance(node, ast.Import):
-            modules += [(alias.name.split("."), []) for alias in node.names]
-    for dotted, names in modules:
-        top = dotted[0]
-        root = _package_root(folder, top)
-        if root is None:
-            if len(dotted) == 1 and (folder / f"{top}.py").is_file():
-                yield folder / f"{top}.py"   # the importer's own folder comes first on its sys.path
-                continue
-            if top in sys.stdlib_module_names or top in THIRD_PARTY:
-                continue
-            script = _script_module(folder, top) if len(dotted) == 1 else None
-            if script is None:
-                raise CodeShaError(f"{file}: `{'.'.join(dotted)}` is no skill module, standard-library module or "
-                                   f"listed third-party package (code_shas.THIRD_PARTY)")
-            yield script
-            continue
-        package = root.joinpath(*dotted)
-        if package.with_suffix(".py").is_file():
-            yield package.with_suffix(".py")
-            continue
-        if not (package / "__init__.py").is_file():
-            raise CodeShaError(f"{file}: `{'.'.join(dotted)}` names no module in {root}")
-        yield package / "__init__.py"
-        for name in names:
-            if (package / f"{name}.py").is_file():
-                yield package / f"{name}.py"
+            yield from ((alias.name.split("."), []) for alias in node.names)
+
+
+def _top_level_module(dotted: list[str], file: Path) -> Iterator[Path]:
+    """The file of an import that names no package in the skills tree: a script next to the importer (its own
+    folder comes first on its sys.path), nothing for the standard library or THIRD_PARTY, else the one script of
+    that name in another skill's scripts folder. Anything else is an error."""
+    top, folder = dotted[0], file.parent
+    if len(dotted) == 1 and (folder / f"{top}.py").is_file():
+        yield folder / f"{top}.py"
+        return
+    if top in sys.stdlib_module_names or top in THIRD_PARTY:
+        return
+    script = _script_module(folder, top) if len(dotted) == 1 else None
+    if script is None:
+        raise CodeShaError(f"{file}: `{'.'.join(dotted)}` is no skill module, standard-library module or "
+                           f"listed third-party package (code_shas.THIRD_PARTY)")
+    yield script
+
+
+def _package_modules(root: Path, dotted: list[str], names: list[str], file: Path) -> Iterator[Path]:
+    """The files of `from <dotted> import <names>` or `import <dotted>` from a package below `root`."""
+    package = root.joinpath(*dotted)
+    if package.with_suffix(".py").is_file():
+        yield package.with_suffix(".py")
+        return
+    if not (package / "__init__.py").is_file():
+        raise CodeShaError(f"{file}: `{'.'.join(dotted)}` names no module in {root}")
+    yield package / "__init__.py"
+    yield from (package / f"{name}.py" for name in names if (package / f"{name}.py").is_file())
+
+
+def _import_targets(tree: ast.Module, file: Path) -> Iterator[Path]:
+    for dotted, names in list(_imports(tree, file)):
+        root = _package_root(file.parent, dotted[0])
+        yield from (_top_level_module(dotted, file) if root is None else _package_modules(root, dotted, names, file))
 
 
 def _data_files(entry: Path) -> list[Path]:
