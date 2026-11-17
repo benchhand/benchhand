@@ -1089,14 +1089,15 @@ def collect_packets(hw: Path, version: str, version_manifest_sha256: str) -> tup
         if not (directory / layout.MANIFEST).is_file():
             problems.append(f"it has no {layout.MANIFEST}")
         elif not problems:
-            sealed = layout.verify(directory)  # a sealed bundle's manifest parses
-            if sealed and all(problem.kind == "missing" for problem in sealed):
+            sealed = layout.verify(directory)
+            problems = list(sealed)
+            if not any(problem.kind == "malformed" for problem in sealed):  # the manifest parses
+                manifest = json.loads((directory / layout.MANIFEST).read_text(encoding="utf-8"))
+                if manifest.get("version_manifest_sha256") != version_manifest_sha256:
+                    problems.append(f"it is bound to another build of {version}")
+            if sealed and len(problems) == len(sealed) and all(problem.kind == "missing" for problem in sealed):
                 findings.append(Finding("packet.missing", rel, f"{rel}: " + "; ".join(sealed), "warning"))
                 continue
-            problems = list(sealed)
-            manifest = json.loads((directory / layout.MANIFEST).read_text(encoding="utf-8")) if not problems else {}
-            if not problems and manifest.get("version_manifest_sha256") != version_manifest_sha256:
-                problems = [f"it is bound to another build of {version}"]
         if problems:
             findings.append(Finding("packet.invalid", rel, f"{rel}: " + "; ".join(problems)))
             continue

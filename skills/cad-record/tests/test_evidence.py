@@ -421,6 +421,13 @@ class PacketFiles(unittest.TestCase):
                          [("packet.missing", "hw/checks/v1/tst", "warning")])
         self.assertIn("evidence/report.txt is listed but missing", findings[0].message)
 
+    def test_a_packet_missing_a_member_and_bound_to_another_build_is_packet_invalid(self) -> None:
+        bundle = self.sealed_packet("tst")
+        (bundle / "evidence" / "report.txt").unlink()
+        packets, findings = evidence.collect_packets(self.hw, "v1", "f" * 64)
+        self.assertEqual((packets, [(f.code, f.severity) for f in findings]), ([], [("packet.invalid", "error")]))
+        self.assertIn("it is bound to another build of v1", findings[0].message)
+
     def test_a_changed_unlisted_linked_or_malformed_packet_seal_is_packet_invalid(self) -> None:
         cases = {
             "changed": lambda b: (b / "evidence" / "report.txt").write_text("edited\n", encoding="utf-8"),

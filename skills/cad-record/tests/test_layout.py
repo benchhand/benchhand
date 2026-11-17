@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pickle
 import shutil
 import subprocess
 import sys
@@ -226,6 +227,27 @@ class LayoutData(TempProject):
             "design inputs only: never the evidence or finding ledgers, the BOM or verification, or a symlink")
         with self.assertRaises(layout.LayoutError):
             layout.snapshot_names(self.hw, ["lmp-1"])
+
+
+class SealProblems(unittest.TestCase):
+    """A SealProblem is the plain message wherever callers treat problems as text, and keeps its type."""
+
+    TEXT = "iso.png changed after it was sealed"
+
+    def problem(self) -> Any:
+        return layout.SealProblem("changed", "iso.png", self.TEXT, "/project/hw/renders/v1/iso/manifest.json")
+
+    def test_it_compares_hashes_and_serializes_as_its_plain_message(self) -> None:
+        problem = self.problem()
+        self.assertEqual(problem, self.TEXT)
+        self.assertEqual(hash(problem), hash(self.TEXT))
+        self.assertIn(self.TEXT, {problem})
+        self.assertEqual(json.dumps({"problems": [problem]}), '{"problems": ["iso.png changed after it was sealed"]}')
+
+    def test_it_survives_a_pickle_round_trip_with_its_kind_member_and_manifest(self) -> None:
+        again = pickle.loads(pickle.dumps(self.problem()))
+        self.assertEqual((type(again), str(again), again.kind, again.member, again.manifest),
+                         (layout.SealProblem, self.TEXT, "changed", "iso.png", "/project/hw/renders/v1/iso/manifest.json"))
 
 
 class Publication(TempProject):
