@@ -1,6 +1,6 @@
 {
  "counts": {
-  "C901": 171,
+  "C901": 170,
   "PLR0912": 87,
   "PLR0915": 50
  },
@@ -119,7 +119,6 @@
   "C901 skills/cad-record/scripts/design_rules.py::torque_path_findings",
   "C901 skills/cad-record/scripts/evidence.py::Assessment.gate",
   "C901 skills/cad-record/scripts/evidence.py::_entry",
-  "C901 skills/cad-record/scripts/evidence.py::_packet_problems",
   "C901 skills/cad-record/scripts/evidence.py::acceptance_inventory",
   "C901 skills/cad-record/scripts/evidence.py::assess",
   "C901 skills/cad-record/scripts/evidence.py::waiver_problem",
