@@ -1,6 +1,6 @@
 # /// script
-# requires-python = ">=3.11,<3.15"
-# dependencies = ["trimesh==4.*", "numpy>=1.26", "networkx", "lxml>=5", "lib3mf>=2.4; sys_platform != 'linux' or platform_machine == 'x86_64'"]
+# requires-python = ">=3.12,<3.15"
+# dependencies = ["trimesh==4.*", "numpy==2.5.5", "networkx", "lxml>=5", "lib3mf>=2.4; sys_platform != 'linux' or platform_machine == 'x86_64'"]
 # ///
 """Read a part.3mf with trimesh, validate its XML parts against the 3MF schemas and read it with lib3mf.
 

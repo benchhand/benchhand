@@ -1,6 +1,6 @@
 # /// script
-# requires-python = ">=3.11,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "trimesh==4.*", "numpy>=1.26", "pyyaml>=6.0"]
+# requires-python = ">=3.12,<3.15"
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "trimesh==4.*", "numpy==2.5.5", "pyyaml>=6.0"]
 # ///
 """Write a drilled plate and a ball to STEP, tessellate their read-back into part.3mf and part.stl, and judge
 the 3MF with manufacture._threemf, also after four deliberate faults.
