@@ -1,0 +1,64 @@
+# /// script
+# requires-python = ">=3.11,<3.15"
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "trimesh==4.*", "numpy>=1.26", "pyyaml>=6.0"]
+# ///
+"""Write a drilled plate and a ball to STEP, tessellate their read-back into part.3mf and part.stl, and judge
+the 3MF with manufacture._threemf, also after four deliberate faults.
+
+TST-0001: 40 x 30 x 8 plate with a through hole of diameter 5 (the cut gives the hole reversed faces).
+TST-0002: a ball of radius 5 (BRepMesh emits a collapsed triangle at each pole).
+Usage: uv run --script threemf_occ_probe.py DIR
+Stdout: {PN: {"step_volume_mm3", "threemf_volume_mm3", "stl_volume_mm3", "good": judge, "faults": {name: judge}}} as JSON.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
+from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from cadmodel import manufacture, mesh, occ, threemf  # noqa: E402
+from cadmodel.motion import load_pose  # noqa: E402
+
+MESH = {"linear_deflection_mm": 0.05, "angular_deflection_rad": 0.1}
+MATERIAL = "PETG"
+
+plate = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 40.0, 30.0, 8.0).Shape(),
+                        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(20, 15, -1), gp_Dir(0, 0, 1)), 2.5, 10.0).Shape()).Shape()
+ball = BRepPrimAPI_MakeSphere(gp_Pnt(0, 0, 5), 5.0).Shape()
+
+folder = Path(sys.argv[1])
+pose = load_pose()
+report = {}
+for pn, title, shape in (("TST-0001", "Drilled plate", plate), ("TST-0002", "Ball", ball)):
+    entry = {"PN": pn, "product": f"{pn} {title}", "material": MATERIAL, "mesh": MESH}
+    step = folder / f"{pn}.step"
+    pose.write_part_step(step, pose.Part(pn, entry["product"], shape))
+    written, problem = manufacture.read_part(step, pn)
+    assert written is not None, problem
+    vertices, triangles = mesh.surface(written.shape, MESH["linear_deflection_mm"], MESH["angular_deflection_rad"])
+    target = folder / f"{pn}.3mf"
+    threemf.write(target, vertices, triangles, name=entry["product"], material=MATERIAL)
+    stl = folder / f"{pn}.stl"
+    mesh.write_stl(written.shape, stl, MESH["linear_deflection_mm"], MESH["angular_deflection_rad"])
+
+    def variant(name: str, verts, tris, material=MATERIAL) -> dict:
+        path = folder / f"{pn}-{name}.3mf"
+        threemf.write(path, verts, tris, name=entry["product"], material=material)
+        return manufacture._threemf(path, entry, written.shape)
+
+    faults = {
+        "cracked": variant("cracked", vertices, triangles[:-1]),
+        "inward": variant("inward", vertices, [(a, c, b) for a, b, c in triangles]),
+        "scaled": variant("scaled", [(x * 1.1, y * 1.1, z * 1.1) for x, y, z in vertices], triangles),
+        "other_material": variant("other_material", vertices, triangles, material="ABS"),
+        "no_material": variant("no_material", vertices, triangles, material=None),
+    }
+    report[pn] = {"step_volume_mm3": occ.volume(written.shape),
+                  "threemf_volume_mm3": threemf.measure(vertices, triangles)["volume_mm3"],
+                  "stl_volume_mm3": mesh.stl_report(stl)["volume_mm3"],
+                  "good": manufacture._threemf(target, entry, written.shape), "faults": faults}
+print(json.dumps(report))

@@ -44,7 +44,7 @@ KERNELS = ("cadquery", "build123d")
 FINDING_KEYS = {"pn", "check", "type", "message", "where"}
 
 sys.path.insert(0, str(SCRIPTS))
-from cadmodel import build, check, diff, fonts, manufacture, mesh, occ, orientation, runner  # noqa: E402 - stdlib-only imports; OCP loads on first use
+from cadmodel import build, check, diff, fonts, manufacture, mesh, occ, orientation, runner, threemf  # noqa: E402 - stdlib-only imports; OCP loads on first use
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import result_payload  # noqa: E402
 
@@ -495,8 +495,11 @@ class KernelChecks:
         self.assertEqual(proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-3000:])
         folder = self.runs["flat-hw"] / "versions" / "v1"
         made = folder / "manufacturing"
-        self.assertEqual(sorted(p.name for p in (made / STRAP).iterdir()), ["manufacturing.json", "part.step", "part.stl"])
+        self.assertEqual(sorted(p.name for p in (made / STRAP).iterdir()), ["manufacturing.json", "part.3mf", "part.step", "part.stl"])
         self.assertEqual(sorted(p.name for p in (made / "TST-0001").iterdir()), ["manufacturing.json", "part.step"])
+        model = threemf.read(made / STRAP / "part.3mf")
+        self.assertEqual((model.unit, len(model.objects), [i.transform for i in model.build]), ("millimeter", 1, [None]))
+        self.assertEqual(model.objects[0].metadata, {"cadagent:material": "TPU 95A"})
         stl = (made / STRAP / "part.stl").read_bytes()
         self.assertEqual(len(stl), 84 + 50 * struct.unpack_from("<I", stl, 80)[0], "binary STL")
         manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
@@ -524,7 +527,7 @@ class KernelChecks:
         self.assertEqual((section["status"], section["complete"], section["blocking_failures"]), ("pass", True, []))
         rows = section["parts"][STRAP]["checks"]
         self.assertEqual({name: row["status"] for name, row in rows.items()},
-                         dict.fromkeys(("outputs", "record", "native", "identity", "step", "mesh", "placement",
+                         dict.fromkeys(("outputs", "record", "native", "identity", "step", "mesh", "threemf", "placement",
                                         "components"), "pass"))
         self.assertEqual((rows["step"]["units"], rows["step"]["product"], rows["step"]["solids"]), (["mm"], f"{STRAP} Strap", 1))
         self.assertLessEqual(rows["step"]["rel_error"], 1e-6)
@@ -532,6 +535,9 @@ class KernelChecks:
         self.assertLessEqual(rows["identity"]["difference_mm3"], rows["identity"]["allowed_mm3"])
         self.assertEqual((rows["mesh"]["watertight"], rows["mesh"]["winding_consistent"], rows["mesh"]["shells"]),
                          (True, True, 1))
+        three = rows["threemf"]["files"]["part.3mf"]  # the strap's analytic volume, within the deflection bound
+        self.assertAlmostEqual(three["volume_mm3"], STRAP_V, delta=three["volume_bound_mm3"])
+        self.assertEqual(three["material"], "TPU 95A")
         low, high = rows["placement"]["bbox_mm"]["min"], rows["placement"]["bbox_mm"]["max"]
         assert_vectors(self, [high[i] - low[i] for i in range(3)], [FLAT_LENGTH, 10.0, 2.0], places=6)
         assert_vectors(self, [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, low[2]], [30.0, 30.0, 0.0], places=6)
@@ -1693,7 +1699,7 @@ class ManufactureRuleTests(unittest.TestCase):
                    "TST-0003": self.part("TST-0003", make_buy="buy", process="purchased", procurement={"mode": "catalog"})}
         plans, refused, uncovered = manufacture.plan(snapshot_of(records))
         self.assertEqual((sorted(plans), refused, uncovered), (["TST-0001", "TST-0002"], [], {}))
-        self.assertEqual(plans["TST-0001"].policy.outputs, ("part.step", "part.stl", "manufacturing.json"))
+        self.assertEqual(plans["TST-0001"].policy.outputs, ("part.step", "part.stl", "part.3mf", "manufacturing.json"))
         self.assertEqual(plans["TST-0002"].policy.outputs, ("part.step", "manufacturing.json"))
         self.assertEqual((plans["TST-0001"].policy.relationship, plans["TST-0001"].policy.volume_tolerance_mm3(1000.0)),
                          ("same", 1000.0 * 1e-9))
@@ -2274,7 +2280,8 @@ class LooseComponentChecks:
         made = result["manufacturing"]["TST-0001"]
         self.assertEqual((made["components"], made["status"], made["complete"]), (["body", "tab"], "warn", False))
         entry = self.entry("v1")
-        self.assertEqual(entry["component_outputs"], ["components/body/part.step", "components/body/part.stl",
+        self.assertEqual(entry["component_outputs"], ["components/body/part.3mf", "components/body/part.step",
+                                                      "components/body/part.stl", "components/tab/part.3mf",
                                                       "components/tab/part.step", "components/tab/part.stl"])
         body, tab = entry["components"]["body"], entry["components"]["tab"]
         self.assertEqual((body["operations"], body["planned"], body["placement"]["pose"]), (["print"], True, "approved"))
@@ -2289,6 +2296,9 @@ class LooseComponentChecks:
         self.assertEqual(proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-2000:])
         rows = checked["checks"]["manufacturing"]["parts"]["TST-0001"]["checks"]["components"]["components"]
         self.assertEqual(rows["body"]["status"], "pass")
+        files = checked["checks"]["manufacturing"]["parts"]["TST-0001"]["checks"]["threemf"]["files"]
+        self.assertEqual({name: row["status"] for name, row in files.items()},
+                         {"part.3mf": "pass", "components/body/part.3mf": "pass", "components/tab/part.3mf": "pass"})
         self.assertEqual((rows["tab"]["status"], rows["tab"]["checks"]["placement"]["status"]), ("warn", "warn"))
         self.assertEqual((rows["tab"]["checks"]["step"]["solids"], rows["tab"]["checks"]["binding"]["status"]), (1, "pass"))
         self.assertEqual(checked["checks"]["artifact_integrity"]["status"], "pass")

@@ -2,7 +2,8 @@
 
 `run` writes hw/versions/<V>/manufacturing/<PN>/ for every custom-made part (cad-record layout
 `custom_made`) whose primary process has an output contract: part.step (AP242, exact B-rep,
-millimetres), part.stl for an additive part (binary STL, millimetres) and manufacturing.json. A part
+millimetres), part.stl for an additive part (binary STL, millimetres), part.3mf for an FDM part (3MF Core 1.4.0,
+millimetres) and manufacturing.json. A part
 whose process has none (`other`) still builds; its entry records its manufacturing coverage as unknown
 and no file is invented. The state is the installed definition, or the `build_manufacture(params)`
 shape of a part whose part.yaml declares `manufacture.relationship: different`.
@@ -33,17 +34,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
-from cadmodel import components, mesh, occ, orientation, provenance, stepfile, store
+from cadmodel import components, mesh, occ, orientation, provenance, stepfile, store, threemf
 from cadmodel.motion import load_pose
 from cadmodel.record import Snapshot, load_intent, load_layout, load_yaml_loader
 
 SIDECAR = "manufacturing.json"
 SIDECAR_SCHEMA = 2  # 2 adds intent, components, component_outputs and the export pose
-OUTPUTS_FORMAT = 2  # bump when what make writes changes without any keyed input changing
+OUTPUTS_FORMAT = 3  # 3 adds part.3mf; bump when what make writes changes without any keyed input changing
 BED_MM = 1e-6  # bed contact, and how far a measured bound may pass a reserved extent
 FLOAT32_EPS = 2.0 ** -23  # STL stores float32 coordinates
 COMPONENT_DIR = "components"
-PART_FILES = ("part.step", "part.stl")
+PART_FILES = ("part.step", "part.stl", "part.3mf")
 
 
 @dataclass(frozen=True)
@@ -310,7 +311,8 @@ def _place(shape: Any, chosen: orientation.Pose, volume: orientation.BuildVolume
 
 
 def _write(folder: Path, entry: Mapping[str, Any], shape: Any, placement: Any) -> None:
-    """part.step of `shape` moved by `placement`, and part.stl tessellated from its read-back when the entry has a mesh."""
+    """part.step of `shape` moved by `placement`, and, when the entry has a mesh, part.stl and part.3mf (when listed)
+    tessellated from its read-back."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
 
     pose_module = load_pose()
@@ -321,8 +323,11 @@ def _write(folder: Path, entry: Mapping[str, Any], shape: Any, placement: Any) -
         written, problem = read_part(folder / "part.step", entry["PN"])
         if written is None:
             raise occ.GeometryError(f"cannot tessellate {folder / 'part.step'}: {problem}")
-        mesh.write_stl(written.shape, folder / "part.stl", entry["mesh"]["linear_deflection_mm"],
-                       entry["mesh"]["angular_deflection_rad"])
+        linear, angular = entry["mesh"]["linear_deflection_mm"], entry["mesh"]["angular_deflection_rad"]
+        mesh.write_stl(written.shape, folder / "part.stl", linear, angular)
+        if "part.3mf" in entry["outputs"]:
+            vertices, triangles = mesh.surface(written.shape, linear, angular)
+            threemf.write(folder / "part.3mf", vertices, triangles, name=entry["product"], material=entry["material"])
 
 
 def _component_facts(plan: Plan, bound: components.Bound, placement: Mapping[str, Any], files: list[str]) -> dict[str, Any]:
@@ -463,6 +468,8 @@ def inspect(target: Path, entry: Mapping[str, Any], record: Mapping[str, Any], e
     if entry["mesh"] is not None:
         checks["mesh"] = (_mesh(target / "part.stl", entry, part.shape) if "part.stl" in present and part is not None
                           else _judge({"present_with_readable_step": False}))
+    if "part.3mf" in entry["outputs"]:
+        checks["threemf"] = _threemf_files(target, entry, present, part.shape if part is not None else None)
     checks["placement"] = _placement(entry, entry["placement"], part.shape if part is not None else None)
     if entry.get("components"):  # sidecar schema 2; earlier versions hold one unbound output
         checks["components"] = _components(target, entry, present, part.shape if part is not None else None)
@@ -534,6 +541,54 @@ def _mesh(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
                   **report, step_shells=shells, step_volume_mm3=step_volume, volume_error_mm3=volume_error,
                   volume_bound_mm3=bound, linear_deflection_mm=deflection,
                   angular_deflection_rad=entry["mesh"]["angular_deflection_rad"])
+
+
+def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
+    """The 3MF against the STEP it was tessellated from: a package the reader accepts (its parts, ids and
+    indices resolve), one millimetre mesh object built once with no transform, closed and consistently wound
+    outward by its indices, the part's material named, and within the declared chord deviation of the exact
+    solid in volume (at most area x deflection) and on each box face. Nothing is repaired."""
+    try:
+        model = threemf.read(path)
+    except (threemf.ThreeMFError, OSError) as error:
+        return _judge({"readable": False}, message=f"cannot read {path.name}: {error}")
+    if len(model.objects) != 1 or len(model.build) != 1:
+        return _judge({"one_object": False}, objects=len(model.objects), build_items=len(model.build))
+    (obj,), (item,) = model.objects, model.build
+    report = threemf.measure(obj.vertices, obj.triangles)
+    deflection = entry["mesh"]["linear_deflection_mm"]
+    step_volume, area = occ.volume(shape), occ.area(shape)
+    low, high = _box(shape)
+    slack = 10.0 ** -threemf.DECIMALS  # the coordinates are rounded to this
+    bound = area * (deflection + slack)
+    volume_error = abs(report["volume_mm3"] - step_volume)
+    m_low, m_high = report["bbox_mm"]["min"], report["bbox_mm"]["max"]
+    return _judge({"millimetres": model.unit == threemf.UNIT, "one_object": True, "no_transform": item.transform is None,
+                   "material_named": obj.metadata.get(threemf.MATERIAL_METADATA) == entry["material"],
+                   "watertight": report["watertight"], "winding_consistent": report["winding_consistent"],
+                   "outward": report["volume_mm3"] > 0, "volume_within_deflection": volume_error <= bound,
+                   "box_within_deflection": all(low[i] - slack <= m_low[i] <= low[i] + deflection + slack
+                                                and high[i] - deflection - slack <= m_high[i] <= high[i] + slack
+                                                for i in range(3))},
+                  **report, standard=threemf.VERSION, material=obj.metadata.get(threemf.MATERIAL_METADATA),
+                  step_volume_mm3=step_volume, volume_error_mm3=volume_error, volume_bound_mm3=bound,
+                  linear_deflection_mm=deflection)
+
+
+def _threemf_files(target: Path, entry: Mapping[str, Any], present: list[str], shape: Any) -> dict[str, Any]:
+    """`_threemf` of part.3mf and of each component's own part.3mf, each against its own STEP read back."""
+    rows: dict[str, dict[str, Any]] = {}
+    if "part.3mf" in present and shape is not None:
+        rows["part.3mf"] = _threemf(target / "part.3mf", entry, shape)
+    else:
+        rows["part.3mf"] = _judge({"present_with_readable_step": False})
+    for name in entry.get("component_outputs") or []:
+        if not name.endswith("/part.3mf"):
+            continue
+        part, _ = read_part(target / name.replace("part.3mf", "part.step"), entry["PN"]) if name in present else (None, None)
+        rows[name] = _threemf(target / name, entry, part.shape) if part is not None else _judge(
+            {"present_with_readable_step": False})
+    return _judge({name: row["status"] == "pass" for name, row in rows.items()}, files=rows)
 
 
 def _placement(entry: Mapping[str, Any], placement: Mapping[str, Any], shape: Any) -> dict[str, Any]:

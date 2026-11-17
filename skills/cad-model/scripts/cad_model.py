@@ -34,7 +34,7 @@ run   executes every hw/parts/<PN>/model.py in its declared kernel's own uv envi
         record/           the records the version was built from: product, requirements, interfaces,
                           assembly, parts, manufacturing profiles and selection, and their source bytes
         manufacturing/<PN>/  every custom-made PN: part.step (AP242, mm), part.stl (additive: binary,
-                          mm), components/<COMP>/ of a part of several solids, and manufacturing.json,
+                          mm; fdm: part.3mf), components/<COMP>/ of a part of several solids, and manufacturing.json,
                           in the state model.py build_manufacture defines (else the installed
                           definition), an additive part on the bed in its route's approved orientation
       and hw/versions/latest.json pointing at that version (paths relative to hw/). Labels

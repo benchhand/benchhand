@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -161,6 +162,46 @@ class MeasureTests(unittest.TestCase):
         vertices = [*CUBE_VERTICES, CUBE_VERTICES[0]]
         triangles = [(8, 2, 1), *CUBE_TRIANGLES[1:]]  # the first triangle uses a copy of vertex 0
         self.assertEqual(self.measure(triangles, vertices)["watertight"], False)
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the OCP environment")
+class TessellationTests(unittest.TestCase):
+    """The mesh of a STEP read-back, written as 3MF and judged by manufacture's check (fixtures/threemf_occ_probe.py)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "threemf_occ_probe.py"), tmp],
+                                  capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr[-3000:]
+        cls.report = json.loads(proc.stdout)
+
+    def test_a_drilled_plate_with_reversed_hole_faces_is_closed_outward_and_at_its_analytic_volume(self) -> None:
+        plate = self.report["TST-0001"]
+        self.assertEqual(plate["good"]["status"], "pass", plate["good"])
+        analytic = 40 * 30 * 8 - math.pi * 2.5 ** 2 * 8  # 9442.92 mm3; the 0.1 rad hole polygon adds about 0.26
+        self.assertAlmostEqual(plate["threemf_volume_mm3"], analytic, delta=0.5)
+
+    def test_a_ball_with_collapsed_pole_triangles_is_closed_outward_and_at_its_analytic_volume(self) -> None:
+        ball = self.report["TST-0002"]
+        self.assertEqual(ball["good"]["status"], "pass", ball["good"])
+        self.assertAlmostEqual(ball["threemf_volume_mm3"], 4 / 3 * math.pi * 5 ** 3, delta=5.0)
+
+    def test_the_3mf_holds_the_triangles_the_stl_holds(self) -> None:
+        for pn, report in self.report.items():
+            with self.subTest(pn=pn):
+                self.assertAlmostEqual(report["threemf_volume_mm3"], report["stl_volume_mm3"],
+                                       delta=1e-4 * report["stl_volume_mm3"])
+
+    def test_each_fault_fails_the_check_by_the_condition_it_breaks(self) -> None:
+        expected = {"cracked": ["watertight"], "inward": ["outward", "volume_within_deflection"],
+                    "scaled": ["volume_within_deflection", "box_within_deflection"],
+                    "other_material": ["material_named"], "no_material": ["material_named"]}
+        for pn, report in self.report.items():
+            for fault, failed in expected.items():
+                with self.subTest(pn=pn, fault=fault):
+                    self.assertEqual((report["faults"][fault]["status"], report["faults"][fault]["failed"]),
+                                     ("fail", failed))
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the trimesh, lxml and lib3mf environment")
