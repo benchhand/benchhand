@@ -604,6 +604,28 @@ class RequiredChecks(unittest.TestCase):
         functional["play"] = {"radial": fx.known(fx.quantity(0.02))}
         self.assertIn("motion.play@IF-001", self.obligations(documents), "declared play is checked whatever the function")
 
+    def test_a_critical_structural_interface_that_carries_a_load_needs_its_stop_reaction(self) -> None:
+        """engineering.stop_reaction for a critical structural interface with use-case loads or a known contact
+        load, at layout. A non-critical, non-structural or unloaded interface needs none."""
+        documents = fx.tst_record()
+        interfaces = documents["interfaces.yaml"]["interfaces"]
+        structural = [{"function": "structural"}]
+        for ident, critical, functions, extra in (
+                ("IF-011", True, structural, {"loads": ["head_load"]}),
+                ("IF-012", True, structural, {"contact": {"materials": ["tst_polymer_printed", "tst_metal_rod"],
+                                                          "load": fx.known(fx.quantity(240, "N"))}}),
+                ("IF-013", True, structural, {}),
+                ("IF-014", True, [{"function": "locating"}], {"loads": ["head_load"]}),
+                ("IF-015", False, structural, {"loads": ["head_load"]})):
+            interfaces.append(fx.interface(ident, "TST-0001", "TST-0002", "other", {
+                "critical": fx.known(critical), "functions": functions, **extra}))
+        found = self.obligations(documents)
+        self.assertEqual(sorted(i for i in found if i.startswith("engineering.stop_reaction")),
+                         ["engineering.stop_reaction@IF-011", "engineering.stop_reaction@IF-012"])
+        obligation = found["engineering.stop_reaction@IF-011"]
+        self.assertEqual((obligation.level, obligation.stage, dict(obligation.subject)),
+                         ("simulation_supported", "layout", {"interface": "IF-011"}))
+
 
 class ProfileDocuments(unittest.TestCase):
     def test_standalone_profiles_are_checked_without_a_project(self) -> None:
