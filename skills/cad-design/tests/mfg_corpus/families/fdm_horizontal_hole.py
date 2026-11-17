@@ -11,7 +11,7 @@ import math
 from typing import Any
 
 from corpus import Family, Outcome, Pair
-from support import assess_printed, printed_verdict, solids
+from support import printed_verdict, solids
 
 SUPPORT = "process.fdm.support@"
 SMALL = 8.0  # small round hole diameter
@@ -22,7 +22,7 @@ MID = 20.0  # axis height of a mid-height hole
 
 
 def _verdict(shape: Any) -> Outcome:
-    return printed_verdict(assess_printed(shape), SUPPORT)
+    return printed_verdict(shape, SUPPORT)
 
 
 def _prism(points: list[tuple[float, float]]) -> Any:
@@ -112,5 +112,6 @@ FAMILY = Family(
              round_roof_large_mid_height),
         Pair("diamond_roof_mid_height", "20 mm mid-height bore left round where a diamond top avoids the overhang",
              diamond_roof_mid_height),
-        Pair("square_roof_bridge", "12 mm flat-roofed horizontal hole beyond the 5 mm bridge", square_roof_bridge),
+        Pair("square_roof_bridge", "12 mm flat-roofed horizontal hole beyond the 5 mm bridge", square_roof_bridge,
+             known_gap="item 9: bridge span measured along the roof length"),
     ))

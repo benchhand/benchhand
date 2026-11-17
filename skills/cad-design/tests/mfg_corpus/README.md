@@ -91,10 +91,11 @@ in the same PR. A new family adds its own file; one file per family keeps stacke
 
 ## fdm_horizontal_hole
 
-Horizontal holes (axis parallel to the bed) against the FDM support obligation, six pairs built in code, no fixture files.
-The TEST profile has no self-supporting-hole calibration, so the limits come from its overhang (45 deg) and
-bridge (5 mm) calibrations. A round hole of 4 mm, inside the bridge span, counts as self-supporting. A teardrop or
-diamond top with 45 deg flanks needs no support at any diameter. A square hole 4 mm wide is a bridge inside the span.
+Horizontal holes (axis parallel to the bed) against the FDM support obligation, five pairs built in code, no fixture files.
+The TEST profile has no self-supporting-hole calibration, so no round roof counts as support-free. Each pair changes one
+thing: a round roof against a 45 deg teardrop or diamond roof of the same width, at a fixed height. The square pair uses
+the 5 mm bridge calibration.
 
-Recorded baseline: detection 100%, false positives 4 of 6 (67%). The check fails every twin that has a round or flat
-roof, even a 4 mm one. Only the teardrop and diamond twins pass. Those false positives are the finding. The fix belongs to a later change in `form_check.py` or `additive.py`.
+The `square_roof_bridge` pair is a known gap. Its 4 mm twin and 12 mm mutant both FAIL on the same wrong span, because
+the probe measures the roof length (30 mm) instead of the width (`form_check.py:862-867`). It counts as a miss until item 9
+fixes the span. The twin's FAIL is a false positive.
