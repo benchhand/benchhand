@@ -7,8 +7,13 @@ falling back to the host's fonts and producing platform-dependent PDFs.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
+import uuid
 import zlib
+from datetime import datetime, timezone
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -242,12 +247,108 @@ def read_pdf(path: Path) -> PdfContent:
     return PdfContent(page_sizes_pt=sizes, fonts=sorted(set(fonts)), text="\n".join(texts))
 
 
+DEFAULT_PDF_EPOCH = 315_532_800   # 1980-01-01T00:00:00Z: the PDF date when SOURCE_DATE_EPOCH is not set
+# Info-dictionary dates (PDF 32000 7.9.4): D:YYYY[MM[DD[HH[mm[SS[O[HH'[mm']]]]]]]] with O one of + - Z; the
+# apostrophes are optional here because readers accept their absence.
+_INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()([^()\r\n]*)(\))")
+_PDF_DATE = re.compile(rb"D:(\d{4})(\d\d)?(\d\d)?(\d\d)?(\d\d)?(\d\d)?((?:[+\-Z](?:\d\d'?(?:\d\d'?)?)?)?)")
+# XMP dates are ISO 8601: YYYY[-MM[-DD[THH:mm[:SS[.f+]][Z|+HH:MM]]]].
+_XMP_DATE = re.compile(rb'(xmp:(?:CreateDate|ModifyDate|MetadataDate)=")([^"]*)(")')
+_XMP_VALUE = re.compile(rb"(\d{4})(?:-(\d\d)(?:-(\d\d)(?:T(\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?(Z|[+\-]\d\d:\d\d)?)?)?)?")
+
+
+MAX_PDF_EPOCH = 253_402_300_799   # 9999-12-31T23:59:59Z: the last second a four-digit year can write
+
+
+def pdf_timestamp() -> int:
+    """Seconds since the epoch for the PDF dates: SOURCE_DATE_EPOCH, else a fixed date; never the clock.
+
+    The value is ASCII digits no later than the last four-digit year, so the dates it writes keep their length.
+    """
+    value = os.environ.get("SOURCE_DATE_EPOCH")
+    if value is None:
+        return DEFAULT_PDF_EPOCH
+    try:
+        epoch = int(value) if value.isascii() and value.isdigit() else -1
+    except ValueError:   # more digits than int() converts
+        epoch = -1
+    if not 0 <= epoch <= MAX_PDF_EPOCH:
+        raise ExportError("export_failed", f"SOURCE_DATE_EPOCH must be whole seconds from 0 to {MAX_PDF_EPOCH}, "
+                                           f"got {value[:40]!r}")
+    return epoch
+
+
+def document_id(content: bytes, page_mm: Sequence[float]) -> str:
+    """A UUID derived from what the sheet draws, so one sheet always gets one PDF /ID."""
+    digest = hashlib.sha256(content + json.dumps(list(page_mm)).encode("ascii")).hexdigest()
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, digest))
+
+
+def _pdf_date(text: bytes, when: datetime) -> bytes:
+    """``when`` (UTC) in the field set and offset form of the Info date ``text``; the length is unchanged."""
+    match = _PDF_DATE.fullmatch(text)
+    if match is None:
+        raise ExportError("export_failed", f"cannot pin the PDF date {text[:40]!r}: not a PDF date string")
+    parts = [f"{when.year:04d}", f"{when.month:02d}", f"{when.day:02d}", f"{when.hour:02d}", f"{when.minute:02d}",
+             f"{when.second:02d}"]
+    fields = "".join(part for part, found in zip(parts, match.groups()[:6]) if found is not None)
+    offset = re.sub(r"\d", "0", match.group(7).decode("ascii")).replace("-", "+")   # Z stays Z; +HH'mm' becomes +00'00'
+    return b"D:" + fields.encode("ascii") + offset.encode("ascii")
+
+
+def _xmp_date(text: bytes, when: datetime) -> bytes:
+    """``when`` (UTC) in the field set, fraction width and offset form of the XMP date ``text``."""
+    match = _XMP_VALUE.fullmatch(text)
+    if match is None:
+        raise ExportError("export_failed", f"cannot pin the XMP date {text[:40]!r}: not an ISO 8601 date")
+    year, month, day, hour, minute, second, fraction, zone = match.groups()
+    out = f"{when.year:04d}"
+    if month is not None:
+        out += f"-{when.month:02d}"
+    if day is not None:
+        out += f"-{when.day:02d}"
+    if hour is not None:
+        out += f"T{when.hour:02d}:{when.minute:02d}"
+    if second is not None:
+        out += f":{when.second:02d}"
+    if fraction is not None:
+        out += "." + "0" * len(fraction)
+    if zone is not None:
+        out += "Z" if zone == b"Z" else "+00:00"
+    return out.encode("ascii")
+
+
+def pin_pdf_dates(data: bytes, epoch: int) -> bytes:
+    """Replace Qt's wall-clock PDF dates (Info dictionary and XMP) with ``epoch`` in UTC.
+
+    Qt's QPdfWriter has no date setter. Each date is rewritten in its own field set, offset form and width
+    (Qt writes ``Z`` for a UTC machine and ``+00'00'`` otherwise), so every xref offset stays valid. A PDF
+    without a /CreationDate, or with a date this cannot parse, is refused: Qt changed its output.
+    """
+    if not 0 <= epoch <= MAX_PDF_EPOCH:
+        raise ExportError("export_failed", f"PDF date epoch {epoch} is outside 0 to {MAX_PDF_EPOCH}")
+    when = datetime.fromtimestamp(epoch, timezone.utc)
+    for name in (b"CreationDate", b"ModDate"):   # every date literal must be whole, so the parser below sees all of them
+        opened = data.count(b"/" + name + b" (")
+        whole = len(re.findall(rb"/" + name + rb" \([^()\r\n]*\)", data))
+        if opened != whole:
+            raise ExportError("export_failed", f"the PDF has an unterminated /{name.decode()} literal")
+    if b"/CreationDate (" not in data:
+        raise ExportError("export_failed", "the PDF has no /CreationDate to pin")
+    pinned = _XMP_DATE.sub(lambda m: m.group(1) + _xmp_date(m.group(2), when) + m.group(3),
+                           _INFO_DATE.sub(lambda m: m.group(1) + _pdf_date(m.group(2), when) + m.group(3), data))
+    if len(pinned) != len(data):
+        raise ExportError("export_failed", "pinning the PDF dates changed its length")
+    return pinned
+
+
 def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_text: Sequence[str],
                  timeout: float) -> dict[str, Any]:
     """Write ``pdf`` and the ``png`` preview from a checked drawing ``svg``; raise ExportError on failure.
 
     Returns the preview size and dark pixel count, the page size in mm, and the PDF's fonts.
     """
+    epoch = pdf_timestamp()   # a bad SOURCE_DATE_EPOCH fails here, before any FreeCAD job runs
     try:
         root = SafeET.parse(str(svg), forbid_dtd=True).getroot()
     except Exception as exc:
@@ -264,13 +365,16 @@ def export_sheet(freecadcmd: Path, svg: Path, pdf: Path, png: Path, required_tex
         raise ExportError("export_failed", message)
     job["texts"] = split_text(root, frozenset(result["supported_codepoints"]))
     job["svg_markup"] = ET.tostring(root, encoding="unicode")
-    job.update(dpi=PREVIEW_DPI, pdf=str(pdf), png=str(png))
+    job.update(dpi=PREVIEW_DPI, pdf=str(pdf), png=str(png),
+               document_id=document_id(json.dumps([job["svg_markup"], job["texts"]], sort_keys=True).encode("utf-8"),
+                                       job["page_mm"]))
     result, message = freecad_runtime.run_job(freecadcmd, EXPORT_JOB, job, svg.parent, timeout)
     if result is None:
         raise ExportError("export_failed", message)
     if result["png"]["dark_pixels"] < MIN_DARK_PIXELS:
         raise ExportError("empty_drawing", f"PNG preview appears blank: {result['png']['dark_pixels']} dark pixels")
     try:
+        pdf.write_bytes(pin_pdf_dates(pdf.read_bytes(), epoch))
         content = read_pdf(pdf)
     except (OSError, ValueError, zlib.error) as exc:
         raise ExportError("export_failed", f"cannot read the written PDF: {exc}") from exc

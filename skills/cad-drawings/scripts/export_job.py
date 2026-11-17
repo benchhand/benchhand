@@ -10,7 +10,7 @@ import traceback
 
 import FreeCAD as App
 import numpy
-from PySide6.QtCore import QByteArray, QMarginsF, QPointF, QRectF, QSizeF
+from PySide6.QtCore import QByteArray, QMarginsF, QPointF, QRectF, QSizeF, QUuid
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QImage, QPageLayout,
                            QPageSize, QPainter, QPdfWriter, QRawFont, QTransform)
 from PySide6.QtSvg import QSvgRenderer
@@ -78,6 +78,7 @@ def _write_pdf(job, renderer, lettering):
     width, height = job["page_mm"]
     writer = QPdfWriter(job["pdf"])
     writer.setCreator("cad-drawings")
+    writer.setDocumentId(QUuid(job["document_id"]))   # the PDF /ID and XMP uuid; the dates are pinned by the caller
     size = QPageSize(QSizeF(width, height), QPageSize.Unit.Millimeter, "", QPageSize.SizeMatchPolicy.ExactMatch)
     layout = QPageLayout(size, QPageLayout.Orientation.Portrait, QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
     if not writer.setPageLayout(layout):
