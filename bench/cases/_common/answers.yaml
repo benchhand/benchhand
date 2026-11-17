@@ -24,7 +24,8 @@ intents:
       reported; record that acceptance in its own decision record and cite it from the approval.
   - id: variant-gate
     kind: gate
-    match: ['VARIANT gate', '\b(select|choose|pick|prefer)\b.*\b(variant|concept)', '\bwhich (variant|concept)']
+    match: ['VARIANT gate', '\b(select|choose|pick|prefer)\b.*\b(variant|concept)', '\bwhich (variant|concept)',
+            '\bwhich (option|design)\b[^?]*\b[A-D],? (or|and) [A-D]\b[^?]*\b(layout|L1)\b']
     answer: I select the variant you recommend. VARIANT gate approved.
   - id: intent-gate
     kind: gate

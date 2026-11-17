@@ -273,6 +273,20 @@ class RoutingTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_regression_the_recorded_lettered_option_choice_is_the_variant_gate(self) -> None:
+        # The fourth small-mechanism build presented the VARIANT gate as "Which option, A, B or C, should go to
+        # layout?"; no intent matched, the default "use your recommended option" was sent, and the lead
+        # recorded the variant from it.
+        reply = dialogue.respond(case_script("small-mechanism"),
+                                 recorded_text("events-gate-small-mechanism-variant-options.jsonl"), "fixture", can_stop=False)
+        self.assertEqual([ask.intent for ask in reply.asks], ["variant-gate", "latched-load", "latched-load"])
+        self.assertTrue(reply.at_gate)
+        self.assertFalse(reply.unmatched_at_gate)
+        self.assertIn("VARIANT gate approved", reply.message)
+
+    def test_a_lettered_choice_in_ground_is_not_the_variant_gate(self) -> None:
+        reply = dialogue.respond(case_script("small-mechanism"), "Which screw head, A, B or C, do you want?", "fixture")
+        self.assertNotEqual([ask.intent for ask in reply.asks], ["variant-gate"])
     def test_regression_the_recorded_variant_gate_reply_instruction_belongs_to_the_gate(self) -> None:
         # The second small-mechanism fixture build failed as unmatched-at-gate: "Reply with a variant (A, B or C),
         # or ask for a change ..." is the VARIANT gate's own reply instruction, not a separate question.
