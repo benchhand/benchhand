@@ -282,6 +282,7 @@ NOT_IN_AUDIT = {
     ("drawing.schema.json", "/$defs/dimension_request/properties/instance"): "a 1-based instance index",
     ("drawing.schema.json", "/$defs/fit/properties/engagement_length_mm"): "sign-only; the upper bound is tracked in #141 and follows the part geometry",
     ("drawing.schema.json", "/$defs/heat_set/properties/engagement_length_mm"): "sign-only; the upper bound is tracked in #141 and follows the part geometry",
+    ("evidence-run.schema.json", "/$defs/step/properties/seconds"): "sign-only; a measured step duration in a run report, an output and not a setting",
     ("fea-case.schema.json", "/properties/solid_index"): "a 1-based index",
     ("manufacturing-capabilities.schema.json", "/$defs/profile/properties/revision"): "a revision counter",
     ("manufacturing-materials.schema.json", "/$defs/profile/properties/revision"): "a revision counter",
