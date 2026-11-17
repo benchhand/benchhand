@@ -34,12 +34,15 @@ class StepValidationTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.tmp.cleanup()
 
-    def write(self, name: str, *mode: str) -> str:
+    def run_probe(self, name: str, *mode: str) -> tuple[Path, str]:
         out = self.root / name
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(PROBE), str(out), *mode],
                               capture_output=True, text=True, check=False, timeout=900)
         self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
-        return out.read_text(encoding="utf-8")
+        return out, proc.stdout
+
+    def write(self, name: str, *mode: str) -> str:
+        return self.run_probe(name, *mode)[0].read_text(encoding="utf-8")
 
     def values(self, text: str) -> tuple[float, float, list[float]]:
         volume, area, centre = VOLUME.search(text), AREA.search(text), CENTRE.search(text)
@@ -93,6 +96,15 @@ class StepValidationTests(unittest.TestCase):
         text = self.write("assembly.step", "assembly")
         self.assertEqual(sorted(VALIDATION.findall(text)), KINDS)
         self.assertEqual(len(re.findall(r"NEXT_ASSEMBLY_USAGE_OCCURRENCE\s*\(", text)), 2)
+
+    def test_assembly_writer_refuses_a_located_definition(self) -> None:
+        # a located definition would export without validation properties, so the writer names the PN instead
+        out, stdout = self.run_probe("located-assembly.step", "located-assembly")
+        self.assertIn("MotionError: ", stdout)
+        self.assertIn("TST-0001", stdout)
+        self.assertIn("unlocated", stdout)
+        self.assertIn("component", stdout)
+        self.assertFalse(out.exists())
 
 
 if __name__ == "__main__":

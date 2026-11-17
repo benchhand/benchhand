@@ -6,7 +6,8 @@
 
 Usage: uv run --script step_header_probe.py OUT.step [MODE]
 MODE is `box` (default), `located` (the box carries a placement of its own), `assembly` (two occurrences),
-`placed` (two occurrences of a box built 50 along x, each placed 100 along y), `halftorus` or `tilted`
+`placed` (two occurrences of a box built 50 along x, each placed 100 along y),
+`located-assembly` (two occurrences of the located box; prints the error the writer raises), `halftorus` or `tilted`
 (a half torus cut by a plane through its axis or by a tilted plane).
 The FILE_NAME time is fixed, whatever the environment holds.
 """
@@ -55,15 +56,20 @@ def main() -> int:
 
     mode = sys.argv[2] if sys.argv[2:] else "box"
     box = BRepPrimAPI_MakeBox(10, 20, 30).Shape()
-    shapes = {"box": box, "located": moved(box, 50),
+    shapes = {"box": box, "located": moved(box, 50), "located-assembly": moved(box, 50),
               "placed": BRepPrimAPI_MakeBox(gp_Pnt(50, 0, 0), 10, 20, 30).Shape(),
               "halftorus": torus_half((1, 2, 0)), "tilted": torus_half((1, 2, 0.5))}
     part = pose.Part("TST-0001", "TST-0001 Box", shapes.get(mode, box))
-    if mode in ("assembly", "placed"):
+    if mode in ("assembly", "placed", "located-assembly"):
         occurrences = [SimpleNamespace(id=name, pn=part.pn, explicit=True) for name in ("a", "b")]
         shift = pose.Rigid(pose.Rigid.identity().rot, (0.0, 100.0, 0.0)) if mode == "placed" else pose.Rigid.identity()
         placements = {"a": shift, "b": shift}
-        pose.write_assembly_step(Path(sys.argv[1]), "TST-TOP", {part.pn: part}, occurrences, placements)
+        try:
+            pose.write_assembly_step(Path(sys.argv[1]), "TST-TOP", {part.pn: part}, occurrences, placements)
+        except pose.MotionError as error:
+            print(f"MotionError: {error}")
+        else:
+            print("no error")
     else:
         pose.write_part_step(Path(sys.argv[1]), part)
     return 0

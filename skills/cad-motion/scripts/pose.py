@@ -1297,7 +1297,10 @@ def write_part_step(path: Path, part: Part) -> None:
 def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Part], occurrences: Iterable[Any],
                         placements: Mapping[str, Rigid]) -> None:
     """Write AP242: one product per PN definition and, under the top product `top_name`, one component per
-    occurrence at `placements[occurrence.id]`. An explicit occurrence's component is named `<product> [@id]`."""
+    occurrence at `placements[occurrence.id]`. An explicit occurrence's component is named `<product> [@id]`.
+
+    A definition has no location of its own: the placement belongs on the component. The writer raises
+    MotionError for a located definition, because its validation properties would vanish."""
     from OCP.TopLoc import TopLoc_Location
 
     doc, tool = _new_document()
@@ -1307,6 +1310,9 @@ def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Par
     for occurrence in occurrences:
         part = definitions[occurrence.pn]
         if occurrence.pn not in labels:
+            if not part.shape.Location().IsIdentity():
+                raise MotionError(f"{occurrence.pn}: the definition carries a location of its own; pass an unlocated "
+                                  f"definition and put the placement on the component")
             labels[occurrence.pn] = _add_shape(tool, part.shape)
             _set_name(labels[occurrence.pn], part.name)
         component = tool.AddComponent(top, labels[occurrence.pn], TopLoc_Location(to_trsf(placements[occurrence.id])))
