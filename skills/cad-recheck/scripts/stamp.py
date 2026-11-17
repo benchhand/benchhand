@@ -328,7 +328,7 @@ def main() -> int:
             actual_hash = staged_tree_hash(root)
             order = validate.stages()
             stamped_stage = record_data.get("stage")
-            if stamped_stage not in order:
+            if not isinstance(stamped_stage, str) or stamped_stage not in order:
                 raise RuntimeError("recheck stamp has an unknown stage")
             # A provisional gate advances flow.stage past the gate just passed, so the stamp may sit one stage behind.
             if order.index(stamped_stage) not in (order.index(current_stage), order.index(current_stage) - 1):
