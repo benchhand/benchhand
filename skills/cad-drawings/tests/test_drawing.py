@@ -8,6 +8,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -317,6 +318,47 @@ class FreeCADConcurrency(unittest.TestCase):
                     self.assertEqual(len(list(self.root.glob("*.result.json.pid"))), 2)
                     os.kill(os.getpid(), signal.SIGTERM)
 
+class EpochCli(unittest.TestCase):
+    """An oversized SOURCE_DATE_EPOCH stops each producer with a structured error before any FreeCAD job."""
+
+    SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="cad-epoch-cli-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.marker = self.root / "freecad-launched"
+        fake = self.root / "freecadcmd"
+        fake.write_text(f"#!/bin/sh\necho launched >> '{self.marker}'\n", encoding="utf-8")
+        fake.chmod(0o755)
+        self.fake = fake
+
+    def run_cli(self, script: str, *args: str, epoch: str) -> tuple[int, dict]:
+        env = {**os.environ, "FREECADCMD": str(self.fake), "SOURCE_DATE_EPOCH": epoch}
+        proc = subprocess.run([sys.executable, str(self.SCRIPTS / script), str(self.root / "hw"), "--version", "v1", *args],
+                              capture_output=True, text=True, env=env, timeout=120)
+        try:
+            return proc.returncode, json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            raise AssertionError(f"no JSON from {script} (exit {proc.returncode}): {proc.stderr[-2000:]}") from None
+
+    def test_part_drawing_refuses_an_oversized_epoch(self) -> None:
+        code, out = self.run_cli("drawing.py", "--part", "LMP-0005", epoch="9" * 40)
+        self.assertEqual((code, out["error"]["code"]), (2, "invalid_source_date_epoch"), out)
+        self.assertFalse(self.marker.exists())
+
+    def test_assembly_drawing_refuses_an_oversized_epoch(self) -> None:
+        code, out = self.run_cli("assembly_drawing.py", epoch="9" * 40)
+        self.assertEqual((code, out["findings"][0]["code"]), (2, "invalid_source_date_epoch"), out)
+        self.assertFalse(self.marker.exists())
+
+    def test_a_valid_epoch_is_not_what_stops_either_cli(self) -> None:
+        for script, extra in (("drawing.py", ("--part", "LMP-0005")), ("assembly_drawing.py", ())):
+            with self.subTest(script=script):
+                _, out = self.run_cli(script, *extra, epoch="1700000000")
+                self.assertNotIn("invalid_source_date_epoch", json.dumps(out))
+
+
 class SheetExportParts(unittest.TestCase):
     """Text splitting and PDF reading without FreeCAD; the lamp drawings exercise the Qt export itself."""
 
@@ -446,6 +488,13 @@ class SheetExportParts(unittest.TestCase):
         with self.assertRaisesRegex(sheet_export.ExportError, "CreationDate"):
             sheet_export.pin_pdf_dates(b"%PDF-1.4\n1 0 obj\n<< >>\nendobj\n", 0)
 
+    def test_pdf_with_only_a_mod_date_is_refused(self) -> None:
+        data = self.qt_style_pdf().replace(b"/CreationDate (D:20261116203848+04'00') ", b"")
+        self.assertIn(b"/ModDate", data)
+        self.assertNotIn(b"/CreationDate", data)
+        with self.assertRaisesRegex(sheet_export.ExportError, "CreationDate"):
+            sheet_export.pin_pdf_dates(data, 0)
+
     def test_pdf_timestamp_follows_source_date_epoch_else_a_fixed_date_never_the_clock(self) -> None:
         with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000000"}):
             self.assertEqual(sheet_export.pdf_timestamp(), 1_700_000_000)
@@ -494,8 +543,9 @@ class SheetExportParts(unittest.TestCase):
             self.assertEqual(first, drawing.part_recipe(context, "LMP-0005"))
         with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700003600"}):
             second = drawing.part_recipe(context, "LMP-0005")
-        os.environ.pop("SOURCE_DATE_EPOCH", None)
-        default = drawing.part_recipe(context, "LMP-0005")
+        with patch.dict(os.environ):   # restored on exit, so a caller's epoch survives the test
+            os.environ.pop("SOURCE_DATE_EPOCH", None)
+            default = drawing.part_recipe(context, "LMP-0005")
         self.assertEqual(first["pdf_epoch"], 1_700_000_000)
         self.assertEqual(default["pdf_epoch"], sheet_export.DEFAULT_PDF_EPOCH)
         self.assertEqual(len({json.dumps(r, sort_keys=True) for r in (first, second, default)}), 3)
@@ -519,11 +569,13 @@ class SheetExportParts(unittest.TestCase):
                            '<text x="10" y="40" font-size="6" font-weight="bold">Bold 456</text>'
                            '<text x="10" y="55" font-size="5">⟂∥ 12.50 H7</text></svg>', encoding="utf-8")
             outputs = []
-            for name in ("a", "b"):
-                sheet_export.export_sheet(command, svg, root / f"{name}.pdf", root / f"{name}.png", ["Aa 0123"], 300)
-                if name == "a":
-                    time.sleep(1.1)   # a wall-clock date would differ by a second
-                outputs.append((root / f"{name}.pdf").read_bytes())
+            with patch.dict(os.environ):   # the default date, whatever epoch the caller has set
+                os.environ.pop("SOURCE_DATE_EPOCH", None)
+                for name in ("a", "b"):
+                    sheet_export.export_sheet(command, svg, root / f"{name}.pdf", root / f"{name}.png", ["Aa 0123"], 300)
+                    if name == "a":
+                        time.sleep(1.1)   # a wall-clock date would differ by a second
+                    outputs.append((root / f"{name}.pdf").read_bytes())
             self.assertEqual(outputs[0], outputs[1])
             self.assert_xref_intact(self, outputs[0])
             with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000000"}):

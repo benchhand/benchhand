@@ -249,6 +249,7 @@ def read_pdf(path: Path) -> PdfContent:
 
 DEFAULT_PDF_EPOCH = 315_532_800   # 1980-01-01T00:00:00Z: the PDF date when SOURCE_DATE_EPOCH is not set
 _INFO_DATE = re.compile(rb"(/(?:CreationDate|ModDate) \()D:\d{14}(?:[+-]\d\d'\d\d'|Z)(\))")
+_CREATION_DATE = re.compile(rb"/CreationDate \(D:\d{14}(?:[+-]\d\d'\d\d'|Z)\)")
 _XMP_DATE = re.compile(rb'(xmp:(?:CreateDate|ModifyDate|MetadataDate)=")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d([+-]\d\d:\d\d|Z)(")')
 
 
@@ -290,7 +291,7 @@ def pin_pdf_dates(data: bytes, epoch: int) -> bytes:
     when = datetime.fromtimestamp(epoch, timezone.utc)
     info = f"D:{when:%Y%m%d%H%M%S}+00'00'".encode("ascii")
     xmp = f"{when:%Y-%m-%dT%H:%M:%S}".encode("ascii")
-    if not _INFO_DATE.search(data):
+    if not _CREATION_DATE.search(data):
         raise ExportError("export_failed", "the PDF has no /CreationDate to pin")
 
     def info_date(match: re.Match[bytes]) -> bytes:

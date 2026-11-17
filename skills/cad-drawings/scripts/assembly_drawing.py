@@ -398,15 +398,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--timeout must be positive")
     if args.jobs is not None and args.jobs < 1:
         parser.error("--jobs must be a positive integer")
+    try:
+        sheet_export.pdf_timestamp()   # the recipe names this epoch; a bad SOURCE_DATE_EPOCH stops the run first
+    except sheet_export.ExportError as exc:
+        print(json.dumps({"status": "error", "findings": [assembly_check.finding("invalid_source_date_epoch", str(exc))]}))
+        return 2
     freecadcmd = freecad_runtime.find_freecadcmd()
     if freecadcmd is None or not freecadcmd.is_file():
         print(json.dumps({"status": "error", "findings": [assembly_check.finding(
             "freecad_unavailable", f"FreeCAD not found ({freecadcmd}); set FREECADCMD or put freecadcmd on PATH")]}))
-        return 2
-    try:
-        sheet_export.pdf_timestamp()   # the recipe names this epoch; a bad SOURCE_DATE_EPOCH stops the run here
-    except sheet_export.ExportError as exc:
-        print(json.dumps({"status": "error", "findings": [assembly_check.finding("invalid_source_date_epoch", str(exc))]}))
         return 2
     try:
         hw = args.hw.resolve()

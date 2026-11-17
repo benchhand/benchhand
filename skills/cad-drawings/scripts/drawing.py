@@ -664,6 +664,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.jobs is not None and args.jobs < 1:
         parser.error("--jobs must be a positive integer")
+    try:
+        sheet_export.pdf_timestamp()   # the recipes name this epoch; a bad SOURCE_DATE_EPOCH stops the run first
+    except sheet_export.ExportError as exc:
+        print(json.dumps(fail("invalid_source_date_epoch", str(exc))))
+        return 2
     if len(set(args.part)) != len(args.part):
         print(json.dumps(fail("invalid_input", "--part values must be unique because each part has one output package"), indent=2))
         return 2
@@ -682,11 +687,6 @@ def main(argv: list[str] | None = None) -> int:
     freecadcmd = freecad_runtime.find_freecadcmd()
     if freecadcmd is None or not freecadcmd.is_file():
         print(json.dumps(fail("freecad_unavailable", "freecadcmd not found; set FREECADCMD or put freecadcmd on PATH")))
-        return 2
-    try:
-        sheet_export.pdf_timestamp()   # the recipes name this epoch; a bad SOURCE_DATE_EPOCH stops the run here
-    except sheet_export.ExportError as exc:
-        print(json.dumps(fail("invalid_source_date_epoch", str(exc))))
         return 2
     if output_root is not None and len(args.part) > 1:
         try:
