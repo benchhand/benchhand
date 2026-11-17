@@ -10,6 +10,7 @@ Shapes (mm, the frame they are probed in):
   pocket  a 40 x 30 x 25 block with a 20 x 10 pocket 20 deep from the top, its vertical corners R2
   plate   a 40 x 30 x 3 plate with a through 6 mm hole at x 20, y 15
   disc    a 100 mm disc, 5 mm thick, on the bed; its cylinder seam is turned 5.625 degrees off +X
+  slot    a 40 x 30 x 30 block on the bed with a 4 mm wide, 30 mm long square slot through it along Y, its flat roof at z 14
   pair    two 10 x 10 x 2 plates 20 mm apart: one component of two equivalent members
 Usage: uv run --script process_probe.py
 stdout: {case: probe facts (process_checks Geometry)}.
@@ -94,6 +95,8 @@ CASES = {
     "plate": (cut(box(0, 0, 0, 40, 30, 3), cylinder((20, 15, -1), (0, 0, 1), 3, 5)), "model",
               bore("ream_bore", (23, 15, 1.5), (-1, 0, 0)), {"directions": {"+z": [0.0, 0.0, 1.0], "-x": [-1.0, 0.0, 0.0]}}),
     "disc": (turned_disc(50.0, 5.0, 5.625), "bed", {}, {}),
+    "slot": (cut(box(0, 0, 0, 40, 30, 30), box(18, -1, 10, 22, 31, 14)), "bed",
+             plane("slot_roof", (20, 15, 14), (0, 0, -1)), {}),
     "pair": (occ.compound([box(0, 0, 0, 10, 10, 2), box(30, 0, 0, 40, 10, 2)]), "bed", {}, {}),
 }
 

@@ -85,6 +85,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import itertools
 import json
 import math
 import sys
@@ -93,7 +94,7 @@ import traceback
 from collections.abc import Iterator, Sequence
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 LAYOUT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "layout.py"
@@ -674,6 +675,8 @@ PROBE_GRID = 8  # UV samples per direction on each face for normals, down-facing
 PROBE_RAY_SAMPLES = 16  # samples per face whose visibility rays are cast along each requested direction
 PROBE_TOL_MM = 1e-3  # a locator patch point this close to a face lies on it (cad-model components.BIND_TOLERANCE_MM)
 PROBE_RAY_OFFSET_MM = 1e-4
+ROOF_PARALLEL_TOL = 1e-6  # sine of the allowed angle between two edges that bound one bridged strip
+ROOF_STRIP_FIT = (0.9, 1.001)  # roof area over (anchor gap x anchor extent) of a roof that is one strip
 PROBE_LEVEL_MM = 1e-6  # faces this close to the lowest z lie on the bed
 FULL_TURN = 2.0 * math.pi - 1e-6
 
@@ -734,10 +737,22 @@ def _face_samples(face: Any) -> list[tuple[tuple[float, float, float], tuple[flo
     return found
 
 
-def _edges(face: Any) -> list[tuple[tuple[float, ...], tuple[float, float, float], tuple[float, float, float]]]:
-    """(rounded midpoint key, midpoint, chord direction) of each non-degenerate edge of `face`."""
+class _Edge(NamedTuple):
+    """One non-degenerate edge of a face: a rounded midpoint key, the midpoint, the chord, both ends and whether it is a line."""
+
+    key: tuple[float, ...]
+    mid: tuple[float, float, float]
+    chord: tuple[float, float, float]
+    start: tuple[float, float, float]
+    end: tuple[float, float, float]
+    straight: bool
+
+
+def _edges(face: Any) -> list[_Edge]:
+    """Each non-degenerate edge of `face`."""
     from OCP.BRep import BRep_Tool
     from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.GeomAbs import GeomAbs_Line
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
 
@@ -753,9 +768,45 @@ def _edges(face: Any) -> list[tuple[tuple[float, ...], tuple[float, float, float
         curve = BRepAdaptor_Curve(edge)
         first, last = curve.FirstParameter(), curve.LastParameter()
         mid = _xyz(curve.Value((first + last) / 2.0))
-        chord = _sub(_xyz(curve.Value(last)), _xyz(curve.Value(first)))
-        found.append((tuple(round(c, 5) for c in mid), mid, chord))
+        start, end = _xyz(curve.Value(first)), _xyz(curve.Value(last))
+        found.append(_Edge(tuple(round(c, 5) for c in mid), mid, _sub(end, start), start, end, curve.GetType() == GeomAbs_Line))
     return found
+
+
+def _touch(a: _Edge, b: _Edge) -> bool:
+    return any(_norm(_sub(p, q)) <= PROBE_TOL_MM for p in (a.start, a.end) for q in (b.start, b.end))
+
+
+def _strip_gap(a: _Edge, b: _Edge, anchors: list[_Edge], area: float) -> float | None:
+    """The distance between parallel overlapping line edges `a` and `b` when the roof is that strip: its area is
+    ROOF_STRIP_FIT of gap x the extent of `anchors` along the edges. None otherwise."""
+    length, other = _norm(a.chord), _norm(b.chord)
+    if not (a.straight and b.straight) or min(length, other) <= PROBE_TOL_MM:
+        return None
+    along = tuple(c / length for c in a.chord)
+    if _norm(_cross(along, b.chord)) > ROOF_PARALLEL_TOL * other:
+        return None
+    gap = _norm(_cross(_sub(b.start, a.start), along))
+    spans = [sorted(_dot(p, along) for p in (e.start, e.end)) for e in (a, b)]
+    if gap <= PROBE_TOL_MM or min(spans[0][1], spans[1][1]) - max(spans[0][0], spans[1][0]) <= PROBE_TOL_MM:
+        return None
+    reach = [_dot(p, along) for e in anchors for p in (e.start, e.mid, e.end)]
+    low, high = ROOF_STRIP_FIT
+    return gap if low <= area / (gap * (max(reach) - min(reach))) <= high else None
+
+
+def _roof_span(area: float, anchors: list[_Edge]) -> tuple[str, float | None]:
+    """(kind, span_mm) of a horizontal ceiling of `area` held at `anchors`, the edges where the next face continues lower.
+
+    Filament crosses the roof between opposing anchors, so the span is the gap between the closest pair of parallel
+    anchor edges when the roof is just that strip (ends and round caps may be anchored or free). Anchors that all touch
+    or a lone anchor hold a cantilever: an "overhang". Any other roof (an L, a ring around a pillar, a taper) is a
+    "bridge" of unknown span: the best single filament direction is not worked out here."""
+    pairs = list(itertools.combinations(anchors, 2))
+    if not any(not _touch(a, b) for a, b in pairs):
+        return "overhang", None
+    gaps = [gap for a, b in pairs if (gap := _strip_gap(a, b, anchors, area)) is not None]
+    return "bridge", min(gaps, default=None)
 
 
 def _distance(point: tuple[float, float, float], shape: Any) -> float:
@@ -887,11 +938,11 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
         rows.append(row)
         edges = _edges(face)
         edges_of.append(edges)
-        for edge_key, _, _ in edges:
-            adjacency.setdefault(edge_key, []).append(n)
+        for edge in edges:
+            adjacency.setdefault(edge.key, []).append(n)
 
     def neighbours(n: int) -> list[tuple[int, Any]]:
-        return [(m, edge) for edge in edges_of[n] for m in adjacency.get(edge[0], ()) if m != n]
+        return [(m, edge) for edge in edges_of[n] for m in adjacency.get(edge.key, ()) if m != n]
 
     starts: dict[int, set[int]] = {}
     for n, row in enumerate(rows):
@@ -921,11 +972,8 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
         if face_low > bed_z + PROBE_LEVEL_MM and all(rows[m]["z_mm"][0] >= face_low - PROBE_LEVEL_MM for m, _ in others):
             kind = "island"  # a local lowest region off the bed: supports must start under it
         elif row["type"] == "plane" and row.get("normal", [0, 0, 0])[2] < -1.0 + 1e-6:
-            # A horizontal ceiling anchored where a neighbour continues downward: two or more anchors bridge it.
-            anchored = [edge[1] for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM]
-            if len(anchored) >= 2:
-                span = max(_norm(_sub(a, b)) for a in anchored for b in anchored)
-                kind = "bridge" if span > PROBE_TOL_MM else kind
+            # A horizontal ceiling: anchored where a neighbour continues downward, it bridges between opposing anchors.
+            kind, span = _roof_span(row["area_mm2"], [edge for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM])
         row["down"] = {"area_mm2": round(sum(angles.values()), 6), "max_angle_deg": float(max(angles)),
                        "angles": [[float(a), round(v, 6)] for a, v in sorted(angles.items())], "kind": kind,
                        "span_mm": None if span is None else round(span, 6),
