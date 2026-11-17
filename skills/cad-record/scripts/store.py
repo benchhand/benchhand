@@ -7,7 +7,9 @@ sha256 of its object) and the producer's facts. Locks (`cache.locks`) serialize 
 
 A producer looks a key up with `record`. On a miss it takes `lock(key)`, looks it up once more, computes, and
 `claim`s the record. `claim` keeps the first record of a key even without the lock (os.link onto the name), and a
-second writer whose members differ is a finding in `cache.findings`: the key misses an input. `record` re-hashes
+second writer whose members differ is a finding in `cache.findings`: the key misses an input. A stale or unreadable
+record gives way to the next claim, and `retire` removes a record its producer judged unusable for a reason outside
+the key. `record` re-hashes
 every member on read and names why a record is stale. `place` lays a record's members down beside each other in a
 fresh folder and renames that folder into place, so a reader sees the whole set or none of it. `place_object`
 links one object. Every write lands beside its name and the store renames it onto that name, and every store
@@ -49,6 +51,7 @@ SHA = re.compile(r"[0-9a-f]{64}")
 READ_ONLY = 0o444
 FORMER = (".cad/parts", ".cad/builds")  # the part store before hw/.cad/cache/, removed by gc
 _RENAME_EXCHANGE = 2  # renameat2 flag (Linux)
+_RENAME_SWAP = 2  # renamex_np flag (macOS)
 
 
 class StoreError(RuntimeError):
@@ -94,18 +97,39 @@ def _names_version(text: str, label: str) -> bool:
     return re.search(rf"(^|[/._-]){re.escape(label)}([/._-]|$)", text) is not None
 
 
-def _exchange(source: Path, target: Path) -> bool:
-    """Swap two existing paths in one step where the platform can (Linux renameat2). False where it cannot."""
-    if not sys.platform.startswith("linux"):
+def _publish(staged: Path, target: Path) -> bool:
+    """Give `staged`'s bytes the name `target` unless that name exists: True when this call created it. A hard
+    link makes the name appear whole. Where the filesystem has no hard links, an exclusive create of `target`
+    takes the name instead, and a reader that meets it half-written sees an unreadable record, a miss."""
+    try:
+        os.link(staged, target)  # first writer wins: os.link fails with FileExistsError on an existing name
+        return True
+    except FileExistsError:
         return False
+    except OSError:  # no hard links here (FAT, some network shares)
+        pass
+    try:
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(staged.read_bytes())
+    return True
+
+
+def _exchange(source: Path, target: Path) -> bool:
+    """Swap two existing paths in one step where the platform can (Linux renameat2, macOS renamex_np). False
+    where it cannot, with both paths unchanged."""
     try:
         libc = ctypes.CDLL(None, use_errno=True)
-        renameat2 = libc.renameat2
-    except (OSError, AttributeError):
+        if sys.platform.startswith("linux"):
+            at_fdcwd = -100
+            return bool(libc.renameat2(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target),
+                                       _RENAME_EXCHANGE) == 0)
+        if sys.platform == "darwin":
+            return bool(libc.renamex_np(os.fsencode(source), os.fsencode(target), _RENAME_SWAP) == 0)
+    except (OSError, AttributeError):  # an older C library without the call
         return False
-    at_fdcwd = -100
-    if renameat2(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target), _RENAME_EXCHANGE) == 0:
-        return True
     return False
 
 
@@ -141,9 +165,10 @@ class Store:
         return self._checked[digest]
 
     def intern(self, path: Path) -> str:
-        """Store the file at `path` as an object and return its sha256. The store holds equal bytes once."""
+        """Store the file at `path` as an object and return its sha256. The store holds equal bytes once: when it
+        holds them already, `path` becomes a read-only link to that object, or a copy where links fail."""
         digest = file_sha(path)
-        if self.holds(digest):
+        if self.holds(digest) and self.place_object(digest, path):
             return digest
         target = self._path("cache.part_objects", digest)
         staged = self._folder("cache.part_objects") / f".{digest}.{os.getpid()}.tmp"
@@ -198,9 +223,10 @@ class Store:
         return Lookup(data, "")
 
     def claim(self, key: str, record: Mapping[str, Any], *, version_labels: tuple[str, ...] = ()) -> str:
-        """Keep `record` under `key` unless a record is there already: `claimed`, `exists` (the same members) or
-        `conflict: ...` (a second writer's members differ, and cache.findings logs it). Refuses (ValueError) a
-        record whose member paths name one of `version_labels`: a cached output is never version-specific."""
+        """Keep `record` under `key` unless a usable record is there already: `claimed`, `replaced: <why>` (the
+        record there was stale or unreadable), `exists` (the same members) or `conflict: ...` (a second writer's
+        members differ, and cache.findings logs it). Refuses (ValueError) a record whose member paths name one of
+        `version_labels`: a cached output is never version-specific."""
         if not SHA.fullmatch(key):
             raise ValueError(f"a store key is a sha256, not {key!r}")
         members = _members(record)
@@ -217,21 +243,30 @@ class Store:
         staged.write_text(json.dumps({**record, "format": FORMAT}, indent=1, sort_keys=True) + "\n",
                           encoding="utf-8")
         try:
-            os.link(staged, target)  # first writer wins: os.link fails with FileExistsError on an existing name
-            outcome = "claimed"
-        except FileExistsError:
-            kept = self.record(key).record
-            if kept is not None and kept.get("members") == members:
-                outcome = "exists"
-            else:
-                differ = sorted(n for n in set(members) | set((kept or {}).get("members") or {})
-                                if members.get(n) != ((kept or {}).get("members") or {}).get(n))
-                outcome = (f"conflict: members {', '.join(differ)} differ from the record kept for this key, so "
-                           "the key is missing an input")
-                self._finding(key, outcome)
+            if _publish(staged, target):
+                return "claimed"
+            found = self.record(key)
+            kept = found.record
+            if kept is None:  # stale or unreadable: this record replaces it whole
+                os.replace(staged, target)
+                return f"replaced: {found.reason}"
+            if kept.get("members") == members:
+                return "exists"
+            differ = sorted(n for n in set(members) | set(kept["members"]) if members.get(n) != kept["members"].get(n))
+            outcome = (f"conflict: members {', '.join(differ)} differ from the record kept for this key, so the key "
+                       "is missing an input")
+            self._finding(key, outcome)
+            return outcome
         finally:
             staged.unlink(missing_ok=True)
-        return outcome
+
+    def retire(self, key: str) -> None:
+        """Remove the record of `key`, so that the next `claim` of `key` keeps its record. A producer calls it
+        under `lock(key)` for a record it judged unusable for a reason outside the key, such as changed
+        producer code that its facts name."""
+        if not SHA.fullmatch(key):
+            raise ValueError(f"a store key is a sha256, not {key!r}")
+        self._path("cache.part_records", key).unlink(missing_ok=True)
 
     def _finding(self, key: str, message: str) -> None:
         path = layout.resolve(self.hw, "cache.findings")
@@ -256,7 +291,9 @@ class Store:
     def place(self, record: Mapping[str, Any], destination: Path) -> str:
         """Lay `record`'s members down as the folder `destination`, whole or not at all: "" when placed, else why
         (`stale: ...`) with `destination` untouched. Where the platform allows, it swaps an existing `destination`
-        out in one step, else moves it aside first, then removes it."""
+        out in one step. Elsewhere it moves the old folder aside, renames the new one in, and moves the old one
+        back if that rename fails. Only there can a kill between the two renames leave `destination` absent,
+        with the old folder beside it as `.<name>.<pid>.replaced`."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         members = _members(record)
@@ -280,7 +317,11 @@ class Store:
                 return ""
             aside = destination.with_name(f".{destination.name}.{os.getpid()}.replaced")
             os.rename(destination, aside)
-            os.rename(staged, destination)
+            try:
+                os.rename(staged, destination)
+            except OSError:  # put the old folder back before reporting the failure
+                os.rename(aside, destination)
+                raise
             shutil.rmtree(aside)
             return ""
         finally:

@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
@@ -107,6 +108,36 @@ class Objects(Fixture):
         self.assertFalse(self.store.place_object(digest, self.root / "run" / "b.step"))
         self.assertFalse((self.root / "run" / "b.step").exists())
 
+    def test_interning_bytes_already_stored_turns_the_output_into_a_read_only_link(self) -> None:
+        digest = self.store.intern(self.file("a.step", b"STEP"))
+        rebuilt = self.file("b.step", b"STEP")  # a rebuild writes equal bytes to a new, writable file
+        self.assertEqual(self.store.intern(rebuilt), digest)
+        self.assertTrue(os.path.samefile(rebuilt, self.hw / ".cad" / "cache" / "objects" / digest))
+        self.assertEqual(rebuilt.stat().st_mode & 0o777, 0o444)
+
+    def test_interning_after_gc_removed_an_object_this_store_checked_stores_it_again(self) -> None:
+        digest = self.store.intern(self.file("a.step", b"STEP"))
+        stored = self.hw / ".cad" / "cache" / "objects" / digest
+        stored.unlink()  # another process's gc, after this Store checked the object
+        rebuilt = self.file("b.step", b"STEP")
+        self.assertEqual(self.store.intern(rebuilt), digest)
+        self.assertEqual(stored.read_bytes(), b"STEP")
+        self.assertTrue(os.path.samefile(rebuilt, stored))
+
+    def test_without_hard_links_objects_and_records_are_copies_and_the_first_writer_still_wins(self) -> None:
+        with mock.patch.object(store.os, "link", side_effect=OSError(1, "Operation not permitted")):
+            first = self.claimed(key("n"), {"mesh.unv": b"ONE"})
+            other = {"kind": "test", "members": {"mesh.unv": self.store.intern(self.file("x.unv", b"TWO"))}}
+            outcome = self.store.claim(key("n"), other)
+            destination = self.root / "run" / "mesh"
+            placed = self.store.place(first, destination)
+        self.assertRegex(outcome, "^conflict: ")
+        self.assertEqual(store.Store(self.hw).record(key("n")).record["members"], first["members"])
+        self.assertEqual((placed, (destination / "mesh.unv").read_bytes()), ("", b"ONE"))
+        stored = self.hw / ".cad" / "cache" / "objects" / first["members"]["mesh.unv"]
+        self.assertFalse(os.path.samefile(destination / "mesh.unv", stored))
+        self.assertEqual((destination / "mesh.unv").stat().st_mode & 0o777, 0o444)
+
 
 class Records(Fixture):
     def test_a_claimed_record_is_read_back_with_its_members(self) -> None:
@@ -151,6 +182,22 @@ class Records(Fixture):
         self.assertEqual(outcomes.count("claimed"), 1)
         self.assertEqual(sum(o.startswith("conflict") for o in outcomes), 7)
 
+    def test_a_stale_record_gives_way_to_the_next_claim(self) -> None:
+        old = self.claimed(key("r"), {"mesh.unv": b"OLD"})
+        stored = self.hw / ".cad" / "cache" / "objects" / old["members"]["mesh.unv"]
+        stored.unlink()  # gc, or a hand, removed the record's object
+        fresh = {"kind": "test", "members": {"mesh.unv": self.store.intern(self.file("n.unv", b"NEW"))}}
+        self.assertRegex(store.Store(self.hw).claim(key("r"), fresh), r"^replaced: stale: mesh\.unv ")
+        self.assertEqual(store.Store(self.hw).record(key("r")).record["members"], fresh["members"])
+
+    def test_a_retired_record_gives_way_to_the_next_claim(self) -> None:
+        self.claimed(key("t"), {"mesh.unv": b"OLD"})
+        fresh = {"kind": "test", "members": {"mesh.unv": self.store.intern(self.file("n.unv", b"NEW"))}}
+        with self.store.lock(key("t")):
+            self.store.retire(key("t"))
+            self.assertEqual(self.store.claim(key("t"), fresh), "claimed")
+        self.assertEqual(self.store.record(key("t")).record["members"], fresh["members"])
+
     def test_a_record_that_names_a_version_is_refused(self) -> None:
         digest = self.store.intern(self.file("a", b"A"))
         for members in ({"versions/v3/mesh.unv": digest}, {"v3.unv": digest}):
@@ -177,6 +224,35 @@ class Place(Fixture):
                          ["mesh.unv", "sub/mesh.json"])
         self.assertEqual((destination / "mesh.unv").read_bytes(), b"UNV")
         self.assertEqual([p.name for p in destination.parent.iterdir()], ["mesh"])  # no staging left beside it
+
+    def existing(self) -> tuple[dict, Path]:
+        record = self.claimed(key("e"), {"mesh.unv": b"NEW"})
+        destination = self.root / "run" / "mesh"
+        destination.mkdir(parents=True)
+        (destination / "old.txt").write_text("old", encoding="utf-8")
+        return record, destination
+
+    def test_without_a_swap_call_the_old_folder_is_moved_aside_and_replaced(self) -> None:
+        record, destination = self.existing()
+        with mock.patch.object(store, "_exchange", return_value=False):
+            self.assertEqual(self.store.place(record, destination), "")
+        self.assertEqual([p.name for p in destination.iterdir()], ["mesh.unv"])
+        self.assertEqual([p.name for p in destination.parent.iterdir()], ["mesh"])
+
+    def test_a_failed_replacement_puts_the_old_folder_back(self) -> None:
+        record, destination = self.existing()
+        real = os.rename
+
+        def rename(source, target):
+            if Path(target) == destination and Path(source).name.endswith(".placing"):
+                raise OSError(28, "No space left on device")
+            real(source, target)
+
+        with mock.patch.object(store, "_exchange", return_value=False), \
+                mock.patch.object(store.os, "rename", side_effect=rename), self.assertRaises(OSError):
+            self.store.place(record, destination)
+        self.assertEqual([p.name for p in destination.iterdir()], ["old.txt"])
+        self.assertEqual([p.name for p in destination.parent.iterdir()], ["mesh"])
 
     def test_a_record_with_a_missing_object_leaves_the_destination_untouched(self) -> None:
         record = self.claimed(key("u"), {"a": b"A", "b": b"B"})

@@ -298,6 +298,18 @@ def reusable(cached: Mapping[str, Any], request: Mapping[str, Any], hw: Path, se
             and sources_hold(cached.get("sources"), hw, seen))
 
 
+def cache_part(parts_store: Any, key: str, fresh: Mapping[str, Any], request: Mapping[str, Any], hw: Path,
+               label: str) -> str:
+    """Store the record of a part just built under its key, and return the store's outcome. A record already
+    there that `reusable` rejects, such as one whose runner sources changed, gives way to this one. Raises
+    ValueError when a member names the version `label`."""
+    with parts_store.lock(key):
+        kept = parts_store.record(key).record
+        if kept is not None and not reusable(kept, request, hw, {}):
+            parts_store.retire(key)
+        return str(parts_store.claim(key, fresh, version_labels=(label,)))
+
+
 def orchestrator_tools() -> dict[str, str]:
     return {"python": platform.python_version(), **record.load_layout().tool_versions(ORCHESTRATOR_DISTS)}
 
@@ -542,10 +554,10 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
                     objects_of[pn]["manufacture_step"] = parts_store.intern(Path(requests[pn]["manufacture_step"]))
                 if (res.get("inputs") == inputs[pn] and res.get("inputs_stable") is True
                         and part_inputs(by_pn[pn]) == inputs[pn]):
+                    fresh = {"kind": "part", "pn": pn, "kernel": kernel, "tools": result["tools"],
+                             "sources": project_sources(result["sources"], hw), "result": res, "members": objects_of[pn]}
                     try:
-                        parts_store.claim(keys[pn], {"kind": "part", "pn": pn, "kernel": kernel, "tools": result["tools"],
-                                                     "sources": project_sources(result["sources"], hw), "result": res,
-                                                     "members": objects_of[pn]}, version_labels=(label,))
+                        cache_part(parts_store, keys[pn], fresh, requests[pn], hw, label)
                     except ValueError:  # the store refuses a version-specific member: build it again next run
                         unsaved.append(pn)
                 else:

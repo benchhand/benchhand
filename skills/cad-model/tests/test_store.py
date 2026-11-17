@@ -60,6 +60,8 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(os.path.samefile(first, obj))
         twin = self.output("TST-0002.step", b"ISO-10303-21; one")  # equal bytes from another build
         self.assertEqual(self.store.intern(twin), digest)
+        self.assertTrue(os.path.samefile(twin, obj))
+        self.assertEqual(twin.stat().st_mode & 0o777, 0o444)
         self.assertEqual(sorted(p.name for p in obj.parent.iterdir()), [digest])
         self.assertEqual((obj.parent.parent / ".gitignore").read_text(encoding="utf-8"), "*\n")
 
@@ -92,11 +94,11 @@ class StoreTests(unittest.TestCase):
         digest = self.store.intern(self.output("TST-0001.step", b"geometry"))
         (self.hw / OBJECTS / digest).unlink()
         target = self.hw / "versions" / ".v2.partial-2" / "parts" / "TST-0001.step"
-        self.assertFalse(store.Store(self.hw).place_object(digest, target))
-        self.assertFalse(target.exists())
+        self.assertFalse(self.store.place_object(digest, target))
+        self.assertEqual(list(target.parent.iterdir()), [])
         rebuilt = self.output("rebuilt.step", b"geometry")
-        self.assertEqual(store.Store(self.hw).intern(rebuilt), digest)
-        self.assertTrue((self.hw / OBJECTS / digest).is_file())
+        self.assertEqual(self.store.intern(rebuilt), digest)
+        self.assertTrue(os.path.samefile(rebuilt, self.hw / OBJECTS / digest))
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes through read-only modes")
     def test_a_later_rebuild_cannot_change_an_earlier_versions_bytes(self) -> None:
@@ -202,6 +204,34 @@ class StoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "version label v1"):
             self.store.claim(self.part_key("TST-0001"), {"kind": "part", "members": {"versions/v1/TST-0001.step": digest}},
                              version_labels=("v1",))
+
+    def test_a_rebuild_after_its_runner_sources_changed_replaces_the_record_and_is_reused_next(self) -> None:
+        """Runner sources sit outside the key. After they change, `run` builds the part again, and that build's
+        record replaces the old one, so the run after reuses the part instead of rebuilding it every time."""
+        helper = self.hw / "lib" / "helper.py"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("X = 1\n", encoding="utf-8")
+        request = {"manufacture_step": None}
+        key = self.part_key("TST-0001")
+
+        def built(data: bytes) -> dict:  # each build writes a new file, as the runner does
+            path = self.output(f"TST-0001-{len(list(self.work.iterdir()))}.step", data)
+            return {"kind": "part", "kernel": "cadquery", "result": {"ok": True},
+                    "members": {"step": self.store.intern(path)},
+                    "sources": {"hw": {"lib/helper.py": sha(helper.read_bytes())}, "skills": {}}}
+
+        self.assertEqual(build.cache_part(self.store, key, built(b"one"), request, self.hw, "v1"), "claimed")
+        for version, data in ((2, b"one"), (3, b"two")):  # the same bytes, or bytes the changed helper now makes
+            with self.subTest(data=data):
+                helper.write_text(f"X = {version}\n", encoding="utf-8")
+                self.assertFalse(build.reusable(self.store.record(key).record, request, self.hw, {}))
+                self.assertEqual(build.cache_part(self.store, key, built(data), request, self.hw, f"v{version}"),
+                                 "claimed")
+                kept = store.Store(self.hw).record(key).record
+                self.assertTrue(build.reusable(kept, request, self.hw, {}))
+                self.assertEqual(kept["members"]["step"], sha(data))
+        self.assertEqual(build.cache_part(self.store, key, built(b"three"), request, self.hw, "v4")[:9], "conflict:")
+        self.assertEqual(store.Store(self.hw).record(key).record["members"]["step"], sha(b"two"))
 
 
 class PartKeyCompatibilityTests(unittest.TestCase):
