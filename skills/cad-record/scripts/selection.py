@@ -131,8 +131,9 @@ APPROVAL_GATE = ("a proposal only: it becomes a decision when the lead records i
                  "(status confirmed, recommendation status final, assessment input_sha256 and decision) through the approval gate")
 # The record inputs a selection reads, digested so a recorded assessment can be checked for staleness.
 DIGEST_SCOPE = ("product.yaml use_case", "requirements.yaml", "interfaces.yaml",
-                "parts/*/part.yaml PN, make_buy, procurement, process, material, transparency and intent",
+                "parts/*/part.yaml PN, make_buy, procurement, process, material, transparency and intent (without color)",
                 "manufacturing/capabilities.yaml", "manufacturing/materials.yaml", "manufacturing/selection.yaml candidates")
+_APPEARANCE_INTENT = ("color",)  # intent keys that never reach the selection digest
 _PART_FIELDS = ("PN", "make_buy", "procurement", "process", "material", "transparency", "intent")
 
 
@@ -238,7 +239,10 @@ def input_digest(documents: Mapping[str, Any]) -> str:
         scoped["manufacturing/selection.yaml#candidates"] = selection.get("candidates")
     for rel, data in documents.items():
         if re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and isinstance(data, Mapping):
-            scoped[rel] = {key: data.get(key) for key in _PART_FIELDS}
+            part = {key: data.get(key) for key in _PART_FIELDS}
+            if isinstance(part["intent"], Mapping):  # the colour is appearance, not a selection input
+                part["intent"] = {key: value for key, value in part["intent"].items() if key not in _APPEARANCE_INTENT}
+            scoped[rel] = part
     text = json.dumps(scoped, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

@@ -137,6 +137,20 @@ class Variants(unittest.TestCase):
         stale = impact.stale_obligations([three_mf, other, *mi.required_checks(self.before)], result.changed)
         self.assertEqual(stale, {"export.3mf@TST-0001": ("appearance",)})
 
+    def test_a_colour_change_leaves_every_catch_all_family_current_but_a_geometry_change_stales_it(self) -> None:
+        """policy.*, requirement.* and an unlisted family depend on every domain except appearance."""
+        cases = {
+            "part-scoped policy": ("policy.simulation_supported", {"PN": "TST-0001"}, "TST-0001"),
+            "requirement": ("requirement.cad_valid", {"product": True, "requirements": ("REQ-001",)}, "REQ-001"),
+            "unlisted family": ("tst_unlisted.check", {"PN": "TST-0001"}, "TST-0001"),
+        }
+        for label, (family, subject, key) in cases.items():
+            with self.subTest(label):
+                obligation = mi.Obligation(f"{family}@{key}", family, subject, "cad_valid", "layout", "test")
+                self.assertEqual(impact.stale_obligations([obligation], {key: ("appearance",)}), {})
+                self.assertEqual(impact.stale_obligations([obligation], {key: ("appearance", "geometry")}),
+                                 {obligation.id: ("geometry",)})
+
     def test_a_geometry_change_also_stales_the_3mf_family(self) -> None:
         three_mf = mi.Obligation("export.3mf@TST-0001", "export.3mf", {"PN": "TST-0001"}, "cad_valid", "layout", "test")
         stale = impact.stale_obligations([three_mf], {"TST-0001": ("geometry",)})
@@ -293,6 +307,33 @@ class Selection(unittest.TestCase):
                          (True, True, self.digest))
         self.assertIn("the selection inputs changed (selection.input_digest)", result.reopened_decisions["DR-001"])
         self.assertTrue(result.any)
+
+    def part(self, docs: dict[str, Any]) -> dict[str, Any]:
+        rel = sorted(rel for rel in docs if rel.startswith("parts/") and rel.endswith("/part.yaml"))[0]
+        return docs[rel]
+
+    def test_a_colour_change_keeps_a_confirmed_selection_current(self) -> None:
+        after = copy.deepcopy(self.docs)
+        self.part(after)["intent"]["color"] = "#FF8000"
+        self.assertEqual(acceptance.evidence.selection.input_digest(after), self.digest)
+        result = self.compare(after)
+        self.assertEqual((result.selection["changed"], result.selection["stale"]), (False, False))
+        self.assertEqual(result.reopened_decisions, {})
+
+    def test_a_material_profile_change_still_reopens_a_confirmed_selection(self) -> None:
+        after = copy.deepcopy(self.docs)
+        self.part(after)["intent"]["material_profile"] = "tst_other_profile"
+        self.assertNotEqual(acceptance.evidence.selection.input_digest(after), self.digest)
+        result = self.compare(after)
+        self.assertEqual((result.selection["changed"], result.selection["stale"]), (True, True))
+        self.assertIn("DR-001", result.reopened_decisions)
+
+    def test_records_without_a_colour_keep_their_recorded_selection_digest(self) -> None:
+        """Digests already written to selection.yaml (assessment.input_sha256) must stay valid; worked out
+        from the digest before colour was excluded."""
+        digest = acceptance.evidence.selection.input_digest
+        self.assertEqual(digest(documents()), "14eefb6b8e5cb822baae30ec3612eefefac8d22e55482ef23227234fa73ea01d")
+        self.assertEqual(self.digest, "d22bad8dfe54d21aea9dc9248ae15c665d0be4741a70b097e292379955387645")
 
     def test_confirming_the_choice_is_no_selection_input(self) -> None:
         before, _ = acceptance.recorded_selection(acceptance.selection_scenarios().qualified_polymer_cover())
