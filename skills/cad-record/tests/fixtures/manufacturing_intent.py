@@ -152,17 +152,24 @@ def question(ident: str, text: str = "TST fixture question?", *, material: bool 
 PROFILE_DECISION = "DR-090"  # the approved decision fixture profiles cite; write_record writes it
 
 
+PROFILE_QUESTIONS = (  # the project-start questions, as flow.profile asked keys
+    "human_approval", "fea", "stack_up", "critique", "storage_results_in_git", "processes/fdm/orientation",
+    "processes/fdm/supports", "processes/fdm/overhang_deg", "processes/fdm/bridge_mm", "processes/fdm/min_wall_mm",
+    "processes/fdm/min_feature_mm", "processes/fdm/warp", "processes/fdm/cosmetic_faces", "processes/fdm/print_in_place",
+    "processes/fdm/pip_clearance_mm/xy", "processes/fdm/pip_clearance_mm/z")
+
+
 def flow_profile(decision: str = PROFILE_DECISION, **changes: Any) -> dict[str, Any]:
     """A complete product.yaml flow.profile citing `decision` (PROFILE_DECISION by default): every
-    question answered, in the combination no flow.conflict rule fires on. `changes` replace top-level
-    fields; `fdm` replaces processes.fdm fields."""
+    question answered by the user, in the combination no flow.conflict rule fires on. `changes` replace
+    top-level fields; `fdm` replaces processes.fdm fields."""
     fdm = {"orientation": "propose", "supports": "allowed", "overhang_deg": 45, "bridge_mm": 10, "min_wall_mm": 0.8,
            "min_feature_mm": 0.4, "warp": "calibrated", "cosmetic_faces": False, "print_in_place": True,
            "pip_clearance_mm": {"xy": "calibrated", "z": "calibrated"}}
     fdm.update(changes.pop("fdm", {}))
     data: dict[str, Any] = {"decision": decision, "human_approval": "all", "fea": {"enabled": True, "mode": "accurate"},
                             "stack_up": "auto", "critique": "full", "motion": "auto", "storage_results_in_git": False,
-                            "processes": {"fdm": fdm}}
+                            "processes": {"fdm": fdm}, "asked": {field: "user" for field in PROFILE_QUESTIONS}}
     data.update(changes)
     return data
 

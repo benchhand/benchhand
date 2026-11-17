@@ -40,6 +40,11 @@ QUESTIONS = [
     "Should generated results (STEP, GLB, renders) be committed to git?",
 ]
 
+OPTIONS = ("human-approval", "fea", "stack-up", "critique", "results-in-git", "orientation", "supports", "overhang-deg",
+           "bridge-mm", "min-wall-mm", "min-feature-mm", "warp", "cosmetic-faces", "print-in-place", "pip-clearance-xy",
+           "pip-clearance-z")
+QUESTION_FIELDS = fx.PROFILE_QUESTIONS
+
 PRODUCT = """\
 record_version: 2
 id: tst-product
@@ -83,13 +88,13 @@ class SchemaContract(unittest.TestCase):
     def test_the_fea_shape_agreed_with_package_a(self) -> None:
         validator = flow_profile.schema_registry.ref_validator(flow_profile.SCHEMAS, flow_profile.PROFILE_REF)
         accepted = ({"enabled": False}, {"enabled": True, "mode": "accurate"}, {"enabled": True, "mode": "fast"},
-                    {"enabled": True, "mode": "fast", "fast_band_pct": 50}, "not_asked")
+                    {"enabled": True, "mode": "fast", "fast_band_pct": 50})
         rejected = ({"enabled": True}, {"enabled": False, "mode": "fast"}, {"enabled": False, "fast_band_pct": 5},
                     {"enabled": True, "mode": "accurate", "fast_band_pct": 5},
                     {"enabled": True, "mode": "fast", "fast_band_pct": 0},
                     {"enabled": True, "mode": "fast", "fast_band_pct": -1},
                     {"enabled": True, "mode": "fast", "fast_band_pct": 50.5},
-                    {"enabled": True, "mode": "fast", "solver": "ccx"}, "off", True)
+                    {"enabled": True, "mode": "fast", "solver": "ccx"}, "off", True, "not_asked")
         for fea in accepted:
             with self.subTest(accepted=fea):
                 self.assertEqual(list(validator.iter_errors(fx.flow_profile(fea=fea))), [])
@@ -97,10 +102,40 @@ class SchemaContract(unittest.TestCase):
             with self.subTest(rejected=fea):
                 self.assertNotEqual(list(validator.iter_errors(fx.flow_profile(fea=fea))), [])
 
-    def test_an_unasked_fea_is_neither_off_nor_fast(self) -> None:
-        self.assertEqual(flow_profile.fea_setting(fx.flow_profile(fea="not_asked")), (None, None))
+    def test_a_fea_setting_needs_a_boolean_enabled_and_is_otherwise_not_assessed(self) -> None:
+        self.assertEqual(flow_profile.fea_setting(fx.flow_profile(fea="off")), (None, None))
         self.assertEqual(flow_profile.fea_setting(fx.flow_profile(fea={"enabled": False})), (False, None))
         self.assertEqual(flow_profile.fea_setting(fx.flow_profile(fea={"enabled": True, "mode": "fast"})), (True, "fast"))
+
+    def test_the_schema_has_no_not_asked_value(self) -> None:
+        self.assertNotIn("not_asked", (SKILLS / "cad-record" / "schemas" / "product.schema.json").read_text(encoding="utf-8"))
+
+    def test_every_question_field_and_motion_has_a_schema_default_that_flow_profile_applies(self) -> None:
+        schema = json.loads((SKILLS / "cad-record" / "schemas" / "product.schema.json").read_text(encoding="utf-8"))["$defs"]
+        profile = schema["profile"]["properties"]
+        fdm = schema["fdm_profile"]["properties"]
+        fea = schema["fea"]["properties"]
+        expected = {
+            "human_approval": profile["human_approval"]["default"], "stack_up": profile["stack_up"]["default"],
+            "critique": profile["critique"]["default"], "motion": profile["motion"]["default"],
+            "storage_results_in_git": profile["storage_results_in_git"]["default"],
+            "fea": {"enabled": fea["enabled"]["default"], "mode": fea["mode"]["default"]},
+            **{f"processes/fdm/{key}": fdm[key]["default"] for key in (
+                "orientation", "supports", "overhang_deg", "bridge_mm", "min_wall_mm", "min_feature_mm", "warp",
+                "cosmetic_faces", "print_in_place")},
+            **{f"processes/fdm/pip_clearance_mm/{axis}": fdm["pip_clearance_mm"]["properties"][axis]["default"]
+               for axis in ("xy", "z")}}
+        self.assertEqual(flow_profile.DEFAULTS, expected)
+        self.assertEqual(set(flow_profile.DEFAULTS), {*flow_profile.QUESTION_FIELDS, "motion"})
+        validator = flow_profile.schema_registry.ref_validator(flow_profile.SCHEMAS, flow_profile.PROFILE_REF)
+        self.assertEqual(list(validator.iter_errors(flow_profile.defaulted_profile("DR-001"))), [])
+
+    def test_the_asked_state_takes_only_the_two_provenances(self) -> None:
+        validator = flow_profile.schema_registry.ref_validator(flow_profile.SCHEMAS, flow_profile.PROFILE_REF)
+        for provenance, ok in (("user", True), ("asked-accepted-default", True), ("not_asked", False), ("default", False)):
+            with self.subTest(provenance):
+                errors = list(validator.iter_errors(fx.flow_profile(asked={"stack_up": provenance})))
+                self.assertEqual(errors == [], ok)
 
     def test_fdm_is_the_iso_52900_material_extrusion_category(self) -> None:
         schema = json.loads((SKILLS / "cad-record" / "schemas" / "product.schema.json").read_text(encoding="utf-8"))
@@ -120,6 +155,13 @@ class Questions(unittest.TestCase):
         self.assertEqual(numbered, [f"{n}. {text}" for n, text in enumerate(QUESTIONS, start=1)])
         self.assertTrue(any("motion sweep" in line and "not asked" in line for line in lines), result.stdout)
 
+    def test_questions_lists_the_default_of_every_decision(self) -> None:
+        lines = run("questions").stdout.splitlines()
+        for line in ("  human_approval: \"all\"", "  fea: {\"enabled\": true, \"mode\": \"accurate\"}",
+                     "  processes.fdm.print_in_place: false", "  processes.fdm.pip_clearance_mm.z: \"calibrated\"",
+                     "  storage_results_in_git: false"):
+            self.assertIn(line, lines)
+
 
 class Record(unittest.TestCase):
     def setUp(self) -> None:
@@ -131,33 +173,67 @@ class Record(unittest.TestCase):
         self.product.write_text(PRODUCT, encoding="utf-8")
 
     def record(self, decision: str = "DR-001", *answers: str) -> subprocess.CompletedProcess[str]:
-        return run("record", "--hw", str(self.hw), "--decision", decision, *answers)
+        """The user answers the options in `answers` (option, value pairs) and accepts the default of every other."""
+        given = {answers[i].removeprefix("--") for i in range(0, len(answers), 2)}
+        accepted = [name for name in OPTIONS if name not in given]
+        return run("record", "--hw", str(self.hw), "--decision", decision, *answers, "--accept-default", *accepted)
 
     def profile(self) -> Any:
         return yaml_loader.safe_load(self.product.read_text(encoding="utf-8"))["flow"]["profile"]
 
-    def test_record_writes_the_answers_and_marks_every_unasked_question_not_asked(self) -> None:
+    def test_record_writes_the_answers_the_defaults_accepted_and_who_gave_each(self) -> None:
         result = self.record("DR-001", "--human-approval", "key", "--fea", "fast:5", "--stack-up", "off", "--critique", "light",
                              "--results-in-git", "no", "--supports", "free", "--overhang-deg", "50", "--warp", "off",
                              "--cosmetic-faces", "on", "--print-in-place", "offer", "--pip-clearance-xy", "0.3")
         self.assertEqual(result.returncode, 0, result.stderr)
-        n = "not_asked"
+        c = "calibrated"
+        accepted = ("orientation", "bridge_mm", "min_wall_mm", "min_feature_mm", "pip_clearance_mm/z")
         self.assertEqual(self.profile(), {
             "decision": "DR-001", "human_approval": "key", "fea": {"enabled": True, "mode": "fast", "fast_band_pct": 5},
             "stack_up": "off", "critique": "light", "motion": "auto", "storage_results_in_git": False,
-            "processes": {"fdm": {"orientation": n, "supports": "free", "overhang_deg": 50, "bridge_mm": n, "min_wall_mm": n,
-                                  "min_feature_mm": n, "warp": "off", "cosmetic_faces": True, "print_in_place": True,
-                                  "pip_clearance_mm": {"xy": 0.3, "z": n}}}})
+            "processes": {"fdm": {"orientation": "user", "supports": "free", "overhang_deg": 50, "bridge_mm": c, "min_wall_mm": c,
+                                  "min_feature_mm": c, "warp": "off", "cosmetic_faces": True, "print_in_place": True,
+                                  "pip_clearance_mm": {"xy": 0.3, "z": c}}},
+            "asked": {field: ("asked-accepted-default" if field.removeprefix("processes/fdm/") in accepted else "user")
+                      for field in QUESTION_FIELDS}})
         data = yaml_loader.safe_load(self.product.read_text(encoding="utf-8"))
         self.assertEqual({k: v for k, v in data.items() if k != "flow"},
                          {"record_version": 2, "id": "tst-product", "rigor": "pro", "units": "mm"})
         self.assertEqual((data["flow"]["stage"], data["flow"]["recheck_from"]), ("intent", "intent"))
         self.assertIn("# a comment the profile record keeps\n", self.product.read_text(encoding="utf-8"))
 
+    def test_accepting_every_default_records_the_conservative_defaults(self) -> None:
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS).returncode, 0)
+        profile = self.profile()
+        self.assertEqual({k: v for k, v in profile.items() if k != "asked"}, {
+            "decision": "DR-001", "human_approval": "all", "fea": {"enabled": True, "mode": "accurate"}, "stack_up": "auto",
+            "critique": "full", "motion": "auto", "storage_results_in_git": False,
+            "processes": {"fdm": {"orientation": "user", "supports": "allowed", "overhang_deg": "calibrated",
+                                  "bridge_mm": "calibrated", "min_wall_mm": "calibrated", "min_feature_mm": "calibrated",
+                                  "warp": "calibrated", "cosmetic_faces": False, "print_in_place": False,
+                                  "pip_clearance_mm": {"xy": "calibrated", "z": "calibrated"}}}})
+        self.assertEqual(set(profile["asked"].values()), {"asked-accepted-default"})
+
+    def test_record_refuses_a_question_neither_answered_nor_accepted_and_writes_nothing(self) -> None:
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--fea", "off", "--accept-default",
+                     *[name for name in OPTIONS if name not in ("fea", "stack-up", "warp")])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--stack-up", result.stderr)
+        self.assertIn("--warp", result.stderr)
+        self.assertNotIn("--critique", result.stderr)
+        self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
+        self.assertFalse((self.hw / "decisions").exists())
+
+    def test_record_refuses_an_option_both_answered_and_accepted(self) -> None:
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--fea", "off", "--accept-default", *OPTIONS)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--fea", result.stderr)
+        self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
+
     def test_record_quotes_every_string_it_writes(self) -> None:
         self.assertEqual(self.record("DR-001", "--stack-up", "off", "--warp", "off", "--fea", "off").returncode, 0)
         text = self.product.read_text(encoding="utf-8")
-        for line in ('    stack_up: "off"\n', '        warp: "off"\n', '      enabled: false\n', '    critique: "not_asked"\n'):
+        for line in ('    stack_up: "off"\n', '        warp: "off"\n', '      enabled: false\n', '    critique: "full"\n'):
             self.assertIn(line, text)
 
     def test_the_fea_answer_records_off_accurate_or_fast_with_an_optional_band(self) -> None:
@@ -178,8 +254,9 @@ class Record(unittest.TestCase):
         self.assertEqual(self.record("DR-004", "--fea", "accurate").returncode, 0)
         text = (self.hw / "decisions" / "DR-004.md").read_text(encoding="utf-8")
         self.assertEqual(text.splitlines()[:3], ["Status: APPROVED", "Gate: intent", "Version: N/A"])
-        self.assertIn("| fea.mode | accurate |", text)
-        self.assertIn("| processes.fdm.orientation | not_asked |", text)
+        self.assertIn("| fea.mode | accurate | user |", text)
+        self.assertIn("| processes.fdm.orientation | user | asked-accepted-default |", text)
+        self.assertIn("| motion | auto | stated |", text)
 
     def test_record_refuses_a_decision_that_exists_and_changes_nothing(self) -> None:
         (self.hw / "decisions").mkdir()
@@ -258,35 +335,66 @@ class Check(unittest.TestCase):
                 self.assertEqual(exit_code, 1, report)
                 self.assertEqual([p["path"] for p in report["problems"]], ["flow/profile/decision"])
 
-    def test_a_not_asked_field_blocks_once_its_check_falls_due_and_not_before(self) -> None:
-        self.write("parts", fx.flow_profile(fea="not_asked"))
-        for stage, code in (("detail", 0), ("analysis", 1), ("release", 1)):
+    def test_a_profile_with_no_asked_state_blocks_on_every_start_question_from_specify_on(self) -> None:
+        profile = fx.flow_profile()
+        del profile["asked"]
+        for stage, code in (("intent", 0), ("specify", 1), ("release", 1)):
             with self.subTest(stage=stage):
-                exit_code, report = self.check(stage)
+                self.write(stage, profile)
+                exit_code, report = self.check()
                 self.assertEqual(exit_code, code, report)
-                self.assertEqual([p["path"] for p in report["problems"]], ["flow/profile/fea"] if code else [])
+                self.assertEqual([p["path"] for p in report["problems"]],
+                                 [f"flow/profile/asked/{field}" for field in QUESTION_FIELDS] if code else [])
                 if code:
-                    self.assertIn("not assessed (not asked)", report["problems"][0]["message"])
+                    self.assertIn("was not asked", report["problems"][0]["message"])
 
-    def test_the_fdm_questions_fall_due_only_for_a_product_that_plans_fdm(self) -> None:
-        profile = fx.flow_profile(fdm={"orientation": "not_asked"})
+    def test_one_question_with_no_asked_state_blocks_by_itself(self) -> None:
+        profile = fx.flow_profile()
+        del profile["asked"]["fea"]
+        self.write("parts", profile)
+        exit_code, report = self.check()
+        self.assertEqual((exit_code, [p["path"] for p in report["problems"]]), (1, ["flow/profile/asked/fea"]))
+
+    def test_an_unknown_provenance_is_a_schema_finding(self) -> None:
+        profile = fx.flow_profile(asked={**fx.flow_profile()["asked"], "critique": "not_asked"})
+        self.write("parts", profile)
+        exit_code, report = self.check()
+        self.assertEqual(exit_code, 1, report)
+        self.assertIn("flow/profile/asked/critique", [p["path"] for p in report["problems"]])
+
+    def test_a_default_marked_accepted_must_equal_the_default(self) -> None:
+        profile = fx.flow_profile(stack_up="off")
+        profile["asked"]["stack_up"] = "asked-accepted-default"
+        self.write("parts", profile)
+        exit_code, report = self.check()
+        self.assertEqual((exit_code, [p["path"] for p in report["problems"]]), (1, ["flow/profile/asked/stack_up"]))
+        self.assertIn("auto", report["problems"][0]["message"])
+        profile = fx.flow_profile(stack_up="auto")
+        profile["asked"]["stack_up"] = "asked-accepted-default"
+        self.write("parts", profile)
+        self.assertEqual(self.check()[0], 0)
+
+    def test_the_fdm_questions_apply_only_to_a_product_that_plans_fdm(self) -> None:
+        profile = fx.flow_profile()
+        del profile["asked"]["processes/fdm/orientation"]
         for process, code in (("fdm", 1), ("cnc", 0)):
             with self.subTest(process=process):
                 self.write("parts", profile, process=process)
                 exit_code, report = self.check()
                 self.assertEqual(exit_code, code, report)
                 self.assertEqual([p["path"] for p in report["problems"]],
-                                 ["flow/profile/processes/fdm/orientation"] if code else [])
+                                 ["flow/profile/asked/processes/fdm/orientation"] if code else [])
 
-    def test_the_pip_clearance_falls_due_only_while_print_in_place_is_offered(self) -> None:
+    def test_the_pip_clearance_questions_apply_only_while_print_in_place_is_offered(self) -> None:
         for offer, code in ((True, 1), (False, 0)):
             with self.subTest(print_in_place=offer):
-                self.write("detail", fx.flow_profile(fdm={"print_in_place": offer,
-                                                          "pip_clearance_mm": {"xy": 0.3, "z": "not_asked"}}))
+                profile = fx.flow_profile(fdm={"print_in_place": offer})
+                del profile["asked"]["processes/fdm/pip_clearance_mm/z"]
+                self.write("detail", profile)
                 exit_code, report = self.check()
                 self.assertEqual(exit_code, code, report)
                 self.assertEqual([p["path"] for p in report["problems"]],
-                                 ["flow/profile/processes/fdm/pip_clearance_mm/z"] if code else [])
+                                 ["flow/profile/asked/processes/fdm/pip_clearance_mm/z"] if code else [])
 
     def test_check_exits_2_without_a_readable_record_or_with_an_unknown_stage(self) -> None:
         self.write("parts", fx.flow_profile())
@@ -323,7 +431,7 @@ class BareYaml(unittest.TestCase):
         if key == "enabled":
             product["flow"]["profile"]["fea"] = {"enabled": True, "mode": "accurate"} if word == "on" else {"enabled": False}
         text = yaml.safe_dump(product, sort_keys=False)
-        lines = [line for line in text.splitlines() if line.lstrip().startswith(f"{key}:")]
+        lines = [line for line in text.splitlines() if line.lstrip().startswith(f"{key}:") and not line.endswith(": user")]  # not its asked key
         self.assertEqual(len(lines), 1, key)
         indent = lines[0][:len(lines[0]) - len(lines[0].lstrip())]
         return yaml_loader.safe_load(text.replace(lines[0], f"{indent}{key}: {word}"))
@@ -371,10 +479,6 @@ class Conflicts(unittest.TestCase):
                          [("fea_off", False)])
         self.documents["requirements.yaml"]["requirements"][0]["verification"]["step"] = "fea"
         self.assertEqual(self.conflicts(fea={"enabled": False}, critique="light"), [("fea_off", False)])
-
-    def test_an_unasked_fea_is_no_conflict_since_its_due_check_blocks_instead(self) -> None:
-        self.documents["requirements.yaml"]["requirements"][0]["verification"]["step"] = "fea"
-        self.assertEqual(self.conflicts(fea="not_asked", critique="light", fea_cases=("bracket_load",)), [])
 
     def test_stack_up_off_conflicts_with_a_critical_interface(self) -> None:
         self.assertEqual(self.conflicts(stack_up="off"), [("stack_up_off", False)])

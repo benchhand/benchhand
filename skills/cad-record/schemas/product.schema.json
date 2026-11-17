@@ -112,17 +112,16 @@
     "process": {"$ref": "manufacturing.schema.json#/$defs/primary_process"},
     "version": {"type": "string", "pattern": "^v[1-9][0-9]*$"},
     "decision": {"type": "string", "pattern": "^DR-[0-9]{3}$"},
-    "not_asked": {"description": "Nobody asked the user this project-start question. The check that reads it reports it not assessed (not asked), and blocks once that check falls due (cad-flow flow_profile.py DUE)", "const": "not_asked"},
     "iso_52900_category": {"description": "The ISO/ASTM 52900 additive process category of a flow.profile process, null for a subtractive or forming process. cad-flow flow_profile.py ISO_52900_CATEGORY maps each process key to one",
                            "enum": ["mex", "pbf", "vpp", "bjt", "ded", "mjt", "shl", null]},
-    "limit": {"oneOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "string", "enum": ["calibrated", "off", "not_asked"]}]},
-    "clearance": {"oneOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "string", "enum": ["calibrated", "not_asked"]}]},
+    "limit": {"oneOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "string", "enum": ["calibrated", "off"]}]},
+    "clearance": {"oneOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "string", "enum": ["calibrated"]}]},
     "fea": {
-      "description": "Whether and how FEA runs, the shape agreed with package A. mode is required when enabled. fast escalates a case to accurate when the fast result lies within fast_band_pct of its criterion limit, |limit - result| / limit x 100 <= fast_band_pct; without fast_band_pct, cad-analysis uses its measured default band, twice the worst-case bias. fea: not_asked is not off and never fast: FEA is not assessed and blocks once it falls due, until the user is asked",
+      "description": "Whether and how FEA runs, the shape agreed with package A. mode is required when enabled. fast escalates a case to accurate when the fast result lies within fast_band_pct of its criterion limit, |limit - result| / limit x 100 <= fast_band_pct; without fast_band_pct, cad-analysis uses its measured default band, twice the worst-case bias.",
       "type": "object", "additionalProperties": false, "required": ["enabled"],
       "properties": {
-        "enabled": {"type": "boolean"},
-        "mode": {"type": "string", "enum": ["fast", "accurate"]},
+        "enabled": {"type": "boolean", "default": true},
+        "mode": {"type": "string", "enum": ["fast", "accurate"], "default": "accurate"},
         "fast_band_pct": {"type": "number", "exclusiveMinimum": 0, "maximum": 50}
       },
       "allOf": [
@@ -132,17 +131,21 @@
       ]
     },
     "profile": {
-      "description": "The user's answers to the project-start questions (cad-flow flow_profile.py questions), recorded at INTENT with the decision that holds them; there are no defaults. A number is the user's design limit; calibrated stays unknown until a calibration exists; off means not assessed. A two-state answer is a boolean; a word answer is a string, written quoted, since YAML reads a bare on, off, yes or no as a boolean",
+      "description": "The user's answers to the project-start questions (cad-flow flow_profile.py questions), recorded at INTENT with the decision that holds them. Each question has a default the user is shown; asked records, per question, whether the user answered (user) or accepted the default (asked-accepted-default). A number is the user's design limit; calibrated stays unknown until a calibration exists; off means not assessed. A two-state answer is a boolean; a word answer is a string, written quoted, since YAML reads a bare on, off, yes or no as a boolean",
       "type": "object", "additionalProperties": false,
       "required": ["human_approval", "fea", "stack_up", "critique", "motion", "storage_results_in_git", "processes"],
       "properties": {
         "decision": {"$ref": "#/$defs/decision"},
-        "human_approval": {"description": "all: every stage gate waits for the user; key: intent, variant, freeze and release do, and a passing full check approves the middle gates", "type": "string", "enum": ["all", "key", "not_asked"]},
-        "fea": {"oneOf": [{"$ref": "#/$defs/fea"}, {"$ref": "#/$defs/not_asked"}]},
-        "stack_up": {"description": "auto turns on when SPECIFY names a critical interface or a stack case", "type": "string", "enum": ["auto", "on", "off", "not_asked"]},
-        "critique": {"description": "light: both reviewers at the L2 light-review scope, rerun on the analysed version", "type": "string", "enum": ["full", "light", "off", "not_asked"]},
-        "motion": {"description": "auto: on once a joint moves; stated to the user, never asked", "type": "string", "enum": ["auto", "not_asked"]},
-        "storage_results_in_git": {"oneOf": [{"type": "boolean"}, {"$ref": "#/$defs/not_asked"}]},
+        "human_approval": {"description": "all: every stage gate waits for the user; key: intent, variant, freeze and release do, and a passing full check approves the middle gates", "type": "string", "enum": ["all", "key"], "default": "all"},
+        "fea": {"$ref": "#/$defs/fea"},
+        "stack_up": {"description": "auto turns on when SPECIFY names a critical interface or a stack case", "type": "string", "enum": ["auto", "on", "off"], "default": "auto"},
+        "critique": {"description": "light: both reviewers at the L2 light-review scope, rerun on the analysed version", "type": "string", "enum": ["full", "light", "off"], "default": "full"},
+        "motion": {"description": "auto: on once a joint moves; stated to the user, never asked", "type": "string", "enum": ["auto"], "default": "auto"},
+        "storage_results_in_git": {"type": "boolean", "default": false},
+        "asked": {
+          "description": "How each project-start question was settled, keyed by its field path below flow.profile (fea, stack_up, processes/fdm/orientation, processes/fdm/pip_clearance_mm/xy, ...). cad-flow flow_profile.py QUESTION_FIELDS lists the keys; a build, a validation and a stage advance refuse a missing one",
+          "type": "object", "additionalProperties": {"enum": ["user", "asked-accepted-default"]}
+        },
         "processes": {
           "type": "object", "additionalProperties": false,
           "properties": {"fdm": {"$ref": "#/$defs/fdm_profile"}}
@@ -154,19 +157,19 @@
       "required": ["orientation", "supports", "overhang_deg", "bridge_mm", "min_wall_mm", "min_feature_mm", "warp",
                    "cosmetic_faces", "print_in_place", "pip_clearance_mm"],
       "properties": {
-        "orientation": {"type": "string", "enum": ["user", "propose", "not_asked"]},
-        "supports": {"type": "string", "enum": ["allowed", "free", "off", "not_asked"]},
-        "overhang_deg": {"oneOf": [{"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 90}, {"type": "string", "enum": ["calibrated", "off", "not_asked"]}]},
-        "bridge_mm": {"$ref": "#/$defs/limit"},
-        "min_wall_mm": {"$ref": "#/$defs/limit"},
-        "min_feature_mm": {"$ref": "#/$defs/limit"},
-        "warp": {"type": "string", "enum": ["calibrated", "off", "not_asked"]},
-        "cosmetic_faces": {"description": "true adds the critical-surface role cosmetic, which supports may not touch", "oneOf": [{"type": "boolean"}, {"$ref": "#/$defs/not_asked"}]},
-        "print_in_place": {"description": "true: offer to print hinges and joints already assembled where that fits; false: assemble them", "oneOf": [{"type": "boolean"}, {"$ref": "#/$defs/not_asked"}]},
+        "orientation": {"type": "string", "enum": ["user", "propose"], "default": "user"},
+        "supports": {"type": "string", "enum": ["allowed", "free", "off"], "default": "allowed"},
+        "overhang_deg": {"oneOf": [{"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 90}, {"type": "string", "enum": ["calibrated", "off"]}], "default": "calibrated"},
+        "bridge_mm": {"$ref": "#/$defs/limit", "default": "calibrated"},
+        "min_wall_mm": {"$ref": "#/$defs/limit", "default": "calibrated"},
+        "min_feature_mm": {"$ref": "#/$defs/limit", "default": "calibrated"},
+        "warp": {"type": "string", "enum": ["calibrated", "off"], "default": "calibrated"},
+        "cosmetic_faces": {"description": "true adds the critical-surface role cosmetic, which supports may not touch", "type": "boolean", "default": false},
+        "print_in_place": {"description": "true: offer to print hinges and joints already assembled where that fits; false: assemble them", "type": "boolean", "default": false},
         "pip_clearance_mm": {
           "description": "The smallest print-in-place gap that separates, across the layers (xy) and between layers (z)",
           "type": "object", "additionalProperties": false, "required": ["xy", "z"],
-          "properties": {"xy": {"$ref": "#/$defs/clearance"}, "z": {"$ref": "#/$defs/clearance"}}
+          "properties": {"xy": {"$ref": "#/$defs/clearance", "default": "calibrated"}, "z": {"$ref": "#/$defs/clearance", "default": "calibrated"}}
         }
       }
     },

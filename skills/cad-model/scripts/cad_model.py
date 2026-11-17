@@ -118,7 +118,7 @@ def load_lifecycle() -> Any:
 
 def require_flow_profile(hw: Path) -> None:
     """Refuse a build while cad-flow's flow profile blocks at L1 LAYOUT or the record's later stage: the
-    project-start answers or their decision are missing, or a question due by then was not asked."""
+    project-start answers or their decision are missing, or a start question has no asked answer."""
     profile = _load_script("cad_flow_profile", FLOW_PROFILE_SCRIPT)
     try:
         stage, found = profile.gate(hw, build=True)

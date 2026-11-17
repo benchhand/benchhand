@@ -64,7 +64,7 @@ GROUND, INTENT, SPECIFY, L1 LAYOUT, BOM, RELEASE, and every gate stay with you. 
 
 ## Rules
 
-MUST At GROUND, run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/flow_profile.py questions` from the project root. Relay its questions to the user verbatim, and state the motion sweep as it prints it. At INTENT, record the answers with `flow_profile.py record --hw hw --decision DR-###` and one option per answer. Leave out the option of a question the user did not answer: the record then says `not_asked`. `cad_model.py run`, `validate.py` and the stage advance refuse without the profile or its decision. They also refuse a question that nobody asked once its check falls due.
+MUST At GROUND, run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/flow_profile.py questions` from the project root. Relay its questions to the user verbatim, show each question's default as it prints them, and state the motion sweep as it prints it. At INTENT, record the answers with `flow_profile.py record --hw hw --decision DR-###`: one option per answer the user gave, and `--accept-default <options>` for each default the user accepted. The profile's `asked` map records which. `record` refuses while a question is neither answered nor accepted. `cad_model.py run`, `validate.py` and the stage advance refuse without the profile or its decision, and while a start question has no `asked` answer.
 
 MUST Preserve shared record names, fields, units, PN/revision patterns, and schemas in `references/flow.md`.
 MUST Route a stage to its listed skill and exact command; a skill or agent marked later is unavailable, not permission to invent its procedure.
