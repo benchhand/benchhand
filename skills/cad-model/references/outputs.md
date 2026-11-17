@@ -272,7 +272,8 @@ declared direction with `placement.transform`.
 
 Top level: `status` pass|fail, `label`, `pose: nominal`, `baseline` (previous label or null),
 `scope`, `blocking_failures`, `warnings`, `evaluation` (`mode` fast|exact, `mesh`, `band_mm`,
-`rule_sha256`), `checks`, `suspects`, `timings_s` (`total_s`; `kernel_evaluations`, `exact_hits`,
+`rule_sha256`, `code_sha256`: one sha256 over check.py and every skill module it loads), `checks`,
+`suspects`, `timings_s` (`total_s`; `kernel_evaluations`, `exact_hits`,
 the exact readings the pair cache held, `decision_hits`, `bucket_hits`, `cleared` by method, and
 `reevaluations` of suspects). Every check has `status` (pass|fail|warn, `skipped` for a check a
 partial scope cannot run) and `blocking`.

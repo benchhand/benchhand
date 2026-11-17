@@ -84,6 +84,7 @@ def _load(name: str, path: Path) -> Any:
 HERE = Path(__file__).resolve().parent
 SKILLS = HERE.parents[1]
 pose = _load("cad_motion_pose", HERE / "pose.py")
+code_shas = _load("cad_motion_code_shas", HERE / "code_shas.py")
 sweep = _load("cad_motion_sweep", HERE / "sweep.py")
 plan_module = _load("cad_motion_plan", HERE / "plan.py")
 pair_measure = _load("cad_motion_pair_measure", HERE / "pair_measure.py")
@@ -647,7 +648,8 @@ def main(argv: list[str] | None = None) -> int:
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
         result, detail = assess(args, version, record_hw)
         recipe = {"options": {"steps": args.steps, "attach": list(args.attach)}, "dependencies": result["dependencies"],
-                  "rule_sha256": pair_measure.RuleVersion.current().digest.hex()}
+                  "rule_sha256": pair_measure.RuleVersion.current().digest.hex(),
+                  "code": code_shas.closure(HERE / "play.py")}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "play.json",
                                            recipe, out=args.out, replace=args.replace,
                                            record_version=intent_module.RECORD_VERSION)

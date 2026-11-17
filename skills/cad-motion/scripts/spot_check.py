@@ -54,6 +54,7 @@ def _load(name: str, path: Path) -> Any:
 
 HERE = Path(__file__).resolve().parent
 pose = _load("cad_motion_pose", HERE / "pose.py")
+code_shas = _load("cad_motion_code_shas", HERE / "code_shas.py")
 pair_measure = _load("cad_motion_pair_measure", HERE / "pair_measure.py")
 LISTED = 10  # largest |mesh - exact| deviations listed
 
@@ -134,6 +135,13 @@ def summary(result: Mapping[str, Any]) -> dict[str, Any]:
             "largest_deviations": deviations[:LISTED]}
 
 
+def audit_provenance(provenance: Mapping[str, Any], rule: Any) -> dict[str, Any]:
+    """What decided this audit: the measuring rule of the swept bundle, the audit's own rule, and this script's
+    code with the modules it loads (code_shas). The audit prints its report, and the report names that code."""
+    return {"rule_sha256": {"sweep": provenance["rule_sha256"], "audit": rule.digest.hex()},
+            "code_sha256": code_shas.digest(HERE / "spot_check.py")}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Measure a sweep's mesh-cleared requests exactly")
     parser.add_argument("--hw", type=Path, required=True, help="hardware design record directory (hw/)")
@@ -198,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
                           "bundle": str(bundle), "mesh_cleared_requests": len(statistics["mesh_cleared"]),
                           **report, "unmeasured": found["unmeasured"], "band_mm": options.mesh_band,
                           "deflection_mm": mesh_module.LINEAR_DEFLECTION_MM, "cache": not args.no_cache,
-                          "rule_sha256": {"sweep": provenance["rule_sha256"], "audit": rule.digest.hex()},
+                          **audit_provenance(provenance, rule),
                           "seconds": round(time.monotonic() - started, 2)}, indent=2))
         return {"pass": 0, "fail": 1}.get(status, 2)
     except (pose.MotionError, OSError, pose.LAYOUT.LayoutError) as error:

@@ -836,6 +836,17 @@ def export_artifacts(hw: Path, folder: Path, expected: Iterable[Any]) -> list[di
     return pairs
 
 
+def readback_recipe(layout: Any, packet: Mapping[str, Any]) -> dict[str, Any]:
+    """The cad.readback bundle's recipe: the packet it seals and the check code with the modules it loads
+    (code_shas). After a code change, the next check republishes the packet instead of keeping the old code's bundle."""
+    return {"producer": READBACK_PRODUCER, "packet_sha256": hashlib.sha256(layout.canonical_json(packet)).hexdigest(),
+            "code": _code_shas().closure(Path(__file__))}
+
+
+def _code_shas() -> Any:
+    return _script("cad_motion_code_shas", SKILLS / "cad-motion" / "scripts" / "code_shas.py")
+
+
 def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
                      checks: Mapping[str, Any]) -> dict[str, Any] | None:
     """Publish the cad.readback packet of a record version 2 version to hw/checks/<V>/cad/ (bundle.checks,
@@ -858,7 +869,7 @@ def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
     for artifact in artifacts:  # a part.3mf the packet judged: its bytes are an input of the verdict
         dependencies["export_3mf_" + artifact["path"].split("/")[-2].lower().replace("-", "_")] = artifact["sha256"]
     packet = packets.build(record, expected, READBACK_PRODUCER, readback_outcomes(expected, checks), [], dependencies)
-    recipe = {"producer": READBACK_PRODUCER, "packet_sha256": hashlib.sha256(layout.canonical_json(packet)).hexdigest()}
+    recipe = readback_recipe(layout, packet)
     detail = {"artifact_integrity": checks["artifact_integrity"]["status"],
               "brep_validity": checks["brep_validity"]["parts"], "step_readback": checks["step_readback"]["parts"],
               "manufacturing": {pn: {name: (row["checks"].get(name) or {}).get("status")
@@ -971,7 +982,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
     result = {"status": "fail" if blocking else "pass", "label": label, "pose": "nominal",
               "baseline": previous, "scope": scope, "blocking_failures": blocking, "warnings": warnings,
               "evaluation": {"mode": "exact" if exact else "fast", "mesh": description, "band_mm": measurer.rule.band_mm,
-                             "rule_sha256": measurer.rule.digest.hex()},
+                             "rule_sha256": measurer.rule.digest.hex(), "code_sha256": _code_shas().digest(Path(__file__))},
               "occurrences": {oid: o.pn for oid, o in occurrences.items()}, "checks": checks, "suspects": suspects,
               "timings_s": {"total_s": round(time.perf_counter() - started, 3),
                             "kernel_evaluations": counters.kernel_evaluations, "exact_hits": counters.exact_hits,

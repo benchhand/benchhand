@@ -127,6 +127,14 @@ def merged_audit(inputs: list[Input], order: dict[tuple[str, ...], int]) -> dict
             "failures": ordered([row for item in inputs for row in item.audit.get("failures", [])]), "unmeasured": 0}
 
 
+def merged_recipe(provenance: dict[str, Any], case: str, inputs: list[Input]) -> dict[str, Any]:
+    """The merged bundle's recipe: the sweep recipe the inputs share, for `case` and every pair, the inputs it
+    merges, and this script's code with the modules it loads (code_shas), which decide the merge."""
+    return {**provenance["equivalence"], "case": case, "subsystem": None,
+            "merged_from": sorted(item.manifest_sha256 for item in inputs),
+            "merge_code": sweep.code_shas.closure(HERE / "merge_sweeps.py")}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Merge subsystem sweeps into the whole sweep's result")
     parser.add_argument("--hw", type=Path, required=True, help="hardware design record directory (hw/)")
@@ -192,8 +200,7 @@ def merge(options: argparse.Namespace, inputs: list[Input], version: str, versio
                                  between=between, complete=True, periods=periods, timings=timings)
     result["scope"]["merged_from"] = [{"bundle": str(item.bundle), "subsystems": item.provenance["subsystem_filter"],
                                        "manifest_sha256": item.manifest_sha256} for item in inputs]
-    recipe = {**provenance["equivalence"], "case": options.case, "subsystem": None,
-              "merged_from": sorted(item.manifest_sha256 for item in inputs)}
+    recipe = merged_recipe(provenance, options.case, inputs)
     merged = {**provenance, "subsystem_filter": None, "pair_ids": list(provenance["all_pair_ids"]),
               "merged_from": result["scope"]["merged_from"]}
     sweep.publish(run, result, state, recipe, (statistics, merged, audit), True, producer="cad-motion merge_sweeps.py")
