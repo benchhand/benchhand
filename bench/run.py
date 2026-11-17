@@ -185,6 +185,7 @@ def opencode_server(paths: Paths, env: Mapping[str, str], timeout: float) -> Ite
     process = subprocess.Popen(["opencode", "serve", "--hostname", "127.0.0.1", "--port", "0"], cwd=paths.project,
                                env=dict(env), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                text=True, start_new_session=True)
+    own_group(process)
     found: dict[str, str] = {}
 
     def read() -> None:
@@ -296,15 +297,19 @@ def stop_group(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
-def scratch_processes(scratch: Path) -> list[int]:
-    """Processes whose command line or working directory is inside the scratch directory."""
+def scratch_processes(scratch: Path) -> list[JSON]:
+    """Processes whose command line or working directory is inside the scratch directory: reported, never
+    killed, because a match by path is a pattern."""
     mine, prefix = os.getpid(), str(scratch)
     pids: set[int] = set()
     listing = subprocess.run(["ps", "-axww", "-o", "pid=,command="], capture_output=True, text=True, check=False)
+    commands: dict[int, str] = {}
     for line in listing.stdout.splitlines():
         number, _, command = line.strip().partition(" ")
-        if prefix in command and number.isdigit():
-            pids.add(int(number))
+        if number.isdigit():
+            commands[int(number)] = command
+            if prefix in command:
+                pids.add(int(number))
     cwd = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn"], capture_output=True, text=True, check=False)
     owner: int | None = None
     for line in cwd.stdout.splitlines():
@@ -312,17 +317,33 @@ def scratch_processes(scratch: Path) -> list[int]:
             owner = int(line[1:])
         elif line.startswith("n") and line[1:].startswith(prefix) and owner is not None:
             pids.add(owner)
-    return sorted(pids - {mine})
+    return [{"pid": pid, "command": commands.get(pid, "")[:300]} for pid in sorted(pids - {mine})]
 
 
-def kill_leftovers(scratch: Path) -> list[int]:
-    pids = scratch_processes(scratch)
+# Process groups this run started itself (start_new_session), by group id. Only these are ever signalled.
+OWN_GROUPS: set[int] = set()
+
+
+def own_group(process: subprocess.Popen[Any]) -> None:
+    OWN_GROUPS.add(process.pid)
+
+
+def kill_leftovers(scratch: Path, grace_s: float = 3.0) -> JSON:
+    """Stop every process group this run created, then report what still runs inside the scratch directory.
+
+    No process is selected by pattern for a signal: the scratch-path scan only reports, so a viewer the lead
+    daemonized into its own session shows up in the record instead of being killed.
+    """
+    stopped = []
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        for pid in pids:
+        for group in sorted(OWN_GROUPS):
             with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.kill(pid, sig)
-        time.sleep(3)
-    return pids
+                os.killpg(group, sig)
+                if sig == signal.SIGTERM:
+                    stopped.append(group)
+        time.sleep(grace_s)
+    OWN_GROUPS.clear()
+    return {"own_groups_stopped": stopped, "still_running": scratch_processes(scratch)}
 
 
 def db_cost(db: Path) -> float:
@@ -440,6 +461,7 @@ class Driver:
         with events.open("wb") as stdout, (self.paths.raw / f"turn-{turn:03d}.stderr").open("wb") as stderr:
             process = subprocess.Popen(self.command(message), cwd=self.paths.project, env=self.env, stdout=stdout,
                                        stderr=stderr, stdin=subprocess.DEVNULL, start_new_session=True)
+            own_group(process)
             killed = self._watch(process, deadline)
         if self.session is None:
             self.session = first_session_id(events)
@@ -581,13 +603,18 @@ class Tool:
 
     def run(self, name: str, script: str, args: Sequence[str], timeout: float) -> tuple[int | None, str]:
         command = ["uv", "run", "--script", str(self.paths.skills / "cad-flow/scripts/run.py"), script, *args]
+        process = subprocess.Popen(command, cwd=self.paths.project, env={**os.environ, "PWD": str(self.paths.project)},
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True,
+                                   start_new_session=True)
+        own_group(process)
         try:
-            result = subprocess.run(command, cwd=self.paths.project, env={**os.environ, "PWD": str(self.paths.project)},
-                                    capture_output=True, text=True, timeout=timeout, check=False, start_new_session=True)
-            code, stdout, stderr = result.returncode, result.stdout, result.stderr
-        except subprocess.TimeoutExpired as error:
-            code, stdout = None, str(error.stdout or "")
-            stderr = f"timed out after {timeout} s"
+            stdout, stderr = process.communicate(timeout=timeout)
+            code: int | None = process.returncode
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)  # the group this call created, never a pattern
+            stdout, _ = process.communicate()
+            code, stderr = None, f"timed out after {timeout} s"
         (self.out / f"{name}.stdout.json").write_text(stdout, encoding="utf-8")
         (self.out / f"{name}.stderr.txt").write_text(stderr[-20000:], encoding="utf-8")
         return code, stdout
@@ -877,7 +904,7 @@ def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case,
         "accepted": None if accepted is None else accepted and conversation.outcome == "reached",
         "version": evaluation["version"], "metrics": run_metrics, "unmatched_questions": unmatched_questions(conversation),
         "hard_checks": evaluation["hard"], "verdicts": evaluation["verdicts"], "machine": monitor.to_json(),
-        "leftover_processes_killed": len(leftovers),
+        "leftover_processes": leftovers,
         "spend": {"producer_usd": run_metrics["spend_usd"], "judge_usd": round(judge_spend, 6),
                   "total_usd": round(run_metrics["spend_usd"] + judge_spend, 6),
                   "opencode_reported_usd": round(db_cost(paths.db), 6), "currency": config["currency"]},

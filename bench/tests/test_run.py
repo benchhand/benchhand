@@ -170,6 +170,25 @@ class BudgetTests(unittest.TestCase):
                 paths.create.assert_not_called()
 
 
+class LeftoverTests(unittest.TestCase):
+    def test_only_the_runs_own_process_groups_are_stopped_and_a_scratch_process_outside_them_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            scratch = Path(folder).resolve()
+            ours = run.subprocess.Popen(["sleep", "60"], cwd=scratch, start_new_session=True)
+            run.own_group(ours)
+            stranger = run.subprocess.Popen(["sleep", "61"], cwd=scratch, start_new_session=True)  # not registered
+            try:
+                report = run.kill_leftovers(scratch, grace_s=0.3)
+                self.assertIsNotNone(ours.poll())
+                self.assertIsNone(stranger.poll())
+                self.assertEqual(report["own_groups_stopped"], [ours.pid])
+                self.assertIn(stranger.pid, [entry["pid"] for entry in report["still_running"]])
+            finally:
+                stranger.kill()  # exact pid of the process this test started
+                stranger.wait()
+                ours.wait()
+
+
 class MarkerTests(unittest.TestCase):
     def test_a_run_claims_its_own_marker_directory_and_refuses_a_used_run_id(self) -> None:
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(run, "MARKER_ROOT", Path(folder)):
