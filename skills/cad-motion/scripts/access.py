@@ -170,6 +170,61 @@ def separation_travel(measurer: Any, path: Travel) -> float:
     return max(0.0, ahead - behind) + SEPARATION_MARGIN_MM
 
 
+def _read_outcomes(path: Travel, pending: list[tuple[int, float]], outcomes: Sequence[Any], fitted: set[int],
+                   overlap: dict[int, dict[float, float | None]], lower: dict[tuple[int, float], float]) -> None:
+    """Record what each measured sample of `pending` says: the shared volume of a fitted partner, a collision with
+    any other obstacle, the distance bound, or the failure."""
+    for (index, s), outcome in zip(pending, outcomes):
+        occurrence = path.obstacles[index][0]
+        if isinstance(outcome, pair_measure.Measured):
+            if index in fitted:
+                overlap[index][s] = outcome.overlap_mm3
+            elif outcome.overlap_mm3 > pose.INTERFERENCE_MM3:
+                path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
+                                        "overlap_mm3": round(outcome.overlap_mm3, 6)})
+            lower[(index, s)] = outcome.distance_mm
+        elif isinstance(outcome, (pair_measure.Cleared, pair_measure.Pruned)):
+            if index in fitted:
+                overlap[index][s] = 0.0
+            lower[(index, s)] = outcome.lower_mm
+        else:
+            if index in fitted:
+                overlap[index][s] = None
+            path.failures.append(f"{occurrence} at {s:.6f} mm: "
+                                 f"{outcome.message if outcome is not None else 'not measured before the deadline'}")
+            lower[(index, s)] = -math.inf
+
+
+def _classify_engagements(path: Travel, fitted: set[int], overlap: dict[int, dict[float, float | None]],
+                          lower: dict[tuple[int, float], float], engaged: dict[str, bool],
+                          seen: set[tuple[int, float]], min_step_mm: float) -> list[tuple[int, float]]:
+    """Sort the samples of each fitted partner into engagement and collisions. Record the missing length, and return
+    the positions to sample before the end of an engagement shows."""
+    resample: list[tuple[int, float]] = []
+    for index in sorted(fitted):
+        occurrence = path.obstacles[index][0]
+        verdict = engagement_module.classify(
+            overlap[index], tail_mm=path.tail_mm, engaged=path.tail_mm == 0.0 or engaged.get(occurrence, False),
+            cap_mm=path.engagement[occurrence], min_step_mm=min_step_mm, threshold=pose.INTERFERENCE_MM3)
+        resample.extend((index, s) for s in verdict.needs)
+        if verdict.needs:
+            continue  # the end of the run needs more samples first
+        engaged[occurrence] = verdict.reached_start
+        if verdict.exempt:
+            path.engaged_mm[occurrence] = round(path.tail_mm + verdict.extent, 6)
+        for s in verdict.exempt:
+            lower[(index, s)] = math.inf  # engaged by design: no clearance to prove
+        for s in verdict.collisions:
+            if (index, s) not in seen:
+                seen.add((index, s))
+                path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
+                                        "overlap_mm3": round(overlap[index][s] or 0.0, 6)})
+        reason = f"{occurrence}: interferes over its engagement and declares no engagement_length_mm"
+        if verdict.unknown and reason not in path.failures:
+            path.failures.append(reason)
+    return resample
+
+
 def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step_mm: float,
              engaged: dict[str, bool] | None = None) -> None:
     """Sample and refine `path`; sets its status (see the module docstring). Run the legs of one insertion from the
@@ -197,48 +252,8 @@ def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step
                                                  sample_id=f"{path.label}@{s:.6f}"))
         outcomes = session.measure(requests)
         path.samples += len(requests)
-        for (index, s), outcome in zip(pending, outcomes):
-            occurrence = path.obstacles[index][0]
-            if isinstance(outcome, pair_measure.Measured):
-                if index in fitted:
-                    overlap[index][s] = outcome.overlap_mm3
-                elif outcome.overlap_mm3 > pose.INTERFERENCE_MM3:
-                    path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
-                                            "overlap_mm3": round(outcome.overlap_mm3, 6)})
-                lower[(index, s)] = outcome.distance_mm
-            elif isinstance(outcome, (pair_measure.Cleared, pair_measure.Pruned)):
-                if index in fitted:
-                    overlap[index][s] = 0.0
-                lower[(index, s)] = outcome.lower_mm
-            else:
-                if index in fitted:
-                    overlap[index][s] = None
-                path.failures.append(f"{occurrence} at {s:.6f} mm: "
-                                     f"{outcome.message if outcome is not None else 'not measured before the deadline'}")
-                lower[(index, s)] = -math.inf
-        resample: list[tuple[int, float]] = []
-        for index in sorted(fitted):
-            occurrence = path.obstacles[index][0]
-            cap = path.engagement[occurrence]
-            verdict = engagement_module.classify(
-                overlap[index], tail_mm=path.tail_mm, engaged=path.tail_mm == 0.0 or engaged.get(occurrence, False),
-                cap_mm=cap, min_step_mm=min_step_mm, threshold=pose.INTERFERENCE_MM3)
-            resample.extend((index, s) for s in verdict.needs)
-            if verdict.needs:
-                continue  # the end of the run needs more samples first
-            engaged[occurrence] = verdict.reached_start
-            if verdict.exempt:
-                path.engaged_mm[occurrence] = round(path.tail_mm + verdict.extent, 6)
-            for s in verdict.exempt:
-                lower[(index, s)] = math.inf  # engaged by design: no clearance to prove
-            for s in verdict.collisions:
-                if (index, s) not in seen:
-                    seen.add((index, s))
-                    path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
-                                            "overlap_mm3": round(overlap[index][s] or 0.0, 6)})
-            reason = f"{occurrence}: interferes over its engagement and declares no engagement_length_mm"
-            if verdict.unknown and reason not in path.failures:
-                path.failures.append(reason)
+        _read_outcomes(path, pending, outcomes, fitted, overlap, lower)
+        resample = _classify_engagements(path, fitted, overlap, lower, engaged, seen, min_step_mm)
         if path.collisions:
             path.status = "collision"
             return
@@ -469,6 +484,37 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
 # --------------------------------------------------------------------------- run
 
 
+def declared_engagements(record_hw: Path, assembly: Any) -> dict[tuple[str, str], float | None]:
+    """The engagement caps of the record's press fits and heat-sets. Running and locating fits never exempt, but a
+    malformed declaration of either is still an input error."""
+    try:
+        interfaces = pair_policy.read_interfaces(record_hw)
+        caps = engagement_caps(pair_policy.declared_press_fits(record_hw, interfaces, assembly),
+                               pair_policy.declared_heat_sets(record_hw, interfaces, assembly))
+        pair_policy.declared_running_fits(record_hw, interfaces, assembly)
+        pair_policy.declared_locating_fits(record_hw, interfaces, assembly)
+    except pair_policy.PolicyError as error:
+        raise AccessError(str(error)) from error
+    return caps
+
+
+def measure_plans(plans: Sequence[OperationAccess], definitions: Mapping[str, Any],
+                  tools: Mapping[tuple[str, int], tuple[str, Any]], step_mm: float, min_step_mm: float) -> None:
+    """Measure every path of `plans` with one pair evaluator over the parts and the tool envelopes."""
+    shapes = {pn: part.shape for pn, part in definitions.items()}
+    parts = dict(definitions)
+    for key, shape in tools.values():
+        shapes[key] = shape
+        parts[key] = pose.Part(key, key, shape)
+    measurer = pair_measure.PairMeasurer(shapes, geometry_ids=pose.geometry_ids(parts),
+                                         rule=pair_measure.RuleVersion.current(), threads=False)
+    with pose.stdout_to_stderr(), measurer.session() as session:
+        for entry in plans:
+            engaged: dict[str, bool] = {}
+            for path in reversed(entry.paths):  # last leg first, so an engagement carries back from it
+                run_path(session, measurer, path, step_mm, min_step_mm, engaged)
+
+
 def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the packet, the evidence detail) of one run."""
     import yaml
@@ -497,14 +543,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         tools, tool_problems, digests = read_tools(requests, record_hw, args.hw)
         for index, (artifact, sha) in enumerate(sorted(digests.items())):
             dependencies[f"tool_envelope_{index + 1}"] = sha
-        try:
-            interfaces = pair_policy.read_interfaces(record_hw)
-            caps = engagement_caps(pair_policy.declared_press_fits(record_hw, interfaces, assembly),
-                                   pair_policy.declared_heat_sets(record_hw, interfaces, assembly))
-            for reader in (pair_policy.declared_running_fits, pair_policy.declared_locating_fits):
-                reader(record_hw, interfaces, assembly)  # a malformed clearance fit is still an input error
-        except pair_policy.PolicyError as error:
-            raise AccessError(str(error)) from error
+        caps = declared_engagements(record_hw, assembly)
         values = chain.complete({})
         world = chain.transforms(values)
         detail["nominal"] = {jid: value for jid, value in values.items()}
@@ -512,18 +551,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         for entry in plans:
             entry.unknown.extend(reason for (op_id, _), reason in sorted(tool_problems.items())
                                  if op_id == entry.operation.id)
-        shapes = {pn: part.shape for pn, part in definitions.items()}
-        parts = dict(definitions)
-        for key, shape in tools.values():
-            shapes[key] = shape
-            parts[key] = pose.Part(key, key, shape)
-        measurer = pair_measure.PairMeasurer(shapes, geometry_ids=pose.geometry_ids(parts),
-                                             rule=pair_measure.RuleVersion.current(), threads=False)
-        with pose.stdout_to_stderr(), measurer.session() as session:
-            for entry in plans:
-                engaged: dict[str, bool] = {}
-                for path in reversed(entry.paths):  # last leg first, so an engagement carries back from it
-                    run_path(session, measurer, path, args.step_mm, args.min_step_mm, engaged)
+        measure_plans(plans, definitions, tools, args.step_mm, args.min_step_mm)
         for entry in plans:
             mine = access_findings(entry)
             findings.extend(mine)
