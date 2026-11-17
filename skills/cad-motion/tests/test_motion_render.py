@@ -684,35 +684,54 @@ class CrosscheckFreecad(unittest.TestCase):
         self.assertGreater(report["max_deviation"]["mm"], 90)
 
 
-class CompactOutput(unittest.TestCase):
-    def printed(self, result: dict[str, Any], hw: Path, agent: bool) -> str:
+class CompactOutput(Fixture):
+    """motion.main under CAD_OUTPUT: the summary, the full-JSON file, and the child asked for json."""
+
+    def main_stdout(self, mode: str, *argv: Any) -> tuple[int, str]:
         stdout = io.StringIO()
-        with mock.patch.dict(os.environ, {"CAD_OUTPUT": "compact"} if agent else {"CAD_OUTPUT": "json"}), contextlib.redirect_stdout(stdout):
-            motion._emit(result, hw, "render", 1, False)
-        return stdout.getvalue()
+        with mock.patch.dict(os.environ, {"CAD_OUTPUT": mode}), contextlib.redirect_stdout(stdout), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = motion.main([str(a) for a in argv])
+        return code, stdout.getvalue()
 
-    def test_compact_mode_prints_a_bounded_summary_naming_the_full_json_that_plain_mode_prints(self) -> None:
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        result = {"status": "fail", "version": "v1", "case": "swing", "error": "rendered placements differ",
-                  "parity": {"frames": {str(n): {"deviation_mm": 0.5 * n} for n in range(60)}}}
-        plain, agent = self.printed(result, tmp / "hw", False), self.printed(result, tmp / "hw", True)
-        self.assertEqual(result_payload(plain), result)
-        self.assertLess(len(agent), 400)
-        self.assertIn("motion render: fail (exit 1)", agent)
-        self.assertIn("error: rendered placements differ", agent)
-        full = Path(agent.splitlines()[-1].removeprefix("full JSON: "))
+    def test_compact_mode_prints_a_bounded_summary_naming_the_full_json_that_json_mode_prints(self) -> None:
+        argv = ("plan", "--hw", self.hw, "--version", "v1")
+        code, plain = self.main_stdout("json", *argv)
+        compact_code, compact = self.main_stdout("compact", *argv)
+        self.assertEqual((code, compact_code), (0, 0))
+        self.assertEqual(result_payload(plain)["version"], "v1")
+        self.assertLess(len(compact), 600)
+        self.assertLess(len(compact), len(plain))
+        self.assertIn("motion plan: pass (exit 0)", compact)
+        full = Path(compact.splitlines()[-1].removeprefix("full JSON: "))
         self.assertEqual(full.read_text(encoding="utf-8"), plain)
-        self.assertEqual(full.parent, (tmp / ".cad-work" / "agent-output").resolve())
+        self.assertEqual(full.parent, (self.tmp / "project" / ".cad-work" / "agent-output").resolve())
 
-    def test_run_json_parses_a_child_that_is_asked_for_json(self) -> None:
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        done = subprocess.CompletedProcess([], 0, stdout='{"schema": "tool-result/1", "status": "pass", "findings": [], "payload": {"x": 1}}', stderr="")
-        with mock.patch.dict(os.environ, {"CAD_OUTPUT": "compact"}), \
-                mock.patch.object(motion.subprocess, "run", return_value=done) as run:
-            self.assertEqual(motion._run_json(["tool"], tmp / "log", 5, "tool"), (0, {"x": 1}))
-        self.assertEqual(run.call_args.kwargs["env"]["CAD_OUTPUT"], "json")
+    def test_an_error_is_the_same_envelope_in_both_modes_and_exits_2(self) -> None:
+        argv = ("plan", "--hw", self.hw, "--version", "v1", "--case", "bad")
+        results = [self.main_stdout(mode, *argv) for mode in ("json", "compact")]
+        self.assertEqual([code for code, _ in results], [2, 2])
+        self.assertEqual(results[0][1], results[1][1])
+        self.assertEqual(result_payload(results[0][1])["status"], "error")
+
+    def test_the_freecad_child_is_asked_for_json_and_its_envelope_is_read_as_its_payload(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def freecad(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            job = Path(command[command.index("--job-dir") + 1])
+            job.mkdir(parents=True)
+            (job / "crosscheck.json").write_text(json.dumps({"mode": "full", "status": "pass"}), encoding="utf-8")
+            (job / "motion.FCStd").write_bytes(b"freecad")
+            seen.update(kwargs["env"])
+            stdout = json.dumps({"schema": "tool-result/1", "status": "pass", "findings": [], "payload": {"status": "pass"}})
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+        with mock.patch.object(motion.subprocess, "run", side_effect=freecad):
+            code, out = self.main_stdout("compact", "render", "--hw", self.hw, "--version", "v1", "--outputs", "glb",
+                                         "--crosscheck", "freecad")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(seen["CAD_OUTPUT"], "json")
+        self.assertIn("motion render: pass (exit 0)", out)
 
 
 if __name__ == "__main__":
