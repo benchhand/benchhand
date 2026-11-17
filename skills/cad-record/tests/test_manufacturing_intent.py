@@ -281,6 +281,28 @@ class Normalization(unittest.TestCase):
         self.assertIn("head_load", problem.message)
         self.assertEqual(problem.pointer, "use_case/loads/0/direction")
 
+    def test_a_load_direction_beyond_float_range_is_reported_not_raised(self) -> None:
+        documents = fx.tst_record()
+        documents["product.yaml"]["use_case"]["loads"][0]["direction"] = [10 ** 400, 0, 0]
+        record = mi.normalize_record(documents)
+        self.assertIn("load.direction_not_unit", [p.code for p in record.problems])
+        self.assertIsNone(record.use_case.loads[0].direction)
+
+    def test_a_non_finite_load_direction_is_reported_and_carried_as_none(self) -> None:
+        for component in (float("nan"), float("inf")):
+            with self.subTest(component):
+                documents = fx.tst_record()
+                documents["product.yaml"]["use_case"]["loads"][0]["direction"] = [component, 0, 0]
+                record = mi.normalize_record(documents)
+                self.assertIn("intent.number", [p.code for p in record.problems])
+                self.assertIsNone(record.use_case.loads[0].direction)
+
+    def test_a_parsed_load_carries_its_direction_as_floats(self) -> None:
+        documents = fx.tst_record()
+        documents["product.yaml"]["use_case"]["loads"][0]["direction"] = [0, 0.6, -0.8]
+        record = mi.normalize_record(documents)
+        self.assertEqual(record.use_case.loads[0].direction, (0.0, 0.6, -0.8))
+
     def test_a_malformed_load_direction_is_a_schema_problem_only(self) -> None:
         documents = fx.tst_record()
         documents["product.yaml"]["use_case"]["loads"][0]["direction"] = [0, -1]

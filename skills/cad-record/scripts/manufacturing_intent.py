@@ -521,6 +521,7 @@ class Load:
     id: str | None
     kind: str | None  # static, sustained, cyclic, impact or vibration
     magnitude: Fact
+    direction: tuple[float, float, float] | None  # a unit vector; None only when invalid, which validation reports
     requirements: tuple[str, ...]
 
 
@@ -1113,17 +1114,25 @@ class _Reader:
                          f"the freeze of {frozen.get('version')} anchors no evidence_sha256; a release needs a new record version 2 "
                          "freeze that records its acceptance digest", severity="warning")
 
-    def check_load_direction(self, load: Mapping[str, Any], path: str, pointer: str) -> None:
-        """A load's direction is a unit vector. The schema reports a malformed one, so only a well-formed
-        three-number array is measured here."""
+    def check_load_direction(self, load: Mapping[str, Any], path: str, pointer: str) -> tuple[float, float, float] | None:
+        """A load's direction as floats, or None when it is not a unit vector. The schema reports a malformed
+        array and intent.number a non-finite component; this reports a well-formed one whose norm is not 1."""
         direction = load.get("direction")
         if not (isinstance(direction, list) and len(direction) == 3
-                and all(isinstance(c, (int, float)) and not isinstance(c, bool) and math.isfinite(c) for c in direction)):
-            return
-        norm = math.hypot(*direction)
+                and all(isinstance(c, (int, float)) and not isinstance(c, bool) for c in direction)):
+            return None
+        try:
+            vector = tuple(float(c) for c in direction)
+        except (OverflowError, TypeError, ValueError):  # an integer beyond float range
+            vector = ()
+        if vector and not all(math.isfinite(c) for c in vector):
+            return None
+        norm = math.hypot(*vector) if vector else math.inf
         if abs(norm - 1.0) > LOAD_DIRECTION_TOLERANCE:
             self.problem("load.direction_not_unit", path, f"{pointer}/direction",
-                         f"load {load.get('id')}: direction {direction} has norm {norm:.9g}, not 1 within {LOAD_DIRECTION_TOLERANCE:g}")
+                         f"load {load.get('id')}: direction has norm {norm:.9g}, not 1 within {LOAD_DIRECTION_TOLERANCE:g}")
+            return None
+        return (vector[0], vector[1], vector[2])
 
     def use_case(self, data: Any, path: str) -> UseCase:
         if not isinstance(data, Mapping):
@@ -1147,13 +1156,14 @@ class _Reader:
                 for key, dimensions in (("duration", ("time",)), ("frequency", ("frequency",)), ("cycles", ("count",))):
                     if key in item:
                         self.fact(item[key], path, f"{pointer}/{key}", dimensions)
-                self.check_load_direction(item, path, pointer)
+                direction = self.check_load_direction(item, path, pointer)
                 if "application" in item:
                     self.subject(item["application"], path, f"{pointer}/application")
                 for requirement in item.get("requirements") or ():
                     self.ref("requirement", requirement, path, pointer)
                 entries.append(Load(item.get("id"), item.get("kind"),
                                     self.fact(item.get("magnitude"), path, f"{pointer}/magnitude", ("force", "torque")),
+                                    direction,
                                     tuple(item.get("requirements") or ())))
             loads = tuple(entries)
         else:

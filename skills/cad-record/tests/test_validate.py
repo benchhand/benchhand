@@ -615,6 +615,20 @@ class ValidateProject(unittest.TestCase):
         self.assertTrue(any(item["message"].startswith("joints/1: ") for item in report["findings"]))
 
 
+class LoadDirection(unittest.TestCase):
+    def test_a_load_direction_beyond_float_range_is_a_finding_not_a_crash(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-record-load-direction-")
+        self.addCleanup(temporary.cleanup)
+        project = Path(temporary.name) / "project"
+        documents = fx.tst_record()
+        documents["product.yaml"]["use_case"]["loads"][0]["direction"] = [10 ** 400, 0, 0]
+        fx.write_record(project / "hw", documents)
+        result = subprocess.run([sys.executable, str(VALIDATOR), str(project)], capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        codes = [item.get("code") for item in json.loads(result.stdout)["findings"] if item["severity"] == "error"]
+        self.assertIn("load.direction_not_unit", codes)
+
+
 class RecordVersion(unittest.TestCase):
     """Row 19: a version 1 record stays readable and is never certified; gated actions name the migration."""
 
