@@ -28,7 +28,7 @@ sys.modules[spec.name] = lifecycle
 spec.loader.exec_module(lifecycle)
 
 POSIX = os.name == "posix"
-# How long a supervised family may take to start on a loaded host before a test gives up.
+# A supervised family gets this long to start on a loaded host. A test that waits longer gives up.
 STARTUP_SECONDS = 120.0
 LOAD = ("import importlib.util, sys\n"
         f"spec = importlib.util.spec_from_file_location('cad_flow_process_lifecycle', {str(SCRIPT)!r})\n"
