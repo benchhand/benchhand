@@ -1405,7 +1405,8 @@ class VersionedPublicationTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         report = json.loads(run.stdout)
         self.assertLess(abs(report["max_von_mises_mpa"] / 120.0 - 1), 0.05)
-        self.assertLess(abs(report["max_displacement_mm"] / 2.31884 - 1), 0.05)
+        # delta = P L^3 / (3 E I) = 50 N * (100 mm)^3 / (3 * 70000 MPa * 10 * 5^3 / 12 mm^4) = 2.285714 mm; the profile gives E = 70000
+        self.assertLess(abs(report["max_displacement_mm"] / 2.285714 - 1), 0.05)
         for tool in ("gmsh", "calculix"):  # the wrapper's directory and PATH hold neither tool
             with self.subTest(tool=tool):
                 path = Path(report["solver_versions"][tool]["path"])
