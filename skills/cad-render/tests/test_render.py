@@ -38,7 +38,7 @@ TEMPLATE_HW = RENDER_EXAMPLE
 COMPARE_PY = SKILL / "scripts" / "compare_renders.py"
 PARITY_PY = SKILL / "scripts" / "parity_policy.py"
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-from modload import load_fresh as load  # noqa: E402
+from modload import load_fresh as load, result_payload  # noqa: E402
 
 
 render = load("cad_render", RENDER_PY)
@@ -753,7 +753,7 @@ class Cli(unittest.TestCase):
     def test_a_project_without_versions_is_an_infra_error(self) -> None:
         result = self.run_cli(str(TEMPLATE_HW))
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(json.loads(result.stdout)["status"], "error")
+        self.assertEqual(result_payload(result.stdout)["status"], "error")
 
     def test_a_bad_size_is_a_usage_error(self) -> None:
         self.assertEqual(self.run_cli(str(TEMPLATE_HW), "--size", "huge").returncode, 2)
@@ -761,7 +761,7 @@ class Cli(unittest.TestCase):
     def test_jobs_outside_supported_range_are_rejected(self) -> None:
         result = self.run_cli(str(TEMPLATE_HW), "--jobs", "9")
         self.assertEqual(result.returncode, 2)
-        self.assertIn("--jobs must be between 1 and 8", json.loads(result.stdout)["error"])
+        self.assertIn("--jobs must be between 1 and 8", result_payload(result.stdout)["error"])
 
     def printed(self, summary: dict, agent: bool) -> str:
         env = {"CAD_OUTPUT": "compact"} if agent else {"CAD_OUTPUT": "json"}
@@ -779,7 +779,7 @@ class Cli(unittest.TestCase):
         summary = {"status": "fail", "cache": "miss", "version": "v1", "out_dir": "x" * 40, "failures": failures,
                    "pngs": {v: f"/very/long/path/{v}.png" for v in failures}, "view_wall_s": {v: 1.5 for v in failures}}
         plain, agent = self.printed(summary, False), self.printed(summary, True)
-        self.assertEqual(plain, json.dumps(summary, indent=2) + "\n")
+        self.assertEqual(result_payload(plain), summary)
         self.assertLess(len(agent), len(plain))
         self.assertLess(len(agent), 800)
         self.assertIn("render: fail (exit 1)", agent)
@@ -1071,7 +1071,7 @@ class BrowserRender(unittest.TestCase):
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(RENDER_PY), str(self.hw), "--size", "400x300",
                                *args], capture_output=True, text=True, timeout=900)
         self.assertIn(proc.returncode, (0, 1), proc.stdout[-3000:] + proc.stderr[-3000:])
-        return proc.returncode, json.loads(proc.stdout)
+        return proc.returncode, result_payload(proc.stdout)
 
     def test_an_opaque_window_hides_the_target_and_a_transparent_one_shows_it(self) -> None:
         box_version.write(self.hw, "v1", BOXES, box_parts("opaque"))

@@ -40,7 +40,7 @@ from cadmodel import scriptenv  # noqa: E402
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-from modload import load_fresh as load  # noqa: E402
+from modload import load_fresh as load, result_payload  # noqa: E402
 
 
 # freecad_assembly.py loads pose.py itself; motion.py then reuses that module, so one MotionError serves both.
@@ -70,7 +70,7 @@ def run(*argv: str) -> tuple[int, Any]:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
         code = motion.main([str(a) for a in argv])
     try:
-        return code, json.loads(out.getvalue())
+        return code, result_payload(out.getvalue())
     except json.JSONDecodeError:
         return code, out.getvalue()
 
@@ -631,7 +631,7 @@ class RenderEndToEnd(Fixture):
                                                        "--size", "320x240"),
                               capture_output=True, text=True, timeout=1800)
         self.assertEqual(proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-3000:])
-        result = json.loads(proc.stdout)
+        result = result_payload(proc.stdout)
         bundle = Path(result["bundle"])
         self.assertEqual(pose.LAYOUT.verify(bundle), [])
         self.assertEqual(result["render"]["parity"]["status"], "pass")
@@ -697,7 +697,7 @@ class CompactOutput(unittest.TestCase):
         result = {"status": "fail", "version": "v1", "case": "swing", "error": "rendered placements differ",
                   "parity": {"frames": {str(n): {"deviation_mm": 0.5 * n} for n in range(60)}}}
         plain, agent = self.printed(result, tmp / "hw", False), self.printed(result, tmp / "hw", True)
-        self.assertEqual(plain, json.dumps(result, indent=2) + "\n")
+        self.assertEqual(result_payload(plain), result)
         self.assertLess(len(agent), 400)
         self.assertIn("motion render: fail (exit 1)", agent)
         self.assertIn("error: rendered placements differ", agent)
@@ -708,10 +708,10 @@ class CompactOutput(unittest.TestCase):
     def test_run_json_parses_a_child_that_is_asked_for_json(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        done = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+        done = subprocess.CompletedProcess([], 0, stdout='{"schema": "tool-result/1", "status": "pass", "findings": [], "payload": {"x": 1}}', stderr="")
         with mock.patch.dict(os.environ, {"CAD_OUTPUT": "compact"}), \
                 mock.patch.object(motion.subprocess, "run", return_value=done) as run:
-            motion._run_json(["tool"], tmp / "log", 5, "tool")
+            self.assertEqual(motion._run_json(["tool"], tmp / "log", 5, "tool"), (0, {"x": 1}))
         self.assertEqual(run.call_args.kwargs["env"]["CAD_OUTPUT"], "json")
 
 

@@ -6,20 +6,22 @@ The tests build the example once with cad_model.py (CadQuery, `uv`), then run ea
 
 Byte budgets (stdout of one command in compact mode, lamp-arm example, v1 built from examples/lamp-arm/hw):
 
-    command               before (full JSON)   after (compact summary)   budget
-    cad_model run                 5534                  176                  400
-    cad_model check              97003                  178                  400
-    cad_model latest               174                  174 (printed whole)  250
-    form_check --version         12563                  430                  800
-    validate                       700                  385                  700
+    command               before    json (enveloped)   compact   budget
+    cad_model run           5534           6067            172      400
+    cad_model check        97003         104331            176      400
+    cad_model latest         174            268            178      250
+    form_check --version   12563          13787            430      800
+    validate                 700           1472            385      700
 
-The "after" column includes a scratch path of about 100 bytes; a shorter path shortens it.
+"before" is the bare JSON of main. The envelope repeats `findings` beside the payload, which shows most in
+validate. The compact column includes a scratch path of about 100 bytes; a shorter path shortens it.
 
 Raise a budget only with a reason in the commit message: each byte is read by an agent on every call.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -28,6 +30,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+from modload import result_payload  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 SKILLS = HERE.parents[1]
@@ -102,23 +107,32 @@ class LampArmTests(unittest.TestCase):
 
     def test_the_json_flag_prints_full_json_though_the_environment_says_compact(self) -> None:
         agent = self.tool(VALIDATE, str(self.hw), "--json", env=AGENT_ENV)
-        self.assertEqual(json.loads(agent.stdout)["ok"], False)
+        self.assertEqual(result_payload(agent.stdout)["ok"], False)
 
-    def test_cad_model_run_summary_stays_inside_its_budget(self) -> None:
+    def sealed(self, hw: Path) -> dict[str, str]:
+        """sha256 of every file the build sealed under hw/versions, by path below hw/."""
+        versions = hw / "versions"
+        return {p.relative_to(hw).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(versions.rglob("*")) if p.is_file()}
+
+    def test_cad_model_run_summary_stays_inside_its_budget_and_seals_the_same_bytes_as_a_json_run(self) -> None:
         other = Path(self.tmp.name) / "again"
         shutil.copytree(LAMP_HW, other / "hw")
         agent = self.tool(CAD_MODEL, "run", str(other / "hw"), "--label", "v1", env=AGENT_ENV)
         self.assertEqual(agent.returncode, 0, agent.stderr[-2000:])
         self.assertLessEqual(len(agent.stdout.encode()), BUDGETS["run"], agent.stdout)
         path = Path(agent.stdout.rstrip("\n").splitlines()[-1].removeprefix("full JSON: "))
-        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["label"], "v1")
+        self.assertEqual(result_payload(path.read_text(encoding="utf-8"))["label"], "v1")
+        sealed = self.sealed(self.hw)
+        self.assertIn("versions/v1/manifest.json", sealed)
+        self.assertEqual(self.sealed(other / "hw"), sealed)
 
     def test_cad_model_check_out_file_is_the_named_full_json(self) -> None:
         out = Path(self.tmp.name) / ".cad-work" / "check.json"
         out.parent.mkdir(exist_ok=True)
         agent = self.tool(CAD_MODEL, "check", "v1", "--hw", str(self.hw), "--out", str(out), env=AGENT_ENV)
         self.assertIn(f"full JSON: {out.resolve()}", agent.stdout)
-        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["label"], "v1")
+        self.assertEqual(result_payload(out.read_text(encoding="utf-8"))["label"], "v1")
 
 
 if __name__ == "__main__":

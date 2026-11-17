@@ -428,7 +428,7 @@ class Pruning(ReleaseCase):
         self.assertEqual(tree(hw), before)
 
     def test_store_gc_is_asked_for_json_whatever_the_caller_environment_says(self) -> None:
-        done = subprocess.CompletedProcess([], 0, stdout='{"objects": {}}', stderr="")
+        done = subprocess.CompletedProcess([], 0, stdout='{"schema": "tool-result/1", "status": "pass", "findings": [], "payload": {"objects": {}}}', stderr="")
         with mock.patch.dict(os.environ, {"CAD_OUTPUT": "compact"}), \
                 mock.patch.object(prune.subprocess, "run", return_value=done) as run:
             self.assertEqual(prune.store_gc(Path("hw")), {"objects": {}})
