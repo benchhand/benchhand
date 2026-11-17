@@ -146,6 +146,8 @@ CASES: tuple[Case, ...] = (
            {"max": 10}),
     number(24, "same_state_volume_rel_tolerance", LAYOUT, "/properties/manufacturing/properties/same_state_volume_rel_tolerance",
            "(0, 0.1]", {"max": 1e-3}, default=1e-9),
+    number(25, "mesh_size_extent_ratio", FEA, "/properties/mesh_size_extent_ratio", "[0.001, 0.25]", {"min": 0.005, "max": 0.1},
+           default=0.05),
     number(25, "mesh_size", FEA, "/properties/mesh_size", "[0.05, 1000]",
            {"relative_to": "part_extent_mm", "min": 0.005, "max": 0.1}),
     number(26, "timeout_seconds", FEA, "/properties/timeout_seconds", "[10, 86400]", {"max": 3600}, default=600),
@@ -216,7 +218,7 @@ CASES: tuple[Case, ...] = (
     number(50, "tol_plus", STACK, f"{CONTRIBUTOR}/tol_plus", "[0, 5]", {"max": 1}),
     number(50, "tol_minus", STACK, f"{CONTRIBUTOR}/tol_minus", "[0, 5]", {"max": 1}),
     number(51, "coverage_factor", STACK, "/properties/statistics/properties/coverage_factor", "[1, 6]",
-           {"min": 1.96, "max": 3.5}),
+           {"min": 1.96, "max": 3.5}, default=2),
     number(52, "confidence", "manufacturing.schema.json", "/$defs/uncertainty/properties/confidence", "(0, 1]", {"min": 0.2}),
     number(53, "weight", "requirements.schema.json", "/properties/preferences/items/properties/weight", "(0, 1000]",
            {"max": 100}),
@@ -237,7 +239,7 @@ FLOW_PROFILE_ROWS = {1, 2, 4, 5, 6, 7}
 FACTS = {
     "build_volume.x_mm", "build_volume.y_mm", "build_volume.z_mm",
     "profile_tolerance_mm", "zone_mm", "limit_um", "edge_limits", "deviation_mm", "heat_set.hole_d", "heat_set.depth_min",
-    "limits.linear_mm", "limits.angular_deg", "volume_rel_tolerance", "volume_abs_tolerance_mm3",
+    "limits.linear_mm", "limits.angular_deg", "min_wall_mm.cnc", "volume_rel_tolerance", "volume_abs_tolerance_mm3",
     "material.E", "material.density", "material.yield", "material.nu", "calibration.samples", "calibration.bridge_span",
     "calibration.overhang_angle", "calibration.min_wall", "calibration.deviation", "nozzle_diameter", "layer_height",
     "hotend_max_temperature", "bed_max_temperature", "max_speed", "travel_x", "travel_y", "travel_z", "spindle_max_speed",
@@ -245,8 +247,8 @@ FACTS = {
     "tol", "tol_plus", "tol_minus", "confidence", "weight", "min_visible_fraction", "crank_radius_mm", "rod_length_mm",
     "period_deg", "mass_target", "bom.mass",
 }
-# Tunables whose default needs a decision, because neither the code, the tests nor the docs give a value
-UNDECIDED = {"mesh_size", "min_wall_mm.cnc", "coverage_factor"}
+# An explicit override that has no default of its own: mesh_size_extent_ratio carries the default and mesh_size wins when set
+OVERRIDES = {"mesh_size"}
 # The absurd values the audit lists, in each case's own unit. The schema must refuse all of them
 ABSURD: tuple[tuple[str, str, Any], ...] = (
     ("calibrated bridge of 500 mm", "calibration.bridge_span", 500),
@@ -254,6 +256,7 @@ ABSURD: tuple[tuple[str, str, Any], ...] = (
     ("layer height of 5 mm", "layer_height", 5),
     ("required_safety_factor of 0.2", "required_safety_factor", 0.2),
     ("mesh_size of 1e-6 mm", "mesh_size", 1e-6),
+    ("mesh_size_extent_ratio of 1e-6", "mesh_size_extent_ratio", 1e-6),
     ("timeout of 1e9 s", "timeout_seconds", 1e9),
     ("motion max_step of 180 deg", "max_step.deg", 180),
     ("layout STL deflection of 10 mm", "layout.mesh.linear_deflection_mm", 10),
@@ -363,10 +366,10 @@ class Rows(unittest.TestCase):
             with self.subTest(case.name):
                 self.assertEqual(node(case.schema, case.default_pointer or case.pointer)["default"], case.default)
 
-    def test_only_a_fact_or_an_undecided_tunable_has_no_default(self) -> None:
+    def test_only_a_fact_or_an_override_has_no_default(self) -> None:
         """A tunable has a default. A fact about a real material, machine or part stays unknown until sourced."""
         without = {case.name for case in CASES if case.default is NODEFAULT}
-        self.assertEqual(without - FACTS, UNDECIDED)
+        self.assertEqual(without - FACTS, OVERRIDES)
 
     def test_a_fact_has_no_default_in_its_schema(self) -> None:
         for case in (c for c in CASES if c.name in FACTS):

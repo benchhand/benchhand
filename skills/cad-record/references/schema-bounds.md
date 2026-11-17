@@ -20,6 +20,10 @@ A tunable is a setting the user may change. It always has a `default`.
 
 The build volume has no default. It comes from the active capability profile's envelope.
 
+The CNC minimum wall is a fact about the shop. It has no default. It comes from the CNC capability profile and stays UNKNOWN until one exists.
+
+The FEA mesh default is a ratio, `mesh_size_extent_ratio`, set to 0.05 of the part extent. It is a starting point that the convergence gate verifies. An explicit `mesh_size` in mm wins when set and has no default.
+
 ## Annotations
 
 - `default`: the value used when the field is absent.

@@ -6,8 +6,13 @@
   "type": "object",
   "properties": {
     "step": {"type": "string", "minLength": 1},
+    "mesh_size_extent_ratio": {
+      "description": "Largest element edge as a fraction of the part's largest extent. The default 0.05 is extent / 20, a starting point that the mesh convergence gate (#56) verifies, not a guarantee. An explicit mesh_size wins when set. The hard bounds are a quarter of the extent and a thousandth of it; warn above a tenth (too coarse) or below a two-hundredth (too many nodes)",
+      "x-unit": "dimensionless", "type": "number", "minimum": 0.001, "maximum": 0.25, "default": 0.05,
+      "x-plausible": {"min": 0.005, "max": 0.1}
+    },
     "mesh_size": {
-      "description": "Largest element edge. A band relative to the part's largest extent: warn above a tenth of it (too coarse) or below a two-hundredth (too many nodes)",
+      "description": "Largest element edge in mm. An explicit value overrides mesh_size_extent_ratio and has no default of its own. A band relative to the part's largest extent: warn above a tenth of it (too coarse) or below a two-hundredth (too many nodes)",
       "x-unit": "mm", "type": "number", "minimum": 0.05, "maximum": 1000,
       "x-plausible": {"relative_to": "part_extent_mm", "min": 0.005, "max": 0.1}
     },

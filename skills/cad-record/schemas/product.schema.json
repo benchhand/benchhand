@@ -76,7 +76,7 @@
           "type": "object", "additionalProperties": false, "minProperties": 1,
           "properties": {
             "fdm": {"type": "number", "minimum": 0.2, "maximum": 25, "default": 1.2, "x-plausible": {"min": 0.4, "max": 3}},
-            "cnc": {"type": "number", "minimum": 0.2, "maximum": 25, "x-plausible": {"min": 0.4, "max": 3}}
+            "cnc": {"description": "A fact of the shop, not a tunable, so it has no default: it comes from the CNC capability profile and stays UNKNOWN until one exists", "type": "number", "minimum": 0.2, "maximum": 25, "x-plausible": {"min": 0.4, "max": 3}}
           }
         }
       }
