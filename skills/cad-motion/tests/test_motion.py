@@ -1171,12 +1171,12 @@ class StepTests(unittest.TestCase):
     _timed_v6_digests: dict[str, str] = {}
 
     def timed_v6_sweep(self) -> tuple[Path, subprocess.CompletedProcess[str], dict]:
-        """v6_sweep(None, "minimum_clearance") with the default options (one job, a fresh cache), run once per
-        class on first use and handed out as a private copy: its result, its folder and its paths are the
+        """v6_sweep(None, "minimum_clearance") on one job (--jobs 1 given explicitly, since the default is now auto)
+        and a fresh cache, run once per class on first use and handed out as a private copy: its result, its folder and its paths are the
         caller's own, so a test that reads it cannot change what another reads."""
         cls = type(self)
         if cls._timed_v6_memo is None:
-            cls._timed_v6_memo = self.v6_sweep(None, "minimum_clearance")
+            cls._timed_v6_memo = self.v6_sweep(None, "minimum_clearance", "--jobs", "1")
             original = cls._timed_v6_memo[0]
             cls._timed_v6_digests = self.folder_digests(original)
         source, proc, result = cls._timed_v6_memo
@@ -1359,7 +1359,7 @@ class StepTests(unittest.TestCase):
     def test_worker_processes_report_exactly_what_one_process_does(self) -> None:
         """The tie-sensitive minimum_clearance worst case of the V6 sweep, in one process and in three
         workers: the same JSON, evidence and worst-case STEP."""
-        # --jobs 1 is the default, so the one-job run is the sweep the correctly-timed test reads too
+        # the one-job run is the same memoised sweep the correctly-timed test reads (it passes --jobs 1 explicitly)
         runs = [self.timed_v6_sweep(), self.v6_sweep(None, "minimum_clearance", "--jobs", "3")]
         for hw, proc, _ in runs:
             self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])

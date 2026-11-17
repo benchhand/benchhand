@@ -461,7 +461,7 @@ def part_recipe(context: drawing_contract.DrawingContext, pn: str) -> dict[str, 
 
 
 def run_part(context: drawing_contract.DrawingContext, pn: str, output_dir: Path, freecadcmd: Path,
-             timeout: float, bundle_path: Path | None = None) -> tuple[dict[str, Any], int]:
+             timeout: float, bundle_path: Path | None = None, jobs: int | None = None) -> tuple[dict[str, Any], int]:
     part = context.part(pn)
     record = part.record
     drawing = record.get("drawing")
@@ -499,7 +499,7 @@ def run_part(context: drawing_contract.DrawingContext, pn: str, output_dir: Path
         plans = part_views.plan_views(drawing, measured.frame, binding.features, face_map)
         result, code = compose_and_publish(context, part, drawing, regime, binding, face_map, measured, plans,
                                            procurement, vendor, output_dir, freecadcmd, timeout, work, recognition,
-                                           bundle_path)
+                                           bundle_path, jobs)
         return result, code
     except drawing_intent.IntentError as exc:
         return fail(exc.code, str(exc), pn=pn), 1
@@ -512,7 +512,7 @@ def compose_and_publish(context: drawing_contract.DrawingContext, part: drawing_
                         measured: drawing_intent.Measured, plans: list[part_views.ViewPlan],
                         procurement: list[dict[str, Any]], vendor: bool, output_dir: Path, freecadcmd: Path,
                         timeout: float, work: Path, recognition: feature_recognition.Recognition,
-                        bundle_path: Path | None = None) -> tuple[dict[str, Any], int]:
+                        bundle_path: Path | None = None, jobs: int | None = None) -> tuple[dict[str, Any], int]:
     record = part.record
     sizes = (drawing.get("sheet") or {}).get("sizes") or \
         ((context.product.get("drawing") or {}).get("default_sheet") or {}).get("sizes") or \
@@ -637,7 +637,7 @@ def compose_and_publish(context: drawing_contract.DrawingContext, part: drawing_
         return fail(getattr(exc, "code", "layout_check_failed"), str(exc), pn=part.pn), 1
     package = drawing_document.publish_package(context, pages, report, output_dir, freecadcmd, timeout,
                                                completeness.release_blockers(record),
-                                               jobs=freecad_runtime.jobs_for(None, len(pages),
+                                               jobs=freecad_runtime.jobs_for(jobs, len(pages),
                                                                              freecad_runtime.FREECAD_JOB_PEAK_RSS_BYTES),
                                                bundle_path=bundle_path if report.status == "pass" else output_dir)
     retained_dir = package.output_dir if package.exit_code != 0 else output_dir
@@ -716,7 +716,7 @@ def main(argv: list[str] | None = None) -> int:
                 draft.parent.mkdir(parents=True, exist_ok=True)
                 draft.mkdir()
             bundle_path = api.bundle_dir(hw, "drawings", label, subject) if output_root is None else draft
-            result, code = run_part(context, pn, draft, freecadcmd, args.timeout, bundle_path)
+            result, code = run_part(context, pn, draft, freecadcmd, args.timeout, bundle_path, args.jobs)
             if code != 0:
                 result.setdefault("output_dir", str(draft))
                 rejected = draft / "rejected.json"
@@ -735,8 +735,10 @@ def main(argv: list[str] | None = None) -> int:
             return fail(exc.code, str(exc), pn=pn), exc.exit_code
         except (OSError, ValueError, KeyError) as exc:
             return fail("io_error", str(exc), pn=pn), 2
+    # --jobs bounds the whole run: parts, views and sheet exports share one budget of FreeCAD processes
+    budget = freecad_runtime.jobs_for(args.jobs, 1 << 16, freecad_runtime.FREECAD_JOB_PEAK_RSS_BYTES)
     try:
-        with freecad_runtime.terminate_jobs_on_signal():
+        with freecad_runtime.terminate_jobs_on_signal(), freecad_runtime.launch_budget(budget):
             outcomes = freecad_runtime.map_jobs(args.part, jobs, draw_part)
     except freecad_runtime.JobInterrupted as exc:
         print(json.dumps(fail("interrupted", str(exc)), indent=2))

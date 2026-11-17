@@ -298,6 +298,40 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
         process.wait()
 
 
+# A run-wide cap on FreeCAD processes alive at once, across every thread that launches one: parts, sheets and
+# views share it, so --jobs bounds the whole run and not each pool separately.
+_LAUNCH_SLOTS: threading.BoundedSemaphore | None = None
+
+
+@contextmanager
+def launch_budget(limit: int):
+    """At most ``limit`` FreeCAD processes at once, from any thread, while the block runs."""
+    global _LAUNCH_SLOTS
+    if limit < 1:
+        raise ValueError("a launch budget must be positive")
+    previous, _LAUNCH_SLOTS = _LAUNCH_SLOTS, threading.BoundedSemaphore(limit)
+    try:
+        yield
+    finally:
+        _LAUNCH_SLOTS = previous
+
+
+@contextmanager
+def _launch_slot():
+    """Hold one slot of the launch budget (if any) for the life of one FreeCAD process; give up on a signal."""
+    slots = _LAUNCH_SLOTS
+    if slots is None:
+        yield
+        return
+    while not slots.acquire(timeout=0.1):
+        if _CANCEL_JOBS.is_set():
+            raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
+    try:
+        yield
+    finally:
+        slots.release()
+
+
 def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
             timeout: float, *, environ: Mapping[str, str] | None = None) -> tuple[dict[str, Any] | None, str]:
     """Run one isolated FreeCAD process group and return its passing JSON result, or a reason.
@@ -312,7 +346,7 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
     try:
         if _CANCEL_JOBS.is_set():
             raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
-        with job_state_environment(workdir) as isolation:
+        with _launch_slot(), job_state_environment(workdir) as isolation:
             try:
                 process = subprocess.Popen([str(freecadcmd), str(script)], cwd=workdir, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

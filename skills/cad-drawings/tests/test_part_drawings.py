@@ -306,6 +306,64 @@ class PinDrawingGate(unittest.TestCase):
         self.assertEqual((code, replaced["status"], replaced.get("cache")), (0, "pass", None), replaced.get("findings"))
         self.assertRegex((Path(replaced["output_dir"]) / "sheet-1.pdf").read_bytes(), rb"/CreationDate \(D:20231114231320(?:Z|\+00'00')\)")
 
+    RECORDER = """#!/usr/bin/env python3
+import os, subprocess, sys, time
+log = os.environ["FREECAD_LAUNCH_LOG"]
+script = os.path.basename(sys.argv[1])
+with open(log, "a") as stream:
+    stream.write(f"start {os.getpid()} {script} {time.time()!r}\\n")
+code = subprocess.call([os.environ["FREECAD_REAL"], *sys.argv[1:]])
+with open(log, "a") as stream:
+    stream.write(f"end {os.getpid()} {script} {time.time()!r}\\n")
+sys.exit(code)
+"""
+
+    @staticmethod
+    def overlap(runs: list[tuple[float, float]]) -> int:
+        """The most runs that were going at the same moment."""
+        events = sorted([(start, 1) for start, _ in runs] + [(end, -1) for _, end in runs], key=lambda e: (e[0], e[1]))
+        peak = running = 0
+        for _, step in events:
+            running += step
+            peak = max(peak, running)
+        return peak
+
+    def test_a_two_sheet_part_exports_its_sheets_together_within_the_job_budget(self) -> None:
+        """A recording stand-in for freecadcmd times every FreeCAD process. With --jobs 2 the two sheets' exports
+        overlap and nothing runs three at a time; with --jobs 1 nothing overlaps, the sheet exports included."""
+        recorder = Path(self.tmp.name) / "recorder.py"
+        recorder.write_text(self.RECORDER, encoding="utf-8")
+        recorder.chmod(0o755)
+        for jobs in (1, 2):
+            with self.subTest(jobs=jobs):
+                hw = Path(self.tmp.name) / f"two-sheets-{jobs}" / "hw"
+                shutil.copytree(self.hw, hw)
+                part = hw / "parts" / "LMP-0005" / "part.yaml"
+                view = "{id: head_end, kind: orthographic, along_axis: A, toward: head_top}"
+                text = part.read_text(encoding="utf-8")
+                self.assertIn(view, text)
+                part.write_text(text.replace(view, view[:-1] + ", sheet: 2}"), encoding="utf-8")
+                log = Path(self.tmp.name) / f"launches-{jobs}.log"
+                env = {"FREECADCMD": str(recorder), "FREECAD_REAL": str(FREECADCMD), "FREECAD_LAUNCH_LOG": str(log)}
+                command = [UV, "run", "--script", str(DRAWING), str(hw), "--version", "v1", "--part", "LMP-0005",
+                           "--jobs", str(jobs)]
+                proc = subprocess.run(command, capture_output=True, text=True, env={**ENV, **env}, timeout=900, check=False)
+                result = json.loads(proc.stdout)["parts"][0]
+                code = proc.returncode
+                self.assertEqual((code, result["status"], result["sheets"]), (0, "pass", 2), result.get("findings"))
+                starts: dict[str, tuple[str, float]] = {}
+                runs: list[tuple[str, float, float]] = []
+                for line in log.read_text(encoding="utf-8").splitlines():
+                    kind, pid, script, stamp = line.split()
+                    if kind == "start":
+                        starts[pid] = (script, float(stamp))
+                    else:
+                        runs.append((starts[pid][0], starts[pid][1], float(stamp)))
+                exports = [(start, end) for script, start, end in runs if script == "export_job.py"]
+                self.assertGreaterEqual(len(exports), 3)   # one font probe, then one export per sheet
+                self.assertLessEqual(self.overlap([(s, e) for _, s, e in runs]), jobs)
+                self.assertEqual(self.overlap(exports), jobs)
+
     def test_explicit_output_outside_cad_work_is_refused(self) -> None:
         outside = Path(self.tmp.name) / "outside"
         proc = run(UV, "run", "--script", str(DRAWING), str(self.hw), "--version", "v1", "--part", "LMP-0005",
