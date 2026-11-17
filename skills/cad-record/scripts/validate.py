@@ -27,6 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import assembly_data  # noqa: E402 - the sibling module, beside this script in the skill
 import design_rules  # noqa: E402 - the sibling module: margins, retention, feasibility and visibility rules
 
+try:  # cad-record also runs without its sibling cad-model skill (pre-commit hook); then it prints the full JSON
+    sys.path.append(str(Path(__file__).resolve().parents[2] / "cad-model" / "scripts"))
+    from cadmodel import agent_output
+except ImportError:
+    agent_output = None  # type: ignore[assignment]
+
 
 def _load_module(name: str, path: Path) -> Any:
     """A standard-library module loaded once by path and registered in sys.modules, where dataclasses look it up."""
@@ -1263,8 +1269,15 @@ def main() -> int:
         return 0
     findings = validate_project(args.project_dir)
     failures = blocking(findings)
-    print(json.dumps({"ok": not failures, "findings": findings}, indent=2))
-    return 1 if failures else 0
+    report = {"ok": not failures, "findings": findings}
+    code = 1 if failures else 0
+    if agent_output is None:
+        print(json.dumps(report, indent=2))
+    else:
+        hw = args.project_dir / "hw" if (args.project_dir / "hw").is_dir() else args.project_dir
+        agent_output.emit(report, tool="validate", name="validate", code=code, scratch=agent_output.work_dir(hw),
+                          facts={"warnings": len(findings) - len(failures)}, blocking=failures)
+    return code
 
 
 if __name__ == "__main__":

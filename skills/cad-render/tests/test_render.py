@@ -9,6 +9,8 @@ Playwright Chromium, and skip without them.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 from unittest import mock
 import asyncio
 import hashlib
@@ -760,6 +762,30 @@ class Cli(unittest.TestCase):
         result = self.run_cli(str(TEMPLATE_HW), "--jobs", "9")
         self.assertEqual(result.returncode, 2)
         self.assertIn("--jobs must be between 1 and 8", json.loads(result.stdout)["error"])
+
+    def printed(self, summary: dict, agent: bool) -> str:
+        env = {"CAD_AGENT_OUTPUT": "1"} if agent else {}
+        stdout = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(render, "run", return_value=(1, summary)), \
+                contextlib.redirect_stdout(stdout):
+            self.assertEqual(render.main([str(self.hw)]), 1)
+        return stdout.getvalue()
+
+    def test_agent_mode_prints_a_bounded_summary_naming_the_full_json_that_plain_mode_prints(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.hw = Path(tmp.name) / "hw"
+        failures = {v: [f"{v}: subject clipped"] * 3 for v in ("iso", "front", "side", "exploded")}
+        summary = {"status": "fail", "cache": "miss", "version": "v1", "out_dir": "x" * 40, "failures": failures,
+                   "pngs": {v: f"/very/long/path/{v}.png" for v in failures}, "view_wall_s": {v: 1.5 for v in failures}}
+        plain, agent = self.printed(summary, False), self.printed(summary, True)
+        self.assertEqual(plain, json.dumps(summary, indent=2) + "\n")
+        self.assertLess(len(agent), len(plain))
+        self.assertLess(len(agent), 800)
+        self.assertIn("render: fail (exit 1)", agent)
+        self.assertIn("iso: subject clipped", agent)
+        full = Path(agent.splitlines()[-1].removeprefix("full JSON: "))
+        self.assertEqual(full.read_text(encoding="utf-8"), plain)
 
 
 WINDOW, TARGET, OTHER = "TST-0001", "TST-0002", "TST-0003"

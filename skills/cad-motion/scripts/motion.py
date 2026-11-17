@@ -64,7 +64,7 @@ SKILLS = HERE.parents[2]
 RENDER_PY = SKILLS / "cad-render" / "scripts" / "render.py"
 FREECAD_PY = HERE.with_name("freecad_assembly.py")
 sys.path.insert(0, str(SKILLS / "cad-model" / "scripts"))
-from cadmodel import scriptenv  # noqa: E402 - standard-library-only launcher
+from cadmodel import agent_output, scriptenv  # noqa: E402 - standard-library-only launcher and summary printer
 
 
 def _load(name: str, path: Path) -> Any:
@@ -213,7 +213,8 @@ def _run_json(command: list[str], log: Path, timeout: float, what: str) -> tuple
     """Run a sibling script in its own uv environment; (exit code, its JSON stdout); stderr goes to `log`."""
     try:
         with log.open("w", encoding="utf-8") as stderr:
-            proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=stderr, text=True, timeout=timeout)
+            proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=stderr, text=True, timeout=timeout,
+                                  env=agent_output.child_env())  # this parser needs the full JSON
     except subprocess.TimeoutExpired as error:
         raise pose.MotionError(f"{what} did not finish within {timeout} s (log: {log})") from error
     except FileNotFoundError as error:
@@ -350,8 +351,10 @@ def command_plan(args: argparse.Namespace) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(frames_document(ctx, effective, frames)) + "\n", encoding="utf-8")
         out["frames_out"] = str(target)
-    print(json.dumps(out, indent=2))
-    return 1 if report["status"] == "fail" else 0
+    code = 1 if report["status"] == "fail" else 0
+    blocking = [*report["limit_findings"], *report["gaps"]] if report["status"] == "fail" else []
+    _emit(out, ctx.hw, "plan", code, blocking=blocking)
+    return code
 
 
 def _recipe(ctx: Context, effective: Mapping[str, Any], outputs: list[str], size: list[int],
@@ -411,7 +414,7 @@ def command_render(args: argparse.Namespace) -> int:
         if reused is not None:
             result = json.loads((reused / "result.json").read_text(encoding="utf-8"))
             result.update(bundle=str(reused), reused=True)
-            print(json.dumps(result, indent=2))
+            _emit(result, ctx.hw, "render", 0)
             return 0
     work = ctx.hw.parent / ".cad-work" / "motion" / f"{effective['case']}-{uuid.uuid4().hex[:12]}"
     work.mkdir(parents=True)
@@ -486,8 +489,16 @@ def command_render(args: argparse.Namespace) -> int:
     shutil.rmtree(work, ignore_errors=True)
     result.update(published)
     result["timings_s"] = {**timings, "total": round(time.monotonic() - wall, 3)}
-    print(json.dumps(result, indent=2))
+    _emit(result, ctx.hw, "render", 0)
     return 0
+
+
+def _emit(result: Mapping[str, Any], hw: Path, command: str, code: int, blocking: Any = None) -> None:
+    """Print a plan or render result: in full, or as a summary of it for an agent (cadmodel.agent_output)."""
+    facts = {"version": result.get("version"), "case": result.get("case"), "summary": result.get("summary"),
+             "bundle": result.get("bundle"), "error": result.get("error")}
+    agent_output.emit(result, tool=f"motion {command}", name=f"motion-{command}", code=code,
+                      scratch=agent_output.work_dir(hw), facts=facts, blocking=blocking)
 
 
 def place(ctx: Context, files: Mapping[str, Path], result: Mapping[str, Any], params: Mapping[str, str],
@@ -537,7 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return command_plan(args) if args.command == "plan" else command_render(args)
     except Failed as failure:
-        print(json.dumps(failure.report, indent=2))
+        _emit(failure.report, args.hw, args.command, 1)
         return 1
     except plan.PlanError as error:
         print(json.dumps({"status": "error", "problems": error.problems}, indent=2))

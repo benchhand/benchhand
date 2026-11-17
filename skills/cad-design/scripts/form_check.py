@@ -1286,6 +1286,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--replace, --out and --on need --version")
     pose = load_pose()
     sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
+    from cadmodel import agent_output
+
     try:
         with pose.stdout_to_stderr():
             if args.version is None:
@@ -1305,7 +1307,13 @@ def main(argv: list[str] | None = None) -> int:
         traceback.print_exc(file=sys.stderr)
         print(json.dumps({"status": "error", "error": f"{type(error).__name__}: {error}"}))
         return 2
-    print(json.dumps(report, indent=2))
+    manufacturing = report.get("manufacturing") or {}
+    blocking = [*agent_output.blocking_of(report), *manufacturing.get("problems", []),
+                *manufacturing.get("findings", [])]
+    agent_output.emit(report, tool="form_check", name="form_check", code=code, scratch=agent_output.work_dir(args.hw),
+                      facts={"fidelity": report.get("fidelity"), "version": report.get("version"),
+                             "manufacturing": manufacturing.get("status"), "packet": manufacturing.get("bundle")},
+                      blocking=blocking)
     return code
 
 

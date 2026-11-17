@@ -96,6 +96,8 @@ YAML_LOADER_PY = SKILL.parent / "cad-record" / "scripts" / "yaml_loader.py"
 CONCEPT_SERVE = SKILL.parent / "cad-concept" / "scripts" / "serve.py"
 # The page chrome tokens (status line) are cad-concept's; renderer/tokens.css holds the scene's.
 CONCEPT_TOKENS = SKILL.parent / "cad-concept" / "assets" / "viewer" / "tokens.css"
+sys.path.insert(0, str(SKILL.parent / "cad-model" / "scripts"))
+from cadmodel import agent_output  # noqa: E402 - standard-library-only summary printer shared by the producers
 THREE_VERSION = "0.186.1"
 CHROMIUM_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
                  *( ["--num-raster-threads=1"] if os.environ.get("CAD_RENDER_RASTER_THREADS") == "1" else [])]
@@ -1643,7 +1645,10 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # an unexpected failure is infrastructure, never a quality verdict
         print(json.dumps({"status": "error", "error": f"{type(exc).__name__}: {exc}"}))
         return 2
-    print(json.dumps(summary, indent=2))
+    failures = [f"{view}: {', '.join(map(str, found))}" for view, found in (summary.get("failures") or {}).items()]
+    agent_output.emit(summary, tool="render", name="render", code=code, scratch=agent_output.work_dir(args.hw),
+                      facts={"version": summary.get("version"), "cache": summary.get("cache"),
+                             "out_dir": summary.get("out_dir")}, blocking=failures)
     return code
 
 
