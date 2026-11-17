@@ -327,6 +327,27 @@ class StageGuardTests(unittest.TestCase):
                                  can_stop=True, gates=self.CONCEPT)
         self.assertFalse(reply.stops)
 
+    def test_the_parts_gate_counts_only_once_an_l2_version_exists(self) -> None:
+        # Synthetic: no recorded run has reached a PARTS gate yet. The provisional gate advances flow.stage past
+        # parts before the human gate, so the binding is a version built at parts, as for the LAYOUT freeze.
+        text = "v5 passed the full check and both light reviews.\nDo you approve the PARTS gate for v5?"
+        cases = [
+            (dialogue.GateContext("parts", has_l1=True, has_l2=True), ["parts-gate"], True),
+            (dialogue.GateContext("detail", has_l1=True, has_l2=True), ["parts-gate"], True),
+            (dialogue.GateContext("parts", has_l1=True, has_l2=False), [], False),
+            (self.GROUND, [], False),
+        ]
+        for context, expected, stops in cases:
+            with self.subTest(stage=context.stage, has_l2=context.has_l2):
+                reply = dialogue.respond(case_script("wall-bracket"), text, "bench", can_stop=True, gates=context)
+                self.assertEqual([ask.intent for ask in reply.asks if ask.kind == "gate"], expected)
+                self.assertEqual(reply.stops, stops)
+
+    def test_the_specify_approval_stays_unbound(self) -> None:
+        reply = dialogue.respond(case_script("wall-bracket"), "Do you approve the requirements and interfaces as specified?",
+                                 "fixture", gates=self.CONCEPT)
+        self.assertEqual([ask.intent for ask in reply.asks], ["specify-approval"])
+
 
 class GateTests(unittest.TestCase):
     def test_regression_a_ground_question_naming_a_gate_as_a_time_reference_is_not_that_gate(self) -> None:

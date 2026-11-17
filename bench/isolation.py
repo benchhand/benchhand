@@ -12,13 +12,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Any
 
 BUILTIN_SKILL_SCHEME = "skill://"
 BUILTIN_AGENTS = frozenset({"build", "general", "explore", "compaction", "title", "summary", "plan"})
 BUILTIN_COMMANDS = frozenset({"init", "review", "goal"})
 OPERATIONS = ("config.get", "skill.list", "agent.list", "command.list")
+# Package-download caches a run may share with the user (bench/run.py links the same names).
+PACKAGE_CACHE_NAMES = ("uv", "pip", "ms-playwright", "cad-concept")
+PACKAGE_CACHE_VARIABLES = ("UV_CACHE_DIR", "PIP_CACHE_DIR", "PLAYWRIGHT_BROWSERS_PATH")
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,31 @@ def cache_findings(opencode_cache: str | None, env: Mapping[str, str], home: Pur
         found.append(f"opencode cache outside the run home: {opencode_cache}")
     if not inside(env.get("XDG_CACHE_HOME")):
         found.append(f"XDG_CACHE_HOME is not set inside the run home: {env.get('XDG_CACHE_HOME')}")
+    return found
+
+
+def private_cache_findings(cache: Path, allowed: Mapping[str, Path], home: PurePath) -> list[str]:
+    """Each entry of the run's private cache is a link to an allowlisted package cache, or a real directory
+    inside the run home; anything else would carry state between runs."""
+    found = []
+    for entry in sorted(cache.iterdir()) if cache.is_dir() else ():
+        if entry.is_symlink():
+            if entry.name not in allowed or entry.resolve() != Path(allowed[entry.name]).resolve():
+                found.append(f"private cache entry {entry.name} links outside the allowlist: {entry.readlink()}")
+        elif not entry.is_dir():
+            found.append(f"private cache entry {entry.name} is not a directory")
+        elif Path(home).resolve() not in entry.resolve().parents:
+            found.append(f"private cache entry {entry.name} is outside the run home")
+    return found
+
+
+def package_cache_env_findings(env: Mapping[str, str], home: PurePath) -> list[str]:
+    """A package-cache variable that points outside the run home must name an allowlisted package cache."""
+    found = []
+    for variable in PACKAGE_CACHE_VARIABLES:
+        value = env.get(variable)
+        if value and home not in PurePath(value).parents and PurePath(value).name not in PACKAGE_CACHE_NAMES:
+            found.append(f"{variable} points outside the run home at a cache that is not allowlisted: {value}")
     return found
 
 

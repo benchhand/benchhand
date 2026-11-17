@@ -102,16 +102,20 @@ class GateContext:
 
     stage: str | None
     has_l1: bool
+    has_l2: bool = False
 
     def admits(self, intent: str) -> bool:
         """Whether a gate intent can be presented now: INTENT at ground or intent, VARIANT at concept, the
-        LAYOUT freeze once an L1 version exists. Other gates and every question are not stage-bound."""
+        LAYOUT freeze once an L1 version exists, the PARTS gate once an L2 version (built at parts) exists.
+        Other gates and every question are not stage-bound."""
         if intent == "intent-gate":
             return self.stage in ("ground", "intent")
         if intent == "variant-gate":
             return self.stage == "concept"
         if intent == "layout-freeze":
             return self.has_l1
+        if intent == "parts-gate":
+            return self.has_l2
         return True
 
 

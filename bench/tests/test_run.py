@@ -188,7 +188,7 @@ class CacheIsolationTests(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory()
         root = Path(self.folder.name)
         self.real = root / "real"
-        for name in ("cad-flow", "opencode", "cad-concept", "development"):
+        for name in ("cad-flow", "opencode", "cad-concept", "development", "fontconfig", "uv", "pip", "ms-playwright"):
             (self.real / ".cache" / name).mkdir(parents=True)
         self.paths = run.Paths("r", root, root / "project", root / "home", root / "raw", root / "results", root / "run")
         self.environ = {"XDG_CACHE_HOME": str(self.real / ".cache"), "XDG_CONFIG_HOME": str(root / "nc"),
@@ -198,15 +198,40 @@ class CacheIsolationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.folder.cleanup()
 
-    def test_the_run_gets_a_private_cache_with_cad_flow_private_and_the_shared_uv_cache(self) -> None:
+    def test_the_private_cache_links_only_the_allowlisted_package_download_caches(self) -> None:
         with mock.patch.dict(run.os.environ, self.environ, clear=True):
             run.link_farm(self.paths.home)
             env = run.opencode_env(self.paths)
         cache = self.paths.home / ".cache"
         self.assertEqual(env["XDG_CACHE_HOME"], str(cache))
         self.assertEqual(env["UV_CACHE_DIR"], str(self.real / ".cache/development/uv"))  # a package cache, shared
-        self.assertEqual(sorted(p.name for p in cache.iterdir()), ["cad-concept", "development"])
-        self.assertTrue(all((cache / name).is_symlink() for name in ("cad-concept", "development")))
+        # fontconfig, development, cad-flow and opencode start empty: they hold derived or run state.
+        self.assertEqual(sorted(p.name for p in cache.iterdir()), ["cad-concept", "ms-playwright", "pip", "uv"])
+        self.assertTrue(all(p.is_symlink() for p in cache.iterdir()))
+
+    def test_the_private_cache_check_accepts_allowlisted_links_and_real_directories_only(self) -> None:
+        with mock.patch.dict(run.os.environ, self.environ, clear=True):
+            run.link_farm(self.paths.home)
+            allowed = run.package_caches()
+        cache, home = self.paths.home / ".cache", self.paths.home
+        (cache / "opencode").mkdir()  # what OpenCode creates in the run: a real directory inside the home
+        self.assertEqual(run.isolation.private_cache_findings(cache, allowed, home), [])
+        (cache / "fontconfig").symlink_to(self.real / ".cache/fontconfig")
+        (cache / "pip").unlink()
+        (cache / "pip").symlink_to(self.real / ".cache/development")  # an allowlisted name, the wrong target
+        (cache / "stray.txt").write_text("x", encoding="utf-8")
+        self.assertEqual(sorted(run.isolation.private_cache_findings(cache, allowed, home)), [
+            f"private cache entry fontconfig links outside the allowlist: {self.real / '.cache/fontconfig'}",
+            f"private cache entry pip links outside the allowlist: {self.real / '.cache/development'}",
+            "private cache entry stray.txt is not a directory",
+        ])
+
+    def test_a_package_cache_variable_outside_the_home_must_name_an_allowlisted_cache(self) -> None:
+        home = self.paths.home
+        good = {"UV_CACHE_DIR": "/shared/development/uv", "PIP_CACHE_DIR": "/shared/development/pip"}
+        self.assertEqual(run.isolation.package_cache_env_findings(good, home), [])
+        self.assertEqual(run.isolation.package_cache_env_findings({"UV_CACHE_DIR": "/shared/fontconfig"}, home),
+                         ["UV_CACHE_DIR points outside the run home at a cache that is not allowlisted: /shared/fontconfig"])
 
     def test_without_a_uv_cache_dir_the_real_uv_cache_is_named_explicitly(self) -> None:
         environ = {key: value for key, value in self.environ.items() if key != "UV_CACHE_DIR"}
@@ -336,7 +361,9 @@ class RecordStateTests(unittest.TestCase):
             (hw / "product.yaml").write_text("flow: {stage: concept}\n", encoding="utf-8")
             write_version(hw, "v1", "layout")
             (hw / "product.yaml").write_text("flow: {stage: parts}\n", encoding="utf-8")
-            self.assertEqual(run.gate_context(hw, run.built_versions(hw)), run.dialogue.GateContext("parts", True))
+            self.assertEqual(run.gate_context(hw, run.built_versions(hw)), run.dialogue.GateContext("parts", True, False))
+            write_version(hw, "v2", "parts")
+            self.assertEqual(run.gate_context(hw, run.built_versions(hw)), run.dialogue.GateContext("parts", True, True))
 
     def test_a_layout_freeze_prompt_before_any_l1_version_is_not_a_gate_in_the_conversation(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

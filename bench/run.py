@@ -123,21 +123,38 @@ def real_base(variable: str, default: str) -> Path:
 
 XDG = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XDG_STATE_HOME", ".local/state"),
        ("XDG_CACHE_HOME", ".cache"))
-# Entries that stay private to the run instead of linking to the user's own: OpenCode's, cad-viewer's session
-# files and cad-flow's warm-up record, so what the lead starts records its pid inside the scratch directory.
-PRIVATE_XDG_ENTRIES = frozenset({"opencode", "cad-viewer", "cad-flow"})
+# Entries that stay private to the run instead of linking to the user's own: OpenCode's, and cad-viewer's
+# session files, so a viewer the lead starts records its pid inside the scratch directory.
+PRIVATE_XDG_ENTRIES = frozenset({"opencode", "cad-viewer"})
+# The only caches a run shares with the user: package downloads, which carry no state from one run to the next.
+# cad-concept holds the SRI-pinned three.js modules cad-render's import map names (vendor/three@<version>/*.js),
+# which preflight verifies digest by digest. Every other cache (fontconfig, FreeCAD, OCC, cad-flow's warm-up
+# record, ...) starts empty in each run.
+PACKAGE_CACHE_NAMES = isolation.PACKAGE_CACHE_NAMES
+
+
+def package_caches() -> dict[str, Path]:
+    """The allowlisted package caches of the user's real XDG cache, by name, that exist."""
+    real = real_base("XDG_CACHE_HOME", ".cache")
+    return {name: real / name for name in PACKAGE_CACHE_NAMES if (real / name).is_dir()}
 
 
 def link_farm(home: Path) -> None:
-    """Point every non-OpenCode XDG entry of the throwaway home at the user's real one.
+    """Point the throwaway home's XDG entries at the user's real ones where a run may share them.
 
-    OpenCode gets a private config, data and state directory, while git, uv and mise in the
-    lead's shell keep reading the user's own configuration through these links.
+    OpenCode gets a private config, data, state and cache directory, while git, uv and mise in the lead's
+    shell keep reading the user's own configuration through these links. The cache links only the
+    allowlisted package-download caches.
     """
     for variable, default in XDG:
         real, fake = real_base(variable, default), home / default
         fake.mkdir(parents=True, exist_ok=True)
         if not real.is_dir():
+            continue
+        if variable == "XDG_CACHE_HOME":
+            for name, target in package_caches().items():
+                if not (fake / name).exists():
+                    (fake / name).symlink_to(target)
             continue
         for entry in sorted(real.iterdir()):
             if entry.name not in PRIVATE_XDG_ENTRIES and not (fake / entry.name).exists():
@@ -260,6 +277,8 @@ def check_isolation(paths: Paths, env: Mapping[str, str], timeout: float = 120.0
     found = isolation.findings(report, expected)
     cache = opencode_cache_dir(paths, env)
     found += isolation.cache_findings(cache, env, paths.home)
+    found += isolation.private_cache_findings(paths.home / ".cache", package_caches(), paths.home)
+    found += isolation.package_cache_env_findings(env, paths.home)
     return {"passed": not found, "findings": found, "loaded": {**summarize_report(report), "cache": cache}}
 
 
@@ -623,7 +642,7 @@ def converse(driver: Driver, script: dialogue.Script, mode: str, opening: str, c
         self_approved = not stopping and bool(acceptance.stop_gate_approvals(decisions(hw), mode))
         outcome = terminal_outcome(stopping, failures, len(driver.invocations), caps, reply, self_approved)
         record_turn(conversation, invocation, text, reply, sent=outcome is None)
-        conversation.entries[-1].update({"stage": gates.stage, "has_l1": gates.has_l1})
+        conversation.entries[-1].update({"stage": gates.stage, "has_l1": gates.has_l1, "has_l2": gates.has_l2})
         if outcome is not None:
             conversation.outcome = outcome
             return conversation
@@ -636,7 +655,8 @@ def gate_context(hw: Path, versions: Mapping[str, str | None]) -> dialogue.GateC
     flow = product.get("flow") if isinstance(product, dict) else None
     stage = flow.get("stage") if isinstance(flow, dict) else None
     return dialogue.GateContext(stage if isinstance(stage, str) else None,
-                                acceptance.latest_at_stage(versions, "layout") is not None)
+                                acceptance.latest_at_stage(versions, "layout") is not None,
+                                acceptance.latest_at_stage(versions, "parts") is not None)
 
 
 def export_tree(driver: Driver, lead: str, sanitize: bool) -> list[JSON]:
