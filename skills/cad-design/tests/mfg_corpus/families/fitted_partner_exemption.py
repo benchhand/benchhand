@@ -10,15 +10,14 @@ over which the pin interferes with the sleeve, so with a pin installed at z 8 it
 from __future__ import annotations
 
 import importlib.util
-import json
 import shutil
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from corpus import Family, Pair, Skip
+from support import access_packet_verdict
 
 REPO = Path(__file__).resolve().parents[5]
 MOTION = REPO / "skills" / "cad-motion"
@@ -102,13 +101,7 @@ def verdict(case: Case) -> str:
         documents = records.record(parts=[records.part(pn, pn, process="cnc") for pn in (HOUSING, SLEEVE, PIN)],
                                    interfaces=[seat, dowel], operations=_operations(case))
         hw = records.write_record(root / "hw", documents)
-        done = subprocess.run([uv, "run", "--quiet", "--script", str(MOTION / "scripts" / "access.py"), "--hw", str(hw),
-                               "--parts-dir", str(parts), "--attach", f"{SLEEVE}={HOUSING}", "--attach", f"{PIN}={HOUSING}"],
-                              capture_output=True, text=True, timeout=1800, check=False)
-        if done.returncode not in (0, 1):
-            raise RuntimeError(done.stdout + done.stderr)
-        outcomes = {row["obligation"]: row["outcome"] for row in json.loads(done.stdout)["outcomes"]}
-        return outcomes["assembly.access@op:insert-pin"]
+        return access_packet_verdict(hw, parts, [f"{SLEEVE}={HOUSING}", f"{PIN}={HOUSING}"], "assembly.access@op:insert-pin")
 
 
 TWIN = Case()
