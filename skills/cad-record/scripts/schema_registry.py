@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from functools import lru_cache
@@ -34,6 +35,7 @@ State = tuple[tuple[str, str], ...]  # (file name, sha256 of its text) of every 
 _T = TypeVar("_T")
 _TEXTS: dict[str, str] = {}  # schema text by its sha256
 _KEPT: dict[tuple[str, Path], tuple[Stamp, int, Any]] = {}  # (stamp, time.time_ns before the read, value)
+_LOCK = threading.Lock()  # guards _KEPT, as lru_cache guarded its own entries
 
 
 def _stamp(path: str | Path) -> Stamp:
@@ -52,15 +54,18 @@ def _kept(kind: str, path: Path, read: Callable[[], _T]) -> _T:
     read: every later write then gets a later change time. Until then `read()` runs on each call."""
     stamp = _stamp(path)
     key = (kind, path)
-    entry = _KEPT.pop(key, None)
-    if entry is not None and entry[0] == stamp and max(stamp[0], stamp[1]) + _TICK_NS < entry[1]:
-        _KEPT[key] = entry  # most recently used last
-        return cast(_T, entry[2])  # the value `read` returned for this kind
+    with _LOCK:
+        entry = _KEPT.get(key)
+        if entry is not None and entry[0] == stamp and max(stamp[0], stamp[1]) + _TICK_NS < entry[1]:
+            _KEPT[key] = _KEPT.pop(key)  # most recently used last
+            return cast(_T, entry[2])  # the value `read` returned for this kind
     read_at = time.time_ns()
     value = read()
-    _KEPT[key] = (stamp, read_at, value)
-    if len(_KEPT) > _CACHE_SIZE:
-        del _KEPT[next(iter(_KEPT))]
+    with _LOCK:
+        _KEPT.pop(key, None)
+        _KEPT[key] = (stamp, read_at, value)
+        while len(_KEPT) > _CACHE_SIZE:
+            del _KEPT[next(iter(_KEPT))]
     return value
 
 
