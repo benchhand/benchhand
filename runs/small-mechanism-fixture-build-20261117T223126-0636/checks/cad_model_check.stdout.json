@@ -1,0 +1,5 @@
+cad_model check: fail (exit 1)
+label: v3
+blocking (1):
+  - connection
+full JSON: /private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/.cad-work/agent-output/cad_model-check-1f4be6de.json

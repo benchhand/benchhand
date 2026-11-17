@@ -1,0 +1,198 @@
+{
+  "run_id": "small-mechanism-fixture-build-20261117T223126-0636",
+  "case": "small-mechanism",
+  "arm": "fixture-build",
+  "mode": "fixture",
+  "started": "2026-11-17T18:31:38+00:00",
+  "finished": "2026-11-17T19:36:39+00:00",
+  "producer_model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
+  "agent": "build",
+  "judge_model": "amazon-bedrock/global.openai.gpt-6.1-sol",
+  "outcome": "error",
+  "accepted": null,
+  "isolation": {
+    "passed": true,
+    "findings": [],
+    "loaded": {
+      "config_sources": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/opencode.json",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode"
+      ],
+      "skills": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-analysis/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-bom/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-concept/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-design/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-drawings/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-fits/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-flow/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-model/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-motion/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-recheck/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-record/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-render/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-review-dfm/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-review-mech/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/home/.config/opencode/skills/cad-viewer/SKILL.md",
+        "skill://browser/SKILL.md",
+        "skill://opencode/SKILL.md",
+        "skill://report/SKILL.md"
+      ],
+      "agents": [
+        "build",
+        "cad-analyst",
+        "cad-clerk",
+        "cad-concept-designer",
+        "cad-dfm-reviewer",
+        "cad-mech-reviewer",
+        "cad-part-designer",
+        "cad-sourcing-researcher",
+        "compaction",
+        "explore",
+        "general",
+        "plan",
+        "summary",
+        "title"
+      ],
+      "commands": [
+        "cad-flow",
+        "goal",
+        "init",
+        "review"
+      ]
+    }
+  },
+  "repo_commit": "8286ab37d2a81218ebbd5672ae0396ef167eabd3",
+  "spend": {
+    "producer_usd": 18.507267,
+    "judge_usd": 0.0,
+    "total_usd": 18.507267,
+    "opencode_reported_usd": 18.507267,
+    "currency": "USD"
+  },
+  "version": "v3",
+  "metrics": {
+    "model_turns": 251,
+    "lead_model_turns": 113,
+    "subagent_model_turns": 138,
+    "subagent_sessions": 4,
+    "tool_calls": 332,
+    "tool_calls_by_tool": {
+      "edit": 18,
+      "glob": 14,
+      "grep": 7,
+      "read": 45,
+      "shell": 141,
+      "skill": 8,
+      "subagent": 7,
+      "webfetch": 36,
+      "websearch": 5,
+      "write": 51
+    },
+    "failed_builds": 2,
+    "lead_model_time_s": 1984.217,
+    "lead_tool_time_s": 1183.183,
+    "subagent_model_time_s": 2005.022,
+    "subagent_tool_time_s": 228.962,
+    "input_tokens": 33229983,
+    "uncached_input_tokens": 528,
+    "cached_input_tokens": 31848625,
+    "cache_write_tokens": 1380830,
+    "output_tokens": 261564,
+    "reasoning_tokens": 0,
+    "spend_usd": 18.507267,
+    "spend_by_model_usd": {
+      "amazon-bedrock/global.anthropic.claude-opus-5-5": 18.507267
+    },
+    "opencode_reported_cost_usd": 18.507267,
+    "unpriced_models": [],
+    "subagent_dispatches": 4,
+    "subagent_redispatches": 0,
+    "subagent_followups": 3,
+    "redispatched_units": [],
+    "dispatches_by_agent": {
+      "cad-concept-designer": 3,
+      "cad-sourcing-researcher": 1
+    },
+    "harness_turns": 5,
+    "active_wall_s": 3836.3,
+    "human_wait_events": 3,
+    "human_wait_s": 960.0,
+    "nudges": 1,
+    "questions_asked": 35,
+    "questions_matched": 32,
+    "questions_unmatched": 3,
+    "questions_unmatched_at_gate": 0,
+    "gates_answered": 1,
+    "profile_questions_asked": 0,
+    "profile_asked": false,
+    "tool_errors": 3
+  },
+  "unmatched_questions": [
+    {
+      "turn": 1,
+      "text": "What happens if it breaks or opens by itself?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Can the lever be slammed into its stops?",
+      "at_gate": false
+    },
+    {
+      "turn": 3,
+      "text": "Which option, A, B or C, should go to layout?",
+      "at_gate": false
+    }
+  ],
+  "hard_checks": {
+    "passed": false,
+    "failed": [
+      "layout_frozen",
+      "cad_model_check",
+      "sweep"
+    ],
+    "checks": [
+      {
+        "name": "l1_version",
+        "passed": true,
+        "detail": "latest layout version: v3",
+        "exit_code": null
+      },
+      {
+        "name": "validate",
+        "passed": true,
+        "detail": "validate.py exit 0",
+        "exit_code": 0
+      },
+      {
+        "name": "layout_frozen",
+        "passed": false,
+        "detail": "flow.stage layout; approved LAYOUT freeze DRs []",
+        "exit_code": null
+      },
+      {
+        "name": "cad_model_check",
+        "passed": false,
+        "detail": "cad_model check v3 exit 1",
+        "exit_code": 1
+      },
+      {
+        "name": "sweep",
+        "passed": false,
+        "detail": "sweep v3 exit 2",
+        "exit_code": 2
+      }
+    ]
+  },
+  "verdicts": null,
+  "machine": {
+    "peak_load1": 209.65,
+    "min_available_gb": 9.44
+  },
+  "leftover_processes": {
+    "own_groups_stopped": [],
+    "still_running": [],
+    "viewers_stopped": []
+  }
+}

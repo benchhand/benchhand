@@ -1,0 +1,355 @@
+[
+  {
+    "turn": 1,
+    "seconds": 260.7,
+    "exit_code": 0,
+    "killed": null,
+    "lead_text": "I've started the design record and run setup. Before I fill in the record, I need some answers from you. The workflow says I can't assume anything about service, loads or equipment that your brief doesn't state.\n\n**Done so far**\n- Setup passed every required check: FreeCAD, CadQuery, build123d, the viewer, Chromium and the FEA solvers. Only the optional harness checks gave warnings. The background warm-up is running.\n- I created the empty design record from the template. The workflow stage is `ground`. The main files are:\n\n  /private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/product.yaml\n\n  /private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/requirements.yaml\n\n**Already answered by your brief** (I'll record these as requirements)\n- Bracket screwed to a panel with 2\u00d7 M4. Lever sits between two cheeks on a \u00d86 \u00d7 30 mm steel pin, retained by two DIN 6799 size-5 rings. A purchased grooved pin is acceptable.\n- Lever is about 80 mm from pivot to handle and 8 mm thick at the hub. Travel is 0\u00b0 to 75\u00b0, with a hard stop on the bracket at each end.\n- Clearances: 0.3 mm axial gap at each cheek, a clearance fit on the pin, and at least 1 mm to the bracket except at the stops.\n- Up to 30 N hand push at the handle end. Indoor use. Quantity 4.\n- Bracket and lever printed in PETG on a Prusa MK4 (250 \u00d7 210 \u00d7 220 mm, 0.4 mm nozzle). The lever's pin hole is reamed after printing.\n\n**GROUND questions**\n\n1. **Service class:** Are the 4 units for real end use, a working prototype, or a supervised demo?\n2. **Failure:** What does the latch hold shut (a door, lid or cover)? What happens if it breaks or opens by itself? Do any safety rules or standards apply, and who approves the design?\n3. **Loads:**\n   - Does the 30 N push go only in the opening direction, or also shutting and sideways?\n   - Can the lever be slammed into its stops?\n   - Does anything pull on the lever while it's latched?\n   - Is the panel vertical or horizontal? This decides whether gravity tends to open the lever.\n4. **Keeper:** Is there a strike or keeper the lever catches on, and is it part of this design? Should the lever stay where you put it (detent or friction), or swing freely?\n5. **Motion and life:** About how many operations per day, and how many years of service?\n6. **Environment:** What's the room temperature range? Is it near heat, direct sun, or cleaning chemicals?\n7. **Panel and screws:**\n   - What is the panel made of, and how thick is it?\n   - Will the M4 screws go through with nuts, into tapped holes, or something else?\n   - Countersunk or pan heads?\n   - Are the screws in the BOM, or does the panel side supply them?\n   - Is there a required hole spacing?\n8. **Your workshop:**\n   - Which PETG brand and grade? I have a reference profile for Polymaker PolyLite PETG; for any other brand the properties stay unknown.\n   - Do you have a \u00d86 H7 reamer, calipers and pin gauges?\n   - Do you have pliers for fitting the DIN 6799 rings?\n   - Where do you buy pins and rings (McMaster, Misumi, local)?\n   - Is outsourcing acceptable?\n9. **Accuracy and finish:** Any looks or finish requirement beyond working properly?\n10. **Budget and lead time** for the 4 units, and do you want spares?\n11. **Drawings:**\n    - What general tolerance should the drawings state? ISO 2768-m is common, but it's your call.\n    - What documentation depth do you want: `maker` or `pro`?\n12. **Release scope:** Is this a CAD-only release with no physical-test claims? Are any physical tests planned?\n13. **Git storage:** Should generated results (STEP, GLB, renders, check bundles) be stored in git? If yes, STEP and GLB files go through Git LFS.\n\nNothing further happens until you reply. Then I'll record GROUND and go on to INTENT, which compares material and process options for your approval.",
+    "reply_kind": "question",
+    "reply": "Answers from the user:\n- Working prototype representative of intended use: four latches on our own cabinet.\n- It holds a hinged cabinet door shut against a keeper on the frame. When latched, the door can pull on the lever with up to 10 N; the 30 N hand load is the larger case.\n- Low consequence; a failed latch lets the panel swing open. No standard applies.\n- Up to 30 N by hand at the lever's handle end, about 80 mm from the pivot, in either direction of travel, including against each stop. No impact or vibration rating.\n- Two ISO 7380 M4 \u00d7 12 button head screws hold the bracket to a 3 mm steel panel with M4 rivet nuts, 40 mm apart along the bracket's length. The screws belong in this BOM; the rivet nuts are already in the panel. No other footprint limit applies.\n- No detent or snap; the two hard stops are all it needs.\n- The lever turns about the pin from 0\u00b0 latched to 75\u00b0 open, with hard stops on the bracket at both ends. About 20 cycles a day; no life target is claimed.\n- Indoor workshop, 10 to 35 \u00b0C, dry.\n- PETG (Prusament PETG) for the bracket and lever. The pin is a purchased steel grooved pin and the rings are DIN 6799 spring steel.\n- Our own Prusa MK4: 250 \u00d7 210 \u00d7 220 mm build volume, 0.4 mm nozzle, 0.2 mm layers, PETG. A 6 mm H7 hand reamer for the lever's pin hole. No calibration records or measured capability.\n- \u00d86 mm steel grooved pin, 30 mm long, with a groove for a DIN 6799 size 5 retaining ring near each end; source a catalogue grooved pin and its ring by designation. The pin sits free in the cheek holes with clearance, held axially only by the rings, and each ring bears on the outside face of a bracket cheek.\n- No preferred supplier. Use common European or global catalogue distributors and order standard parts by their standard designation.\n- As printed except the reamed \u00d86 H7 hole in the lever. The cheek holes are printed and may be drilled to suit.\n- 4 latches, printed in-house within two weeks.\n- pro\n- A CAD release: STEP and STL, drawings, BOM and the checks and analyses we run. It claims no measured strength or life.\n- Do not store generated results in git: set storage.results_in_git to false.\n- I have no further information on that. Use your recommended option, record it as a bounded assumption in a decision record, and continue.",
+    "sent": true,
+    "wait_s": 180.0,
+    "stops": false,
+    "at_gate": false,
+    "asks": [
+      {
+        "text": "Service class: Are the 4 units for real end use, a working prototype, or a supervised demo?",
+        "intent": "service-class",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Failure: What does the latch hold shut (a door, lid or cover)?",
+        "intent": "latched-load",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "What happens if it breaks or opens by itself?",
+        "intent": null,
+        "kind": null,
+        "matched": false,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Do any safety rules or standards apply, and who approves the design?",
+        "intent": "consequences",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Does the 30 N push go only in the opening direction, or also shutting and sideways?",
+        "intent": "loads",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Can the lever be slammed into its stops?",
+        "intent": null,
+        "kind": null,
+        "matched": false,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Does anything pull on the lever while it's latched?",
+        "intent": "latched-load",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Is the panel vertical or horizontal?",
+        "intent": "panel-screws",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Keeper: Is there a strike or keeper the lever catches on, and is it part of this design?",
+        "intent": "latched-load",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Should the lever stay where you put it (detent or friction), or swing freely?",
+        "intent": "detent",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Motion and life: About how many operations per day, and how many years of service?",
+        "intent": "motion",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Environment: What's the room temperature range?",
+        "intent": "environment",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Is it near heat, direct sun, or cleaning chemicals?",
+        "intent": "environment",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "What is the panel made of, and how thick is it?",
+        "intent": "panel-screws",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Will the M4 screws go through with nuts, into tapped holes, or something else?",
+        "intent": "panel-screws",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Countersunk or pan heads?",
+        "intent": "panel-screws",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Are the screws in the BOM, or does the panel side supply them?",
+        "intent": "panel-screws",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Is there a required hole spacing?",
+        "intent": "panel-screws",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Which PETG brand and grade?",
+        "intent": "material",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Do you have a \u00d86 H7 reamer, calipers and pin gauges?",
+        "intent": "equipment",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Do you have pliers for fitting the DIN 6799 rings?",
+        "intent": "pin",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Where do you buy pins and rings (McMaster, Misumi, local)?",
+        "intent": "sourcing",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Is outsourcing acceptable?",
+        "intent": "equipment",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Accuracy and finish: Any looks or finish requirement beyond working properly?",
+        "intent": "accuracy",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Budget and lead time for the 4 units, and do you want spares?",
+        "intent": "quantity",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "What general tolerance should the drawings state?",
+        "intent": "accuracy",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "What documentation depth do you want: maker or pro?",
+        "intent": "rigor",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Release scope: Is this a CAD-only release with no physical-test claims?",
+        "intent": "release-scope",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Are any physical tests planned?",
+        "intent": "release-scope",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Git storage: Should generated results (STEP, GLB, renders, check bundles) be stored in git?",
+        "intent": "storage",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      }
+    ]
+  },
+  {
+    "turn": 2,
+    "seconds": 941.2,
+    "exit_code": 0,
+    "killed": null,
+    "lead_text": "I've finished GROUND, and the INTENT gate is now waiting for your approval. The design record validates cleanly. The option comparison recommends your planned route, but only conditionally. Two findings about the pivot pin need your decision before I continue.\n\n**Recorded so far**\n- Your answers are stored as the confirmed use case, with 14 requirements, 2 preferences and 7 bounded assumptions; DR-001 records the decision.\n- I picked ISO 2768-m as the general drawing tolerance (ASM-001), as you delegated.\n- Generated results stay out of git (`storage.results_in_git: false`).\n- The Prusament PETG datasheet (v1.1) is saved and hash-bound in the record. Its typical values include 47 MPa printed yield strength (horizontal) and a 68 \u00b0C heat-deflection temperature.\n- Your equipment is recorded as two capability entries: the MK4 with PETG, and the 6 H7 reamer. Neither has a calibration.\n- Part numbers:\n\n| PN | Part | Make/buy | Material and route |\n|---|---|---|---|\n| LAT-0001 | Base bracket | make | Prusament PETG, printed on the MK4 |\n| LAT-0002 | Latch lever | make | Prusament PETG, printed, then hand-reamed to 6 H7 |\n| LAT-0003 | Pivot pin \u00d86 \u00d7 30 with two DIN 6799 grooves | buy | identity OPEN (see F-PIN-2) |\n| LAT-0004 | DIN 6799 \u2013 5 retaining ring | buy | spring steel; M\u00e4dler 63783050 (in stock) |\n| LAT-0005 | ISO 7380-1 M4 \u00d7 12 screw, A2-70 | buy | A2-70 is my recommended grade (ASM-004) |\n\n**Option comparison** (`selection.py` reports **conditional**)\n\n| Option | Result |\n|---|---|\n| `fdm_petg_reamed`: printed bracket and lever, reamed lever bore on a bought steel pin | **Recommended (conditional).** It's the only option that no hard requirement rules out. It stays conditional until the layout and analysis stages check fit, travel, clearance and strength. My hand estimate is about 9 MPa bending stress at the lever hub against 47 MPa typical yield. |\n| `fdm_petg_bushed`: adds a bought bushing in the lever | Ruled out. It goes against your reamed-bore running surface (REQ-006), and it needs an \u00d88 reamer you don't have. |\n| `cnc_aluminium_bracket`: outsourced machined bracket | Ruled out. You require the bracket printed in PETG (REQ-010). |\n\nThe comparison's input fingerprint is `df01fa9e\u20263bc2`.\n\n**Pivot pin findings from the sourcing researcher**\n- **F-PIN-2: no stock catalogue pin was verified.** I couldn't find an off-the-shelf \u00d86 \u00d7 30 mm pin with two DIN 6799 grooves. Kipp K1454/K1455 are clevis pins: they have heads and are too short. The nearest buyable option is the mbo O\u00dfwald configurator for an ISO 2340 headless pin with two DIN 6799 grooves. It comes in A2 stainless, but it is made to order. I've put it in as ASM-005. The cheeks are limited to about 8.7 mm each: the grooves can be at most about 26.1 mm apart, minus the 8.6 mm gap between the cheeks.\n- **F-PIN-1: ISO 2340 pins are h11.** With your 6 H7 reamed hole, the fit gives 0 to 0.087 mm clearance. Zero clearance counts as a clearance fit under ISO 286, but your brief asks for clearance. I've proposed changing the REQ-006 criterion to \"minimum clearance \u2265 0 mm\", pending your approval.\n\n**Your INTENT decision**\n1. Do you approve `fdm_petg_reamed` as the conditional primary route, along with assumptions ASM-002 to ASM-007? These cover:\n   - the keeper pressing the lever toward the panel\n   - quasi-static use\n   - A2-70 screws\n   - no scheduled maintenance\n   - no budget limit\n2. For the pin:\n   - (a) accept the made-to-order mbo O\u00dfwald pin (A2, h11) and the REQ-006 change to 6 H7/h11; or\n   - (b) require an f7 or g6 pin, which means a ground pin, probably custom-made; or\n   - (c) give me another source.\n3. Your panel rivet nuts: are they flat-head (with a flange on the visible side) or countersunk/flush? The answer decides whether the bracket underside needs a flange recess. If you don't know, I'll add an \u00d811 \u00d7 1.2 mm recess as an assumption.\n\nFiles:\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/product.yaml\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/requirements.yaml\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/interfaces.yaml\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/manufacturing/selection.yaml\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/manufacturing/materials.yaml\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/manufacturing/capabilities.yaml\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/decisions/DR-001.md\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/.cad-work/selection-intent2.json\n\nThe stage stays at `ground` until you reply. After you approve, I'll record the decision and specify the details, then draft 2\u20133 concept options for the VARIANT gate.",
+    "reply_kind": "gate",
+    "reply": "Answers from the user:\n- I approve the recommended material and process selection for every part, as assessed. INTENT gate approved.\n- Two ISO 7380 M4 \u00d7 12 button head screws hold the bracket to a 3 mm steel panel with M4 rivet nuts, 40 mm apart along the bracket's length. The screws belong in this BOM; the rivet nuts are already in the panel. No other footprint limit applies.",
+    "sent": true,
+    "wait_s": 600.0,
+    "stops": false,
+    "at_gate": true,
+    "asks": [
+      {
+        "text": "Do you approve fdm_petg_reamed as the conditional primary route, along with assumptions ASM-002 to ASM-007?",
+        "intent": "intent-gate",
+        "kind": "gate",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Your panel rivet nuts: are they flat-head (with a flange on the visible side) or countersunk/flush?",
+        "intent": "panel-screws",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      }
+    ]
+  },
+  {
+    "turn": 3,
+    "seconds": 978.1,
+    "exit_code": 0,
+    "killed": null,
+    "lead_text": "The three concept options are merged into one scene and it passes the scene check. They're live in the viewer, and the **VARIANT gate** is waiting for you to pick one.\n\nViewer: http://127.0.0.1:57600/?scene=latch-lever.scene.json\n\n| | A \u00b7 Low clevis, arm-rest stop | B \u00b7 Tail stops in a cheek pocket | C \u00b7 Long channel, end-wall stops |\n|---|---|---|---|\n| Pivot height | 12.5 mm | 21 mm | 16 mm |\n| Base (L \u00d7 W \u00d7 T) | 81 \u00d7 30 \u00d7 4 mm | 54 \u00d7 32 \u00d7 4 mm | 90 \u00d7 24.6 \u00d7 4 mm |\n| Latched (0\u00b0) stop | pad under the arm, 30 mm from the pivot | bridge above a 15 mm tail | floor pad 68 mm from the pivot, near the handle |\n| Open (75\u00b0) stop | heel on a rear block, 13 mm out | wedge under the tail | sloped rear wall, 17 mm out |\n| Stop force at 30 N, latched / open | \u224880 N / \u2248185 N | \u2248188 N / \u2248188 N | **\u224835 N** / \u2248141 N |\n| Smallest clearance (designer's estimate) | 1.3 mm, screw heads to arm | 1.48 mm, tail to base | 2.3 mm side walls; 2.8 mm screw heads |\n| Screw access | lever must be opened | clear | lever open; short hex key needed |\n| Watch-outs | tightest clearances | small stops near the pivot carry high loads | longest bracket; the side walls are extra print |\n\nThe clearances are the designers' own estimates, not swept. Nothing has been checked as CAD yet; that starts at the layout stage.\n\n**My recommendation is C.** It has the lowest load on the latched stop, which takes the door pull and every closing push. The channel walls also guide the arm. All three options use the approved printed PETG route with bought pin, rings and screws.\n\n**Since INTENT:** assumption ASM-008 (a rivet-nut flange recess under each screw hole) changed the option-comparison inputs. I re-ran the comparison and the outcome is unchanged (DR-003).\n\n**Please answer:**\n1. Which option, A, B or C, should go to layout? You can also ask for changes, a merge, or a dropped option.\n2. Where does the lever catch the keeper on the frame? Is it the handle end sticking out past the bracket and door edge, or a separate nose? If you don't know, I'll assume the handle end sticks out about 10 mm past the bracket end and takes the 10 N door pull there (ASM-002).\n\nFiles:\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/concept/latch-lever.scene.json\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/concept/screenshots/7f7fc0f695e9f4c6558aa721b57e724dc3c5d30fc7b400f54fd5e278711074f7/6f55b1407dd0f0a5375b85008947a05ca29520583a4bbae21490456c9fe774fe/preview.png\n\n/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T223126-0636/project/hw/decisions/DR-003.md\n\nThe stage stays at `concept` until you choose.",
+    "reply_kind": "question",
+    "reply": "Answers from the user:\n- It holds a hinged cabinet door shut against a keeper on the frame. When latched, the door can pull on the lever with up to 10 N; the 30 N hand load is the larger case.\n- I have no further information on that. Use your recommended option, record it as a bounded assumption in a decision record, and continue.",
+    "sent": true,
+    "wait_s": 180.0,
+    "stops": false,
+    "at_gate": false,
+    "asks": [
+      {
+        "text": "Which option, A, B or C, should go to layout?",
+        "intent": null,
+        "kind": null,
+        "matched": false,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Where does the lever catch the keeper on the frame?",
+        "intent": "latched-load",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      },
+      {
+        "text": "Is it the handle end sticking out past the bracket and door edge, or a separate nose?",
+        "intent": "latched-load",
+        "kind": "question",
+        "matched": true,
+        "profile": false,
+        "options": []
+      }
+    ]
+  },
+  {
+    "turn": 4,
+    "seconds": 1637.6,
+    "exit_code": 1,
+    "killed": null,
+    "lead_text": "I'm recording the layout-stage record changes, then rebuilding as v3 so the version snapshot matches the current record.",
+    "reply_kind": "nudge",
+    "reply": "Continue within this session's scope. If the scope's stop point is reached, say so and stop; do not start the next stage.",
+    "sent": true,
+    "wait_s": 30.0,
+    "stops": false,
+    "at_gate": false,
+    "asks": []
+  },
+  {
+    "turn": 5,
+    "seconds": 18.6,
+    "exit_code": 1,
+    "killed": null,
+    "lead_text": "",
+    "reply_kind": "nudge",
+    "reply": "Continue within this session's scope. If the scope's stop point is reached, say so and stop; do not start the next stage.",
+    "sent": false,
+    "wait_s": 30.0,
+    "stops": false,
+    "at_gate": false,
+    "asks": []
+  }
+]
