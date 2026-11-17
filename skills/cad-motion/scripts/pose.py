@@ -1238,6 +1238,27 @@ def _set_name(label: Any, text: str) -> None:
 STEP_TIMESTAMP = "1980-01-01T00:00:00"
 
 
+def _add_shape(tool: Any, shape: Any) -> Any:
+    """Add `shape` as a free product and attach its volume, area and centroid, which STEPCAFControl_Writer
+    writes as AP242 geometric validation properties."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.TDF import TDF_Label
+    from OCP.XCAFDoc import XCAFDoc_Area, XCAFDoc_Centroid, XCAFDoc_Volume
+
+    label = tool.AddShape(shape, False)
+    # A located shape becomes an instance of a prototype label. The writer reads the properties off the prototype.
+    # The values describe the geometry as written, placement included.
+    prototype = TDF_Label()
+    target = prototype if tool.GetReferredShape_s(label, prototype) else label
+    volume, area = volume_properties(shape), GProp_GProps()
+    BRepGProp.SurfaceProperties_s(shape, area, VOLUME_EPS, False)
+    XCAFDoc_Volume.Set_s(target, volume.Mass())
+    XCAFDoc_Area.Set_s(target, area.Mass())
+    XCAFDoc_Centroid.Set_s(target, volume.CentreOfMass())
+    return label
+
+
 def _write_document(path: Path, doc: Any, tool: Any) -> None:
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
     from OCP.IFSelect import IFSelect_RetDone
@@ -1269,14 +1290,17 @@ def _write_document(path: Path, doc: Any, tool: Any) -> None:
 def write_part_step(path: Path, part: Part) -> None:
     """Write AP242 with one free product, the definition named `part.name`, in its own frame."""
     doc, tool = _new_document()
-    _set_name(tool.AddShape(part.shape, False), part.name)
+    _set_name(_add_shape(tool, part.shape), part.name)
     _write_document(path, doc, tool)
 
 
 def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Part], occurrences: Iterable[Any],
                         placements: Mapping[str, Rigid]) -> None:
     """Write AP242: one product per PN definition and, under the top product `top_name`, one component per
-    occurrence at `placements[occurrence.id]`. An explicit occurrence's component is named `<product> [@id]`."""
+    occurrence at `placements[occurrence.id]`. An explicit occurrence's component is named `<product> [@id]`.
+
+    A definition has no location of its own: the placement belongs on the component. The writer raises
+    MotionError for a located definition, because its validation properties would vanish."""
     from OCP.TopLoc import TopLoc_Location
 
     doc, tool = _new_document()
@@ -1286,7 +1310,10 @@ def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Par
     for occurrence in occurrences:
         part = definitions[occurrence.pn]
         if occurrence.pn not in labels:
-            labels[occurrence.pn] = tool.AddShape(part.shape, False)
+            if not part.shape.Location().IsIdentity():
+                raise MotionError(f"{occurrence.pn}: the definition carries a location of its own; pass an unlocated "
+                                  f"definition and put the placement on the component")
+            labels[occurrence.pn] = _add_shape(tool, part.shape)
             _set_name(labels[occurrence.pn], part.name)
         component = tool.AddComponent(top, labels[occurrence.pn], TopLoc_Location(to_trsf(placements[occurrence.id])))
         tag = component_name(part, occurrence)
