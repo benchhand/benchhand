@@ -2218,7 +2218,8 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
     each made component x route operation x its kind's check families; purchase checks for bought items;
     function-driven engineering checks; critical interface fit, stack, acceptance, contact and play (play for
     every critical interface that declares it or rotates or slides); assembly order (per operation and for the
-    whole product) and access, and joint evidence for every joining operation; requirement evidence levels; and an intent.* obligation for every unknown
+    whole product) and access, and joint evidence for every joining operation; requirement evidence levels;
+    and an intent.* obligation for every unknown
     input that hides checks. A producer cannot shrink this list by omission; an unknown route kind gets
     process.<kind>.coverage, which no handler can pass."""
     found: dict[str, Obligation] = {}

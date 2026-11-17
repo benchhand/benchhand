@@ -18,7 +18,7 @@ from pathlib import Path
 from corpus import Family, Outcome, Pair
 from support import PNS, SKILLS, TITLES, _access_geometry, load, require, reordered, socket_operations
 
-VALID = ("seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")  # the screw is driven before the bracket goes on
+VALID = ("seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")  # the screw goes in before the bracket
 
 
 def _result(dropped: str | None) -> Outcome:
