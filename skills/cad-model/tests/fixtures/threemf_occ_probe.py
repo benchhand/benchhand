@@ -13,6 +13,7 @@ Stdout: {PN: {"step_volume_mm3", "threemf_volume_mm3", "stl_volume_mm3", "good":
 
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
@@ -50,7 +51,21 @@ for pn, title, shape in (("TST-0001", "Drilled plate", plate), ("TST-0002", "Bal
         threemf.write(path, verts, tris, name=entry["product"], material=material)
         return manufacture._threemf(path, entry, written.shape)
 
+    def edited(name: str, old: str, new: str) -> dict:
+        """The good package with `old` replaced by `new` in its model part, judged."""
+        path = folder / f"{pn}-{name}.3mf"
+        model = threemf.MODEL_PART
+        with zipfile.ZipFile(target) as source, zipfile.ZipFile(path, "w") as out:
+            for info in source.infolist():
+                data = source.read(info.filename)
+                out.writestr(info, data.decode().replace(old, new, 1).encode() if info.filename == model else data)
+        return manufacture._threemf(path, entry, written.shape)
+
+    item = '<item objectid="1"/>'
     faults = {
+        "transformed": edited("transformed", item, '<item objectid="1" transform="1 0 0 0 1 0 0 0 1 5 0 0"/>'),
+        "two_items": edited("two_items", item, item + item),
+        "two_objects": edited("two_objects", "</resources>", '<object id="2" type="model"><mesh><vertices/><triangles/></mesh></object></resources>'),
         "cracked": variant("cracked", vertices, triangles[:-1]),
         "inward": variant("inward", vertices, [(a, c, b) for a, b, c in triangles]),
         "scaled": variant("scaled", [(x * 1.1, y * 1.1, z * 1.1) for x, y, z in vertices], triangles),

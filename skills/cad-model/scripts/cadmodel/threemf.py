@@ -39,6 +39,7 @@ DECIMALS = 6  # nanometres: a coordinate is written, and welded, at this precisi
 XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
 
 MATERIAL_METADATA = "cadagent:material"
+RESOURCE_ID_LIMIT = 2 ** 31  # ST_ResourceID: a positive integer below this
 
 
 @dataclass(frozen=True)
@@ -192,6 +193,8 @@ def _check_envelope(archive: zipfile.ZipFile) -> None:
 
 def _object(element: ET.Element, prefixes: set[str]) -> Object:
     ident = _int(element.get("id"), "object id")
+    if not 0 < ident < RESOURCE_ID_LIMIT:
+        raise ThreeMFError(f"object id {ident} is outside 1..{RESOURCE_ID_LIMIT - 1}")
     metadata: dict[str, str] = {}
     mesh = None
     for child in element:
@@ -222,10 +225,12 @@ def read(source: Path | bytes) -> Model:
         with zipfile.ZipFile(io.BytesIO(source) if isinstance(source, bytes) else source) as archive:
             _check_envelope(archive)
             root, prefixes = _parse(archive.read(MODEL_PART), MODEL_PART)
-    except zipfile.BadZipFile as error:
-        raise ThreeMFError(f"not a ZIP package: {error}") from error
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as error:  # the latter two: encrypted, unknown method
+        raise ThreeMFError(f"not a readable ZIP package: {error}") from error
     if root.tag != f"{{{CORE_NS}}}model":
         raise ThreeMFError(f"{MODEL_PART} root is {root.tag}, not a 3MF model")
+    if root.get("requiredextensions"):
+        raise ThreeMFError(f"the model requires extensions {root.get('requiredextensions')!r}; this reader has none")
     if root.get("unit") != UNIT:
         raise ThreeMFError(f"the unit is {root.get('unit')!r}, not {UNIT!r}")
     objects = [_object(e, prefixes) for e in root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}object")]

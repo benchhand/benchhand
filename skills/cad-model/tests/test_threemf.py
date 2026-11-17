@@ -111,6 +111,12 @@ class ReadTests(unittest.TestCase):
             "unit is inch": repack(cube(), **{"3D/3dmodel.model": model.replace("millimeter", "inch").encode()}),
             "duplicate object id": repack(cube(), **{"3D/3dmodel.model": model.replace(
                 "</resources>", model[model.index("<object "):model.index("</resources>")] + "</resources>").encode()}),
+            "object id zero": repack(cube(), **{"3D/3dmodel.model": model.replace(
+                '<object id="1"', '<object id="0"').replace('objectid="1"', 'objectid="0"').encode()}),
+            "object id past the resource range": repack(cube(), **{"3D/3dmodel.model": model.replace(
+                '<object id="1"', '<object id="2147483648"').replace('objectid="1"', 'objectid="2147483648"').encode()}),
+            "required extension": repack(cube(), **{"3D/3dmodel.model": model.replace(
+                "<model ", '<model requiredextensions="cadagent" ', 1).encode()}),
             "model is not XML": repack(cube(), **{"3D/3dmodel.model": b"not xml"}),
             "content types lack the model": repack(cube(), **{"[Content_Types].xml": b'<Types xmlns="http://schemas.'
                 b'openxmlformats.org/package/2006/content-types"/>'}),
@@ -196,7 +202,8 @@ class TessellationTests(unittest.TestCase):
     def test_each_fault_fails_the_check_by_the_condition_it_breaks(self) -> None:
         expected = {"cracked": ["watertight"], "inward": ["outward", "volume_within_deflection"],
                     "scaled": ["volume_within_deflection", "box_within_deflection"],
-                    "other_material": ["material_named"], "no_material": ["material_named"]}
+                    "other_material": ["material_named"], "no_material": ["material_named"],
+                    "transformed": ["no_transform"], "two_items": ["one_object"], "two_objects": ["one_object"]}
         for pn, report in self.report.items():
             for fault, failed in expected.items():
                 with self.subTest(pn=pn, fault=fault):
