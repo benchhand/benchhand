@@ -112,7 +112,13 @@ class SharedCacheEnvironmentTests(unittest.TestCase):
 
     # This class holds the pin. A move to another Python or numpy changes these constants and the headers.
     PYTHON = ">=3.12,<3.15"
-    RUNNER_PYTHON = ">=3.12,<3.13"   # the kernel runners and their run_*.py fixture copies stay on the Python of their sealed results
+    RUNNER_PYTHON = ">=3.12,<3.13"   # the kernel runners and their test doubles stay on the Python of their sealed results
+    # Only these scripts may declare RUNNER_PYTHON. The doubles run in the cadquery runner's environment.
+    RUNNER_SCRIPTS = frozenset({
+        "cad-model/scripts/run_cadquery.py", "cad-model/scripts/run_build123d.py",
+        "cad-model/tests/fixtures/run_cadquery_breaking_submit.py",
+        "cad-model/tests/fixtures/run_cadquery_reusing_workers.py",
+    })
     NUMPY = "numpy==2.5.5"
 
     def headers(self) -> dict[Path, dict]:
@@ -126,16 +132,26 @@ class SharedCacheEnvironmentTests(unittest.TestCase):
                         continue  # no PEP 723 block: not a script env
         return found
 
+    def drifted(self, found: dict[str, str | None]) -> dict[str, str | None]:
+        """The scripts whose requires-python is not the one this class allows them."""
+        return {name: value for name, value in found.items()
+                if value != (self.RUNNER_PYTHON if name in self.RUNNER_SCRIPTS else self.PYTHON)}
+
     def test_every_script_header_of_both_skills_declares_one_python(self) -> None:
         scripts = self.headers()
         names = {script.name for script in scripts}
         self.assertTrue({"cad_model.py", "run_cadquery.py", "motion.py", "mesh_probe.py"} <= names, sorted(names))
-        runners = {runner.name for runner in build.RUNNERS.values()}
-        self.assertTrue(all(name.startswith("run_") for name in runners), runners)
         found = {str(script.relative_to(SKILLS)): meta.get("requires-python") for script, meta in scripts.items()}
-        expected = {str(script.relative_to(SKILLS)): self.RUNNER_PYTHON if script.name.startswith("run_") else self.PYTHON
-                    for script in scripts}
-        self.assertEqual(found, expected)
+        self.assertLessEqual(self.RUNNER_SCRIPTS, set(found))
+        self.assertEqual(self.drifted(found), {})
+
+    def test_the_runner_range_is_refused_on_any_unlisted_script(self) -> None:
+        runners = {str(runner.relative_to(SKILLS)) for runner in build.RUNNERS.values()}
+        self.assertLessEqual(runners, self.RUNNER_SCRIPTS)
+        stray = {"cad-motion/scripts/run_something.py": self.RUNNER_PYTHON}
+        self.assertEqual(self.drifted(stray), stray)
+        self.assertEqual(self.drifted({"cad-model/scripts/run_cadquery.py": self.PYTHON}),
+                         {"cad-model/scripts/run_cadquery.py": self.PYTHON})
 
     def test_every_declared_numpy_is_one_exact_pin(self) -> None:
         pins = {str(script.relative_to(SKILLS)): requirement
