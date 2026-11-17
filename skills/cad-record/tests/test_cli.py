@@ -54,8 +54,9 @@ SCHEMA: dict[str, Any] = {
 class Harness:
     """A command over SCHEMA that records its parameters and the CLI layer it built."""
 
-    def __init__(self, ldr: Any = loader) -> None:
-        self.cli = cli_mod.SchemaCLI(SCHEMA, ldr, tool="probe")
+    def __init__(self, ldr: Any = loader, schema: Mapping[str, Any] = SCHEMA) -> None:
+        self.schema = schema
+        self.cli = cli_mod.SchemaCLI(schema, ldr, tool="probe")
         self.params: dict[str, Any] = {}
         self.layer: Any = None
         self.resolved: Any = None
@@ -65,7 +66,7 @@ class Harness:
         def callback(ctx: click.Context, **params: Any) -> None:
             self.params = params
             self.layer = self.cli.layer(ctx)
-            self.resolved = self.cli.resolve(ctx, config if config is not None else loader.load(SCHEMA, env=env),
+            self.resolved = self.cli.resolve(ctx, config if config is not None else loader.load(self.schema, env=env),
                                              json_flag=True)
 
         command = click.Command("probe", params=self.cli.params(), callback=callback)
@@ -146,11 +147,6 @@ class OptionTests(unittest.TestCase):
         self.assertEqual(bad.exit_code, 2)
         self.assertIn("Invalid value for '--mesh-band'", bad.stderr)
 
-    def test_an_unsupported_type_is_refused_when_the_options_are_built(self) -> None:
-        schema = {"properties": {"xs": {"type": "array", "x-cli": "--xs"}}}
-        with self.assertRaisesRegex(ValueError, "--xs"):
-            cli_mod.SchemaCLI(schema, loader, tool="probe").params()
-
 
 class BooleanTests(unittest.TestCase):
     def test_a_paired_flag_reports_the_half_that_was_given(self) -> None:
@@ -221,6 +217,73 @@ class LazyTests(unittest.TestCase):
             self.assertFalse(Harness().cli.needs_click(["run"], os.environ))
 
 
+def one(**field: Any) -> dict[str, Any]:
+    return {"properties": {"f": {"x-cli": "--f", **field}}}
+
+
+def two(first: str, second: str, **extra: Any) -> dict[str, Any]:
+    return {"properties": {"a": {"type": "integer", "x-cli": first, **extra}, "b": {"type": "integer", "x-cli": second}}}
+
+
+class ConstructionTests(unittest.TestCase):
+    def refused(self, schema: Mapping[str, Any], pattern: str) -> None:
+        with self.assertRaisesRegex(ValueError, pattern):
+            cli_mod.SchemaCLI(schema, loader, tool="probe")
+
+    def test_an_unsupported_type_is_refused(self) -> None:
+        self.refused(one(type="array"), "--f.*unsupported type")
+
+    def test_a_non_string_enum_is_refused(self) -> None:
+        self.refused(one(type="integer", enum=[1, 2]), "--f.*only string enums")
+
+    def test_two_fields_with_the_same_flag_are_refused(self) -> None:
+        self.refused(two("--x", "--x"), "duplicate flag")
+
+    def test_a_negative_half_that_another_field_spells_is_refused(self) -> None:
+        schema = {"properties": {"a": {"type": "boolean", "x-cli": "--x/--no-x"},
+                                 "b": {"type": "boolean", "x-cli": "--no-x"}}}
+        self.refused(schema, "duplicate flag")
+
+    def test_two_flags_that_make_one_parameter_name_are_refused(self) -> None:
+        self.refused(two("--a-b", "--a_b"), "duplicate parameter name")
+
+    def test_a_short_flag_is_refused_in_either_half_of_a_pair(self) -> None:
+        for declaration in ("-n", "--x/-n"):
+            with self.subTest(declaration=declaration):
+                self.refused({"properties": {"a": {"type": "boolean", "x-cli": declaration}}}, "only long --flags")
+
+    def test_draft_4_boolean_exclusive_bounds_are_refused(self) -> None:
+        for key in ("exclusiveMinimum", "exclusiveMaximum"):
+            for flag in (True, False):
+                with self.subTest(key=key, flag=flag):
+                    self.refused(one(type="number", **{key: flag}), "draft-4 boolean exclusive bounds")
+
+
+class TighterBoundTests(unittest.TestCase):
+    SCHEMA = {"properties": {
+        "lo_excl": {"type": "number", "minimum": 0, "exclusiveMinimum": 1, "x-cli": "--lo-excl"},
+        "lo_incl": {"type": "number", "minimum": 2, "exclusiveMinimum": 1, "x-cli": "--lo-incl"},
+        "hi_excl": {"type": "number", "maximum": 5, "exclusiveMaximum": 3, "x-cli": "--hi-excl"},
+        "hi_incl": {"type": "number", "maximum": 3, "exclusiveMaximum": 5, "x-cli": "--hi-incl"},
+        "tie_lo": {"type": "integer", "minimum": 1, "exclusiveMinimum": 1, "x-cli": "--tie-lo"},
+        "tie_hi": {"type": "integer", "maximum": 1, "exclusiveMaximum": 1, "x-cli": "--tie-hi"},
+    }}
+
+    def test_the_tighter_bound_wins_at_each_end(self) -> None:
+        cases = [
+            ("--lo-excl", "1", False), ("--lo-excl", "1.5", True),
+            ("--lo-incl", "1.5", False), ("--lo-incl", "2", True),
+            ("--hi-excl", "3", False), ("--hi-excl", "2.9", True),
+            ("--hi-incl", "3.1", False), ("--hi-incl", "3", True),
+            ("--tie-lo", "1", False), ("--tie-lo", "2", True),
+            ("--tie-hi", "1", False), ("--tie-hi", "0", True),
+        ]
+        for flag, value, accepted in cases:
+            with self.subTest(flag=flag, value=value):
+                result = Harness(schema=self.SCHEMA).run([flag, value])
+                self.assertEqual(result.exit_code, 0 if accepted else 2, result.output)
+
+
 class FieldTests(unittest.TestCase):
     def test_nested_properties_map_to_json_pointers_with_rfc_6901_escapes(self) -> None:
         schema = {"properties": {
@@ -267,6 +330,23 @@ class SourceTests(unittest.TestCase):
         self.assertEqual((harness.params["mesh_band"], harness.params["mesh_tol"]), (7.0, 0.5))
         self.assertEqual(harness.layer.sources, {})
         self.assertEqual(harness.resolved.sources["/band"], "file:cfg.yaml")
+
+
+class EscapedPointerTests(unittest.TestCase):
+    SCHEMA = {"properties": {
+        "x/y": {"type": "number", "default": 1.0, "x-cli": "--slash"},
+        "m~n": {"type": "number", "default": 2.0, "x-cli": "--tilde"},
+        "grp": {"properties": {"a/b": {"type": "number", "x-cli": "--nested-slash"}}},
+    }}
+
+    def test_fields_with_slash_and_tilde_names_resolve_end_to_end(self) -> None:
+        harness = Harness(schema=self.SCHEMA)
+        result = harness.run(["--slash", "5", "--nested-slash", "7"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(harness.layer.sources, {"/x~1y": "cli:--slash", "/grp/a~1b": "cli:--nested-slash"})
+        self.assertEqual(harness.resolved.values, {"x/y": 5.0, "m~n": 2.0, "grp": {"a/b": 7.0}})
+        self.assertEqual(harness.resolved.sources["/m~0n"], "default")
+        self.assertEqual(harness.resolved.sources["/x~1y"], "cli:--slash")
 
 
 class ReportTests(unittest.TestCase):

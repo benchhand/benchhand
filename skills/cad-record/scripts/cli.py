@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -39,6 +39,10 @@ class Field:
         return self.declaration.split("/")[0]
 
     @property
+    def spellings(self) -> list[str]:
+        return self.declaration.split("/")
+
+    @property
     def negative(self) -> str | None:
         """The second half of a paired boolean flag, `--no-x` in `--x/--no-x`."""
         return self.declaration.split("/")[1] if "/" in self.declaration else None
@@ -62,10 +66,21 @@ def fields(schema: Mapping[str, Any], path: tuple[str, ...] = ()) -> list[Field]
     return found
 
 
-def _bounds(sub: Mapping[str, Any], low: str, high: str) -> dict[str, Any]:
-    lo, hi = sub.get(low, sub.get(f"exclusive{low.title()}")), sub.get(high, sub.get(f"exclusive{high.title()}"))
-    return {"min": lo, "max": hi, "min_open": low not in sub and lo is not None,
-            "max_open": high not in sub and hi is not None}
+def _end(sub: Mapping[str, Any], closed_key: str, open_key: str, pick: Callable[..., Any]) -> tuple[Any, bool]:
+    """The bound at one end and whether it is open. With both forms present, the tighter wins and a tie is open."""
+    closed, opened = sub.get(closed_key), sub.get(open_key)
+    if opened is None:
+        return closed, False
+    if closed is None:
+        return opened, True
+    tight = pick(closed, opened)
+    return tight, tight == opened
+
+
+def _bounds(sub: Mapping[str, Any]) -> dict[str, Any]:
+    low, low_open = _end(sub, "minimum", "exclusiveMinimum", max)
+    high, high_open = _end(sub, "maximum", "exclusiveMaximum", min)
+    return {"min": low, "max": high, "min_open": low_open, "max_open": high_open}
 
 
 def _param_type(field: Field) -> click.ParamType:
@@ -73,18 +88,39 @@ def _param_type(field: Field) -> click.ParamType:
 
     sub, kind = field.schema, field.schema.get("type")
     if "enum" in sub:
-        if not all(isinstance(item, str) for item in sub["enum"]):
-            raise ValueError(f"{field.flag}: only string enums are supported")
         return click.Choice(sub["enum"])
-    if kind not in VALUE_TYPES:
-        raise ValueError(f"{field.flag}: unsupported type {kind!r}")
-    bounds = _bounds(sub, "minimum", "maximum")
+    bounds = _bounds(sub)
     ranged = bounds["min"] is not None or bounds["max"] is not None
     if kind == "integer":
         return click.IntRange(**bounds) if ranged else click.INT
     if kind == "number":
         return click.FloatRange(**bounds) if ranged else click.FLOAT
     return click.STRING
+
+
+def _check(field: Field) -> None:
+    """Refuse an unsupported field with a message that names its flag."""
+    sub, kind = field.schema, field.schema.get("type")
+    for spelling in field.spellings:
+        if not spelling.startswith("--") or len(spelling) == 2:
+            raise ValueError(f"{spelling}: only long --flags are supported")
+    if kind not in VALUE_TYPES | {"boolean"}:
+        raise ValueError(f"{field.flag}: unsupported type {kind!r}")
+    if "enum" in sub and not all(isinstance(item, str) for item in sub["enum"]):
+        raise ValueError(f"{field.flag}: only string enums are supported")
+    if any(isinstance(sub.get(key), bool) for key in ("exclusiveMinimum", "exclusiveMaximum")):
+        raise ValueError(f"{field.flag}: draft-4 boolean exclusive bounds are not supported; use a number")
+
+
+def _check_all(found: Sequence[Field]) -> None:
+    for field in found:
+        _check(field)
+    spellings = [spelling for field in found for spelling in field.spellings]
+    if len(set(spellings)) != len(spellings):
+        raise ValueError(f"duplicate flag: {sorted(s for s in set(spellings) if spellings.count(s) > 1)}")
+    names = [field.name for field in found]
+    if len(set(names)) != len(names):
+        raise ValueError(f"duplicate parameter name: {sorted(n for n in set(names) if names.count(n) > 1)}")
 
 
 def _option(field: Field) -> click.Option:
@@ -129,9 +165,7 @@ class SchemaCLI:
     def __init__(self, schema: Mapping[str, Any], loader: Any, *, tool: str) -> None:
         self.fields = fields(schema)
         self.loader, self.tool = loader, tool
-        flags = [field.flag for field in self.fields]
-        if len(set(flags)) != len(flags):
-            raise ValueError(f"duplicate x-cli flags: {sorted(flags)}")
+        _check_all(self.fields)
 
     def needs_click(self, argv: Sequence[str], environ: Mapping[str, str]) -> bool:
         """Whether Click must run: `argv` has a schema flag or `--help`, or `environ` has an `x-env` variable.
@@ -139,7 +173,7 @@ class SchemaCLI:
         With nothing to check, a caller can skip the Click import and use the loaded config as it is."""
         flags = {"--help"}
         for field in self.fields:
-            flags |= {flag for flag in (field.flag, field.negative) if flag}
+            flags |= set(field.spellings)
         given = any(arg.split("=", 1)[0] in flags for arg in argv)
         names = [field.schema["x-env"] for field in self.fields if "x-env" in field.schema]
         return given or any(name in environ for name in names)
