@@ -22,10 +22,12 @@ and reads one JSON result from that file once the runner exits, identical in sha
                "LMP-0004": {"ok": false, "error": {"type": "SafeEditError", "message": "...",
                                                    "where": "model.py:42 in build"}}}}
 
-`import_s` is the wall time of the kernel import: in this process for one worker, or, with several
-workers (`build_jobs`; CAD_MODEL_BUILD_JOBS overrides, 1 = serial), the slowest worker's own import,
-as the workers import concurrently. Parts then build in spawned worker processes of the runner's
-process group, and the result lists them in request order.
+A request of several parts builds them in spawned worker processes of the runner's process group, one
+fresh process per part (`build_jobs` workers at a time; CAD_MODEL_BUILD_JOBS overrides, 1 = one at a
+time), so a part's bytes, STEP occurrence ids included, never depend on the parts built before it. A
+request of one part builds in this process. The result lists the parts in request order. `import_s` is
+the wall time of one kernel import: this process's, or the slowest worker's, as workers import
+concurrently. A worker that dies fails its unfinished parts with error type WorkerCrashed.
 
 `sources` hashes every Python file the runner loaded from the plugin or the project, the part models
 themselves excepted: with `tools` and the part's own files they are what a cached build depends on.
@@ -74,6 +76,7 @@ import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -83,28 +86,10 @@ from cadmodel.motion import load_pose
 
 CONTRACT = "model.py must define KERNEL (str), PARAMS (JSON-serialisable dict), and build(params) -> shape"
 FEATURE_ID = re.compile(r"[a-z][a-z0-9_]*")
-FEATURE_FRAMES = (
-    "assembly_zero",
-    "part_local",
-)  # part.yaml model_frame: the coordinates build returns
-MANUFACTURE_FRAME = (
-    "manufacture"  # the native frame build_manufacture returns its state in
-)
-SUPPORT_TYPES = frozenset(
-    {
-        "plane",
-        "cylinder",
-        "cone",
-        "sphere",
-        "torus",
-        "bezier",
-        "bspline",
-        "revolution",
-        "extrusion",
-        "offset",
-        "other",
-    }
-)
+FEATURE_FRAMES = ("assembly_zero", "part_local")  # part.yaml model_frame: the coordinates build returns
+MANUFACTURE_FRAME = "manufacture"  # the native frame build_manufacture returns its state in
+SUPPORT_TYPES = frozenset({"plane", "cylinder", "cone", "sphere", "torus", "bezier", "bspline",
+                           "revolution", "extrusion", "offset", "other"})
 LOCATOR_KEYS = frozenset({"kind", "frame", "patches", "anchors", "relations"})
 PATCH_KEYS = frozenset({"support_type", "point_mm", "normal", "region"})
 ANCHOR_KEYS = frozenset({"point_mm", "direction"})
@@ -135,12 +120,7 @@ def _load_model(pn: str, path: Path, source: bytes | None = None) -> Any:
         raise ContractError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    code = compile(
-        path.read_bytes() if source is None else source,
-        str(path),
-        "exec",
-        dont_inherit=True,
-    )
+    code = compile(path.read_bytes() if source is None else source, str(path), "exec", dont_inherit=True)
     exec(code, module.__dict__)  # noqa: S102 - executing the part model is the runner's job
     return module
 
@@ -161,21 +141,15 @@ def _validate_text_fonts(module: Any) -> None:
             continue
         if name not in {"text", "Text"}:
             continue
-        if not any(
-            keyword.arg in {"fontPath", "font_path"} for keyword in node.keywords
-        ):
-            raise ContractError(
-                f"{Path(module.__file__).name}:{node.lineno}: {name}() must pass an explicit "
-                "font file path with fontPath= or font_path=; system font fallback is refused"
-            )
+        if not any(keyword.arg in {"fontPath", "font_path"} for keyword in node.keywords):
+            raise ContractError(f"{Path(module.__file__).name}:{node.lineno}: {name}() must pass an explicit "
+                                "font file path with fontPath= or font_path=; system font fallback is refused")
 
 
 def _params(module: Any) -> dict[str, Any]:
     params = getattr(module, "PARAMS", None)
     if not isinstance(params, dict):
-        raise ContractError(
-            f"PARAMS is {type(params).__name__}, expected a dict; {CONTRACT}"
-        )
+        raise ContractError(f"PARAMS is {type(params).__name__}, expected a dict; {CONTRACT}")
     try:
         return cast(dict[str, Any], json.loads(json.dumps(params, allow_nan=False)))
     except (TypeError, ValueError) as error:
@@ -183,16 +157,8 @@ def _params(module: Any) -> dict[str, Any]:
 
 
 def _vector(value: Any, where: str, *, unit: bool = False) -> list[float]:
-    if (
-        not isinstance(value, (list, tuple))
-        or len(value) != 3
-        or any(
-            isinstance(v, bool)
-            or not isinstance(v, (int, float))
-            or not math.isfinite(v)
-            for v in value
-        )
-    ):
+    if (not isinstance(value, (list, tuple)) or len(value) != 3
+            or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in value)):
         raise ContractError(f"{where} must be three finite numbers")
     vector = [float(v) for v in value]
     if unit and abs(math.hypot(*vector) - 1.0) > 1e-6:
@@ -200,9 +166,7 @@ def _vector(value: Any, where: str, *, unit: bool = False) -> list[float]:
     return vector
 
 
-def _keys(
-    value: Any, allowed: frozenset[str], required: frozenset[str], where: str
-) -> dict[str, Any]:
+def _keys(value: Any, allowed: frozenset[str], required: frozenset[str], where: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ContractError(f"{where} must be a mapping")
     unknown, missing = sorted(set(value) - allowed), sorted(required - set(value))
@@ -211,9 +175,7 @@ def _keys(
     return value
 
 
-def feature_locators(
-    value: Any, frame: str = "assembly_zero", hook: str = "drawing_features"
-) -> dict[str, Any]:
+def feature_locators(value: Any, frame: str = "assembly_zero", hook: str = "drawing_features") -> dict[str, Any]:
     """Check a drawing_features (or manufacture_features) result and return its JSON copy: semantic ID
     -> FeatureLocator.
 
@@ -228,55 +190,33 @@ def feature_locators(
     if frame not in allowed:
         raise ContractError(f"model_frame {frame!r} must be one of {list(allowed)}")
     if not isinstance(value, dict) or not value:
-        raise ContractError(
-            f"{hook} must return a non-empty dict of semantic ID -> locator"
-        )
-    meaning = (
-        "the native frame build_manufacture returns its state in"
-        if manufacture
-        else "the part's model_frame: the coordinates build returns"
-    )
+        raise ContractError(f"{hook} must return a non-empty dict of semantic ID -> locator")
+    meaning = ("the native frame build_manufacture returns its state in" if manufacture
+               else "the part's model_frame: the coordinates build returns")
     features: dict[str, Any] = {}
     for feature_id, locator in value.items():
         where = f"{hook}[{feature_id!r}]"
         if not isinstance(feature_id, str) or not FEATURE_ID.fullmatch(feature_id):
             raise ContractError(f"{where}: a semantic ID is lower_snake_case")
         _keys(locator, LOCATOR_KEYS, frozenset({"kind", "frame", "patches"}), where)
-        if not isinstance(locator["kind"], str) or not FEATURE_ID.fullmatch(
-            locator["kind"]
-        ):
+        if not isinstance(locator["kind"], str) or not FEATURE_ID.fullmatch(locator["kind"]):
             raise ContractError(f"{where}.kind must be a lower_snake_case string")
         if locator["frame"] != frame:
             raise ContractError(f"{where}.frame must be {frame!r}, {meaning}")
         patches = locator["patches"]
         if not isinstance(patches, list) or not patches:
             raise ContractError(f"{where}.patches must be a non-empty list")
-        checked: dict[str, Any] = {
-            "kind": locator["kind"],
-            "frame": frame,
-            "patches": [],
-        }
+        checked: dict[str, Any] = {"kind": locator["kind"], "frame": frame, "patches": []}
         for index, patch in enumerate(patches):
             at = f"{where}.patches[{index}]"
-            _keys(
-                patch, PATCH_KEYS, frozenset({"support_type", "point_mm", "normal"}), at
-            )
+            _keys(patch, PATCH_KEYS, frozenset({"support_type", "point_mm", "normal"}), at)
             if patch["support_type"] not in SUPPORT_TYPES:
-                raise ContractError(
-                    f"{at}.support_type must be one of {sorted(SUPPORT_TYPES)}"
-                )
-            entry = {
-                "support_type": patch["support_type"],
-                "point_mm": _vector(patch["point_mm"], f"{at}.point_mm"),
-                "normal": _vector(patch["normal"], f"{at}.normal", unit=True),
-            }
+                raise ContractError(f"{at}.support_type must be one of {sorted(SUPPORT_TYPES)}")
+            entry = {"support_type": patch["support_type"], "point_mm": _vector(patch["point_mm"], f"{at}.point_mm"),
+                     "normal": _vector(patch["normal"], f"{at}.normal", unit=True)}
             if "region" in patch:
-                if not isinstance(patch["region"], str) or not FEATURE_ID.fullmatch(
-                    patch["region"]
-                ):
-                    raise ContractError(
-                        f"{at}.region must be a lower_snake_case string"
-                    )
+                if not isinstance(patch["region"], str) or not FEATURE_ID.fullmatch(patch["region"]):
+                    raise ContractError(f"{at}.region must be a lower_snake_case string")
                 entry["region"] = patch["region"]
             checked["patches"].append(entry)
         if "anchors" in locator:
@@ -288,32 +228,19 @@ def feature_locators(
                 if not isinstance(name, str) or not FEATURE_ID.fullmatch(name):
                     raise ContractError(f"{at}: an anchor name is lower_snake_case")
                 _keys(anchor, ANCHOR_KEYS, frozenset({"point_mm"}), at)
-                checked["anchors"][name] = {
-                    "point_mm": _vector(anchor["point_mm"], f"{at}.point_mm")
-                }
+                checked["anchors"][name] = {"point_mm": _vector(anchor["point_mm"], f"{at}.point_mm")}
                 if "direction" in anchor:
-                    checked["anchors"][name]["direction"] = _vector(
-                        anchor["direction"], f"{at}.direction", unit=True
-                    )
+                    checked["anchors"][name]["direction"] = _vector(anchor["direction"], f"{at}.direction", unit=True)
         if "relations" in locator:
             if not isinstance(locator["relations"], dict):
                 raise ContractError(f"{where}.relations must be a mapping")
             checked["relations"] = {}
             for name, targets in locator["relations"].items():
                 at = f"{where}.relations[{name!r}]"
-                if (
-                    not isinstance(name, str)
-                    or not FEATURE_ID.fullmatch(name)
-                    or not isinstance(targets, list)
-                    or not targets
-                    or any(
-                        not isinstance(t, str) or t not in value or t == feature_id
-                        for t in targets
-                    )
-                ):
-                    raise ContractError(
-                        f"{at} must name a non-empty list of the other semantic IDs in this result"
-                    )
+                if (not isinstance(name, str) or not FEATURE_ID.fullmatch(name) or not isinstance(targets, list)
+                        or not targets or any(not isinstance(t, str) or t not in value or t == feature_id
+                                              for t in targets)):
+                    raise ContractError(f"{at} must name a non-empty list of the other semantic IDs in this result")
                 checked["relations"][name] = list(targets)
         features[feature_id] = checked
     return features
@@ -323,9 +250,7 @@ def _shape(value: Any, kernel: str, hook: str) -> tuple[Any, int]:
     """The TopoDS_Shape a hook returned and its solid count; ContractError when it is no solid shape."""
     shape = occ.to_topods(value)
     if shape is None or shape.IsNull():
-        raise ContractError(
-            f"{hook} returned {type(value).__name__}, not a {kernel} shape"
-        )
+        raise ContractError(f"{hook} returned {type(value).__name__}, not a {kernel} shape")
     solids = occ.count(shape, "SOLID")
     if solids == 0:
         raise ContractError(f"{hook} returned a shape with no solid")
@@ -336,19 +261,13 @@ def _manufacture_hook(module: Any, declared: str | None) -> Any:
     """`build_manufacture`, required exactly when part.yaml declares a different manufacturing state."""
     hook = getattr(module, "build_manufacture", None)
     if hook is not None and not callable(hook):
-        raise ContractError(
-            "build_manufacture is defined but not callable; expected build_manufacture(params) -> shape"
-        )
+        raise ContractError("build_manufacture is defined but not callable; expected build_manufacture(params) -> shape")
     if declared == "different" and hook is None:
-        raise ContractError(
-            "part.yaml declares manufacture.relationship: different, but model.py defines no "
-            "build_manufacture(params)"
-        )
+        raise ContractError("part.yaml declares manufacture.relationship: different, but model.py defines no "
+                            "build_manufacture(params)")
     if hook is not None and declared != "different":
-        raise ContractError(
-            "model.py defines build_manufacture(params), but part.yaml does not declare "
-            "manufacture.relationship: different with its state, reason, decision and volume tolerance"
-        )
+        raise ContractError("model.py defines build_manufacture(params), but part.yaml does not declare "
+                            "manufacture.relationship: different with its state, reason, decision and volume tolerance")
     return hook
 
 
@@ -357,15 +276,11 @@ def _manufacture_features_hook(module: Any, declared: str | None) -> Any:
     its manufacturing features through its installed drawing_features locators."""
     hook = getattr(module, "manufacture_features", None)
     if hook is not None and not callable(hook):
-        raise ContractError(
-            "manufacture_features is defined but not callable; expected "
-            "manufacture_features(params, manufacture_shape)"
-        )
+        raise ContractError("manufacture_features is defined but not callable; expected "
+                            "manufacture_features(params, manufacture_shape)")
     if hook is not None and declared != "different":
-        raise ContractError(
-            "model.py defines manufacture_features(params, shape), but part.yaml does not declare "
-            "manufacture.relationship: different; a part made as installed reuses drawing_features"
-        )
+        raise ContractError("model.py defines manufacture_features(params, shape), but part.yaml does not declare "
+                            "manufacture.relationship: different; a part made as installed reuses drawing_features")
     return hook
 
 
@@ -395,14 +310,10 @@ def _build_part(kernel: str, request: Mapping[str, Any]) -> dict[str, Any]:
     model = Path(request["model"])
     inputs = provenance.folder_inputs(model.parent)
     source = model.read_bytes()
-    inputs["model.py"] = hashlib.sha256(
-        source
-    ).hexdigest()  # the bytes executed, whatever the file holds later
+    inputs["model.py"] = hashlib.sha256(source).hexdigest()  # the bytes executed, whatever the file holds later
     module = _load_model(request["pn"], model, source)
     if getattr(module, "KERNEL", None) != kernel:
-        raise ContractError(
-            f"KERNEL is {getattr(module, 'KERNEL', None)!r}, this runner is {kernel!r}"
-        )
+        raise ContractError(f"KERNEL is {getattr(module, 'KERNEL', None)!r}, this runner is {kernel!r}")
     _validate_text_fonts(module)
     params = _params(module)
     build = getattr(module, "build", None)
@@ -410,9 +321,7 @@ def _build_part(kernel: str, request: Mapping[str, Any]) -> dict[str, Any]:
         raise ContractError(f"build is not callable; {CONTRACT}")
     hook = getattr(module, "drawing_features", None)
     if hook is not None and not callable(hook):
-        raise ContractError(
-            "drawing_features is defined but not callable; expected drawing_features(params, shape)"
-        )
+        raise ContractError("drawing_features is defined but not callable; expected drawing_features(params, shape)")
     manufacture_hook = _manufacture_hook(module, request.get("manufacture"))
     state_hook = _manufacture_features_hook(module, request.get("manufacture"))
     build_params = json.loads(json.dumps(params))
@@ -422,84 +331,42 @@ def _build_part(kernel: str, request: Mapping[str, Any]) -> dict[str, Any]:
     shape, solids = _shape(value, kernel, "build")
     # The hook sees build's own result, after every cut and fillet, and its own copy of the parameters.
     frame = request.get("model_frame", "assembly_zero")
-    features = (
-        feature_locators(hook(json.loads(json.dumps(params)), value), frame)
-        if hook is not None
-        else None
-    )
-    pose.write_part_step(
-        Path(request["step"]), pose.Part(request["pn"], request["name"], shape)
-    )
-    errors = occ.check_statuses(
-        shape
-    )  # STEP export can hide an invalid solid (an open shell becomes a surface model)
+    features = feature_locators(hook(json.loads(json.dumps(params)), value), frame) if hook is not None else None
+    pose.write_part_step(Path(request["step"]), pose.Part(request["pn"], request["name"], shape))
+    errors = occ.check_statuses(shape)  # STEP export can hide an invalid solid (an open shell becomes a surface model)
     manufacture = state_features = None
     if manufacture_hook is not None:
         state_value = manufacture_hook(json.loads(json.dumps(params)))
         state, state_solids = _shape(state_value, kernel, "build_manufacture")
-        pose.write_part_step(
-            Path(request["manufacture_step"]),
-            pose.Part(request["pn"], request["name"], state),
-        )
+        pose.write_part_step(Path(request["manufacture_step"]), pose.Part(request["pn"], request["name"], state))
         state_errors = occ.check_statuses(state)
-        manufacture = {
-            "kernel_volume_mm3": occ.volume(state),
-            "kernel_solids": state_solids,
-            "kernel_valid": not state_errors,
-            "kernel_errors": state_errors,
-        }
-        if (
-            state_hook is not None
-        ):  # it sees build_manufacture's own result and its own copy of the parameters
-            state_features = feature_locators(
-                state_hook(json.loads(json.dumps(params)), state_value),
-                MANUFACTURE_FRAME,
-                "manufacture_features",
-            )
-    return {
-        "ok": True,
-        "params": params,
-        "kernel_volume_mm3": occ.volume(shape),
-        "kernel_solids": solids,
-        "kernel_valid": not errors,
-        "kernel_errors": errors,
-        "build_s": round(time.perf_counter() - started, 3),
-        "drawing_features": features,
-        "manufacture": manufacture,
-        "manufacture_features": state_features,
-        "inputs": inputs,
-        "inputs_stable": provenance.folder_inputs(model.parent) == inputs,
-    }
-
+        manufacture = {"kernel_volume_mm3": occ.volume(state), "kernel_solids": state_solids,
+                       "kernel_valid": not state_errors, "kernel_errors": state_errors}
+        if state_hook is not None:  # it sees build_manufacture's own result and its own copy of the parameters
+            state_features = feature_locators(state_hook(json.loads(json.dumps(params)), state_value),
+                                              MANUFACTURE_FRAME, "manufacture_features")
+    return {"ok": True, "params": params, "kernel_volume_mm3": occ.volume(shape), "kernel_solids": solids,
+            "kernel_valid": not errors, "kernel_errors": errors, "build_s": round(time.perf_counter() - started, 3),
+            "drawing_features": features, "manufacture": manufacture, "manufacture_features": state_features,
+            "inputs": inputs, "inputs_stable": provenance.folder_inputs(model.parent) == inputs}
 
 def _failure(error: BaseException, model: str) -> dict[str, Any]:
-    frames = [
-        f for f in traceback.extract_tb(error.__traceback__) if f.filename == model
-    ]
+    frames = [f for f in traceback.extract_tb(error.__traceback__) if f.filename == model]
     where = f"model.py:{frames[-1].lineno} in {frames[-1].name}" if frames else None
-    return {
-        "ok": False,
-        "error": {"type": type(error).__name__, "message": str(error), "where": where},
-    }
+    return {"ok": False, "error": {"type": type(error).__name__, "message": str(error), "where": where}}
 
 
 BUILD_JOBS_ENV = "CAD_MODEL_BUILD_JOBS"
-MAX_BUILD_JOBS = (
-    8  # each worker imports the kernel (~1 GB resident for OCP); more rarely pays back
-)
+MAX_BUILD_JOBS = 8  # each worker imports the kernel (~1 GB resident for OCP); more rarely pays back
 
 
-def build_jobs(
-    part_count: int, environ: Mapping[str, str], cpus: int | None = None
-) -> int:
+def build_jobs(part_count: int, environ: Mapping[str, str], cpus: int | None = None) -> int:
     """Worker processes for `part_count` parts: min(cpu count, parts, MAX_BUILD_JOBS), or the positive
-    integer in CAD_MODEL_BUILD_JOBS (still capped by the parts). 1 builds in this process."""
+    integer in CAD_MODEL_BUILD_JOBS (still capped by the parts)."""
     raw = environ.get(BUILD_JOBS_ENV, "").strip()
     if raw:
         if not raw.isdecimal() or int(raw) < 1:
-            raise ValueError(
-                f"{BUILD_JOBS_ENV} must be a positive integer, got {raw!r}"
-            )
+            raise ValueError(f"{BUILD_JOBS_ENV} must be a positive integer, got {raw!r}")
         wanted = int(raw)
     else:
         wanted = min(cpus or os.cpu_count() or 1, MAX_BUILD_JOBS)
@@ -513,62 +380,54 @@ def _build_or_fail(kernel: str, part: Mapping[str, Any]) -> dict[str, Any]:
         return _failure(error, str(Path(part["model"])))
 
 
-_worker_import_s = 0.0
+def _no_bytecode() -> None:
+    sys.dont_write_bytecode = True  # a spawned worker starts with the default: no __pycache__ beside model.py
 
 
-def _init_worker(kernel: str) -> None:
-    """Worker start: no bytecode beside the part models, kernel imported once per worker."""
-    global _worker_import_s
-    sys.dont_write_bytecode = True
+def _build_in_worker(kernel: str, part: Mapping[str, Any],
+                     roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
+    """One part in a fresh worker: the kernel import time, the part's result and the plugin and project
+    sources this worker loaded (the parent never loads the models' helper modules). The import runs here,
+    not in the pool initializer, so a replacement worker that never gets a task imports nothing."""
     started = time.perf_counter()
     importlib.import_module(kernel)
-    _worker_import_s = round(time.perf_counter() - started, 3)
+    import_s = round(time.perf_counter() - started, 3)
+    return _build_or_fail(kernel, part), provenance.sources(roots, MODEL_MODULE), import_s
 
 
-def _build_in_worker(
-    kernel: str, part: Mapping[str, Any], roots: list[Path]
-) -> tuple[dict[str, Any], dict[str, str], float]:
-    """One part in a worker: its result, the plugin and project sources this worker has loaded so far
-    (the parent never loads the models' helper modules), and the worker's kernel import time."""
-    return (
-        _build_or_fail(kernel, part),
-        provenance.sources(roots, MODEL_MODULE),
-        _worker_import_s,
-    )
+def _worker_died(error: BaseException) -> dict[str, Any]:
+    return {"ok": False, "error": {"type": "WorkerCrashed", "where": None,
+                                   "message": f"the worker process died before the part finished ({error})"}}
 
 
-def _build_parallel(
-    kernel: str, parts: list[Mapping[str, Any]], jobs: int, roots: list[Path]
-) -> tuple[dict[str, Any], dict[str, str], float]:
-    """Build `parts` in `jobs` spawned workers; results in request order. spawn, not fork: OCCT keeps
-    process-global state and threads once imported. Workers stay in the runner's process group and
-    session, so killing that group (build._stop) takes them too. One part per worker process: OCCT's STEP
-    writer numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter, so a reused worker would
-    write ids that depend on which parts the scheduler gave it."""
+def _build_in_workers(kernel: str, parts: list[Mapping[str, Any]], jobs: int,
+                      roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
+    """Build `parts` in `jobs` spawned workers, one part per worker process, results in request order.
+
+    spawn, not fork: OCCT keeps process-global state and threads once imported. One part per process:
+    OCCT's STEP writer numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter, so a reused
+    worker would write ids that depend on which parts it built before. Workers stay in the runner's
+    process group and session, so killing that group (build._stop) takes them too. A worker that dies
+    fails the parts it had not finished; the others keep their results."""
     results: dict[str, Any] = {}
     sources: dict[str, str] = {}
     import_s = 0.0
-    with ProcessPoolExecutor(
-        max_workers=jobs,
-        mp_context=multiprocessing.get_context("spawn"),
-        initializer=_init_worker,
-        initargs=(kernel,),
-        max_tasks_per_child=1,
-    ) as pool:
-        futures = [
-            (part, pool.submit(_build_in_worker, kernel, part, roots)) for part in parts
-        ]
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn"),
+                             initializer=_no_bytecode, max_tasks_per_child=1) as pool:
+        futures = [(part, pool.submit(_build_in_worker, kernel, part, roots)) for part in parts]
         for part, future in futures:
-            results[part["pn"]], worker_sources, worker_import_s = future.result()
+            try:
+                results[part["pn"]], worker_sources, worker_import_s = future.result()
+            except BrokenProcessPool as error:
+                results[part["pn"]] = _worker_died(error)
+                continue
             sources.update(worker_sources)
             import_s = max(import_s, worker_import_s)
     return results, sources, import_s
 
 
 def main(kernel: str, dists: tuple[str, ...]) -> int:
-    sys.dont_write_bytecode = (
-        True  # never leave __pycache__ beside hw/parts/<PN>/model.py
-    )
+    sys.dont_write_bytecode = True  # never leave __pycache__ beside hw/parts/<PN>/model.py
     if sys.argv[1:] == ["--tools"]:
         print(json.dumps(provenance.runtime(tool_versions(dists))))
         return 0
@@ -580,36 +439,17 @@ def main(kernel: str, dists: tuple[str, ...]) -> int:
     except (ValueError, KeyError, TypeError) as error:
         print(f"run_{kernel}: bad request on stdin: {error}", file=sys.stderr)
         return 2
-    projects = {
-        Path(part["model"]).resolve().parents[2] for part in parts
-    }  # hw/ of hw/parts/<PN>/model.py
+    projects = {Path(part["model"]).resolve().parents[2] for part in parts}  # hw/ of hw/parts/<PN>/model.py
     roots = [provenance.SKILLS, *projects]
-    results: dict[str, Any] = {}
-    if jobs > 1:
-        results, worker_sources, import_s = _build_parallel(kernel, parts, jobs, roots)
-        sources = dict(
-            sorted(
-                {**provenance.sources(roots, MODEL_MODULE), **worker_sources}.items()
-            )
-        )
-    else:
+    if len(parts) > 1:
+        results, worker_sources, import_s = _build_in_workers(kernel, parts, jobs, roots)
+        sources = dict(sorted({**provenance.sources(roots, MODEL_MODULE), **worker_sources}.items()))
+    else:  # the process's first and only STEP write: its ids match a fresh worker's
         started = time.perf_counter()
         importlib.import_module(kernel)
         import_s = round(time.perf_counter() - started, 3)
-        for part in parts:
-            results[part["pn"]] = _build_or_fail(kernel, part)
+        results = {part["pn"]: _build_or_fail(kernel, part) for part in parts}
         sources = provenance.sources(roots, MODEL_MODULE)
-    result.write_text(
-        json.dumps(
-            {
-                "kernel": kernel,
-                "tools": tool_versions(dists),
-                "import_s": import_s,
-                "sources": sources,
-                "parts": results,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    result.write_text(json.dumps({"kernel": kernel, "tools": tool_versions(dists), "import_s": import_s,
+                                  "sources": sources, "parts": results}) + "\n", encoding="utf-8")
     return 0

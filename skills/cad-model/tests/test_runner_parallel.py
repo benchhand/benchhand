@@ -30,6 +30,27 @@ def build(params):
     s = params["size"]
     return cq.Solid.makeBox(s, s + 1, s + 2)
 """
+SYNC = """import os, time
+from pathlib import Path
+import cadquery as cq
+KERNEL = "cadquery"
+PARAMS = {{}}
+def build(params):
+    signals = Path({signals!r})
+    (signals / str(os.getpid())).touch()
+    deadline = time.monotonic() + 30
+    while len(list(signals.iterdir())) < 2:
+        if time.monotonic() > deadline:
+            raise TimeoutError("the other part never started")
+        time.sleep(0.05)
+    return cq.Solid.makeBox(3, 4, 5)
+"""
+CRASH = """import os
+KERNEL = "cadquery"
+PARAMS = {}
+def build(params):
+    os._exit(3)
+"""
 TWIN = """import cadquery as cq
 KERNEL = "cadquery"
 PARAMS = {}
@@ -96,6 +117,18 @@ class BuildJobs(unittest.TestCase):
                 runner.build_jobs(5, {runner.BUILD_JOBS_ENV: raw}, 16)
 
 
+REUSING_RUNNER = HERE / "fixtures" / "run_cadquery_reusing_workers.py"
+
+
+def step_bytes(path: Path) -> bytes:
+    """The STEP bytes with only the FILE_NAME header's wall-clock timestamp masked."""
+    return re.sub(rb"(FILE_NAME\('[^']*',')[^']*'", rb"\1<time>'", path.read_bytes())
+
+
+def step_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
 @unittest.skipUnless(shutil.which("uv"), "uv is required to start the runners")
 class ParallelBuilds(unittest.TestCase):
     @classmethod
@@ -126,14 +159,22 @@ class ParallelBuilds(unittest.TestCase):
 
     @classmethod
     def run_with(
-        cls, jobs: str, label: str, parts: list[dict[str, str]] | None = None
+        cls,
+        jobs: str,
+        label: str,
+        parts: list[dict[str, str]] | None = None,
+        script: Path | None = None,
     ) -> dict:
         parts = [
             dict(p, step=str(cls.root / label / f"{p['pn']}.step"))
             for p in parts or cls.requests
         ]
-        with mock.patch.dict(
-            os.environ, {runner.BUILD_JOBS_ENV: jobs, "WHERE_LOG": str(cls.where)}
+        scripts = {"cadquery": script} if script else {}
+        with (
+            mock.patch.dict(
+                os.environ, {runner.BUILD_JOBS_ENV: jobs, "WHERE_LOG": str(cls.where)}
+            ),
+            mock.patch.dict(build.RUNNERS, scripts),
         ):
             return build.run_kernels({"cadquery": parts})["cadquery"]
 
@@ -188,9 +229,7 @@ class ParallelBuilds(unittest.TestCase):
             }
 
         def step(label: str, pn: str) -> bytes:
-            # OCCT stamps FILE_NAME with the wall clock: the only bytes allowed to differ
-            data = (self.root / label / f"{pn}.step").read_bytes()
-            return re.sub(rb"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", b"<time>", data)
+            return step_bytes(self.root / label / f"{pn}.step")
 
         self.assertEqual(stable(self.pool), stable(self.serial))
         for pn, part in self.serial["parts"].items():
@@ -220,14 +259,60 @@ class ParallelBuilds(unittest.TestCase):
             "workers must not write bytecode beside model.py",
         )
 
-    def test_step_occurrence_ids_do_not_depend_on_which_worker_built_what(self) -> None:
-        # OCCT numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE per process: every part must start at '1'
-        parts = self.request("twins", [(f"TST-{i:04d}", TWIN) for i in range(1, 9)])
-        result = self.run_with("2", "twins", parts)
-        for pn in result["parts"]:
-            text = (self.root / "twins" / f"{pn}.step").read_text()
-            self.assertIn("NEXT_ASSEMBLY_USAGE_OCCURRENCE('1'", text, pn)
-            self.assertNotRegex(text, r"NEXT_ASSEMBLY_USAGE_OCCURRENCE\('[2-9]'", pn)
+    def occurrence_ids(self, label: str, pns: list[str]) -> list[str]:
+        ids = []
+        for pn in pns:
+            found = re.search(r"NEXT_ASSEMBLY_USAGE_OCCURRENCE\('(\d+)'", step_text(self.root / label / f"{pn}.step"))
+            self.assertIsNotNone(found, pn)
+            ids.append(found.group(1))
+        return ids
+
+    def test_located_parts_give_the_same_step_bytes_with_one_job_and_several(self) -> None:
+        # OCCT numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter: a part's bytes must
+        # not depend on how many parts the same process wrote before it
+        pns = [f"TST-{i:04d}" for i in range(1, 5)]
+        parts = self.request("twins", [(pn, TWIN) for pn in pns])
+        self.run_with("1", "twins1", parts)
+        self.run_with("3", "twins3", parts)
+        for pn in pns:
+            self.assertEqual(
+                step_bytes(self.root / "twins1" / f"{pn}.step"),
+                step_bytes(self.root / "twins3" / f"{pn}.step"),
+                pn,
+            )
+        self.assertEqual(self.occurrence_ids("twins3", pns), ["1"] * 4)
+
+    def test_the_occurrence_check_notices_a_reused_worker(self) -> None:
+        pns = [f"TST-{i:04d}" for i in range(1, 4)]
+        parts = self.request("reuse", [(pn, TWIN) for pn in pns])
+        self.run_with("1", "reuse", parts, script=REUSING_RUNNER)
+        self.assertEqual(self.occurrence_ids("reuse", pns), ["1", "2", "3"])
+
+    def test_parts_build_at_the_same_time_in_different_workers(self) -> None:
+        # each part signals it started, then waits for the other; serial scheduling times the wait out
+        signals = self.root / "signals"
+        signals.mkdir()
+        parts = self.request("sync", [(f"TST-{i:04d}", SYNC.format(signals=str(signals))) for i in (1, 2)])
+        result = self.run_with("2", "sync", parts)
+        self.assertTrue(all(part["ok"] for part in result["parts"].values()), result["parts"])
+        pids = {path.name for path in signals.iterdir()}
+        self.assertEqual(len(pids), 2, pids)
+        self.assertNotIn(str(os.getpid()), pids)
+
+    def test_a_worker_that_dies_fails_only_the_parts_it_did_not_finish(self) -> None:
+        # one worker at a time: TST-0001 is done before TST-0002 kills its worker, TST-0003 never starts
+        parts = self.request(
+            "crash", [("TST-0001", BOX.format(size=10, delay=0)), ("TST-0002", CRASH), ("TST-0003", NOISY)]
+        )
+        result = self.run_with("1", "crash", parts)
+        self.assertEqual(list(result["parts"]), ["TST-0001", "TST-0002", "TST-0003"])
+        self.assertTrue(result["parts"]["TST-0001"]["ok"])
+        for pn in ("TST-0002", "TST-0003"):
+            part = result["parts"][pn]
+            self.assertFalse(part["ok"], pn)
+            self.assertEqual(set(part), {"ok", "error"})
+            self.assertEqual(part["error"]["type"], "WorkerCrashed")
+            self.assertEqual(set(part["error"]), {"type", "message", "where"})
 
     def test_a_bad_jobs_value_is_a_bad_request(self) -> None:
         with self.assertRaisesRegex(build.UsageError, "CAD_MODEL_BUILD_JOBS"):
