@@ -135,7 +135,7 @@ class Fixture:
 
 FIXTURE_SET = [
     Fixture("l_bracket", "TST-0401", "Sheet-metal L-bracket", "al_6061_t6", "sheet_metal", plane("z", 0), plane("x", 2),
-            100.0, (1, 0, 0), 1.5, 1.5, "bolted down on its base, pulled sideways on the flange"),
+            100.0, (1, 0, 0), 1.0, 1.5, "bolted down on its base, pulled sideways on the flange"),
     Fixture("moulded_housing", "TST-0402", "Ribbed moulded housing", "abs_moulded", "moulding", plane("z", 28), plane("z", 2.5),
             200.0, (0, 0, -1), 3.0, 80 / 30, "screwed down on the four boss tops, 0.05 MPa inside pressure on the floor"),
     Fixture("pillow_block", "TST-0403", "Machined pillow block", "steel_s355", "cnc", plane("z", 0), cylinders(12.5),
