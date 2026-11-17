@@ -11,7 +11,10 @@ import json
 import os
 import re
 import shutil
+import signal
+import subprocess
 import sys
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,13 +73,26 @@ def build(params):
     logging.getLogger("cadmodel.fillets").warning("skipped edge E1")
     return cq.Solid.makeBox(3, 4, 5)
 """
-WHERE = """import json, os
+WHERE = """import json, multiprocessing, os
 import cadquery as cq
 KERNEL = "cadquery"
 PARAMS = {}
 def build(params):
+    server, runner = os.getppid(), multiprocessing.parent_process().pid
     with open(os.environ["WHERE_LOG"] + "/" + str(os.getpid()), "w") as out:
-        json.dump({"pid": os.getpid(), "ppid": os.getppid(), "pgrp": os.getpgrp(), "runner_pgrp": os.getpgid(os.getppid())}, out)
+        json.dump({"pid": os.getpid(), "server": server, "runner": runner, "pgrp": os.getpgrp(),
+                   "server_pgrp": os.getpgid(server), "runner_pgrp": os.getpgid(runner)}, out)
+    return cq.Solid.makeBox(3, 4, 5)
+"""
+HOLD = """import json, multiprocessing, os, time
+import cadquery as cq
+KERNEL = "cadquery"
+PARAMS = {}
+def build(params):
+    server, runner = os.getppid(), multiprocessing.parent_process().pid
+    with open(os.environ["WHERE_LOG"] + "/" + str(os.getpid()), "w") as out:
+        json.dump({"pid": os.getpid(), "server": server, "runner": runner}, out)
+    time.sleep(120)
     return cq.Solid.makeBox(3, 4, 5)
 """
 # (pn, source): the slow part is first so a completion-order result would differ from request order
@@ -112,6 +128,15 @@ class BuildJobs(unittest.TestCase):
 
 
 REUSING_RUNNER = HERE / "fixtures" / "run_cadquery_reusing_workers.py"
+BREAKING_SUBMIT_RUNNER = HERE / "fixtures" / "run_cadquery_breaking_submit.py"
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def step_bytes(path: Path) -> bytes:
@@ -244,10 +269,10 @@ class ParallelBuilds(unittest.TestCase):
         self.assertTrue(seen)
         for entry in seen:  # the group build._stop kills is the runner's
             self.assertEqual(entry["pgrp"], entry["runner_pgrp"], entry)
-            self.assertNotEqual(
-                entry["pgrp"], os.getpgrp(), "run_kernels starts a session of its own"
-            )
-            self.assertNotEqual(entry["pid"], entry["ppid"])
+            self.assertEqual(entry["server_pgrp"], entry["runner_pgrp"], entry)
+            self.assertNotEqual(entry["pgrp"], os.getpgrp(), "run_kernels starts a session of its own")
+            self.assertNotEqual(entry["pid"], entry["server"])
+            self.assertNotEqual(entry["server"], entry["runner"])
         self.assertFalse(
             list(self.root.rglob("__pycache__")),
             "workers must not write bytecode beside model.py",
@@ -307,6 +332,61 @@ class ParallelBuilds(unittest.TestCase):
             self.assertEqual(set(part), {"ok", "error"})
             self.assertEqual(part["error"]["type"], "WorkerCrashed")
             self.assertEqual(set(part["error"]), {"type", "message", "where"})
+
+    def test_a_pool_that_breaks_while_submitting_fails_only_the_unsubmitted_parts(self) -> None:
+        pns = [f"TST-{i:04d}" for i in range(1, 5)]
+        parts = self.request("submit", [(pn, BOX.format(size=10, delay=0)) for pn in pns])
+        result = self.run_with("1", "submit", parts, script=BREAKING_SUBMIT_RUNNER)
+        self.assertEqual(list(result["parts"]), pns)
+        self.assertTrue(result["parts"]["TST-0001"]["ok"])
+        self.assertTrue(result["parts"]["TST-0002"]["ok"])
+        for pn in ("TST-0003", "TST-0004"):
+            part = result["parts"][pn]
+            self.assertEqual(set(part), {"ok", "error"}, pn)
+            self.assertFalse(part["ok"], pn)
+            self.assertEqual(part["error"]["type"], "WorkerCrashed", pn)
+            self.assertEqual(set(part["error"]), {"type", "message", "where"}, pn)
+
+    def test_import_s_is_measured_when_every_part_crashes(self) -> None:
+        parts = self.request("allcrash", [(f"TST-{i:04d}", CRASH) for i in range(1, 4)])
+        result = self.run_with("2", "allcrash", parts)
+        self.assertTrue(all(not part["ok"] for part in result["parts"].values()), result["parts"])
+        self.assertGreater(result["import_s"], 0.0)
+
+    def test_killing_the_runners_group_takes_the_server_and_every_worker(self) -> None:
+        # the runner starts as build.py starts it: a session of its own, killed through build._stop
+        pids = self.root / "cancel"
+        pids.mkdir()
+        parts = self.request("cancel", [(f"TST-{i:04d}", HOLD) for i in range(1, 3)])
+        request = {"result": str(self.root / "cancel.json"),
+                   "parts": [dict(p, step=str(self.root / "cancel" / f"{p['pn']}.step")) for p in parts]}
+        env = dict(os.environ, **{runner.BUILD_JOBS_ENV: "2", "WHERE_LOG": str(pids)})
+        proc = subprocess.Popen(build.scriptenv.script_command(build.RUNNERS["cadquery"]), stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True, env=env,
+                                start_new_session=True)
+        seen: list[int] = []
+        try:
+            proc.stdin.write(json.dumps(request))
+            proc.stdin.close()
+            deadline = time.monotonic() + 180
+            while len(list(pids.glob("[0-9]*"))) < 2:
+                self.assertLess(time.monotonic(), deadline, "the workers never started")
+                self.assertIsNone(proc.poll(), "the runner exited early")
+                time.sleep(0.2)
+            entries = [json.loads(path.read_text()) for path in pids.glob("[0-9]*")]
+            seen = sorted({proc.pid, *(e["pid"] for e in entries), *(e["server"] for e in entries),
+                           *(e["runner"] for e in entries)})
+            self.assertGreaterEqual(len(seen), 5, seen)  # uv, the runner, the server, two workers
+            build._stop([proc])
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and any(alive(pid) for pid in seen):
+                time.sleep(0.1)
+            self.assertEqual([pid for pid in seen if alive(pid)], [])
+        finally:
+            for pid in seen:  # only the recorded pids
+                if alive(pid):
+                    os.kill(pid, signal.SIGKILL)
+            proc.wait()
 
     def test_a_bad_jobs_value_is_a_bad_request(self) -> None:
         with self.assertRaisesRegex(build.UsageError, "CAD_MODEL_BUILD_JOBS"):

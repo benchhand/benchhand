@@ -29,7 +29,7 @@ A part's bytes, STEP occurrence ids included, therefore never depend on the part
 A request of one part builds in this process. The result lists the parts in request order.
 
 `import_s` is the wall time to a kernel ready to build. In this process it is the import. With workers
-it is the seconds until the first worker started on a part, which includes the server's start and the
+it is the seconds until the first worker started, which includes the server's start and the
 kernel import. A worker that dies fails its unfinished parts with error type WorkerCrashed.
 
 `sources` hashes every Python file the runner loaded from the plugin or the project, the part models
@@ -384,19 +384,22 @@ def _build_or_fail(kernel: str, part: Mapping[str, Any]) -> dict[str, Any]:
         return _failure(error, str(Path(part["model"])))
 
 
-def _no_bytecode() -> None:
+def _worker_ready(ready: Any) -> None:
+    """Worker start: no bytecode beside the part models, and the first worker to start stamps `ready`."""
     sys.dont_write_bytecode = True  # a new worker process starts with the default: no __pycache__ beside model.py
+    with ready.get_lock():
+        if ready.value == 0.0:
+            ready.value = time.time()
 
 
 def _build_in_worker(kernel: str, part: Mapping[str, Any],
-                     roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
-    """One part in a fresh worker: the time it started, the part's result and the plugin and project
-    sources this worker loaded, including the helper modules of the part models. The kernel
-    import is a no-op in a worker forked from the preloaded server. It runs here, not in the pool
-    initializer, so a replacement worker that never gets a task imports nothing."""
-    started = time.time()
+                     roots: list[Path]) -> tuple[dict[str, Any], dict[str, str]]:
+    """One part in a fresh worker: the part's result and the plugin and project sources this worker
+    loaded, including the helper modules of the part models. The kernel import is a no-op in a worker
+    forked from the preloaded server. It runs here, not in the pool initializer, so a replacement
+    worker that never gets a task imports nothing."""
     importlib.import_module(kernel)
-    return _build_or_fail(kernel, part), provenance.sources(roots, MODEL_MODULE), started
+    return _build_or_fail(kernel, part), provenance.sources(roots, MODEL_MODULE)
 
 
 def _worker_died(error: BaseException) -> dict[str, Any]:
@@ -413,26 +416,35 @@ def _build_in_workers(kernel: str, parts: list[Mapping[str, Any]], jobs: int,
     never reused: the OCCT STEP writer numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter,
     so a reused worker would write ids that depend on which parts it built before. Workers stay in the
     runner's process group and session, so killing that group (build._stop) takes them and the server
-    too. A worker that dies fails the parts it had not finished. The others keep their results."""
+    too. A worker that dies breaks the pool. The parts it had not finished, submitted or not, fail with
+    WorkerCrashed and the others keep their results. The returned import_s is the seconds until the first
+    worker started, which includes the server's start and the kernel import, even if every part crashes."""
     results: dict[str, Any] = {}
     sources: dict[str, str] = {}
-    first_start = float("inf")
     context = multiprocessing.get_context("forkserver")
     context.set_forkserver_preload([kernel])
+    ready = context.Value("d", 0.0)
     submitted = time.time()
-    with ProcessPoolExecutor(max_workers=jobs, mp_context=context, initializer=_no_bytecode,
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=context, initializer=_worker_ready, initargs=(ready,),
                              max_tasks_per_child=1) as pool:
-        futures = [(part, pool.submit(_build_in_worker, kernel, part, roots)) for part in parts]
+        futures = []
+        broken: BrokenProcessPool | None = None
+        for part in parts:
+            try:
+                futures.append((part, pool.submit(_build_in_worker, kernel, part, roots)))
+            except BrokenProcessPool as error:
+                broken = error
+                break
         for part, future in futures:
             try:
-                results[part["pn"]], worker_sources, started = future.result()
+                results[part["pn"]], worker_sources = future.result()
             except BrokenProcessPool as error:
                 results[part["pn"]] = _worker_died(error)
                 continue
             sources.update(worker_sources)
-            first_start = min(first_start, started)
-    import_s = round(max(first_start - submitted, 0.0), 3) if first_start != float("inf") else 0.0
-    return results, sources, import_s
+        for part in parts[len(futures):]:
+            results[part["pn"]] = _worker_died(cast(BrokenProcessPool, broken))
+    return results, sources, round(max(ready.value - submitted, 0.0), 3) if ready.value else 0.0
 
 
 def main(kernel: str, dists: tuple[str, ...]) -> int:
