@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["mypy==2.4.1"]
+# dependencies = ["click==8.5.1", "mypy==2.4.1"]
 # ///
 """Run mypy over changed feature modules and strict-check new pure modules."""
 
