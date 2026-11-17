@@ -1238,6 +1238,30 @@ def _set_name(label: Any, text: str) -> None:
 STEP_TIMESTAMP = "1980-01-01T00:00:00"
 
 
+def _add_shape(tool: Any, shape: Any) -> Any:
+    """Add `shape` as a free product and attach its volume, area and centroid, which STEPCAFControl_Writer
+    writes as AP242 geometric validation properties."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.TDF import TDF_Label
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.XCAFDoc import XCAFDoc_Area, XCAFDoc_Centroid, XCAFDoc_Volume
+
+    label = tool.AddShape(shape, False)
+    # A located shape becomes an instance of a prototype label; the writer reads the properties off the prototype,
+    # which holds the definition in its own frame.
+    prototype = TDF_Label()
+    target = prototype if tool.GetReferredShape_s(label, prototype) else label
+    own = shape.Located(TopLoc_Location())
+    volume, area = GProp_GProps(), GProp_GProps()
+    BRepGProp.VolumeProperties_s(own, volume)
+    BRepGProp.SurfaceProperties_s(own, area)
+    XCAFDoc_Volume.Set_s(target, volume.Mass())
+    XCAFDoc_Area.Set_s(target, area.Mass())
+    XCAFDoc_Centroid.Set_s(target, volume.CentreOfMass())
+    return label
+
+
 def _write_document(path: Path, doc: Any, tool: Any) -> None:
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
     from OCP.IFSelect import IFSelect_RetDone
@@ -1269,7 +1293,7 @@ def _write_document(path: Path, doc: Any, tool: Any) -> None:
 def write_part_step(path: Path, part: Part) -> None:
     """Write AP242 with one free product, the definition named `part.name`, in its own frame."""
     doc, tool = _new_document()
-    _set_name(tool.AddShape(part.shape, False), part.name)
+    _set_name(_add_shape(tool, part.shape), part.name)
     _write_document(path, doc, tool)
 
 
@@ -1286,7 +1310,7 @@ def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Par
     for occurrence in occurrences:
         part = definitions[occurrence.pn]
         if occurrence.pn not in labels:
-            labels[occurrence.pn] = tool.AddShape(part.shape, False)
+            labels[occurrence.pn] = _add_shape(tool, part.shape)
             _set_name(labels[occurrence.pn], part.name)
         component = tool.AddComponent(top, labels[occurrence.pn], TopLoc_Location(to_trsf(placements[occurrence.id])))
         tag = component_name(part, occurrence)
