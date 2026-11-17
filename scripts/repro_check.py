@@ -10,13 +10,16 @@
 A and B are hw directories. Every file under hw/versions of both is compared byte for byte, nothing normalised.
 Use it to check that a refactor (parallel part builds, a new cache) leaves the output unchanged: build once
 before and once after the change, then compare. Prints one line per differing file, with the first differing
-byte or the JSON paths that differ. Exit status: 0 identical, 1 mismatch, 2 usage error.
+byte or the JSON paths that differ. Symlinks are never followed: a link is reported as a difference unless
+both sides hold the same link with the same target. Exit status: 0 identical, 1 any difference (including a
+symlink difference), 2 usage error.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,20 +68,38 @@ def _describe(a: bytes, b: bytes) -> str:
     return f"first differing byte at offset {offset}{size}"
 
 
-def _files(hw: Path) -> dict[str, Path]:
-    return {p.relative_to(hw).as_posix(): p for p in sorted((hw / SEALED).rglob("*")) if p.is_file()}
+def _entries(hw: Path) -> dict[str, Path]:
+    """Every file and symlink under hw/versions by relative path. Links are listed, never followed."""
+    found: dict[str, Path] = {}
+    for dirpath, dirnames, filenames in os.walk(hw / SEALED, followlinks=False):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            if path.is_symlink() or path.is_file():
+                found[path.relative_to(hw).as_posix()] = path
+    return dict(sorted(found.items()))
 
 
 def compare(hw_a: Path, hw_b: Path) -> Report:
-    """Compare every file under hw/versions of the two trees byte for byte."""
-    files_a, files_b = _files(hw_a), _files(hw_b)
+    """Compare every file under hw/versions of the two trees byte for byte.
+
+    A symlink counts as a difference unless both sides hold the same link with the same target."""
+    entries_a, entries_b = _entries(hw_a), _entries(hw_b)
     report = Report()
-    for rel in sorted(set(files_a) | set(files_b)):
-        if rel not in files_a or rel not in files_b:
-            report.mismatches.append(Mismatch(rel, "missing in A" if rel not in files_a else "missing in B"))
+    for rel in sorted(set(entries_a) | set(entries_b)):
+        if rel not in entries_a or rel not in entries_b:
+            report.mismatches.append(Mismatch(rel, "missing in A" if rel not in entries_a else "missing in B"))
             continue
         report.compared += 1
-        a, b = files_a[rel].read_bytes(), files_b[rel].read_bytes()
+        path_a, path_b = entries_a[rel], entries_b[rel]
+        link_a, link_b = path_a.is_symlink(), path_b.is_symlink()
+        if link_a or link_b:
+            if link_a and link_b:
+                if os.readlink(path_a) != os.readlink(path_b):
+                    report.mismatches.append(Mismatch(rel, f"symlink targets differ: {os.readlink(path_a)!r} vs {os.readlink(path_b)!r}"))
+            else:
+                report.mismatches.append(Mismatch(rel, f"symlink in {'A' if link_a else 'B'}, regular file in {'B' if link_a else 'A'}"))
+            continue
+        a, b = path_a.read_bytes(), path_b.read_bytes()
         if a != b:
             report.mismatches.append(Mismatch(rel, _describe(a, b)))
     return report

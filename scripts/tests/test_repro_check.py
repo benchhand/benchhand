@@ -53,6 +53,79 @@ class CompareTests(unittest.TestCase):
         self.assertEqual([m.path for m in rc.compare(self.a, self.b).mismatches], ["versions/v1/p.step"])
 
 
+class NoNormalisationTests(unittest.TestCase):
+    """Guards against JSON or manifest normalisation coming back: each pair differs only in what a normaliser hides."""
+
+    def run_pair(self, rel: str, a: bytes, b: bytes) -> int:
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, data in (("a", a), ("b", b)):
+                target = Path(tmp) / name / "versions" / "v1" / rel
+                target.parent.mkdir(parents=True)
+                target.write_bytes(data)
+            return rc.main(["--compare", str(Path(tmp) / "a"), str(Path(tmp) / "b")])
+
+    def test_json_equal_in_value_but_not_in_formatting_is_a_mismatch(self) -> None:
+        self.assertEqual(self.run_pair("m.json", b'{"a": 1, "b": 2}', b'{"a":1,"b":2}'), 1)
+
+    def test_json_equal_in_value_but_not_in_key_order_is_a_mismatch(self) -> None:
+        self.assertEqual(self.run_pair("m.json", b'{"a": 1, "b": 2}', b'{"b": 2, "a": 1}'), 1)
+
+    def test_manifests_differing_only_in_created_utc_are_a_mismatch(self) -> None:
+        self.assertEqual(self.run_pair("manifest.json", b'{"created_utc": "t1", "n": 1}', b'{"created_utc": "t2", "n": 1}'), 1)
+
+    def test_manifests_differing_only_in_import_s_are_a_mismatch(self) -> None:
+        self.assertEqual(self.run_pair("manifest.json", b'{"tools": {"cadquery": {"import_s": 1.0}}}', b'{"tools": {"cadquery": {"import_s": 2.0}}}'), 1)
+
+
+class SymlinkTests(unittest.TestCase):
+    """Symlinks are never followed; any link that is not identical on both sides is a difference."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.a, self.b = root / "a" / "versions" / "v1", root / "b" / "versions" / "v1"
+        for side in (self.a, self.b):
+            side.mkdir(parents=True)
+            (side / "f").write_bytes(b"same")
+        (root / "real").mkdir()
+        (root / "real" / "inner.step").write_bytes(b"data")
+
+    def main(self) -> int:
+        root = Path(self.tmp.name)
+        return rc.main(["--compare", str(root / "a"), str(root / "b")])
+
+    def test_linked_directory_on_one_side_is_a_mismatch(self) -> None:
+        (self.a / "parts").symlink_to(Path(self.tmp.name) / "real", target_is_directory=True)
+        self.assertEqual(self.main(), 1)
+
+    def test_dangling_link_on_one_side_is_a_mismatch(self) -> None:
+        (self.a / "gone").symlink_to(Path(self.tmp.name) / "nowhere")
+        self.assertEqual(self.main(), 1)
+
+    def test_links_with_different_targets_are_a_mismatch(self) -> None:
+        (self.a / "l").symlink_to("f")
+        (self.b / "l").symlink_to("other")
+        self.assertEqual(self.main(), 1)
+
+    def test_link_against_a_regular_file_is_a_mismatch(self) -> None:
+        (self.a / "l").symlink_to("f")
+        (self.b / "l").write_bytes(b"same")
+        self.assertEqual(self.main(), 1)
+
+    def test_identical_links_on_both_sides_pass(self) -> None:
+        for side in (self.a, self.b):
+            (side / "l").symlink_to("f")
+            (side / "d").symlink_to(Path(self.tmp.name) / "real", target_is_directory=True)
+        self.assertEqual(self.main(), 0)
+
+    def test_report_names_the_link_difference(self) -> None:
+        (self.a / "l").symlink_to("f")
+        (self.b / "l").symlink_to("other")
+        report = rc.compare(self.a.parents[1], self.b.parents[1])
+        self.assertEqual([(m.path, m.detail) for m in report.mismatches], [("versions/v1/l", "symlink targets differ: 'f' vs 'other'")])
+
+
 class MainTests(unittest.TestCase):
     def test_exit_codes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
