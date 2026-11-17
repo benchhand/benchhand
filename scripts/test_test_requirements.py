@@ -1,12 +1,14 @@
-"""Guard: CI installs its test pins from the two requirements files, and every pin is used.
+"""Guard: CI installs its test pins from the requirements files, and every pin is used.
 
 A `--with <pkg>==<ver>` in ci.yml is a second copy of a pin, and dev run scripts drift from it.
 The only pins that may stay inline belong to a tool that runs in its own pinned environment.
 
-Two files exist on purpose. `harness/test-requirements-min.txt` (PyYAML only) serves the steps that
+Three files exist on purpose. `harness/test-requirements-min.txt` (PyYAML only) serves the steps that
 run host scripts declaring PyYAML or nothing (`install.py`, `generate.py`, `docs_only.py`,
 `ci_shards.py`): extra packages on the path there could hide a missing declaration.
-`harness/test-requirements.txt` serves the skill tests.
+`harness/test-requirements-freecad.txt` (PyYAML and jsonschema) serves the FreeCAD Python 3.11
+import check. `harness/test-requirements.txt` serves the skill tests. A package pinned in more
+than one file has the same version in each.
 """
 
 from __future__ import annotations
@@ -23,7 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 FULL = "harness/test-requirements.txt"
 MIN = "harness/test-requirements-min.txt"
-REQUIREMENT_FILES = (FULL, MIN)
+FREECAD = "harness/test-requirements-freecad.txt"
+REQUIREMENT_FILES = (FULL, MIN, FREECAD)
 # Tools that run in their own pinned environment keep their pin inline. None does today
 # (ruff, actionlint and typecheck.py are pinned by `uvx`, a download or a --script lock).
 TOOL_PINS: frozenset[str] = frozenset()
@@ -195,27 +198,37 @@ class RepositoryTests(unittest.TestCase):
     workflow_text: str
     full: str
     minimal: str
+    freecad: str
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.workflow_text = WORKFLOW.read_text(encoding="utf-8")
         cls.full = (ROOT / FULL).read_text(encoding="utf-8")
         cls.minimal = (ROOT / MIN).read_text(encoding="utf-8")
+        cls.freecad = (ROOT / FREECAD).read_text(encoding="utf-8")
 
     def test_ci_declares_no_inline_test_pin(self) -> None:
         self.assertEqual(inline_pins(self.workflow_text), [])
 
-    def test_ci_uses_only_the_two_requirement_files_and_each_of_them(self) -> None:
+    def test_ci_uses_only_the_requirement_files_and_each_of_them(self) -> None:
         used = requirement_files_used(self.workflow_text)
         self.assertEqual(set(used), set(REQUIREMENT_FILES), used)
 
     def test_every_requirement_is_an_exact_pin(self) -> None:
         self.assertEqual(unpinned_lines(self.full), [])
         self.assertEqual(unpinned_lines(self.minimal), [])
+        self.assertEqual(unpinned_lines(self.freecad), [])
 
-    def test_the_minimal_file_is_pyyaml_alone_at_the_full_files_version(self) -> None:
+    def test_the_minimal_file_is_pyyaml_alone(self) -> None:
         self.assertEqual(list(pins(self.minimal)), ["pyyaml"])
-        self.assertEqual(pins(self.minimal)["pyyaml"], pins(self.full)["pyyaml"])
+
+    def test_the_freecad_file_is_pyyaml_and_jsonschema_alone(self) -> None:
+        self.assertEqual(sorted(pins(self.freecad)), ["jsonschema", "pyyaml"])
+
+    def test_a_package_pinned_in_two_files_has_one_version(self) -> None:
+        for subset in (self.minimal, self.freecad):
+            for name, version in pins(subset).items():
+                self.assertEqual(version, pins(self.full)[name], name)
 
     def test_every_pin_is_imported_in_the_code_its_file_serves(self) -> None:
         self.assertEqual(
@@ -225,6 +238,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(
             unused_pins(self.minimal, imported_modules(("harness", "scripts"))), []
         )
+        self.assertEqual(unused_pins(self.freecad, imported_modules(("skills",))), [])
 
 
 if __name__ == "__main__":
