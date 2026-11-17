@@ -19,6 +19,7 @@ import hashlib
 import importlib.util
 import shutil
 import sys
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -32,13 +33,19 @@ V1_MINIMAL = SKILL / "tests" / "fixtures" / "record_v1_minimal" / "hw"  # a mini
 SYNTHETIC = "synthetic test fixture value, not material, machine or supplier data"
 
 
+_LOADING = threading.RLock()
+
+
 def _module(name: str, path: Path) -> Any:
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, path)
-        assert spec and spec.loader
-        sys.modules[name] = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sys.modules[name])
-    return sys.modules[name]
+    """Load a script once by path. The module is registered before it runs, so a second thread would see it
+    half-executed; the lock makes it wait (re-entrant, since a script may load its siblings)."""
+    with _LOADING:
+        if name not in sys.modules:
+            spec = importlib.util.spec_from_file_location(name, path)
+            assert spec and spec.loader
+            sys.modules[name] = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sys.modules[name])
+        return sys.modules[name]
 
 
 def intent_module() -> Any:
