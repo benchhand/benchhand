@@ -27,8 +27,8 @@ FULL = "harness/test-requirements.txt"
 MIN = "harness/test-requirements-min.txt"
 FREECAD = "harness/test-requirements-freecad.txt"
 REQUIREMENT_FILES = (FULL, MIN, FREECAD)
-# Tools that run in their own pinned environment keep their pin inline. None does today
-# (ruff, actionlint and typecheck.py are pinned by `uvx`, a download or a --script lock).
+# Tools that run in their own pinned environment keep their pin inline. The set is empty: ruff,
+# actionlint and typecheck.py take their pins from `uvx`, a download or a --script lock.
 TOOL_PINS: frozenset[str] = frozenset()
 # The importable module of a pin whose distribution name differs from it.
 MODULES = {"pyyaml": "yaml"}
