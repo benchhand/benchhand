@@ -286,8 +286,8 @@ class NeverInstalledTests(unittest.TestCase):
         self.assertEqual(sorted(f["subject"]["PN"] for f in report.findings), ["TST-0103", "TST-0104"])
 
     def test_a_receiver_nobody_installs_is_a_second_base(self) -> None:
-        # The screw fastens into the cover and the bearing presses into the housing; nothing installs either
-        # receiver, so the housing (named first) is the base and the cover floats beside it.
+        # The screw fastens into the cover. The bearing presses into the housing. Nothing installs either
+        # receiver. The sequence names the housing first, so the housing is the base and the cover floats.
         screw = {**self.SEAT, "id": "fasten-cover", "kind": "fasten", "part": "TST-0104", "into": "TST-0103"}
         report = self.check([self.SEAT, screw], pns=(*self.PNS, "TST-0104"))
         [finding] = report.findings

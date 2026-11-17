@@ -1,10 +1,9 @@
 """install_missing: an assembly occurrence that no operation installs, other than its one base.
 
-cad-record assembly_operations.check_order treats every occurrence no operation installs as base (present
-from the start). A part whose installing operation was lost then looks like a second base part and the
-sequence passes, whether nothing else names it or it only receives or is closed over. The mutant drops one
-installing operation from the housing assembly sequence; the twin keeps it. Both variants are built by
-`_outcome`.
+cad-record assembly_operations.check_order treats every occurrence no operation installs as base. A part
+that lost its installing operation then looks like a second base part, and the sequence passes. This holds
+whether nothing else names the part, or a close operation only names it. The mutant drops one installing
+operation from the housing assembly sequence. The twin keeps it. `_outcome` builds both variants.
 """
 
 from __future__ import annotations
