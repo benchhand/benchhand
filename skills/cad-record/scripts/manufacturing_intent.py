@@ -37,23 +37,15 @@ if TYPE_CHECKING:
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
 
 RECORD_VERSION = 2
-LEGACY_RECORD_VERSION = 1  # product.yaml without record_version
-MIGRATE_SCRIPT = "cad-record/scripts/migrate.py"
-MIGRATE_COMMAND = f'uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" {MIGRATE_SCRIPT} <project>'
-LEGACY_REASON = "the record predates record version 2 and was never migrated; run migrate.py"
 
 # --- problem codes this module reports (validate.py maps them to report findings) -------------------------------
-MIGRATION_REQUIRED = "record.migration_required"
 VERSION_UNSUPPORTED = "record.version_unsupported"
 INCOMPLETE = "record.incomplete"
-LEGACY_FREEZE = "record.legacy_freeze"
 LOAD_DIRECTION_TOLERANCE = 1e-6
 COLOR_INVALID = "intent.color_invalid"
 CODES: Mapping[str, str] = types.MappingProxyType({
-    MIGRATION_REQUIRED: "a record version 1 record: readable, but gated actions refuse until migrate.py migrates it",
-    VERSION_UNSUPPORTED: "a record_version this cad-agent cannot read",
+    VERSION_UNSUPPORTED: "a record_version other than 2, or none: this cad-agent cannot read it",
     INCOMPLETE: "a record version 2 record lacks a block or file version 2 requires",
-    LEGACY_FREEZE: "flow.frozen anchors no evidence_sha256: a freeze from before migration, which no release accepts",
     "intent.schema": "a document violates its JSON schema",
     "intent.reference": "a reference names no question, assumption, requirement, interface, part, load, profile, operation, inspection, evidence, case or decision",
     "intent.duplicate": "an id is declared twice",
@@ -173,8 +165,8 @@ _USE_CASE_DIMENSIONS = {
     "motion.service_life": ("time", "count"), "logistics.quantity": ("count",), "logistics.lead_time": ("time",),
 }
 
-# The use-case questions migrate.py and the project template ask: (question, use-case paths it answers,
-# material_to_choice, safety_relevant). One authority, so the template and every migration ask the same.
+# The use-case questions the project template asks: (question, use-case paths it answers,
+# material_to_choice, safety_relevant). One authority, so the template and its fixtures ask the same.
 USE_CASE_QUESTIONS: tuple[tuple[str, tuple[str, ...], bool, bool], ...] = (
     ("Which service class applies: appearance or concept model, fit or assembly prototype, functional demonstration with "
      "limited loads and supervised operation, working prototype, production or end-use product, or safety-critical, "
@@ -734,7 +726,7 @@ class Selection:
 
 @dataclass(frozen=True)
 class Record:
-    """A normalized record. A version 1 record carries LEGACY_REASON unknowns and a migration problem."""
+    """A normalized record. An unsupported-version record carries unknowns and a record.version_unsupported problem."""
 
     version: int
     product: Mapping[str, Any]
@@ -755,41 +747,29 @@ class Record:
     problems: tuple[Problem, ...]
     assembly_inventory: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # assembly.yaml occurrences, subassemblies
 
-    @property
-    def migrated(self) -> bool:
-        return self.version == RECORD_VERSION
-
 
 # --- record version --------------------------------------------------------------------------------------------
 
 def record_version(product: Mapping[str, Any]) -> int:
-    """1 for a product.yaml without record_version, 2 for the current version; UnsupportedRecordVersion otherwise."""
-    if "record_version" not in product:
-        return LEGACY_RECORD_VERSION
-    version = product["record_version"]
+    """2, the only record version; UnsupportedRecordVersion for any other or absent record_version."""
+    version = product.get("record_version")
     if isinstance(version, bool) or version != RECORD_VERSION:
         raise UnsupportedRecordVersion(f"product.yaml record_version {version!r} is not supported; this cad-agent reads "
-                                       f"record version {RECORD_VERSION} and migrates version {LEGACY_RECORD_VERSION}")
+                                       f"record version {RECORD_VERSION} only")
     return RECORD_VERSION
 
 
-def migration_problem(product: Mapping[str, Any] | None, path: str = "hw/product.yaml") -> Problem | None:
-    """The blocking record.migration_required (version 1) or record.version_unsupported problem, or None
-    for a current record. validate.py, status and gated commands report it beside every other finding."""
+def version_problem(product: Mapping[str, Any] | None, path: str = "hw/product.yaml") -> Problem | None:
+    """The blocking record.version_unsupported problem, or None for a current record.
+    validate.py, status and gated commands report it beside every other finding."""
     if not isinstance(product, Mapping):
         return None
     try:
-        version = record_version(product)
+        record_version(product)
     except UnsupportedRecordVersion as error:
         return Problem(VERSION_UNSUPPORTED, path, "record_version", str(error),
                        action="Use the cad-agent release that wrote this record; nothing was changed.")
-    if version == RECORD_VERSION:
-        return None
-    return Problem(MIGRATION_REQUIRED, path, "",
-                   f"the record is record version {LEGACY_RECORD_VERSION}; manufacturing intent (use case, part routes, "
-                   f"profiles) is unknown and stage advance, freeze, release and record-writing builds refuse it",
-                   action=f"Review `{MIGRATE_COMMAND} --dry-run`, then run it with --apply. It adds explicit unknowns and "
-                          "open questions and changes nothing else; nothing was changed.")
+    return None
 
 
 # --- reading documents -----------------------------------------------------------------------------------------
@@ -1050,15 +1030,10 @@ class _Reader:
         product = self.doc(product_rel) or {}
         for rel, data in self.documents.items():
             self.numbers(data, f"hw/{rel}", "")
-        try:
-            version = record_version(product)
-        except UnsupportedRecordVersion:
-            version = 0
-        problem = migration_problem(product)
+        problem = version_problem(product)
         if problem is not None:
             self.problems.append(problem)
-        if version != RECORD_VERSION:
-            return self.legacy(product, version)
+            return self.unsupported(product)
         self.completeness()
         use_case = self.use_case(product.get("use_case"), f"hw/{product_rel}")
         requirements, preferences, assumptions, questions = self.statements()
@@ -1076,9 +1051,9 @@ class _Reader:
                       types.MappingProxyType(dict(self.artifacts)), tuple(self.problems),
                       freeze({key: (self.doc("assembly.yaml") or {}).get(key) for key in ("occurrences", "subassemblies")}))
 
-    def legacy(self, product: Mapping[str, Any], version: int) -> Record:
-        """A version 1 (or unreadable-version) record: every manufacturing-intent field unknown, never defaulted."""
-        reason = LEGACY_REASON if version == LEGACY_RECORD_VERSION else "the record version is not supported"
+    def unsupported(self, product: Mapping[str, Any]) -> Record:
+        """A record of an unsupported version: every manufacturing-intent field unknown, never defaulted."""
+        reason = "the record version is not supported"
         parts = {}
         for rel in sorted(self.documents):
             match = re.fullmatch(r"parts/([^/]+)/part\.yaml", rel)
@@ -1090,13 +1065,9 @@ class _Reader:
         for item in (self.doc("interfaces.yaml") or {}).get("interfaces") or ():
             if isinstance(item, Mapping) and isinstance(item.get("id"), str):
                 interfaces[item["id"]] = Interface(item["id"], item.get("type"), InterfaceFunctional.unknown(reason), freeze(item))
-        assembly = self.doc("assembly.yaml") or {}
-        drawing = _mapping(assembly.get("drawing"))
-        legacy_operations = drawing.get("operations")
-        operations: tuple[Mapping[str, Any], ...] | Fact = (
-            freeze(legacy_operations) if isinstance(legacy_operations, list) else Fact.unknown_because(reason))
+        operations: tuple[Mapping[str, Any], ...] | Fact = Fact.unknown_because(reason)
         requirements = self.requirements_only()
-        return Record(version, freeze(product), UseCase.unknown(reason), requirements, types.MappingProxyType({}),
+        return Record(0, freeze(product), UseCase.unknown(reason), requirements, types.MappingProxyType({}),
                       types.MappingProxyType({}), types.MappingProxyType({}), types.MappingProxyType(parts),
                       types.MappingProxyType(interfaces), operations, types.MappingProxyType({}), types.MappingProxyType({}),
                       Selection("not_assessed", types.MappingProxyType({}), None, types.MappingProxyType({})), (), (),
@@ -1127,12 +1098,6 @@ class _Reader:
         for rel in REQUIRED_DESIGN_FILES:
             if rel not in self.documents:
                 self.problem(INCOMPLETE, f"hw/{rel}", "", f"record version 2 needs hw/{rel}")
-        flow = (self.doc("product.yaml") or {}).get("flow")
-        frozen = flow.get("frozen") if isinstance(flow, Mapping) else None
-        if isinstance(frozen, Mapping) and "evidence_sha256" not in frozen:
-            self.problem(LEGACY_FREEZE, "hw/product.yaml", "flow/frozen",
-                         f"the freeze of {frozen.get('version')} anchors no evidence_sha256; a release needs a new record version 2 "
-                         "freeze that records its acceptance digest", severity="warning")
 
     def check_load_direction(self, load: Mapping[str, Any], path: str, pointer: str) -> tuple[float, float, float] | None:
         """A load's direction as floats, or None when it is not a unit vector. The schema reports a malformed
@@ -1955,7 +1920,7 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
     use_case = record.use_case
     blocking: list[str] = []
     if record.version != RECORD_VERSION:
-        blocking.append(f"the record is record version {record.version}; run migrate.py")
+        blocking.append("the record is not record version 2")
     if use_case.status != "confirmed" or not use_case.decision:
         blocking.append("the use case is not confirmed by a decision")
     service = use_case.service_class.value if use_case.service_class.known else None
@@ -2456,7 +2421,7 @@ def profile_document(data: Mapping[str, Any], kind: str, path: str) -> tuple[tup
 
 def blank_use_case(reason: str, questions: Mapping[str, str]) -> dict[str, Any]:
     """A use_case block whose every field is unknown for `reason`, each naming the question id
-    `questions` maps its USE_CASE_QUESTIONS path to. Used by migrate.py, the template and fixtures."""
+    `questions` maps its USE_CASE_QUESTIONS path to. Used by the template and fixtures."""
     def unknown(path: str) -> dict[str, Any]:
         item = {"status": "unknown", "reason": reason}
         if questions.get(path):

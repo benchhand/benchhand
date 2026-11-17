@@ -10,7 +10,7 @@ under other conditions, and orientation-dependent material without an approved e
 the solver is static, linear and isotropic. Nothing is derived from density or inherited from another
 case, part or profile.
 
-Explicit numbers stay readable in a standalone case and in a record version 1 version: they are labelled
+Explicit numbers stay readable in a standalone case: they are labelled
 unsourced and the result is exploratory, never service evidence. A completed sourced solve is
 simulation-supported evidence at most, never physical validation; `engineering.*` outcomes pass only with a
 sourced acceptance criterion, service-grade properties, service loads covered as vectors and a mesh convergence
@@ -102,7 +102,7 @@ def intent() -> Any:
 
 
 def material_form(material: Mapping[str, Any]) -> str:
-    """`explicit` for legacy numbers, `profile` for the conditions of the part's material profile."""
+    """`explicit` for numbers given in the case, `profile` for the conditions of the part's material profile."""
     return "explicit" if any(key in material for key in EXPLICIT_KEYS) else "profile"
 
 
@@ -142,7 +142,7 @@ class Assessment:
 
 
 def explicit(case: Mapping[str, Any], why: str) -> Assessment:
-    """Legacy explicit numbers: readable, unsourced, exploratory, never service evidence."""
+    """Explicit case numbers: readable, unsourced, exploratory, never service evidence."""
     material = case["material"]
     report = {"source": "unsourced_explicit", "name": material.get("name"),
               "values": {key: material[key] for key in EXPLICIT_KEYS},
@@ -164,14 +164,6 @@ def assess_version(case: dict[str, Any], *, record_dir: Path, hw: Path, version:
     """The material and evidence basis of a versioned case; Refused before the solve when it has none."""
     record, documents = read_record(record_dir)
     form = case["_material_form"]
-    if record.version == 1:
-        if form != "explicit":
-            raise Refused([{"code": "material.legacy_record",
-                            "message": f"version {version} is a record version 1 snapshot without material profiles; "
-                                       "migrate the record and build a new version to analyse a profile's material"}])
-        assessment = explicit(case, f"version {version} predates material profiles (record version 1)")
-        assessment.version = version
-        return assessment
     if record.version != 2:
         raise Refused([{"code": "record.version_unsupported",
                         "message": f"version {version}: the record snapshot's record_version is not supported"}])

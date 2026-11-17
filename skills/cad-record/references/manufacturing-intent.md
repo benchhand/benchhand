@@ -1,6 +1,6 @@
 # Manufacturing-intent record
 
-The version-2 `hw/` record owns service, constraints, candidate selection, per-part route intent, capability and evidence. See `layout.md` for canonical paths and `layout-api.md` for path APIs. Schemas and `manufacturing_intent.py` own fields and interpretation. Missing and legacy facts remain unknown. They never mean zero, PASS or a default process/material.
+The version-2 `hw/` record owns service, constraints, candidate selection, per-part route intent, capability and evidence. See `layout.md` for canonical paths and `layout-api.md` for path APIs. Schemas and `manufacturing_intent.py` own fields and interpretation. Missing facts remain unknown. They never mean zero, PASS or a default process/material.
 
 ## Use case before selection
 
@@ -59,11 +59,8 @@ Evidence levels are scoped facets: `cad_valid`, `geometrically_manufacturable`, 
 
 Findings are immutable producer results with stable code, subject, severity, outcome and measured value with units or unknown reason. Each names criterion/source, method/evidence, uncertainty, consequence, remedy/alternatives/tradeoffs and recheck scope/stage. `findings.yaml` contains dispositions anchored to exact producer evidence. A disposition does not turn UNKNOWN or FAIL into PASS. Waivers remain waived.
 
-## Legacy migration and gates
-
-Version-1 records remain readable with explicit unknown manufacturing intent. Run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-record/scripts/migrate.py <project|hw> [--dry-run|--apply] [--json]`; dry-run is the default and shows exact per-file changes, questions and findings without writing. The project owner may explicitly use `--apply` to change mutable design records and add a dated migration note. Migration is idempotent, validates changes, writes `product.yaml` last, and refuses unsupported versions, invalid input/results or a frozen record without an open change. It never edits models, geometry, sealed versions/releases or evidence bundles, and never invents evidence. Version-1 records cannot start gated actions or new record-writing builds, freeze or release before migration. Historical sealed formats remain inspectable in their original form.
+## Gates
 
 A new freeze/release requires a recorded material/process selection and cannot treat missing selection, intent, unsupported route, required UNKNOWN, stale evidence, incomplete service policy or unqualified waiver as PASS. An approved safe trial waiver may retain a precisely scoped unresolved obligation where policy allows. It remains unvalidated and cannot waive safety, regulatory or geometry failures. See `evidence.md` and `cad-flow/references/manufacturing-selection.md`.
-Migration exit codes are 0 for current or applied, 1 for pending dry-run changes, and 2 when refused. The dry-run plan reports paths, before/after changes, summary, questions, unknown facts and findings. `--apply` preserves comments/formatting, verifies parsed results and schemas, writes a dated `hw/docs/record-migration-v2-<date>.md` note, then writes product.yaml last for crash-safe reruns. It refuses unsupported versions, invalid input/result schemas or a frozen record without an approved open `flow.change`. It edits only mutable records: no model.py, geometry, sealed snapshots/releases/bundles, decisions, BOM or verification; migration approves nothing.
 
-New freeze records `flow.frozen.evidence_sha256` and its approving decision. Release manifest v3 seals acceptance inventory, service scope/limits, open obligations/waivers, claims by evidence level, per-part routes and component package files. Historical release manifests v1/v2 remain inspectable, not re-certified.
+New freeze records `flow.frozen.evidence_sha256` and its approving decision. Release manifest v3 seals acceptance inventory, service scope/limits, open obligations/waivers, claims by evidence level, per-part routes and component package files. Only release manifest v3 is read.

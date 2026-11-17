@@ -12,10 +12,10 @@ IDENTITY_ROWS = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0
 
 
 def _schema_version(document: Any, name: str) -> int:
-    """Read an occurrence input schema version; legacy schema 1 is still normalizable."""
-    version = document.get("schema_version", 1) if isinstance(document, dict) else None
-    if version not in (1, 2):
-        raise VersionError(f"{name}: schema_version {version!r} is not one this plugin reads (1 or 2)")
+    """Read an occurrence input schema version; only schema 2 is read."""
+    version = document.get("schema_version") if isinstance(document, dict) else None
+    if version != 2:
+        raise VersionError(f"{name}: schema_version {version!r} is not one this plugin reads (2)")
     return version
 
 
@@ -48,19 +48,13 @@ def validate_version_manifest(document: Any, name: str = "manifest.json") -> Non
             raise VersionError(f"{name}: schema_version 2 requires a `{key}` object")
 
 
-def built_occurrences(part_map: dict[str, Any], manifest: dict[str, Any],
-                      legacy_groups: dict[str, str] | None = None) -> dict[str, BuiltOccurrence]:
-    """Every occurrence keyed by id; legacy v1 files normalize to one occurrence per PN."""
+def built_occurrences(part_map: dict[str, Any], manifest: dict[str, Any]) -> dict[str, BuiltOccurrence]:
+    """Every occurrence keyed by id."""
     if _schema_version(part_map, "part-map.json") != _schema_version(manifest, "manifest.json"):
         raise VersionError("part-map.json and manifest.json have different schema versions")
     pose = manifest.get("pose") if isinstance(manifest.get("pose"), dict) else {}
     transforms = pose.get("transforms") or {}
     try:
-        if _schema_version(manifest, "manifest.json") == 1:
-            groups = legacy_groups or {}
-            return {pn: BuiltOccurrence(pn, pn, pn, groups.get(pn), tuple(entry["node_indices"]), IDENTITY_ROWS,
-                                        transforms[pn], transforms[pn])
-                    for pn, entry in part_map["parts"].items()}
         records, motions = manifest["occurrences"], pose["motions"]
         return {oid: BuiltOccurrence(oid, entry["PN"], records[oid]["ref"], records[oid].get("group"),
                                      tuple(entry["node_indices"]), records[oid]["rest"], transforms[oid], motions[oid])
@@ -68,10 +62,8 @@ def built_occurrences(part_map: dict[str, Any], manifest: dict[str, Any],
     except (KeyError, TypeError) as error:
         raise VersionError(f"part-map.json and manifest.json disagree on the occurrences: missing {error}") from error
 
-def built_joints(manifest: dict[str, Any], legacy_joints: list[Any]) -> list[dict[str, Any]]:
-    """Joints use occurrence ids in schema 2; schema 1 assembly records use PN endpoints."""
-    if _schema_version(manifest, "manifest.json") == 1:
-        return [joint for joint in legacy_joints if isinstance(joint, dict)]
+def built_joints(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Joints use occurrence ids."""
     joints = manifest.get("joints")
     if not isinstance(joints, list):
         raise VersionError("manifest.json: schema_version 2 without a joints list")

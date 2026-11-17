@@ -595,9 +595,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             (after_documents, after), after_geometry = read_inputs(hw), current_geometry(hw)
         if after.version != mi.RECORD_VERSION or before.version != mi.RECORD_VERSION:
-            problem = mi.migration_problem(after.product) or mi.migration_problem(before.product)
+            problem = mi.version_problem(after.product) or mi.version_problem(before.product)
             message = problem.message if problem is not None else "the record is not record version 2"
-            print(json.dumps({"status": "error", "code": mi.MIGRATION_REQUIRED, "message": message,
+            print(json.dumps({"status": "error", "code": mi.VERSION_UNSUPPORTED, "message": message,
                               "action": problem.action if problem is not None else None}, indent=2))
             return 2
         impact = compare(before, after, before_geometry=before_geometry, after_geometry=after_geometry,

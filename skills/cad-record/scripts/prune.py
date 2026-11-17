@@ -56,7 +56,7 @@ emit = sys.modules["cad_record_emit"]
 
 JOURNAL = "journal.json"
 LEDGERS = ("manufacturing/evidence.yaml", "manufacturing/findings.yaml")  # accepted evidence, never pruned blind
-RELEASE_MANIFEST_VERSIONS = (None, 2, 3)  # version 1 has no schema_version
+RELEASE_MANIFEST_VERSIONS = (3,)
 LABEL = re.compile(r"(?<![A-Za-z0-9])v[1-9][0-9]*(?![A-Za-z0-9])")  # a version label inside prose
 CAD_MODEL = Path(__file__).resolve().parents[2] / "cad-model" / "scripts" / "cad_model.py"
 
@@ -91,8 +91,7 @@ def roots(label: str) -> list[str]:
 
 
 def releases(hw: Path) -> dict[str, str]:
-    """The frozen version of each release package by revision. A version 1 manifest names none; the
-    reference scan keeps the versions its file list names. A manifest version this module does not read
+    """The frozen version of each release package by revision. A manifest version this module does not read
     refuses, since it might name versions in a way the scan misses."""
     found = {}
     for path in sorted((hw / "releases").glob(f"*/{layout.MANIFEST}")):

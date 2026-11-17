@@ -32,7 +32,6 @@ Use the user's description to record the service class; ask when the description
 | Safety-critical, regulated or high-consequence use | `safety_critical` | Identify the governing authority, standards, risk criteria and accountable approver. |
 
 If a user says only "prototype", ask whether it is for fit/assembly, a supervised functional demonstration, or representative intended service. Keep the answer open until resolved.
-For an existing v1 record, keep the record unchanged during assessment. Run the documented migration dry run and review every proposed file diff. Migration is an explicit owner action. It adds unknowns/questions and cannot certify a historical design.
 
 ## INTENT: compare complete routes
 

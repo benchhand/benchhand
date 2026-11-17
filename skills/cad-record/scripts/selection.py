@@ -1195,8 +1195,8 @@ _CONTRADICTIONS = frozenset({"selection.recorded_recommendation_eliminated", "se
 
 def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: str | None = None) -> dict[str, Any]:
     """The deterministic, JSON-ready selection report of a normalized record (manufacturing_intent.Record).
-    `problems` are the record's problems (default record.problems); an error other than
-    record.migration_required makes the report invalid, and nothing is compared on invalid input. A valid
+    `problems` are the record's problems (default record.problems); an error
+    makes the report invalid, and nothing is compared on invalid input. A valid
     report's `coverage` names the record's made parts and those no candidate covers (see `_coverage`)."""
     problems = list(record.problems if problems is None else problems)
     assessment = mi.assess_use_case(record)
@@ -1206,22 +1206,21 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
                               "use_case": _use_case_section(record, assessment), "decisions": [],
                               "recorded": _recorded_section(record, input_sha256), "findings": findings.items,
                               "problems": [p.finding() for p in problems], "approval": APPROVAL_GATE}
-    if any(p.severity == "error" and p.code != mi.MIGRATION_REQUIRED for p in problems):
+    if any(p.severity == "error" for p in problems):
         report["status"] = "invalid"
         return report
     if not assessment.final_ready:
         _use_case_finding(findings, assessment, report["use_case"])
     candidates = [_candidate(ident, raw) for ident, raw in record.selection.candidates.items()]
     if not candidates:
-        if record.migrated:
-            findings.add("selection.not_assessed", "selection", {"product": True}, "minor", "unknown",
-                         measured=_unknown("hw/manufacturing/selection.yaml records no candidates"),
-                         criterion={"property": "candidates", "operator": ">=", "value": 1, "units": "count",
-                                    "source": _policy_source("evaluate credible material, process and architecture combinations")},
-                         method="selection.yaml candidates", uncertainty="no candidate is recorded",
-                         consequence="no material, process or architecture is recommended",
-                         remedy="record whole candidate routes (material profile, route and capability per part), including "
-                                "metal, purchased, sheet and hybrid alternatives where credible", inputs=_INPUTS)
+        findings.add("selection.not_assessed", "selection", {"product": True}, "minor", "unknown",
+                     measured=_unknown("hw/manufacturing/selection.yaml records no candidates"),
+                     criterion={"property": "candidates", "operator": ">=", "value": 1, "units": "count",
+                                "source": _policy_source("evaluate credible material, process and architecture combinations")},
+                     method="selection.yaml candidates", uncertainty="no candidate is recorded",
+                     consequence="no material, process or architecture is recommended",
+                     remedy="record whole candidate routes (material profile, route and capability per part), including "
+                            "metal, purchased, sheet and hybrid alternatives where credible", inputs=_INPUTS)
         report["coverage"] = _coverage(record, [])
         return report
     assessor = _Assessor(record)

@@ -91,7 +91,7 @@ def emit(layout: Any, hw: Path, version: str | None, subject: str, producer: str
     if out is not None:
         raise PacketError("--out is only for an unversioned run")
     if packet["record_version"] != record_version:
-        raise PacketError(f"record version {packet['record_version']}: run migrate.py before publishing a {subject} packet")
+        raise PacketError(f"record version {packet['record_version']}: only record version {record_version} packets are published ({subject})")
     validate(packet)
     params = {"V": version, "S": subject}
     reused = layout.reusable(hw, "bundle.checks", params, recipe, replace=replace)

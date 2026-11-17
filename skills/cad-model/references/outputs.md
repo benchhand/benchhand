@@ -14,29 +14,25 @@ admit.
 | `assembly.step` | AP242, top product `"<product id> vN"`, one product per PN and one component per occurrence at T = D P (nominal pose); an explicit occurrence's component is named `"<PN> <title> [@id]"` (cad-motion `pose.write_assembly_step`) |
 | `assembly.glb` | binary glTF 2.0 of `assembly.step`: metres, +Y up, one node per occurrence named by its instance name (`"<PN> <title>"`, or `"<PN> <title> [@id]"`), mesh names = product names |
 | `part-map.json` | `schema_version: 2`; `occurrences.<id>`: `PN`, `ref`, `nodes`, `node_indices`, `meshes`, matched on the exact instance name (authoritative for selection and motion); `parts.<PN>`: `product`, `occurrences`, and the aggregated `nodes`, `node_indices`, `meshes` |
-| `metrics.json` | `schema_version: 2`; `mass_source` (`material_profiles`, record v2, or `legacy_density_table`, record v1) and the density table (v1 only). `parts.<PN>` contains model-frame geometry, solid/shell/face/hole facts and the part material label. The label is never a property source. Mass metrics include `density_g_cm3`, `mass_g`, `mass_target_g` and `mass` detail. Density or COM stays null when unresolved. Per-component profiles may produce mass bounds instead of one value. `occurrences.<id>` contains PN, transform, placed geometry and hole facts. `totals` aggregates occurrences and their known mass and COM.
+| `metrics.json` | `schema_version: 2`; `mass_source` (`material_profiles`). `parts.<PN>` contains model-frame geometry, solid/shell/face/hole facts and the part material label. The label is never a property source. Mass metrics include `density_g_cm3`, `mass_g`, `mass_target_g` and `mass` detail. Density or COM stays null when unresolved. Per-component profiles may produce mass bounds instead of one value. `occurrences.<id>` contains PN, transform, placed geometry and hole facts. `totals` aggregates occurrences and their known mass and COM.
 | `drawing-features.json` | only when a model defines `drawing_features`: `label`, `units`, `frames.<PN>` (its `model_frame`), and `parts.<PN>` = that model's locators in that frame (semantic ID → locator, `references/contract.md`); parts without the hook are absent |
 | `record/` | byte copies of the records the version was built from, every file cad-record `layout.snapshot_names` names that exists: `product.yaml`, `requirements.yaml`, `interfaces.yaml`, `assembly.yaml`, `parts/<PN>/part.yaml` of every part record, `manufacturing/capabilities.yaml`, `materials.yaml`, `selection.yaml` and every file below `manufacturing/sources/` (exact bytes). Never the findings or evidence ledgers. `run` reads them once, before the kernels, and refuses to seal if any record, source or `model.py` changed during the run |
 | `manufacturing/<PN>/` | every custom-made PN with an output contract (below): `part.step`, `part.stl` for an additive part, `part.3mf` for an FDM part, `components/<COMP>/` for each component of a part of several, and `manufacturing.json` |
 | `manufacturing-features.json` | only when a model defines `manufacture_features`: `label`, `units`, and `parts.<PN>`: `state`, `decision`, `frame` (`manufacture`), `step_sha256` of the state STEP, `features` (its locators in the native frame of the state) and `correspondence` (`shared`, `manufacture_only` and `installed_unmapped` semantic ids) |
-| `manifest.json` | `schema_version: 2`; `record_version` (the record version of its snapshot; a manifest without it predates snapshots of requirements and manufacturing records). Per PN, `parts.<PN>`: `kernel`, `model_frame`, `occurrences`, `model`, `source_sha256`, `record_sha256` (part.yaml), `params` and the kernel's volume, solids and validity. Per occurrence, `occurrences.<id>`: `PN`, `ref`, `explicit`, `group` and `rest` (P). `pose` holds `values` (independent joints at nominal, coupled joints derived from them; a derived value outside its limits fails the run) and, per occurrence, `transforms` (T) and `motions` (D). `joints` lists each joint with occurrence-id `parent` and `child` (a coupled joint's `nominal` is null); `joint_pairs` lists their sorted pairs with `joint` id and `type` (an `--attach` joint is fixed, id `attach:<REF>`). `record` maps each snapshot path to its sha256; `manufacturing.<PN>` is each custom-made PN's manufacturing entry (below). Also: `ground`, `tools`, `glb`, `drawing_features`, `manufacturing_features` and the `files` sha256 map of every file but itself. |
+| `manifest.json` | `schema_version: 2`; `record_version` (the record version of its snapshot). Per PN, `parts.<PN>`: `kernel`, `model_frame`, `occurrences`, `model`, `source_sha256`, `record_sha256` (part.yaml), `params` and the kernel's volume, solids and validity. Per occurrence, `occurrences.<id>`: `PN`, `ref`, `explicit`, `group` and `rest` (P). `pose` holds `values` (independent joints at nominal, coupled joints derived from them; a derived value outside its limits fails the run) and, per occurrence, `transforms` (T) and `motions` (D). `joints` lists each joint with occurrence-id `parent` and `child` (a coupled joint's `nominal` is null); `joint_pairs` lists their sorted pairs with `joint` id and `type` (an `--attach` joint is fixed, id `attach:<REF>`). `record` maps each snapshot path to its sha256; `manufacturing.<PN>` is each custom-made PN's manufacturing entry (below). Also: `ground`, `tools`, `glb`, `drawing_features`, `manufacturing_features` and the `files` sha256 map of every file but itself. |
 
-A file without `schema_version` is a version 1 version, written before occurrences: it reads as one
-occurrence per PN whose id is the PN (cad-render `scripts/versions.py`, `built_occurrences`, the
-one reader for render, viewer and check). A newer schema is refused. Versions are never rewritten.
+Only `schema_version: 2` is read (cad-render `scripts/versions.py`, `built_occurrences`, the
+one reader for render, viewer and check); a file without it or with another is refused. Versions are never rewritten.
 Definition metrics and bboxes are in each part's model frame, read back from the per-part STEP.
 Every volume is BRepGProp's adaptive integration to 1e-9 relative (cad-motion `pose.VOLUME_EPS`,
 through `pose.volume_properties`, which cad-motion's sweep uses too); the default fixed-order rule
 is off by up to ~6e-6 on revolved and filleted B-spline faces.
-Mass is solid-material mass at a uniform, fully dense density: `volume_mm3 * density / 1000`. A record
-version 2 part takes the density its material profile resolves (hw/manufacturing/materials.yaml,
+Mass is solid-material mass at a uniform, fully dense density: `volume_mm3 * density / 1000`. A part takes the density its material profile resolves (hw/manufacturing/materials.yaml,
 cad-record `resolve_property`), per component when its components name different profiles; `mass`
 holds `status` (known or unknown), `source`, `basis`, `method`, `densities` (per profile: `profile`,
 `status`, `value` g_cm3, `basis`, `sources`, `conditions`, `reasons`), `value_g` (a number, or
 `lower`/`upper` for an interval density) and `reasons`. An unresolved density leaves `mass_g` and the
-centre of mass null; it is never replaced by a default or another material's value. A record version 1
-part keeps the labelled estimate from the density-only table `assets/materials.yaml`
-(`source: legacy_density_table`, `basis: estimate`), which supplies no other property.
+centre of mass null; it is never replaced by a default or another material's value.
 
 `holes` lists the part's cylindrical bores (`cadmodel/holes.py`), sorted by (`diameter_mm`,
 `position`), `[]` when there are none:
@@ -198,17 +194,14 @@ whose patch points lie on it, and a `multiplicity` n also takes the n - 1 other 
 pieces separately). Identity is never guessed: a witness within 1e-3 mm of a surface or inside two
 solids, a feature on several solids, two components on one solid, overlapping solids, a solid no
 component binds, and a group without exactly its count of congruent members fail the run
-(`components`). A record version 1 part of several solids keeps one combined output whose identity is
-unknown, incomplete.
+(`components`).
 
 An additive component sits on the bed (its box centred in X and Y on a declared envelope, its lowest
 point at Z 0) in the pose its route fixes: the approved `orientation.rotation` of the first additive
 operation that shapes it (`cadmodel/orientation.py` `rotation_of`; machine = rotation x native). A
 proposed or unknown orientation, or no additive operation shaping it, exports its native frame and is
 incomplete. The envelope is that operation's capability profile `envelope` when x, y and z are known
-lengths, else product.yaml `build_volume`, a declaration. A record version 1 part keeps the legacy
-envelope auto-fit (`pose: unapproved_auto_fit`, or `unapproved_native` without a fit), labelled, never
-approved. Any other part keeps its model frame (identity). Components in different poses leave the
+lengths, else product.yaml `build_volume`, a declaration. Any other part keeps its model frame (identity). Components in different poses leave the
 combined part.step in their native frame on the bed (`pose: per_component`).
 
 The manifest entry `manufacturing.<PN>` holds:
@@ -222,24 +215,23 @@ The manifest entry `manufacturing.<PN>` holds:
   relative for a part made as installed, and the declared values otherwise.
 - `installed` (`step`, `sha256`, the kernel volume and solids) and `native` (the manufacturing
   state's kernel volume, solids, validity and errors)
-- `intent`: `record_version`; for record version 2 `material_profile`, `route` (per operation `id`,
+- `intent`: `record_version`, `material_profile`, `route` (per operation `id`,
   `kind`, `capability`, `provider`, `components`, `depends_on`, `known_kind`), `profiles` (sha256 of
   each material and capability profile the part names), `sources` (sha256 of each cited source
-  artifact's snapshot bytes) and `inputs_sha256`; for version 1 `status: unknown` and its `reason`
+  artifact's snapshot bytes) and `inputs_sha256`
 - `units` mm, `up` +Z, `build_volume` (the envelope used: size, margin, usable size, orientations,
   `source`) and `mesh` (additive: format and deflections)
 - `placement`: `method` (approved, proposed, native, axis_aligned, oriented or identity),
   `orientation`, `bed` (centred, origin or null), `frame` (bed or model), `transform` (3x4 rows,
-  unrounded), `determinant`, `pose` (approved, proposed, not_applicable, unknown, unapproved_auto_fit,
-  unapproved_native, model_frame or per_component), `approved`, `operation`, `decision`, `reason`
+  unrounded), `determinant`, `pose` (approved, proposed, not_applicable, unknown,
+  model_frame or per_component), `approved`, `operation`, `decision`, `reason`
   and `build_volume`
 - `components.<COMP>`: `binding` (implicit, witness or locator), `points_mm` (native frame),
   `locator`, `multiplicity`, `material_profile` (the component's, else the part's), `operations`
   (the route operations that shape it; `[]` unplanned, null while the route is unknown), `planned`,
   `files`, `placement` (as above), `volume_mm3` and `members` (per solid, native frame:
   `volume_mm3`, `area_mm2`, `centre_of_volume_mm`, `bbox_mm`, `principal_moments_mm5`);
-  `component_outputs` (the component files) and `component_identity` (`status` bound or unknown, with
-  the unbound `solids` of a version 1 part)
+  `component_outputs` (the component files) and `component_identity` (`status` bound)
 - `path`, `outputs` (the process's files), `files` (sha256 of every output, the sidecar included),
   `status`, `complete` and `blocking_failures`
 
@@ -263,8 +255,7 @@ check has `status`, `blocking` and `failed`, the conditions that do not hold:
 | `components` | (`run`) the solids cannot be bound to the declared components without guessing. (`run` and `check`) per component: its own `step` (its member count and volume), `mesh` and `placement` as above, and `binding`: its witness, moved by its placement, lies inside exactly one solid of its file (feature points on it) |
 
 Any failed check fails the run (exit 1): no version, no new `latest.json`. A part is `complete` when
-every check passes; incompleteness (no approved orientation, no envelope, no fit, no model, unbound
-version 1 solids) warns without blocking.
+every check passes; incompleteness (no approved orientation, no envelope, no fit, no model) warns without blocking.
 cad-model does not resolve `drawing.manufacturing.build_direction` datums; cad-drawings compares the
 declared direction with `placement.transform`.
 

@@ -83,7 +83,7 @@ def _script(name: str, path: Path) -> Any:
 
 
 def _versions() -> Any:
-    """cad-render's stdlib version reader: a version's occurrences, version 1 files normalized."""
+    """cad-render's stdlib version reader: a version's occurrences."""
     return _script("cad_render_versions", VERSIONS_SCRIPT)
 
 
@@ -193,10 +193,8 @@ def declared_solids(snapshot: Path) -> dict[str, int]:
     """The solid count each record version 2 part of a version's record snapshot declares for its
     definition: the sum of its part.yaml `intent.components` multiplicities, unless it is made in a
     different state, whose components count that state's solids instead. A part declaring no
-    components, and every part of a record version 1 snapshot, declares none."""
+    components, declares none."""
     found, _ = build.read_snapshot(read_folder(snapshot))
-    if found.version == load_intent().LEGACY_RECORD_VERSION:
-        return {}
     counts = {}
     for pn, part in found.intent.parts.items():
         made = (found.parts.get(pn) or {}).get("manufacture") or {}
@@ -813,7 +811,7 @@ def nominal_placements(manifest: Mapping[str, Any], record: Path | None,
     pose = load_pose()
     ids = sorted(located)
     pairs = [(a, b) for i, a in enumerate(ids) for b in ids[i + 1:]]
-    if record is None or manifest.get("schema_version", 1) < 2:
+    if record is None:
         return None, {(a, b): located[a][1].inverse() @ located[b][1] for a, b in pairs}
     assembly = pose.load_assembly(record, record)
     chain = load_incremental().built_chain(assembly, manifest["parts"], manifest.get("attach", []))
@@ -951,15 +949,13 @@ def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
                      checks: Mapping[str, Any]) -> dict[str, Any] | None:
     """Publish the cad.readback packet of a record version 2 version to hw/checks/<V>/cad/ (bundle.checks,
     the one place cad-record evidence.py reads producer packets) and return {bundle, reused, result,
-    complete}; None for a version built from a record version 1 snapshot (or none). The packet is
+    complete}; None for a version without a snapshot. The packet is
     recomputed by every check and replaces the one an earlier check sealed when it differs, so a changed
     verdict is never hidden behind a reused bundle."""
     if snapshot is None:
         return None
     found, _ = build.read_snapshot(read_folder(snapshot))
     intent = load_intent()
-    if found.version != intent.RECORD_VERSION:
-        return None
     record = found.intent
     expected = [o for o in intent.required_checks(record) if o.family in READBACK_FAMILIES]
     packets = _script("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")

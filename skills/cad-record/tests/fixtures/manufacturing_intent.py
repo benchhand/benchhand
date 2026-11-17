@@ -19,7 +19,6 @@ import hashlib
 import importlib.util
 import shutil
 import sys
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -54,11 +53,6 @@ def schema_registry_module() -> Any:
 def ref_validator(ref: str) -> Any:
     """A validator of one schema or definition of cad-record's schemas by its `$ref`, offline."""
     return schema_registry_module().ref_validator(SKILL / "schemas", ref)
-
-
-def migrate_module() -> Any:
-    """cad-record migrate.py (needs PyYAML and jsonschema)."""
-    return _module("cad_record_migrate", SCRIPTS / "migrate.py")
 
 
 # --- facts ------------------------------------------------------------------------------------------------------
@@ -466,9 +460,7 @@ def add_v1_operations(hw: Path) -> None:
 
 
 def migrated_copy(src_hw: Path, dst_hw: Path, today: date | None = None) -> Path:
-    """Copy the record at `src_hw` (by default a version 1 example) to `dst_hw` and migrate it to record
-    version 2 with migrate.py, as a test fixture for code that reads current records."""
+    """Copy the record at `src_hw` to `dst_hw` unchanged (the examples are record version 2), as a test fixture
+    for code that reads current records. The name and `today` stay for tests written when this migrated."""
     shutil.copytree(src_hw, dst_hw)
-    migrate = migrate_module()
-    migrate.apply(migrate.plan(dst_hw, today or date(2026, 1, 1)))
     return dst_hw

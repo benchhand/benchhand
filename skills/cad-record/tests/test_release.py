@@ -146,7 +146,7 @@ def frozen_lamp(hw: Path, *, before_build: Callable[[Path], None] | None = None,
     it with its acceptance digest (unless not `anchor`), every required bundle published, and DR-005
     approving it. Each `older` version is built first, with a check and a render bundle of its own;
     `ledger` may rewrite the accepted entries before the freeze."""
-    fx.migrated_copy(LAMP, hw)
+    fx.copied_record(LAMP, hw)
     for part in sorted((hw / "parts").glob("*/part.yaml")):
         edit_yaml(part, lambda data: data.update(rev="A"))
     edit_csv(hw / "bom.csv", lambda rows: [row.update(rev="A") for row in rows])
@@ -722,18 +722,18 @@ def open_selection(hw: Path) -> None:
 class Acceptance(ReleaseCase):
     """The intent acceptance of a record version 2 release: anchor, evidence and service policy."""
 
-    def test_a_version_1_record_refuses_until_it_is_migrated(self) -> None:
+    def test_a_record_without_the_current_version_refuses(self) -> None:
         hw = self.project()
         edit_yaml(hw / "product.yaml", lambda data: data.pop("record_version"))
         before = tree(hw)
         code, report = self.release(hw)
         self.assertEqual((code, report["status"]), (1, "refused"))
-        self.assertIn("record.migration_required", [item.get("code") for item in report["findings"]])
+        self.assertIn("record.version_unsupported", [item.get("code") for item in report["findings"]])
         self.assertEqual(tree(hw), before)
 
     def test_a_freeze_without_an_acceptance_anchor_refuses(self) -> None:
         hw = self.project(anchor=False)
-        self.assertEqual(validate.blocking(validate.validate_project(hw)), [], "readable: a legacy-freeze warning only")
+        self.assertEqual(validate.blocking(validate.validate_project(hw)), [], "readable: only the release refuses an unanchored freeze")
         self.refused_with(hw, "release.frozen", "anchors no evidence_sha256")
 
     def test_evidence_accepted_after_the_freeze_needs_a_new_anchor(self) -> None:
@@ -771,7 +771,7 @@ class Acceptance(ReleaseCase):
         hw = self.project(service_class="production", ledger=waive_fdm_trials)
         self.refused_with(hw, "release.acceptance", "release.trial_not_permitted")
 
-    def test_a_sealed_package_is_read_by_its_own_manifest_version(self) -> None:
+    def test_a_sealed_package_is_verified_and_any_other_manifest_version_is_refused(self) -> None:
         hw = self.project()
         self.assertEqual(self.release(hw)[0], 0)
         code, report = release.sealed(hw, "A", "v1", "DR-005")
@@ -783,15 +783,10 @@ class Acceptance(ReleaseCase):
         code, report = release.sealed(hw, "A", "v1", "DR-005")
         self.assertEqual(code, 1)
         self.assertIn("not the digest of its sealed inventory", report["findings"][0]["message"])
-        # the same package as a version 2 seal: inspectable as sealed, never re-certified as version 3
-        legacy = {key: value for key, value in manifest.items() if key not in ("acceptance", "record_version")}
-        legacy.update(schema_version=2, files={k: v for k, v in manifest["files"].items() if not k.startswith("acceptance/")},
-                      manufacturing={pn: {k: v for k, v in entry.items() if k != "route"}
-                                     for pn, entry in manifest["manufacturing"].items()})
-        shutil.rmtree(hw / "releases" / "A" / "acceptance")
-        path.write_text(json.dumps(legacy), encoding="utf-8")
+        path.write_text(json.dumps({**manifest, "schema_version": 2}), encoding="utf-8")
         code, report = release.sealed(hw, "A", "v1", "DR-005")
-        self.assertEqual((code, report["manifest_version"]), (0, 2))
+        self.assertEqual(code, 1)
+        self.assertIn("its manifest version 2 is not one this release.py reads", report["findings"][0]["message"])
 
     def test_an_open_or_stale_selection_refuses_the_release(self) -> None:
         hw = self.project(before_build=open_selection)

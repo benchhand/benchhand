@@ -648,8 +648,6 @@ def _inventory(hw: Path, rel: str, entry: Entry, params: Mapping[str, str]) -> t
     if not isinstance(data, dict):
         return None, "the manifest is not a JSON object"
     name = posixpath.basename(rel)
-    if entry.manifest == "release" and "schema_version" not in data:
-        return None, None  # a version 1 release lists project files in place; validate.py checks them
     if entry.manifest == "version" and data.get("label", name) != name:
         return None, f"label {data.get('label')!r} is not the folder name {name}"
     if entry.manifest == "bundle":

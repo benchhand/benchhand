@@ -207,7 +207,7 @@ def load_case(path: Path) -> dict[str, Any]:
 
 
 def _explicit_material(material: dict[str, Any]) -> None:
-    """Legacy explicit numbers (standalone and record version 1 cases only)."""
+    """Explicit case numbers (standalone cases only)."""
     stray = sorted(set(material) & set(conditions.PROFILE_KEYS))
     if stray:
         raise CaseError(f"material mixes explicit values with {', '.join(stray)}: use one form")
@@ -694,7 +694,7 @@ def publish_engineering(hw: Path, version: str, case_id: str, result: dict[str, 
     case's required-check bundle hw/checks/<V>/fea-<case>/, the one place cad-record evidence.py reads
     producer packets, with the analysis bundle it came from as its evidence; reused while it holds the
     packet of that very analysis bundle. Its path relative to the project, or None when the result has no
-    packet (record version 1, explicit numbers): exploratory results are never evidence."""
+    packet (explicit numbers): exploratory results are never evidence."""
     packet = result.get("engineering")
     if not isinstance(packet, dict):
         return None

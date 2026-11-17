@@ -42,13 +42,10 @@ class MigrationPlan(unittest.TestCase):
         self.project = Path(temporary.name) / "project"
         self.hw = self.project / "hw"
         shutil.copytree(LAMP, self.hw)
-        # a demo-style record: a v1 built before manufacturing outputs, a version 1 release, loose files
+        # a demo-style record: a built v1 and loose files
         version = self.hw / "versions" / "v1"
         write(version / "assembly.step")
         write(version / "manifest.json", json.dumps({"label": "v1", "files": {"assembly.step": sha(version / "assembly.step")}}))
-        write(self.hw / "releases" / "A" / "manifest.json", json.dumps(
-            {"product_id": "lamp-arm", "rev": "A", "released_at": "2026-01-01T00:00:00Z", "files": ["hw/bom.csv"],
-             "checks": {}}))
         for name in ("print/LMP-0004_flat.step", "print/LMP-0004_bent.step", "print/LMP-0004.stl",
                      "print/VXA-0004_flat.step", "print/export_flat_plug.py", "print/settings.ini",
                      "drawings/LMP-0001/sheet-1.svg", "renders/v1/iso.png", "notes.md", "docs/notes.md", "docs/.DS_Store"):
@@ -94,9 +91,6 @@ class MigrationPlan(unittest.TestCase):
         self.assertEqual(row("hw/notes.md"), ("document", "move", "hw/docs/notes.md", "high", None, []))
         self.assertTrue(items["hw/notes.md"]["destination_exists"], "hw/docs/notes.md already exists: a collision")
         self.assertEqual(row("hw/docs/.DS_Store")[:2], ("metadata", "remove"))
-        self.assertEqual(row("hw/versions/v1"), ("legacy version", "keep", None, "high", model, []))
-        self.assertIn("cannot be frozen or released", items["hw/versions/v1"]["action"])
-        self.assertEqual(row("hw/releases/A")[:2], ("legacy release", "keep"))
         for item in plan["items"]:
             self.assertTrue(item["action"], item["path"])
         self.assertEqual(sum(plan["counts"].values()), len(plan["items"]))

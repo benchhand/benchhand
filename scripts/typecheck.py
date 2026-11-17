@@ -66,7 +66,6 @@ CHANGED_FILES = (
     "skills/cad-record/scripts/impact.py",
     "skills/cad-record/scripts/layout.py",
     "skills/cad-record/scripts/manufacturing_intent.py",
-    "skills/cad-record/scripts/migrate.py",
     "skills/cad-record/scripts/prune.py",
     "skills/cad-record/scripts/release.py",
     "skills/cad-record/scripts/schema_registry.py",

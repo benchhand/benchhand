@@ -703,7 +703,7 @@ def build_scene(hw: Path, version: Version, views: list[str], size: tuple[int, i
 
     assembly, assembly_raw = load_assembly(version.record)
     try:
-        joints = version_reader.built_joints(version.manifest, assembly.get("joints") or [])
+        joints = version_reader.built_joints(version.manifest)
     except version_reader.VersionError as exc:
         raise InfraError(f"{version.label}: {exc}") from exc
     joints = [j for j in joints if j.get("parent") in occurrences and j.get("child") in occurrences]

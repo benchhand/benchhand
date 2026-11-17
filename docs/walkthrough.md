@@ -42,9 +42,9 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Review:** requirements, preferences, assumptions and open questions separately; cited sources; evidence and scope gaps. Capability availability is not a product requirement. Do not infer operating conditions from illustrative CAD geometry or a lamp example.
 
-**Approve:** confirm the use case, unknowns and scope before a consequential selection. Only the explicit owner applies a migration (`migrate.py --apply`) or changes shared design records. A preview is not CAD, process or verification evidence.
+**Approve:** confirm the use case, unknowns and scope before a consequential selection. Only the explicit owner changes shared design records. A preview is not CAD, process or verification evidence.
 
-**Files:** `hw/product.yaml`, `hw/requirements.yaml`, the migration report/note when relevant, and `hw/decisions/DR-###.md`.
+**Files:** `hw/product.yaml`, `hw/requirements.yaml`, and `hw/decisions/DR-###.md`.
 
 ## INTENT
 

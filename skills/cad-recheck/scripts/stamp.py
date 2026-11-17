@@ -8,8 +8,8 @@
 A stamp records the staged hw/ tree hash, the stage and the evidence packet `evidence.py check` wrote
 for it (cad-record), or the packet of an `evidence.py run` report (a run that stopped has none): its
 expected checks, each one's status and the digest of the record inputs it
-read. Only a record version 2 record stamps; a version 1 record refuses at or after the threshold
-until migrate.py migrates it. A packet that is not the assessment of the staged record, lacks an
+read. Only a record version 2 record stamps; a record of another version refuses at or after the
+threshold. A packet that is not the assessment of the staged record, lacks an
 expected check or is partial never stamps; `--passed` stamps only a packet whose stage gate, recomputed
 here from its statuses and from the staged record's selection report (cad-record selection.py, with
 the digest of the staged selection inputs), passes, so a stale, failed or unknown due check, or a
@@ -116,8 +116,8 @@ def staged_record(root: Path, committed: bool = False) -> Staged:
                   evidence.selection.input_digest(documents))
 
 
-def require_migrated(record: Any) -> None:
-    problem = intent.migration_problem(record.product)
+def require_current_version(record: Any) -> None:
+    problem = intent.version_problem(record.product)
     if problem is not None:
         raise RuntimeError(f"{problem.code}: {problem.message}. {problem.action or ''}".strip())
 
@@ -282,7 +282,7 @@ def record(stage: str, checks_path: Path, passed: bool, root: Path) -> dict[str,
     checks = load_checks(checks_path)
     require_complete(checks, checks_path)
     staged = staged_record(root)
-    require_migrated(staged.record)
+    require_current_version(staged.record)
     blocking = require_evidence(checks, staged, stage)
     if passed and blocking:
         raise RuntimeError(f"--passed contradicts the evidence packet: {len(blocking)} blocking finding(s) at {stage}: "
@@ -375,7 +375,7 @@ def main() -> int:
                 print(json.dumps({"passed": True, "required": False, "stage": current_stage}))
                 return 0
             staged = staged_record(root, committed)
-            require_migrated(staged.record)
+            require_current_version(staged.record)
             try:
                 record_data = json.loads(tree_blob(root, "hw/.cad/recheck.json", committed).decode("utf-8"))
             except (RuntimeError, UnicodeError, json.JSONDecodeError) as error:

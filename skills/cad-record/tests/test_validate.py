@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -54,7 +55,7 @@ class ValidateProject(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.project = Path(self.temporary.name) / "project"
         self.hw = self.project / "hw"
-        fx.migrated_copy(EXAMPLE, self.hw)
+        fx.copied_record(EXAMPLE, self.hw)
         self.migrated_interfaces = (self.hw / "interfaces.yaml").read_bytes()
         self.part_path = self.hw / "parts" / "LMP-0001" / "part.yaml"
 
@@ -290,20 +291,29 @@ class ValidateProject(unittest.TestCase):
             writer.writeheader()
             writer.writerows(rows)
 
-    def write_release(self, directory: str, rev: str, files: list[str]) -> None:
+    def write_release(self, directory: str, rev: str) -> None:
+        """A sealed package of one byte copy (bom.csv) under a schema-valid version 3 manifest."""
         release_dir = self.hw / "releases" / directory
         release_dir.mkdir(parents=True, exist_ok=True)
+        content = (self.hw / "bom.csv").read_bytes()
+        (release_dir / "bom.csv").write_bytes(content)
+        digest = hashlib.sha256(content).hexdigest()
         (release_dir / "manifest.json").write_text(json.dumps({
-            "product_id": "lamp-arm",
-            "rev": rev,
+            "schema_version": 3, "record_version": 2, "product_id": "lamp-arm", "rev": rev,
             "released_at": "2026-10-26T00:00:00Z",
-            "files": files,
-            "checks": {"record-validation": "pass"},
+            "frozen": {"version": "v1", "manifest_sha256": "0" * 64, "decision": "DR-001", "evidence_sha256": "0" * 64},
+            "approval": "DR-001",
+            "files": {"bom.csv": {"sha256": digest, "original": "hw/bom.csv"}},
+            "manufacturing": {}, "bundles": [], "checks": {"record-validation": "pass"},
+            "acceptance": {"evidence_sha256": "0" * 64, "inventory": {"hw/bom.csv": digest},
+                           "scope": {"service_class": "fit_assembly", "purpose": "TST", "operating_limits": [],
+                                     "exclusions": [], "trial": False},
+                           "claims": {}, "waivers": [], "open_obligations": []},
         }), encoding="utf-8")
 
     def test_accepts_release_with_existing_files_and_verified_released_parts(self) -> None:
         self.make_release_ready()
-        self.write_release("A", "A", ["hw/product.yaml", "hw/bom.csv"])
+        self.write_release("A", "A")
         result, report = self.validate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         # A record version 2 verification pass is a summary of ledger evidence, not evidence: without
@@ -314,13 +324,12 @@ class ValidateProject(unittest.TestCase):
                          [("evidence.csv_unsupported", "warning", f"verification.csv:{line}")
                           for line in range(2, len(rows) + 2)])
 
-    def test_rejects_release_with_mismatched_directory_missing_file_planned_checks_and_prototype(self) -> None:
-        self.write_release("B", "A", ["hw/product.yaml", "hw/not-present.step"])
+    def test_rejects_release_with_mismatched_directory_planned_checks_and_prototype(self) -> None:
+        self.write_release("B", "A")
         result, report = self.validate()
         findings = json.dumps(report["findings"])
         self.assertEqual(result.returncode, 1)
         self.assertIn("directory name does not match manifest rev", findings)
-        self.assertIn("release file does not exist within project: hw/not-present.step", findings)
         self.assertIn("verification result must be pass or waived", findings)
         self.assertIn("release cannot include prototype revision X1", findings)
 
@@ -647,7 +656,7 @@ class LoadDirection(unittest.TestCase):
 
 
 class RecordVersion(unittest.TestCase):
-    """Row 19: a version 1 record stays readable and is never certified; gated actions name the migration."""
+    """Row 19: a record of an unsupported version stays readable and is never certified; gated actions name the version."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-record-version-")
@@ -683,13 +692,30 @@ class RecordVersion(unittest.TestCase):
         self.assertIn("decision DR-999 does not exist", messages)
 
     def test_an_unsupported_record_version_is_named_not_guessed(self) -> None:
-        fx.migrated_copy(EXAMPLE, self.hw)
+        for version in ("record_version: 1", "record_version: 3", None):
+            with self.subTest(version=version):
+                shutil.rmtree(self.hw, ignore_errors=True)
+                fx.copied_record(EXAMPLE, self.hw)
+                product = self.hw / "product.yaml"
+                text = product.read_text(encoding="utf-8")
+                product.write_text(text.replace("record_version: 2\n", f"{version}\n" if version else ""), encoding="utf-8")
+                before = tree(self.hw)
+                code, findings = self.validate()
+                self.assertEqual(code, 1)
+                self.assertIn("record.version_unsupported", [item.get("code") for item in findings])
+                self.assertEqual(tree(self.hw), before, "reading a record rewrites nothing")
+
+    def test_an_unsupported_record_version_still_reports_its_other_findings(self) -> None:
+        fx.copied_record(EXAMPLE, self.hw)
         product = self.hw / "product.yaml"
-        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 2", "record_version: 3"),
-                           encoding="utf-8")
+        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 2", "record_version: 1"), encoding="utf-8")
+        part = self.hw / "parts" / "LMP-0001" / "part.yaml"
+        part.write_text(part.read_text(encoding="utf-8").replace("decisions: [DR-002, DR-004]", "decisions: [DR-999]"),
+                        encoding="utf-8")
         code, findings = self.validate()
-        self.assertEqual(code, 1)
-        self.assertIn("record.version_unsupported", [item.get("code") for item in findings])
+        messages = json.dumps(findings)
+        self.assertIn("record.version_unsupported", messages)
+        self.assertIn("decision DR-999 does not exist", messages)
 
 
 class LedgerEvidence(unittest.TestCase):
@@ -699,7 +725,7 @@ class LedgerEvidence(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-record-evidence-")
         self.addCleanup(temporary.cleanup)
         self.project = Path(temporary.name) / "project"
-        self.hw = fx.migrated_copy(EXAMPLE, self.project / "hw")
+        self.hw = fx.copied_record(EXAMPLE, self.project / "hw")
 
     def findings(self) -> list[dict[str, object]]:
         result = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,

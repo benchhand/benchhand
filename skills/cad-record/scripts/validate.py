@@ -761,9 +761,9 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
                                part_records: Mapping[str, tuple[dict[str, Any], str]],
                                verification: list[dict[str, str]], findings: list[dict[str, Any]]) -> Any:
     """The record version and its manufacturing intent, through manufacturing_intent.py, over the
-    documents validate_project already read. A version 1 record stays readable: every other finding is
-    reported, plus the blocking record.migration_required that names the migration command, so stage
-    advance, freeze, release and record-writing builds refuse it. A version 2 record: its
+    documents validate_project already read. A record of another version is reported with the blocking
+    record.version_unsupported, so stage advance, freeze, release and record-writing builds refuse it.
+    A version 2 record: its
     hw/manufacturing/ documents against their schemas, the normalization problems (references, units,
     routes, profiles, completeness), the waivers of its ledgers, and verification rows that state a
     result its ledger does not hold (an error from the design freeze on). Returns the normalized record."""
@@ -801,7 +801,7 @@ def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]
     flow = record.product.get("flow")
     frozen = flow.get("frozen") if isinstance(flow, Mapping) else None
     if not isinstance(frozen, Mapping) or "evidence_sha256" not in frozen:
-        return  # manufacturing_intent reports a freeze without an anchor as record.legacy_freeze
+        return  # manufacturing_intent reports a freeze without an anchor; release.py refuses it
     manifest = layout.version_dir(hw, frozen["version"]) / "manifest.json"
     if not manifest.is_file():
         return  # check_flow reports a frozen version that is not built
@@ -1076,20 +1076,6 @@ def validate_project(project_dir: Path) -> list[dict[str, str]]:
                 findings.append(finding(str(path), "manifest product_id does not match product.yaml id"))
             if path.parent.name != manifest.get("rev"):
                 findings.append(finding(str(path), "release directory name does not match manifest rev"))
-            project_root = hw.parent if hw == project_dir else project_dir
-            root = project_root.resolve()
-            # version 1 lists project files in place. Version 2 holds byte copies, which check_layout audits
-            # against the package inventory; their originals may change or go after release.
-            in_place = manifest["files"] if "schema_version" not in manifest else []
-            for file_name in in_place:
-                candidate = root / file_name
-                try:
-                    candidate.resolve().relative_to(root)
-                    exists = candidate.is_file()
-                except (OSError, ValueError):
-                    exists = False
-                if not exists:
-                    findings.append(finding(str(path), f"release file does not exist within project: {file_name}"))
             check_release_readiness(hw, verification, part_records, str(path), findings)
     if valid.get("product.yaml"):
         check_flow(documents["product.yaml"], str(hw / "product.yaml"), hw, part_records, findings)
@@ -1162,54 +1148,9 @@ def plan_item(hw: Path, item: Mapping[str, Any], records: Mapping[str, Mapping[s
             "action": item.get("action")}
 
 
-def legacy_items(hw: Path) -> list[dict[str, Any]]:
-    """Built versions without complete manufacturing outputs and version 1 releases: kept as they are,
-    readable, but never frozen, released or reissued."""
-    lay, items = layout.load(), []
-    next_label = layout.next_version(hw)
-    for label in layout.versions(hw):
-        manifest = load_json(layout.version_dir(hw, label) / layout.MANIFEST, [])
-        made = manifest.get("manufacturing") if isinstance(manifest, dict) else None
-        if isinstance(made, dict) and all(isinstance(e, dict) and e.get("complete") is True for e in made.values()):
-            continue
-        items.append({"path": f"{layout.HW}/versions/{label}", "code": None, "severity": "info",
-                      "classification": "legacy version", "operation": "keep", "destination": None,
-                      "rebuild": lay.entry("version.core").writer, "confidence": "high",
-                      "action": f"{label} stays readable as built, but its manufacturing outputs are missing or "
-                                f"incomplete, so it cannot be frozen or released. Build {next_label} with cad-model "
-                                "run to freeze. Nothing was changed."})
-    for path in sorted((hw / "releases").glob(f"*/{layout.MANIFEST}")):
-        manifest = load_json(path, [])
-        if isinstance(manifest, dict) and "schema_version" not in manifest:
-            items.append({"path": layout.relative(hw, path.parent), "code": None, "severity": "info",
-                          "classification": "legacy release", "operation": "keep", "destination": None,
-                          "rebuild": lay.entry("release.package").writer, "confidence": "high",
-                          "action": f"Release {path.parent.name} lists project files in place (manifest version 1). "
-                                    "Keep it for inspection and recovery; it is never reissued. Issue the next "
-                                    "revision with release.py from a frozen version. Nothing was changed."})
-        elif isinstance(manifest, dict) and manifest.get("schema_version") == 2:
-            items.append({"path": layout.relative(hw, path.parent), "code": None, "severity": "info",
-                          "classification": "legacy release", "operation": "keep", "destination": None,
-                          "rebuild": lay.entry("release.package").writer, "confidence": "high",
-                          "action": f"Release {path.parent.name} seals byte copies (manifest version 2) without an "
-                                    "acceptance anchor: it stays readable and verifiable as sealed, but certifies no "
-                                    "intended service. The next revision is a version 3 release of a record version 2 "
-                                    "freeze. Nothing was changed."})
-    return items
-
-
-def record_items(findings: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """The record migration (manufacturing_intent migration_problem) as a plan step: migrate.py, run by
-    the user, never by this plan."""
-    return [{"path": f"{layout.HW}/product.yaml", "code": item["code"], "severity": item["severity"],
-             "classification": "record version", "operation": "migrate", "destination": None,
-             "rebuild": intent.MIGRATE_SCRIPT, "confidence": "high", "action": item.get("action")}
-            for item in findings if item.get("code") in (intent.MIGRATION_REQUIRED, intent.VERSION_UNSUPPORTED)]
-
-
 def migration_plan(project_dir: Path) -> dict[str, Any]:
-    """Every layout finding of the record, plus the record version migration, legacy versions and
-    releases, as a move, migrate and rebuild plan. Reads only; nothing is moved, deleted, migrated or rebuilt."""
+    """Every layout finding of the record as a move and rebuild plan. Reads only; nothing is moved,
+    deleted or rebuilt."""
     hw = project_dir / "hw" if (project_dir / "hw").is_dir() else project_dir
     records = {}
     for path in sorted((hw / "parts").glob("*/part.yaml")):
@@ -1218,8 +1159,6 @@ def migration_plan(project_dir: Path) -> dict[str, Any]:
             records[path.parent.name] = data
     findings = validate_project(project_dir)
     items = [plan_item(hw, item, records) for item in findings if is_layout_finding(item)]
-    items += record_items(findings)
-    items += legacy_items(hw)
     targets: dict[str, list[str]] = {}
     for item in items:
         if item["destination"] and "<" not in item["destination"]:

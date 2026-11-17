@@ -48,7 +48,7 @@ MUST Treat `check` exit 1 as a failed stage gate; report `blocking_failures` and
 MUST Stop the runs a `check` exit 2 names as still running or left behind with the `kill` commands it prints (`uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/process_lifecycle.py strays --hw hw` lists them); never delete a run record whose processes still run.
 NOT Stamp, gate or release from a `--changed-only` check; run the full check first.
 MUST Use the cad-record layout API for version and manufacturing paths; its generated `references/layout.md` is the one canonical path table.
-MUST For record-v2, use the selected material profile for mass and properties; missing density remains unknown. The legacy `assets/materials.yaml` density table is an estimate for v1 only and never provides structural properties.
+MUST For record-v2, use the selected material profile for mass and properties; missing density remains unknown.
 MUST Declare locating, press and running fits, and heat-set inserts in `hw/interfaces.yaml`; only the shared pair policy determines allowed geometric overlap.
 DEFAULT Use `--allow-interference PN:PN` only for an undeclared, intentional overlap.
 NOT Treat build-volume fit, solid-count check or geometric integrity as process capability or physical evidence.

@@ -406,7 +406,7 @@ class Assessment:
         if stage not in STAGES:
             raise ValueError(f"unknown stage {stage!r}")
         if self.record.version != mi.RECORD_VERSION:
-            problem = mi.migration_problem(self.record.product)
+            problem = mi.version_problem(self.record.product)
             message = problem.message if problem is not None else "the record is not record version 2"
             action = f"; {problem.action}" if problem is not None and problem.action else ""
             return (Finding("gate.record", "hw/product.yaml", message + action),)

@@ -13,7 +13,7 @@ never builds. It refuses the release when any of these fails, and then writes no
 .cad-work/:
 
 - the frozen anchor, the approving decision, and a revision that is not yet used;
-- validate.py on the current record (a record version 1 record refuses: migrate it first), and the
+- validate.py on the current record (a record of an unsupported version refuses), and the
   current record against the frozen snapshot: the snapshot set the version sealed, its structured
   documents by content and its frozen sources by their exact bytes;
 - a build_guide.py okh.toml in hw/docs/ that describes another release;
@@ -27,8 +27,7 @@ never builds. It refuses the release when any of these fails, and then writes no
 
 It stages the copies, including the acceptance inventory under acceptance/, in
 .cad-work/release-<REV>/, writes and checks the manifest, then claims hw/releases/<REV>/ and renames
-the stage onto it. Sealed version 1 and 2 packages stay readable as they are and are never reissued
-or re-certified.
+the stage onto it. A sealed package of another manifest version is refused.
 
 --prune, once the package is sealed, prints the plan of superseded versions to remove (prune.py) with
 its digest and changes nothing; when hw/releases/<REV>/ already verifies and holds this version and
@@ -404,7 +403,7 @@ def check_acceptance(release: Release, frozen: Any) -> None:
         release.refuse("hw/product.yaml", "acceptance", f"the acceptance inventory cannot be formed: {error}")
         return
     if assessment.record.version != intent.RECORD_VERSION:
-        return  # validate.py reports record.migration_required, which refuses the release
+        return  # validate.py reports record.version_unsupported, which refuses the release
     if digest != frozen["evidence_sha256"]:
         release.refuse("hw/product.yaml", "acceptance", f"flow.frozen.evidence_sha256 is not the acceptance digest as it "
                        f"stands ({digest}): the evidence changed after the freeze; freeze again or open a change")
@@ -601,9 +600,8 @@ def acceptance_problems(manifest: dict[str, Any]) -> list[str]:
 def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
     """The existing hw/releases/<REV>/ when it verifies and holds `version` approved by `decision`, so a
     --prune rerun skips sealing; refused otherwise, since a used revision is never overwritten. A package
-    is read by its own manifest version: version 1 and 2 packages are inspected as sealed, never
-    re-certified; a version 3 package also verifies its sealed acceptance bytes and anchor. A manifest
-    version this release.py does not know is refused."""
+    must be manifest version 3, and also verifies its sealed acceptance bytes and anchor. Any other
+    manifest version is refused."""
     hw = hw.resolve()
     target_rel = layout.load().path("release.package", {"REV": rev})
     package = layout.locate(hw, target_rel)
@@ -611,14 +609,14 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
     problems = layout.verify(package) if package.is_dir() and not package.is_symlink() else ["it is not a directory"]
     manifest = _json(package / MANIFEST) if not problems else None
     frozen = manifest.get("frozen") if isinstance(manifest, dict) else None
-    schema = manifest.get("schema_version", 1) if isinstance(manifest, dict) else None
-    if not problems and schema not in (1, 2, 3):
+    schema = manifest.get("schema_version") if isinstance(manifest, dict) else None
+    if not problems and schema != SCHEMA_VERSION:
         problems = [f"its manifest version {schema!r} is not one this release.py reads"]
     if not problems and isinstance(manifest, dict):  # always an object here: schema is None otherwise
         if not isinstance(frozen, dict) or frozen.get("version") != version or manifest.get("approval") != decision:
             problems = [f"it holds {frozen.get('version') if isinstance(frozen, dict) else None} "
                         f"approved by {manifest.get('approval')}"]
-        elif schema == 3:
+        else:
             problems = acceptance_problems(manifest)
     if problems:
         finding = validate.finding(target_rel, f"{target_rel} exists but is not the sealed release of {version} approved "

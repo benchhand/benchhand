@@ -529,11 +529,11 @@ class ProgressiveGates(unittest.TestCase):
         record = normalized(documents())
         self.assertIn("gate.use_case", codes(assess(record, packet(record)).gate("design_freeze"), "error"))
 
-    def test_a_version_1_record_gets_one_migration_gate(self) -> None:
-        legacy = mi.normalize_record({"product.yaml": {"id": "old", "flow": {"stage": "parts"}}})
-        gate = evidence.assess(legacy).gate("parts")
+    def test_a_record_of_an_unsupported_version_gets_one_version_gate(self) -> None:
+        old = mi.normalize_record({"product.yaml": {"id": "old", "flow": {"stage": "parts"}}})
+        gate = evidence.assess(old).gate("parts")
         self.assertEqual([f.code for f in gate], ["gate.record"])
-        self.assertIn("migrate.py", gate[0].message)
+        self.assertIn("record_version None is not supported", gate[0].message)
 
 
 class ReleasePolicy(unittest.TestCase):

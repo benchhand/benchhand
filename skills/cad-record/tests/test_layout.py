@@ -512,7 +512,7 @@ class ValidatorLayout(TempProject):
 
     def setUp(self) -> None:
         super().setUp()
-        load("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py").migrated_copy(LAMP, self.hw)
+        load("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py").copied_record(LAMP, self.hw)
 
     def set_flow(self, **flow: Any) -> None:
         path = self.hw / "product.yaml"
