@@ -96,7 +96,6 @@ impact = _load_module("cad_record_impact", SCRIPTS / "impact.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
 operations = _load_module("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
-fail_fast = _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
 SKILLS = SCRIPTS.parents[1]
 
 STAGES = mi.STAGES
@@ -1413,8 +1412,8 @@ def run_plan(hw: Path, version: str, scope: str, stage: str, assessment: Assessm
     # TODO(2b, issue #23 04-full-sweep): the hash-proven full-sweep carry-forward plugs in here. At the
     # parts and detail approvals and at the freeze, a carry that passes proof checks 1-5 turns sweep.full
     # into a `carried` step recording carried_from and the proof hashes; anything unproved runs the sweep.
-    return fail_fast.plan(scope, column, producer_argv(hw, version, stage, since_version),
-                          not_applicable=_not_applicable(stage, manifest), stale=stale)
+    return _fail_fast().plan(scope, column, producer_argv(hw, version, stage, since_version),
+                             not_applicable=_not_applicable(stage, manifest), stale=stale)
 
 
 class _Producer:
@@ -1441,6 +1440,12 @@ class _Producer:
 
 def _lifecycle() -> Any:
     return _load_module("cad_flow_process_lifecycle", SKILLS / "cad-flow" / "scripts" / "process_lifecycle.py")
+
+
+def _fail_fast() -> Any:
+    # Loaded only by `run`: validate.py and the cad-recheck hook load this module from a copy that
+    # holds only the siblings they read.
+    return _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
 
 
 def _spawner(hw: Path, version: str, scope: str) -> Callable[[Any], _Producer]:
@@ -1502,8 +1507,8 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
         return 1, {**report, "findings": [Finding(mi.MIGRATION_REQUIRED, "hw/product.yaml", message + action).as_dict()]}
     assessment, _ = build_assessment(hw, label, today)
     work = run_plan(hw, label, scope, stage, assessment, since_version=since_version)
-    outcome = fail_fast.execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),
-                                strays=strays or (lambda: _strays(hw)))
+    outcome = _fail_fast().execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),
+                                   strays=strays or (lambda: _strays(hw)))
     report.update(status=outcome.status, steps=[step.as_dict() for step in outcome.steps], stopped_at=outcome.stopped_at)
     if outcome.strays:
         report["strays"] = [dict(item) for item in outcome.strays]
