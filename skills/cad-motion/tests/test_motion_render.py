@@ -684,14 +684,14 @@ class CrosscheckFreecad(unittest.TestCase):
         self.assertGreater(report["max_deviation"]["mm"], 90)
 
 
-class AgentOutput(unittest.TestCase):
+class CompactOutput(unittest.TestCase):
     def printed(self, result: dict[str, Any], hw: Path, agent: bool) -> str:
         stdout = io.StringIO()
-        with mock.patch.dict(os.environ, {"CAD_AGENT_OUTPUT": "1"} if agent else {}), contextlib.redirect_stdout(stdout):
-            motion._emit(result, hw, "render", 1)
+        with mock.patch.dict(os.environ, {"CAD_OUTPUT": "compact"} if agent else {"CAD_OUTPUT": "json"}), contextlib.redirect_stdout(stdout):
+            motion._emit(result, hw, "render", 1, False)
         return stdout.getvalue()
 
-    def test_agent_mode_prints_a_bounded_summary_naming_the_full_json_that_plain_mode_prints(self) -> None:
+    def test_compact_mode_prints_a_bounded_summary_naming_the_full_json_that_plain_mode_prints(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         result = {"status": "fail", "version": "v1", "case": "swing", "error": "rendered placements differ",
@@ -705,14 +705,14 @@ class AgentOutput(unittest.TestCase):
         self.assertEqual(full.read_text(encoding="utf-8"), plain)
         self.assertEqual(full.parent, (tmp / ".cad-work" / "agent-output").resolve())
 
-    def test_run_json_parses_a_child_that_does_not_inherit_the_agent_switch(self) -> None:
+    def test_run_json_parses_a_child_that_is_asked_for_json(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         done = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
-        with mock.patch.dict(os.environ, {"CAD_AGENT_OUTPUT": "1"}), \
+        with mock.patch.dict(os.environ, {"CAD_OUTPUT": "compact"}), \
                 mock.patch.object(motion.subprocess, "run", return_value=done) as run:
             motion._run_json(["tool"], tmp / "log", 5, "tool")
-        self.assertNotIn("CAD_AGENT_OUTPUT", run.call_args.kwargs["env"])
+        self.assertEqual(run.call_args.kwargs["env"]["CAD_OUTPUT"], "json")
 
 
 if __name__ == "__main__":

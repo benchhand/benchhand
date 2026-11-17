@@ -64,7 +64,7 @@ SKILLS = HERE.parents[2]
 RENDER_PY = SKILLS / "cad-render" / "scripts" / "render.py"
 FREECAD_PY = HERE.with_name("freecad_assembly.py")
 sys.path.insert(0, str(SKILLS / "cad-model" / "scripts"))
-from cadmodel import agent_output, scriptenv  # noqa: E402 - standard-library-only launcher and summary printer
+from cadmodel import scriptenv  # noqa: E402 - standard-library-only launcher
 
 
 def _load(name: str, path: Path) -> Any:
@@ -80,6 +80,7 @@ def _load(name: str, path: Path) -> Any:
 pose = _load("cad_motion_pose", HERE.with_name("pose.py"))
 plan = _load("cad_motion_plan", HERE.with_name("plan.py"))
 motion_glb = _load("cad_motion_glb", HERE.with_name("motion_glb.py"))
+emit = _load("cad_record_emit", SKILLS / "cad-record" / "scripts" / "emit.py")  # the shared output emitter
 LAYOUT = pose.LAYOUT
 
 OUTPUTS = ("glb", "sheet", "video", "frames")
@@ -214,7 +215,7 @@ def _run_json(command: list[str], log: Path, timeout: float, what: str) -> tuple
     try:
         with log.open("w", encoding="utf-8") as stderr:
             proc = subprocess.run(command, stdout=subprocess.PIPE, stderr=stderr, text=True, timeout=timeout,
-                                  env=agent_output.child_env())  # this parser needs the full JSON
+                                  env=emit.json_env())  # this parser needs the full JSON
     except subprocess.TimeoutExpired as error:
         raise pose.MotionError(f"{what} did not finish within {timeout} s (log: {log})") from error
     except FileNotFoundError as error:
@@ -353,7 +354,7 @@ def command_plan(args: argparse.Namespace) -> int:
         out["frames_out"] = str(target)
     code = 1 if report["status"] == "fail" else 0
     blocking = [*report["limit_findings"], *report["gaps"]] if report["status"] == "fail" else []
-    _emit(out, ctx.hw, "plan", code, blocking=blocking)
+    _emit(out, ctx.hw, "plan", code, args.json, blocking=blocking)
     return code
 
 
@@ -414,7 +415,7 @@ def command_render(args: argparse.Namespace) -> int:
         if reused is not None:
             result = json.loads((reused / "result.json").read_text(encoding="utf-8"))
             result.update(bundle=str(reused), reused=True)
-            _emit(result, ctx.hw, "render", 0)
+            _emit(result, ctx.hw, "render", 0, args.json)
             return 0
     work = ctx.hw.parent / ".cad-work" / "motion" / f"{effective['case']}-{uuid.uuid4().hex[:12]}"
     work.mkdir(parents=True)
@@ -489,16 +490,17 @@ def command_render(args: argparse.Namespace) -> int:
     shutil.rmtree(work, ignore_errors=True)
     result.update(published)
     result["timings_s"] = {**timings, "total": round(time.monotonic() - wall, 3)}
-    _emit(result, ctx.hw, "render", 0)
+    _emit(result, ctx.hw, "render", 0, args.json)
     return 0
 
 
-def _emit(result: Mapping[str, Any], hw: Path, command: str, code: int, blocking: Any = None) -> None:
-    """Print a plan or render result: in full, or as a summary of it for an agent (cadmodel.agent_output)."""
+def _emit(result: Mapping[str, Any], hw: Path, command: str, code: int, json_flag: bool,
+          blocking: Any = None) -> None:
+    """Print a plan or render result: in full, or as a summary of it in compact mode (cad-record emit.py)."""
     facts = {"version": result.get("version"), "case": result.get("case"), "summary": result.get("summary"),
              "bundle": result.get("bundle"), "error": result.get("error")}
-    agent_output.emit(result, tool=f"motion {command}", name=f"motion-{command}", code=code,
-                      scratch=agent_output.work_dir(hw), facts=facts, blocking=blocking)
+    emit.emit(result, tool=f"motion {command}", name=f"motion-{command}", code=code, scratch=emit.work_dir(hw),
+              facts=facts, blocking=blocking, json_flag=json_flag)
 
 
 def place(ctx: Context, files: Mapping[str, Path], result: Mapping[str, Any], params: Mapping[str, str],
@@ -528,6 +530,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("plan", "render"):
         command = sub.add_parser(name)
         command.add_argument("--hw", type=Path, required=True, help="hardware design record directory (hw/)")
+        command.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
         command.add_argument("--version", type=pose._version, required=True, metavar="vN|latest")
         source = command.add_mutually_exclusive_group()
         source.add_argument("--case", help="default (generated) or an authored hw/motion/cases/<case>")
@@ -548,7 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return command_plan(args) if args.command == "plan" else command_render(args)
     except Failed as failure:
-        _emit(failure.report, args.hw, args.command, 1)
+        _emit(failure.report, args.hw, args.command, 1, args.json)
         return 1
     except plan.PlanError as error:
         print(json.dumps({"status": "error", "problems": error.problems}, indent=2))

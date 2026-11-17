@@ -764,14 +764,14 @@ class Cli(unittest.TestCase):
         self.assertIn("--jobs must be between 1 and 8", json.loads(result.stdout)["error"])
 
     def printed(self, summary: dict, agent: bool) -> str:
-        env = {"CAD_AGENT_OUTPUT": "1"} if agent else {}
+        env = {"CAD_OUTPUT": "compact"} if agent else {"CAD_OUTPUT": "json"}
         stdout = io.StringIO()
         with mock.patch.dict(os.environ, env), mock.patch.object(render, "run", return_value=(1, summary)), \
                 contextlib.redirect_stdout(stdout):
             self.assertEqual(render.main([str(self.hw)]), 1)
         return stdout.getvalue()
 
-    def test_agent_mode_prints_a_bounded_summary_naming_the_full_json_that_plain_mode_prints(self) -> None:
+    def test_compact_mode_prints_a_bounded_summary_naming_the_full_json_that_plain_mode_prints(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.hw = Path(tmp.name) / "hw"

@@ -106,7 +106,7 @@ jobs:
         motion-b skills/cad-motion/tests/test_motion.py StepTests.test_the_correctly_timed_v6_passes_and_reports_its_minimum_clearance
         motion-b skills/cad-motion/tests/test_motion.py StepTests.test_one_crank_sweeps_the_coupled_v6_and_finds_the_misphased_valve_at_its_tdc
         cad-model skills/cad-model/tests/test_cad_model.py
-        cad-model skills/cad-model/tests/test_agent_output.py
+        cad-model skills/cad-model/tests/test_output_budget.py
         motion skills/cad-viewer/tests/test_viewer.py
         motion skills/cad-motion/tests/test_motion_render.py
         cad-model skills/cad-record/tests/test_design_rules.py

@@ -27,12 +27,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import assembly_data  # noqa: E402 - the sibling module, beside this script in the skill
 import design_rules  # noqa: E402 - the sibling module: margins, retention, feasibility and visibility rules
 
-try:  # cad-record also runs without its sibling cad-model skill (pre-commit hook); then it prints the full JSON
-    sys.path.append(str(Path(__file__).resolve().parents[2] / "cad-model" / "scripts"))
-    from cadmodel import agent_output
-except ImportError:
-    agent_output = None  # type: ignore[assignment]
-
 
 def _load_module(name: str, path: Path) -> Any:
     """A standard-library module loaded once by path and registered in sys.modules, where dataclasses look it up."""
@@ -49,6 +43,7 @@ def _load_module(name: str, path: Path) -> Any:
 coupling = _load_module("cad_motion_coupling", Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "coupling.py")
 # The canonical hw/ layout (layout.json beside schemas/), the one reader of where record and output files live.
 layout = _load_module("cad_record_layout", Path(__file__).resolve().parent / "layout.py")
+emit = _load_module("cad_record_emit", Path(__file__).resolve().parent / "emit.py")
 # The record version 2 manufacturing intent (the one reader of use case, routes and profiles) and the
 # evidence model on it: waivers, typed verification and the acceptance digest.
 intent = _load_module("cad_record_manufacturing_intent", Path(__file__).resolve().parent / "manufacturing_intent.py")
@@ -1244,6 +1239,7 @@ def main() -> int:
     parser.add_argument("--migration-plan", action="store_true",
                         help="print a read-only move and rebuild plan for every stray, legacy or damaged path")
     parser.add_argument("--report", type=Path, help="with --migration-plan: write the plan here, under .cad-work/")
+    parser.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
     args = parser.parse_args()
     if args.report is not None and not args.migration_plan:
         parser.error("--report needs --migration-plan")
@@ -1271,12 +1267,9 @@ def main() -> int:
     failures = blocking(findings)
     report = {"ok": not failures, "findings": findings}
     code = 1 if failures else 0
-    if agent_output is None:
-        print(json.dumps(report, indent=2))
-    else:
-        hw = args.project_dir / "hw" if (args.project_dir / "hw").is_dir() else args.project_dir
-        agent_output.emit(report, tool="validate", name="validate", code=code, scratch=agent_output.work_dir(hw),
-                          facts={"warnings": len(findings) - len(failures)}, blocking=failures)
+    hw = args.project_dir / "hw" if (args.project_dir / "hw").is_dir() else args.project_dir
+    emit.emit(report, tool="validate", name="validate", code=code, scratch=emit.work_dir(hw), json_flag=args.json,
+              facts={"warnings": len(findings) - len(failures)}, blocking=failures)
     return code
 
 

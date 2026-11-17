@@ -395,17 +395,17 @@ class InitAndDeliver(ScratchCase):
         self.assertTrue((self.hw / "parts" / "PRT-0001" / "model.py").is_file())
 
 
-class AgentOutputChildren(unittest.TestCase):
-    def test_run_tool_parses_a_child_that_does_not_inherit_the_agent_switch(self) -> None:
+class JsonChildren(unittest.TestCase):
+    def test_run_tool_parses_a_child_that_is_asked_for_json(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         scratch_module = load_scratch()
         done = subprocess.CompletedProcess([], 0, stdout='{"findings": []}', stderr="")
-        with mock.patch.dict("os.environ", {"CAD_AGENT_OUTPUT": "1"}), \
+        with mock.patch.dict("os.environ", {"CAD_OUTPUT": "compact"}), \
                 mock.patch.object(scratch_module.subprocess, "run", return_value=done) as run:
             result = scratch_module.run_tool([str(scratch_module.CAD_MODEL)], Path(tmp.name) / "log")
         self.assertEqual(result, (0, {"findings": []}))
-        self.assertNotIn("CAD_AGENT_OUTPUT", run.call_args.kwargs["env"])
+        self.assertEqual(run.call_args.kwargs["env"]["CAD_OUTPUT"], "json")
 
 
 class LampExample(ScratchCase):

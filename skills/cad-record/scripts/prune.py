@@ -46,6 +46,13 @@ if "cad_record_yaml_loader" not in sys.modules:
     sys.modules["cad_record_yaml_loader"] = importlib.util.module_from_spec(_SPEC)
     _SPEC.loader.exec_module(sys.modules["cad_record_yaml_loader"])
 yaml_loader = sys.modules["cad_record_yaml_loader"]
+if "cad_record_emit" not in sys.modules:
+    _SPEC = importlib.util.spec_from_file_location("cad_record_emit", Path(__file__).resolve().parent / "emit.py")
+    if _SPEC is None or _SPEC.loader is None:
+        raise ImportError("cannot load emit.py beside prune.py")
+    sys.modules["cad_record_emit"] = importlib.util.module_from_spec(_SPEC)
+    _SPEC.loader.exec_module(sys.modules["cad_record_emit"])
+emit = sys.modules["cad_record_emit"]
 
 JOURNAL = "journal.json"
 LEDGERS = ("manufacturing/evidence.yaml", "manufacturing/findings.yaml")  # accepted evidence, never pruned blind
@@ -266,7 +273,7 @@ def store_gc(hw: Path) -> dict[str, Any]:
     """`cad_model.py store gc`: drop part-store objects that no surviving manifest references."""
     try:
         result = subprocess.run([sys.executable, str(CAD_MODEL), "store", "gc", str(hw)],
-                                capture_output=True, text=True, check=False, timeout=300)
+                                capture_output=True, text=True, check=False, timeout=300, env=emit.json_env())
     except (OSError, subprocess.TimeoutExpired) as error:
         raise layout.LayoutError(f"store gc did not run: {error}") from error
     if result.returncode != 0:

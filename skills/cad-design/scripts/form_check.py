@@ -103,6 +103,21 @@ BLOCKING_CHECKS = frozenset({"brep_invalid", "step_readback", "joint_bore_missin
 
 POSE_PATH = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "pose.py"
 CAD_MODEL_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-model" / "scripts"
+
+
+def load_emit() -> Any:
+    """cad-record's output emitter, loaded by path: every skill sits beside cad-record in an installed tree."""
+    name = "cad_record_emit"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            name, Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "emit.py")
+        assert spec is not None and spec.loader is not None
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+emit = load_emit()
 KERNEL_FACTS = "build.json"
 FIDELITY = ("F0", "F1", "F2", "F3")
 BLOCK_PLANAR_FRACTION = 0.80
@@ -1281,13 +1296,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replace", action="store_true", help="with --version: retain and replace a bundle of another recipe")
     parser.add_argument("--out", type=Path, help="with --version: write the packet to this .cad-work path instead of publishing")
     parser.add_argument("--on", type=date.fromisoformat, help="with --version: the date calibrations must be valid on (default today)")
+    parser.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
     args = parser.parse_args(argv)
     if args.version is None and (args.replace or args.out or args.on):
         parser.error("--replace, --out and --on need --version")
     pose = load_pose()
     sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
-    from cadmodel import agent_output
-
     try:
         with pose.stdout_to_stderr():
             if args.version is None:
@@ -1308,9 +1322,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "error", "error": f"{type(error).__name__}: {error}"}))
         return 2
     manufacturing = report.get("manufacturing") or {}
-    blocking = [*agent_output.blocking_of(report), *manufacturing.get("problems", []),
+    blocking = [*emit.blocking_of(report), *manufacturing.get("problems", []),
                 *manufacturing.get("findings", [])]
-    agent_output.emit(report, tool="form_check", name="form_check", code=code, scratch=agent_output.work_dir(args.hw),
+    emit.emit(report, tool="form_check", name="form_check", code=code, scratch=emit.work_dir(args.hw),
+              json_flag=args.json,
                       facts={"fidelity": report.get("fidelity"), "version": report.get("version"),
                              "manufacturing": manufacturing.get("status"), "packet": manufacturing.get("bundle")},
                       blocking=blocking)

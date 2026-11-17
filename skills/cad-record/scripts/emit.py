@@ -1,14 +1,20 @@
-"""Print a producer's JSON result in full for a person or a script, or as a short summary for an agent.
+"""Print a producer's result as full JSON or as a short summary for an agent.
 
-`cad-flow/scripts/run.py` sets `CAD_AGENT_OUTPUT=1` for every tool it launches. A producer then prints the
-verdict, its first blocking findings and the path of the full JSON instead of the whole document. The full
-JSON is written byte for byte as the plain mode would print it, so no information is lost. Without the
-variable the output is exactly `json.dumps(result, indent=2)` and a newline.
+The one output emitter of the CAD skills. A producer loads it by path from cad-record's scripts directory
+(`<skills>/cad-record/scripts/emit.py`, reachable from every skill through its own file path) and calls `emit`.
 
-A tool that parses another producer's stdout must start it with `child_env()`, so it always gets full JSON.
+Mode, by precedence: the `--json` flag (`json_flag=True`), then the `CAD_OUTPUT` environment variable
+(`text`, `compact` or `json`), then DEFAULT. `cad-flow/scripts/run.py` sets `CAD_OUTPUT=compact` for the
+tools it launches for an agent.
 
-The module is standard-library only and lives in cadmodel, the package every skill script already imports
-from a sibling `cad-model/scripts` directory.
+- `json`: exactly `json.dumps(result, indent=2)` and a newline.
+- `compact`: the verdict, the first blocking findings and the path of the full JSON, which is written byte for
+  byte as `json` mode prints it, so no information is lost. A result no longer than its summary prints whole.
+- `text` is accepted but has no renderer yet, so it prints like DEFAULT.
+
+A tool that parses another producer's stdout must start it with `json_env()`.
+
+Standard library only.
 """
 
 from __future__ import annotations
@@ -21,7 +27,9 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-ENV = "CAD_AGENT_OUTPUT"
+ENV = "CAD_OUTPUT"
+MODES = ("text", "compact", "json")
+DEFAULT = "json"
 MAX_BLOCKING = 5
 MAX_LINE = 200
 NONBLOCKING_SEVERITIES = frozenset({"warning", "info"})
@@ -29,13 +37,23 @@ IDENTITY_KEYS = ("code", "check", "id", "rule")
 SUBJECT_KEYS = ("part", "joint", "subject", "path")
 
 
-def enabled(env: Mapping[str, str] | None = None) -> bool:
-    return (os.environ if env is None else env).get(ENV, "") not in ("", "0")
+def mode(json_flag: bool = False, env: Mapping[str, str] | None = None) -> str:
+    """The output mode: `--json`, else `CAD_OUTPUT` when it names a mode, else DEFAULT."""
+    if json_flag:
+        return "json"
+    value = (os.environ if env is None else env).get(ENV, "")
+    return value if value in MODES else DEFAULT
 
 
-def child_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
-    """`env` (default: this process's) without the agent switch: for a child whose stdout this tool parses."""
-    return {key: value for key, value in (os.environ if env is None else env).items() if key != ENV}
+def json_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """`env` (default: this process's) with full JSON requested: for a child whose stdout this tool parses."""
+    return {**(os.environ if env is None else env), ENV: "json"}
+
+
+def validate_result(result: Any, schema_id: str | None) -> None:
+    """Hook: check `result` against the schema named `schema_id` before it is printed or written.
+
+    Package G implements it. Until then it accepts everything."""
 
 
 def work_dir(hw: Path) -> Path:
@@ -77,8 +95,8 @@ def verdict_of(result: Mapping[str, Any]) -> str:
 
 def emit(result: Any, *, tool: str, name: str, code: int, scratch: Path | None = None, out: Path | None = None,
          facts: Mapping[str, Any] | None = None, blocking: Iterable[Any] | None = None,
-         stream: TextIO | None = None) -> None:
-    """Print `result`: in full, or as a summary when the agent switch is on.
+         json_flag: bool = False, schema_id: str | None = None, stream: TextIO | None = None) -> None:
+    """Print `result`: in full, or as a summary in `compact` mode.
 
     `out` is a file that already holds exactly this result's plain text; otherwise the full text goes to a
     file in `scratch` named from `name` and a digest. When neither exists or the write fails, the full JSON is
@@ -86,8 +104,9 @@ def emit(result: Any, *, tool: str, name: str, code: int, scratch: Path | None =
     `blocking_of`.
     """
     stream = sys.stdout if stream is None else stream
+    validate_result(result, schema_id)
     text = json.dumps(result, indent=2)
-    if not enabled():
+    if mode(json_flag) != "compact":
         print(text, file=stream)
         return
     mapping = result if isinstance(result, Mapping) else {}

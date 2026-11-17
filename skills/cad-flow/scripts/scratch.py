@@ -66,7 +66,7 @@ CAD_MODEL_SCRIPTS = SKILLS / "cad-model" / "scripts"
 CAD_RECORD_SCRIPTS = SKILLS / "cad-record" / "scripts"
 FORM_CHECK = SKILLS / "cad-design" / "scripts" / "form_check.py"
 sys.path.insert(0, str(CAD_MODEL_SCRIPTS))
-from cadmodel import agent_output, scriptenv  # noqa: E402 - standard library only
+from cadmodel import scriptenv  # noqa: E402 - standard library only
 CAD_MODEL = CAD_MODEL_SCRIPTS / "cad_model.py"
 WORK_DIR = ".cad-work"
 # .cad/ holds only caches and control files (cad-record layout cache.*, control.*): the part store is as
@@ -87,6 +87,20 @@ def load_layout() -> Any:
         sys.modules[name] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(sys.modules[name])
     return sys.modules[name]
+
+
+def load_emit() -> Any:
+    """cad-record's output emitter, for the env of the tools whose JSON this script parses."""
+    name = "cad_record_emit"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, CAD_RECORD_SCRIPTS / "emit.py")
+        assert spec is not None and spec.loader is not None
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+emit = load_emit()
 
 
 layout = load_layout()
@@ -195,7 +209,7 @@ def run_tool(argv: list[str], log: Path) -> tuple[int, dict[str, Any] | None]:
     try:
         with log.open("w", encoding="utf-8") as stderr:
             done = subprocess.run(scriptenv.script_command(Path(argv[0]), *argv[1:]),
-                                  stdout=subprocess.PIPE, stderr=stderr, text=True, env=agent_output.child_env())
+                                  stdout=subprocess.PIPE, stderr=stderr, text=True, env=emit.json_env())  # this parser needs the full JSON
     except FileNotFoundError as error:
         raise UsageError("uv is not on PATH") from error
     try:

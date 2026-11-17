@@ -96,8 +96,18 @@ YAML_LOADER_PY = SKILL.parent / "cad-record" / "scripts" / "yaml_loader.py"
 CONCEPT_SERVE = SKILL.parent / "cad-concept" / "scripts" / "serve.py"
 # The page chrome tokens (status line) are cad-concept's; renderer/tokens.css holds the scene's.
 CONCEPT_TOKENS = SKILL.parent / "cad-concept" / "assets" / "viewer" / "tokens.css"
-sys.path.insert(0, str(SKILL.parent / "cad-model" / "scripts"))
-from cadmodel import agent_output  # noqa: E402 - standard-library-only summary printer shared by the producers
+def load_emit() -> Any:
+    """cad-record's output emitter, loaded by path: every skill sits beside cad-record in an installed tree."""
+    name = "cad_record_emit"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, SKILL.parent / "cad-record" / "scripts" / "emit.py")
+        assert spec is not None and spec.loader is not None
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+emit = load_emit()
 THREE_VERSION = "0.186.1"
 CHROMIUM_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
                  *( ["--num-raster-threads=1"] if os.environ.get("CAD_RENDER_RASTER_THREADS") == "1" else [])]
@@ -1631,6 +1641,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, help="write scratch output under .cad-work only")
     parser.add_argument("--replace", action="store_true", help="retain and replace a conflicting bundle")
     parser.add_argument("--cache-dir", type=Path, help="pinned three.js module cache (default: cad-concept's)")
+    parser.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
     parser.add_argument("--motion", type=Path, metavar="SPEC",
                         help="cad-motion motion.py frames spec: render its frames and contact sheet into --out-dir")
     try:
@@ -1646,8 +1657,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "error", "error": f"{type(exc).__name__}: {exc}"}))
         return 2
     failures = [f"{view}: {', '.join(map(str, found))}" for view, found in (summary.get("failures") or {}).items()]
-    agent_output.emit(summary, tool="render", name="render", code=code, scratch=agent_output.work_dir(args.hw),
-                      facts={"version": summary.get("version"), "cache": summary.get("cache"),
+    emit.emit(summary, tool="render", name="render", code=code, scratch=emit.work_dir(args.hw), json_flag=args.json,
+              facts={"version": summary.get("version"), "cache": summary.get("cache"),
                              "out_dir": summary.get("out_dir")}, blocking=failures)
     return code
 

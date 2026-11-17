@@ -12,12 +12,13 @@ The target path is relative to the directory containing this installed `cad-*` s
 individual `--with` dependencies for uv-reserved basenames), which keys uv's cache by the declared
 dependency set.
 
-The tool runs with `CAD_AGENT_OUTPUT=1` unless the caller set that variable: producers then print a short
-summary and the path of the full JSON (see `cadmodel.agent_output`).
+The tool runs with `CAD_OUTPUT=compact` unless the caller set that variable (or passes `--json`): producers
+then print a short summary and the path of the full JSON (see cad-record's `emit.py`).
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -25,7 +26,12 @@ from pathlib import Path
 SKILLS = Path(__file__).resolve().parents[2]
 MODEL_SCRIPTS = SKILLS / "cad-model" / "scripts"
 sys.path.insert(0, str(MODEL_SCRIPTS))
-from cadmodel import agent_output, scriptenv  # noqa: E402 - standard-library-only helpers
+from cadmodel import scriptenv  # noqa: E402 - standard-library-only helper
+
+_EMIT = importlib.util.spec_from_file_location("cad_record_emit", SKILLS / "cad-record" / "scripts" / "emit.py")
+assert _EMIT is not None and _EMIT.loader is not None
+emit = importlib.util.module_from_spec(_EMIT)
+_EMIT.loader.exec_module(emit)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     command = scriptenv.script_command(target, *args[1:])
-    os.environ.setdefault(agent_output.ENV, "1")  # an agent reads this stdout; CAD_AGENT_OUTPUT=0 keeps full JSON
+    os.environ.setdefault(emit.ENV, "compact")  # an agent reads this stdout; CAD_OUTPUT=json keeps full JSON
     try:
         os.execvp(command[0], command)
     except OSError as error:
