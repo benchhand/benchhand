@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """layout_check.parse_transform: the SVG transform-list grammar, no FreeCAD needed.
 
-Run: uv run --no-project --with hypothesis python -B scripts/ci_shards.py run rest cad/skills/cad-drawings/tests/test_layout_transform.py
+Run: uv run --no-project --with hypothesis==6.170.15 python -B scripts/ci_shards.py run rest skills/cad-drawings/tests/test_layout_transform.py
 """
 
 from __future__ import annotations
@@ -31,6 +31,15 @@ class EmptyArgumentTests(unittest.TestCase):
         # SVG 1.1 7.6 / CSS Transforms 1 section 10: translate and scale take at least one number and
         # rotate takes one or three, so "translate()" is a grammar error; the parser's one error type is ValueError.
         for text in ("translate()", "translate( )", "scale()", "rotate()", "translate(1) scale()"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                layout_check.parse_transform(text)
+
+    def test_a_wrong_number_of_arguments_is_a_value_error(self) -> None:
+        # SVG 1.1 7.6: translate and scale take 1 or 2 numbers, rotate 1 or 3, matrix exactly 6
+        for text in (
+            "rotate(1 2)", "rotate(1 2 3 4)", "translate(1 2 3)", "scale(1 2 3)",
+            "matrix(1 2 3 4 5)", "matrix(1 2 3 4 5 6 7)", "matrix()",
+        ):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 layout_check.parse_transform(text)
 

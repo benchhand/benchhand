@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The view tokens of a drawing intent: the scale string and the projection relation, no FreeCAD needed.
 
-Run: uv run --no-project --with pyyaml --with defusedxml --with jsonschema --with hypothesis python -B scripts/ci_shards.py run rest cad/skills/cad-drawings/tests/test_view_tokens.py
+Run: uv run --no-project --with pyyaml==6.0.3 --with defusedxml==0.7.1 --with jsonschema==4.26.0 --with hypothesis==6.170.15 python -B scripts/ci_shards.py run rest skills/cad-drawings/tests/test_view_tokens.py
 """
 
 from __future__ import annotations
@@ -28,6 +28,12 @@ class ScaleTokenTests(unittest.TestCase):
     def test_a_scale_with_a_zero_term_is_a_value_error(self) -> None:
         # a scale is a ratio of positive terms; 1:0 would divide by zero and 0:1 would draw nothing
         for text in ("1:0", "0:1", "0:0"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                part_views.parse_scale(text)
+
+    def test_a_spelling_the_schema_forbids_is_a_value_error(self) -> None:
+        # drawing.schema.json: ^[1-9][0-9]*:[1-9][0-9]*$ - no padding, sign, decimal point, exponent or non-ASCII digit
+        for text in ("01:2", "1.5:2", "1:2.5", "1e2:1", "+1:2", "-1:2", " 1:2", "1:2 ", "1:2\n", "\uff11:2", "inf:1", "1:2:3", "1"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 part_views.parse_scale(text)
 
