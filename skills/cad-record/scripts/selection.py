@@ -240,7 +240,7 @@ def input_digest(documents: Mapping[str, Any]) -> str:
     for rel, data in documents.items():
         if re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and isinstance(data, Mapping):
             part = {key: data.get(key) for key in _PART_FIELDS}
-            if isinstance(part["intent"], Mapping):  # the colour is appearance, not a selection input
+            if isinstance(part["intent"], Mapping):  # color is no selection input
                 part["intent"] = {key: value for key, value in part["intent"].items() if key not in _APPEARANCE_INTENT}
             scoped[rel] = part
     text = json.dumps(scoped, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)

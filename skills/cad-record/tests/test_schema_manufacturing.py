@@ -197,7 +197,7 @@ class SharedDefinitions(SchemaCase):
         self.assert_shared("evidence_level", {level: level for level in intent.EVIDENCE_LEVELS}, {"badge": "certified"})
 
     def test_the_3mf_output_family_and_its_obligation_id_are_schema_valid(self) -> None:
-        """The impact tests use `export.3mf@TST-0001`; a family segment may start with a digit."""
+        """The impact tests use `export.3mf@TST-0001`. A family segment may start with a digit."""
         self.assert_shared("check_family", {"3mf export": "export.3mf"}, {})
         self.assert_shared("obligation_id", {"3mf export": "export.3mf@TST-0001"}, {})
 

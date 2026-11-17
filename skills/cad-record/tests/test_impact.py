@@ -329,8 +329,8 @@ class Selection(unittest.TestCase):
         self.assertIn("DR-001", result.reopened_decisions)
 
     def test_records_without_a_colour_keep_their_recorded_selection_digest(self) -> None:
-        """Digests already written to selection.yaml (assessment.input_sha256) must stay valid; worked out
-        from the digest before colour was excluded."""
+        """Digests recorded in selection.yaml (assessment.input_sha256) stay valid. The pins come from the
+        digest before color left the scope."""
         digest = acceptance.evidence.selection.input_digest
         self.assertEqual(digest(documents()), "14eefb6b8e5cb822baae30ec3612eefefac8d22e55482ef23227234fa73ea01d")
         self.assertEqual(self.digest, "d22bad8dfe54d21aea9dc9248ae15c665d0be4741a70b097e292379955387645")

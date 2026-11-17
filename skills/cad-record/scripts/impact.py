@@ -103,7 +103,7 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("motion.", _JUDGED | {"geometry", "interface", "material", "finish", "load", "process"}),
     ("assembly.", _JUDGED | {"geometry", "interface"}),
     ("function.", _JUDGED | {"geometry", "material", "condition", "load", "environment", "interface", "process", "finish"}),
-    ("export.3mf", frozenset({"geometry", "material", "appearance"})),  # package D's 3MF output writes the part colour and material name
+    ("export.3mf", frozenset({"geometry", "material", "appearance"})),  # package D's 3MF output writes the part color and material name
     ("requirement.", _EVERYTHING),
     ("policy.", _EVERYTHING),
 )
@@ -326,7 +326,7 @@ class _Record:
         if key == "product":  # the whole sequence, occurrence references included, which the per-part view misses
             combined["interface"] = {"parts": combined["interface"], "assembly_sequence": self.operations,
                                      "assembly_inventory": plain(self.record.assembly_inventory)}
-        combined.pop("appearance", None)  # only a part has a colour
+        combined.pop("appearance", None)  # only a part has a color
         return combined
 
 

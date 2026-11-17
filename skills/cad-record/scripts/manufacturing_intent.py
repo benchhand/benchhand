@@ -609,7 +609,7 @@ class PartIntent:
     critical_surfaces: tuple[CriticalSurface, ...] | Fact
     route: tuple[Operation, ...] | Fact
     rationale: Mapping[str, Any] | None
-    color: str | None = None  # sRGB #RRGGBB for 3MF export; None when the intent names none
+    color: str | None = None  # sRGB #RRGGBB for 3MF export, or None
 
     @classmethod
     def unknown(cls, reason: str) -> PartIntent:
