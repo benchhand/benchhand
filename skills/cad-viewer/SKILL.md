@@ -109,8 +109,8 @@ to the live 3D viewer.
 | Renders | `hw/renders/<vN>/<subject>/{render.json,*.png,manifest.json}` (`cad-render`) | view quality, retry strategy, and material/input decisions from render.json |
 | Drawings | `hw/drawings/<vN>/<subject>/{package.json,sheet-1.png,sheet-1.pdf,manifest.json}` | status, scale, projection and Open PDF with its absolute path |
 | Concept screenshots | `hw/concept/screenshots/` (`cad-concept`) | scene and variant |
-The version picker uses built labels from cad-record layout. Each option includes the build date and part
-count, plus counts of valid render sets, capture bundles and drawing preview bundles; choose Gallery to
+The version picker uses built labels from cad-record layout. Each option includes the part
+count, plus counts of valid render sets, capture bundles and drawing preview bundles. Choose Gallery to
 see the actual images. The file route serves only PNG, JPEG, and PDF files inside the open `hw/`.
 
 ## Rules
