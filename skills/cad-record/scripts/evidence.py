@@ -126,7 +126,7 @@ _REQUIRED_DOMAINS: Mapping[str, Mapping[str, frozenset[str]]] = {
 # unvalidated trial (a waived physical obligation) is permitted. Approved requirements and the
 # evidence policy (requirement.*, policy.*) are always in scope: a project may demand more.
 _LOWER = frozenset({"cad_valid", "geometrically_manufacturable", "process_planned"})
-_MAKE = ("intent.", "cad.", "route.", "process.", "purchase.", "optical.route")
+_MAKE = ("intent.", "cad.", "route.", "process.", "purchase.", "optical.route", "export.")
 _FIT = _MAKE + ("interface.", "feature.", "assembly.", "motion.play")
 _FUNCTION = _FIT + ("engineering.", "function.", "contact.", "motion.", "optical.")
 

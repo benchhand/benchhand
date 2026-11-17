@@ -283,6 +283,12 @@ class TessellationTests(unittest.TestCase):
                 self.assertAlmostEqual(report["threemf_volume_mm3"], report["stl_volume_mm3"],
                                        delta=1e-4 * report["stl_volume_mm3"])
 
+    def test_a_declared_colour_the_3mf_carries_passes_the_check_for_both_shapes(self) -> None:
+        for pn, report in self.report.items():
+            with self.subTest(pn=pn):
+                self.assertEqual((report["good_colour"]["status"], report["good_colour"]["failed"]), ("pass", []),
+                                 report["good_colour"])
+
     def test_each_fault_fails_the_check_by_the_condition_it_breaks(self) -> None:
         expected = {"cracked": ["watertight"], "inward": ["outward", "volume_within_deflection"],
                     "scaled": ["volume_within_deflection", "box_within_deflection"],
