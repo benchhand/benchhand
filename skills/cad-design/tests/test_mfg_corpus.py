@@ -543,14 +543,21 @@ class DocVerdictPathTests(unittest.TestCase):
         unknown = doc_support.route_verdict(self.bought(identity=fx.unknown("not recorded")), "purchase.identity@")
         self.assertEqual((known, unknown), ("pass", "unknown"))
 
-    def test_a_purchase_packet_the_schema_rejects_is_refused(self) -> None:
+    def test_a_purchase_packet_that_only_the_schema_rejects_is_refused(self) -> None:
+        """The packet is the real one plus a key the schema forbids (additionalProperties false). Evidence reads the packet
+        without noticing, so only the schema step can refuse it, and the reason names that step."""
         import types
 
         import doc_support
 
         pc = doc_support.process_checks()
-        broken = types.SimpleNamespace(packet=lambda dependencies: {"schema_version": 99})
-        with mock.patch.object(pc, "assess", lambda *args, **kwargs: broken), self.assertRaises(corpus.Rejected):
+        real = pc.assess
+
+        def assess_with_extra_key(*args: object, **kwargs: object) -> object:
+            result = real(*args, **kwargs)
+            return types.SimpleNamespace(packet=lambda dependencies: {**result.packet(dependencies), "unreviewed": True})
+
+        with mock.patch.object(pc, "assess", assess_with_extra_key), self.assertRaisesRegex(corpus.Rejected, r"^schema:"):
             doc_support.route_verdict(self.bought(), "purchase.identity@")
 
     def test_purchase_verdict_runs_from_a_process_that_only_imports_support(self) -> None:
