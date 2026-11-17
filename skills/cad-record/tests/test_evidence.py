@@ -919,6 +919,35 @@ class EvidenceRun(BuiltRecord):
             cases[ident] = case(next(step["argv"] for step in report["steps"] if step["id"] == ident))
         self.assertNotEqual(cases["sweep.smoke"], cases["sweep.full"])
 
+    def test_the_full_scope_refuses_to_default_to_an_advanced_flow_stage(self) -> None:
+        self.assertEqual(impact.plain(impact.read_record(self.hw).product)["flow"]["stage"], "parts")  # past the layout gate
+        with self.assertRaisesRegex(ValueError, "--stage"):
+            evidence.run(self.hw, "v1", "full", spawn=self.spawn, strays=list)
+        self.assertEqual(self.spawned, [])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = evidence.main(["run", "--hw", str(self.hw), "--version", "v1", "--scope", "full"])
+        self.assertEqual((code, json.loads(out.getvalue())["status"]), (2, "error"))
+
+    def test_a_full_run_after_provisional_advancement_evaluates_the_stage_of_its_gate(self) -> None:
+        code, report = self.run_scope("full", "layout")  # flow.stage is already parts
+        form = next(step for step in report["steps"] if step["id"] == "form")
+        self.assertEqual((report["stage"], form["argv"][form["argv"].index("--fidelity") + 1]), ("layout", "F1"))
+        self.assertEqual(report["packet"]["stage"], "layout")
+
+    def test_both_sweeps_forward_the_attachments_of_the_built_manifest(self) -> None:
+        manifest_path = self.hw / "versions" / "v1" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["joints"] = [{"id": "elbow", "type": "revolute", "min": 0, "max": 90, "nominal": 0}]
+        manifest["attach"] = ["TST-0002=TST-0001", "TST-0004=TST-0001"]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        for scope, ident in (("commit", "sweep.smoke"), ("full", "sweep.full")):
+            with self.subTest(ident):
+                _, report = self.run_scope(scope, "layout")
+                argv = next(step["argv"] for step in report["steps"] if step["id"] == ident)
+                forwarded = [argv[i + 1] for i, word in enumerate(argv) if word == "--attach"]
+                self.assertEqual(forwarded, ["TST-0002=TST-0001", "TST-0004=TST-0001"])
+
 
 class EvidenceRunProducers(BuiltRecord):
     """`evidence.py run` starting real processes through a stand-in for cad-flow run.py."""
@@ -979,6 +1008,26 @@ class EvidenceRunProducers(BuiltRecord):
                 _, report = self.run_real(producers, "full", stage)
                 step = next(item for item in report["steps"] if item["id"] == "form")
                 self.assertEqual((step["exit"], step["status"], report["stopped_at"]), (1, status, stopped))
+
+    def form_blocks(self, report: dict[str, Any], stage: str) -> None:
+        """A form_check.py exit 1 with `report` stops the run at the form step at `stage`, with no packet."""
+        producers = {"cad-design/scripts/form_check.py": ("form", report, 1)}
+        code, run_report = self.run_real(producers, "full", stage)
+        form = next(item for item in run_report["steps"] if item["id"] == "form")
+        self.assertEqual((code, form["exit"], form["status"], run_report["stopped_at"], run_report["packet"]),
+                         (1, 1, "fail", "form", None))
+
+    def test_a_fidelity_failing_form_report_blocks_even_when_its_open_obligations_are_not_yet_due(self) -> None:
+        parts = next(o.id for o in mi.required_checks(impact.read_record(self.hw))
+                     if o.family.startswith("process.") and o.stage == "parts")
+        self.form_blocks({"status": "fail", "manufacturing": {"status": "unknown",
+                                                              "open": [{"obligation": parts, "outcome": "unknown"}]}}, "layout")
+
+    def test_a_failed_outcome_blocks_even_when_its_obligation_is_not_yet_due(self) -> None:
+        parts = next(o.id for o in mi.required_checks(impact.read_record(self.hw))
+                     if o.family.startswith("process.") and o.stage == "parts")
+        self.form_blocks({"status": "pass", "manufacturing": {"status": "fail",
+                                                              "open": [{"obligation": parts, "outcome": "fail"}]}}, "layout")
 
 
 class EvidenceRunCli(BuiltRecord):

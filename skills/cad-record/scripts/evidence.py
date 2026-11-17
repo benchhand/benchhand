@@ -9,7 +9,7 @@ built on it; waivers; and the acceptance digest a freeze and a release anchor.
 
     uv run --script evidence.py check  --hw HW --version vN [--stage STAGE] [--out .cad-work/evidence.json]
     uv run --script evidence.py digest --hw HW --version vN
-    uv run --script evidence.py run    --hw HW --version vN --scope commit|full [--stage STAGE]
+    uv run --script evidence.py run    --hw HW --version vN --scope commit|full [--stage STAGE]   (--stage is required for full)
                                        [--since-version vM] [--out .cad-work/evidence-run.json]
 
 Evidence levels are independent facets, never an ordinal badge: CAD-valid, geometrically
@@ -1358,19 +1358,22 @@ def _fidelity(stage: str) -> str:
     return "F1" if index <= STAGES.index("layout") else "F2" if index == STAGES.index("parts") else "F3"
 
 
-def producer_argv(hw: Path, version: str, stage: str, since: str | None) -> dict[str, list[str]]:
-    """The command of each producer step, through cad-flow run.py."""
+def producer_argv(hw: Path, version: str, stage: str, since: str | None,
+                  attach: Sequence[str] = ()) -> dict[str, list[str]]:
+    """The command of each producer step, through cad-flow run.py. The sweeps rebuild the assembly chain from
+    the snapshot and their own `--attach` arguments, so `attach` is the built manifest's attachments."""
     def through(script: str, *args: str) -> list[str]:
         return [sys.executable, str(RUN_PY), script, *args]
 
     hw_arg, baseline = str(hw), (["--since-version", since] if since else [])
+    attached = [argument for spec in attach for argument in ("--attach", spec)]
     return {
         "form": through("cad-design/scripts/form_check.py", "--hw", hw_arg, "--version", version, "--fidelity", _fidelity(stage)),
         "static.changed": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg, "--changed-only", *baseline),
         "static.all": through("cad-model/scripts/cad_model.py", "check", version, "--hw", hw_arg),
         "sweep.smoke": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version, "--case", SMOKE_CASE,
-                               "--smoke", "--changed-only", *baseline),
-        "sweep.full": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version),
+                               "--smoke", "--changed-only", *attached, *baseline),
+        "sweep.full": through("cad-motion/scripts/sweep.py", "--hw", hw_arg, "--version", version, *attached),
         "render": through("cad-render/scripts/render.py", hw_arg, "--version", version),
         "motion.default": through("cad-motion/scripts/motion.py", "render", "--hw", hw_arg, "--version", version, "--case",
                                   "default", "--outputs", "glb,sheet"),
@@ -1384,7 +1387,7 @@ def run_plan(hw: Path, version: str, scope: str, stage: str, assessment: Assessm
     _, folder, _ = layout.built_version(hw, version)
     manifest = json.loads((folder / layout.MANIFEST).read_text(encoding="utf-8"))
     column = {ident: row.mark(SCOPE_COLUMN[scope]) for ident, row in MATRIX.items()}
-    return _fail_fast().plan(scope, column, producer_argv(hw, version, stage, since_version),
+    return _fail_fast().plan(scope, column, producer_argv(hw, version, stage, since_version, manifest.get("attach") or ()),
                              not_applicable=_not_applicable(stage, manifest), stale=stale_producers(assessment, stage))
 
 
@@ -1503,6 +1506,9 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
         return 1, {**report, "findings": [Finding("run.not_built", "hw/versions", f"{error}; the version is not built or is "
                                                   "stale: build the version again (cad-model run)").as_dict()]}
     _, record = impact.read_inputs(hw)
+    if scope == "full" and stage is None:
+        # A provisional approval moves flow.stage past the gate that this check belongs to.
+        raise ValueError("the full scope needs --stage, the stage of the gate it checks: flow.stage may be past it")
     stage = stage or (impact.plain(record.product).get("flow") or {}).get("stage")
     if not isinstance(stage, str) or stage not in STAGES:
         raise ValueError(f"product.yaml flow.stage {stage!r} is not a stage; pass --stage")
@@ -1609,7 +1615,8 @@ def main(argv: list[str] | None = None) -> int:
     runner.add_argument("--hw", type=Path, required=True)
     runner.add_argument("--version", required=True)
     runner.add_argument("--scope", required=True, choices=tuple(SCOPE_COLUMN))
-    runner.add_argument("--stage", choices=STAGES, help="the gate to apply; product.yaml flow.stage when omitted")
+    runner.add_argument("--stage", choices=STAGES, help="the gate to apply: required for --scope full, and for commit it is "
+                        "product.yaml flow.stage when omitted")
     runner.add_argument("--since-version", help="the baseline of the changed-only steps; their own default when omitted")
     runner.add_argument("--out", type=Path, help="also write the run report here, under .cad-work/")
     args = parser.parse_args(argv)
