@@ -2384,7 +2384,7 @@ class Build123dLooseComponentTests(LooseComponentChecks, unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class ManufacturingInvalidColorTests(unittest.TestCase):
-    """A record whose intent.color is not #RRGGBB is refused with a named finding by `run`, never a traceback."""
+    """A record whose intent.color is not #RRGGBB makes `run` refuse the part with a named finding, never a traceback."""
 
     BAD = {"three digits": "#abc", "integer": 16744448, "trailing newline": "#FF8000\n"}
 
