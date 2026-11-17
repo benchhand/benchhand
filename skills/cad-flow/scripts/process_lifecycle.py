@@ -323,7 +323,7 @@ def _exited(process: Supervised) -> bool:
 
 
 def exited(process: Supervised) -> bool:
-    """Whether the supervised command has ended, without reaping its supervisor. Poll with this
+    """Whether the supervised command is over, without reaping its supervisor. Poll with this
     rather than `poll()`, then call `terminate_group`, which kills what the command left in its
     group while the unreaped supervisor still holds the group id."""
     return _exited(process)

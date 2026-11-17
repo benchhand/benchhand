@@ -1273,8 +1273,8 @@ def packet_blocking(data: Mapping[str, Any], *, record: Any, stage: str, selecti
 
 # The producer x iteration matrix (issue #23, 02-process-design), narrowed to the steps `run` executes
 # and the scopes cad-flow calls: Cm the commit batch of vN (its fail-fast checks, cad-flow SKILL.md
-# and references/flow.md), Fl the full check after the provisional gate. Marks: R required; C only
-# while an obligation the producer covers is stale or open and due; - not in that scope. The commit
+# and references/flow.md), Fl the full check after the provisional gate. Marks: R required. C only
+# while an obligation the producer covers is stale or open and due. - not in that scope. The commit
 # batch also renders and runs the default motion render, because the provisional gate cites them.
 COLUMNS = ("Cm", "Fl")
 SCOPE_COLUMN: Mapping[str, str] = {"commit": "Cm", "full": "Fl"}
@@ -1315,7 +1315,7 @@ SMOKE_CASE = "sweep-smoke"
 
 
 def producers_of(family: str) -> tuple[str, ...]:
-    """The producers that show obligations of `family`; none for a family no producer shows."""
+    """The producers that show obligations of `family`. A family no producer shows gives none."""
     best = max((prefix for prefix, _ in FAMILY_PRODUCERS if family.startswith(prefix)), key=len, default=None)
     return dict(FAMILY_PRODUCERS)[best] if best is not None else ()
 
@@ -1326,7 +1326,7 @@ def _due(obligation: Any, stage: str) -> bool:
 
 def stale_producers(assessment: Assessment, stage: str) -> set[str]:
     """The producers of every obligation due at `stage` that is not resolved (stale, failed, unknown or
-    planned). A physical validation is left out: no producer can show it."""
+    not started). A physical validation does not count, since no producer can show it."""
     found: set[str] = set()
     for obligation in assessment.expected:
         if obligation.level != PHYSICAL and _due(obligation, stage) \
@@ -1336,7 +1336,7 @@ def stale_producers(assessment: Assessment, stage: str) -> set[str]:
 
 
 def _moves(manifest: Mapping[str, Any]) -> bool:
-    """Whether a version has an independent movable joint (not fixed, not coupled); True when its
+    """Whether a version has an independent movable joint (not fixed, not coupled). True when its
     manifest records no joints, so the motion producers decide."""
     joints = manifest.get("joints")
     if not isinstance(joints, list):
@@ -1379,7 +1379,7 @@ def producer_argv(hw: Path, version: str, stage: str, since: str | None) -> dict
 
 def run_plan(hw: Path, version: str, scope: str, stage: str, assessment: Assessment, *,
              since_version: str | None = None) -> Any:
-    """The fail_fast.Plan of `scope` for built `version` at `stage`, given the version's assessment."""
+    """The plan of `scope` for built `version` at `stage`, from the version's assessment."""
     hw = Path(hw).resolve()
     _, folder, _ = layout.built_version(hw, version)
     manifest = json.loads((folder / layout.MANIFEST).read_text(encoding="utf-8"))
@@ -1414,7 +1414,7 @@ def _lifecycle() -> Any:
 
 
 def _fail_fast() -> Any:
-    # Loaded only by `run`: validate.py and the cad-recheck hook load this module from a copy that
+    # Loaded only by `run`: validate.py and the cad-recheck hook load evidence.py from a copy that
     # holds only the siblings they read.
     return _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
 
@@ -1464,7 +1464,7 @@ def _spawner(hw: Path, version: str, scope: str) -> Callable[[Any], _Producer]:
 
 
 def _strays(hw: Path) -> list[dict[str, Any]]:
-    """Recorded runs of `hw` that ended and left processes behind, or that cannot be verified."""
+    """Recorded runs of `hw` that ended and left processes behind, or that fail verification."""
     lifecycle = _lifecycle()
     try:
         return [stray.to_json() for stray in lifecycle.strays(hw) if stray.state != "running"]
@@ -1482,7 +1482,7 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
         spawn: Callable[[Any], Any] | None = None, strays: Callable[[], Sequence[Mapping[str, Any]]] | None = None,
         today: date | None = None) -> tuple[int, dict[str, Any]]:
     """`evidence.py run`: (exit status, report). `spawn` and `strays` default to cad-flow
-    process_lifecycle; a ValueError is a usage error (an unknown scope or stage)."""
+    process_lifecycle. A ValueError is a usage error (an unknown scope or stage)."""
     hw = Path(hw).resolve()
     if scope not in SCOPE_COLUMN:
         raise ValueError(f"unknown scope {scope!r}; one of {', '.join(SCOPE_COLUMN)}")

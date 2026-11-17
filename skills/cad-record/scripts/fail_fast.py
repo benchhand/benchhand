@@ -48,7 +48,7 @@ POLL_SECONDS = 0.05
 
 @dataclass(frozen=True)
 class Step:
-    """One step of a plan: `argv` is None for the in-process validator; `skip` says why it does not run."""
+    """One step of a plan: `argv` is None for the in-process validator. `skip` says why it does not run."""
 
     id: str
     argv: tuple[str, ...] | None = None
@@ -91,7 +91,7 @@ class Outcome:
 
 class Running(Protocol):
     """A started producer. `ended` tells whether it ended, without reaping it. `stop` terminates
-    what still runs of it, reaps it and returns its exit status; it is called once per producer,
+    what still runs of it, reaps it and returns its exit status. Call `stop` once per producer,
     also after one that ended by itself. `result` is what the producer reported."""
 
     def ended(self) -> bool: ...
@@ -101,15 +101,15 @@ class Running(Protocol):
     def result(self) -> Any: ...
 
 
-# A producer step's status from (the step, its exit status, its result); status_of by default.
+# A producer step's status from the step, its exit status and its result. The default is status_of.
 Judge = Callable[[Step, int | None, Any], str]
 
 
 def plan(scope: str, column: Mapping[str, str], argv: Mapping[str, Sequence[str]], *,
          not_applicable: Mapping[str, str] | None = None, stale: Collection[str] = ()) -> Plan:
     """The steps of `scope` from its matrix `column` (step id -> mark), in STEP_ORDER. `argv` holds
-    the command of each producer step; `not_applicable` maps a step to why it does not apply to this
-    version or stage; `stale` lists the steps that cover a stale or open obligation due at the stage."""
+    the command of each producer step. `not_applicable` maps a step to why it does not apply to the
+    design version or stage. `stale` lists the steps that cover a stale or open obligation due at the stage."""
     if scope not in SCOPES:
         raise ValueError(f"unknown scope {scope!r}; one of {', '.join(SCOPES)}")
     not_applicable = not_applicable or {}
@@ -135,7 +135,7 @@ def execute(work: Plan, *, validate: Callable[[], tuple[int, Any]], spawn: Calla
             strays: Callable[[], Sequence[Mapping[str, Any]]], judge: Judge | None = None,
             clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> Outcome:
     """Run `work` (see the module docstring). `judge` decides a producer's status from its exit
-    status and result; the step keeps the exit status either way."""
+    status and result. The step keeps the exit status either way."""
     done: dict[str, StepResult] = {}
     for step in work.steps:
         if step.skip is not None:
@@ -189,7 +189,7 @@ class _Runner:
         return result
 
     def wait(self, processes: Mapping[str, Running | str], ended: dict[str, float], wanted: str) -> None:
-        """Poll every producer still running until `wanted` has ended, noting when each one ends."""
+        """Note when each running producer ends. Return when `wanted` ends."""
         while True:
             for ident, process in processes.items():
                 if ident not in ended and (isinstance(process, str) or process.ended()):

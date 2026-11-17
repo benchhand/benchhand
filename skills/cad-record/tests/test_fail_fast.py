@@ -30,7 +30,7 @@ class Clock:
 
 
 class Producer:
-    """A fake producer that ends with `code` once the clock reaches `ends`; `None` never ends by itself."""
+    """A fake producer that ends with `code` once the clock reaches `ends`. With `None` it does not end by itself."""
 
     def __init__(self, clock: Clock, code: int, ends: float | None) -> None:
         self.clock, self.code, self.ends = clock, code, ends
@@ -52,7 +52,7 @@ class Producer:
 
 
 class Run:
-    """One execute call with fake producers: `behaviour` maps a step id to (exit code, end time)."""
+    """One execute call with fake producers: `behavior` maps a step id to (exit code, end time)."""
 
     def __init__(self, behaviour: dict[str, tuple[int, float | None]], validate: int = 0,
                  strays: list[list[dict[str, Any]]] | None = None) -> None:
