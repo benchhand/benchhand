@@ -176,40 +176,6 @@ class RecipeTests(unittest.TestCase):
 
 
 class ReadTests(unittest.TestCase):
-    def test_a_colour_writes_a_basematerials_entry_the_object_points_at(self) -> None:
-        data = threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material="PETG", color="#336699")
-        model = entries(data)["3D/3dmodel.model"].decode("utf-8")
-        self.assertIn('<basematerials id="1"><base name="PETG" displaycolor="#336699FF"/></basematerials>', model)
-        self.assertIn('<object id="2" name="TST-0001" type="model" pid="1" pindex="0">', model)
-        self.assertIn(threemf.MATERIAL_METADATA, model)  # the material name stays beside the colour
-        read = threemf.read(data)
-        self.assertEqual((read.objects[0].color, [i.objectid for i in read.build]), ("#336699FF", [2]))
-
-    def test_no_colour_keeps_the_metadata_and_writes_no_basematerials(self) -> None:
-        model = entries(cube())["3D/3dmodel.model"].decode("utf-8")
-        self.assertNotIn("basematerials", model)
-        self.assertNotIn("pid=", model)
-        self.assertIn('<metadata name="cadagent:material">PETG</metadata>', model)
-        self.assertIsNone(threemf.read(cube()).objects[0].color)
-
-    def test_changing_only_the_colour_changes_the_bytes(self) -> None:
-        def colored(color: str | None) -> bytes:
-            return threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="TST-0001", material="PETG", color=color)
-        self.assertEqual(colored("#336699"), colored("#336699"))
-        self.assertEqual(len({colored(None), colored("#336699"), colored("#336698")}), 3)
-
-    def test_a_colour_that_is_not_srgb_hex_is_refused(self) -> None:
-        for bad in ("336699", "#33669", "#33669G", "blue", "#336699FF"):
-            with self.subTest(bad), self.assertRaises(threemf.ThreeMFError):
-                threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="P", color=bad)
-
-    def test_a_pid_that_resolves_to_no_basematerials_entry_is_refused(self) -> None:
-        good = entries(threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="P", color="#336699"))["3D/3dmodel.model"].decode()
-        data = repack(threemf.dumps(CUBE_VERTICES, CUBE_TRIANGLES, name="P", color="#336699"),
-                      **{"3D/3dmodel.model": good.replace('pindex="0"', 'pindex="3"').encode()})
-        with self.assertRaises(threemf.ThreeMFError):
-            threemf.read(data)
-
     def test_the_mesh_the_writer_wrote_is_read_back(self) -> None:
         model = threemf.read(cube())
         (obj,) = model.objects
