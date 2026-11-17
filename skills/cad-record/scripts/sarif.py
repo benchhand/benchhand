@@ -23,7 +23,8 @@ Mapping, per finding:
   feature counts as an empty field.
 - locations: `location {file, line}` when valid, else line 1 of hw/parts/<PN>/part.yaml, else of
   hw/parts/<PN>/model.py. With neither file the result has no physical location, which SARIF allows, and stays in the
-  output. The part and feature become logicalLocations in the same `locations` entry.
+  output. The part and feature become logicalLocations in the same `locations` entry. File paths become URI
+  references: spaces, `#`, `%` and non-ASCII characters are percent-encoded.
 A finding that is not a mapping becomes an uncoded result whose message is its text.
 """
 
@@ -36,6 +37,7 @@ from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 VERSION = "2.1.0"
 SCHEMA_URI = "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
@@ -151,8 +153,10 @@ def _physical(item: Mapping[str, Any], part: str | None, hw: Path | None) -> dic
     return _region(uri, 1) if uri else None
 
 
-def _region(uri: str, line: int) -> dict[str, Any]:
-    return {"artifactLocation": {"uri": uri}, "region": {"startLine": line}}
+def _region(path: str, line: int) -> dict[str, Any]:
+    """The physical location of `path`, a POSIX file path, written as a URI reference: reserved characters, spaces and
+    non-ASCII characters are percent-encoded and a relative path stays relative."""
+    return {"artifactLocation": {"uri": quote(path, safe="/")}, "region": {"startLine": line}}
 
 
 def _part_file(part: str | None, hw: Path | None) -> str | None:

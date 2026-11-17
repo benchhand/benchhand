@@ -19,6 +19,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 from unittest import mock
+from urllib.parse import unquote
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -198,7 +199,7 @@ class MappingTests(unittest.TestCase):
 class HonestMistakeTests(unittest.TestCase):
     def test_a_finding_without_a_code_takes_check_id_or_rule_else_a_fixed_placeholder(self) -> None:
         cases = [({"check": "min_wall"}, "min_wall"), ({"id": "FC-1"}, "FC-1"), ({"rule": "r1"}, "r1"),
-                 ({}, sarif.UNCODED)]
+                 ({}, "cad.finding.uncoded")]
         for extra, rule in cases:
             with self.subTest(extra=extra):
                 [result] = results_of([{"message": "m", **extra}])
@@ -212,7 +213,7 @@ class HonestMistakeTests(unittest.TestCase):
 
     def test_a_finding_that_is_not_an_object_is_exported_as_uncoded_text(self) -> None:
         results = results_of(["rule-1: too steep", 7, None])
-        self.assertEqual([r["ruleId"] for r in results], [sarif.UNCODED] * 3)
+        self.assertEqual([r["ruleId"] for r in results], ["cad.finding.uncoded"] * 3)
         self.assertEqual(results[0]["message"]["text"], "rule-1: too steep")
         self.assertEqual(schema_errors(sarif.document(["rule-1: too steep", 7, None])), [])
 
@@ -292,6 +293,23 @@ class LocationTests(unittest.TestCase):
     def test_a_windows_separator_in_the_file_becomes_a_slash(self) -> None:
         self.assertEqual(self.anchor({"location": {"file": "hw\\parts\\a.yaml"}})["artifactLocation"]["uri"],
                          "hw/parts/a.yaml")
+
+
+    def test_a_file_name_is_encoded_as_a_uri_reference(self) -> None:
+        name = "hw/parts/my part/a#b%c é.yaml"
+        uri = self.anchor({"location": {"file": name}})["artifactLocation"]["uri"]
+        self.assertEqual(uri, "hw/parts/my%20part/a%23b%25c%20%C3%A9.yaml")
+        self.assertEqual(unquote(uri), name)
+        document = sarif.document([{"code": "x", "message": "m", "location": {"file": name}}])
+        self.assertEqual(schema_errors(document), [])
+
+    def test_a_hw_folder_name_with_a_space_is_encoded_in_the_part_file_uri(self) -> None:
+        spaced = Path(self.tmp.name) / "my hw"
+        (spaced / "parts" / "TST-0001").mkdir(parents=True)
+        (spaced / "parts" / "TST-0001" / "part.yaml").write_text("x\n", encoding="utf-8")
+        [result] = results_of([{"code": "x", "message": "m", "subject": {"PN": "TST-0001"}}], hw=spaced)
+        self.assertEqual(result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+                         "my%20hw/parts/TST-0001/part.yaml")
 
 
 class FingerprintTests(unittest.TestCase):
@@ -389,6 +407,79 @@ class EmitTests(unittest.TestCase):
             for argv in ([str(bad)], ["--sarif", str(bad)], ["--sarif", str(Path(tmp) / "missing.json")]):
                 with self.subTest(argv=argv), contextlib.redirect_stderr(StringIO()):
                     self.assertEqual(emit.main(argv), 2)
+
+
+class CommandLineProcessTests(unittest.TestCase):
+    """emit.py run as a fresh process on a stored envelope: the cold loader, `--hw` and `--tool` for real."""
+
+    EMIT = SKILL / "scripts" / "emit.py"
+    # Runs emit.py as __main__, then reports on stderr which modules the export path imported.
+    WRAPPER = ("import json, runpy, sys\n"
+               "sys.argv = ['emit.py', *sys.argv[1:]]\n"
+               "code = 0\n"
+               "try:\n    runpy.run_path({path!r}, run_name='__main__')\n"
+               "except SystemExit as stop:\n    code = stop.code\n"
+               "print(json.dumps({{'jsonschema': 'jsonschema' in sys.modules, 'sarif': 'cad_record_sarif' in sys.modules}}),"
+               " file=sys.stderr)\n"
+               "raise SystemExit(code)\n")
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.hw = root / "hw"
+        (self.hw / "parts" / "TST-0001").mkdir(parents=True)
+        (self.hw / "parts" / "TST-0001" / "part.yaml").write_text("pn: TST-0001\n", encoding="utf-8")
+        shapes = producer_shapes()
+        # (finding, expected ruleId, expected part, expected feature, anchored on TST-0001's part.yaml)
+        self.cases = [
+            (FULL | {"location": None}, "process.fdm.overhang", "TST-0001", "mount_slot", True),
+            (FORM_CHECK["min_wall"], "min_wall", "TST-0001", "", True),
+            (shapes["build.finding"], shapes["build.finding"]["check"], "TST-0001", "", True),
+            (shapes["drawing_intent.with_feature"], "fit_unverified", "", "pivot_bore", False),
+            (shapes["packet.process_overhang"], "process.fdm.overhang", "TST-0101", "shelf_underside", False),
+        ]
+        self.envelope = root / "envelope.json"
+        findings = [case[0] for case in self.cases]
+        self.envelope.write_text(json.dumps(emit.envelope({"status": "fail", "findings": findings})), encoding="utf-8")
+
+    def run_emit(self, *args: str, wrapped: bool = False) -> subprocess.CompletedProcess[str]:
+        if wrapped:
+            command = [sys.executable, "-B", "-c", self.WRAPPER.format(path=str(self.EMIT)), *args]
+        else:
+            command = [sys.executable, "-B", str(self.EMIT), *args]
+        return subprocess.run(command, capture_output=True, text=True, check=False)
+
+    def test_every_stored_finding_comes_out_with_its_rule_fingerprint_anchor_and_the_requested_tool(self) -> None:
+        run = self.run_emit(str(self.envelope), "--sarif", "--hw", str(self.hw), "--tool", "probe-tool")
+        self.assertEqual((run.returncode, run.stderr), (0, ""))
+        shown = json.loads(run.stdout)
+        self.assertEqual(schema_errors(shown), [])
+        self.assertEqual(shown["runs"][0]["tool"]["driver"]["name"], "probe-tool")
+        results = shown["runs"][0]["results"]
+        got = [(r["ruleId"], r["partialFingerprints"]["cadFinding/v1"]) for r in results]
+        expected = [(rule, hashlib.sha256(f"{rule}|{part}|{feature}".encode()).hexdigest()[:32])
+                    for _, rule, part, feature, _ in self.cases]
+        self.assertEqual(got, expected)
+        for result, case in zip(results, self.cases, strict=True):
+            physical = result.get("locations", [{}])[0].get("physicalLocation")
+            if case[4]:
+                self.assertEqual(physical, {"artifactLocation": {"uri": "hw/parts/TST-0001/part.yaml"},
+                                            "region": {"startLine": 1}})
+            else:
+                self.assertIsNone(physical)
+
+    def test_without_hw_no_part_anchor_is_found_and_the_default_tool_name_is_used(self) -> None:
+        shown = json.loads(self.run_emit(str(self.envelope), "--sarif").stdout)
+        self.assertEqual(shown["runs"][0]["tool"]["driver"]["name"], "cad-agent")
+        self.assertEqual(len(shown["runs"][0]["results"]), len(self.cases))
+        self.assertTrue(all("physicalLocation" not in r.get("locations", [{}])[0] for r in shown["runs"][0]["results"]))
+
+    def test_the_cold_export_loads_sarif_itself_and_does_not_import_jsonschema(self) -> None:
+        run = self.run_emit(str(self.envelope), "--sarif", wrapped=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(len(json.loads(run.stdout)["runs"][0]["results"]), len(self.cases))
+        self.assertEqual(json.loads(run.stderr.strip().splitlines()[-1]), {"jsonschema": False, "sarif": True})
 
 
 if __name__ == "__main__":
