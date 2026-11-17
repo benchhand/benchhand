@@ -514,6 +514,24 @@ class QualificationBypasses(SourcedFEACase):
             with self.subTest(direction=direction):
                 self.assert_direction_never_passes(direction)
 
+    def test_a_direction_within_the_unit_tolerance_covers_a_load_of_exactly_its_magnitude(self) -> None:
+        """The record accepts a norm within 1e-6 of 1; the reader must project on the direction, not on its length.
+        50 N along -Z reached 49.999975 N along (0, 0, -0.9999995) and the load was wrongly left unproven."""
+        for scale in (1 - 0.9e-6, 1 + 0.9e-6):
+            for axis, force in (((0, 0, -1), [0, 0, -50]), ((0.6, 0, -0.8), [30, 0, -40])):
+                direction = tuple(c * scale for c in axis)
+                with self.subTest(direction=direction):
+                    self.solved.clear()
+                    self.build(documents(direction=direction))
+                    report = self.solve(self.loads_case(([2], force)))
+                    self.assertEqual(self.verdicts(report), ("pass", "pass"), report["evidence"]["gaps"])
+
+    def test_a_direction_just_outside_the_unit_tolerance_is_still_refused(self) -> None:
+        for scale in (1 - 1.1e-6, 1 + 1.1e-6):
+            direction = (0, 0, -scale)
+            with self.subTest(direction=direction):
+                self.assert_direction_never_passes(direction)
+
     def test_a_unit_vector_direction_is_read_as_given(self) -> None:
         for direction in ((0, 0, -1), (0.0, 0.0, -1.0), (0, -1, 0), (0.6, 0, -0.8)):
             with self.subTest(direction=direction):

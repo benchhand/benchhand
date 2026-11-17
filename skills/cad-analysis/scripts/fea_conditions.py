@@ -586,15 +586,17 @@ def _text(vector: tuple[float, ...]) -> str:
 
 
 def _unit(direction: Any) -> tuple[float, float, float] | None:
-    """The load's direction as the record holds it (a unit vector, or None when invalid), or None when it is not
-    three finite numbers of norm 1. The record reports an invalid direction; this refuses it again."""
+    """A working copy of the load's direction, scaled to length 1, or None when it is not three finite numbers of
+    norm 1 within the record's 1e-6. The record's own direction is left as stated and reports an invalid one; this
+    refuses it again. The scaling matters because the record accepts a norm of 1 ± 1e-6 and the projections assume 1."""
     if not isinstance(direction, (tuple, list)) or len(direction) != 3:
         return None
     if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(c) for c in direction):
         return None
-    if abs(_norm(tuple(direction)) - 1.0) > 1e-6:
+    length = _norm(tuple(direction))
+    if abs(length - 1.0) > 1e-6:
         return None
-    return (float(direction[0]), float(direction[1]), float(direction[2]))
+    return (direction[0] / length, direction[1] / length, direction[2] / length)
 
 
 def _selector_key(selector: Any) -> str:
