@@ -1,0 +1,7 @@
+# Test pins for the FreeCAD-on-Python-3.11 import check: only what FreeCAD 1.1.4's bundled Python
+# provides to the job code (see scripts/freecad_job_modules.txt). Keep it to these two: a package
+# beyond them on the path would hide a job module that imports something freecadcmd cannot.
+# The versions must match harness/test-requirements.txt (scripts/test_test_requirements.py checks).
+# Install with: uv run --no-project --python 3.11 --with-requirements harness/test-requirements-freecad.txt ...
+pyyaml==6.0.3  # skill code that reads YAML records
+jsonschema==4.26.0  # cad-record schema validation
