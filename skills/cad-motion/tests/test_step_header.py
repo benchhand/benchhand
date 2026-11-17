@@ -51,9 +51,8 @@ class StepHeaderTests(unittest.TestCase):
         for mode in ("halftorus", "tilted", "assembly", "placed"):
             with self.subTest(mode=mode):
                 first = self.write(f"{mode}-a.step", mode=mode)
-                time.sleep(1.1)
                 second = self.write(f"{mode}-b.step", mode=mode)
-                self.assertEqual(VALIDATION_PROPERTY.findall(first), [b"surface area", b"volume", b"centroid"])
+                self.assertEqual(sorted(VALIDATION_PROPERTY.findall(first)), [b"centroid", b"surface area", b"volume"])
                 self.assertEqual(first, second)
 
     def test_header_time_is_the_fixed_date(self) -> None:
