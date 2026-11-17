@@ -1482,7 +1482,7 @@ class _Producer:
 
 
 def _emit() -> Any:
-    # Loaded only by `run`, like fail_fast: the copies that validate.py and the cad-recheck hook make hold no emit.py.
+    # Loaded only by `run`, like fail_fast.
     return _load_module("cad_record_emit", SCRIPTS / "emit.py")
 
 
@@ -1499,8 +1499,7 @@ def _lifecycle() -> Any:
 
 
 def _fail_fast() -> Any:
-    # Loaded only by `run`: validate.py and the cad-recheck hook load evidence.py from a copy that
-    # holds only the siblings they read.
+    # Loaded only by `run`.
     return _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
 
 
