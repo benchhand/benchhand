@@ -412,6 +412,15 @@ class Routes(unittest.TestCase):
             mi.part_route(mi.normalize_record(documents), "TST-0001")
 
 
+class PartColor(unittest.TestCase):
+    def test_intent_carries_the_declared_color_or_none(self) -> None:
+        documents = fx.tst_record()
+        documents["parts/TST-0001/part.yaml"]["intent"]["color"] = "#FF8000"
+        record = mi.normalize_record(documents)
+        self.assertEqual(record.parts["TST-0001"].intent.color, "#FF8000")
+        self.assertIsNone(record.parts["TST-0002"].intent.color)
+
+
 class MaterialProperties(unittest.TestCase):
     def setUp(self) -> None:
         self.materials = mi.normalize_record(fx.tst_record()).materials

@@ -609,6 +609,7 @@ class PartIntent:
     critical_surfaces: tuple[CriticalSurface, ...] | Fact
     route: tuple[Operation, ...] | Fact
     rationale: Mapping[str, Any] | None
+    color: str | None = None  # sRGB #RRGGBB for 3MF export; None when the intent names none
 
     @classmethod
     def unknown(cls, reason: str) -> PartIntent:
@@ -1356,7 +1357,7 @@ class _Reader:
             self.ref("decision", rationale.get("decision"), path, "intent/rationale/decision")
             self.ref("candidate", rationale.get("selection"), path, "intent/rationale/selection")
         return PartIntent(functions, material, data.get("selection"), service, tuple(components), surfaces, route,
-                          freeze(rationale) if isinstance(rationale, Mapping) else None)
+                          freeze(rationale) if isinstance(rationale, Mapping) else None, data.get("color"))
 
     def route(self, pn: str, data: Any, path: str) -> tuple[Operation, ...] | Fact:
         if _looks_like_fact(data):
