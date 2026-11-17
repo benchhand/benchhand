@@ -12,34 +12,6 @@ JOB_LIST = ROOT / "scripts" / "freecad_job_modules.txt"
 BLOCK = re.compile(r"^# /// script\n((?:#.*\n)+?)# ///$", re.MULTILINE)
 FLOOR = re.compile(r"""^#\s*requires-python\s*=\s*["']\s*(?:>=|==)\s*(\d+)\.(\d+)""", re.MULTILINE)
 MINIMUM = (3, 12)
-# D6 owns these files. Delete an entry once its floor is 3.12.
-PENDING_D6 = frozenset(
-    {
-        "skills/cad-model/scripts/cad_model.py",
-        "skills/cad-model/tests/fixtures/components_probe.py",
-        "skills/cad-model/tests/fixtures/containment_probe.py",
-        "skills/cad-model/tests/fixtures/holes_probe.py",
-        "skills/cad-model/tests/fixtures/mesh_probe.py",
-        "skills/cad-model/tests/fixtures/share_probe.py",
-        "skills/cad-model/tests/fixtures/suspect_probe.py",
-        "skills/cad-motion/scripts/access.py",
-        "skills/cad-motion/scripts/freecad_assembly.py",
-        "skills/cad-motion/scripts/merge_sweeps.py",
-        "skills/cad-motion/scripts/motion.py",
-        "skills/cad-motion/scripts/play.py",
-        "skills/cad-motion/scripts/pose.py",
-        "skills/cad-motion/scripts/spot_check.py",
-        "skills/cad-motion/scripts/sweep.py",
-        "skills/cad-motion/tests/fixtures/access_fixture.py",
-        "skills/cad-motion/tests/fixtures/build_fixtures.py",
-        "skills/cad-motion/tests/fixtures/continuous_collision.py",
-        "skills/cad-motion/tests/fixtures/measure_probe.py",
-        "skills/cad-motion/tests/fixtures/mesh_probe.py",
-        "skills/cad-motion/tests/fixtures/play_fixture.py",
-        "skills/cad-motion/tests/fixtures/probe_step.py",
-        "skills/cad-motion/tests/fixtures/step_header_probe.py",
-    }
-)
 
 
 def job_modules() -> set[str]:
@@ -102,21 +74,13 @@ class FloorParsing(unittest.TestCase):
 class HostScriptFloors(unittest.TestCase):
     def test_host_scripts_require_python_3_12_or_later(self) -> None:
         sources = {rel: (ROOT / rel).read_text(encoding="utf-8") for rel in tracked_python()}
-        low = below_minimum(sources, job_modules() | PENDING_D6)
+        low = below_minimum(sources, job_modules())
         self.assertEqual(
             low,
             [],
             "Raise the floor to >=3.12 or, if FreeCAD runs the file on its Python 3.11, "
             "add it to scripts/freecad_job_modules.txt:\n" + "\n".join(low),
         )
-
-    def test_pending_entries_are_still_below_the_minimum(self) -> None:
-        stale = [
-            rel
-            for rel in sorted(PENDING_D6)
-            if (floor := floor_of((ROOT / rel).read_text(encoding="utf-8"))) is None or floor >= MINIMUM
-        ]
-        self.assertEqual(stale, [], "Remove these from PENDING_D6; their floor is already 3.12 or later.")
 
 
 if __name__ == "__main__":

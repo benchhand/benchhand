@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11,<3.15"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["pyyaml>=6.0", "imageio-ffmpeg==0.6.0"]
 # ///
 """Plan and render the motion of a built cad-model version: coverage check, animated GLB, frames,
