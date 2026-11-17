@@ -30,6 +30,8 @@ viewer, TechDraw's ``Direction``.
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -288,8 +290,20 @@ def grid_cell(relation: str | None, projection: str) -> tuple[int, int] | None:
     return (first if projection == "first_angle" else third).get(relation)
 
 
+_SCALE = re.compile(r"([1-9][0-9]*):([1-9][0-9]*)")     # drawing.schema.json $defs/scale
+
+
 def parse_scale(text: str) -> float | None:
+    """None for "auto", else N:M as N / M; raises ValueError for any other text, as the drawing schema does."""
     if text == "auto":
         return None
-    a, b = text.split(":")
-    return float(a) / float(b)
+    match = _SCALE.fullmatch(text)
+    if match is None:
+        raise ValueError(f"scale must be 'auto' or two positive integers like 1:2, got {text!r}")
+    try:
+        scale = int(match[1]) / int(match[2])
+    except OverflowError:
+        scale = math.inf
+    if not 0 < scale < math.inf:
+        raise ValueError(f"scale {text[:40]!r} is outside the range of a float")
+    return scale
