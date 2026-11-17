@@ -740,7 +740,7 @@ class SheetExportParts(unittest.TestCase):
             sheet_export.export_sheet(Path("fc-b"), svg, Path(tmp) / "c.pdf", Path(tmp) / "c.png", ["Aa"], 5)
             self.assertEqual(calls, ["probe", "write", "write", "probe", "write"])
 
-    def test_font_probe_asks_only_about_codepoints_it_has_not_seen(self) -> None:
+    def test_font_probe_covers_plain_lettering_at_once_and_then_only_unseen_codepoints(self) -> None:
         sheet_export._FONT_SUPPORT.clear()
         asked: list[list[int]] = []
 
@@ -749,11 +749,76 @@ class SheetExportParts(unittest.TestCase):
             return {"supported_codepoints": [c for c in job["codepoints"] if c != ord("Z")]}, ""
 
         fc = Path("fc")
+        vector = 0x27C2
         with patch.object(freecad_runtime, "run_job", fake_run_job):
             first = sheet_export.supported_codepoints(fc, {"codepoints": [65, 90]}, Path("."), 5)
             second = sheet_export.supported_codepoints(fc, {"codepoints": [65, 90, 66]}, Path("."), 5)
-        self.assertEqual(asked, [[65, 90], [66]])
-        self.assertEqual((first, second), (frozenset({65}), frozenset({65, 66})))
+            third = sheet_export.supported_codepoints(fc, {"codepoints": [66, vector]}, Path("."), 5)
+        self.assertEqual(asked, [sorted(sheet_export.OSIFONT_CODEPOINTS), [vector]])
+        self.assertEqual((first, second, third), (frozenset({65}), frozenset({65, 66}), frozenset({66, vector})))
+
+    def probe_threads(self, jobs: list[tuple[str, list[int]]], fake_run_job) -> list:
+        """Run supported_codepoints on one thread per (freecadcmd, codepoints) at once; each outcome or error."""
+        barrier = threading.Barrier(len(jobs))
+        outcomes: list = [None] * len(jobs)
+
+        def call(index: int, command: str, codepoints: list[int]) -> None:
+            barrier.wait(5)
+            try:
+                outcomes[index] = sheet_export.supported_codepoints(Path(command), {"codepoints": codepoints}, Path("."), 5)
+            except sheet_export.ExportError as exc:
+                outcomes[index] = exc
+
+        with patch.object(freecad_runtime, "run_job", fake_run_job):
+            threads = [threading.Thread(target=call, args=(i, c, cp)) for i, (c, cp) in enumerate(jobs)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(10)
+        return outcomes
+
+    def test_concurrent_sheets_share_one_font_probe(self) -> None:
+        sheet_export._FONT_SUPPORT.clear()
+        launches: list[int] = []
+
+        def slow_run_job(command, script, job, workdir, timeout):
+            launches.append(1)
+            time.sleep(0.3)
+            return {"supported_codepoints": list(job["codepoints"])}, ""
+
+        # eight sheets, each with its own text, all arrive before the first probe answers
+        outcomes = self.probe_threads([("fc", [65 + i, 97 + i]) for i in range(8)], slow_run_job)
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(outcomes, [frozenset({65 + i, 97 + i}) for i in range(8)])
+
+    def test_a_failed_probe_gives_every_waiter_the_same_error_and_caches_nothing(self) -> None:
+        sheet_export._FONT_SUPPORT.clear()
+        launches: list[int] = []
+
+        def failing(command, script, job, workdir, timeout):
+            launches.append(1)
+            time.sleep(0.3)
+            return None, "freecadcmd crashed"
+
+        outcomes = self.probe_threads([("fc", [65, 66 + i]) for i in range(6)], failing)
+        self.assertEqual(len(launches), 1)
+        self.assertTrue(all(isinstance(o, sheet_export.ExportError) for o in outcomes), outcomes)
+        self.assertEqual({(o.code, str(o)) for o in outcomes}, {("export_failed", "freecadcmd crashed")})
+        self.assertEqual(sheet_export._FONT_SUPPORT, {})
+        recovered = self.probe_threads([("fc", [65])], lambda *a, **k: (launches.append(1) or {"supported_codepoints": [65]}, ""))
+        self.assertEqual((recovered, len(launches)), ([frozenset({65})], 2))
+
+    def test_different_freecad_commands_probe_independently(self) -> None:
+        sheet_export._FONT_SUPPORT.clear()
+        commands: list[str] = []
+
+        def run_job(command, script, job, workdir, timeout):
+            commands.append(str(command))
+            time.sleep(0.2)
+            return {"supported_codepoints": list(job["codepoints"])}, ""
+
+        self.probe_threads([("fc-a", [65]), ("fc-b", [65])], run_job)
+        self.assertEqual(sorted(commands), ["fc-a", "fc-b"])
 
     def test_svg_unknown_glyph_is_rejected(self) -> None:
         root = SafeET.fromstring('<svg xmlns="http://www.w3.org/2000/svg"><text font-family="serif" font-size="10">☃</text></svg>')
