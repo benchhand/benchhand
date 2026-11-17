@@ -68,6 +68,8 @@ SCOPE = {
               "L2 PARTS and its PARTS gate. Stop once the PARTS gate is decided."),
 }
 TARGET_STAGE = {"fixture": "layout", "bench": "parts"}
+# The hard-check sweep publishes under its own case id, so it never meets a bundle the lead's sweeps published.
+HARD_CHECK_SWEEP_CASE = "bench-hard-check"
 SPEND_POLL_S = 20.0
 SETTLED_POLLS = 3
 MONITOR_POLL_S = 30.0
@@ -780,8 +782,8 @@ def hard_checks(paths: Paths, mode: str, rubric: acceptance.Rubric, timeouts: Ma
                                     ["--hw", "hw", "--version", label, "--fidelity", "F2"], timeouts["default"])
             results += acceptance.form_results(parse_json(stdout), code)
         if rubric.sweep:
-            code, _ = tool.run("sweep", "cad-motion/scripts/sweep.py", ["--hw", "hw", "--version", label],
-                               timeouts["sweep"])
+            code, _ = tool.run("sweep", "cad-motion/scripts/sweep.py",
+                               ["--hw", "hw", "--version", label, "--case", HARD_CHECK_SWEEP_CASE], timeouts["sweep"])
             results.append(acceptance.CheckResult("sweep", code == 0, f"sweep {label} exit {code}", code))
     return acceptance.hard_verdict(results), label
 
@@ -908,11 +910,18 @@ def publish(paths: Paths, record: Mapping[str, Any], phase: str, push: bool) -> 
     return total
 
 
-def freeze_fixture(paths: Paths, case_dir: Path) -> Path:
+def snapshot_record(paths: Paths) -> Path:
+    """A copy of hw/ as the lead left it, taken before the hard checks publish their own bundles into it."""
+    target = paths.scratch / "record-before-checks/hw"
+    shutil.copytree(paths.project / "hw", target, ignore=shutil.ignore_patterns(*FIXTURE_EXCLUDE), symlinks=True)
+    return target
+
+
+def freeze_fixture(source: Path, case_dir: Path) -> Path:
     target = case_dir / "fixture/hw"
     if target.exists():
         raise BenchError(f"fixture exists, not overwritten: {target}")
-    shutil.copytree(paths.project / "hw", target, ignore=shutil.ignore_patterns(*FIXTURE_EXCLUDE), symlinks=True)
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns(*FIXTURE_EXCLUDE), symlinks=True)
     for path in target.rglob("*"):
         if path.is_file():
             path.chmod(0o644)
@@ -997,6 +1006,7 @@ def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case,
         viewers = stop_recorded_viewers(paths)
         warmups = stop_recorded_warmups(paths)
         leftovers = {**kill_leftovers(paths.scratch), "viewers_stopped": viewers, "warmups_stopped": warmups}
+        before_checks = snapshot_record(paths) if args.mode == "fixture" and conversation.outcome == "reached" else None
         evaluation = evaluate(driver, config, args.mode, case.rubric, prices, judge=args.mode == "bench" and not args.no_judge)
     exports = export_tree(driver, driver.session or "", sanitize=False)
     run_metrics = {**metrics.summarize(exports, driver.session or "", prices), **dialogue_metrics(conversation, driver)}
@@ -1019,8 +1029,8 @@ def run_session(args: argparse.Namespace, config: Mapping[str, Any], case: Case,
                   "total_usd": round(run_metrics["spend_usd"] + judge_spend, 6),
                   "opencode_reported_usd": round(db_cost(paths.db), 6), "currency": config["currency"]},
     })
-    if args.mode == "fixture" and conversation.outcome == "reached":
-        record["fixture"] = str(freeze_fixture(paths, case.folder))
+    if before_checks is not None:
+        record["fixture"] = str(freeze_fixture(before_checks, case.folder))
     return record
 
 

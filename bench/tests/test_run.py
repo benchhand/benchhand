@@ -353,6 +353,41 @@ class IsolationAbortTests(unittest.TestCase):
             self.assertFalse((root / "bench-iso").exists())  # scratch removed
 
 
+class HardCheckIsolationTests(unittest.TestCase):
+    """Regression for …T003143-ebc5: the harness sweep collided with the lead's own smoke bundle in
+    hw/motion/v3/sweep (sweep exit 2, "exists with another recipe"), and its own bundles would have entered
+    the frozen fixture."""
+
+    def test_the_hard_check_sweep_publishes_under_its_own_case_id(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            hw = root / "project/hw"
+            (hw / "decisions").mkdir(parents=True)
+            (hw / "product.yaml").write_text("flow: {stage: parts}\n", encoding="utf-8")
+            write_version(hw, "v3", "layout")
+            paths = run.Paths("r", root, root / "project", root / "home", root / "raw", root / "results", root / "run")
+            paths.run_dir.mkdir()
+            calls: list[tuple[str, list[str]]] = []
+            with mock.patch.object(run.Tool, "run", lambda self, name, script, args, timeout: calls.append((name, list(args))) or (0, "{}")):
+                run.hard_checks(paths, "fixture", run.acceptance.Rubric((), sweep=True), {"default": 1, "sweep": 1})
+            sweep = dict(calls)["sweep"]
+            self.assertEqual(sweep[sweep.index("--case") + 1], run.HARD_CHECK_SWEEP_CASE)
+            self.assertNotEqual(run.HARD_CHECK_SWEEP_CASE, "sweep")  # the producer's default case id
+
+    def test_the_fixture_is_frozen_from_the_record_as_it_was_before_the_hard_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            paths = run.Paths("r", root, root / "project", root / "home", root / "raw", root / "results", root / "run")
+            (paths.project / "hw").mkdir(parents=True)
+            (paths.project / "hw/product.yaml").write_text("id: x\n", encoding="utf-8")
+            snapshot = run.snapshot_record(paths)
+            (paths.project / "hw/motion/v3/bench-hard-check").mkdir(parents=True)  # what a hard check publishes
+            case_dir = root / "case"
+            frozen = run.freeze_fixture(snapshot, case_dir)
+            self.assertTrue((frozen / "product.yaml").is_file())
+            self.assertFalse((frozen / "motion").exists())
+
+
 class RecordStateTests(unittest.TestCase):
     def test_the_gate_context_reads_flow_stage_and_whether_an_l1_version_is_built(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
