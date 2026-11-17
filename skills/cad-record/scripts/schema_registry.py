@@ -7,9 +7,10 @@ Every `*.schema.json` in a schema directory resolves by its `$id`, so a `$ref` s
 another checkout's cad-record keeps its own registry and validators in the same process. A validator
 is cached by the sha256 of the schema it validates and of every schema file in its directory, so a
 schema edited or deleted during a run is read again, as before the cache. A file is hashed again
-whenever its modification time, change time, size or inode changes. jsonschema is imported only when a validator
-is built, so loading this module does not need it. Load it by path and register it in `sys.modules`
-as `cad_record_schema_registry`.
+whenever its modification time, change time, size or inode changes, and on every call while those
+times are too recent to tell a later write in the same clock tick apart (see `_kept`). jsonschema is
+imported only when a validator is built, so loading this module does not need it. Load it by path
+and register it in `sys.modules` as `cad_record_schema_registry`.
 """
 
 from __future__ import annotations
@@ -17,16 +18,24 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+import time
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
 _CACHE_SIZE = 256
+# The coarsest file time step allowed for: FAT stores modification times in 2 s steps.
+_TICK_NS = 2_000_000_000
 
 Stamp = tuple[int, int, int, int]  # st_mtime_ns, st_ctime_ns, st_size, st_ino
 State = tuple[tuple[str, str], ...]  # (file name, sha256 of its text) of every schema in a directory
+_T = TypeVar("_T")
 _TEXTS: dict[str, str] = {}  # schema text by its sha256
+_KEPT: dict[tuple[str, Path], tuple[Stamp, int, Any]] = {}  # (stamp, time.time_ns before the read, value)
+_LOCK = threading.Lock()  # guards _KEPT, as lru_cache guarded its own entries
 
 
 def _stamp(path: str | Path) -> Stamp:
@@ -36,9 +45,32 @@ def _stamp(path: str | Path) -> Stamp:
     return status.st_mtime_ns, status.st_ctime_ns, status.st_size, status.st_ino
 
 
-@lru_cache(maxsize=_CACHE_SIZE)
-def _digest(path: Path, stamp: Stamp) -> str:
-    """The sha256 of the text of `path` as it is at `stamp`; the text is kept by its digest."""
+def _kept(kind: str, path: Path, read: Callable[[], _T]) -> _T:
+    """`read()`, kept while the stamp of `path` is unchanged and was verified when it was read.
+
+    A filesystem stamps a write from a clock that may tick in steps (10 ms on Linux at HZ=100, 2 s on
+    FAT), so a second write in the tick of a read leaves every stat field as the read saw it. As racy
+    git does, a value is used again only when the times of its stamp lie more than one tick before the
+    read: every later write then gets a later change time. Until then `read()` runs on each call."""
+    stamp = _stamp(path)
+    key = (kind, path)
+    with _LOCK:
+        entry = _KEPT.get(key)
+        if entry is not None and entry[0] == stamp and max(stamp[0], stamp[1]) + _TICK_NS < entry[1]:
+            _KEPT[key] = _KEPT.pop(key)  # most recently used last
+            return cast(_T, entry[2])  # the value `read` returned for this kind
+    read_at = time.time_ns()
+    value = read()
+    with _LOCK:
+        _KEPT.pop(key, None)
+        _KEPT[key] = (stamp, read_at, value)
+        while len(_KEPT) > _CACHE_SIZE:
+            del _KEPT[next(iter(_KEPT))]
+    return value
+
+
+def _digest(path: Path) -> str:
+    """The sha256 of the text of `path`; the text is kept by its digest."""
     text = path.read_text(encoding="utf-8")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     _TEXTS[digest] = text
@@ -47,7 +79,7 @@ def _digest(path: Path, stamp: Stamp) -> str:
 
 def _content(path: Path) -> str:
     """The sha256 of the current text of `path`. Raises OSError when it cannot be read."""
-    return _digest(path, _stamp(path))
+    return _kept("text", path, lambda: _digest(path))
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
@@ -55,9 +87,8 @@ def _resolved(root: str) -> Path:
     return Path(root).resolve()
 
 
-@lru_cache(maxsize=_CACHE_SIZE)
-def _names(root: Path, stamp: Stamp) -> tuple[str, ...]:
-    """The schema file names in `root` while the directory itself is unchanged (no file added or removed)."""
+def _names(root: Path) -> tuple[str, ...]:
+    """The schema file names in `root`."""
     return tuple(sorted(entry.name for entry in os.scandir(root)
                         if entry.name.endswith(".schema.json") and entry.is_file()))
 
@@ -65,7 +96,7 @@ def _names(root: Path, stamp: Stamp) -> tuple[str, ...]:
 def _directory_state(root: Path) -> State:
     """Every schema file of `root` by name, with the sha256 of its text."""
     state = []
-    for name in _names(root, _stamp(root)):
+    for name in _kept("names", root, lambda: _names(root)):
         try:
             state.append((name, _content(root / name)))
         except FileNotFoundError:  # removed since the listing: the next listing leaves it out
