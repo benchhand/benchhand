@@ -447,9 +447,45 @@ def _incomplete(message: str, **fields: Any) -> dict[str, Any]:
     return {"status": "warn", "blocking": False, "failed": [], "message": message, **fields}
 
 
-def _box(shape: Any) -> tuple[list[float], list[float]]:
-    low, high = occ.bbox(shape)
-    return list(low), list(high)
+class _Measures:
+    """What one `inspect` reads back from its outputs, done once however many sub-checks ask. It reads
+    each part STEP once (`part`) and measures each shape's exact box and volume once, each an OCCT pass
+    over the whole B-rep. A measurement belongs to a shape that `IsEqual` matches (TShape, Location,
+    Orientation) behind a hash bucket: a hash does not prove equality, and a reversed solid has the
+    opposite volume. A path gives one shape. The memo holds its shapes, lives for one `inspect`
+    call, and nothing in that call edits a shape."""
+
+    def __init__(self) -> None:
+        self._parts: dict[tuple[Path, str], tuple[Any, str | None]] = {}
+        self._boxes: dict[int, list[tuple[Any, tuple[list[float], list[float]]]]] = {}
+        self._volumes: dict[int, list[tuple[Any, float]]] = {}
+
+    def part(self, path: Path, pn: str) -> tuple[Any, str | None]:
+        """`read_part(path, pn)`, read once per path."""
+        if (path, pn) not in self._parts:
+            self._parts[(path, pn)] = read_part(path, pn)
+        return self._parts[(path, pn)]
+
+    @staticmethod
+    def _find(memo: dict[int, list[tuple[Any, Any]]], shape: Any) -> tuple[list[tuple[Any, Any]], Any]:
+        bucket = memo.setdefault(hash(shape), [])
+        return bucket, next((value for held, value in bucket if held.IsEqual(shape)), None)
+
+    def box(self, shape: Any) -> tuple[list[float], list[float]]:
+        bucket, found = self._find(self._boxes, shape)
+        if found is None:
+            corner_min, corner_max = occ.bbox(shape)
+            found = (list(corner_min), list(corner_max))
+            bucket.append((shape, found))
+        low, high = found
+        return list(low), list(high)
+
+    def volume(self, shape: Any) -> float:
+        bucket, found = self._find(self._volumes, shape)
+        if found is None:
+            found = occ.volume(shape)
+            bucket.append((shape, found))
+        return cast(float, found)
 
 
 def required(entry: Mapping[str, Any], sidecar: bool = True) -> list[str]:
@@ -484,19 +520,22 @@ def inspect(target: Path, entry: Mapping[str, Any], record: Mapping[str, Any], e
                            allowed_mm3=allowed, installed_solids=installed["kernel_solids"],
                            manufacture_solids=native["kernel_solids"]),
     }
-    part = None
+    part, measures = None, _Measures()
     if "part.step" in present:
-        part, checks["step"] = _step(target / "part.step", entry, native["kernel_volume_mm3"], native["kernel_solids"])
+        part, checks["step"] = _step(target / "part.step", entry, native["kernel_volume_mm3"], native["kernel_solids"],
+                                     measures)
     else:
         checks["step"] = _judge({"present": False})
     if entry["mesh"] is not None:
-        checks["mesh"] = (_mesh(target / "part.stl", entry, part.shape) if "part.stl" in present and part is not None
+        checks["mesh"] = (_mesh(target / "part.stl", entry, part.shape, measures)
+                          if "part.stl" in present and part is not None
                           else _judge({"present_with_readable_step": False}))
     if "part.3mf" in entry["outputs"]:
-        checks["threemf"] = _threemf_files(target, entry, present, part.shape if part is not None else None)
-    checks["placement"] = _placement(entry, entry["placement"], part.shape if part is not None else None)
+        checks["threemf"] = _threemf_files(target, entry, present, part.shape if part is not None else None, measures)
+    checks["placement"] = _placement(entry, entry["placement"], part.shape if part is not None else None, measures)
     if entry.get("components"):  # sidecar schema 2; earlier versions hold one unbound output
-        checks["components"] = _components(target, entry, present, part.shape if part is not None else None)
+        checks["components"] = _components(target, entry, present, part.shape if part is not None else None,
+                                           measures)
     elif (entry.get("component_identity") or {}).get("status") == "unknown":
         checks["components"] = _incomplete("the part's solids are not bound to components: "
                                            + entry["component_identity"]["reason"])
@@ -516,18 +555,19 @@ def failure_message(row: Mapping[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def _step(path: Path, entry: Mapping[str, Any], volume: float, solids_expected: int) -> tuple[Any, dict[str, Any]]:
+def _step(path: Path, entry: Mapping[str, Any], volume: float, solids_expected: int,
+          measures: _Measures) -> tuple[Any, dict[str, Any]]:
     """A part STEP read back: AP242 in millimetres, one product named `<PN> <title>` in place, a valid
     B-rep with the expected solid count, and the expected volume within the read-back drift."""
     schema, units = stepfile.schema(path), stepfile.length_units(path)
-    part, problem = read_part(path, entry["PN"])
+    part, problem = measures.part(path, entry["PN"])
     header = {"ap242": schema is not None and schema.startswith(stepfile.AP242), "millimetres": units == ["mm"]}
     if part is None:
         return None, _judge({**header, "one_product_in_place": False}, schema=schema, units=units, message=problem)
     errors = occ.check_statuses(part.shape)
-    measured, solids = occ.volume(part.shape), occ.count(part.shape, "SOLID")
+    measured, solids = measures.volume(part.shape), occ.count(part.shape, "SOLID")
     rel = abs(measured - volume) / max(abs(volume), 1e-12)
-    low, high = _box(part.shape)
+    low, high = measures.box(part.shape)
     return part, _judge({**header, "one_product_in_place": True, "product_name": part.name == entry["product"],
                          "valid": not errors, "same_solids": solids == solids_expected,
                          "volume_drift": rel <= stepfile.READBACK_REL},
@@ -536,7 +576,7 @@ def _step(path: Path, entry: Mapping[str, Any], volume: float, solids_expected: 
                         tolerance_rel=stepfile.READBACK_REL, bbox_mm={"min": low, "max": high})
 
 
-def _mesh(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
+def _mesh(path: Path, entry: Mapping[str, Any], shape: Any, measures: _Measures) -> dict[str, Any]:
     """The STL against the STEP it was tessellated from: binary, finite, without degenerate triangles,
     closed and consistently wound outward, one mesh shell per B-rep shell, and within the declared
     chord deviation of the exact solid: in volume (at most area x deflection) and on each box face.
@@ -546,8 +586,8 @@ def _mesh(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
     except Exception as error:  # noqa: BLE001 - an unreadable STL is a failed output, not an infrastructure error
         return _judge({"readable": False}, message=f"cannot read {path.name}: {error}")
     deflection = entry["mesh"]["linear_deflection_mm"]
-    step_volume, area = occ.volume(shape), occ.area(shape)
-    low, high = _box(shape)
+    step_volume, area = measures.volume(shape), occ.area(shape)
+    low, high = measures.box(shape)
     slack = 2 * FLOAT32_EPS * max(report["max_abs_mm"], 1.0) + 1e-9  # float32 rounding of a coordinate
     bound = area * (deflection + slack)
     finite = report["finite"]
@@ -567,7 +607,7 @@ def _mesh(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
                   angular_deflection_rad=entry["mesh"]["angular_deflection_rad"])
 
 
-def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]:
+def _threemf(path: Path, entry: Mapping[str, Any], shape: Any, measures: _Measures) -> dict[str, Any]:
     """Judge the 3MF against the STEP it came from. The reader accepts the package (its parts, ids and
     indices resolve). It holds one millimetre mesh object, built once with no transform, closed and consistently
     wound outward by its indices. It names the part's material and shows its color. Its volume is within the
@@ -582,8 +622,8 @@ def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]
     (obj,), (item,) = model.objects, model.build
     report = threemf.measure(obj.vertices, obj.triangles)
     deflection = entry["mesh"]["linear_deflection_mm"]
-    step_volume, area = occ.volume(shape), occ.area(shape)
-    low, high = _box(shape)
+    step_volume, area = measures.volume(shape), occ.area(shape)
+    low, high = measures.box(shape)
     slack = 10.0 ** -threemf.DECIMALS  # the writer rounds each coordinate to this
     bound = area * (deflection + slack)
     volume_error = abs(report["volume_mm3"] - step_volume)
@@ -601,23 +641,26 @@ def _threemf(path: Path, entry: Mapping[str, Any], shape: Any) -> dict[str, Any]
                   linear_deflection_mm=deflection)
 
 
-def _threemf_files(target: Path, entry: Mapping[str, Any], present: list[str], shape: Any) -> dict[str, Any]:
+def _threemf_files(target: Path, entry: Mapping[str, Any], present: list[str], shape: Any,
+                   measures: _Measures) -> dict[str, Any]:
     """`_threemf` of part.3mf and of each component's own part.3mf, each against its own STEP read back."""
     rows: dict[str, dict[str, Any]] = {}
     if "part.3mf" in present and shape is not None:
-        rows["part.3mf"] = _threemf(target / "part.3mf", entry, shape)
+        rows["part.3mf"] = _threemf(target / "part.3mf", entry, shape, measures)
     else:
         rows["part.3mf"] = _judge({"present_with_readable_step": False})
     for name in entry.get("component_outputs") or []:
         if not name.endswith("/part.3mf"):
             continue
-        part, _ = read_part(target / name.replace("part.3mf", "part.step"), entry["PN"]) if name in present else (None, None)
-        rows[name] = _threemf(target / name, entry, part.shape) if part is not None else _judge(
+        part, _ = (measures.part(target / name.replace("part.3mf", "part.step"), entry["PN"])
+                   if name in present else (None, None))
+        rows[name] = _threemf(target / name, entry, part.shape, measures) if part is not None else _judge(
             {"present_with_readable_step": False})
     return _judge({name: row["status"] == "pass" for name, row in rows.items()}, files=rows)
 
 
-def _placement(entry: Mapping[str, Any], placement: Mapping[str, Any], shape: Any) -> dict[str, Any]:
+def _placement(entry: Mapping[str, Any], placement: Mapping[str, Any], shape: Any,
+               measures: _Measures) -> dict[str, Any]:
     """A proper transform. A part set on a bed touches it at Z 0 and, with an envelope, sits inside its
     reserved extents (X and Y: margin to size - margin; Z: 0 to size - 2 margin); a record version 2
     part on a bed is complete only in its approved orientation. Any other part keeps its model frame."""
@@ -625,7 +668,7 @@ def _placement(entry: Mapping[str, Any], placement: Mapping[str, Any], shape: An
     proper = orientation.is_proper(tuple(tuple(row[:3]) for row in transform))  # type: ignore[arg-type]
     if shape is None:
         return _judge({"proper_rotation": proper, "readable_step": False}, **placement)
-    low, high = _box(shape)
+    low, high = measures.box(shape)
     facts_of = {**placement, "bbox_mm": {"min": low, "max": high}}
     frame = placement.get("frame") or ("bed" if entry["process"] == "fdm" else "model")  # sidecar schema 1 has no frame
     if frame != "bed":
@@ -656,7 +699,8 @@ def _moved(points: Iterable[Iterable[float]], transform: list[list[float]]) -> l
             for p in (list(point) for point in points)]
 
 
-def _components(target: Path, entry: Mapping[str, Any], present: list[str], whole: Any) -> dict[str, Any]:
+def _components(target: Path, entry: Mapping[str, Any], present: list[str], whole: Any,
+                measures: _Measures) -> dict[str, Any]:
     """Each component's own files read back: one product in place with the component's member count and
     volume, its mesh, its placement, and its binding points (witness inside, feature points on the
     surface) moved by that placement onto exactly one of its solids."""
@@ -666,16 +710,16 @@ def _components(target: Path, entry: Mapping[str, Any], present: list[str], whol
         if facts_of["files"] and facts_of["files"][0].startswith(f"{COMPONENT_DIR}/"):
             step_name = facts_of["files"][0]
             if step_name in present:
-                part, step = _step(target / step_name, entry, volume, facts_of["multiplicity"])
+                part, step = _step(target / step_name, entry, volume, facts_of["multiplicity"], measures)
             else:
                 part, step = None, _judge({"present": False})
             shape = part.shape if part is not None else None
             row: dict[str, Any] = {"step": step}
             stl_name = f"{COMPONENT_DIR}/{ident}/part.stl"
             if entry["mesh"] is not None:
-                row["mesh"] = (_mesh(target / stl_name, entry, shape) if stl_name in present and shape is not None
+                row["mesh"] = (_mesh(target / stl_name, entry, shape, measures) if stl_name in present and shape is not None
                                else _judge({"present_with_readable_step": False}))
-            row["placement"] = _placement(entry, facts_of["placement"], shape)
+            row["placement"] = _placement(entry, facts_of["placement"], shape, measures)
         else:
             shape, row = whole, {}
         expected = "in" if facts_of["binding"] == "witness" else "on"
