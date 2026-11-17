@@ -890,14 +890,29 @@ class PurchasedIdentityTests(Checks):
                 self.assertEqual(self.outcome(self.bought(f"Hex nut {designation}"), self.obligation), "fail")
 
     def test_a_grade_is_not_a_size_but_a_real_size_beside_a_grade_is(self) -> None:
-        """A token is a grade only with a grade marker: a hardness unit (HV, HB, HRC), a stainless class (A2-70), or a property
-        class (8.8, 10.9, 12.9). Another decimal such as 8.4 is a washer size."""
+        """A token is a grade only with a grade marker: a hardness unit (HV, HB, HRC) after a number, or a stainless class
+        (A2-70). A property class (8.8) beside a thread size does not change the size. A decimal such as 8.4 is a washer size."""
         cases = (
             ("Washer ISO 7089 - 200 HV", "fail"), ("Washer ISO 7089 200 HV", "fail"), ("Washer ISO 7089 - 40 HRC", "fail"),
-            ("ISO 4762 - 8.8", "fail"), ("ISO 4762 10.9", "fail"), ("ISO 4762 - A2-70", "fail"), ("A2-70", "fail"),
+            ("ISO 4762 - A2-70", "fail"), ("A2-70", "fail"),
             ("ISO 7089 - 5 - 200 HV", "pass"), ("Washer ISO 7089 - 8 - 200 HV", "pass"), ("DIN 125 - 8.4", "pass"),
-            ("Washer ISO 7089 - 8.4 - 200 HV", "pass"), ("ISO 4762 M6x20 - 8.8", "pass"), ("ISO 4762 M3x10 10.9", "pass"),
+            ("Washer ISO 7089 - 8.4 - 200 HV", "pass"), ("ISO 4762 M6x20 - 8.8", "pass"), ("ISO 4762 M6 - 8.8", "pass"),
+            ("ISO 4762 M3x10 10.9", "pass"),
         )
+        self.assert_designations(cases)
+
+    def test_a_threaded_fastener_standard_needs_a_thread_designation_as_its_size(self) -> None:
+        """For ISO 4762 and the other listed screw, bolt and nut standards a bare number is not a size. An unlisted standard
+        (a washer, a ring, a pin) keeps a bare decimal as a size."""
+        cases = [("ISO 4762 - 8.8", "fail"), ("ISO 4762 10.9", "fail"), ("ISO 4017 - 10.9", "fail"), ("ISO 4762 5", "fail"),
+                 ("ISO 4032 - 8", "fail"), ("ISO 4762 5x20", "fail"),
+                 ("ISO 4762 M6", "pass"), ("ISO 4762 #10-24", "pass"), ("ISO 4762 1/4-20", "pass"), ("ISO 4017 M8x30", "pass"),
+                 ("ISO 7089 - 8.8", "pass"), ("DIN 125 - 8.4", "pass"), ("DIN 471 - 5x0.6", "pass")]
+        for standard in ("ISO 4762", "ISO 4014", "ISO 4017", "ISO 7380", "ISO 10642", "ISO 4032", "DIN 912", "DIN 933", "DIN 934"):
+            cases += [(f"{standard} - 8.8", "fail"), (f"{standard} M6", "pass")]
+        self.assert_designations(cases)
+
+    def assert_designations(self, cases: Any) -> None:
         for designation, expected in cases:
             with self.subTest(designation=designation, where="field"):
                 result = self.bought(designation=designation)

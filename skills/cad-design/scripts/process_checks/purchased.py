@@ -23,16 +23,31 @@ _FIT = r"(?:\s*[a-zA-Z]{1,2}\d{1,2})?"  # a tolerance class after the diameter: 
 _SIZE = rf"(?:[M#]\d+(?:\.\d+)?(?:-\d+)?(?:{_TIMES})?|\d+(?:[./]\d+)*(?:-\d+)?{_FIT}{_TIMES})(?!\d)"
 # A bare nominal size (ISO 7089 - 5 - 200 HV, ASME B18.2.2 1/4-20) follows the standard number after a space, so a part of
 # a multi-part standard number (EN 10025-2) is not read as one. It is a whole token: a number, a fraction or a thread
-# (1/4-20), an optional series (UNC, UNF, UNEF), then a space, a delimiter or the end. A token that carries a grade marker
-# is not a size: a number before a hardness unit (200 HV) or a property class (8.8, 10.9, 12.9). A stainless class (A2-70)
-# starts with a letter, so it is never a size. Another decimal such as 8.4 is a washer size.
+# (1/4-20), an optional series (UNC, UNF, UNEF), then a space, a delimiter or the end. A number before a hardness unit
+# (200 HV) is a grade, not a size. A stainless class (A2-70) starts with a letter, so it is never a size.
 _HARDNESS_UNIT = r"HV|HB[WS]?|HR[ABC]"
-_PROPERTY_CLASS = r"(?:8\.8|10\.9|12\.9)(?![\d.])"
-_BARE = (rf"(?!{_PROPERTY_CLASS})\d{{1,4}}(?:\.\d+)?(?:/\d{{1,3}})?(?:-\d{{1,3}})?(?:UNEF|UNC|UNF)?(?=\s|$|[,;)\"])"
+_BARE = (r"\d{1,4}(?:\.\d+)?(?:/\d{1,3})?(?:-\d{1,3})?(?:UNEF|UNC|UNF)?(?=\s|$|[,;)\"])"
          rf"(?!\s*(?:{_HARDNESS_UNIT})\b)")
 STANDARD_DESIGNATION = re.compile(
     rf"(?<![A-Za-z])(?P<bodies>(?:{_BODY})(?:[ /]+(?:{_BODY}))*)\s+(?P<number>{_NUMBER})"
-    rf"(?:(?:\s*[-\u2013\u2014]\s*|\s+){_SIZE}|\s+(?:[-\u2013\u2014]\s+)?{_BARE})")
+    rf"(?:(?:\s*[-\u2013\u2014]\s*|\s+)(?P<size>{_SIZE})|\s+(?:[-\u2013\u2014]\s+)?(?P<bare>{_BARE}))")
+
+# Screw, bolt and nut standards whose size is a thread designation (M6, M6x20, #10-24, 1/4-20). For these a bare number such as
+# 8.8 is not a size: it reads as a property class. Each entry names the standard's scope. Every other standard (a washer, a
+# ring, a pin) keeps a bare decimal as its size. The list is short and needs completing as more standards are met (#147).
+THREADED_FASTENERS = {
+    "ISO 4762": "hexagon socket head cap screws, M1.6 to M64",
+    "ISO 4014": "hexagon head bolts, product grades A and B",
+    "ISO 4017": "hexagon head screws, product grades A and B",
+    "ISO 7380": "button head screws with hexagon socket",
+    "ISO 10642": "countersunk head screws with hexagon socket",
+    "ISO 4032": "hexagon regular nuts (style 1), product grades A and B",
+    "DIN 912": "hexagon socket head cap screws",
+    "DIN 933": "hexagon head screws, fully threaded",
+    "DIN 934": "hexagon nuts",
+}
+_THREADED = tuple(tuple(entry.split(" ", 1)) for entry in THREADED_FASTENERS)
+_THREAD_SIZE = re.compile(r"(?:M\d|#\d|\d+/\d)")
 
 # Standards that specify features or tolerances (threads, fits, general tolerances), not purchasable parts. A feature
 # standard matches by body plus number: ISO 965 covers ISO 965-1, DIN ISO 965-1 and DIN EN ISO 965-1, not DIN 965 (a screw).
@@ -43,9 +58,16 @@ DESIGNATION_RULE = "a standard designation with a size (DIN 471 - 5x0.6), or a m
 
 
 def _part_standard(match: re.Match[str]) -> bool:
+    """A part standard with a size that fits it: a thread designation for a threaded fastener, any size otherwise."""
     bodies = set(re.split(r"[ /]+", match["bodies"]))
     root = re.sub(r"(?:-\d+)+$", "", match["number"])
-    return not any(body in bodies and root == number for body, number in _FEATURE)
+
+    def listed(entries: tuple[tuple[str, ...], ...]) -> bool:
+        return any(body in bodies and root == number for body, number in entries)
+
+    if listed(_FEATURE):
+        return False
+    return not listed(_THREADED) or _THREAD_SIZE.match(match["size"] or match["bare"]) is not None
 
 
 def designation_parses(value: Any) -> bool:
