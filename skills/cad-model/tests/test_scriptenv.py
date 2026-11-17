@@ -112,7 +112,7 @@ class SharedCacheEnvironmentTests(unittest.TestCase):
 
     # This class holds the pin. A move to another Python or numpy changes these constants and the headers.
     PYTHON = ">=3.12,<3.15"
-    RUNNER_PYTHON = ">=3.12,<3.13"   # the kernel runners keep the interpreter their results were sealed on
+    RUNNER_PYTHON = ">=3.12,<3.13"   # the kernel runners and their fixture copies (run_*.py) keep the interpreter their results were sealed on
     NUMPY = "numpy==2.5.5"
 
     def headers(self) -> dict[Path, dict]:
@@ -131,8 +131,9 @@ class SharedCacheEnvironmentTests(unittest.TestCase):
         names = {script.name for script in scripts}
         self.assertTrue({"cad_model.py", "run_cadquery.py", "motion.py", "mesh_probe.py"} <= names, sorted(names))
         runners = {runner.name for runner in build.RUNNERS.values()}
+        self.assertTrue(all(name.startswith("run_") for name in runners), runners)
         found = {str(script.relative_to(SKILLS)): meta.get("requires-python") for script, meta in scripts.items()}
-        expected = {str(script.relative_to(SKILLS)): self.RUNNER_PYTHON if script.name in runners else self.PYTHON
+        expected = {str(script.relative_to(SKILLS)): self.RUNNER_PYTHON if script.name.startswith("run_") else self.PYTHON
                     for script in scripts}
         self.assertEqual(found, expected)
 
