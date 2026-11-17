@@ -48,7 +48,7 @@ Session identity:
    B side by side, cameras synced both ways. Either side may be `latest`. `mode single --active A|B`
    flips one viewer.
    The panel's Versions section shows a labeled select for each shown version (A, plus B side by side).
-   It lists `latest (vN)`, then every `hw/versions/vN` newest first with build time and part count.
+   It lists `latest (vN)`, then every `hw/versions/vN` newest first with part count.
    Picking one loads it into that slot and keeps the camera and view state. `show` and `compare`
    update the selects. When a version cannot load, such as a missing part STEP, the error shows
    under its select and the slot keeps its model. Command output reports `versions.<A|B>.selected`
@@ -109,8 +109,8 @@ to the live 3D viewer.
 | Renders | `hw/renders/<vN>/<subject>/{render.json,*.png,manifest.json}` (`cad-render`) | view quality, retry strategy, and material/input decisions from render.json |
 | Drawings | `hw/drawings/<vN>/<subject>/{package.json,sheet-1.png,sheet-1.pdf,manifest.json}` | status, scale, projection and Open PDF with its absolute path |
 | Concept screenshots | `hw/concept/screenshots/` (`cad-concept`) | scene and variant |
-The version picker uses built labels from cad-record layout. Each option includes the build date and part
-count, plus counts of valid render sets, capture bundles and drawing preview bundles; choose Gallery to
+The version picker uses built labels from cad-record layout. Each option includes the part
+count, plus counts of valid render sets, capture bundles and drawing preview bundles. Choose Gallery to
 see the actual images. The file route serves only PNG, JPEG, and PDF files inside the open `hw/`.
 
 ## Rules

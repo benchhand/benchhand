@@ -148,8 +148,6 @@ const optionSignatures = {}; // version key -> the options its select lists, reb
 
 const selectionKey = (selected) => (selected ? `${selected.version}|${selected.label}` : "");
 
-const builtAt = (iso) => (iso ? iso.slice(0, 10) : "build time not recorded");
-
 function previewCounts(previews) {
   const labels = { renders: "render set", captures: "capture", drawings: "drawing preview" };
   return Object.entries(labels).flatMap(([kind, label]) => {
@@ -163,7 +161,7 @@ function versionText(entry) {
   const preview = counts.length ? ` · ${counts.join(", ")}` : "";
   if (entry.error) return `${entry.label} · incomplete build${preview}`;
   const parts = entry.parts === null ? "" : ` · ${entry.parts} part${entry.parts === 1 ? "" : "s"}`;
-  return `${entry.label} · ${builtAt(entry.built_utc)}${parts}${preview}`;
+  return `${entry.label}${parts}${preview}`;
 }
 // [value, text] per option: latest (vN), then every built version, newest first
 function versionOptions(selected) {
