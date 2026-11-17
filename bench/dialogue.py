@@ -38,7 +38,7 @@ ASK_LINE = re.compile(
     r"^(?:please|reply|respond|confirm|approve|choose|select|pick|say|let me know|tell me)\b"
     r"|\b(?:do|can|could|would|will) you (?:approve|confirm)\b",
     re.IGNORECASE)
-SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+SENTENCE_END = re.compile(r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\betc\.)(?<!\bvs\.)(?<!\bcf\.)(?<=[.!?])\s+|\n+")
 MARKUP = re.compile(r"^[\s>*#\-+|—–]*(?:\d+[.)]\s*)?|[*_`]+")
 GATE_WORD = re.compile(r"\b(gate|freeze)\b", re.IGNORECASE)
 APPROVAL_ASK = re.compile(r"\bapprov(?:e|al)\b", re.IGNORECASE)

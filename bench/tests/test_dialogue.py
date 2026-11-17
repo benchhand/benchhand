@@ -110,6 +110,20 @@ def recorded_text(name: str) -> str:
 class RecordedGroundTests(unittest.TestCase):
     """Real GROUND replies the lead gave in the fixture builds: long question tables, not gates."""
 
+    def test_regression_a_ground_reply_that_describes_later_gates_approves_no_gate(self) -> None:
+        # The first matcher read "Once you answer, I'll ... ask for your approval. Then come the concept
+        # variants, the VARIANT gate and the L1 LAYOUT with its freeze gate." as an ask and answered it with
+        # the VARIANT, INTENT and LAYOUT freeze approvals before the lead had presented any of them.
+        for case in ("wall-bracket", "fdm-enclosure", "print-in-place"):
+            with self.subTest(case=case):
+                script = case_script(case)
+                gates = {intent.id: intent.answer for intent in script.intents if intent.kind == "gate"}
+                reply = dialogue.respond(script, recorded_text(f"events-ground-{case}.jsonl"), "fixture", can_stop=False)
+                self.assertEqual([ident for ident in reply.answered if ident in gates], [])
+                self.assertEqual(reply.kind, "question")
+                for answer in gates.values():
+                    self.assertNotIn(answer, reply.message)
+
     def test_a_ground_reply_that_names_later_gates_is_not_a_gate_and_its_unmatched_question_gets_the_default(self) -> None:
         script = case_script("fdm-enclosure")
         reply = dialogue.respond(script, recorded_text("events-ground-fdm-enclosure.jsonl"), "fixture", can_stop=False)
@@ -123,6 +137,15 @@ class RecordedGroundTests(unittest.TestCase):
         reply = dialogue.respond(case_script("wall-bracket"), recorded_text("events-ground-wall-bracket.jsonl"), "fixture")
         follow_up = [ask for ask in reply.asks if ask.text == "Or kept out of git?"]
         self.assertEqual([ask.intent for ask in follow_up], ["storage"])
+
+    def test_regression_an_abbreviation_does_not_split_the_release_scope_question(self) -> None:
+        # The first matcher split Q-011 at "e.g." and answered the orphan "at 300 N?" with the default, so the
+        # lead adopted its own proof-test suggestion instead of receiving the CAD-only release scope.
+        reply = dialogue.respond(case_script("wall-bracket"), recorded_text("events-ground-wall-bracket.jsonl"), "fixture")
+        q011 = [ask for ask in reply.asks if ask.text.startswith("Q-011")]
+        self.assertEqual([ask.intent for ask in q011], ["release-scope"])
+        self.assertTrue(q011[0].text.endswith("e.g. at 300 N?"))
+        self.assertNotIn("at 300 N?", [ask.text for ask in reply.asks])
 
 
 class GateTests(unittest.TestCase):

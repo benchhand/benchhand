@@ -3,7 +3,9 @@
 default: >-
   I have no further information on that. Use your recommended option, record it as a bounded
   assumption in a decision record, and continue.
-nudge: Continue with the next step of the flow.
+nudge: >-
+  Continue within this session's scope. If the scope's stop point is reached, say so and stop;
+  do not start the next stage.
 wait_s: {question: 180, gate: 600, nudge: 30}
 stop: {fixture: layout-freeze, bench: parts-gate}
 intents:
@@ -96,8 +98,8 @@ intents:
   - id: rigor
     match: ['\brigou?r\b', '\bmaker\b', '\bregulated\b', 'documentation depth']
   - id: release-scope
-    match: ['\brelease\b.*\b(claim|scope|include|contain)', '\bwhat may\b', 'operating limits', '\bexclusions\b',
-            'evidence\b.*\b(need|required|scope)']
+    match: ['\brelease\b.*\b(claim|scope|include|contain|backed)', '\bwhat may\b', 'operating limits', '\bexclusions\b',
+            'evidence\b.*\b(need|required|scope)', 'load[- ]test', 'proof[- ]test', 'physical (test|validation|proof)']
   - id: pn-prefix
     match: ['part[- ]number', '\bPN\b', '\bprefix\b', '\bnaming\b', '\bproduct id\b']
   - id: equipment

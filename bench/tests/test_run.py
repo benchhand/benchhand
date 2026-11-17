@@ -95,6 +95,21 @@ class ConverseTests(unittest.TestCase):
         driver = FakeDriver(self.paths, [(0, None, "What loads apply?"), (1, None, ""), (1, None, "")])
         self.assertEqual(run.converse(driver, SCRIPT, "bench", "start", CAPS).outcome, "error")
 
+    def test_a_stop_gate_the_lead_approved_without_being_answered_fails_the_run(self) -> None:
+        class SelfApprovingDriver(FakeDriver):
+            def send(self, message: str, deadline: float) -> run.Invocation:
+                invocation = super().send(message, deadline)
+                decisions = self.paths.project / "hw/decisions"
+                decisions.mkdir(exist_ok=True)
+                (decisions / "DR-009.md").write_text("Status: APPROVED\n# DR-009 PARTS gate approved on v3\n", encoding="utf-8")
+                return invocation
+
+        driver = SelfApprovingDriver(self.paths, [(0, None, "The session stops here, as you scoped it."), (0, None, "")],
+                                     build_at=1)
+        conversation = run.converse(driver, SCRIPT, "bench", "start", CAPS)
+        self.assertEqual(conversation.outcome, "fail:gate-approved-unasked")
+        self.assertEqual(len(driver.sent), 1)
+
     def test_an_unmatched_question_at_a_gate_fails_the_run_without_answering_it(self) -> None:
         driver = FakeDriver(self.paths, [
             (0, None, "What loads apply? What colour should it be?"),

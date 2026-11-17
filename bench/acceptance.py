@@ -15,6 +15,11 @@ from typing import Any
 JSON = dict[str, Any]
 
 STAGE_LEVEL = {"layout": "L1", "parts": "L2", "detail": "L3", "analysis": "L4"}
+# The human gate each mode stops at, as a decision title names it ("# DR-009 LAYOUT freeze approved on v2").
+STOP_GATE_TITLE = {
+    "fixture": re.compile(r"layout\W+(?:\w+\W+){0,2}freeze|freeze\W+(?:\w+\W+){0,2}layout", re.IGNORECASE),
+    "bench": re.compile(r"\bparts\W+(?:\w+\W+){0,2}gate\b|\bgate\W+(?:\w+\W+){0,2}parts\b", re.IGNORECASE),
+}
 VERSION_LABEL = re.compile(r"^v([1-9][0-9]*)$")
 JSON_BLOCK = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
@@ -67,6 +72,17 @@ def latest_at_stage(versions: Mapping[str, str | None], stage: str) -> str | Non
     """The newest version label whose record snapshot was built at `stage`."""
     labels = [label for label, built_at in versions.items() if built_at == stage and VERSION_LABEL.match(label)]
     return max(labels, key=version_number, default=None)
+
+
+def stop_gate_approvals(decisions: Mapping[str, str], mode: str) -> list[str]:
+    """Decisions that approve the mode's stop gate: first line `Status: APPROVED`, title naming the gate."""
+    approvals = []
+    for name, text in sorted(decisions.items()):
+        lines = text.splitlines()
+        title = next((line for line in lines if line.startswith("#")), "")
+        if lines and lines[0].strip() == "Status: APPROVED" and STOP_GATE_TITLE[mode].search(title):
+            approvals.append(name)
+    return approvals
 
 
 @dataclass(frozen=True)

@@ -36,6 +36,19 @@ class VerdictTests(unittest.TestCase):
 
 
 class HardCheckTests(unittest.TestCase):
+    def test_only_an_approved_decision_whose_title_names_the_stop_gate_approves_it(self) -> None:
+        # First lines of the wall-bracket fixture build's decisions.
+        records = {
+            "DR-001.md": "Status: APPROVED\n# DR-001 GROUND: use case confirmed and bounded assumptions adopted\nThe L1 layout ...",
+            "DR-004.md": "Status: APPROVED\n# DR-004 VARIANT gate: concept B \"Tapered cantilever\" (taper) selected\n",
+            "DR-005.md": "Status: PROVISIONAL\n# DR-005 LAYOUT freeze, provisional gate on v1\n",
+            "DR-006.md": "Status: VOID\n# DR-006 VOID: provisional LAYOUT gate DR-005 on v1\n",
+            "DR-009.md": "Status: APPROVED\n# DR-009 LAYOUT freeze approved on v2\n",
+            "DR-012.md": "Status: APPROVED\n# DR-012 PARTS gate approved on v4\n",
+        }
+        self.assertEqual(acceptance.stop_gate_approvals(records, "fixture"), ["DR-009.md"])
+        self.assertEqual(acceptance.stop_gate_approvals(records, "bench"), ["DR-012.md"])
+
     def test_the_newest_version_built_at_the_stage_is_chosen_by_number(self) -> None:
         versions = {"v2": "layout", "v9": "parts", "v10": "parts", "v11": "detail"}
         self.assertEqual(acceptance.latest_at_stage(versions, "parts"), "v10")
