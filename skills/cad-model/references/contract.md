@@ -101,7 +101,7 @@ manufacture:
   reason: elastic_bending   # why the states differ
   decision: DR-007          # the decision record approving the difference
   volume_rel_tolerance: 1.0e-6     # and/or volume_abs_tolerance_mm3: the allowed volume difference
-  mesh: {linear_deflection_mm: 0.05, angular_deflection_rad: 0.1}   # optional, FDM part.stl
+  mesh: {linear_deflection_mm: 0.05, angular_deflection_rad: 0.1}   # optional, FDM part.stl and part.3mf
 ```
 
 ```python
