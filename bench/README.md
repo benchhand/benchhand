@@ -79,7 +79,7 @@ Both gates are bound to a built version, not to `flow.stage`, for one reason. Th
 
 At another stage, the harness matches the ask to the other intents instead of that gate. A GROUND reply that names a later gate is then no gate prompt, so its open questions can no longer fail the run as `fail:unmatched-at-gate`. Commit-timing, flow-profile and SPECIFY approval questions are not stage-bound. Each dialogue entry records `stage`, `has_l1` and `has_l2`.
 
-This changes what `metrics.gates_answered`, `metrics.questions_unmatched_at_gate` and the `fail:unmatched-at-gate` outcome count. Results from runs before a0df35c use the old definition, so compare gate metrics only between runs on the same definition. The first run on the new definition is named here once it exists.
+This changes what `metrics.gates_answered`, `metrics.questions_unmatched_at_gate` and the `fail:unmatched-at-gate` outcome count. Results from runs before a0df35c use the old definition, so compare gate metrics only between runs on the same definition. The first run on the new definition is small-mechanism-fixture-build-20261118T003143-ebc5, at 224f5f0.
 
 Each run commits its record to `bench/results`, appends `spend.jsonl` and pushes. It then deletes its scratch directory. `--mode fixture` builds a fixture instead. It starts from an empty project, or from `--seed-hw`, stops at the LAYOUT freeze, and copies the frozen `hw/` into the case.
 
