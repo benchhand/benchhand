@@ -121,8 +121,42 @@ def exporter_deflections() -> dict[str, float]:
     return {"small": mesh.deflection(block()), "large": mesh.deflection(large)}
 
 
+def reference_torus_error() -> dict[str, float]:
+    """The reference mesh of a disc whose top rim has a 1.2 mm fillet, a torus of major radius 44.85 mm as on
+    LMP-0004's face 28, at the reference budget: the largest exact distance of a triangle center to the B-rep,
+    over an even sample of the centers."""
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
+    from OCP.GeomAbs import GeomAbs_Circle
+
+    from cadmodel import occ
+
+    height = 10.0
+    disc = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 44.85 + 1.2, height).Shape()
+    fillet = BRepFilletAPI_MakeFillet(disc)
+    for edge in (occ.downcast(e, "EDGE") for e in occ.subshapes(disc, "EDGE")):
+        curve = BRepAdaptor_Curve(edge)
+        if curve.GetType() == GeomAbs_Circle and abs(curve.Circle().Location().Z() - height) < 1e-6:
+            fillet.Add(1.2, edge)
+    shape = fillet.Shape()
+    budget = agreement.REFERENCE_FACTOR * LARGE_LINEAR
+    reference = agreement.reference(shape, budget)
+    centres = reference.points[reference.triangles].mean(axis=1)
+    tool = BRepExtrema_DistShapeShape()
+    tool.LoadS2(shape)
+    worst = 0.0
+    for centre in centres[::max(1, len(centres) // 600)]:
+        tool.LoadS1(BRepBuilderAPI_MakeVertex(gp_Pnt(*[float(c) for c in centre])).Vertex())
+        tool.Perform()
+        worst = max(worst, tool.Value())
+    return {"budget_mm": budget, "worst_mm": worst, "triangles": float(len(centres))}
+
+
 if __name__ == "__main__":
     folder = Path(sys.argv[1])
     glb = glb_case(folder)
     print(json.dumps({"cases": cases(), "glb": glb, "abstentions": abstentions(folder),
-                      "exporter_deflection_mm": exporter_deflections()}))
+                      "exporter_deflection_mm": exporter_deflections(),
+                      "reference_torus": reference_torus_error()}))

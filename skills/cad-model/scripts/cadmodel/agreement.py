@@ -150,13 +150,23 @@ def read_glb(path: Path) -> dict[str, Mesh]:
 # --- reference mesh of a STEP shape -----------------------------------------------------------------
 
 def reference(shape: Any, linear_mm: float) -> Mesh:
-    """`shape` tessellated at `linear_mm` into a mesh in its own frame (on a copy: a caller's shape keeps its mesh)."""
+    """`shape` tessellated at `linear_mm` into a mesh in its own frame (on a copy: a caller's shape keeps its mesh).
+    The control-surface deflection is on for every surface type: without it BRepMesh leaves a torus fillet up to
+    3 x `linear_mm` from the B-rep. The reach relies on the reference lying within `linear_mm`."""
     from OCP.BRep import BRep_Tool
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.IMeshTools import IMeshTools_Parameters
     from OCP.TopLoc import TopLoc_Location
 
     work = occ.copy(shape)
-    BRepMesh_IncrementalMesh(work, linear_mm, False, ANGULAR_RAD, True)
+    parameters = IMeshTools_Parameters()
+    parameters.Deflection = linear_mm
+    parameters.Angle = ANGULAR_RAD
+    parameters.Relative = False
+    parameters.InParallel = True
+    parameters.ControlSurfaceDeflection = True
+    parameters.EnableControlSurfaceDeflectionAllSurfaces = True
+    BRepMesh_IncrementalMesh(work, parameters)
     points: list[Vec] = []
     triangles: list[tuple[int, int, int]] = []
     for face in occ.subshapes(work, "FACE"):

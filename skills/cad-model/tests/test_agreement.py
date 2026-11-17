@@ -61,6 +61,15 @@ class AgreementTests(unittest.TestCase):
         self.assertEqual(self.probe["exporter_deflection_mm"]["large"], 0.05)
         self.assertAlmostEqual(self.probe["exporter_deflection_mm"]["small"], 0.03, places=9)  # 60 mm diagonal
 
+    def test_the_reference_of_a_torus_fillet_stays_within_its_budget(self) -> None:
+        """The floor relies on the STEP reference lying within REFERENCE_FACTOR x the GLB deflection (0.025 mm) of the
+        B-rep. BRepMesh holds that on a torus only with the control-surface deflection on for all surfaces. Without
+        it the reference stayed 3.1 x the budget away on a R 44.85, r 1.2 fillet (3.15 x on LMP-0004's face 28).
+        With the flag, OCCT holds 0.81 to 1.21 x the budget on lamp-arm's tori, so the test allows 1.25 x."""
+        torus = self.probe["reference_torus"]
+        self.assertAlmostEqual(torus["budget_mm"], 0.025, places=9)
+        self.assertLessEqual(torus["worst_mm"], 1.25 * torus["budget_mm"], torus)
+
     def test_a_hole_eight_millimetres_off_does_not_agree(self) -> None:
         self.assertEqual(self.status("hole_moved_8_mm"), "fail")
 
