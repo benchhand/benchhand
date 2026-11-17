@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = []
 # ///
 """Process supervision shared by cad-motion sweeps, the cad-model static check and cad-analysis FEA.

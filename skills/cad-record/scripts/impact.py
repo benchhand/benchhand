@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["pyyaml>=6.0"]
 # ///
 """Change impact over the manufacturing-intent dependency domains of a record version 2 design record.

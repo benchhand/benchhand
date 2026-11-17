@@ -38,12 +38,15 @@ jobs:
       - name: Complexity ratchet
         run: uv run --no-project --script scripts/complexity_ratchet.py
 
-      # The README names Python 3.11 as the minimum, and every other step runs 3.12, so check the
-      # floor here: 3.12-only syntax fails to compile, and the harness tests run on 3.11.
-      - name: Python 3.11 floor
-        run: |
-          uv run --no-project --python 3.11 python -B -m compileall -q skills harness scripts
-          uv run --no-project --python 3.11 --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
+      # Import-time errors (unhashable dataclass defaults, bad annotations) survive compileall, so import
+      # every module. Modules that need FreeCAD or other unavailable packages are listed as SKIPPED.
+      - name: Import every module
+        run: uv run --no-project --python 3.12 --with pyyaml==6.0.3 --with jsonschema==4.26.0 --with defusedxml==0.7.1 --with hypothesis==6.170.15 python -B scripts/import_check.py
+
+      # freecadcmd runs FreeCAD's bundled Python 3.11, so the modules its jobs load must compile and
+      # import there. scripts/freecad_job_modules.txt lists them; reviewers keep it complete.
+      - name: FreeCAD job code on Python 3.11
+        run: uv run --no-project --python 3.11 --with pyyaml==6.0.3 --with jsonschema==4.26.0 python -B scripts/import_check.py --manifest
 
       - name: Generated files
         run: uv run --no-project --with pyyaml==6.0.3 python -B harness/generate.py --check

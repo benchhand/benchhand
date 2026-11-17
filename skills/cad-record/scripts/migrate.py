@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
 # ///
 """Migrate a CAD design record from record version 1 to record version 2.

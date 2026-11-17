@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["defusedxml>=0.7.1"]
 # ///
 """Assembly-drawing intent, its reconciliation with the record, and the checks of composed sheets.

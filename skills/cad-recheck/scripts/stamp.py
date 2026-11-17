@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["pyyaml>=6.0", "jsonschema>=4.23"]
 # ///
 """Write or verify the CAD design recheck record for the staged index.

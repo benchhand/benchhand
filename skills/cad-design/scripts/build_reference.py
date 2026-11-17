@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.11,<3.15"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["pyyaml>=6.0"]
 # ///
 """Build cad-design reference parts in one kernel and write one STEP AP242 per part.

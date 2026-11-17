@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = []
 # ///
 """Scratch workspace of one cad-flow worker unit: copy hw/, build and check the copy, deliver the unit's parts.

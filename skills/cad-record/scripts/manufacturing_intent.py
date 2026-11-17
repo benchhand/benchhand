@@ -725,7 +725,7 @@ class Selection:
     candidates: Mapping[str, Mapping[str, Any]]
     recommendation: Mapping[str, Any] | None
     raw: Mapping[str, Any]
-    proposed: Mapping[str, Mapping[str, ProposedPart]] = types.MappingProxyType({})  # candidate id -> PN -> proposal
+    proposed: Mapping[str, Mapping[str, ProposedPart]] = field(default_factory=lambda: _EMPTY)  # candidate id -> PN -> proposal
 
 
 @dataclass(frozen=True)

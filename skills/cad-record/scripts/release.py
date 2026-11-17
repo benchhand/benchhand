@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
 # ///
 """Seal a release package of the frozen version: byte copies and a version 3 manifest under hw/releases/<REV>/.

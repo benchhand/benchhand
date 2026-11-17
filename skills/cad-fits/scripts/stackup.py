@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
 # ///
 """One-dimensional linear tolerance stack-up: worst case, and statistics only where justified.

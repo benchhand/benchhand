@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["ruff==0.17.4"]
 # ///
 """Fail when ruff complexity findings (C901, PLR0912, PLR0915) rise above the baseline."""

@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11,<3.15"
+# requires-python = ">=3.12,<3.15"
 # dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "pyyaml>=6.0"]
 # ///
 """Engineering BOM roll-up from a STEP AP242 assembly and the hw/ design record.
