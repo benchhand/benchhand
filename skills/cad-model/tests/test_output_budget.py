@@ -109,9 +109,10 @@ class LampArmTests(unittest.TestCase):
         # check's result is large, so compact mode summarizes it whatever lamp-arm's verdict; a full envelope
         # under CAD_OUTPUT=compact can then only come from --json
         args = ("check", "v1", "--hw", str(self.hw), "--no-cache")
-        plain = self.tool(CAD_MODEL, *args, env=PLAIN_ENV)
+        # the control runs first: the first check publishes the readback packet, so both compared runs reuse it
         control = self.tool(CAD_MODEL, *args, env=AGENT_ENV)
         self.assertIn("full JSON: ", control.stdout)
+        plain = self.tool(CAD_MODEL, *args, env=PLAIN_ENV)
         agent = self.tool(CAD_MODEL, *args, "--json", env=AGENT_ENV)
         self.assertEqual(agent.returncode, plain.returncode, agent.stderr[-2000:])
         self.assertNotIn("full JSON: ", agent.stdout)
