@@ -34,7 +34,10 @@ TRIGGER
    `--jobs` uses 1-8 dedicated pages in one Chromium process (default 1). Each page loads the scene once
    and renders its assigned views serially, while pages capture concurrently. On CPU-only SwiftShader, keep
    the default: SwiftShader already multithreads. Pace measured 11s at jobs=1, 12s at 2, and 17s at 4
-   for five 800x600 views. Use higher values when tests on the target hardware show a benefit.
+   for five 800x600 views. On a 16-CPU aarch64 Linux host, iso and front at 1600x1200 took 22.7 s at jobs=1
+   and 31.4 s with two pages (+38%); a separate set of runs measured 21.7 s against 29.6 s and 30.4 s. The pages
+   share one SwiftShader GPU process, which serialises their frames. Use higher values only when tests on
+   the target hardware show a benefit.
    The render metadata records page-load, view-capture, renderer, and PNG-encoding times.
    Per-view PNG SHA-256 values verify cache integrity. From this skill directory, run
    `uv run --script scripts/compare_renders.py DIR_A DIR_B` to compare render decisions and PNG pixels.

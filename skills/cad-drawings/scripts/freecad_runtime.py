@@ -130,11 +130,18 @@ def jobs_for(requested: int | None, item_count: int, peak_rss_bytes: int) -> int
 def _map_jobs(items: list[_T], executor: Executor, worker: Callable[[_T], _R]) -> list[_R]:
     futures: list[Future[_R]] = [executor.submit(worker, item) for item in items]
     results: list[_R | None] = [None] * len(futures)
-    failures: list[BaseException] = []
+    failures: list[Exception] = []
     for index, future in enumerate(futures):
         try:
             results[index] = future.result()
-        except BaseException as exc:
+        except (KeyboardInterrupt, JobInterrupted):
+            for pending in futures[index + 1:]:   # stop at once. The caller's signal handling ends running jobs
+                pending.cancel()
+            raise
+        except Exception as exc:
+            if not failures:   # drop items that have not started. Running ones finish
+                for pending in futures[index + 1:]:
+                    pending.cancel()
             failures.append(exc)
     if failures:
         raise failures[0]
@@ -291,6 +298,40 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
         process.wait()
 
 
+# A run-wide cap on FreeCAD processes alive at once, across every thread that launches one: parts, sheets and
+# views share it, so --jobs bounds the whole run and not each pool separately.
+_LAUNCH_SLOTS: threading.BoundedSemaphore | None = None
+
+
+@contextmanager
+def launch_budget(limit: int):
+    """While the block runs, allow at most ``limit`` FreeCAD processes at once, from any thread."""
+    global _LAUNCH_SLOTS
+    if limit < 1:
+        raise ValueError("a launch budget must be positive")
+    previous, _LAUNCH_SLOTS = _LAUNCH_SLOTS, threading.BoundedSemaphore(limit)
+    try:
+        yield
+    finally:
+        _LAUNCH_SLOTS = previous
+
+
+@contextmanager
+def _launch_slot():
+    """Hold one slot of the launch budget (if any) for the life of one FreeCAD process. Stop waiting on a signal."""
+    slots = _LAUNCH_SLOTS
+    if slots is None:
+        yield
+        return
+    while not slots.acquire(timeout=0.1):
+        if _CANCEL_JOBS.is_set():
+            raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
+    try:
+        yield
+    finally:
+        slots.release()
+
+
 def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
             timeout: float, *, environ: Mapping[str, str] | None = None) -> tuple[dict[str, Any] | None, str]:
     """Run one isolated FreeCAD process group and return its passing JSON result, or a reason.
@@ -305,7 +346,7 @@ def run_job(freecadcmd: Path, script: Path, job: dict[str, Any], workdir: Path,
     try:
         if _CANCEL_JOBS.is_set():
             raise JobInterrupted(_CANCEL_SIGNAL or signal.SIGTERM)
-        with job_state_environment(workdir) as isolation:
+        with _launch_slot(), job_state_environment(workdir) as isolation:
             try:
                 process = subprocess.Popen([str(freecadcmd), str(script)], cwd=workdir, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
