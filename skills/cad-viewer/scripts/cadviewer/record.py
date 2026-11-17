@@ -13,6 +13,7 @@ import json
 import math
 import re
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -363,6 +364,13 @@ def connection_text(row: dict[str, Any]) -> str:
     return f"touches no other part; {_mm(row.get('distance_mm'))} from {nearest}{joint}"
 
 
+ORACLE_ROWS: dict[str, Callable[[dict[str, Any]], Iterable[tuple[str, dict[str, Any]]]]] = {
+    # Both key their rows by occurrence id, which is the part id the panel shows.
+    "glb_step_agreement": lambda result: (result.get("occurrences") or {}).items(),
+    "declared_dimensions": lambda result: ((row["host"], row) for row in result.get("heat_sets") or []),
+}
+
+
 def part_findings(check: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
     """Per-PN findings from a cad-model `check` result: one entry per failed or warned row."""
     checks = check.get("checks") if isinstance(check, dict) else None
@@ -383,16 +391,36 @@ def part_findings(check: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
                     add(a, name, severity, f"interferes with {b}: {volume:.3f} mm3")
                     add(b, name, severity, f"interferes with {a}: {volume:.3f} mm3")
             continue
+        oracle_rows = ORACLE_ROWS.get(name)
+        if oracle_rows is not None:
+            for target, row in oracle_rows(result):
+                _row_finding(add, target, name, severity, row)
+            continue
         for pn, row in (result.get("parts") or {}).items():
-            if name == "connection":
-                if row.get("status") != "touching":
-                    add(pn, name, "warn" if row.get("ok") else severity, connection_text(row))
-            elif name == "mesh_watertight":
-                if not row.get("watertight", True):
-                    add(pn, name, severity, f"GLB mesh not watertight (Euler number {row.get('euler_number')})")
-            elif not row.get("ok", row.get("valid", True)):
-                add(pn, name, severity, _row_message(name, row))
+            _part_row_finding(add, pn, name, severity, row)
     return found
+
+
+def _part_row_finding(add: Callable[[str, str, str, str], None], pn: str, name: str, severity: str,
+                      row: dict[str, Any]) -> None:
+    """The finding of one `parts` row of a check, if the row failed or warns."""
+    if name == "connection":
+        if row.get("status") != "touching":
+            add(pn, name, "warn" if row.get("ok") else severity, connection_text(row))
+    elif name == "mesh_watertight":
+        if not row.get("watertight", True):
+            add(pn, name, severity, f"GLB mesh not watertight (Euler number {row.get('euler_number')})")
+    elif not row.get("ok", row.get("valid", True)):
+        add(pn, name, severity, _row_message(name, row))
+
+
+def _row_finding(add: Callable[[str, str, str, str], None], target: str, name: str, severity: str,
+                 row: dict[str, Any]) -> None:
+    """A finding for an oracle row with a `status`: a failed row as the check's severity, an abstained one as a warning."""
+    if row.get("status") == "fail":
+        add(target, name, severity, str(row.get("reason") or "failed"))
+    elif row.get("status") == "unknown":
+        add(target, name, "warn", f"abstained: {row.get('reason') or 'the data cannot judge'}")
 
 
 def _row_message(name: str, row: dict[str, Any]) -> str:
@@ -479,5 +507,6 @@ def panel_model(version: Version, check: dict[str, Any] | None) -> dict[str, Any
                    "bbox_mm": _union_bbox(list(placed.values()) if placed else list(metric_parts.values()))},
         "check": None if check is None else {
             "status": check.get("status"), "blocking_failures": check.get("blocking_failures") or [],
-            "warnings": check.get("warnings") or [], "pose": check.get("pose")},
+            "warnings": check.get("warnings") or [], "abstentions": check.get("abstentions") or [],
+            "pose": check.get("pose")},
     }

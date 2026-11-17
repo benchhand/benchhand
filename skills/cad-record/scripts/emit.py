@@ -192,6 +192,9 @@ def emit(result: Any, *, tool: str, name: str, code: int, scratch: Path | None =
         lines += [f"  - {describe(item)}" for item in items[:MAX_BLOCKING]]
         if len(items) > MAX_BLOCKING:
             lines.append(f"  +{len(items) - MAX_BLOCKING} more")
+    abstained = mapping.get("abstentions")
+    if isinstance(abstained, list) and abstained:
+        lines.append(_clip(f"abstentions ({len(abstained)}): {', '.join(str(name) for name in abstained)}"))
     lines.append(f"full JSON: {target}")
     summary = "\n".join(lines)
     if len(text) <= len(summary) or (out is None and not _write(target, text)):

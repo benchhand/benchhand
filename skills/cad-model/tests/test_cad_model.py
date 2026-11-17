@@ -1455,7 +1455,8 @@ class CheckRuleTests(unittest.TestCase):
             return sorted(check.agreement_scope(built, changes))
 
         def changes(**kept: tuple[str, ...]) -> mock.Mock:
-            return mock.Mock(baseline=object(), **{"geometry": (), "added": (), "moved": (), **kept})
+            baseline = mock.Mock(occurrences={oid: o.pn for oid, o in built.items()})  # the same PNs as the current build
+            return mock.Mock(baseline=baseline, **{"geometry": (), "added": (), "moved": (), **kept})
 
         self.assertEqual(examined(None), ["a1", "a2", "b", "c"])
         self.assertEqual(examined(mock.Mock(baseline=None, geometry=(), added=(), moved=())), ["a1", "a2", "b", "c"])
@@ -1463,6 +1464,14 @@ class CheckRuleTests(unittest.TestCase):
         self.assertEqual(examined(changes(moved=("b",), added=("c",))), ["b", "c"])
         self.assertEqual(examined(changes()), [])  # nothing changed: nothing to re-judge
         self.assertEqual(examined(changes(geometry=("GONE",), added=("never-built",))), [])
+
+    def test_an_occurrence_reassigned_to_another_unchanged_pn_is_in_the_changed_only_agreement_scope(self) -> None:
+        """"b" keeps its id and placement and no definition changes, so geometry, added and moved name nothing. Its
+        PN went from B to C, which changes the shape it depicts, so the check must judge its GLB mesh again."""
+        built = {"a1": mock.Mock(pn="A"), "b": mock.Mock(pn="C"), "c": mock.Mock(pn="C")}
+        baseline = mock.Mock(occurrences={"a1": "A", "b": "B", "c": "C"})
+        changes = mock.Mock(baseline=baseline, geometry=(), added=(), moved=())
+        self.assertEqual(sorted(check.agreement_scope(built, changes)), ["b"])
 
     def test_without_numpy_the_agreement_abstains_for_every_occurrence_it_was_to_examine(self) -> None:
         with mock.patch.object(check.agreement, "AVAILABLE", False):

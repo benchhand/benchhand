@@ -719,13 +719,16 @@ def _worst_status(statuses: Iterable[str]) -> str:
 def agreement_scope(occurrences: Mapping[str, Any], changes: Any | None) -> set[str]:
     """The occurrence ids whose GLB mesh the check compares with the STEP. Every one, in a full check and in a
     changed-only check without a baseline. With a baseline (`changes`, a `ChangeSet` of incremental.py), the occurrences
-    of a PN whose geometry changed, and the added and the moved occurrences. That catches a mutation of a
-    changed part. The full check covers an unchanged part at its old place, and the `scope.complete` of the
+    of a PN whose geometry changed, the added and the moved occurrences, and the occurrences that now carry another
+    PN than in the baseline. That catches a mutation of a changed part and a reassignment to another unchanged
+    part. The full check covers an unchanged part at its old place, and the `scope.complete` of the
     report already says a changed-only check is not complete."""
     if changes is None or changes.baseline is None:
         return set(occurrences)
+    then = changes.baseline.occurrences
     return {oid for oid, built in occurrences.items()
-            if built.pn in changes.geometry or oid in changes.added or oid in changes.moved}
+            if built.pn in changes.geometry or oid in changes.added or oid in changes.moved
+            or then.get(oid, built.pn) != built.pn}
 
 
 def agreement_result(rows: Mapping[str, Mapping[str, Any]], skipped: Iterable[str], linear: float | None) -> dict[str, Any]:

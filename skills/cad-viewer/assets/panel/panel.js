@@ -266,6 +266,9 @@ function renderCheck(version) {
   if (check.warnings.length) {
     box.append(el("p", { class: "check-detail", text: `Warnings: ${check.warnings.join(", ")}` }));
   }
+  if (check.abstentions.length) {
+    box.append(el("p", { class: "check-detail", text: `Abstained: ${check.abstentions.join(", ")}` }));
+  }
 }
 
 function rowActions(id, label, members, view) {
