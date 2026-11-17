@@ -29,7 +29,9 @@ case $pattern in
     trap '' TERM
     sh -c 'trap "" TERM; echo $$ > "$STUB_GRANDCHILD"; exec sleep 600' > /dev/null 2>&1 &
     sleep 600 > /dev/null 2>&1 ;;
-  test_breaklog.py) rm -f "$STUB_RUN_ROOT"/*/log; mkdir "$STUB_RUN_ROOT"/*/log ;;
+  test_breaklog.py)
+    for pid_file in "$STUB_RUN_ROOT"/*/pid; do run_dir=${pid_file%/pid}; done
+    rm -f "$run_dir/log"; mkdir "$run_dir/log" ;;
 esac
 exit 0
 """
@@ -210,6 +212,7 @@ class DoneMarkerTests(RunTestsCase):
     def test_sigterm_writes_rc143_and_the_test_process_is_gone(self) -> None:
         earlier, *_ = self.finish(self.local("pass/test_pass.py"))
         self.started.unlink()
+        self.stub_pid.unlink()
         process = self.local("pass/test_hang.py")
         run_dir = self.run_dir(process)
         pid = self.kill_at_cleanup(self.stub_pid)
@@ -283,6 +286,93 @@ class SlotTests(RunTestsCase):
         run_dir, code, _, _ = self.finish(self.slotted("pass/test_pass.py", FAKE_SLOT_MODE="fail"))
         self.assertEqual(code, 1)
         self.assertEqual((run_dir / "done").read_text(), "rc=1\n")
+
+
+class CheckoutTests(RunTestsCase):
+    """The runner refuses a tree that is not the git checkout the caller meant."""
+
+    def make_tree(self, with_git: bool) -> Path:
+        tree = self.tmp / ("repo" if with_git else "synced")
+        (tree / "harness").mkdir(parents=True)
+        script = tree / "harness" / "run_tests.sh"
+        script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+        script.chmod(0o755)
+        if with_git:
+            git = ["git", "-C", str(tree), "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run([*git, "init", "-q"], check=True)
+            subprocess.run([*git, "add", "."], check=True)
+            subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        return tree
+
+    def head(self, tree: Path) -> str:
+        return subprocess.run(
+            ["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    def run_in(self, tree: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(tree / "harness" / "run_tests.sh"), "--run-root", str(self.root), *args, "pass/test_pass.py"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def test_a_copy_without_git_is_refused_before_a_run_directory_exists(self) -> None:
+        result = self.run_in(self.make_tree(with_git=False))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("is not a git work tree (a synced copy without .git?)", result.stderr)
+        self.assertTrue(result.stderr.startswith("run_tests: "))
+        self.assertFalse(self.root.exists())
+
+    def test_a_slot_run_checks_the_tree_before_it_waits_for_a_slot(self) -> None:
+        tree = self.make_tree(with_git=False)
+        result = subprocess.run(
+            [str(tree / "harness" / "run_tests.sh"), "--slot", "--pkg", "A", "--item", "t1", "pass/test_pass.py"],
+            env={**self.env, "FAKE_SLOT_MODE": "queue"},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse((self.home / "cad-bench" / "pkgA").exists())
+        self.assertFalse(self.slot_pid.exists(), "the slot was reached")
+
+    def test_a_matching_expect_head_passes_for_a_full_sha_and_a_prefix(self) -> None:
+        tree = self.make_tree(with_git=True)
+        sha = self.head(tree)
+        for given in (sha, sha[:7], sha[:12].upper()):
+            with self.subTest(given):
+                result = self.run_in(tree, "--expect-head", given)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_mismatched_expect_head_is_refused_with_both_shas(self) -> None:
+        tree = self.make_tree(with_git=True)
+        sha = self.head(tree)
+        wrong = ("0" if sha[0] != "0" else "1") + sha[1:12]
+        result = self.run_in(tree, "--expect-head", wrong)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(sha, result.stderr)
+        self.assertIn(wrong, result.stderr)
+        self.assertFalse(self.root.exists())
+
+    def test_a_prefix_shorter_than_seven_characters_is_a_usage_error(self) -> None:
+        tree = self.make_tree(with_git=True)
+        result = self.run_in(tree, "--expect-head", self.head(tree)[:6])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage", result.stderr)
+
+    def test_uncommitted_changes_to_tracked_files_warn_but_do_not_refuse(self) -> None:
+        tree = self.make_tree(with_git=True)
+        with (tree / "harness" / "run_tests.sh").open("a", encoding="utf-8") as script:
+            script.write("# edited\n")
+        result = self.run_in(tree)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("uncommitted", result.stderr)
+
+    def test_a_clean_tree_does_not_warn(self) -> None:
+        result = self.run_in(self.make_tree(with_git=True))
+        self.assertNotIn("uncommitted", result.stderr)
 
 
 class HandoffTests(RunTestsCase):
