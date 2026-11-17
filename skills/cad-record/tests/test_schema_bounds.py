@@ -74,6 +74,7 @@ class Case:
     default_pointer: str | None = None  # where the default sits when not on the bounded node
     cli: str | None = None
     env: str | None = None
+    refused: tuple[str, ...] = ()  # enum values that must fail besides an arbitrary one
 
 
 def number(row: int, name: str, schema: str, pointer: str, bounds: str, band: dict[str, Any] | None, **extra: Any) -> Case:
@@ -231,6 +232,18 @@ CASES: tuple[Case, ...] = (
     number(54, "period_deg", "assembly.schema.json", "/$defs/profile/properties/period_deg", "(0, 360]", None),
     number(55, "mass_target", PART, "/properties/mass_target", "(0, 10000000]", {"max": 50000}),
     number(55, "bom.mass", "bom-row.schema.json", "/properties/mass", "(0, 10000000]", {"max": 50000}),
+    # Fields outside the audit's 55 rows (row 0)
+    number(0, "form_check.fidelity", TOOLS, "/properties/form_check/properties/fidelity", "F0,F1,F2,F3", None, shape="enum",
+           default="F2", cli="--fidelity", refused=("F4", "f2")),
+    number(0, "easing", PLAN, "/properties/segments/items/properties/easing", "linear,ease_in_out", None, shape="enum",
+           default="linear", refused=("ease", "LINEAR")),
+    number(0, "camera", PLAN, "/properties/segments/items/properties/camera", "iso,front,side", None, shape="enum",
+           default="iso", refused=("back", "ISO")),
+    number(0, "coverage", PLAN, "/properties/coverage", "full,partial", None, shape="enum", default="full",
+           refused=("half", "Full")),
+    number(0, "hold_frames", PLAN, "/properties/segments/items/properties/hold_frames", "[1, 10000]", None, shape="int"),
+    number(0, "interface.margin_mm", "interfaces.schema.json", "/properties/interfaces/items/properties/margin_mm", "[0, 1]",
+           {"max": 0.5}),
 )
 BY_NAME = {case.name: case for case in CASES}
 # Rows of the audit table that live only in the product.yaml `flow.profile` schema, which flow PR 1 owns
@@ -248,7 +261,30 @@ FACTS = {
     "period_deg", "mass_target", "bom.mass",
 }
 # An explicit override that has no default of its own: mesh_size_extent_ratio carries the default and mesh_size wins when set
-OVERRIDES = {"mesh_size"}
+OVERRIDES = {"mesh_size", "interface.margin_mm"}
+# Content of a document that the author states, where no default fits
+CONTENT = {"hold_frames"}
+# Schemas that describe tunables and list their enums too. The other schemas hold vocabularies
+SURFACES = {"fea-case.schema.json", "motion-plan.schema.json", "tool-settings.schema.json", "stackup.schema.json"}
+# Nodes with a bound the audit does not cover: counters, indices and geometry facts bounded only by sign
+NOT_IN_AUDIT = {
+    ("assembly.schema.json", "/$defs/drawing_item/properties/item"): "a 1-based item index",
+    ("bom-row.schema.json", "/properties/level"): "a tree depth",
+    ("bom-row.schema.json", "/properties/qty"): "an instance count",
+    ("drawing.schema.json", "/$defs/view/properties/sheet"): "a sheet number",
+    ("drawing.schema.json", "/$defs/dimension_request/properties/instance"): "a 1-based instance index",
+    ("drawing.schema.json", "/$defs/fit/properties/engagement_length_mm"): "a geometry fact, bounded by sign only",
+    ("drawing.schema.json", "/$defs/heat_set/properties/engagement_length_mm"): "a geometry fact, bounded by sign only",
+    ("fea-case.schema.json", "/properties/solid_index"): "a 1-based index",
+    ("manufacturing-capabilities.schema.json", "/$defs/profile/properties/revision"): "a revision counter",
+    ("manufacturing-materials.schema.json", "/$defs/profile/properties/revision"): "a revision counter",
+    ("manufacturing.schema.json", "/$defs/money/properties/amount"): "a price, bounded by sign only",
+    ("part.schema.json", "/$defs/component/properties/multiplicity"): "an instance count",
+    ("release-manifest.schema.json", "/$defs/v2/properties/manufacturing/additionalProperties/properties/quantity"): "a unit count",
+    ("release-manifest.schema.json", "/$defs/v3/properties/manufacturing/additionalProperties/properties/quantity"): "a unit count",
+}
+# Nodes that a listed case covers without a case of their own
+COVERED_BY = {("motion-plan.schema.json", "/properties/max_step"): "its default repeats the defaults of deg and mm"}
 # The absurd values the audit lists, in each case's own unit. The schema must refuse all of them
 ABSURD: tuple[tuple[str, str, Any], ...] = (
     ("calibrated bridge of 500 mm", "calibration.bridge_span", 500),
@@ -346,7 +382,7 @@ def check_bounds(test: unittest.TestCase, case: Case, accept: Any, reject: Any, 
 
 class Rows(unittest.TestCase):
     def test_every_audit_row_is_covered_or_belongs_to_the_flow_profile(self) -> None:
-        covered = {case.row for case in CASES}
+        covered = {case.row for case in CASES} - {0}
         self.assertEqual(covered | FLOW_PROFILE_ROWS, set(range(1, 56)))
         self.assertFalse(covered & FLOW_PROFILE_ROWS)
 
@@ -361,7 +397,8 @@ class Rows(unittest.TestCase):
             with self.subTest(case.name):
                 for choice in case.bounds.split(","):
                     self.assertTrue(validator(case).is_valid(choice), choice)
-                self.assertFalse(validator(case).is_valid("bogus"))
+                for value in ("bogus", *case.refused):
+                    self.assertFalse(validator(case).is_valid(value), value)
 
     def test_the_audits_absurd_values_are_all_refused(self) -> None:
         for label, name, value in ABSURD:
@@ -376,7 +413,7 @@ class Rows(unittest.TestCase):
     def test_only_a_fact_or_an_override_has_no_default(self) -> None:
         """A tunable has a default. A fact about a real material, machine or part stays unknown until sourced."""
         without = {case.name for case in CASES if case.default is NODEFAULT}
-        self.assertEqual(without - FACTS, OVERRIDES)
+        self.assertEqual(without - FACTS - CONTENT, OVERRIDES)
 
     def test_a_fact_has_no_default_in_its_schema(self) -> None:
         for case in (c for c in CASES if c.name in FACTS):
@@ -409,6 +446,47 @@ class Bands(unittest.TestCase):
             band = node(schema, pointer)["x-plausible"]
             low, high = band.get("min"), band.get("max")
             self.assertTrue(low is None or high is None or low < high, (schema, pointer))
+
+
+def listed_pointers() -> set[tuple[str, str]]:
+    """The (schema, pointer) of every node a case pins: its field, its band, its default and the items of a pair."""
+    found = set()
+    for case in CASES:
+        for pointer in (case.pointer, case.band_pointer, case.default_pointer):
+            if pointer:
+                found.add((case.schema, pointer))
+        if case.shape == "pair":
+            found.add((case.schema, f"{case.pointer}/items"))
+    return found | set(COVERED_BY)
+
+
+class EveryField(unittest.TestCase):
+    """A field with a bound, a band, a default or a flag that no case lists fails here, so a new one cannot slip
+    past the table. Enums count only in the schemas that describe tunables."""
+
+    KEYS = ("x-plausible", "x-cli", "x-env", "default", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
+
+    def test_every_bounded_field_is_in_the_table(self) -> None:
+        listed = listed_pointers()
+        unlisted = []
+        for path in sorted(registry.SCHEMAS.glob("*.schema.json")):
+            keys = (*self.KEYS, "enum") if path.name in SURFACES else self.KEYS
+            for pointer, item in walk(document(path.name)):
+                if any(key in item for key in keys) and (path.name, pointer) not in NOT_IN_AUDIT:
+                    covered = any(path.name == schema and (pointer == own or pointer.startswith(own + "/")) for schema, own in listed)
+                    if not covered:
+                        unlisted.append(f"{path.name}#{pointer}")
+        self.assertEqual(unlisted, [], "add each field to CASES, or to NOT_IN_AUDIT with its reason")
+
+    def test_the_audit_exemptions_name_real_bounded_nodes(self) -> None:
+        for (schema, pointer), reason in NOT_IN_AUDIT.items():
+            with self.subTest(pointer):
+                self.assertTrue(reason)
+                self.assertTrue(any(key in node(schema, pointer) for key in self.KEYS), "the node has no bound: drop the entry")
+
+    def test_the_max_step_default_repeats_its_members_defaults(self) -> None:
+        step = node(PLAN, "/properties/max_step")
+        self.assertEqual(step["default"], {name: step["properties"][name]["default"] for name in ("deg", "mm")})
 
 
 class Annotations(unittest.TestCase):
@@ -612,7 +690,8 @@ class Reached(unittest.TestCase):
             if case.shape == "enum":
                 with self.subTest(case.name):
                     self.assertFalse(any(bound_errors(root, nest(path, choice), path) for choice in case.bounds.split(",")))
-                    self.assertTrue(bound_errors(root, nest(path, "bogus"), path))
+                    for value in ("bogus", *case.refused):
+                        self.assertTrue(bound_errors(root, nest(path, value), path), value)
                 continue
             check_bounds(self, case, lambda value, unit, f=refused: not any(f(value, unit)),
                          lambda value, unit, f=refused: all(f(value, unit)), label=root)

@@ -28,7 +28,7 @@
           },
           "margin_mm": {
             "description": "This requirement's margin above min_clearance_mm, overriding product.yaml design.clearance_margin_mm",
-            "type": "number", "minimum": 0
+            "type": "number", "minimum": 0, "maximum": 1, "x-plausible": {"max": 0.5}
           },
           "limits": {
             "type": "object",
