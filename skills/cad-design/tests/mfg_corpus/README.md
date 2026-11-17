@@ -88,3 +88,14 @@ rate command prints `known gap: <family>/<pair>: <why>`. Remove the field when t
 `false_positive_rate`, `ran`). `../test_mfg_corpus.py` fails when a family's detection rate falls or its
 false-positive rate rises past its baseline. After a check improves, raise the rates in that family's baseline file
 in the same PR. A new family adds its own file; one file per family keeps stacked PRs from conflicting.
+
+## fdm_horizontal_hole
+
+Horizontal holes (axis parallel to the bed) against the FDM support obligation, six pairs built in code, no fixture files.
+The TEST profile has no self-supporting-hole calibration, so the limits are derived from its overhang (45 deg) and
+bridge (5 mm) calibrations. A round hole of 4 mm, inside the bridge span, counts as self-supporting. A teardrop or
+diamond top with 45 deg flanks needs no support at any diameter. A square hole 4 mm wide is a bridge inside the span.
+
+Recorded baseline: detection 100%, false positives 4 of 6 (67%). The check fails every twin that has a round or flat
+roof, even a 4 mm one. Only the teardrop and diamond twins pass. Those false positives are the finding, not a defect of
+the corpus. The fix belongs to a later change in `form_check.py` or `additive.py`.

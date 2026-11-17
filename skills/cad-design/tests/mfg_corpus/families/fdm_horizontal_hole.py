@@ -1,7 +1,7 @@
 """FDM treatment of horizontal holes (axis parallel to the bed), judged by the fdm support obligation on the TEST profile.
 
 The TEST profile has no self-supporting-hole calibration. The limits below come from its overhang (45 deg) and bridge
-(5 mm) calibrations: a round hole up to the 5 mm bridge span counts as self-supporting; a teardrop or diamond top whose
+(5 mm) calibrations: a round hole up to the 5 mm bridge span counts as self-supporting. A teardrop or diamond top whose
 flanks sit at 45 deg from vertical needs no support at any diameter. Every case plans no supports.
 Geometry is real B-rep probed by form_check.probe. Millimetres, bed frame, +Z up, hole axis along Y.
 """
