@@ -22,14 +22,15 @@ and reads one JSON result from that file once the runner exits, identical in sha
                "LMP-0004": {"ok": false, "error": {"type": "SafeEditError", "message": "...",
                                                    "where": "model.py:42 in build"}}}}
 
-A request of several parts builds them in worker processes of the runner's process group, one fresh
-process per part (`build_jobs` workers at a time; CAD_MODEL_BUILD_JOBS overrides, 1 = one at a time).
-The workers fork from a server that has imported the kernel and written nothing, so a part's bytes,
-STEP occurrence ids included, never depend on the parts built before it. A request of one part builds
-in this process. The result lists the parts in request order. `import_s` is the wall time to a kernel
-ready to build: the import in this process or, with workers, the seconds until the first worker
-started on a part (the server's start and kernel import included). A worker that dies fails its
-unfinished parts with error type WorkerCrashed.
+A request of two or more parts builds them in worker processes of the runner's process group, one
+fresh process per part. `build_jobs` sets how many run at a time. CAD_MODEL_BUILD_JOBS overrides it,
+and 1 means one at a time. The workers fork from a server that imported the kernel and wrote nothing.
+A part's bytes, STEP occurrence ids included, therefore never depend on the parts built before it.
+A request of one part builds in this process. The result lists the parts in request order.
+
+`import_s` is the wall time to a kernel ready to build. In this process it is the import. With workers
+it is the seconds until the first worker started on a part, which includes the server's start and the
+kernel import. A worker that dies fails its unfinished parts with error type WorkerCrashed.
 
 `sources` hashes every Python file the runner loaded from the plugin or the project, the part models
 themselves excepted: with `tools` and the part's own files they are what a cached build depends on.
@@ -390,9 +391,9 @@ def _no_bytecode() -> None:
 def _build_in_worker(kernel: str, part: Mapping[str, Any],
                      roots: list[Path]) -> tuple[dict[str, Any], dict[str, str], float]:
     """One part in a fresh worker: the time it started, the part's result and the plugin and project
-    sources this worker loaded (the parent never loads the models' helper modules). The kernel import
-    is a no-op in a worker forked from the preloaded server; it runs here, not in the pool initializer,
-    so a replacement worker that never gets a task imports nothing."""
+    sources this worker loaded, including the helper modules of the part models. The kernel
+    import is a no-op in a worker forked from the preloaded server. It runs here, not in the pool
+    initializer, so a replacement worker that never gets a task imports nothing."""
     started = time.time()
     importlib.import_module(kernel)
     return _build_or_fail(kernel, part), provenance.sources(roots, MODEL_MODULE), started
@@ -409,10 +410,10 @@ def _build_in_workers(kernel: str, parts: list[Mapping[str, Any]], jobs: int,
 
     forkserver, not fork: the server is a fresh single-threaded process that imports the kernel and runs
     nothing, so each worker forks from a state without OCCT threads or open files. A worker is also
-    never reused: OCCT's STEP writer numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter,
+    never reused: the OCCT STEP writer numbers NEXT_ASSEMBLY_USAGE_OCCURRENCE from a process-wide counter,
     so a reused worker would write ids that depend on which parts it built before. Workers stay in the
     runner's process group and session, so killing that group (build._stop) takes them and the server
-    too. A worker that dies fails the parts it had not finished; the others keep their results."""
+    too. A worker that dies fails the parts it had not finished. The others keep their results."""
     results: dict[str, Any] = {}
     sources: dict[str, str] = {}
     first_start = float("inf")

@@ -283,7 +283,7 @@ class ParallelBuilds(unittest.TestCase):
         self.assertEqual(self.occurrence_ids("reuse", pns), ["1", "2", "3"])
 
     def test_parts_build_at_the_same_time_in_different_workers(self) -> None:
-        # each part signals it started, then waits for the other; serial scheduling times the wait out
+        # Each part signals its start and waits for the other. Serial scheduling times the wait out.
         signals = self.root / "signals"
         signals.mkdir()
         parts = self.request("sync", [(f"TST-{i:04d}", SYNC.format(signals=str(signals))) for i in (1, 2)])
