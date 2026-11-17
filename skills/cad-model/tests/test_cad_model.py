@@ -635,7 +635,7 @@ class KernelChecks:
         layout = build.record.load_layout()
         for folder in versions:
             self.assertEqual(layout.verify(folder), [], folder.name)
-        store = hw / ".cad" / "parts"
+        store = hw / ".cad" / "cache" / "objects"
         base = versions[0] / "parts" / "TST-0001.step"
         self.assertTrue(os.path.samefile(base, store / build.store.file_sha(base)))
         manifest = json.loads((versions[0] / "manifest.json").read_text(encoding="utf-8"))
@@ -643,7 +643,7 @@ class KernelChecks:
             with self.subTest(read_only=rel):  # TST-0002 was rebuilt in v2-v4; v1's bytes and mode stay
                 self.assertEqual((versions[0] / rel).stat().st_mode & 0o777, 0o444)
                 self.assertEqual(build.store.file_sha(versions[0] / rel), manifest["files"][rel])
-        self.assertEqual((store / ".gitignore").read_text(encoding="utf-8"), "*\n")
+        self.assertEqual((store.parent / ".gitignore").read_text(encoding="utf-8"), "*\n")
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
@@ -771,7 +771,7 @@ class ManufacturingStateTests(unittest.TestCase):
         set_model(rebuilds, "TST-0001", "cadquery", "base.py", base, "Base block", "Aluminum 6061-T6", "purchased")
         cls.runs["process"] = cli("run", str(rebuilds), "--label", "v7")
         step = rebuilds / "versions" / "v7" / "parts" / "TST-0001.step"
-        (rebuilds / ".cad" / "parts" / build.store.file_sha(step)).unlink()  # as if store gc ran
+        (rebuilds / ".cad" / "cache" / "objects" / build.store.file_sha(step)).unlink()  # as if store gc ran
         cls.runs["missing"] = cli("run", str(rebuilds), "--label", "v8")
 
     @classmethod

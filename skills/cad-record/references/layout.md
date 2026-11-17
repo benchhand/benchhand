@@ -70,8 +70,12 @@ listed files and nothing else.
 | `cache.pairs` | `hw/.cad/pairs-v2.sqlite` | generated | (data) | cad-motion pair_measure.py PairCache (sweep.py, spot_check.py, cad-model check) | any | scratch | disposable pair-measurement cache the sweep and the static check share; deleting it costs time, never a result; git-ignored, never evidence |
 | `cache.pairs_wal` | `hw/.cad/pairs-v2.sqlite-wal` | generated | (data) | SQLite, for cad-motion pair_measure.py PairCache | any | scratch | the pair cache's write-ahead log; disposable with the cache |
 | `cache.pairs_shm` | `hw/.cad/pairs-v2.sqlite-shm` | generated | (data) | SQLite, for cad-motion pair_measure.py PairCache | any | scratch | the pair cache's shared-memory index; disposable with the cache |
-| `cache.part_objects` | `hw/.cad/parts/{SHA}` | generated | (data) | cad-model cad_model.py run (cadmodel/store.py) | layout | scratch | one part output is stored read-only under the sha256 of its bytes. Outputs include definition or state STEP, manufacturing STEP, STL, and manufacturing.json. Each version holds a hard link where the filesystem allows, or a copy otherwise, so readers use the version's own path. The output is git-ignored and is not evidence. cad_model.py store gc removes it once no manifest references it |
-| `cache.part_records` | `hw/.cad/builds/{SHA}.json` | generated | (data) | cad-model cad_model.py run (cadmodel/store.py) | layout | scratch | what one part build or manufacturing make produced, keyed by the sha256 of its inputs: the stored objects and the runner or check facts; run reuses it only while every object still hashes to its name; git-ignored; store gc drops it once no manifest references its outputs |
+| `cache.part_objects` | `hw/.cad/cache/objects/{SHA}` | generated | (data) | cad-record store.py (cad-model cad_model.py run) | layout | scratch | one cached output file stored read-only under the sha256 of its bytes, such as a part's definition or state STEP. Each version holds a hard link where the filesystem allows, or a copy otherwise, so readers use the version's own path. The output is git-ignored and is not evidence. cad_model.py store gc removes it once no sealed manifest references it |
+| `cache.part_records` | `hw/.cad/cache/records/{SHA}.json` | generated | (data) | cad-record store.py (cad-model cad_model.py run) | layout | scratch | what one cached computation produced, keyed by the sha256 of its allowlisted inputs: each member's relative path and object sha256, and the producer's facts. A reader reuses it only while every member still hashes to its name. The first writer of a key wins. It is git-ignored, and store gc drops it once no sealed manifest references its members |
+| `cache.locks` | `hw/.cad/cache/locks/{SHA}.lock` | generated | (control) | cad-record store.py | any | scratch | held by one producer of a key while it computes the output, so a second producer waits and then reuses it; disposable |
+| `cache.findings` | `hw/.cad/cache/findings.jsonl` | generated | (data) | cad-record store.py | any | scratch | one line for each second writer whose output for a key differs from the record kept: the key misses an input its producer reads; disposable |
+| `cache.former_part_objects` | `hw/.cad/parts/{SHA}` | generated | (data) | none: the part store before hw/.cad/cache/ | layout | scratch | an object of the former part store; nothing reads it, and cad_model.py store gc removes the whole folder |
+| `cache.former_part_records` | `hw/.cad/builds/{SHA}.json` | generated | (data) | none: the part store before hw/.cad/cache/ | layout | scratch | a record of the former part store; nothing reads it, and cad_model.py store gc removes the whole folder |
 | `control.run` | `hw/.cad/runs/{RUN}.json` | generated | (control) | cad-flow process_lifecycle.py claim_run (cad-motion sweep.py, cad-model check, cad-analysis fea_static.py) | any | scratch | the process groups of one running sweep, check or FEA run, removed when it ends; a live one refuses an overlapping run; git-ignored |
 | `control.run_lock` | `hw/.cad/runs/.lock` | generated | (control) | cad-flow process_lifecycle.py claim_run | any | scratch | lock held only while a run claims its record; disposable |
 | `scratch` | `.cad-work/` | scratch | `**` (scratch) | cad-flow scratch.py, scoped workers, layout.py publication staging | any | scratch | drafts, jobs, logs, publication staging and replaced bundles, beside hw/ |
@@ -122,8 +126,8 @@ reported with the action below; `vcs` paths are accepted.
 |---|---|---|---|
 | `hw/versions/.{V}.partial-{PID}`/ | transient | cad-model cad_model.py run | An interrupted cad-model run left this staging folder. Delete it once no run is in progress. |
 | `hw/versions/.latest.json.tmp` | transient | cad-model cad_model.py run | An interrupted cad-model run left this temporary pointer. Delete it once no run is in progress. |
-| `hw/.cad/parts/.{SHA}.{PID}.tmp` | transient | cad-model cad_model.py run | An interrupted cad-model run left this half-stored object. Delete it once no run is in progress. |
-| `hw/.cad/builds/.{SHA}.json.{PID}.tmp` | transient | cad-model cad_model.py run | An interrupted cad-model run left this half-written build record. Delete it once no run is in progress. |
+| `hw/.cad/cache/objects/.{SHA}.{PID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-stored object. Delete it once no run is in progress. |
+| `hw/.cad/cache/records/.{SHA}.json.{PID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written record. Delete it once no run is in progress. |
 | `hw/renders/.{V}.partial-{STAMP}`/ | transient | cad-render render.py | An interrupted render left this staging folder. Delete it once no render is in progress. |
 | `hw/renders/.{V}.old-{STAMP}`/ | transient | cad-render render.py | An interrupted render left the set it was replacing. Delete it once no render is in progress. |
 | `hw/.cad/.recheck.json.tmp` | transient | cad-recheck stamp.py | An interrupted stamp left this temporary file. Delete it once no stamp is in progress. |
@@ -220,17 +224,20 @@ declares its own `volume_rel_tolerance` or `volume_abs_tolerance_mm3`.
 ## Part store
 
 `cad-model run` stores each part output once: the definition and state STEP of every part and the
-manufacturing files of every custom-made part, in `hw/.cad/parts/{SHA}`, named by the sha256 of its
-bytes. A version's `parts/{PN}.step` and `manufacturing/{PN}/` files are hard links to those objects
-where the filesystem allows them, else byte copies; the paths and manifests are those of any version,
-and verification hashes file content, never the inode. `hw/.cad/builds/{SHA}.json` records, under
+manufacturing files of every custom-made part, in `hw/.cad/cache/objects/{SHA}`, named by the sha256
+of its bytes. A version's `parts/{PN}.step` and `manufacturing/{PN}/` files
+are hard links to those objects where the filesystem allows them, else byte copies; the paths and
+manifests are those of any version, and verification hashes file content, never the inode.
+`hw/.cad/cache/records/{SHA}.json` records, under
 the sha256 of a part's build inputs, the objects and facts its build produced. A part whose inputs
 are unchanged reuses them once every object still hashes to its name, so a run builds only the
 changed parts. Objects and the version files linked to them are read-only (0444), so an in-place
-write fails instead of changing every version that shares the bytes. Both folders ignore
-themselves in git. After deleting versions, `cad_model.py store gc <hw> [--dry-run]` removes every
-object no version or release manifest references, and the build records no referenced output
+write fails instead of changing every version that shares the bytes. The store ignores
+itself in git. After deleting versions, `cad_model.py store gc <hw> [--dry-run]` removes every
+object no sealed manifest references, and the build records no referenced output
 needs, and reports the bytes freed; it never removes an object a manifest names.
+
+`store gc` also removes the former part store, `hw/.cad/parts/` and `hw/.cad/builds/`.
 
 ## Git storage
 

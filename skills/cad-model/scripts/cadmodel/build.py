@@ -292,22 +292,14 @@ def sources_hold(recorded: Any, hw: Path, seen: dict[Path, str | None]) -> bool:
 def reusable(cached: Mapping[str, Any], request: Mapping[str, Any], hw: Path, seen: dict[Path, str | None]) -> bool:
     """Whether a part record read from the store can stand in for building the part of `request`: a
     successful result, the STEP files the request needs, and runner sources that still hold."""
-    objects, result = cached.get("objects", {}), cached.get("result")
+    objects, result = cached.get("members", {}), cached.get("result")
     return ("step" in objects and (not request["manufacture_step"] or "manufacture_step" in objects)
             and isinstance(result, Mapping) and result.get("ok") is True and cached.get("kernel") in KERNELS
             and sources_hold(cached.get("sources"), hw, seen))
 
 
 def orchestrator_tools() -> dict[str, str]:
-    import importlib.metadata
-
-    versions = {"python": platform.python_version()}
-    for dist in ORCHESTRATOR_DISTS:
-        try:
-            versions[dist] = importlib.metadata.version(dist)
-        except importlib.metadata.PackageNotFoundError:
-            versions[dist] = "missing"
-    return versions
+    return {"python": platform.python_version(), **record.load_layout().tool_versions(ORCHESTRATOR_DISTS)}
 
 
 def _density(snapshot: record.Snapshot, reference: Any) -> tuple[dict[str, Any], Any]:
@@ -528,15 +520,15 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
         keys = {p.pn: build_key(requests[p.pn], k, runtimes[k], inputs[p.pn])
                 for k, members in groups.items() for p in members}
         seen: dict[Path, str | None] = {}
-        reused = {pn: cached for pn, cached in ((pn, parts_store.record(key)) for pn, key in keys.items())
+        reused = {pn: cached for pn, cached in ((pn, parts_store.record(key).record) for pn, key in keys.items())
                   if cached is not None and reusable(cached, requests[pn], hw, seen)}
         for pn, cached in list(reused.items()):  # an object store gc removed since record() is a miss: build it
             step, state = Path(requests[pn]["step"]), requests[pn]["manufacture_step"]
-            if not (parts_store.place(cached["objects"]["step"], step)
-                    and (not state or parts_store.place(cached["objects"]["manufacture_step"], Path(state)))):
+            if not (parts_store.place_object(cached["members"]["step"], step)
+                    and (not state or parts_store.place_object(cached["members"]["manufacture_step"], Path(state)))):
                 step.unlink(missing_ok=True)  # never leave the runner a read-only link to write through
                 del reused[pn]
-        objects_of = {pn: cached["objects"] for pn, cached in reused.items()}
+        objects_of = {pn: cached["members"] for pn, cached in reused.items()}
         pending = {k: [requests[p.pn] for p in members if p.pn not in reused] for k, members in groups.items()}
         results = run_kernels({k: parts for k, parts in pending.items() if parts}) if any(pending.values()) else {}
         timings["kernels_s"] = round(time.perf_counter() - started, 3)
@@ -550,9 +542,12 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
                     objects_of[pn]["manufacture_step"] = parts_store.intern(Path(requests[pn]["manufacture_step"]))
                 if (res.get("inputs") == inputs[pn] and res.get("inputs_stable") is True
                         and part_inputs(by_pn[pn]) == inputs[pn]):
-                    parts_store.save(keys[pn], {"kind": "part", "pn": pn, "kernel": kernel, "tools": result["tools"],
-                                                "sources": project_sources(result["sources"], hw), "result": res,
-                                                "objects": objects_of[pn]})
+                    try:
+                        parts_store.claim(keys[pn], {"kind": "part", "pn": pn, "kernel": kernel, "tools": result["tools"],
+                                                     "sources": project_sources(result["sources"], hw), "result": res,
+                                                     "members": objects_of[pn]}, version_labels=(label,))
+                    except ValueError:  # the store refuses a version-specific member: build it again next run
+                        unsaved.append(pn)
                 else:
                     unsaved.append(pn)
         failed = [finding(pn, "build", res["error"]["message"], res["error"]["type"], res["error"]["where"])
@@ -757,28 +752,20 @@ def reconcile_latest(hw: Path, label: str) -> tuple[int, dict[str, Any]]:
 
 
 def store_gc(hw: Path, dry_run: bool = False) -> tuple[int, dict[str, Any]]:
-    """`store gc`: drop what no version or release manifest references from the part store. Refused
-    while a version is being staged, and when a manifest cannot be read, so it never removes an object
-    a manifest names."""
+    """`store gc`: drop what no sealed manifest references from the store (cad-record store.py gc), and the
+    part store of the former layout. Refused while a version is being staged, and when a manifest cannot be
+    read, so it never removes an object a manifest names."""
     hw = hw.resolve()
     versions = hw / "versions"
     staging = sorted(p.name for p in versions.glob(".v*.partial-*")) if versions.is_dir() else []
     if staging:
         raise UsageError(f"{versions} holds staging folders {staging}: a cad-model run is in progress or was "
                          "interrupted; delete them once no run is in progress, then run gc again")
-    manifests = sorted([*versions.glob("v*/manifest.json"), *(hw / "releases").glob("*/manifest.json")])
-    referenced: set[str] = set()
-    for path in manifests:
-        manifest = read_json(path)
-        inventory = manifest.get("files") if isinstance(manifest, dict) else None
-        if not isinstance(inventory, dict):
-            raise UsageError(f"{path} has no files inventory; gc removed nothing")
-        for value in inventory.values():  # a v2 release manifest lists {sha256, original}
-            sha = value.get("sha256") if isinstance(value, Mapping) else value
-            if isinstance(sha, str):
-                referenced.add(sha)
-    result = store.Store(hw).gc(referenced, dry_run)
-    return 0, {"status": "pass", "dry_run": dry_run, "manifests": len(manifests), **result}
+    try:
+        result = store.Store(hw).gc(dry_run)
+    except store.load_store().StoreError as error:
+        raise UsageError(str(error)) from error
+    return 0, {"status": "pass", "dry_run": dry_run, **result}
 
 
 def version_exists(label: str, final: Path) -> UsageError:

@@ -70,7 +70,6 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib
-import importlib.metadata
 import importlib.util
 import json
 import math
@@ -107,13 +106,9 @@ class ContractError(ValueError):
 
 
 def tool_versions(dists: tuple[str, ...]) -> dict[str, str]:
-    versions = {"python": platform.python_version()}
-    for dist in dists:
-        try:
-            versions[dist] = importlib.metadata.version(dist)
-        except importlib.metadata.PackageNotFoundError:
-            versions[dist] = "missing"
-    return versions
+    from cadmodel import record
+
+    return {"python": platform.python_version(), **record.load_layout().tool_versions(dists)}
 
 
 MODEL_MODULE = "cad_model_part_"  # the module name prefix of a loaded part model

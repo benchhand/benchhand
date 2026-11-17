@@ -109,18 +109,22 @@ that keyed it and the folder did not change during the build; otherwise it is bu
 removed during a run is a miss: the part is built again. `scratch.py init` seeds a scratch copy's
 store with hard links to these objects and records.
 
-Each output is stored once in the part store, `hw/.cad/parts/<sha256>`, named by the sha256 of its
-bytes; `hw/.cad/builds/<sha256>.json` maps the sha256 of a build's inputs to its objects and facts.
+Each output is stored once in the store that cad-record `store.py` keeps, as
+`hw/.cad/cache/objects/<sha256>`, named by the sha256 of its bytes;
+`hw/.cad/cache/records/<sha256>.json` maps the sha256 of a build's inputs to its objects and facts.
 A version holds a hard link to each object where the filesystem allows one, else a byte copy, at
 its usual path. An output is reused only after its object still hashes to its name. Manifests hash
 file content, so verification is unchanged. Objects, and the version files linked to or copied from
 them, are read-only (0444): an in-place write fails instead of changing every version that shares
 the bytes, so a tool that must change a sealed file has to write a new file. The store ignores itself
 in git. After deleting versions, `cad_model.py store gc <hw> [--dry-run]` frees what they alone held:
-it removes every object no version or release manifest references and no build record of a
+it removes every object no sealed manifest references and no build record of a
 referenced output needs (such as a part's state STEP), drops every other build record, and reports
 `removed_bytes` and `freed_bytes` (bytes no other link still holds). It refuses while a version is
 being staged or a manifest cannot be read, and never removes an object a manifest names.
+
+`store gc` also removes the former part store, `hw/.cad/parts/` and `hw/.cad/builds/`. A project
+built before the store moved rebuilds each part once, and its keys stay the same.
 
 `run` stdout: `status`, `label`, `version_dir`, per-part `kernel`/`build`/`volume_mm3`/`solids`/`mass_g`,
 `manufacturing` per custom-made PN (`status`, `complete`, `path`, `process`, `state`, `build`),
