@@ -39,6 +39,8 @@ SCHEMA: dict[str, Any] = {
         "pitch": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "x-cli": "--pitch"},
         "kind": {"type": "string", "enum": ["fine", "coarse"], "x-cli": "--kind"},
         "verbose": {"type": "boolean", "x-cli": "--verbose"},
+        "refit": {"type": "boolean", "x-cli": "--refit/--no-refit", "x-env": "CAD_REFIT"},
+        "cache": {"type": "boolean", "default": True, "x-cli": "--cache/--no-cache"},
         "label": {"type": "string", "x-cli": "--label"},
         "free": {"type": "number", "x-cli": "--free"},
         "mesh": {"type": "object", "properties": {
@@ -77,8 +79,9 @@ class OptionTests(unittest.TestCase):
             (["--mesh-band", "1.5"], "mesh_band", 1.5),
             (["--free", "-7.25"], "free", -7.25),
             (["--kind", "coarse"], "kind", "coarse"),
-            (["--verbose", "true"], "verbose", True),
-            (["--verbose", "false"], "verbose", False),
+            (["--verbose"], "verbose", True),
+            (["--refit"], "refit", True),
+            (["--no-refit"], "refit", False),
             (["--label", "x y"], "label", "x y"),
         ]
         for args, name, expected in cases:
@@ -148,6 +151,69 @@ class OptionTests(unittest.TestCase):
             cli_mod.SchemaCLI(schema, loader, tool="probe").params()
 
 
+class BooleanTests(unittest.TestCase):
+    def test_a_paired_flag_reports_the_half_that_was_given(self) -> None:
+        cases = [("--refit", True, "cli:--refit"), ("--no-refit", False, "cli:--no-refit")]
+        for arg, value, source in cases:
+            with self.subTest(arg=arg):
+                harness = Harness()
+                self.assertEqual(harness.run([arg]).exit_code, 0)
+                self.assertEqual(harness.layer.values, {"refit": value})
+                self.assertEqual(harness.layer.sources, {"/refit": source})
+                self.assertEqual(harness.resolved.sources["/refit"], source)
+
+    def test_a_paired_flag_left_out_keeps_its_default_and_stays_out_of_the_cli_layer(self) -> None:
+        harness = Harness()
+        self.assertEqual(harness.run([]).exit_code, 0)
+        self.assertEqual(harness.layer.sources, {})
+        self.assertIs(harness.resolved.values["cache"], True)
+        self.assertEqual(harness.resolved.sources["/cache"], "default")
+
+    def test_a_store_true_flag_is_true_when_given_and_false_when_not(self) -> None:
+        given, absent = Harness(), Harness()
+        given.run(["--verbose"])
+        absent.run([])
+        self.assertIs(given.params["verbose"], True)
+        self.assertEqual(given.layer.sources, {"/verbose": "cli:--verbose"})
+        self.assertIs(absent.params["verbose"], False)
+        self.assertEqual(absent.layer.sources, {})
+
+    def test_a_store_true_flag_takes_no_value(self) -> None:
+        self.assertEqual(Harness().run(["--verbose", "true"]).exit_code, 2)
+
+    def test_the_env_var_sets_a_boolean_and_is_not_a_cli_source(self) -> None:
+        for text, value in (("true", True), ("false", False)):
+            with self.subTest(text=text):
+                harness = Harness()
+                self.assertEqual(harness.run([], env={"CAD_REFIT": text}).exit_code, 0)
+                self.assertIs(harness.params["refit"], value)
+                self.assertEqual(harness.layer.sources, {})
+                self.assertEqual(harness.resolved.sources["/refit"], "env:CAD_REFIT")
+
+    def test_an_env_var_that_is_not_a_boolean_is_a_usage_error(self) -> None:
+        result = Harness().run([], env={"CAD_REFIT": "maybe"})
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("Invalid value", result.stderr)
+
+
+class LazyTests(unittest.TestCase):
+    def test_click_is_needed_only_when_a_flag_help_or_an_env_var_is_present(self) -> None:
+        cli = Harness().cli
+        cases = [
+            (["run"], {}, False),
+            (["run", "--plain-name", "x"], {"PATH": "/bin"}, False),
+            (["run", "--count", "3"], {}, True),
+            (["run", "--count=3"], {}, True),
+            (["run", "--no-refit"], {}, True),
+            (["run", "--mesh-band", "1"], {}, True),
+            (["run", "--help"], {}, True),
+            (["run"], {"CAD_BAND": "3"}, True),
+        ]
+        for argv, environ, expected in cases:
+            with self.subTest(argv=argv, environ=environ):
+                self.assertIs(cli.needs_click(argv, environ), expected)
+
+
 class FieldTests(unittest.TestCase):
     def test_nested_properties_map_to_json_pointers_with_rfc_6901_escapes(self) -> None:
         schema = {"properties": {
@@ -197,32 +263,69 @@ class SourceTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
-    ERROR = {"message": "band must be below 10", "pointer": "/band", "value": 11, "source": "file:cfg.yaml"}
+    ERROR = {"message": "band must be below 10", "pointer": "/band", "source": "file:cfg.yaml", "value": 11}
 
-    def test_a_config_error_exits_2_with_config_invalid_findings_in_the_envelope(self) -> None:
+    def failing(self, *errors: dict[str, Any]) -> Any:
         def merge(config: Any, layer: Any) -> Any:
-            raise loader.ConfigError([self.ERROR, {**self.ERROR, "pointer": "/count", "value": 0}])
+            raise loader.ConfigError(errors)
 
-        failing = SimpleNamespace(**{**vars(loader), "merge": merge})
-        result = Harness(failing).run([])
+        return SimpleNamespace(**{**vars(loader), "merge": merge})
+
+    def findings(self, *errors: dict[str, Any]) -> list[dict[str, Any]]:
+        result = Harness(self.failing(*errors)).run([])
         self.assertEqual(result.exit_code, 2)
         document = json.loads(result.stdout)
         self.assertEqual(set(document), {"schema", "status", "findings", "payload"})
         self.assertEqual(document["status"], "fail")
-        self.assertEqual(
-            document["findings"][0],
-            {"code": "config.invalid", "severity": "error", **self.ERROR},
-        )
-        self.assertEqual([f["pointer"] for f in document["findings"]], ["/band", "/count"])
+        return document["findings"]
 
-    def test_loader_warnings_enter_the_envelope_findings_unchanged(self) -> None:
-        warning = {"code": "plausibility.band", "severity": "warning", "message": "band is large",
-                   "pointer": "/band", "value": 9.9, "source": "cli:--mesh-band"}
-        config = loader.Config({"band": 9.9}, {"/band": "user"}, (warning,))
+    def test_a_config_error_exits_2_with_a_config_invalid_finding_per_error(self) -> None:
+        found = self.findings(self.ERROR)
+        self.assertEqual(found, [{"code": "config.invalid", "severity": "error", **self.ERROR}])
+
+    def test_a_missing_required_key_gives_a_finding_without_a_value_key(self) -> None:
+        error = {"message": "count is required", "pointer": "/count", "source": "default"}
+        self.assertNotIn("value", self.findings(error)[0])
+
+    def test_an_explicit_null_gives_value_none(self) -> None:
+        error = {"message": "count must be an integer", "pointer": "/count", "source": "file:cfg.yaml", "value": None}
+        found = self.findings(error)[0]
+        self.assertIn("value", found)
+        self.assertIsNone(found["value"])
+
+    def test_a_root_level_error_keeps_the_empty_pointer(self) -> None:
+        error = {"message": "config must be an object", "pointer": "", "source": "file:cfg.yaml", "value": []}
+        self.assertEqual(self.findings(error)[0]["pointer"], "")
+
+    def test_several_errors_keep_the_loaders_order(self) -> None:
+        errors = [
+            {"message": "root", "pointer": "", "source": "user"},
+            {"message": "a low", "pointer": "/band", "source": "user", "value": 1},
+            {"message": "b high", "pointer": "/band", "source": "user", "value": 1},
+            {"message": "c", "pointer": "/count", "source": "user", "value": 0},
+        ]
+        found = self.findings(*errors)
+        self.assertEqual([(f["pointer"], f["message"]) for f in found],
+                         [("", "root"), ("/band", "a low"), ("/band", "b high"), ("/count", "c")])
+
+    def test_the_stand_in_error_is_a_sorted_tuple_of_mappings_as_the_loader_contract_says(self) -> None:
+        error = loader.ConfigError([{"message": "z", "pointer": "/b", "source": "user"},
+                                    {"message": "a", "pointer": "/a", "source": "user"}])
+        self.assertIsInstance(error.errors, tuple)
+        self.assertEqual([e["pointer"] for e in error.errors], ["/a", "/b"])
+
+    def test_plausibility_warnings_enter_the_envelope_findings_unchanged_and_in_order(self) -> None:
+        first = {"message": "band is large", "pointer": "/band", "code": "plausibility.band", "source": "cli:--mesh-band",
+                 "severity": "warning", "value": 9.9}
+        second = {"code": "plausibility.count", "severity": "warning", "message": "count is large",
+                  "pointer": "/count", "value": 5, "source": "user"}
+        config = loader.Config({"band": 9.9}, {"/band": "user"}, (first, second))
         result = cli_mod.with_warnings({"status": "pass", "findings": [{"code": "x"}]}, config)
-        document = emit.envelope(result)
-        self.assertEqual(document["findings"], [warning, {"code": "x"}])
-        self.assertIs(document["findings"][0], warning)
+        found = emit.envelope(result)["findings"]
+        self.assertEqual(found, [first, second, {"code": "x"}])
+        self.assertIs(found[0], first)
+        self.assertEqual(list(found[0]), list(first))
+        self.assertEqual(list(found[1]), list(second))
 
 
 if __name__ == "__main__":

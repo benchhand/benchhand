@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -20,8 +20,9 @@ if TYPE_CHECKING:
 
 CONFIG_INVALID = "config.invalid"
 EXIT_USAGE = 2
+FINDING_KEYS = ("message", "pointer", "value", "source")
 EMIT_MODULE = "cad_record_emit"
-SCALARS = frozenset({"integer", "number", "boolean", "string"})
+VALUE_TYPES = frozenset({"integer", "number", "string"})
 
 
 @dataclass(frozen=True)
@@ -30,8 +31,17 @@ class Field:
     schema: Mapping[str, Any]
 
     @property
-    def flag(self) -> str:
+    def declaration(self) -> str:
         return str(self.schema["x-cli"])
+
+    @property
+    def flag(self) -> str:
+        return self.declaration.split("/")[0]
+
+    @property
+    def negative(self) -> str | None:
+        """The second half of a paired boolean flag, `--no-x` in `--x/--no-x`."""
+        return self.declaration.split("/")[1] if "/" in self.declaration else None
 
     @property
     def name(self) -> str:
@@ -66,7 +76,7 @@ def _param_type(field: Field) -> click.ParamType:
         if not all(isinstance(item, str) for item in sub["enum"]):
             raise ValueError(f"{field.flag}: only string enums are supported")
         return click.Choice(sub["enum"])
-    if kind not in SCALARS:
+    if kind not in VALUE_TYPES:
         raise ValueError(f"{field.flag}: unsupported type {kind!r}")
     bounds = _bounds(sub, "minimum", "maximum")
     ranged = bounds["min"] is not None or bounds["max"] is not None
@@ -74,14 +84,19 @@ def _param_type(field: Field) -> click.ParamType:
         return click.IntRange(**bounds) if ranged else click.INT
     if kind == "number":
         return click.FloatRange(**bounds) if ranged else click.FLOAT
-    return click.BOOL if kind == "boolean" else click.STRING
+    return click.STRING
 
 
 def _option(field: Field) -> click.Option:
     import click
 
-    return click.Option([field.flag, field.name], type=_param_type(field), default=field.schema.get("default"),
-                        envvar=field.schema.get("x-env"), help=field.schema.get("description"))
+    common = {"default": field.schema.get("default"), "envvar": field.schema.get("x-env"),
+              "help": field.schema.get("description")}
+    if field.schema.get("type") == "boolean":
+        if field.negative is None:
+            common["default"] = field.schema.get("default", False)
+        return click.Option([field.declaration, field.name], is_flag=True, **common)
+    return click.Option([field.flag, field.name], type=_param_type(field), **common)
 
 
 def _lookup(values: Mapping[str, Any], path: tuple[str, ...]) -> tuple[bool, Any]:
@@ -118,6 +133,16 @@ class SchemaCLI:
         if len(set(flags)) != len(flags):
             raise ValueError(f"duplicate x-cli flags: {sorted(flags)}")
 
+    def needs_click(self, argv: Sequence[str], environ: Mapping[str, str]) -> bool:
+        """Whether Click must run: `argv` has a schema flag or `--help`, or `environ` has an `x-env` variable.
+
+        With nothing to check, a caller can skip the Click import and use the loaded config as it is."""
+        flags = {"--help"}
+        for field in self.fields:
+            flags |= {flag for flag in (field.flag, field.negative) if flag}
+        given = any(arg.split("=", 1)[0] in flags for arg in argv)
+        return given or any(field.schema.get("x-env") in environ for field in self.fields)
+
     def params(self) -> list[click.Option]:
         return [_option(field) for field in self.fields]
 
@@ -138,8 +163,10 @@ class SchemaCLI:
             node = values
             for key in field.path[:-1]:
                 node = node.setdefault(key, {})
-            node[field.path[-1]] = ctx.params[field.name]
-            sources[field.pointer] = f"cli:{field.flag}"
+            value = ctx.params[field.name]
+            node[field.path[-1]] = value
+            used = field.negative if field.negative and value is False else field.flag
+            sources[field.pointer] = f"cli:{used}"
         return self.loader.Layer(values=values, sources=sources)
 
     def resolve(self, ctx: click.Context, config: Any, *, json_flag: bool = False) -> Any:
@@ -150,8 +177,7 @@ class SchemaCLI:
             self.fail(ctx, error, json_flag=json_flag)
 
     def fail(self, ctx: click.Context, error: Any, *, json_flag: bool = False) -> None:
-        findings = [{"code": CONFIG_INVALID, "severity": "error", "message": item.get("message"),
-                     "pointer": item.get("pointer"), "value": item.get("value"), "source": item.get("source")}
+        findings = [{"code": CONFIG_INVALID, "severity": "error", **{key: item[key] for key in FINDING_KEYS if key in item}}
                     for item in error.errors]
         _emit().emit({"status": "fail", "findings": findings}, tool=self.tool, name="config", code=EXIT_USAGE,
                      json_flag=json_flag)

@@ -8,7 +8,7 @@ Delete it when the real loader lands and point test_cli.py at that.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,9 +29,13 @@ class Config:
 
 
 class ConfigError(Exception):
-    def __init__(self, errors: list[dict[str, Any]]) -> None:
-        super().__init__(f"{len(errors)} invalid config value(s)")
-        self.errors = errors
+    """`errors`: a tuple of mappings with message, pointer, source and value.
+
+    Sorted by pointer, then message. `value` is absent for a missing required key, and None for an explicit null."""
+
+    def __init__(self, errors: Iterable[Mapping[str, Any]]) -> None:
+        self.errors: tuple[Mapping[str, Any], ...] = tuple(sorted(errors, key=lambda e: (e["pointer"], e["message"])))
+        super().__init__(f"{len(self.errors)} invalid config value(s)")
 
 
 def _leaves(schema: Mapping[str, Any], path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], Mapping[str, Any]]]:
