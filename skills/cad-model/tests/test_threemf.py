@@ -152,8 +152,6 @@ def recipe_hash(material: str = "PETG", color: str | None = None) -> str:
 
 
 class RecipeTests(unittest.TestCase):
-    @unittest.skip("STUB(feat/fdm-color impact.py export.3mf): un-skip when feat/fdm-color lands the export.3mf family "
-                   "(geometry, material, appearance) in cad-record impact.py")
     def test_a_colour_or_material_change_stales_the_3mf_artifact_of_that_part_and_a_finish_change_does_not(self) -> None:
         impact = load_module("cad_record_impact", HERE.parents[1] / "cad-record" / "scripts" / "impact.py")
         artifact = types.SimpleNamespace(id="export.3mf@TST-0001", family="export.3mf", subject={"PN": "TST-0001"})

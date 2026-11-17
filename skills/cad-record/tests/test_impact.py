@@ -120,7 +120,7 @@ class Variants(unittest.TestCase):
         self.assertEqual(result.earliest_stage, "layout")
 
     def test_a_colour_change_stales_only_a_check_family_that_declares_appearance(self) -> None:
-        """`export.3mf` stands in for package D's 3MF output: it declares the appearance domain, nothing else does."""
+        """Of the obligations the record owes, only the FDM part's `export.3mf` declares the appearance domain."""
         def colour(docs: dict[str, Any]) -> None:
             docs["parts/TST-0001/part.yaml"]["intent"]["color"] = "#FF8000"
         entry = acceptance.entry(self.before, "EV-001", {"PN": "TST-0001"}, "simulation_supported",
@@ -131,11 +131,8 @@ class Variants(unittest.TestCase):
         self.before = normalized(self.docs)
         result = self.compare(colour)
         self.assertEqual(dict(result.changed), {"TST-0001": ("appearance",)})
-        self.assertEqual((result.stale_obligations, result.stale_evidence), ({}, {}))
-        three_mf = mi.Obligation("export.3mf@TST-0001", "export.3mf", {"PN": "TST-0001"}, "cad_valid", "layout", "test")
-        other = mi.Obligation("export.3mf@TST-0002", "export.3mf", {"PN": "TST-0002"}, "cad_valid", "layout", "test")
-        stale = impact.stale_obligations([three_mf, other, *mi.required_checks(self.before)], result.changed)
-        self.assertEqual(stale, {"export.3mf@TST-0001": ("appearance",)})
+        self.assertEqual(result.stale_obligations, {"export.3mf@TST-0001": ("appearance",)})
+        self.assertEqual(result.stale_evidence, {})
 
     def test_a_colour_change_leaves_every_catch_all_family_current_but_a_geometry_change_stales_it(self) -> None:
         """policy.*, requirement.* and an unlisted family depend on every domain except appearance."""
