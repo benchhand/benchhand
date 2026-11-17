@@ -228,7 +228,7 @@
       "required": ["id", "kind", "part"],
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
-        "kind": {"enum": ["press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "adjust", "inspect", "disassemble"]},
+        "kind": {"enum": ["press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "adjust", "inspect", "disassemble", "print_in_place"]},
         "part": {"$ref": "#/$defs/part_ref"},
         "into": {"$ref": "#/$defs/part_ref"},
         "interface": {"type": "string", "pattern": "^IF-[0-9]{3}$"},

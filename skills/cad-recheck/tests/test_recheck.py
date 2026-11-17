@@ -99,10 +99,11 @@ class RecheckHookTests(unittest.TestCase):
         if legacy:
             product.write_text(LEGACY_PRODUCT.format(stage=stage, threshold=threshold), encoding="utf-8")
             return
-        flow = {"stage": stage, **({"recheck_from": threshold} if threshold else {})}
+        flow = {"stage": stage, **({"recheck_from": threshold} if threshold else {}), "profile": fx.flow_profile()}
         data = {"record_version": 2, "id": "test-project", "flow": flow,
                 "use_case": acceptance.confirmed_use_case("appearance_concept")}
         product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        fx.write_profile_decision(self.root / "hw")
         assembly = self.root / "hw" / "assembly.yaml"
         if not assembly.exists():
             assembly.write_text("operations: []\n", encoding="utf-8")
@@ -154,6 +155,17 @@ class RecheckHookTests(unittest.TestCase):
         self.git("add", "hw/parts/PRT-0001/part.yaml")
         result = self.commit()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_stage_advance_without_the_flow_profile_is_refused(self) -> None:
+        self.write_product("specify", "layout")
+        product = self.root / "hw" / "product.yaml"
+        data = json.loads(product.read_text(encoding="utf-8"))
+        del data["flow"]["profile"]
+        product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        self.git("add", "hw/product.yaml")
+        result = self.commit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("the flow profile blocks staged stage specify: flow/profile: flow.profile is missing", result.stderr)
 
     def test_missing_recheck_threshold_is_refused(self) -> None:
         product = self.root / "hw" / "product.yaml"

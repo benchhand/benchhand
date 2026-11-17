@@ -10,6 +10,7 @@ import math
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import date
 from pathlib import Path
@@ -566,6 +567,30 @@ class ProfileDocuments(unittest.TestCase):
         self.assertEqual(sorted(p.code for p in problems), ["intent.allowable", "intent.duplicate"])
         with self.assertRaises(mi.IntentError):
             mi.profile_document(materials, "selection", "x.yaml")
+
+
+class FixtureModuleLoading(unittest.TestCase):
+    def test_concurrent_loads_of_one_module_all_see_it_whole(self) -> None:
+        """hole tests build two kernels' projects on threads; a thread must never see a module another is still executing."""
+        directory = tempfile.TemporaryDirectory(prefix="cad-fixture-module-")
+        self.addCleanup(directory.cleanup)
+        script = Path(directory.name) / "slow_module.py"
+        script.write_text("import time\ntime.sleep(0.2)\nREADY = True\n", encoding="utf-8")
+        name = "cad_record_test_slow_module"
+        self.addCleanup(sys.modules.pop, name, None)
+        seen: list[bool] = []
+        gate = threading.Barrier(4)
+
+        def load_it() -> None:
+            gate.wait()
+            seen.append(hasattr(fx._module(name, script), "READY"))
+
+        threads = [threading.Thread(target=load_it) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(seen, [True] * 4)
 
 
 if __name__ == "__main__":

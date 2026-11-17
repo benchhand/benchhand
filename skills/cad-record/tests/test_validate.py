@@ -367,6 +367,9 @@ class ValidateProject(unittest.TestCase):
         coupling_copy = self.project / "cad-motion" / "scripts" / "coupling.py"  # the sibling skill's module
         coupling_copy.parent.mkdir(parents=True)
         shutil.copy2(SKILL.parent / "cad-motion" / "scripts" / "coupling.py", coupling_copy)
+        profile_copy = self.project / "cad-flow" / "scripts" / "flow_profile.py"  # the flow profile gate
+        profile_copy.parent.mkdir(parents=True)
+        shutil.copy2(SKILL.parent / "cad-flow" / "scripts" / "flow_profile.py", profile_copy)
         result, report = self.validate(validator_copy)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(any(item["severity"] == "info" and "skipped handoff schema validation" in item["message"] for item in report["findings"]))
@@ -690,6 +693,62 @@ class RecordVersion(unittest.TestCase):
         code, findings = self.validate()
         self.assertEqual(code, 1)
         self.assertIn("record.version_unsupported", [item.get("code") for item in findings])
+
+
+class FlowProfileGate(unittest.TestCase):
+    """The project-start answers gate validation: product.yaml flow.profile with its decision (cad-flow
+    flow_profile.py), and the profile's flow.conflict findings."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="cad-record-flow-profile-")
+        self.addCleanup(temporary.cleanup)
+        self.project = Path(temporary.name) / "project"
+        self.documents = fx.tst_record()
+
+    def findings(self, stage: str = "specify", profile: object = None) -> tuple[int, list[dict[str, object]]]:
+        flow = self.documents["product.yaml"]["flow"]
+        flow.update(stage=stage, recheck_from=stage)
+        if profile is None:
+            del flow["profile"]
+        else:
+            flow["profile"] = profile
+        fx.write_record(self.project / "hw", self.documents)
+        result = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,
+                                timeout=120)
+        return result.returncode, json.loads(result.stdout)["findings"]
+
+    def flow(self, findings: list[dict[str, object]]) -> list[tuple[object, object, str]]:
+        return [(item["code"], item["severity"], str(item["message"]).split(":")[0]) for item in findings
+                if str(item.get("code", "")).startswith("flow.")]
+
+    def test_validate_refuses_a_record_past_intent_without_the_profile(self) -> None:
+        code, findings = self.findings("specify")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.flow(findings), [("flow.profile", "error", "flow/profile")])
+        self.assertEqual(self.flow(self.findings("specify", fx.flow_profile())[1]), [])
+
+    def test_a_conflict_warns_before_the_variant_gate_and_blocks_from_layout(self) -> None:
+        for stage, severity in (("concept", "warning"), ("layout", "error")):
+            with self.subTest(stage=stage):
+                _code, findings = self.findings(stage, fx.flow_profile(stack_up="off"))
+                self.assertEqual(self.flow(findings), [("flow.conflict", severity, "flow/profile/stack_up")])
+
+    def test_a_safety_refusal_blocks_at_every_stage(self) -> None:
+        self.documents["product.yaml"]["rigor"] = "regulated"
+        _code, findings = self.findings("concept", fx.flow_profile(fdm={"warp": "off"}))
+        self.assertEqual(self.flow(findings), [("flow.conflict", "error", "flow/profile/processes/fdm/warp")])
+
+    def test_a_bare_off_where_a_word_is_due_asks_for_quotes(self) -> None:
+        self.findings("layout", fx.flow_profile())
+        product = self.project / "hw" / "product.yaml"
+        text = product.read_text(encoding="utf-8")
+        self.assertEqual(text.count("stack_up: auto\n"), 1)
+        product.write_text(text.replace("stack_up: auto\n", "stack_up: off\n"), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,
+                                timeout=120)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.flow(json.loads(result.stdout)["findings"]),
+                         [("flow.profile_unquoted", "error", "flow/profile/stack_up")])
 
 
 class LedgerEvidence(unittest.TestCase):

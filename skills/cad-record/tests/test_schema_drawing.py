@@ -134,6 +134,7 @@ class DrawingRecordAdditions(unittest.TestCase):
         self.hw = Path(temporary.name) / "project" / "hw"
         self.docs = {"product.yaml": copy.deepcopy(PRODUCT), "interfaces.yaml": copy.deepcopy(INTERFACES),
                      "assembly.yaml": copy.deepcopy(ASSEMBLY), "requirements.yaml": copy.deepcopy(REQUIREMENTS)}
+        self.docs["product.yaml"]["flow"]["profile"] = fx.flow_profile()  # its decision written by write()
         self.parts = {"TST-0001": copy.deepcopy(BASE), "TST-0002": copy.deepcopy(PIN)}
         self.procurement_columns = True
         self.bom_edit: Callable[[list[dict[str, str]]], None] = lambda rows: None
@@ -141,6 +142,7 @@ class DrawingRecordAdditions(unittest.TestCase):
     def write(self) -> None:
         (self.hw / "decisions").mkdir(parents=True, exist_ok=True)
         (self.hw / "decisions" / "DR-001.md").write_text("# DR-001\n", encoding="utf-8")
+        fx.write_profile_decision(self.hw)
         (self.hw / "parts" / "TST-0002" / "sources").mkdir(parents=True, exist_ok=True)
         (self.hw / "parts" / "TST-0002" / "sources" / "dp.pdf").write_bytes(DATASHEET)
         # Record version 2 (fx.current_documents): the drawing, procurement and fit additions read the same in both

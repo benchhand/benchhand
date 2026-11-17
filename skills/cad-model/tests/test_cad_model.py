@@ -48,6 +48,11 @@ from cadmodel import build, check, diff, fonts, manufacture, mesh, occ, orientat
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import result_payload  # noqa: E402
 
+sys.path.insert(0, str(HERE.parents[2] / "scripts"))
+from modload import load_module  # noqa: E402
+
+fx = load_module("cad_record_mi_fixtures", HERE.parents[1] / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
+
 AP242 = "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING"
 SCHEMA = re.compile(r"FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'\s*\)\s*\)")
 ASSEMBLY = """joints:
@@ -114,6 +119,7 @@ def two_part_project(root: Path, kernel: str) -> Path:
     hw = root / kernel / "hw"
     hw.mkdir(parents=True)
     (hw / "product.yaml").write_text("id: twoarm\n", encoding="utf-8")
+    fx.add_flow_profile(hw)
     (hw / "assembly.yaml").write_text(ASSEMBLY, encoding="utf-8")
     set_model(hw, "TST-0001", kernel, "base.py", {"size": 40.0, "height": 20.0, "bore": 6.0}, *PARTS["TST-0001"][:2])
     return hw
@@ -128,6 +134,7 @@ def flat_project(root: Path, kernel: str, name: str = "flat-hw") -> Path:
     hw = root / kernel / name
     hw.mkdir(parents=True)
     (hw / "product.yaml").write_text(FLAT_PRODUCT, encoding="utf-8")
+    fx.add_flow_profile(hw)
     (hw / "assembly.yaml").write_text(STRAP_JOINT.format(pn=STRAP), encoding="utf-8")
     set_model(hw, "TST-0001", kernel, "base.py", {"size": 40.0, "height": 20.0, "bore": 6.0}, *PARTS["TST-0001"][:2])
     set_strap(hw, kernel)
@@ -147,6 +154,7 @@ def safe_project(root: Path, kernel: str) -> Path:
     hw = root / kernel / "safe-hw"
     hw.mkdir(parents=True)
     (hw / "product.yaml").write_text("id: safe\n", encoding="utf-8")
+    fx.add_flow_profile(hw)
     joints = "".join(f"  - {{id: J-00{i}, type: fixed, parent: SAF-0001, child: {pn}, axis: [0, 0, 1], origin: [0, 0, 0],"
                      f" min: 0, max: 0, nominal: 0}}\n" for i, pn in enumerate(list(SAFE_CASES)[1:], start=1))
     (hw / "assembly.yaml").write_text("joints:\n" + joints, encoding="utf-8")
@@ -696,6 +704,7 @@ class ManufacturingStateTests(unittest.TestCase):
         cls.rebuilds = rebuilds = root / "rebuilds" / "hw"
         shutil.copytree(hw, rebuilds)
         (rebuilds / "product.yaml").write_text(FLAT_PRODUCT.replace("x_mm: 60", "x_mm: 61"), encoding="utf-8")
+        fx.add_flow_profile(rebuilds)
         cls.runs["volume"] = cli("run", str(rebuilds), "--label", "v4")
         set_strap(rebuilds, "cadquery", manufacture=FLAT_STATE.replace("1.0e-6", "2.0e-6").replace(
             "}\n", ", mesh: {linear_deflection_mm: 0.1, angular_deflection_rad: 0.2}}\n"))
@@ -1111,6 +1120,7 @@ def insert_project(root: Path) -> Path:
     hw = root / "inserts" / "hw"
     hw.mkdir(parents=True)
     (hw / "product.yaml").write_text("id: inserts\n", encoding="utf-8")
+    fx.add_flow_profile(hw)
     occurrences = "".join(
         f"  - {{id: {oid}, PN: {INSERT}, placement: {{translation_mm: {move}"
         + (f", rotation: {{axis: {turn['axis']}, angle_deg: {turn['angle_deg']}}}" if turn else "") + "}}\n"
@@ -2014,6 +2024,20 @@ class ManufacturingIntentRuleTests(unittest.TestCase):
         self.assertEqual((changed["parts"]["TST-0001"]["changed"], changed["parts"]["TST-0002"]["changed"]),
                          (["intent"], ["components"]))
 
+
+
+class FlowProfileRefusalTests(unittest.TestCase):
+    """cad_model.py run builds nothing until the project-start answers are recorded (cad-flow flow_profile.py)."""
+
+    def test_a_build_refuses_without_the_flow_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hw = two_part_project(Path(tmp), "cadquery")
+            set_arm(hw, "cadquery")
+            (hw / "product.yaml").write_text("id: twoarm\n", encoding="utf-8")
+            proc, result, _wall = cli("run", str(hw), "--label", "v1")
+            self.assertEqual((proc.returncode, result), (2, {}), proc.stderr[-2000:])
+            self.assertIn("flow/profile: flow.profile is missing", proc.stderr)
+            self.assertFalse((hw / "versions").exists())
 
 
 class VersionLabelTests(unittest.TestCase):

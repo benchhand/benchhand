@@ -15,7 +15,8 @@ the digest of the staged selection inputs), passes, so a stale, failed or unknow
 recorded final choice the selection does not support, cannot be stamped as passed.
 `--verify` reads the staged index: the record inputs, the stamp and its packet, never the work tree
 beyond the layout audit. flow.recheck_from is the threshold and may only stay or move earlier than
-HEAD's: raising it would suppress the checks of the stages it skips.
+HEAD's: raising it would suppress the checks of the stages it skips. `--verify` also refuses a staged
+flow.stage at which cad-flow flow_profile.py's gate blocks, below the threshold too.
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ validate = _load_module("cad_record_validate", CAD_RECORD_SCRIPTS / "validate.py
 yaml_loader = validate.yaml_loader  # cad-record's shared YAML reader: yaml.safe_load on libyaml
 intent = validate.intent
 evidence = validate.evidence
+flow_profile = validate.flow_profile  # cad-flow's project-start answers, which gate a stage advance
 
 
 def staged_inputs(root: Path) -> dict[str, bytes]:
@@ -105,6 +107,14 @@ def require_migrated(record: Any) -> None:
     problem = intent.migration_problem(record.product)
     if problem is not None:
         raise RuntimeError(f"{problem.code}: {problem.message}. {problem.action or ''}".strip())
+
+
+def require_flow_profile(root: Path, product: dict[str, Any]) -> None:
+    """A stage advance waits for the project-start answers: cad-flow flow_profile.py's gate on the staged
+    product.yaml at its flow.stage."""
+    stage, found = flow_profile.gate(root / "hw", product=product)
+    if found:
+        raise RuntimeError(f"the flow profile blocks staged stage {stage}: {flow_profile.refusal(found)}")
 
 
 def require_threshold_kept(root: Path, threshold: str) -> None:
@@ -315,10 +325,12 @@ def main() -> int:
             require_clean_layout(root, product)
             require_threshold_kept(root, threshold)
             if validate.stages().index(current_stage) < validate.stages().index(threshold):
+                require_flow_profile(root, product)
                 print(json.dumps({"passed": True, "required": False, "stage": current_stage}))
                 return 0
             staged = staged_record(root)
             require_migrated(staged.record)
+            require_flow_profile(root, product)
             try:
                 record_data = json.loads(git("show", ":hw/.cad/recheck.json", cwd=root).decode("utf-8"))
             except (RuntimeError, UnicodeError, json.JSONDecodeError) as error:

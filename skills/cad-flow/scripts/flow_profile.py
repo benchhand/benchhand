@@ -1,0 +1,714 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
+# ///
+"""The flow profile: the project-start questions, the record of their answers, and the gate on it.
+
+questions  prints the questions the lead relays to the user verbatim at GROUND, and the motion sweep,
+           which is stated to the user and never asked.
+record     writes the answers to hw/product.yaml flow.profile, citing --decision, and writes that
+           decision as an approved INTENT gate decision. The lead asks each question showing its default.
+           Every question is an option the user answered (--fea off) or a default the user accepted
+           (--accept-default fea); the profile's `asked` map records which. A question neither answered
+           nor accepted refuses the record. product.yaml is edited as text, so its comments and layout
+           survive: the edit must parse to exactly the intended data, and the file is replaced in one rename.
+check      reports what refuses a build, a validation and a stage advance at --stage (default:
+           product.yaml flow.stage): a missing profile or decision from SPECIFY on, a value the schema
+           rejects, and a start question with no `asked` answer.
+
+cad-model cad_model.py run, cad-record validate.py and cad-recheck stamp.py --verify load this file by
+path and call gate() or problems(); validate.py also reports conflicts() as flow.conflict.
+
+Exit status: 0 nothing blocks (questions, record: done), 1 check found a blocking problem, 2 usage
+or a record that cannot be read or edited; nothing was written.
+"""
+
+# TODO(flow-profile PR 7): a plan command prints the stages, the L4 units and the decisions due at each gate.
+
+from __future__ import annotations
+
+import argparse
+import copy
+import importlib.util
+import json
+import os
+import re
+import sys
+import tempfile
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+SKILLS = Path(__file__).resolve().parents[2]
+CAD_RECORD_SCRIPTS = SKILLS / "cad-record" / "scripts"
+
+
+def _load_module(name: str, path: Path) -> Any:
+    """A sibling skill's module loaded once by path and registered in sys.modules."""
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{path.name} not found at {path}")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+yaml_loader = _load_module("cad_record_yaml_loader", CAD_RECORD_SCRIPTS / "yaml_loader.py")
+schema_registry = _load_module("cad_record_schema_registry", CAD_RECORD_SCRIPTS / "schema_registry.py")
+# The schemas beside the schema registry in use: a validate.py that loaded it from its own skill copy reads its own.
+SCHEMAS: Path = schema_registry.SCHEMAS
+
+PROFILE_REF = "https://srobroek.com/cad/schemas/product.schema.json#/$defs/profile"
+_PRODUCT_DEFS = json.loads((SCHEMAS / "product.schema.json").read_text(encoding="utf-8"))["$defs"]
+STAGES: tuple[str, ...] = tuple(_PRODUCT_DEFS["stage"]["enum"])
+GATED_STAGES: tuple[str, ...] = tuple(_PRODUCT_DEFS["gated_stage"]["enum"])  # the values a decision's gate takes
+DECISION = re.compile(r"DR-[0-9]{3}")
+# The profile and its decision are due once the INTENT gate has passed. A build is L1 LAYOUT work or later.
+PROFILE_DUE = "specify"
+BUILD_STAGE = "layout"
+FDM = "processes/fdm/"
+PIP_CLEARANCE = "processes/fdm/pip_clearance_mm/"
+# The ISO/ASTM 52900 category of each flow.profile process (product.schema.json $defs/iso_52900_category);
+# None for a subtractive or forming process.
+ISO_52900_CATEGORY: dict[str, str | None] = {"fdm": "mex"}
+# flow.profile fea, the shape agreed with package A (product.schema.json $defs/fea): these names only.
+FEA, FEA_ENABLED, FEA_MODE, FEA_FAST_BAND = "fea", "enabled", "mode", "fast_band_pct"
+FEA_BAND_MAX = 50
+# Who settled a start question, recorded per question in flow.profile `asked`.
+USER, ACCEPTED_DEFAULT = "user", "asked-accepted-default"
+PROVENANCE = (USER, ACCEPTED_DEFAULT)
+# The default of every flow decision, shown to the user at GROUND. Conservative: no check is turned off, nothing is
+# committed to git and the user keeps control. product.schema.json carries the same values as `default`
+# (a test keeps the two equal). fast_band_pct has none: cad-analysis measures its own band.
+DEFAULTS: dict[str, Any] = {
+    "human_approval": "all", "fea": {"enabled": True, "mode": "accurate"}, "stack_up": "auto", "critique": "full",
+    "motion": "auto", "storage_results_in_git": False, "processes/fdm/orientation": "user",
+    "processes/fdm/supports": "allowed", "processes/fdm/overhang_deg": "calibrated", "processes/fdm/bridge_mm": "calibrated",
+    "processes/fdm/min_wall_mm": "calibrated", "processes/fdm/min_feature_mm": "calibrated",
+    "processes/fdm/warp": "calibrated", "processes/fdm/cosmetic_faces": False, "processes/fdm/print_in_place": False,
+    "processes/fdm/pip_clearance_mm/xy": "calibrated", "processes/fdm/pip_clearance_mm/z": "calibrated"}
+# Fields whose values are words: YAML 1.1 reads a bare on, off, yes or no as a boolean, which these never take.
+# A two-state field (fea.enabled, cosmetic_faces, print_in_place, storage_results_in_git) is a boolean instead.
+WORD_FIELDS = ("human_approval", "stack_up", "critique", "motion", "processes/fdm/orientation", "processes/fdm/supports",
+               "processes/fdm/overhang_deg", "processes/fdm/bridge_mm", "processes/fdm/min_wall_mm",
+               "processes/fdm/min_feature_mm", "processes/fdm/warp", "processes/fdm/pip_clearance_mm/xy",
+               "processes/fdm/pip_clearance_mm/z")
+
+
+def _words(*words: str, number: bool = False, booleans: dict[str, bool] | None = None) -> Any:
+    """An answer parser: one of `words` (each mapped through `booleans` when given), or a positive number."""
+    def parse(text: str) -> Any:
+        if text in words:
+            return booleans[text] if booleans else text
+        try:
+            value = float(text) if number else None
+        except ValueError:
+            value = None
+        if value is None or not value > 0:
+            raise argparse.ArgumentTypeError(f"expected {' or '.join([*words, *(['a positive number'] if number else [])])}, "
+                                             f"got {text!r}")
+        return int(value) if value.is_integer() else value
+    return parse
+
+
+def _fea_answer(text: str) -> dict[str, Any]:
+    """--fea off | accurate | fast[:<band %>], as the fea shape."""
+    if text == "off":
+        return {FEA_ENABLED: False}
+    if text == "accurate":
+        return {FEA_ENABLED: True, FEA_MODE: "accurate"}
+    mode, _colon, band = text.partition(":")
+    if mode == "fast" and not band:
+        return {FEA_ENABLED: True, FEA_MODE: "fast"}
+    try:
+        value = float(band) if mode == "fast" else None
+    except ValueError:
+        value = None
+    if value is None or not 0 < value <= FEA_BAND_MAX:
+        raise argparse.ArgumentTypeError(f"expected off, accurate, fast or fast:<band %> with 0 < band <= {FEA_BAND_MAX}, "
+                                         f"got {text!r}")
+    return {FEA_ENABLED: True, FEA_MODE: "fast", FEA_FAST_BAND: int(value) if value.is_integer() else value}
+
+
+# (option, profile field, answer parser, metavar)
+OPTIONS: tuple[tuple[str, str, Any, str], ...] = (
+    ("--human-approval", "human_approval", _words("all", "key"), "all|key"),
+    ("--fea", FEA, _fea_answer, "off|accurate|fast[:PCT]"),
+    ("--stack-up", "stack_up", _words("auto", "on", "off"), "auto|on|off"),
+    ("--critique", "critique", _words("full", "light", "off"), "full|light|off"),
+    ("--results-in-git", "storage_results_in_git", _words("yes", "no", booleans={"yes": True, "no": False}), "yes|no"),
+    ("--orientation", "processes/fdm/orientation", _words("user", "propose"), "user|propose"),
+    ("--supports", "processes/fdm/supports", _words("allowed", "free", "off"), "allowed|free|off"),
+    ("--overhang-deg", "processes/fdm/overhang_deg", _words("calibrated", "off", number=True), "N|calibrated|off"),
+    ("--bridge-mm", "processes/fdm/bridge_mm", _words("calibrated", "off", number=True), "N|calibrated|off"),
+    ("--min-wall-mm", "processes/fdm/min_wall_mm", _words("calibrated", "off", number=True), "N|calibrated|off"),
+    ("--min-feature-mm", "processes/fdm/min_feature_mm", _words("calibrated", "off", number=True), "N|calibrated|off"),
+    ("--warp", "processes/fdm/warp", _words("calibrated", "off"), "calibrated|off"),
+    ("--cosmetic-faces", "processes/fdm/cosmetic_faces", _words("on", "off", booleans={"on": True, "off": False}), "on|off"),
+    ("--print-in-place", "processes/fdm/print_in_place", _words("offer", "no", booleans={"offer": True, "no": False}),
+     "offer|no"),
+    ("--pip-clearance-xy", "processes/fdm/pip_clearance_mm/xy", _words("calibrated", number=True), "N|calibrated"),
+    ("--pip-clearance-z", "processes/fdm/pip_clearance_mm/z", _words("calibrated", number=True), "N|calibrated"),
+)
+QUESTION_FIELDS: tuple[str, ...] = tuple(field for _option, field, _parse, _metavar in OPTIONS)
+# Design section 3, verbatim, each with the options its answer records.
+QUESTIONS: tuple[tuple[str, str], ...] = (
+    ("Must any part carry a load where breaking or bending would matter? Should I simulate it?",
+     "--fea off|accurate|fast[:PCT] (fast escalates to accurate within PCT % of a limit)"),
+    ("Which fits must not jam or rattle with real, imperfect parts: only the critical ones, all of them, or none?",
+     "--stack-up"),
+    ("How much review before release: full, a quick re-check of retainers, mounts and walls, or none?", "--critique"),
+    ("Which printer, nozzle and filament? What is the bed size?",
+     "the capability profile in hw/manufacturing/capabilities.yaml, not flow.profile"),
+    ("Are supports allowed, or must parts print support-free? Do you know your overhang, bridge, thinnest-wall and "
+     "smallest-feature limits, or should I wait for a test print?",
+     "--supports, --overhang-deg, --bridge-mm, --min-wall-mm, --min-feature-mm, --warp"),
+    ("Will you pick the print orientation, or should I propose options? Which faces must stay clean?",
+     "--orientation, --cosmetic-faces"),
+    ("Would you like hinges or joints printed already assembled where that fits?",
+     "--print-in-place, --pip-clearance-xy, --pip-clearance-z"),
+    ("Should every stage gate wait for your approval, or only intent, variant, freeze and release?", "--human-approval"),
+    ("Should generated results (STEP, GLB, renders) be committed to git?", "--results-in-git"),
+)
+MOTION_STATEMENT = ("Stated, not asked: once any joint moves, the motion sweep checks its full range for collisions "
+                    "and the motion is rendered (motion: auto).")
+ASK = ("ask the user the project-start questions (flow_profile.py questions), each with its default, and record the "
+       "answers with flow_profile.py record --decision DR-###")
+# Settings whose off or light turns a check off; safety_critical service and regulated rigor refuse them, and
+# fea disabled. cosmetic_faces false declares no cosmetic face and turns no check off.
+CHECK_SWITCHES = ("stack_up", "critique", "processes/fdm/supports", "processes/fdm/overhang_deg",
+                  "processes/fdm/bridge_mm", "processes/fdm/min_wall_mm", "processes/fdm/min_feature_mm",
+                  "processes/fdm/warp")
+
+
+class ProfileError(Exception):
+    """A record this script cannot read or edit; nothing was written."""
+
+
+@dataclass(frozen=True)
+class Problem:
+    """What refuses a build, a validation or a stage advance: its flow/profile path, the fix and its code."""
+
+    path: str
+    message: str
+    action: str
+    code: str = "flow.profile"
+
+
+@dataclass(frozen=True)
+class Conflict:
+    """A profile setting the rest of the record contradicts. `refuse` marks the safety rule, which no
+    gate decision resolves; validate.py grades the others by stage."""
+
+    rule: str
+    path: str
+    message: str
+    refuse: bool = False
+
+
+# --- reading ------------------------------------------------------------------------------------------------------
+
+def read_product(hw: Path) -> Any:
+    path = Path(hw) / "product.yaml"
+    try:
+        return yaml_loader.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+        raise ProfileError(f"cannot read {path}: {error}") from None
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def profile_of(product: Any) -> Any:
+    """product.yaml flow.profile as recorded, or None."""
+    return _mapping(_mapping(product).get("flow")).get("profile")
+
+
+def value_at(profile: Mapping[str, Any], field: str) -> Any:
+    """The profile's value of `field` (a / path below flow.profile), None when absent."""
+    value: Any = profile
+    for key in field.split("/"):
+        if not isinstance(value, Mapping) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def fea_setting(profile: Any) -> tuple[bool | None, str | None]:
+    """(enabled, mode) of flow.profile fea. (None, None) when it is not a fea mapping with a boolean enabled:
+    not assessed, which is neither off nor fast."""
+    fea = _mapping(profile).get(FEA) if isinstance(profile, Mapping) else None
+    if not isinstance(fea, Mapping) or not isinstance(fea.get(FEA_ENABLED), bool):
+        return None, None
+    mode = fea.get(FEA_MODE) if fea[FEA_ENABLED] else None
+    return fea[FEA_ENABLED], mode if isinstance(mode, str) else None
+
+
+def stage_index(stage: Any) -> int:
+    """The position of `stage` in the stage order; a missing or unknown stage counts as the last one."""
+    return STAGES.index(stage) if stage in STAGES else len(STAGES) - 1
+
+
+def plans_fdm(hw: Path, product: Any) -> bool:
+    """Whether the product plans FDM: at INTENT (manufacturing.processes), as a part's process, or as an
+    operation of a part's route. A part record that does not parse counts as no plan; validate.py reports it."""
+    if "fdm" in (_mapping(_mapping(product).get("manufacturing")).get("processes") or ()):
+        return True
+    for path in sorted((Path(hw) / "parts").glob("*/part.yaml")):
+        try:
+            part = yaml_loader.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            continue
+        if _uses_fdm(_mapping(part)):
+            return True
+    return False
+
+
+def _route(part: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    route = _mapping(part.get("intent")).get("route")
+    return [op for op in route if isinstance(op, Mapping)] if isinstance(route, list) else []
+
+
+def _uses_fdm(part: Mapping[str, Any]) -> bool:
+    return part.get("process") == "fdm" or any(op.get("kind") == "fdm" for op in _route(part))
+
+
+def fea_cases(hw: Path) -> list[str]:
+    """The authored FEA cases: hw/analysis/cases/<ID>/case.yaml with fixed faces (cad-analysis fea_static.py)."""
+    found = []
+    for path in sorted((Path(hw) / "analysis" / "cases").glob("*/case.yaml")):
+        try:
+            case = yaml_loader.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            continue
+        if isinstance(case, Mapping) and "fixed_faces" in case:
+            found.append(path.parent.name)
+    return found
+
+
+# --- the gate -----------------------------------------------------------------------------------------------------
+
+def problems(hw: Path, product: Any, stage: str | None = None) -> list[Problem]:
+    """What blocks at `stage` (default: product.yaml flow.stage): from SPECIFY on, a missing profile, a
+    missing decision record, and every applicable start question with no `asked` answer. The FDM questions
+    apply while the product plans FDM, the PIP clearance while print-in-place is not declined."""
+    at = stage_index(stage if stage is not None else _mapping(_mapping(product).get("flow")).get("stage"))
+    if at < STAGES.index(PROFILE_DUE):
+        return []
+    profile = profile_of(product)
+    if not isinstance(profile, Mapping):
+        return [Problem("flow/profile", "flow.profile is missing: the project-start questions are not recorded", ASK)]
+    found = []
+    decision = profile.get("decision")
+    if not isinstance(decision, str) or not (Path(hw) / "decisions" / f"{decision}.md").is_file():
+        found.append(Problem("flow/profile/decision", f"flow.profile cites no decision record ({decision or 'none'})",
+                             "record the profile again with flow_profile.py record --decision DR-###"))
+    elif not decision_approves(hw, decision):
+        found.append(Problem("flow/profile/decision", f"flow.profile cites {decision}, which is not an approval",
+                             "only the user's explicit approval records the answers: record them again with a new DR-###"))
+    return found + asked_problems(profile, fdm=plans_fdm(hw, product))
+
+
+def asked_problems(profile: Mapping[str, Any], *, fdm: bool) -> list[Problem]:
+    """Every applicable start question needs an `asked` answer; one marked as the accepted default must hold it."""
+    asked = _mapping(profile.get("asked"))
+    pip = value_at(profile, "processes/fdm/print_in_place") is not False
+    found = []
+    for field in QUESTION_FIELDS:
+        if (field.startswith(FDM) and not fdm) or (field.startswith(PIP_CLEARANCE) and not pip):
+            continue
+        how = asked.get(field)
+        path = f"flow/profile/asked/{field}"
+        if how not in PROVENANCE:
+            found.append(Problem(path, f"{field.replace('/', '.')} was not asked",
+                                 "ask the user that project-start question, showing its default, and record the answers again"))
+        elif how == ACCEPTED_DEFAULT and value_at(profile, field) != DEFAULTS[field]:
+            found.append(Problem(path, f"{field.replace('/', '.')} is recorded as the accepted default but is "
+                                 f"{value_at(profile, field)!r}, not {DEFAULTS[field]!r}",
+                                 "record it as asked: user, or record the answers again"))
+    return found
+
+
+def unquoted(product: Any) -> list[Problem]:
+    """flow.profile_unquoted: a word field holding a boolean, because YAML 1.1 read a bare on, off, yes or no.
+    Reported at every stage; the word is never guessed back from the boolean."""
+    profile = profile_of(product)
+    if not isinstance(profile, Mapping):
+        return []
+    found = []
+    for field in WORD_FIELDS:
+        value = value_at(profile, field)
+        if isinstance(value, bool):
+            word = "on" if value else "off"
+            found.append(Problem(f"flow/profile/{field}", f'write "{word}" in quotes; YAML reads bare {word} as '
+                                 f"{str(value).lower()}", f'quote the answer: {field.split("/")[-1]}: "{word}"',
+                                 code="flow.profile_unquoted"))
+    return found
+
+
+def shape_problems(profile: Any, skip: Iterable[str] = ()) -> list[Problem]:
+    """The schema's findings on a recorded profile, at their flow/profile paths, except those at `skip`."""
+    validator = schema_registry.ref_validator(SCHEMAS, PROFILE_REF)
+    found = []
+    for error in sorted(validator.iter_errors(profile), key=lambda item: list(item.absolute_path)):
+        path = "/".join(["flow/profile", *(str(part) for part in error.absolute_path)])
+        if path not in skip:
+            found.append(Problem(path, error.message, "correct the value, or record the answers again"))
+    return found
+
+
+def gate(hw: Path, stage: str | None = None, *, build: bool = False, product: Any = None) -> tuple[str, list[Problem]]:
+    """(the stage checked, what blocks at it): unquoted(), problems() and, once the profile is due, its
+    shape. `stage` defaults to product.yaml flow.stage; a build checks at L1 LAYOUT at the earliest.
+    `product` defaults to hw/product.yaml. Raises ProfileError when that cannot be read."""
+    product = read_product(hw) if product is None else product
+    recorded = _mapping(_mapping(product).get("flow")).get("stage")
+    checked = STAGES[stage_index(stage if stage is not None else recorded)]
+    if build:
+        checked = STAGES[max(stage_index(checked), STAGES.index(BUILD_STAGE))]
+    words = unquoted(product)
+    found = problems(hw, product, checked)
+    profile = profile_of(product)
+    if stage_index(checked) >= STAGES.index(PROFILE_DUE) and isinstance(profile, Mapping):
+        found = shape_problems(profile, {item.path for item in words}) + found
+    return checked, words + found
+
+
+def refusal(found: Iterable[Problem]) -> str:
+    """One line per problem, for a refusing command's stderr."""
+    return "\n".join(f"{item.path}: {item.message}; {item.action}" for item in found)
+
+
+# --- conflicts ----------------------------------------------------------------------------------------------------
+
+def _known_true(fact: Any) -> bool:
+    return isinstance(fact, Mapping) and fact.get("status") == "known" and fact.get("value") is True
+
+
+def _plans_supports(part: Mapping[str, Any]) -> bool:
+    return any(op.get("kind") == "fdm" and _mapping(op.get("supports")).get("strategy") not in (None, "none")
+               for op in _route(part))
+
+
+def _pip_conflicts(profile: Mapping[str, Any], interfaces: list[Mapping[str, Any]]) -> list[Conflict]:
+    joints = [item for item in interfaces if _mapping(item.get("functional")).get("print_in_place")]
+    if not joints:
+        return []
+    ids = ", ".join(str(item.get("id")) for item in joints)
+    found = []
+    if value_at(profile, "processes/fdm/print_in_place") is False or value_at(profile, "processes/fdm/overhang_deg") == "off":
+        found.append(Conflict("pip_not_offered", "flow/profile/processes/fdm",
+                              f"{ids} print in place, but the profile declines print-in-place or turns the overhang check off"))
+    # The record does not say which way each gap faces, so the larger axis clearance governs: the
+    # conservative choice, since a gap at least that wide separates in either direction.
+    axes = [value_at(profile, f"{PIP_CLEARANCE}{axis}") for axis in ("xy", "z")]
+    known = [value for value in axes if isinstance(value, (int, float)) and not isinstance(value, bool)]
+    tight = [str(item.get("id")) for item in joints
+             if known and isinstance(item.get("min_clearance_mm"), (int, float)) and item["min_clearance_mm"] < max(known)]
+    if tight:
+        found.append(Conflict("pip_play_too_tight", "flow/profile/processes/fdm/pip_clearance_mm",
+                              f"{', '.join(tight)} require(s) a min_clearance_mm below the print-in-place clearance "
+                              f"{max(known)} mm, so the printed gap would fuse"))
+    return found
+
+
+def conflicts(product: Any, requirements: Any, interfaces: Any, parts: Mapping[str, Any],
+              fea_cases: Iterable[str]) -> list[Conflict]:
+    """Where the profile contradicts the record (design section 4): requirements.yaml, interfaces.yaml,
+    the part records by PN and the authored FEA case ids."""
+    profile = profile_of(product)
+    if not isinstance(profile, Mapping):
+        return []
+    items = [item for item in _mapping(interfaces).get("interfaces") or [] if isinstance(item, Mapping)]
+    found = []
+    enabled, _mode = fea_setting(profile)
+    if enabled is False:
+        needs = [str(r.get("id")) for r in _mapping(requirements).get("requirements") or []
+                 if isinstance(r, Mapping) and _mapping(r.get("verification")).get("step") == "fea"]
+        needs += [f"analysis case {case}" for case in fea_cases]
+        if needs:
+            found.append(Conflict("fea_off", "flow/profile/fea/enabled", f"fea is off, but {', '.join(needs)} need(s) FEA"))
+    critical = [str(item.get("id")) for item in items if _known_true(_mapping(item.get("functional")).get("critical"))]
+    if value_at(profile, "stack_up") == "off" and critical:
+        found.append(Conflict("stack_up_off", "flow/profile/stack_up",
+                              f"stack_up is off, but {', '.join(critical)} is a critical interface"))
+    if enabled is True and value_at(profile, "critique") in ("light", "off"):
+        found.append(Conflict("fea_without_critique", "flow/profile/critique",
+                              f"fea is on, but critique is {value_at(profile, 'critique')}: an analysed design gets the full critique"))
+    supported = sorted(pn for pn, part in parts.items() if _plans_supports(_mapping(part)))
+    if value_at(profile, "processes/fdm/supports") == "free" and supported:
+        found.append(Conflict("supports_free", "flow/profile/processes/fdm/supports",
+                              f"parts must print support-free, but {', '.join(supported)} plan(s) supports: "
+                              "decide supports or a redesign at the PARTS gate"))
+    found += _pip_conflicts(profile, items)
+    use_case = _mapping(_mapping(product).get("use_case"))
+    service = _mapping(use_case.get("service_class"))
+    safety = service.get("status") == "known" and service.get("value") == "safety_critical"
+    if safety or _mapping(product).get("rigor") == "regulated":
+        reason = "safety_critical service" if safety else "regulated rigor"
+        if enabled is False:
+            found.append(Conflict("safety_off", "flow/profile/fea/enabled", f"{reason} refuses fea off", refuse=True))
+        found += [Conflict("safety_off", f"flow/profile/{field}",
+                           f"{reason} refuses {field.replace('/', '.')}: {value_at(profile, field)}", refuse=True)
+                  for field in CHECK_SWITCHES if value_at(profile, field) in ("off", "light")]
+    return found
+
+
+# --- record -------------------------------------------------------------------------------------------------------
+
+def defaulted_profile(decision: str) -> dict[str, Any]:
+    """A profile citing `decision` with every decision at its default and no `asked` answer."""
+    profile: dict[str, Any] = {"decision": decision}
+    for field, value in DEFAULTS.items():
+        *parents, key = field.split("/")
+        target = profile
+        for parent in parents:
+            target = target.setdefault(parent, {})
+        target[key] = copy.deepcopy(value)
+    return profile
+
+
+def answered_profile(decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = ()) -> dict[str, Any]:
+    """defaulted_profile with each answer (profile field: value) set, and `asked` saying who settled each
+    question: the user for an answer, the user accepting the default for a field in `accepted`."""
+    profile = defaulted_profile(decision)
+    for field, value in answers.items():
+        *parents, key = field.split("/")
+        target: dict[str, Any] = profile
+        for parent in parents:
+            target = target[parent]
+        target[key] = value
+    how = {**{field: ACCEPTED_DEFAULT for field in accepted}, **{field: USER for field in answers}}
+    profile["asked"] = {field: how[field] for field in QUESTION_FIELDS if field in how}
+    return profile
+
+
+def _indent_of(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _content(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and not stripped.startswith("#")
+
+
+class _Quoted(str):
+    """A string value the profile dump writes in double quotes, so a hand edit beside it keeps quoting."""
+
+
+class _Dumper(yaml.SafeDumper):  # type: ignore[misc]  # PyYAML ships no stubs here, so SafeDumper is Any
+    pass
+
+
+_Dumper.add_representer(_Quoted, lambda dumper, data: dumper.represent_scalar("tag:yaml.org,2002:str", data, style='"'))
+
+
+def _quoted(value: Any) -> Any:
+    """`value` with every string value, not key, marked for double quotes."""
+    if isinstance(value, Mapping):
+        return {key: _quoted(item) for key, item in value.items()}
+    return _Quoted(value) if isinstance(value, str) else value
+
+
+def _dump(block: Mapping[str, Any], indent: int) -> str:
+    text = yaml.dump(_quoted(dict(block)), Dumper=_Dumper, sort_keys=False, default_flow_style=False, allow_unicode=True,
+                     width=4096)
+    return "".join(" " * indent + line if line.strip() else line for line in text.splitlines(keepends=True))
+
+
+def with_profile(text: str, profile: Mapping[str, Any]) -> str:
+    """`text` (product.yaml, \\n newlines) with flow.profile set to `profile`: an earlier profile block
+    removed and the new one placed last in the block-style flow mapping, which is added when absent.
+    Raises ProfileError for a flow this textual edit cannot place."""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, line in enumerate(lines) if re.match(r"^flow:\s*(#.*)?$", line)), None)
+    if start is None:
+        if any(re.match(r"^flow\s*:", line) for line in lines):
+            raise ProfileError("product.yaml flow is not a block-style mapping; write it as one, then record again")
+        prefix = text if not text or text.endswith("\n") else text + "\n"
+        return prefix + "flow:\n" + _dump({"profile": profile}, 2)
+    end = next((i for i in range(start + 1, len(lines)) if _content(lines[i]) and _indent_of(lines[i]) == 0), len(lines))
+    children = [line for line in lines[start + 1:end] if _content(line)]
+    column = _indent_of(children[0]) if children else 2
+    body, skipping = [], False
+    for line in lines[start + 1:end]:
+        if _content(line) and _indent_of(line) == column:
+            skipping = re.match(rf"^ {{{column}}}profile\s*:", line) is not None
+        if not skipping:
+            body.append(line)
+    last = max((i for i, line in enumerate(body) if _content(line)), default=-1)
+    if last >= 0 and not body[last].endswith("\n"):
+        body[last] += "\n"
+    body.insert(last + 1, _dump({"profile": profile}, column))
+    return "".join(lines[:start + 1] + body + lines[end:])
+
+
+def answers_body(profile: Mapping[str, Any], today: date) -> str:
+    """The decision body of a recorded profile: its date, its source and one table row per answer, with who
+    settled it: the user, the user accepting the default, or stated (the motion sweep, which is never asked)."""
+    asked = _mapping(profile.get("asked"))
+
+    def rows(value: Any, path: str) -> list[str]:
+        if isinstance(value, Mapping):
+            return [row for key, item in value.items() for row in rows(item, f"{path}/{key}" if path else key)]
+        word = json.dumps(value) if isinstance(value, bool) else str(value)
+        parts = path.split("/")
+        how = next((asked[key] for key in ("/".join(parts[:n]) for n in range(len(parts), 0, -1)) if key in asked), "stated")
+        return [f"| {path.replace('/', '.')} | {word} | {how} |"]
+
+    answers = [row for key, value in profile.items() if key not in ("decision", "asked") for row in rows(value, key)]
+    return "\n".join([
+        f"- Date: {today.isoformat()}",
+        "- Source: the user's answers to the project-start questions (cad-flow `flow_profile.py questions`)", "",
+        "`product.yaml` `flow.profile` records these answers. The lead showed the user each question with its default:",
+        f"`{USER}` marks an answer the user gave, `{ACCEPTED_DEFAULT}` a default the user accepted. The lead told the",
+        "user that the motion sweep runs once a joint moves.", "",
+        "| Setting | Answer | Asked |", "|---|---|---|", *answers, ""])
+
+
+def write_decision(hw: Path, number: str, *, status: str, gate: str, version: str, title: str, body: str) -> Path:
+    """Write hw/decisions/<number>.md in the decision record format, the one place this script knows
+    that format. `gate` is a gated stage (product.schema.json $defs/gated_stage). Raises FileExistsError
+    for an existing record, since decisions are append-only, and ValueError for another gate."""
+    if gate not in GATED_STAGES:
+        raise ValueError(f"gate {gate!r} is not one of {', '.join(GATED_STAGES)}")
+    path = Path(hw) / "decisions" / f"{number}.md"
+    if path.exists():
+        raise FileExistsError(path)
+    _replace(path, "\n".join([f"Status: {status}", f"Gate: {gate}", f"Version: {version}", "",
+                              f"# {number}: {title}", "", body]))
+    return path
+
+
+def decision_approves(hw: Path, number: str) -> bool:
+    """Whether hw/decisions/<number>.md exists and records the user's explicit approval, the one place this
+    script reads the decision record format: its first line is `Status: APPROVED`."""
+    path = Path(hw) / "decisions" / f"{number}.md"
+    if not path.is_file():
+        return False
+    return path.read_text(encoding="utf-8", errors="replace").partition("\n")[0].strip() == "Status: APPROVED"
+
+
+def _replace(path: Path, data: str, newline: str = "\n") -> None:
+    """Write `data` beside `path` and rename it onto `path` in one step, keeping an existing file's mode."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, staged = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data.replace("\n", newline).encode("utf-8"))
+        if path.exists():
+            os.chmod(staged, path.stat().st_mode & 0o7777)
+        os.replace(staged, path)
+    except BaseException:
+        Path(staged).unlink(missing_ok=True)
+        raise
+
+
+def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = (),
+           today: date | None = None) -> dict[str, Any]:
+    """Write `answers` (profile field: value) and the defaults of the `accepted` fields as flow.profile citing
+    `decision`, then the decision record. Raises ProfileError, having written nothing, for an existing
+    decision, a start question neither answered nor accepted, or a product.yaml it cannot edit."""
+    hw = Path(hw)
+    accepted = list(accepted)
+    if DECISION.fullmatch(decision) is None:
+        raise ProfileError(f"--decision {decision!r} is not DR-###")
+    options = {field: option for option, field, _parse, _metavar in OPTIONS}
+    if both := [options[field] for field in accepted if field in answers]:
+        raise ProfileError(f"{', '.join(both)} answered and also accepted as the default; give one")
+    if unasked := [option for field, option in options.items() if field not in answers and field not in accepted]:
+        raise ProfileError(f"ask the user {', '.join(unasked)} and answer it, or accept its default with --accept-default; "
+                           "nothing was recorded")
+    record_path = hw / "decisions" / f"{decision}.md"
+    if record_path.exists():
+        raise ProfileError(f"{record_path} exists; decisions are append-only, so cite a new DR-###")
+    path = hw / "product.yaml"
+    try:
+        raw = path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ProfileError(f"cannot read {path}: {error}") from None
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    text = raw.replace("\r\n", "\n")
+    product = read_product(hw)
+    if not isinstance(product, Mapping) or not isinstance(product.get("flow", {}), Mapping):
+        raise ProfileError(f"{path} is not a mapping with a flow mapping")
+    profile = answered_profile(decision, answers, accepted)
+    if invalid := shape_problems(profile):
+        raise ProfileError(refusal(invalid))
+    after = with_profile(text, profile)
+    expected = copy.deepcopy(dict(product))
+    expected["flow"] = {**expected.get("flow", {}), "profile": profile}
+    if yaml_loader.safe_load(after) != expected:
+        raise ProfileError(f"{path}: the textual edit would not give the intended data; simplify its flow block")
+    _replace(path, after, newline)
+    record_path = write_decision(hw, decision, status="APPROVED", gate="intent", version="N/A", title="Flow profile",
+                                 body=answers_body(profile, today or date.today()))
+    return {"product": str(path), "decision": str(record_path)}
+
+
+# --- command line -------------------------------------------------------------------------------------------------
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
+    sub = root.add_subparsers(dest="command", required=True)
+    sub.add_parser("questions", help="print the project-start questions to relay verbatim")
+    rec = sub.add_parser("record", help="record the user's answers as flow.profile and its decision")
+    rec.add_argument("--hw", type=Path, required=True, help="the design record directory (hw/)")
+    rec.add_argument("--decision", required=True, help="the new DR-### that records the answers")
+    for option, field, parse, metavar in OPTIONS:
+        rec.add_argument(option, dest=field, type=parse, metavar=metavar,
+                         help=f"flow.profile {field.replace('/', '.')}: the user's answer")
+    rec.add_argument("--accept-default", dest="accept_default", nargs="+", default=[], metavar="OPTION",
+                     choices=[option.removeprefix("--") for option, _field, _parse, _metavar in OPTIONS],
+                     help="the options (without --) whose default the user accepted when asked")
+    check = sub.add_parser("check", help="report what refuses a build, a validation or a stage advance")
+    check.add_argument("--hw", type=Path, required=True, help="the design record directory (hw/)")
+    check.add_argument("--stage", choices=STAGES, help="the stage to check at (default: product.yaml flow.stage)")
+    return root
+
+
+def print_questions() -> None:
+    print("Ask the user these questions verbatim, then record the answers with flow_profile.py record.\n")
+    for number, (text, _records) in enumerate(QUESTIONS, start=1):
+        print(f"{number}. {text}")
+    print(f"\n{MOTION_STATEMENT}\n\nEach answer records as:")
+    for number, (_text, records) in enumerate(QUESTIONS, start=1):
+        print(f"  {number}: {records}")
+    print("\nDefaults, shown with each question:")
+    for field, value in DEFAULTS.items():
+        print(f"  {field.replace('/', '.')}: {json.dumps(value)}")
+    print("Show the user each question with its default. Record an answer as its option, or a")
+    print("default the user accepts with --accept-default <options>. A question neither answered nor accepted refuses")
+    print("the record, a build, a validation and a stage advance.")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        if args.command == "questions":
+            print_questions()
+            return 0
+        if args.command == "record":
+            answers = {field: getattr(args, field) for _option, field, _parse, _metavar in OPTIONS
+                       if getattr(args, field) is not None}
+            by_name = {option.removeprefix("--"): field for option, field, _parse, _metavar in OPTIONS}
+            accepted = [by_name[name] for name in args.accept_default]
+            print(json.dumps(record(args.hw, args.decision, answers, accepted), indent=2))
+            return 0
+        stage, found = gate(args.hw, args.stage)
+    except ProfileError as error:
+        print(f"flow_profile.py {args.command}: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps({"ok": not found, "stage": stage, "problems": [asdict(item) for item in found]}, indent=2))
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

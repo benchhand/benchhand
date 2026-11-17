@@ -19,6 +19,7 @@ import hashlib
 import importlib.util
 import shutil
 import sys
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -32,13 +33,19 @@ V1_MINIMAL = SKILL / "tests" / "fixtures" / "record_v1_minimal" / "hw"  # a mini
 SYNTHETIC = "synthetic test fixture value, not material, machine or supplier data"
 
 
+_LOADING = threading.RLock()
+
+
 def _module(name: str, path: Path) -> Any:
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, path)
-        assert spec and spec.loader
-        sys.modules[name] = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sys.modules[name])
-    return sys.modules[name]
+    """Load a script once by path. The module is registered before it runs, so a second thread would see it
+    half-executed; the lock makes it wait (re-entrant, since a script may load its siblings)."""
+    with _LOADING:
+        if name not in sys.modules:
+            spec = importlib.util.spec_from_file_location(name, path)
+            assert spec and spec.loader
+            sys.modules[name] = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sys.modules[name])
+        return sys.modules[name]
 
 
 def intent_module() -> Any:
@@ -142,9 +149,58 @@ def question(ident: str, text: str = "TST fixture question?", *, material: bool 
     return data
 
 
+PROFILE_DECISION = "DR-090"  # the approved decision fixture profiles cite; write_record writes it
+
+
+PROFILE_QUESTIONS = (  # the project-start questions, as flow.profile asked keys
+    "human_approval", "fea", "stack_up", "critique", "storage_results_in_git", "processes/fdm/orientation",
+    "processes/fdm/supports", "processes/fdm/overhang_deg", "processes/fdm/bridge_mm", "processes/fdm/min_wall_mm",
+    "processes/fdm/min_feature_mm", "processes/fdm/warp", "processes/fdm/cosmetic_faces", "processes/fdm/print_in_place",
+    "processes/fdm/pip_clearance_mm/xy", "processes/fdm/pip_clearance_mm/z")
+
+
+def flow_profile(decision: str = PROFILE_DECISION, **changes: Any) -> dict[str, Any]:
+    """A complete product.yaml flow.profile citing `decision` (PROFILE_DECISION by default): every
+    question answered by the user, in the combination no flow.conflict rule fires on. `changes` replace
+    top-level fields; `fdm` replaces processes.fdm fields."""
+    fdm = {"orientation": "propose", "supports": "allowed", "overhang_deg": 45, "bridge_mm": 10, "min_wall_mm": 0.8,
+           "min_feature_mm": 0.4, "warp": "calibrated", "cosmetic_faces": False, "print_in_place": True,
+           "pip_clearance_mm": {"xy": "calibrated", "z": "calibrated"}}
+    fdm.update(changes.pop("fdm", {}))
+    data: dict[str, Any] = {"decision": decision, "human_approval": "all", "fea": {"enabled": True, "mode": "accurate"},
+                            "stack_up": "auto", "critique": "full", "motion": "auto", "storage_results_in_git": False,
+                            "processes": {"fdm": fdm}, "asked": {field: "user" for field in PROFILE_QUESTIONS}}
+    data.update(changes)
+    return data
+
+
+def add_flow_profile(hw: Path, decision: str = PROFILE_DECISION, **changes: Any) -> Path:
+    """Set hw/product.yaml flow.profile to flow_profile(decision, **changes) and write the decision, for a
+    hand-written fixture that builds or validates. The file is dumped again, so its comments go."""
+    path = Path(hw) / "product.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
+    data = data if isinstance(data, dict) else {}
+    flow = data.setdefault("flow", {})
+    flow["profile"] = flow_profile(decision, **changes)
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    write_profile_decision(hw, decision)
+    return path
+
+
+def write_profile_decision(hw: Path, decision: str = PROFILE_DECISION) -> Path:
+    """The approved INTENT decision a fixture's flow.profile cites, through cad-flow flow_profile.py's one
+    decision writer; an existing record is kept."""
+    path = Path(hw) / "decisions" / f"{decision}.md"
+    if path.exists():
+        return path
+    writer = _module("cad_flow_profile", SKILL.parent / "cad-flow" / "scripts" / "flow_profile.py")
+    return Path(writer.write_decision(hw, decision, status="APPROVED", gate="intent", version="N/A",
+                                      title="TST flow profile", body="TST fixture answers.\n"))
+
+
 def product(use: dict[str, Any] | None = None, stage: str = "parts", **extra: Any) -> dict[str, Any]:
     data = {"record_version": 2, "id": "tst-product", "rigor": "pro", "units": "mm", "regime": "iso",
-            "general_tolerance": "ISO 2768-m", "flow": {"stage": stage, "recheck_from": stage},
+            "general_tolerance": "ISO 2768-m", "flow": {"stage": stage, "recheck_from": stage, "profile": flow_profile()},
             "use_case": use if use is not None else use_case()}
     data.update(extra)
     return data
@@ -330,6 +386,9 @@ def write_record(hw: Path, documents: dict[str, Any]) -> Path:
         path = hw / "decisions" / f"{ident}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {ident}\n\nTST fixture decision, approved.\n", encoding="utf-8")
+    profile = ((documents.get("product.yaml") or {}).get("flow") or {}).get("profile")
+    if isinstance(profile, dict) and isinstance(profile.get("decision"), str):
+        write_profile_decision(hw, profile["decision"])
     for rel, data in sources.items():
         path = hw / rel
         path.parent.mkdir(parents=True, exist_ok=True)

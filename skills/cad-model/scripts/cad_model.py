@@ -39,7 +39,8 @@ run   executes every hw/parts/<PN>/model.py in its declared kernel's own uv envi
                           definition), an additive part on the bed in its route's approved orientation
       and hw/versions/latest.json pointing at that version (paths relative to hw/). Labels
       increase: an existing label or one below the newest built version is refused. A part whose
-      manufacturing output fails a blocking check fails the run: no version, latest unchanged.
+      manufacturing output fails a blocking check fails the run: no version, latest unchanged. A run
+      refuses (exit 2) while cad-flow flow_profile.py check blocks at LAYOUT or the record's later stage.
 check runs the geometry checks on a built version; diff compares two built versions. A check of a
       version built from a record version 2 snapshot also publishes its cad.readback required-check
       packet to hw/checks/<V>/cad/ (stdout `packet`). A check is a
@@ -92,20 +93,41 @@ LIFECYCLE_SCRIPT = (
     / "scripts"
     / "process_lifecycle.py"
 )
+FLOW_PROFILE_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "cad-flow" / "scripts" / "flow_profile.py"
+)
 
 
-def load_lifecycle() -> Any:
-    """cad-flow's process supervision: run records, stray refusal, private process groups."""
+def _load_script(name: str, path: Path) -> Any:
+    """A cad-flow script loaded once by path and registered in sys.modules."""
     import importlib.util
 
-    name = "cad_flow_process_lifecycle"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, LIFECYCLE_SCRIPT)
+        spec = importlib.util.spec_from_file_location(name, path)
         assert spec and spec.loader
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         spec.loader.exec_module(module)
     return sys.modules[name]
+
+
+def load_lifecycle() -> Any:
+    """cad-flow's process supervision: run records, stray refusal, private process groups."""
+    return _load_script("cad_flow_process_lifecycle", LIFECYCLE_SCRIPT)
+
+
+def require_flow_profile(hw: Path) -> None:
+    """Refuse a build while cad-flow's flow profile blocks at L1 LAYOUT or the record's later stage: the
+    project-start answers or their decision are missing, or a start question has no asked answer."""
+    profile = _load_script("cad_flow_profile", FLOW_PROFILE_SCRIPT)
+    try:
+        stage, found = profile.gate(hw, build=True)
+    except profile.ProfileError as error:
+        raise build.UsageError(str(error)) from None
+    if found:
+        raise build.UsageError(
+            f"refused: the flow profile blocks a build at {stage}\n{profile.refusal(found)}"
+        )
 
 
 def _pair(text: str) -> tuple[str, str]:
@@ -264,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with pose.stdout_to_stderr():
             if args.command == "run":
+                require_flow_profile(args.hw)
                 code, result = build.run(args.hw, args.label, args.kernel, args.attach)
             elif args.command == "check":
                 from cadmodel.check import check
