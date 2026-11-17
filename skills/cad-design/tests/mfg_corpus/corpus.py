@@ -30,7 +30,7 @@ class Skip(Exception):
 
 class Rejected(Exception):
     """Raised by `run` when the packet check or the evidence assessment refuses the case's packet. Neither a detection
-    nor an abstention: the pair is a miss and the reason is recorded."""
+    nor an abstention. The pair counts as a miss and the run records the reason."""
 
 
 @dataclass(frozen=True)
@@ -124,14 +124,14 @@ def rate(count: int, total: int) -> float | None:
 
 def summarise(family: Family, results: list[PairResult]) -> dict[str, Any]:
     """Rates over the pairs that ran: detection = FAIL on mutant, abstention = UNKNOWN on mutant,
-    false positive = FAIL on twin. A pair that errored or whose packet was rejected on either side has no verdicts: it
-    is a miss. A pair with a known gap is a miss whatever its mutant returned; its twin still counts."""
+    false positive = FAIL on twin. A pair that errored, or whose packet evidence rejected on either side, has no verdicts
+    and counts as a miss. A pair with a known gap counts as a miss whatever its mutant returned. Its twin still counts."""
     ran = [r for r in results if not r.skipped]
     n = len(ran)
     trusted = [r for r in ran if not r.known_gap]
     detected = sum(r.mutant == "fail" for r in trusted)
     abstained = sum(r.mutant == "unknown" for r in trusted)
-    missed = n - detected - abstained  # a pass on the mutant, or a pair that errored or was rejected
+    missed = n - detected - abstained  # a pass on the mutant, or a pair that errored or got rejected
     false_pos = sum(r.twin == "fail" for r in ran)
     return {
         "family": family.id, "check": family.check, "owner": family.owner,

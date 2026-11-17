@@ -51,7 +51,7 @@ def require(module: str) -> None:
 
 # --- the packet a release sees ---------------------------------------------------------------------------------------
 
-BUILD = "v9000"  # the version evidence assesses the in-memory packet for; no repository version uses it
+BUILD = "v9000"  # the version label evidence assesses the in-memory packet for. No repository version uses it
 MANIFEST_SHA256 = "0" * 64
 _STATE_OUTCOME = {"fail": "fail", "pass": "pass", "not_applicable": "pass"}  # any other state is not a pass
 
@@ -63,7 +63,7 @@ def _evidence() -> Any:
 def state_verdict(record: Any, produced: Sequence[Any], version: str, manifest_sha256: str, prefixes: tuple[str, ...],
                   today: Any = None) -> Outcome:
     """What cad-record evidence.assess concludes for the obligations of `record` whose id starts with a prefix, given the
-    version's producer packets (evidence.ProducerPacket): fail if any failed, pass if all passed, else unknown. Evidence
+    version's producer packets (ProducerPacket objects of evidence): fail if any failed, pass if all passed, else unknown. Evidence
     refusing a packet (packet.invalid) raises Rejected: a miss with the reason, not a verdict. A record with no such
     obligation also raises it: the release asks nothing of the check."""
     from datetime import date
@@ -237,7 +237,7 @@ def readback_verdict(model_source: str) -> Outcome:
     """What a release concludes about the cad.readback obligation of a one-part project whose model.py is
     `model_source`: cad_model run builds the version, cad_model check publishes its packet to hw/checks/<V>/cad/, and
     evidence.collect_packets reads it back sealed, as the release gate does. A build that refuses the part leaves no version and so no
-    packet: evidence then has nothing for the obligation, which is unknown."""
+    packet: evidence then has nothing for the obligation and calls it unknown."""
     import hashlib
     import shutil
     import subprocess
