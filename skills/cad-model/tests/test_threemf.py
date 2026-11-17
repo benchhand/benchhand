@@ -114,6 +114,7 @@ class ColourTests(unittest.TestCase):
 
     def test_a_different_colour_changes_the_bytes_and_two_writes_are_identical(self) -> None:
         self.assertEqual(cube("PETG", "#FF0000"), cube("PETG", "#FF0000"))
+        self.assertEqual(len({cube("PETG"), cube("PETG", "#336699"), cube("PETG", "#336698")}), 3)
         self.assertNotEqual(cube("PETG", "#FF0000"), cube("PETG", "#00FF00"))
 
     def test_a_colour_that_is_not_rrggbb_is_refused(self) -> None:
