@@ -7,15 +7,23 @@ Needs `uv`. None of these commands builds a part, so none waits on a kernel envi
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
-CLI = Path(__file__).resolve().parent.parent / "scripts" / "cad_model.py"
+SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+CLI = SCRIPTS / "cad_model.py"
 COMMANDS = ("run", "check", "diff", "latest", "store")
 
 
@@ -79,6 +87,205 @@ class CliSurfaceTests(unittest.TestCase):
         self.assertEqual(json.loads(full.stdout)["payload"]["dry_run"], True)
         with self.assertRaises(json.JSONDecodeError):
             json.loads(compact.stdout)
+
+
+class MainCase(unittest.TestCase):
+    """`main(argv)` in this process: what it accepts, refuses and forwards, with the builders replaced by recorders.
+
+    Needs no uv and no kernel: the part builder, check, diff and store are stand-ins that note their arguments."""
+
+    def setUp(self) -> None:
+        patched_path = mock.patch.object(sys, "path", [str(SCRIPTS), *sys.path])
+        patched_path.start()
+        self.addCleanup(patched_path.stop)
+        spec = importlib.util.spec_from_file_location("cad_model_under_test", CLI)
+        assert spec is not None and spec.loader is not None
+        self.cad = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.cad)
+        from cadmodel import build, motion
+
+        self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+        self.emitted: list[dict[str, object]] = []
+
+        def recorder(name: str) -> object:
+            def record(*args: object, **kwargs: object) -> tuple[int, dict[str, object]]:
+                self.calls.append((name, args, kwargs))
+                return 0, {"label": "v1"}
+
+            return record
+
+        for name in ("run", "store_gc", "reconcile_latest"):
+            self.start(mock.patch.object(build, name, recorder(name)))
+        self.start(mock.patch.object(build, "version_dir", lambda hw, label: None))
+        fakes = {"cadmodel.check": types.SimpleNamespace(check=recorder("check")),
+                 "cadmodel.diff": types.SimpleNamespace(diff=recorder("diff"))}
+        self.start(mock.patch.dict(sys.modules, fakes))
+        self.start(mock.patch.object(self.cad.load_lifecycle(), "claim_run", lambda *a, **k: contextlib.nullcontext()))
+        self.start(mock.patch.object(motion.load_pose(), "stdout_to_stderr", contextlib.nullcontext))
+        self.start(mock.patch.object(self.cad.emit, "emit", lambda result, **kwargs: self.emitted.append(kwargs)))
+        self.motion = motion
+        temporary = tempfile.TemporaryDirectory(prefix="cad-main-test-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def start(self, patcher: "mock._patch[object]") -> None:
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def main(self, *argv: str) -> tuple[int, str, str]:
+        self.calls.clear()
+        self.emitted.clear()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                code = self.cad.main(list(argv))
+            except SystemExit as stop:
+                code = stop.code if isinstance(stop.code, int) else 0
+        return code, out.getvalue(), err.getvalue()
+
+    def refused(self, *argv: str) -> None:
+        code, out, err = self.main(*argv)
+        self.assertEqual((code, out, self.calls), (2, "", []), err[-1000:])
+
+    def forwarded(self, *argv: str) -> tuple[str, tuple[object, ...], dict[str, object]]:
+        code, _, err = self.main(*argv)
+        self.assertEqual(code, 0, err[-1000:])
+        self.assertEqual(len(self.calls), 1, self.calls)
+        return self.calls[0]
+
+
+class MainTests(MainCase):
+    def test_a_value_taking_option_refuses_a_following_option_as_its_value(self) -> None:
+        for argv in (("run", "hw", "--label", "--json"), ("run", "hw", "--label", "v1", "--attach", "--json"),
+                     ("check", "v1", "--out", "--json"), ("check", "v1", "--cache", "--no-cache"),
+                     ("check", "v1", "--hw", "--exact"), ("check", "v1", "--pair", "--exact"),
+                     ("check", "v1", "--allow-interference", "--exact"), ("check", "v1", "--expect-solids", "--exact"),
+                     ("check", "v1", "--jobs", "--exact"), ("check", "v2", "--changed-only", "--since-version", "--exact"),
+                     ("diff", "v1", "v2", "--out", "--json"), ("diff", "v1", "v2", "--hw", "--json"),
+                     ("latest", "hw", "--label", "--json"), ("run", "hw", "--label", "v1", "--kernel", "--json")):
+            with self.subTest(argv=argv):
+                self.refused(*argv)
+
+    def test_a_value_that_argparse_takes_as_a_value_is_one(self) -> None:
+        for flag_value, expected in (("-1", "-1"), ("-0.5", "-0.5"), ("-", "-"), ("-a b", "-a b")):
+            with self.subTest(label=flag_value):
+                _, args, _ = self.forwarded("latest", "hw", "--label", flag_value)
+                self.assertEqual(args, (Path("hw"), expected))
+
+    def test_the_equals_form_takes_an_option_like_value(self) -> None:
+        self.forwarded("diff", "v1", "v2", "--out=--json")
+        self.assertEqual(self.emitted[0]["out"], Path("--json"))
+
+    def test_a_numeric_hardware_positional_that_starts_with_a_dash_is_a_path(self) -> None:
+        _, args, _ = self.forwarded("run", "-5", "--label", "v1")
+        self.assertEqual(args[0], Path("-5"))
+
+    def test_an_unknown_option_is_a_usage_error(self) -> None:
+        for argv in (("run", "hw", "--label", "v1", "--bogus"), ("run", "hw", "--label", "v1", "-x"),
+                     ("diff", "v1", "v2", "--hw")):
+            with self.subTest(argv=argv):
+                self.refused(*argv)
+
+    def test_dash_h_prints_the_help_of_the_tool_and_of_every_command(self) -> None:
+        for argv in (("-h",), *((command, "-h") for command in COMMANDS)):
+            with self.subTest(argv=argv):
+                code, out, _ = self.main(*argv)
+                self.assertEqual((code, "sage" in out), (0, True))
+
+    def test_a_leading_double_dash_before_the_command_is_skipped(self) -> None:
+        self.assertEqual(self.forwarded("--", "run", "hw", "--label", "v1"),
+                         ("run", (Path("hw"), "v1", "auto", []), {}))
+
+    def test_a_double_dash_inside_a_command_ends_its_options(self) -> None:
+        _, args, _ = self.forwarded("diff", "--", "v1", "v2")
+        self.assertEqual(args, (Path("hw"), "v1", "v2"))
+
+    def test_every_occurrence_of_a_repeated_scalar_option_is_checked_in_order(self) -> None:
+        for argv in (("check", "v1", "--jobs", "0", "--jobs", "1"), ("check", "v1", "--jobs", "0", "--help"),
+                     ("run", "hw", "--label", "v1", "--kernel", "freecad", "--kernel", "auto"),
+                     ("check", "v1", "--jobs=0", "--jobs=2")):
+            with self.subTest(argv=argv):
+                self.refused(*argv)
+
+    def test_help_ends_parsing_before_a_later_bad_value_or_option(self) -> None:
+        for argv in (("check", "v1", "--help", "--jobs", "0"), ("check", "--help", "--bogus"),
+                     ("check", "v1", "-h", "--pair", "nonsense")):
+            with self.subTest(argv=argv):
+                code, out, _ = self.main(*argv)
+                self.assertEqual((code, "sage" in out, self.calls), (0, True, []))
+
+    def test_a_converter_that_raises_value_error_is_a_usage_error(self) -> None:
+        for flag, value in (("--jobs", "\u00b2"), ("--expect-solids", "TST-0001=\u00b2")):
+            with self.subTest(flag=flag):
+                self.refused("check", "v1", flag, value)
+
+    def test_an_interrupt_propagates_as_a_keyboard_interrupt(self) -> None:
+        with mock.patch.object(self.motion, "load_pose", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.cad.main(["latest", "hw", "--label", "v1"])
+
+    def test_a_path_the_process_cannot_read_is_still_a_path(self) -> None:
+        write_only = self.root / "write-only"
+        write_only.mkdir()
+        write_only.chmod(stat.S_IWUSR | stat.S_IXUSR)
+        self.addCleanup(write_only.chmod, stat.S_IRWXU)
+        target = str(write_only)
+        for argv in (("latest", target, "--label", "v1"), ("check", "v1", "--hw", target),
+                     ("check", "v1", "--hw", "hw", "--cache", target), ("diff", "v1", "v2", "--out", target)):
+            with self.subTest(argv=argv):
+                self.forwarded(*argv)
+
+    def test_run_forwards_its_defaults_and_its_repeated_attachments_in_order(self) -> None:
+        self.assertEqual(self.forwarded("run", "hw", "--label", "v1"),
+                         ("run", (Path("hw"), "v1", "auto", []), {}))
+        self.forwarded("run", "--attach", "TST-0001=TST-0002", "hw", "--attach", "@a=@b", "--label", "v2",
+                       "--kernel", "cadquery")
+        self.assertEqual(self.calls[0][1], (Path("hw"), "v2", "cadquery", ["TST-0001=TST-0002", "@a=@b"]))
+
+    def test_check_forwards_its_defaults(self) -> None:
+        hw = self.root / "hw"
+        name, args, kwargs = self.forwarded("check", "v1", "--hw", str(hw))
+        self.assertEqual((name, args, kwargs), (
+            "check", (hw, "v1", None, [], {}, hw.resolve() / ".cad", 1),
+            {"exact": False, "changed_only": False, "since": None}))
+        self.assertEqual(self.emitted[0]["out"], None)
+        self.assertEqual(self.emitted[0]["json_flag"], False)
+
+    def test_check_forwards_repeated_options_interleaved_with_its_positional(self) -> None:
+        hw, cache = self.root / "hw", self.root / "cache"
+        _, args, kwargs = self.forwarded(
+            "check", "--pair", "TST-0001:TST-0002", "v2", "--hw", str(hw), "--pair", "TST-0002:TST-0003",
+            "--allow-interference", "TST-0001:TST-0003", "--allow-interference", "TST-0002:TST-0004",
+            "--expect-solids", "TST-0001=2", "--expect-solids", "TST-0002=3", "--exact", "--jobs", "4",
+            "--cache", str(cache), "--out", str(self.root / "r.json"), "--json")
+        self.assertEqual(args, (hw, "v2", [("TST-0001", "TST-0002"), ("TST-0002", "TST-0003")],
+                                [("TST-0001", "TST-0003"), ("TST-0002", "TST-0004")],
+                                {"TST-0001": 2, "TST-0002": 3}, cache, 4))
+        self.assertEqual(kwargs, {"exact": True, "changed_only": False, "since": None})
+        self.assertEqual((self.emitted[0]["out"], self.emitted[0]["json_flag"]), (self.root / "r.json", True))
+
+    def test_check_forwards_a_changed_only_selection_without_a_cache(self) -> None:
+        _, args, kwargs = self.forwarded("check", "v3", "--hw", "hw", "--changed-only", "--since-version", "v1",
+                                         "--no-cache", "--jobs", "auto")
+        self.assertEqual((args[5], args[6] >= 1, kwargs), (None, True, {"exact": False, "changed_only": True,
+                                                                          "since": "v1"}))
+
+    def test_diff_latest_and_store_forward_their_arguments(self) -> None:
+        self.assertEqual(self.forwarded("diff", "--hw", "alt", "v1", "--out", "o.json", "v2"),
+                         ("diff", (Path("alt"), "v1", "v2"), {}))
+        self.assertEqual(self.emitted[0]["out"], Path("o.json"))
+        self.assertEqual(self.forwarded("latest", "--label", "v4", "hw"), ("reconcile_latest", (Path("hw"), "v4"), {}))
+        self.assertEqual(self.forwarded("store", "--dry-run", "gc", "hw"), ("store_gc", (Path("hw"), True), {}))
+        self.assertEqual(self.forwarded("store", "gc", "hw"), ("store_gc", (Path("hw"), False), {}))
+
+
+class DeliberateChangeTests(MainCase):
+    """The one change the Click conversion makes on purpose. These FAIL on the argparse script and pass on the Click one."""
+
+    def test_an_abbreviated_option_is_a_usage_error(self) -> None:
+        for argv in (("store", "gc", "hw", "--dry-r"), ("run", "hw", "--lab", "v1"), ("check", "v1", "--exa")):
+            with self.subTest(argv=argv):
+                self.refused(*argv)
 
 
 if __name__ == "__main__":
