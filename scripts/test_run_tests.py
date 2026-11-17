@@ -13,8 +13,9 @@ import time
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "harness" / "run_tests.sh"
-# The stub reads the -p pattern of `unittest discover`: test_fail.py fails, test_hang.py blocks.
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "harness" / "run_tests.sh"
+# The stub reads the -p pattern of `unittest discover` (its last argument) to pick a behavior.
 UV_STUB = """#!/bin/sh
 echo "$@" >> "$STUB_ARGS"
 for arg in "$@"; do pattern=$arg; done
@@ -22,16 +23,21 @@ echo $$ > "$STUB_PID"
 : > "$STUB_STARTED"
 case $pattern in
   test_fail.py) exit 1 ;;
-  test_hang.py) exec sleep 5 ;;
+  test_hang.py) exec sleep 600 > /dev/null 2>&1 ;;
+  test_stubborn.py)
+    # a TERM-ignoring test process with a TERM-ignoring grandchild
+    trap '' TERM
+    sh -c 'trap "" TERM; echo $$ > "$STUB_GRANDCHILD"; exec sleep 600' > /dev/null 2>&1 &
+    sleep 600 > /dev/null 2>&1 ;;
+  test_breaklog.py) rm -f "$STUB_RUN_ROOT"/*/log; mkdir "$STUB_RUN_ROOT"/*/log ;;
 esac
 exit 0
 """
 # A stand-in for ~/cad-bench/bin/suite-slot: FAKE_SLOT_MODE picks how it behaves before the command.
 SLOT_STUB = """#!/bin/sh
 case $FAKE_SLOT_MODE in
-  queue) echo $$ > "$FAKE_SLOT_PID"; : > "$STUB_STARTED"; exec sleep 5 ;;
+  queue) echo $$ > "$FAKE_SLOT_PID"; : > "$STUB_STARTED"; exec sleep 600 > /dev/null 2>&1 ;;
   fail) exit 1 ;;
-  breaklog) while [ "$1" != --run-dir ]; do shift; done; mkdir "$2/log" ;;
 esac
 exec "$@"
 """
@@ -63,6 +69,7 @@ class RunTestsCase(unittest.TestCase):
         self.started = self.tmp / "started"
         self.stub_pid = self.tmp / "stub.pid"
         self.slot_pid = self.tmp / "slot.pid"
+        self.grandchild_pid = self.tmp / "grandchild.pid"
         self.stub_args = self.tmp / "args"
         self.env = {
             **os.environ,
@@ -71,7 +78,10 @@ class RunTestsCase(unittest.TestCase):
             "STUB_STARTED": str(self.started),
             "STUB_PID": str(self.stub_pid),
             "STUB_ARGS": str(self.stub_args),
+            "STUB_GRANDCHILD": str(self.grandchild_pid),
+            "STUB_RUN_ROOT": str(self.root),
             "FAKE_SLOT_PID": str(self.slot_pid),
+            "RUN_TESTS_GRACE": "1",
         }
         for name in ("RUN_ROOT", "RUN_ID", "PKG", "ITEM"):
             self.env.pop(name, None)
@@ -102,13 +112,15 @@ class RunTestsCase(unittest.TestCase):
         out, err = process.communicate(timeout=60)
         return run_dir, process.returncode, out, err
 
-    def wait_for_start(self) -> None:
+    def wait_for(self, path: Path) -> None:
         deadline = time.monotonic() + 30
-        while not self.started.exists() and time.monotonic() < deadline:
+        while not path.exists() and time.monotonic() < deadline:
             time.sleep(0.02)
-        self.assertTrue(self.started.exists(), "the stub never started")
+        self.assertTrue(path.exists(), f"{path.name} never appeared")
 
-    def kill_when_done(self, pid_file: Path) -> int:
+    def kill_at_cleanup(self, pid_file: Path) -> int:
+        """The pid in pid_file, killed when the test ends if it is still alive."""
+        self.wait_for(pid_file)
         pid = int(pid_file.read_text())
 
         def cleanup() -> None:
@@ -118,9 +130,10 @@ class RunTestsCase(unittest.TestCase):
         self.addCleanup(cleanup)
         return pid
 
-    def terminate(self, process: subprocess.Popen[str]) -> None:
+    def cancel(self, process: subprocess.Popen[str]) -> None:
+        """SIGTERM the runner and wait for its exit alone, before any pipe is drained."""
         process.send_signal(signal.SIGTERM)
-        process.communicate(timeout=30)
+        process.wait(timeout=30)
 
 
 class DirectoryTests(RunTestsCase):
@@ -158,6 +171,32 @@ class DirectoryTests(RunTestsCase):
         self.assertIn("harness/test-requirements.txt", lines[2])
         self.assertNotIn("-min", lines[2])
 
+    def test_every_spelling_of_a_scripts_path_selects_the_minimal_pins(self) -> None:
+        spellings = [
+            "scripts/test_x.py",
+            "./scripts/test_x.py",
+            ".//scripts//./test_x.py",
+            f"{ROOT}/scripts/test_x.py",
+            f"{os.environ.get('PWD', str(ROOT))}/scripts/test_x.py",
+            f"{ROOT.resolve()}/scripts/test_x.py",
+        ]
+        for spelling in spellings:
+            with self.subTest(spelling):
+                self.stub_args.unlink(missing_ok=True)
+                self.finish(self.local(spelling))
+                line = self.stub_args.read_text().strip()
+                self.assertIn("harness/test-requirements-min.txt", line)
+                self.assertTrue(line.endswith("-s scripts -p test_x.py"), line)
+
+    def test_a_skill_path_in_any_spelling_selects_the_full_pins(self) -> None:
+        for spelling in ("skills/a/test_x.py", f"./skills/a/test_x.py", f"{ROOT}/skills/a/test_x.py"):
+            with self.subTest(spelling):
+                self.stub_args.unlink(missing_ok=True)
+                self.finish(self.local(spelling))
+                line = self.stub_args.read_text().strip()
+                self.assertNotIn("-min", line)
+                self.assertTrue(line.endswith("-s skills/a -p test_x.py"), line)
+
 
 class DoneMarkerTests(RunTestsCase):
     def test_a_failing_run_writes_its_own_rc_not_an_earlier_rc0(self) -> None:
@@ -173,14 +212,35 @@ class DoneMarkerTests(RunTestsCase):
         self.started.unlink()
         process = self.local("pass/test_hang.py")
         run_dir = self.run_dir(process)
-        self.wait_for_start()
-        pid = self.kill_when_done(self.stub_pid)
+        pid = self.kill_at_cleanup(self.stub_pid)
         self.assertTrue(alive(pid))
-        self.terminate(process)
+        self.cancel(process)
         self.assertEqual(process.returncode, 143)
         self.assertEqual((run_dir / "done").read_text(), "rc=143\n")
         self.assertEqual((earlier / "done").read_text(), "rc=0\n")
         self.assertFalse(alive(pid), "the test process outlived the runner")
+
+    def test_done_appears_only_after_a_term_ignoring_test_and_grandchild_are_gone(self) -> None:
+        process = self.local("pass/test_stubborn.py")
+        run_dir = self.run_dir(process)
+        test_pid = self.kill_at_cleanup(self.stub_pid)
+        grandchild = self.kill_at_cleanup(self.grandchild_pid)
+        process.send_signal(signal.SIGTERM)
+        self.wait_for(run_dir / "done")
+        self.assertFalse(alive(grandchild), "done appeared while the grandchild lived")
+        self.assertFalse(alive(test_pid), "done appeared while the test lived")
+        process.wait(timeout=30)
+        self.assertEqual((run_dir / "done").read_text(), "rc=143\n")
+
+    def test_a_log_write_failure_after_a_passing_file_stops_the_run(self) -> None:
+        run_dir, code, out, _ = self.finish(
+            self.local("pass/test_breaklog.py", "pass/test_pass.py")
+        )
+        self.assertNotEqual(code, 0)
+        done = (run_dir / "done").read_text()
+        self.assertRegex(done, r"^rc=[1-9]\d*\n$")
+        self.assertEqual(len(self.stub_args.read_text().splitlines()), 1, "a second test ran")
+        self.assertNotIn("test_pass.py", out, "the run went on after its log failed")
 
 
 class SlotTests(RunTestsCase):
@@ -198,29 +258,31 @@ class SlotTests(RunTestsCase):
         self.assertIn("PASS", (run_dir / "log").read_text())
         self.assertTrue((run_dir / "pid").exists())
 
-    def test_sigterm_while_queued_writes_rc143_and_stops_the_slot(self) -> None:
+    def test_sigterm_while_queued_stops_the_slot_before_the_runner_exits(self) -> None:
         process = self.slotted("pass/test_pass.py", FAKE_SLOT_MODE="queue")
         run_dir = self.run_dir(process)
-        self.wait_for_start()
-        pid = self.kill_when_done(self.slot_pid)
-        self.terminate(process)
+        pid = self.kill_at_cleanup(self.slot_pid)
+        self.cancel(process)
         self.assertEqual(process.returncode, 143)
-        self.assertEqual((run_dir / "done").read_text(), "rc=143\n")
         self.assertFalse(alive(pid), "the queued slot outlived the runner")
+        self.assertEqual((run_dir / "done").read_text(), "rc=143\n")
+
+    def test_cancelling_an_active_slot_waits_for_a_term_ignoring_grandchild(self) -> None:
+        process = self.slotted("pass/test_stubborn.py")
+        run_dir = self.run_dir(process)
+        test_pid = self.kill_at_cleanup(self.stub_pid)
+        grandchild = self.kill_at_cleanup(self.grandchild_pid)
+        process.send_signal(signal.SIGTERM)
+        self.wait_for(run_dir / "done")
+        self.assertFalse(alive(grandchild), "done appeared while the grandchild lived")
+        self.assertFalse(alive(test_pid), "done appeared while the test lived")
+        process.wait(timeout=30)
+        self.assertEqual((run_dir / "done").read_text(), "rc=143\n")
 
     def test_a_slot_that_exits_without_running_the_command_still_gets_done(self) -> None:
         run_dir, code, _, _ = self.finish(self.slotted("pass/test_pass.py", FAKE_SLOT_MODE="fail"))
         self.assertEqual(code, 1)
         self.assertEqual((run_dir / "done").read_text(), "rc=1\n")
-
-    def test_a_metadata_write_failure_in_the_worker_fails_the_run(self) -> None:
-        run_dir, code, _, _ = self.finish(
-            self.slotted("pass/test_pass.py", FAKE_SLOT_MODE="breaklog")
-        )
-        self.assertNotEqual(code, 0)
-        self.assertNotEqual((run_dir / "done").read_text(), "rc=0\n")
-        self.assertTrue((run_dir / "done").read_text().startswith("rc="))
-        self.assertFalse(self.stub_args.exists(), "a test ran after its log failed")
 
 
 class HandoffTests(RunTestsCase):
