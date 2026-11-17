@@ -1,0 +1,194 @@
+{
+  "run_id": "small-mechanism-fixture-build-20261117T154335-30b5",
+  "case": "small-mechanism",
+  "arm": "fixture-build",
+  "mode": "fixture",
+  "started": "2026-11-17T11:43:35+00:00",
+  "finished": "2026-11-17T11:56:07+00:00",
+  "producer_model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
+  "agent": "build",
+  "judge_model": "amazon-bedrock/global.openai.gpt-6.1-sol",
+  "outcome": "fail:unmatched-at-gate",
+  "accepted": null,
+  "isolation": {
+    "passed": true,
+    "findings": [],
+    "loaded": {
+      "config_sources": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/opencode.json",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode"
+      ],
+      "skills": [
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-analysis/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-bom/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-concept/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-design/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-drawings/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-fits/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-flow/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-model/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-motion/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-recheck/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-record/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-render/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-review-dfm/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-review-mech/SKILL.md",
+        "/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/bench-small-mechanism-fixture-build-20261117T154335-30b5/home/.config/opencode/skills/cad-viewer/SKILL.md",
+        "skill://browser/SKILL.md",
+        "skill://opencode/SKILL.md",
+        "skill://report/SKILL.md"
+      ],
+      "agents": [
+        "build",
+        "cad-analyst",
+        "cad-clerk",
+        "cad-concept-designer",
+        "cad-dfm-reviewer",
+        "cad-mech-reviewer",
+        "cad-part-designer",
+        "cad-sourcing-researcher",
+        "compaction",
+        "explore",
+        "general",
+        "plan",
+        "summary",
+        "title"
+      ],
+      "commands": [
+        "cad-flow",
+        "goal",
+        "init",
+        "review"
+      ]
+    }
+  },
+  "repo_commit": "01bccd1dc752f1c1182f95186be17aec38fe375f",
+  "spend": {
+    "producer_usd": 2.762648,
+    "judge_usd": 0.0,
+    "total_usd": 2.762648,
+    "opencode_reported_usd": 2.762648,
+    "currency": "USD"
+  },
+  "version": null,
+  "metrics": {
+    "model_turns": 42,
+    "lead_model_turns": 42,
+    "subagent_model_turns": 0,
+    "subagent_sessions": 0,
+    "tool_calls": 46,
+    "tool_calls_by_tool": {
+      "edit": 1,
+      "read": 5,
+      "shell": 29,
+      "skill": 1,
+      "webfetch": 1,
+      "websearch": 1,
+      "write": 8
+    },
+    "failed_builds": 0,
+    "lead_model_time_s": 612.056,
+    "lead_tool_time_s": 91.594,
+    "subagent_model_time_s": 0.0,
+    "subagent_tool_time_s": 0.0,
+    "input_tokens": 4550464,
+    "uncached_input_tokens": 88,
+    "cached_input_tokens": 4374730,
+    "cache_write_tokens": 175646,
+    "output_tokens": 50456,
+    "reasoning_tokens": 0,
+    "spend_usd": 2.762648,
+    "spend_by_model_usd": {
+      "amazon-bedrock/global.anthropic.claude-opus-5-5": 2.762648
+    },
+    "opencode_reported_cost_usd": 2.762648,
+    "unpriced_models": [],
+    "subagent_dispatches": 0,
+    "subagent_redispatches": 0,
+    "subagent_followups": 0,
+    "redispatched_units": [],
+    "dispatches_by_agent": {},
+    "harness_turns": 2,
+    "active_wall_s": 731.9,
+    "human_wait_events": 1,
+    "human_wait_s": 180.0,
+    "nudges": 0,
+    "questions_asked": 28,
+    "questions_matched": 21,
+    "questions_unmatched": 7,
+    "questions_unmatched_at_gate": 1,
+    "gates_answered": 0,
+    "profile_questions_asked": 0,
+    "profile_asked": false
+  },
+  "unmatched_questions": [
+    {
+      "turn": 1,
+      "text": "Can it be applied while the lever is against a stop?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Should the lever hold its position anywhere other than the stops, for example with a detent?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Which 6 mm reamer do you have (H7?)?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Is buying the pin, rings and screws OK?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Are the screws in this BOM?",
+      "at_gate": false
+    },
+    {
+      "turn": 1,
+      "text": "Is the pin free in the cheeks, held only by the rings?",
+      "at_gate": false
+    },
+    {
+      "turn": 2,
+      "text": "Please answer:",
+      "at_gate": true
+    }
+  ],
+  "hard_checks": {
+    "passed": false,
+    "failed": [
+      "l1_version",
+      "layout_frozen"
+    ],
+    "checks": [
+      {
+        "name": "l1_version",
+        "passed": false,
+        "detail": "latest layout version: None",
+        "exit_code": null
+      },
+      {
+        "name": "validate",
+        "passed": true,
+        "detail": "validate.py exit 0",
+        "exit_code": 0
+      },
+      {
+        "name": "layout_frozen",
+        "passed": false,
+        "detail": "flow.stage intent; approved layout DRs []",
+        "exit_code": null
+      }
+    ]
+  },
+  "verdicts": null,
+  "machine": {
+    "peak_load1": 99.72,
+    "min_available_gb": 16.2
+  },
+  "leftover_processes_killed": 0
+}
