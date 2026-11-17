@@ -30,7 +30,7 @@ jobs:
         run: uv run --no-project --with pyyaml==6.0.3 python -B -m unittest discover -s harness -p 'test_*.py'
 
       - name: Script tests
-        run: uv run --no-project --python 3.12 python -B -m unittest discover -s scripts -p 'test_*.py'
+        run: uv run --no-project --python 3.12 --with pyyaml==6.0.3 python -B -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Complexity ratchet
         run: uv run --no-project --script scripts/complexity_ratchet.py
@@ -81,6 +81,9 @@ jobs:
       matrix:
         shard: [motion, motion-b, cad-model, freecad-gated, rest]
     env:
+      # The one place that decides to skip: the gate job must have succeeded AND said exactly true.
+      # A gate that wrote its output and then failed leaves a non-success result, so the shard runs.
+      SKIP: ${{ needs.changes.result == 'success' && needs.changes.outputs.skip == 'true' }}
       FREECAD_APPIMAGE: FreeCAD_1.1.4-Linux-x86_64-py311.AppImage
       FREECAD_RELEASE: https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4
       FREECAD_DIR: ${{ github.workspace }}/../freecad-1.1.4
@@ -118,7 +121,7 @@ jobs:
     # Every step below is gated on the same condition, so a skipped shard still reports success.
     steps:
       - name: Skip the shard
-        if: needs.changes.outputs.skip == 'true'
+        if: env.SKIP == 'true'
         env:
           SHARD: ${{ matrix.shard }}
         run: |
@@ -126,10 +129,10 @@ jobs:
           echo "Shard $SHARD skipped: the pull request changes only docs, agents, harness (except install.py), SKILL.md and references (except cad-record's layout.md)." >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
 
       - name: Collect PEP 723 dependency headers
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         run: |
           python3 - > skills-pep723-headers.txt <<'PY'
           import re
@@ -152,26 +155,26 @@ jobs:
           PY
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         with:
           enable-cache: true
           cache-dependency-glob: skills-pep723-headers.txt
 
       - name: Drop script environments restored from the uv cache
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         # A restored environment keeps the versions it was resolved with; a new one gets today's.
         run: rm -rf -- "$(uv cache dir)/environments-v2"
 
       - name: Cache the FreeCAD AppImage
         id: freecad-cache
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.FREECAD_DIR }}/download
           key: freecad-${{ env.FREECAD_APPIMAGE }}
 
       - name: Download the FreeCAD AppImage
-        if: needs.changes.outputs.skip != 'true' && steps.freecad-cache.outputs.cache-hit != 'true'
+        if: env.SKIP != 'true' && steps.freecad-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$FREECAD_DIR/download"
           curl --fail --location --silent --show-error --retry 3 --output-dir "$FREECAD_DIR/download" \
@@ -179,12 +182,12 @@ jobs:
             --remote-name "$FREECAD_RELEASE/$FREECAD_APPIMAGE-SHA256.txt"
 
       - name: Verify the FreeCAD AppImage
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         working-directory: ${{ env.FREECAD_DIR }}/download
         run: sha256sum --check "$FREECAD_APPIMAGE-SHA256.txt"
 
       - name: Install FreeCAD 1.1.4
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         working-directory: ${{ env.FREECAD_DIR }}
         run: |
           chmod +x "download/$FREECAD_APPIMAGE"
@@ -196,7 +199,7 @@ jobs:
           grep -q 'FreeCAD 1\.1\.4' version.txt
 
       - name: Skill tests
-        if: needs.changes.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         env:
           SHARD: ${{ matrix.shard }}
           JOB_INDEX: ${{ strategy.job-index }}

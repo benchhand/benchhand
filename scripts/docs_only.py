@@ -1,10 +1,15 @@
 """Decide whether a pull request can skip the skill test shards.
 
-A shard is skipped only when every changed path is one that no skill test reads: repo-root
-Markdown, ``docs/``, ``agents/*.md``, ``harness/`` except ``install.py``, ``skills/*/SKILL.md`` and
-``skills/*/references/*.md`` except cad-record's ``layout.md``. Anything else, a push, a missing
-SHA, a diff error or an empty diff runs every shard.
-``test_docs_only.py`` fails when a skill test starts to name one of these paths.
+A shard is skipped only when every changed path is one that no skill test is known to read:
+repo-root Markdown, ``docs/``, ``agents/*.md``, ``harness/`` except ``install.py``,
+``skills/*/SKILL.md`` and ``skills/*/references/*.md`` except cad-record's ``layout.md``.
+
+Everything else runs every shard: any other path, a push, a missing SHA, a diff error, an empty
+diff, and any symlink, submodule, or mode or type change. The diff is read with modes because a
+name alone cannot tell a Markdown file from a symlink to code.
+
+The safe set rests on ``test_docs_guard.py``, which scans the skill tests for literals that name
+these paths. That scan is a name check and cannot see a path built from an imported constant.
 
 ``check`` writes the job output ``skip`` (``true`` or ``false``).
 """
@@ -15,6 +20,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 # cad-flow's setup test needs this file to exist; cad-record's test_layout.py compares layout.md
@@ -22,10 +28,31 @@ from pathlib import Path, PurePosixPath
 READ_BY_SKILL_TESTS = frozenset(
     {"harness/install.py", "skills/cad-record/references/layout.md"}
 )
+# git's mode for a regular file; 000000 is the missing side of an added or deleted file
+REGULAR = frozenset({"100644", "100755"})
+ABSENT = "000000"
+PLAIN_STATUSES = frozenset({"A", "M", "D"})
 
 
 class DiffError(RuntimeError):
     """The changed files could not be determined."""
+
+
+@dataclass(frozen=True)
+class Change:
+    path: str
+    status: str = "M"
+    old_mode: str = "100644"
+    new_mode: str = "100644"
+
+    def is_plain(self) -> bool:
+        """A regular file added, deleted or edited in place: no symlink, submodule or mode change."""
+        modes = (self.old_mode, self.new_mode)
+        if self.status not in PLAIN_STATUSES or any(
+            mode not in REGULAR | {ABSENT} for mode in modes
+        ):
+            return False
+        return ABSENT in modes or self.old_mode == self.new_mode
 
 
 def is_safe(path: str) -> bool:
@@ -45,34 +72,46 @@ def is_safe(path: str) -> bool:
     return False
 
 
-def skips_skills(changed: Iterable[str]) -> bool:
-    """True when there is a change and every path in it is safe; an empty diff runs everything."""
-    paths = list(changed)
-    return bool(paths) and all(is_safe(path) for path in paths)
+def skips_skills(changes: Iterable[Change]) -> bool:
+    """True when there is a change and every one is a plain edit of a safe path."""
+    listed = list(changes)
+    return bool(listed) and all(c.is_plain() and is_safe(c.path) for c in listed)
 
 
-def git_diff(root: Path, base: str, head: str) -> list[str]:
-    """Files changed on ``head`` since its merge base with ``base``; a rename lists both paths."""
+def parse_raw(output: str) -> list[Change]:
+    """Read ``git diff --raw -z``: ``:<old mode> <new mode> <old id> <new id> <status>``, then the path."""
+    fields = output.split("\0")
+    changes = []
+    for index in range(0, len(fields) - 1, 2):
+        meta = fields[index].split()
+        if len(meta) != 5 or not meta[0].startswith(":"):
+            raise DiffError(f"unreadable diff record: {fields[index]!r}")
+        changes.append(Change(fields[index + 1], meta[4][:1], meta[0][1:], meta[1]))
+    return changes
+
+
+def git_diff(root: Path, base: str, head: str) -> list[Change]:
+    """Changes on ``head`` since its merge base with ``base``; a rename lists both paths."""
     done = subprocess.run(
-        ["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}"],
+        ["git", "diff", "--raw", "--no-renames", "-z", f"{base}...{head}"],
         cwd=root,
         capture_output=True,
         text=True,
     )
     if done.returncode:
         raise DiffError(done.stderr.strip() or f"git diff exited {done.returncode}")
-    return [path for path in done.stdout.split("\0") if path]
+    return parse_raw(done.stdout)
 
 
 def decide(
-    event: str, base: str, head: str, diff: Callable[[str, str], list[str]]
+    event: str, base: str, head: str, diff: Callable[[str, str], list[Change]]
 ) -> bool:
     """True to skip the skill shards; every doubt returns False."""
     if event != "pull_request" or not base or not head:
         return False
     try:
         return skips_skills(diff(base, head))
-    except DiffError:
+    except (DiffError, OSError):
         return False
 
 
