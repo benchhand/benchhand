@@ -146,7 +146,7 @@ def frozen_lamp(hw: Path, *, before_build: Callable[[Path], None] | None = None,
     it with its acceptance digest (unless not `anchor`), every required bundle published, and DR-005
     approving it. Each `older` version is built first, with a check and a render bundle of its own;
     `ledger` may rewrite the accepted entries before the freeze."""
-    fx.copied_record(LAMP, hw)
+    fx.migrated_copy(LAMP, hw)
     for part in sorted((hw / "parts").glob("*/part.yaml")):
         edit_yaml(part, lambda data: data.update(rev="A"))
     edit_csv(hw / "bom.csv", lambda rows: [row.update(rev="A") for row in rows])
@@ -326,17 +326,19 @@ class Release(ReleaseCase):
         """stackup.py publishes the stack at hw/analysis/cases/<case>/case.yaml as hw/analysis/<V>/<case>/, the
         bundle release.py requires for that case, whatever the stack's own (uppercase) id."""
         hw = self.project()
-        stack = {"id": "STK-001", "title": "Bearing end float", "units": "mm",
-                 "requirement": {"min": 0.0, "max": 0.40, "method": "worst_case"},
-                 "contributors": [{"id": "A", "nominal": 50.0, "tol": 0.05, "direction": 1},
-                                  {"id": "B", "nominal": 49.8, "tol": 0.05, "direction": -1}]}
+        source = {"kind": "user", "reference": "TST stack input", "origin": "TST fixture user"}
+        stack = {"intent_version": 2, "id": "STK-001", "title": "Bearing end float", "units": "mm",
+                 "subject": {"PN": "LMP-0002", "feature": "hub_bore"}, "dimension_state": "assembled", "consequence": "performance",
+                 "relevant": ["assembly"], "requirement": {"min": 0.0, "max": 0.40, "method": "worst_case", "source": source},
+                 "contributors": [{"id": "A", "category": "assembly", "nominal": 50.0, "tol": 0.05, "direction": 1, "source": source},
+                                  {"id": "B", "category": "assembly", "nominal": 49.8, "tol": 0.05, "direction": -1, "source": source}]}
         case = write(hw / "analysis" / "cases" / "end-float" / "case.yaml", yaml.safe_dump(stack, sort_keys=False))
         code, report = self.release(hw)
         self.assertEqual(code, 1)
         self.assertIn("analysis case end-float has no result for v1", json.dumps(report["findings"]))
         run = subprocess.run([sys.executable, str(STACKUP), str(case), "--hw", str(hw), "--version", "v1"],
                              capture_output=True, text=True, timeout=120, check=False)
-        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(run.returncode, 0, run.stderr + run.stdout[-3000:])
         self.assertEqual(json.loads(run.stdout)["bundle"], str(hw / "analysis" / "v1" / "end-float"))
         code, report = self.release(hw)
         self.assertEqual(code, 0, report.get("findings"))

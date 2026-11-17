@@ -55,7 +55,7 @@ class ValidateProject(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.project = Path(self.temporary.name) / "project"
         self.hw = self.project / "hw"
-        fx.copied_record(EXAMPLE, self.hw)
+        fx.migrated_copy(EXAMPLE, self.hw)
         self.migrated_interfaces = (self.hw / "interfaces.yaml").read_bytes()
         self.part_path = self.hw / "parts" / "LMP-0001" / "part.yaml"
 
@@ -695,7 +695,7 @@ class RecordVersion(unittest.TestCase):
         for version in ("record_version: 1", "record_version: 3", None):
             with self.subTest(version=version):
                 shutil.rmtree(self.hw, ignore_errors=True)
-                fx.copied_record(EXAMPLE, self.hw)
+                fx.migrated_copy(EXAMPLE, self.hw)
                 product = self.hw / "product.yaml"
                 text = product.read_text(encoding="utf-8")
                 product.write_text(text.replace("record_version: 2\n", f"{version}\n" if version else ""), encoding="utf-8")
@@ -706,7 +706,7 @@ class RecordVersion(unittest.TestCase):
                 self.assertEqual(tree(self.hw), before, "reading a record rewrites nothing")
 
     def test_an_unsupported_record_version_still_reports_its_other_findings(self) -> None:
-        fx.copied_record(EXAMPLE, self.hw)
+        fx.migrated_copy(EXAMPLE, self.hw)
         product = self.hw / "product.yaml"
         product.write_text(product.read_text(encoding="utf-8").replace("record_version: 2", "record_version: 1"), encoding="utf-8")
         part = self.hw / "parts" / "LMP-0001" / "part.yaml"
@@ -725,7 +725,7 @@ class LedgerEvidence(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-record-evidence-")
         self.addCleanup(temporary.cleanup)
         self.project = Path(temporary.name) / "project"
-        self.hw = fx.copied_record(EXAMPLE, self.project / "hw")
+        self.hw = fx.migrated_copy(EXAMPLE, self.project / "hw")
 
     def findings(self) -> list[dict[str, object]]:
         result = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,

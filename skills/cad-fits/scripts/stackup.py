@@ -6,24 +6,9 @@
 
 Usage: uv run --script stackup.py STACK.yaml [--hw hw --version vN [--replace]] [--out .cad-work/...]
 
-Legacy stack file (no intent_version):
-    id: STK-001
-    title: Pin end float
-    units: mm
-    requirement: {min: 0.05, max: 0.60, method: worst_case}  # min and/or max; method worst_case|rss
-    contributors:
-      - id: A
-        description: housing bore depth
-        nominal: 20.0
-        tol_plus: 0.10      # or `tol: 0.10` for a symmetric +/- tolerance
-        tol_minus: 0.10     # magnitudes, both >= 0
-        direction: 1        # 1 adds to the closing dimension, -1 subtracts
-
 Each contributor is centred on its mid-limit before stacking, so asymmetric tolerances shift the
 mean: mean_i = nominal + (tol_plus - tol_minus) / 2 and half_i = (tol_plus + tol_minus) / 2. The
-closing dimension is mean = sum(direction_i * mean_i); worst case is mean +/- sum(half_i). The
-legacy `rss` result, mean +/- sqrt(sum(half_i ** 2)), is an unqualified quadrature heuristic: no
-distribution, independence or coverage stands behind it, so it is never a probabilistic range.
+closing dimension is mean = sum(direction_i * mean_i); worst case is mean +/- sum(half_i).
 
 Intent stack file (`intent_version: 2`, the analysis case of a critical interface's
 `functional.variation.stack_case`, at hw/analysis/cases/<case>/case.yaml):
@@ -125,11 +110,8 @@ CHECK_PACKET = _shared_module("cad_record_check_packet", SKILLS / "cad-record" /
 # subject is a PN or a lowercase slug, and a case id or published stack id is one of those)
 CHECK_PREFIX = "stack-"
 
-METHODS = ("worst_case", "rss")
 RESULT_DECIMALS = 6
 PRODUCER = "cad-fits stackup.py"
-RSS_QUALIFICATION = ("unqualified quadrature heuristic: no distribution, independence or coverage is established, "
-                     "so this is not a probabilistic range")
 
 INTENT_VERSION = 2
 CATEGORIES = ("manufacture", "assembly", "thermal", "moisture", "wear", "deformation", "coating", "adhesive", "joining")
@@ -199,92 +181,15 @@ def _verdict(low: float, high: float, req_min: float | None, req_max: float | No
 
 def compute(stack: dict[str, Any], record: Any = None, *, case: str | None = None, on: date | None = None,
             decisions: frozenset[str] | None = None) -> dict[str, Any]:
-    """Evaluate a parsed stack definition; raise StackError on invalid input. An intent stack
-    (`intent_version: 2`) is bound to `record` (a manufacturing_intent Record) when one is given,
-    as the analysis case `case`, with calibrations judged valid `on` that date and `decisions` the
-    project's recorded DR ids."""
+    """Evaluate a parsed intent stack (`intent_version: 2`); raise StackError on invalid input. The stack is
+    bound to `record` (a manufacturing_intent Record) when one is given, as the analysis case `case`, with
+    calibrations judged valid `on` that date and `decisions` the project's recorded DR ids."""
     if not isinstance(stack, dict):
         raise StackError("stack file must be a mapping")
-    if "intent_version" in stack:
-        if stack["intent_version"] != INTENT_VERSION or isinstance(stack["intent_version"], bool):
-            raise StackError(f"intent_version must be {INTENT_VERSION}, got {stack['intent_version']!r}")
-        return _IntentStack(stack, record, case, on, decisions).evaluate()
-    if record is not None:
-        raise StackError("a legacy stack (no intent_version) cannot be bound to a record; add intent_version: 2")
-    return _legacy(stack)
-
-
-def _legacy(stack: dict[str, Any]) -> dict[str, Any]:
-    contributors = stack.get("contributors")
-    if not isinstance(contributors, list) or not contributors:
-        raise StackError("contributors must be a non-empty list")
-
-    nominal = mean = wc_half = sum_sq = 0.0
-    rows = []
-    for index, entry in enumerate(contributors):
-        where = f"contributors[{index}]"
-        if not isinstance(entry, dict):
-            raise StackError(f"{where} must be a mapping")
-        direction = entry.get("direction")
-        if direction not in (1, -1) or isinstance(direction, bool):
-            raise StackError(f"{where}.direction must be 1 or -1, got {direction!r}")
-        value = _number(entry.get("nominal"), f"{where}.nominal")
-        plus, minus = _tolerance(entry, where)
-        half = (plus + minus) / 2
-        centre = value + (plus - minus) / 2
-        nominal += direction * value
-        mean += direction * centre
-        wc_half += half
-        sum_sq += half * half
-        rows.append(
-            {
-                "id": entry.get("id", str(index + 1)),
-                "direction": direction,
-                "nominal": value,
-                "tol_plus": plus,
-                "tol_minus": minus,
-                "mean": _round(centre),
-                "half_tolerance": _round(half),
-            }
-        )
-
-    rss_half = math.sqrt(sum_sq)
-    for row in rows:
-        half = row["half_tolerance"]
-        row["wc_contribution_pct"] = _round(100 * half / wc_half) if wc_half else 0.0
-        row["rss_contribution_pct"] = _round(100 * half * half / sum_sq) if sum_sq else 0.0
-
-    results: dict[str, dict[str, Any]] = {
-        "worst_case": {"min": _round(mean - wc_half), "max": _round(mean + wc_half), "half_range": _round(wc_half)},
-        "rss": {"min": _round(mean - rss_half), "max": _round(mean + rss_half), "half_range": _round(rss_half),
-                "qualification": RSS_QUALIFICATION},
-    }
-
-    requirement = stack.get("requirement")
-    verdict: dict[str, Any] | None = None
-    if requirement is not None:
-        if not isinstance(requirement, dict):
-            raise StackError("requirement must be a mapping")
-        req_min = None if requirement.get("min") is None else _number(requirement["min"], "requirement.min")
-        req_max = None if requirement.get("max") is None else _number(requirement["max"], "requirement.max")
-        if req_min is None and req_max is None:
-            raise StackError("requirement needs min, max, or both")
-        method = requirement.get("method", "worst_case")
-        if method not in METHODS:
-            raise StackError(f"requirement.method must be one of {METHODS}, got {method!r}")
-        passes = {name: _verdict(r["min"], r["max"], req_min, req_max) for name, r in results.items()}
-        verdict = {"min": req_min, "max": req_max, "method": method, "pass": passes[method], "pass_by_method": passes}
-
-    return {
-        "id": stack.get("id"),
-        "title": stack.get("title"),
-        "units": stack.get("units", "mm"),
-        "nominal": _round(nominal),
-        "mean": _round(mean),
-        **results,
-        "contributors": rows,
-        "requirement": verdict,
-    }
+    version = stack.get("intent_version")
+    if version != INTENT_VERSION or isinstance(version, bool):
+        raise StackError(f"intent_version must be {INTENT_VERSION}, got {version!r}")
+    return _IntentStack(stack, record, case, on, decisions).evaluate()
 
 
 # --------------------------------------------------------------------------- intent stacks (version 2)
@@ -460,7 +365,7 @@ class _IntentStack:
             raise StackError("requirement.min exceeds requirement.max")
         self.method = requirement.get("method", "worst_case")
         if self.method not in GOVERNING_METHODS:
-            raise StackError(f"requirement.method must be one of {', '.join(GOVERNING_METHODS)}; legacy rss is "
+            raise StackError(f"requirement.method must be one of {', '.join(GOVERNING_METHODS)}; rss is "
                              "an unqualified heuristic, never an intent stack's governing method")
         if "source" not in requirement:
             raise StackError("requirement.source is required: where the acceptance limit comes from")
@@ -1091,7 +996,7 @@ def check_packet(result: Mapping[str, Any], record: Any,
                  dependencies: Mapping[str, str]) -> dict[str, Any] | None:
     """The required-check packet of an intent stack bound to a record version 2 snapshot: the outcome of the
     interface.stack or feature.fit obligation it judges, as its governing method judged it (unknown stays
-    unknown), and that obligation's findings. None for a legacy stack or record, or when the record expects
+    unknown), and that obligation's findings. None for a missing record, or when the record expects
     no such obligation (an interface that is not critical, a feature that is not a critical surface)."""
     intent = _intent_module()
     if record is None or record.version != intent.RECORD_VERSION or "obligations" not in result:
@@ -1155,9 +1060,8 @@ def main(argv: list[str] | None = None) -> int:
             version, _, record_dir = LAYOUT.built_version(args.hw, args.version)
             # a stack at hw/analysis/cases/<case>/case.yaml is that analysis case: it publishes as the case
             case = LAYOUT.analysis_case(args.hw.resolve(), stack_path)
-            if isinstance(stack, dict) and "intent_version" in stack:
-                record = _intent_module().load_record(record_dir)
-                decisions = recorded_decisions(args.hw)
+            record = _intent_module().load_record(record_dir)
+            decisions = recorded_decisions(args.hw)
         result = compute(stack, record, case=case, on=date.today() if record is not None else None, decisions=decisions)
         status = status_of(result)
         if args.hw:
@@ -1169,10 +1073,8 @@ def main(argv: list[str] | None = None) -> int:
             params = {"V": version, "S": subject}
             if args.out is not None:
                 raise StackError("--out is only allowed for standalone scratch output")
-            options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS,
+            options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS, "intent_version": INTENT_VERSION, "case": case,
                                        "method": (stack.get("requirement") or {}).get("method", "worst_case")}
-            if "intent_version" in stack:
-                options.update(intent_version=INTENT_VERSION, case=case)
             recipe = {"source_yaml_sha256": hashlib.sha256(stack_path.read_bytes()).hexdigest(), "options": options}
             reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
             if reused is not None:

@@ -1089,7 +1089,7 @@ def markdown() -> str:
               "| Path | Kind | Writer | Action |", "|---|---|---|---|"]
     lines += [f"| {_code(e.path)}{'/' if e.directory else ''} | {e.kind} | {_cell(e.writer)} | {_cell(e.action)} |"
               for e in lay.exemptions]
-    lines += ["", "## Misplaced and legacy paths", "",
+    lines += ["", "## Misplaced paths", "",
               "| Path | Finding | Canonical location | Action |", "|---|---|---|---|"]
     for rule in lay.rules:
         where = (f"a file part.yaml `{rule.referenced_by}` names" if rule.referenced_by

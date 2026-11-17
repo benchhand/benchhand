@@ -48,7 +48,7 @@ class MigrationPlan(unittest.TestCase):
         write(version / "manifest.json", json.dumps({"label": "v1", "files": {"assembly.step": sha(version / "assembly.step")}}))
         for name in ("print/LMP-0004_flat.step", "print/LMP-0004_bent.step", "print/LMP-0004.stl",
                      "print/VXA-0004_flat.step", "print/export_flat_plug.py", "print/settings.ini",
-                     "drawings/LMP-0001/sheet-1.svg", "renders/v1/iso.png", "notes.md", "docs/notes.md", "docs/.DS_Store"):
+                     "notes.md", "docs/notes.md", "docs/.DS_Store"):
             write(self.hw / name, f"{name}\n")
 
     def plan(self, *extra: str) -> tuple[int, Any]:
@@ -83,11 +83,6 @@ class MigrationPlan(unittest.TestCase):
                          ("script", "move", ".cad-work/migration/print/export_flat_plug.py", "high", None, []))
         self.assertEqual(row("hw/print/settings.ini"),
                          ("data", "move", ".cad-work/migration/print/settings.ini", "low", None, []))
-        self.assertEqual(row("hw/drawings/LMP-0001/sheet-1.svg"),
-                         ("legacy", "rebuild", "hw/drawings/<V>/LMP-0001/", "medium",
-                          "cad-drawings drawing.py, assembly_drawing.py", []))
-        self.assertEqual(row("hw/renders/v1/iso.png"),
-                         ("legacy", "rebuild", "hw/renders/v1/<subject>/", "medium", "cad-render render.py", []))
         self.assertEqual(row("hw/notes.md"), ("document", "move", "hw/docs/notes.md", "high", None, []))
         self.assertTrue(items["hw/notes.md"]["destination_exists"], "hw/docs/notes.md already exists: a collision")
         self.assertEqual(row("hw/docs/.DS_Store")[:2], ("metadata", "remove"))

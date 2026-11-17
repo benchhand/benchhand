@@ -36,7 +36,7 @@ class LampRecord(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-record-rules-")
         self.addCleanup(temporary.cleanup)
         self.hw = Path(temporary.name) / "project" / "hw"
-        fx.copied_record(LAMP, self.hw)
+        fx.migrated_copy(LAMP, self.hw)
 
     def edit(self, name: str, change: Callable[[Any], None]) -> None:
         path = self.hw / name
@@ -256,7 +256,7 @@ class Schemas(LampRecord):
         for name, (change, location) in cases.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
                 self.hw = Path(tmp) / "project" / "hw"
-                fx.copied_record(LAMP, self.hw)
+                fx.migrated_copy(LAMP, self.hw)
                 change()
                 messages = [item["message"] for item in validate.blocking(self.findings())]
                 self.assertTrue(any(message.startswith(location) for message in messages), messages)

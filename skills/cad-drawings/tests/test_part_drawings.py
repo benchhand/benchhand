@@ -239,7 +239,7 @@ class PinDrawingGate(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.tmp = tempfile.TemporaryDirectory(prefix="cad-part-drawing-")
         cls.hw = Path(cls.tmp.name) / "hw"
-        cls.fx().copied_record(TEMPLATE, cls.hw)  # the example migrated to record version 2 (the current record)
+        cls.fx().migrated_copy(TEMPLATE, cls.hw)  # the example migrated to record version 2 (the current record)
         for pn, route in FINISHED_ROUTES.items():
             part = cls.hw / "parts" / pn / "part.yaml"
             part.write_text(with_finished_route(part.read_text(encoding="utf-8"), route), encoding="utf-8")
@@ -249,7 +249,7 @@ class PinDrawingGate(unittest.TestCase):
 
     @staticmethod
     def fx() -> object:
-        """cad-record's manufacturing-intent fixture builder (copied_record)."""
+        """cad-record's manufacturing-intent fixture builder (migrated_copy)."""
         name = "cad_record_mi_fixtures"
         if name not in sys.modules:
             spec = importlib.util.spec_from_file_location(
