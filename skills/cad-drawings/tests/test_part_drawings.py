@@ -335,6 +335,7 @@ sys.exit(code)
         recorder.chmod(0o755)
         hw = Path(self.tmp.name) / f"{name}" / "hw"
         shutil.copytree(self.hw, hw)
+        shutil.rmtree(hw / "drawings", ignore_errors=True)   # bundles that earlier tests published would conflict
         for pn, view in (("LMP-0005", "{id: head_end, kind: orthographic, along_axis: A, toward: head_top}"),
                          ("LMP-0002", "{id: underside, kind: orthographic, opposite: plan}")):
             part = hw / "parts" / pn / "part.yaml"
