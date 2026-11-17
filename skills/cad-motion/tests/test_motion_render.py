@@ -733,6 +733,19 @@ class CompactOutput(Fixture):
         self.assertEqual(seen["CAD_OUTPUT"], "json")
         self.assertIn("motion render: pass (exit 0)", out)
 
+    def test_the_freecad_childs_enveloped_error_is_reported_by_its_own_message(self) -> None:
+        def freecad(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            error = {"status": "error", "error": "FreeCAD could not open assembly 7f3a"}
+            stdout = json.dumps({"schema": "tool-result/1", "status": "error", "findings": [], "payload": error})
+            return subprocess.CompletedProcess(command, 2, stdout=stdout, stderr="")
+
+        with mock.patch.object(motion.subprocess, "run", side_effect=freecad):
+            code, out = self.main_stdout("json", "render", "--hw", self.hw, "--version", "v1", "--outputs", "glb",
+                                         "--crosscheck", "freecad")
+        self.assertEqual(code, 2)
+        self.assertEqual(result_payload(out)["error"],
+                         "the FreeCAD cross-check gave no result: FreeCAD could not open assembly 7f3a")
+
 
 if __name__ == "__main__":
     unittest.main()
