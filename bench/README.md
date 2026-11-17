@@ -50,6 +50,15 @@ An ask that matches no intent gets the default answer, which records a bounded a
 
 Each run commits its record to `bench/results`, appends `spend.jsonl` and pushes. It then deletes its scratch directory. `--mode fixture` builds a fixture instead. It starts from an empty project, or from `--seed-hw`, stops at the LAYOUT freeze, and copies the frozen `hw/` into the case.
 
+Each run also owns `cad-plan-c-bench/<run-id>/` in the OpenCode temp directory. It writes `pid` there at start and `done`, holding its exit code, at the end. It refuses a run id whose `pid` or `done` already exists. A launcher creates that directory first, passes `--run-id` and sends the output to `log` inside it, so a watcher reads only its own run's files:
+
+```sh
+id=wall-bracket-baseline-$(date +%Y%m%dT%H%M%S)-$(openssl rand -hex 2)
+dir=/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode/cad-plan-c-bench/$id
+mkdir -p "$dir" && uv run --script bench/run.py --case wall-bracket --arm baseline --run-id "$id" \
+  --results ../cad-agent-bench-results > "$dir/log" 2>&1
+```
+
 ## Report
 
 ```sh

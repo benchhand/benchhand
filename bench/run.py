@@ -56,6 +56,7 @@ ROOT = BENCH.parent
 CASES = BENCH / "cases"
 CONFIG = BENCH / "config.json"
 TMP = Path("/private/var/folders/8d/02tkxcq55qzfyj7_z_ktft1r0000gq/T/opencode")
+MARKER_ROOT = TMP / "cad-plan-c-bench"  # per-run pid, done and log; never a generic name in TMP itself
 PUSH_LOCK = Path.home() / ".cache/cad-agent-push.lock"
 RESULTS_BRANCH = "bench/results"
 FIXTURE_EXCLUDE = (".cad", "__pycache__", ".DS_Store")
@@ -882,7 +883,7 @@ def execute(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     check_results_checkout(args.results)
     if args.budget is not None and ledger_total(args.results) >= args.budget:
         raise BenchError(f"ledger total reached the budget ${args.budget}")
-    run_id = args.run_id or f"{args.case}-{args.arm}-{dt.datetime.now().strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(2)}"
+    run_id = args.run_id
     paths = Paths.create(run_id, args.results)
     caps = {**config["caps"], **{key: value for key, value in (("max_turns", args.max_turns),
                                                                ("max_active_minutes", args.max_active_minutes))
@@ -942,11 +943,34 @@ def main(argv: list[str] | None = None) -> int:
         print("FAIL: bench/run.py drives a paid model and runs only on a developer machine, never in CI", file=sys.stderr)
         return 2
     config = json.loads(CONFIG.read_text(encoding="utf-8"))
+    args.run_id = args.run_id or f"{args.case}-{args.arm}-{dt.datetime.now().strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(2)}"
     try:
-        return execute(args, config)
+        markers = claim_markers(args.run_id)
     except BenchError as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
+    code = 1
+    try:
+        code = execute(args, config)
+    except BenchError as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        code = 1
+    finally:
+        (markers / "done").write_text(f"{code}\n", encoding="utf-8")
+    return code
+
+
+def claim_markers(run_id: str) -> Path:
+    """This run's own marker directory, TMP/cad-plan-c-bench/<run-id>/: `pid` now, `done` with the exit code
+    at the end. A launcher may create the directory first to hold the run's `log`; a directory that already
+    holds a pid or done marker belongs to another run and is never reused."""
+    markers = MARKER_ROOT / run_id
+    markers.mkdir(parents=True, exist_ok=True)
+    for name in ("pid", "done"):
+        if (markers / name).exists():
+            raise BenchError(f"{markers / name} exists: run id {run_id} was already used")
+    (markers / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    return markers
 
 
 if __name__ == "__main__":

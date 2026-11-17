@@ -39,7 +39,7 @@ ASK_LINE = re.compile(
     r"|\b(?:do|can|could|would|will) you (?:approve|confirm)\b",
     re.IGNORECASE)
 SENTENCE_END = re.compile(r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\betc\.)(?<!\bvs\.)(?<!\bcf\.)(?<=[.!?])\s+|\n+")
-MARKUP = re.compile(r"^[\s>*#\-+|—–]*(?:\d+[.)]\s*)?|[*_`]+")
+MARKUP = re.compile(r"^[\s>*#\-+|—–]*(?:\d+[.)]\s*)?|[*`]+")
 GATE_WORD = re.compile(r"\b(gate|freeze)\b", re.IGNORECASE)
 APPROVAL_ASK = re.compile(r"\bapprov(?:e|al)\b", re.IGNORECASE)
 FOLLOW_UP = re.compile(r"^(?:or|and|also|if so|if not|otherwise)\b", re.IGNORECASE)
@@ -192,7 +192,8 @@ def asks_in_context(text: str) -> list[tuple[str, str | None]]:
             continue
         pieces = [piece.strip() for piece in SENTENCE_END.split(cleaned) if piece.strip()]
         found = [(index, piece) for index, piece in enumerate(pieces) if piece.endswith("?")]
-        if not found and ASK_LINE.search(cleaned):
+        lead_in = cleaned.endswith(":") and len(cleaned.split()) <= 3  # "Please answer:" introduces the asks below
+        if not found and ASK_LINE.search(cleaned) and not lead_in:
             found = [(0, cleaned)]
         for index, piece in found:
             follow_up = index > 0 and (FOLLOW_UP.match(piece) is not None or len(piece.split()) <= 3)
@@ -210,12 +211,20 @@ def extract_asks(text: str) -> list[str]:
 
 
 def classify(script: Script, ask: str, context: str | None = None) -> Ask:
-    """The first intent that matches the ask, else, for a follow-up, the first that matches the sentence before it."""
-    for candidate in (ask, context):
-        if candidate is None:
+    """The intent an ask means. For an approval request a gate intent wins, on the ask or the gate line above
+    it, so "Approve or name changes. Please confirm these assumptions:" under a LAYOUT freeze heading answers
+    the gate. Otherwise the first intent that matches the ask, else, for a follow-up, the sentence before it."""
+    gates: Sequence[Intent] = tuple(intent for intent in script.intents if intent.kind == "gate")
+    order: tuple[tuple[Sequence[Intent], str | None], ...]
+    if APPROVAL_ASK.search(ask):
+        order = ((gates, ask), (gates, context), (script.intents, ask), (script.intents, context))
+    else:
+        order = ((script.intents, ask), (script.intents, context))
+    for candidates, text in order:
+        if text is None:
             continue
-        for intent in script.intents:
-            if intent.matches(candidate):
+        for intent in candidates:
+            if intent.matches(text):
                 return Ask(ask, intent.id, intent.kind, intent.profile)
     return Ask(ask, None, None, False)
 

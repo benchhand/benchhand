@@ -40,6 +40,10 @@ intents:
     kind: question
     match: ['between-sample', 'unproved interval', 'finer (run|sweep)']
     answer: Accept the unproved between-sample intervals and record the acceptance in a decision record.
+  - id: assumptions
+    kind: question
+    match: ['confirm\b.*\bASM-\d+', '\bassumptions?\b.*\b(confirm|correct|change|accept)', '(confirm|accept)\b.*\bassumptions?\b']
+    answer: I confirm the bounded assumptions as you recorded them; I have no changes.
   # --- workflow and setup ------------------------------------------------------------------
   - id: flow-profile
     kind: question

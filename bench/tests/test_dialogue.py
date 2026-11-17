@@ -149,6 +149,15 @@ class RecordedGroundTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
+    def test_regression_the_recorded_intent_gate_with_a_please_answer_lead_in_is_answered_not_failed(self) -> None:
+        # The small-mechanism fixture build failed here: "Please answer:" introduces the numbered asks, and the
+        # matcher took it for an unmatched question at the INTENT gate.
+        text = recorded_text("events-gate-small-mechanism-intent.jsonl")
+        reply = dialogue.respond(case_script("small-mechanism"), text, "fixture", can_stop=False)
+        self.assertEqual([(ask.intent, ask.matched) for ask in reply.asks], [("intent-gate", True), ("assumptions", True)])
+        self.assertTrue(reply.at_gate)
+        self.assertFalse(reply.unmatched_at_gate)
+        self.assertIn("petg_print_ream", reply.asks[0].text)
     def test_the_recorded_layout_freeze_prompt_is_a_gate_its_approval_request_matched_through_its_heading(self) -> None:
         text = recorded_text("events-gate-wall-bracket-layout.jsonl")
         reply = dialogue.respond(case_script("wall-bracket"), text, "fixture", can_stop=True)
@@ -163,6 +172,10 @@ class GateTests(unittest.TestCase):
         reply = dialogue.respond(case_script("wall-bracket"), text, "fixture", can_stop=True)
         self.assertTrue(reply.unmatched_at_gate)
         self.assertEqual([ask.text for ask in reply.unmatched], ["Should the bracket get a drip edge?"])
+
+    def test_a_follow_up_to_a_gate_question_is_matched_on_its_own_words_first(self) -> None:
+        reply = dialogue.respond(case_script("wall-bracket"), "Do you approve the LAYOUT freeze? Or a finer sweep?", "fixture")
+        self.assertEqual([ask.intent for ask in reply.asks], ["layout-freeze", "between-sample"])
 
     def test_a_question_no_intent_matches_in_a_gate_prompt_is_unmatched_at_the_gate(self) -> None:
         text = "v2 passed the full check.\nDo you approve the LAYOUT freeze? Should the hinge get a detent?"

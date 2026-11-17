@@ -139,6 +139,20 @@ class ConverseTests(unittest.TestCase):
         self.assertEqual(run.dialogue_metrics(conversation, driver)["questions_unmatched"], 1)
 
 
+class MarkerTests(unittest.TestCase):
+    def test_a_run_claims_its_own_marker_directory_and_refuses_a_used_run_id(self) -> None:
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(run, "MARKER_ROOT", Path(folder)):
+            (Path(folder) / "r1").mkdir()  # a launcher may create it first for the log
+            markers = run.claim_markers("r1")
+            self.assertEqual((markers / "pid").read_text(encoding="utf-8").strip(), str(run.os.getpid()))
+            with self.assertRaises(run.BenchError):
+                run.claim_markers("r1")
+            (Path(folder) / "r2").mkdir()
+            (Path(folder) / "r2/done").write_text("0\n", encoding="utf-8")  # a stale marker from an old run
+            with self.assertRaises(run.BenchError):
+                run.claim_markers("r2")
+
+
 class IsolationAbortTests(unittest.TestCase):
     def test_a_failed_isolation_check_records_isolation_failed_and_never_drives_the_lead(self) -> None:
         failed = {"passed": False, "findings": ["skill loaded from outside the throwaway home: /Users/x/.agents/skills/a"],
