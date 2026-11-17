@@ -57,7 +57,7 @@ intents:
     answer: 'Do not store generated results in git: set storage.results_in_git to false.'
   - id: commit-timing
     kind: question
-    match: ['commit (now|at the end|later|after)', 'when (to|should I) commit']
+    match: ['commit (now|at the end|later|after|once)', 'when (to|should I) commit', 'commit\b.*\bnow\b']
     answer: >-
       Commit at the end of L2. Keep flow.stage where the provisional gate set it; do not move it back to
       make a commit pass.

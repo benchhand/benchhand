@@ -58,6 +58,8 @@ def _gate_ask(text: str) -> bool:
     """An ask that answers whatever gate the message names: an approval request or a reply instruction."""
     return bool(APPROVAL_ASK.search(text) or REPLY_INSTRUCTION.match(text))
 FOLLOW_UP = re.compile(r"^(?:or|and|also|if so|if not|otherwise)\b", re.IGNORECASE)
+# A choice offered as a statement: "..., or commit the layout state now if you prefer."
+OFFER = re.compile(r"\bif you(?: prefer|'d rather|’d rather| would rather| want)\b[.!]?$", re.IGNORECASE)
 STOP_NOTE = ("This ends the session: record this decision as instructed, commit, and stop. "
              "Do not start the next stage.")
 
@@ -267,6 +269,8 @@ def find_asks(text: str) -> list[Found]:
             continue
         pieces = split_sentences(cleaned)
         found = [(position, piece) for position, piece in enumerate(pieces) if piece.endswith("?")]
+        if not found:  # "I can commit once L2 passes, or commit the layout state now if you prefer."
+            found = [(position, piece) for position, piece in enumerate(pieces) if OFFER.search(piece)]
         lead_in = cleaned.endswith(":") and len(cleaned.split()) <= 3  # "Please answer:" introduces the asks below
         if not found and ASK_LINE.search(cleaned) and not lead_in:
             found = [(0, cleaned)]

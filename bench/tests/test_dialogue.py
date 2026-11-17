@@ -177,6 +177,19 @@ class AbbreviationTests(unittest.TestCase):
         self.assertEqual(dialogue.extract_asks("The gap is 0.3 mm (ISO 2768-m.) Which finish?"), ["Which finish?"])
 
 
+class OfferTests(unittest.TestCase):
+    def test_regression_the_recorded_commit_offer_without_a_question_mark_is_a_commit_timing_ask(self) -> None:
+        # Recorded fdm-enclosure turn 2, "## Not committed to git": "I can commit once L2 passes, or commit the
+        # layout state now if you prefer." The lead offered a choice; the matcher nudged instead.
+        reply = dialogue.respond(case_script("fdm-enclosure"), recorded_text("events-gate-fdm-enclosure-layout.jsonl"), "fixture")
+        self.assertEqual([(ask.text, ask.intent) for ask in reply.asks],
+                         [("I can commit once L2 passes, or commit the layout state now if you prefer.", "commit-timing")])
+
+    def test_an_offer_cue_in_a_statement_line_takes_only_its_own_sentence(self) -> None:
+        self.assertEqual(dialogue.extract_asks("The sweep passed. I can run a finer grid if you'd rather."),
+                         ["I can run a finer grid if you'd rather."])
+
+
 class HeadingTests(unittest.TestCase):
     def test_regression_a_markdown_heading_is_never_a_question(self) -> None:
         # Recorded fdm-enclosure turn 2: "## Please confirm before L2" was taken for an unmatched question.
@@ -189,7 +202,7 @@ class HeadingTests(unittest.TestCase):
         reply = dialogue.respond(case_script("fdm-enclosure"), text, "fixture", can_stop=True)
         self.assertTrue(reply.at_gate)
         self.assertFalse(reply.unmatched_at_gate)
-        self.assertEqual([ask.intent for ask in reply.asks], ["layout-freeze"])
+        self.assertEqual([ask.intent for ask in reply.asks], ["commit-timing", "layout-freeze"])
 
     def test_a_heading_still_names_the_gate_for_the_approval_request_below_it(self) -> None:
         reply = dialogue.respond(case_script("wall-bracket"), "## Decision needed: LAYOUT freeze on v2\nApprove or name changes.",
