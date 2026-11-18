@@ -510,35 +510,54 @@ class PurchaseMountingStaleness(unittest.TestCase):
         self.assertEqual(result.statuses[self.OBLIGATION].result, "stale", result.statuses[self.OBLIGATION])
         self.assertIn("occurrences", " ".join(result.statuses[self.OBLIGATION].reasons))
 
-    def wrong_shapes(self) -> list[tuple[str, Any]]:
-        """Inventories whose containers have the wrong type, each as a function that edits assembly.yaml."""
-        def edit(path: tuple[Any, ...], value: Any) -> Any:
-            def apply(assembly: dict[str, Any]) -> None:
-                target = assembly
-                for key in path[:-1]:
-                    target = target[key]
-                target[path[-1]] = value
-            return apply
-        return [("subassembly occurrences is an integer", edit(("subassemblies", 0, "occurrences"), 1)),
-                ("subassembly occurrences is a mapping", edit(("subassemblies", 0, "occurrences"), {"@ring-a": 1})),
-                ("subassembly parts is an integer", edit(("subassemblies", 0, "parts"), 1)),
-                ("subassemblies is an integer", edit(("subassemblies",), 1)),
-                ("a subassembly is a string", edit(("subassemblies",), ["main"])),
-                ("occurrences is an integer", edit(("occurrences",), 1)),
-                ("an occurrence is a string", edit(("occurrences",), ["ring-a"])),
-                ("a placement is a string", edit(("occurrences", 2, "placement"), "left"))]
+    def legacy_documents(self) -> dict[str, Any]:
+        """A bought part and its housing in one subassembly of plain part numbers: no explicit occurrence, so no
+        membership error can compete with a shape error."""
+        ring = fx.part("TST-0103", "Ring", process="purchased", make_buy="buy",
+                       part_intent=fx.intent(route=[fx.operation("buy", "purchased")],
+                                             material_profile=fx.not_applicable("catalogue item")))
+        mount = [{"id": "mount", "kind": "join", "part": "TST-0103", "into": "TST-0104", "direction": [0, 0, -1],
+                  "acceptance": {"kind": "standoff", "features": ["foot", "top"]}}]
+        docs = fx.record(parts=[ring, fx.part("TST-0104", "Housing", process="cnc")], operations=mount)
+        return {rel: data for rel, data in docs.items() if not rel.startswith("_")}
+
+    def wrong_shapes(self) -> list[tuple[str, str, Any, str]]:
+        """(name, fixture, edit of assembly.yaml, exact problem). Each fixture is valid in every other respect."""
+        def subassembly(key: str, value: Any) -> Any:
+            return lambda assembly: assembly["subassemblies"][0].__setitem__(key, value)
+
+        def top(key: str, value: Any) -> Any:
+            return lambda assembly: assembly.__setitem__(key, value)
+
+        every_reference = {f"@{o['id']}": 1 for o in self.documents()["assembly.yaml"]["occurrences"]}
+        return [
+            ("subassembly occurrences is a mapping", "placed", subassembly("occurrences", every_reference),
+             "subassembly main: occurrences must be a list"),
+            ("subassembly occurrences is an integer", "legacy", subassembly("occurrences", 1),
+             "subassembly main: occurrences must be a list"),
+            ("subassembly parts is an integer", "legacy", subassembly("parts", 1),
+             "subassembly main: parts must be a list"),
+            ("subassemblies is an integer", "legacy", top("subassemblies", 1), "subassemblies must be a list"),
+            ("a subassembly is a string", "legacy", top("subassemblies", ["main"]),
+             "subassemblies/0 must be a mapping"),
+            ("occurrences is an integer", "placed", top("occurrences", 1), "occurrences must be a list"),
+            ("a placement is a string", "placed", lambda assembly: assembly["occurrences"][2].__setitem__(
+                "placement", "left"), "occurrences/2.placement must be a mapping of translation_mm and rotation")]
 
     def test_a_wrong_container_shape_is_a_named_inventory_problem(self) -> None:
         valid = impact.fingerprints(normalized(self.documents()), {"PN": "TST-0103"})["occurrences"]
-        for name, edit in self.wrong_shapes():
+        for name, fixture, edit, message in self.wrong_shapes():
             with self.subTest(shape=name):
-                docs = self.documents()
+                docs = self.documents() if fixture == "placed" else self.legacy_documents()
                 edit(docs["assembly.yaml"])
                 record = normalized(docs)
                 found = impact.part_occurrences(record, "TST-0103")
                 self.assertIsInstance(found, impact.InventoryProblem)
+                problems = found.message.split("; ")
                 self.assertEqual(found.field, "assembly_inventory")
-                self.assertTrue(found.message)
+                self.assertIn(message, problems)
+                if fixture == "legacy":
+                    self.assertEqual(problems, [message], "the shape is the only thing wrong with this inventory")
                 self.assertNotEqual(impact.fingerprints(record, {"PN": "TST-0103"})["occurrences"], valid)
 
     def old_entry_result(self, docs: dict[str, Any], current: dict[str, Any]) -> Any:
