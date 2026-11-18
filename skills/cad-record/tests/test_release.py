@@ -554,6 +554,19 @@ class Pruning(ReleaseCase):
         for reason in ("frozen in product.yaml flow.frozen", "named by DR-005", "latest: versions/latest.json names it"):
             self.assertIn(reason, plan["keep"]["v3"])
 
+    def test_a_stray_decision_file_that_names_a_version_still_keeps_it(self) -> None:
+        hw = self.released(seal=False)
+        removable = prune.plan(hw, "A", "v3")["prune"]
+        self.assertIn("v1", removable, "v1 is removable before the stray file")
+        for name in ("DR-007-Bad_Name.md", "DR-007.md"):
+            with self.subTest(name):
+                stray = hw / "decisions" / name
+                write(stray, "Status: APPROVED\n\nThe PARTS gate approved v1.\n")
+                plan = prune.plan(hw, "A", "v3")
+                self.assertEqual(plan["prune"], [v for v in removable if v != "v1"])
+                self.assertEqual(plan["keep"]["v1"], ["named by DR-007"])
+                stray.unlink()
+
     def test_evidence_only_the_ledger_cites_keeps_its_version(self) -> None:
         hw = self.released()
         ledger = hw / "manufacturing" / "evidence.yaml"

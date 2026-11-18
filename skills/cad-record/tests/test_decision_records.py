@@ -243,6 +243,24 @@ class ReadTests(Base):
         with self.assertRaisesRegex(dr.DecisionRecordError, r"DR-001-gate\.md.*MADR 4\.0\.0 YAML front matter"):
             dr.read_decision(path)
 
+    def test_a_front_matter_key_given_twice_is_refused_naming_the_key(self) -> None:
+        for front in ("status: rejected\nstatus: accepted\ndate: 2026-10-26\n",
+                      "status: accepted\ndate: 2026-10-26\ndate: 2026-10-27\n"):
+            path = self.put("DR-001-twice.md", document(front))
+            with self.subTest(front), self.assertRaisesRegex(dr.DecisionRecordError,
+                                                             r"DR-001-twice\.md.*(status|date).*twice"):
+                dr.read_decision(path)
+
+    def test_an_impossible_calendar_date_is_refused_naming_the_file(self) -> None:
+        path = self.put("DR-001-date.md", document("status: accepted\ndate: 2026-13-45\n"))
+        with self.assertRaisesRegex(dr.DecisionRecordError, r"DR-001-date\.md.*YAML front matter is invalid"):
+            dr.read_decision(path)
+
+    def test_unknown_front_matter_keys_of_mixed_types_are_refused_naming_the_file(self) -> None:
+        path = self.put("DR-001-keys.md", document("status: accepted\ndate: 2026-10-26\n1: one\nz: zed\n"))
+        with self.assertRaisesRegex(dr.DecisionRecordError, r"DR-001-keys\.md.*unknown front matter keys"):
+            dr.read_decision(path)
+
     def test_a_number_above_999_is_refused(self) -> None:
         with self.assertRaises(dr.DecisionRecordError):
             dr.write_decision(self.dir, number=1000, **MINIMAL)

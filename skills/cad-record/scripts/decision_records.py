@@ -25,7 +25,7 @@ import os
 import re
 import tempfile
 import unicodedata
-from collections.abc import Iterable, Sequence
+from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -236,6 +236,22 @@ def _body(text: str) -> tuple[str, dict[str, str], dict[str, str]]:
     return heads[0][2], sections, outcome_parts
 
 
+class _FrontLoader(yaml.SafeLoader):  # type: ignore[misc]
+    """SafeLoader that refuses a key given twice: PyYAML would keep the last, so `status: rejected` followed by
+    `status: accepted` would approve."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=True)
+            if isinstance(key, Hashable) and key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"the key {key!r} is given twice", key_node.start_mark)
+            seen.add(key)
+        mapping: dict[Any, Any] = super().construct_mapping(node, deep)
+        return mapping
+
+
 def _front(text: str) -> tuple[dict[str, Any], str]:
     if not text.startswith("---\n"):
         raise DecisionRecordError(f"the file must start with '---' YAML front matter; expected {EXPECTED}")
@@ -243,12 +259,12 @@ def _front(text: str) -> tuple[dict[str, Any], str]:
     if end < 0:
         raise DecisionRecordError("the YAML front matter is not closed by a '---' line")
     try:
-        front = yaml.safe_load(text[4:end + 1])
-    except yaml.YAMLError as error:
+        front = yaml.load(text[4:end + 1], Loader=_FrontLoader)  # noqa: S506  (a SafeLoader subclass)
+    except (yaml.YAMLError, ValueError) as error:
         raise DecisionRecordError(f"the YAML front matter is invalid: {error}") from error
     if not isinstance(front, dict):
         raise DecisionRecordError("the YAML front matter must be a mapping")
-    unknown = sorted(set(front) - FRONT_KEYS)
+    unknown = sorted(set(front) - FRONT_KEYS, key=str)
     if unknown:
         raise DecisionRecordError(f"unknown front matter keys {unknown}; MADR 4.0.0 has {sorted(FRONT_KEYS)}")
     missing = [key for key in ("status", "date") if key not in front]

@@ -430,6 +430,17 @@ class ValidateProject(unittest.TestCase):
         self.assertIn(record.name, message)
         self.assertIn("status 'approved'", message)
 
+    def test_conflicting_statuses_in_one_record_never_approve(self) -> None:
+        record = write_test_decision(self.hw, "DR-009")
+        record.write_text(record.read_text(encoding="utf-8").replace("status: accepted", "status: rejected\nstatus: accepted", 1),
+                          encoding="utf-8")
+        [message] = self.anchor_on("DR-009", None)
+        self.assertTrue(message.startswith("flow/frozen/decision DR-009 is not a valid MADR record: "), message)
+        self.assertIn("status", message)
+        from modload import load_module  # noqa: PLC0415 - used by this test alone
+        validate = load_module("cad_record_validate", SKILL / "scripts" / "validate.py")
+        self.assertFalse(validate.decision_approves(self.hw, "DR-009"))
+
     def test_an_old_form_decision_file_is_no_record(self) -> None:
         (self.hw / "decisions" / "DR-009.md").write_text("Status: APPROVED\n\n# DR-009 Gate\n", encoding="utf-8")
         self.assertEqual(self.anchor_on("DR-009", None),
