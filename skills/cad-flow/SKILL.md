@@ -82,6 +82,6 @@ MUST Never default a process, material, property, capability, tolerance, evidenc
 MUST Eliminate mandatory failures before preference scoring, and rank only candidates that pass every mandatory requirement.
 MUST Distinguish geometry, process planning, simulation and physical evidence; no preview, heuristic, envelope fit, solver result or planned test proves physical performance.
 MUST Treat changes to service, material/condition, route/capability, orientation/support/finish, geometry, interfaces, criteria or source as possible evidence impacts; recheck from the earliest affected stage.
-MUST Keep service class (intended-use maturity/consequence) separate from product rigor (`maker|pro|regulated`, documentation depth). Prototype is a service class, never rigor.
+MUST Record service class as intended-use maturity and consequence. Prototype is a service class.
 MUST Block design freeze and release when material/process selection is unrecorded or another required input/evidence remains unknown.
 NOT Claim see-through FDM; optical/transparency requirements require traceable transparent purchase/stock criteria and a suitable route.

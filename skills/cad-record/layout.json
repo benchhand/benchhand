@@ -52,7 +52,7 @@
   "entries": [
     {"id": "record.product", "path": "hw/product.yaml", "kind": "record", "role": "source",
      "writer": "lead (cad-record workflow)", "stage": "ground", "mutability": "controlled",
-     "meaning": "product identity, rigor, regime, tolerances and workflow state, including the frozen anchor"},
+     "meaning": "product identity, regime, tolerances and workflow state, including the frozen anchor"},
     {"id": "record.requirements", "path": "hw/requirements.yaml", "kind": "record", "role": "source",
      "writer": "lead (cad-record workflow)", "stage": "specify", "mutability": "controlled",
      "meaning": "REQ-### requirements with verification methods"},

@@ -21,7 +21,7 @@ TRIGGER
    ```
 
    Stop if `hw/` already exists; do not merge a template into a record. The template has record-file placeholders and no part folders. Add `hw/parts/<PN>/part.yaml` and `model.py` for each PN matching `^[A-Z]{2,5}-[0-9]{4}$`; record the EBOM, verification and decisions in their canonical paths from [layout.md](references/layout.md). Never copy `.cad/recheck.json`; `cad-recheck` generates it.
-2. At GROUND, read [manufacturing selection](../cad-flow/references/manufacturing-selection.md). Follow its single decision table for service class, rigor and optical requirements.
+2. At GROUND, read [manufacturing selection](../cad-flow/references/manufacturing-selection.md). Follow its single decision table for service class and optical requirements.
 3. In v2, keep requirements, preferences, assumptions and open questions separate; record each part's material/process intent, capability and evidence. Use the existing validators, selectors and producer checks; do not create a parallel workflow. LOAD [manufacturing-intent.md](references/manufacturing-intent.md) for the record contract and [evidence.md](references/evidence.md) for evidence and gates.
 4. Build record-derived guides after `vN` exists:
 

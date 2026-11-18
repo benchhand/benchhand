@@ -4,7 +4,7 @@ The CAD record captures the intended service, requirements, per-part routes, cap
 
 ## Establish service before selection
 
-Record intended-use service class: `appearance_concept`, `fit_assembly`, `functional_demo`, `working_prototype`, `production` or `safety_critical`. This is separate from product rigor (`maker`, `pro`, `regulated`), which controls documentation depth. A prototype is a service class, never a rigor level.
+Record intended-use service class: `appearance_concept`, `fit_assembly`, `functional_demo`, `working_prototype`, `production` or `safety_critical`. It describes intended-use maturity and consequence. A prototype is a service class.
 
 Ask about purpose/users, loads, motion, duty/life, environment, required accuracy/finish/stability, failure consequences/standards, quantity/budget/lead time, maintenance/repair, actual equipment/operators and outsourcing. Keep requirements, preferences, bounded assumptions and open questions distinct. Cite facts. Geometry does not establish service. Unknown facts remain unknown.
 
