@@ -20,7 +20,7 @@ here from its statuses and from the staged record's selection report (cad-record
 the digest of the staged selection inputs), passes, so a stale, failed or unknown due check, or a
 recorded final choice the selection does not support, cannot be stamped as passed.
 `--verify` reads the staged index: the record inputs, the stamp and its packet, never the work tree
-beyond the layout audit. It is the whole pre-commit check: a commit that stages no hw/ change passes.
+beyond the layout audit. It is the whole commit-time check: a commit that stages no hw/ change passes.
 `--hw` names the hw/ directory, as in evidence.py (default: hw/ at the git root). `--verify --committed` checks HEAD's
 hw/ tree and stamp instead of the index, and never skips: CI runs it on a clean checkout.
 flow.recheck_from is the threshold and may only stay or move earlier than
@@ -349,8 +349,7 @@ def main() -> int:
         root = project_root(start, args.hw)
         if args.verify:
             committed = args.committed
-            # What the pre-commit hook skipped: a commit that stages no hw/ change needs no stamp. --committed
-            # checks HEAD instead, so it never skips.
+            # A commit that stages no hw/ change needs no stamp. --committed checks HEAD instead, so it never skips.
             if not committed and not git("diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB", "--", "hw/", cwd=root).strip():
                 print(json.dumps({"passed": True, "required": False, "reason": "no staged hw/ change"}))
                 return 0

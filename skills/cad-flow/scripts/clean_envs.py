@@ -56,8 +56,6 @@ sys.path.insert(0, str(CAD_ROOT / "skills" / "cad-model" / "scripts"))
 from cadmodel import scriptenv  # noqa: E402 - standard library only
 
 ENVIRONMENT_NAME = re.compile(r"^.+-[0-9a-f]{16}$")
-# cad-recheck's install-hook.py copies stamp.py into a repository's hooks under this name.
-INSTALLED_AS = {"cad-recheck-stamp.py": CAD_ROOT / "skills" / "cad-recheck" / "scripts" / "stamp.py"}
 
 
 @dataclass(frozen=True)
@@ -71,7 +69,7 @@ class Environment:
 
 
 def shipped_scripts(root: Path = CAD_ROOT) -> dict[str, list[Path]]:
-    """File name -> the PEP 723 scripts of that name in the plugin, plus their installed copies."""
+    """File name -> the PEP 723 scripts of that name in the plugin."""
     scripts: dict[str, list[Path]] = {}
     for path in sorted(root.rglob("*.py")):
         try:
@@ -79,9 +77,6 @@ def shipped_scripts(root: Path = CAD_ROOT) -> dict[str, list[Path]]:
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         scripts.setdefault(path.name, []).append(path)
-    for name, source in INSTALLED_AS.items():
-        if source.is_file():
-            scripts.setdefault(name, []).append(source)
     return scripts
 
 

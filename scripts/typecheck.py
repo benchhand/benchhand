@@ -60,7 +60,6 @@ CHANGED_FILES = (
     "skills/cad-motion/scripts/pair_policy.py",
     "skills/cad-motion/scripts/play.py",
     "skills/cad-motion/scripts/sweep.py",
-    "skills/cad-recheck/scripts/install-hook.py",
     "skills/cad-recheck/scripts/stamp.py",
     "skills/cad-record/scripts/assembly_operations.py",
     "skills/cad-record/scripts/build_guide.py",

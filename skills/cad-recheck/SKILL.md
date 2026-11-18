@@ -26,22 +26,15 @@ TRIGGER
    Stamp at the stage of the gate just passed. After a provisional gate writes its decision and advances `flow.stage`, rerun `evidence.py check --stage <gate stage>`. `product.yaml` is a record input, so the check refuses an earlier packet. `--verify` accepts a stamp at `flow.stage` or the stage just before it, never below `flow.recheck_from`.
 
    The evidence input MUST be the JSON packet that `evidence.py check` writes, or an `evidence.py run` report. A run report stamps with its `packet`. A run that stopped holds no packet, so it cannot stamp. A `cad_model.py check` result is never evidence. Include `--passed` only when every blocking obligation passes, and omit it for a failed gate. A record that is not version 2 cannot be stamped.
-4. Stage the design changes and `hw/.cad/recheck.json`. The pre-commit hook accepts only a passing stamp for the exact staged `hw/` tree.
-5. Install the hook in a hardware project's repository:
+4. Stage the design changes and `hw/.cad/recheck.json`.
+
+   Before each commit of `hw/` changes, run this from the project root:
 
    ```sh
-   uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/install-hook.py --project <project-directory>
+   uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify
    ```
 
-   The installer refuses a conflicting repository-local `core.hooksPath` or ignores no-sample hooks unless `--force` is explicit. Commit the generated `.githooks/` directory. A system/global `core.hooksPath` makes it exit 3 with no installation, even with `--force`; another refusal exits 2.
-
-For an absent or uninstalled hook, stage the hardware change then verify the staged index from the project root:
-
-```sh
-uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify
-```
-
-Exit 0 permits the commit; exit 2 means do not commit. Fix stderr's reason, restamp, and verify again.
+   Exit 0 permits the commit; exit 2 means do not commit. Fix stderr's reason, restamp, and verify again. Exit 0 means that the commit stages no `hw/` change, the stamp matches the staged `hw/` tree, or the staged stage is below `flow.recheck_from`.
 
 `stamp.py` reads `hw/` at the git root by default.
 
@@ -64,16 +57,6 @@ CI has nothing staged. Add `--committed` there. It checks the stamp against the 
 ```sh
 uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --committed --hw examples/lamp-arm/hw
 ```
-
-The installer refuses to replace a different repository-local `core.hooksPath` or ignore non-sample hooks in `.git/hooks/`. Integrate the CAD hook with existing hooks, or explicitly pass `--force` to replace or ignore them. Commit the generated `.githooks/` directory so the hook and its stamp verifier are available to other checkouts.
-
-When the system or global git config sets `core.hooksPath` (Git Defender does), the installer exits 3 and changes nothing, even with `--force`. A repository-local hooks path would stop those managed hooks from running. In that case, verify the stamp yourself before each commit of `hw/` changes. Stage the changes. Then run this command from the project repository:
-
-```
-uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify
-```
-
-When it exits 0, commit. Exit 0 means that the commit stages no `hw/` change, the stamp matches the staged `hw/` tree, or the staged stage is below `flow.recheck_from`. Exit 2 means do not commit, and stderr gives the reason. `--verify` runs the whole check that the hook ran, so it replaces the hook.
 
 `stamp.py` parses staged YAML with cad-record's `yaml_loader.safe_load` (`yaml.safe_load` on libyaml's C parser) and declares `pyyaml>=6.0` for `uv run --script`; keep that PEP 723 dependency declaration when changing its dependencies.
 
@@ -101,7 +84,7 @@ When it exits 0, commit. Exit 0 means that the commit stages no `hw/` change, th
 
 The stamp hashes the whole staged `hw/` tree, so any staged change needs a new stamp. This list decides only which checks to rerun before that stamp.
 
-The stamp command and its hook audit the complete `hw/` tree with cad-record's layout API. Any staged or untracked path whose layout finding blocks under `validate.blocking` prevents stamping or commit, including hidden generated subtrees under `parts/<PN>/`.
+The stamp command and `--verify` audit the complete `hw/` tree with cad-record's layout API. Any staged or untracked path whose layout finding blocks under `validate.blocking` prevents stamping or commit, including hidden generated subtrees under `parts/<PN>/`.
 
 ## Rules
 
