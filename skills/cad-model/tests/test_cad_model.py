@@ -2693,7 +2693,7 @@ class ManufacturingColorLostBeforeExportTests(unittest.TestCase):
         mp = projects()
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
-        header = "".join(CLI.read_text(encoding="utf-8").splitlines(keepends=True)[:4])  # the PEP 723 block
+        header = re.search(r"^# /// script\n(?:#.*\n)*?# ///\n", CLI.read_text(encoding="utf-8"), re.M).group()  # PEP 723
         cls.probe = root / "probe.py"
         cls.probe.write_text(header + PROBE.format(scripts=str(SCRIPTS), cli=str(CLI)),
                              encoding="utf-8")

@@ -56,7 +56,7 @@ for pn, title, shape in (("TST-0001", "Drilled plate", plate), ("TST-0002", "Bal
         shutil.copy(step, part_folder / "part.step")
         shutil.copy(package, part_folder / "part.3mf")
         record = {"PN": pn, "rev": "X1", "material": declared["material"], "process": "fdm", "finish": "none",
-                  "intent": {"color": color}}
+                  "intent": {"color": color} if color else {}}
         facts = {"kernel_volume_mm3": 1.0, "kernel_valid": True, "kernel_solids": 1}
         files = ["part.step", "part.3mf"]
         full = {**record, **declared, "native": facts, "installed": facts, "tolerance": {"allowed_mm3": 1.0},
