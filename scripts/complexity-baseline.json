@@ -1,6 +1,6 @@
 {
  "counts": {
-  "C901": 170,
+  "C901": 171,
   "PLR0912": 87,
   "PLR0915": 50
  },
@@ -163,6 +163,7 @@
   "C901 skills/cad-record/scripts/validate.py::check_procurement",
   "C901 skills/cad-record/scripts/validate.py::spdx_expression_problem",
   "C901 skills/cad-record/scripts/validate.py::validate_project",
+  "C901 skills/cad-record/tests/test_schema_bounds.py::reach",
   "C901 skills/cad-render/scripts/render.py::assess",
   "C901 skills/cad-render/scripts/render.py::capture_views",
   "C901 skills/cad-render/scripts/render.py::mesh_digests",
