@@ -41,8 +41,8 @@ DISPOSITION_STRUCTURED = frozenset({
     *(f"waiver.{name}" for name in _WAIVER_FIELDS),
 })
 _TOKEN = re.compile(r"[^\s\"'`()\[\]{}<>,;=|]+")
-# A file name ends in a dot and 1 to 5 alphanumeric characters with a letter, after a stem that is not a number.
-_EXTENSION = re.compile(r"(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,5}$")
+# A file name ends in a dot and 1 to 8 alphanumeric characters with a letter, after a stem that is not a number.
+_EXTENSION = re.compile(r"(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,8}$")
 _NUMBER = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?$")
 _URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$")
 _EVIDENCE_ID = re.compile(r"\bEV-[0-9]{3}\b")

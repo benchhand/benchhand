@@ -290,12 +290,13 @@ class Extensions(Project):
             with self.subTest(name):
                 self.assertEqual([p.code for p in self.refusal(self.entry(method=method))], [code], method)
 
-    def test_a_listed_sealed_3mf_is_accepted(self) -> None:
+    def test_a_listed_sealed_3mf_or_parquet_is_accepted(self) -> None:
         sealed = self.hw / "versions" / "v3" / "manufacturing" / "TST-0001"
         sealed.mkdir(parents=True)
-        (sealed / "part.3mf").write_bytes(b"3mf")
-        path = "hw/versions/v3/manufacturing/TST-0001/part.3mf"
-        self.assertEqual(self.refusal(self.entry(method=f"read back {path}", artifacts=[path])), [])
+        for name in ("part.3mf", "samples.parquet"):
+            (sealed / name).write_bytes(b"x")
+            path = f"hw/versions/v3/manufacturing/TST-0001/{name}"
+            self.assertEqual(self.refusal(self.entry(method=f"read back {path}", artifacts=[path])), [], name)
 
 
 class NestedProse(Project):
@@ -370,8 +371,8 @@ class Symlinks(Project):
 
 
 class Formats(Project):
-    # Any 1 to 5 character alphanumeric extension with a letter, after a stem that is not a number.
-    EXTENSIONS = (".3mf", ".3MF", ".3ds", ".3dm", ".3gp", ".7z", ".7Z", ".4dv", ".2bk")
+    # Any 1 to 8 character alphanumeric extension with a letter, after a stem that is not a number.
+    EXTENSIONS = (".3mf", ".3MF", ".3ds", ".3dm", ".3gp", ".7z", ".7Z", ".4dv", ".2bk", ".bgcode", ".sqlite", ".parquet")
 
     def test_formats_in_an_unlisted_result_folder_are_refused_in_any_case(self) -> None:
         for extension in self.EXTENSIONS:
