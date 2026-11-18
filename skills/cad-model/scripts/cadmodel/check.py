@@ -193,7 +193,7 @@ def declared_solids(snapshot: Path) -> dict[str, int]:
     """The solid count each record version 2 part of a version's record snapshot declares for its
     definition: the sum of its part.yaml `intent.components` multiplicities, unless it is made in a
     different state, whose components count that state's solids instead. A part declaring no
-    components, declares none."""
+    components declares none."""
     found, _ = build.read_snapshot(read_folder(snapshot))
     counts = {}
     for pn, part in found.intent.parts.items():
