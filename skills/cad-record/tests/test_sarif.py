@@ -420,6 +420,7 @@ class EmitTests(unittest.TestCase):
                 code = emit.main(["--sarif", str(stored)])
             self.assertEqual(code, 0)
             self.assertEqual(schema_errors(json.loads(stream.getvalue())), [])
+            self.assertEqual(json.loads(stream.getvalue())["runs"][0]["tool"]["driver"]["name"], "benchhand")
 
     def test_the_command_line_needs_the_sarif_flag_and_a_readable_envelope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
