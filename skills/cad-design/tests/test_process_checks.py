@@ -334,6 +334,19 @@ class SupportPolicyTests(Checks):
         self.assertEqual(self.outcome(partial, "process.fdm.support@TST-0101/print"), "unknown")
         self.assertIn("process.fdm.support_region_unplanned", self.codes(partial))
 
+    def test_a_flat_downward_face_with_no_measured_span_is_judged_by_its_angle(self) -> None:
+        """A ceiling that is not a strip (a ring around a pillar, a notched outline) has bridge facts with no span."""
+        unmeasured = facts(faces=(face("f1", bed=True, normals=((0, 0, -1),)),
+                                  face("f10", features=("ceiling",), down_=down(90.0, 200.0, "bridge"))))
+        result = self.assess(printed("TST-0101", {"strategy": "none"}), geometry("TST-0101", unmeasured))
+        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0101/print"), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.overhang")["severity"], "major")
+        self.assertNotIn("process.fdm.overhang_uncalibrated", self.codes(result))
+        steep = facts(faces=(face("f1", bed=True, normals=((0, 0, -1),)),
+                             face("f10", features=("ceiling",), down_=down(45.0, 200.0, "bridge"))))
+        within = self.assess(printed("TST-0101", {"strategy": "none"}), geometry("TST-0101", steep))
+        self.assertEqual(self.outcome(within, "process.fdm.support@TST-0101/print"), "pass")
+
     def test_without_a_calibrated_limit_the_need_for_support_is_unknown_never_a_universal_angle(self) -> None:
         result = self.assess(printed("TST-0101", {"strategy": "none"}, calibrations=[]), geometry("TST-0101", SHELF))
         self.assertEqual(self.outcome(result, "process.fdm.support@TST-0101/print"), "unknown")

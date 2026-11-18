@@ -267,7 +267,7 @@ def support(ctx: Context) -> Result:
         hit = sorted(feats & set(critical))
         start = down.get("start") or {}
         start_hit = sorted(set(start.get("features") or ()) & set(critical))
-        limit = _limit_criterion("bridge" if down.get("kind") == "bridge" else "overhang", overhang, bridge)
+        limit = _limit_criterion("bridge" if _is_spanned(down) else "overhang", overhang, bridge)
         covered = strategy == "finished_critical" and set(hit + start_hit) <= contacts
         if reason == "undecided" and not (hit or start_hit):
             if feats & contacts:
@@ -357,17 +357,22 @@ def _one(feats: set[str]) -> str | None:
     return sorted(feats)[0] if len(feats) == 1 else None
 
 
+def _is_spanned(down: Any) -> bool:
+    """Whether `down` is a bridge with a measured span. A flat downward face that is not a strip (a ring, a notch) is
+    a bridge with no span. The support check applies the overhang angle to it, as to any overhang."""
+    return down.get("kind") == "bridge" and down.get("span_mm") is not None
+
+
 def _needs_support(down: Any, overhang: Calibrated, bridge: Calibrated) -> str | None:
     """island, bridge or overhang when the face needs support; undecided when no calibration says; None otherwise.
-    A bridge is judged by its span alone, an overhang by the area beyond the unsupported angle."""
+    A bridge with a measured span is judged by its span alone, any other face by the area beyond the unsupported angle."""
     kind = down.get("kind")
     if kind == "island":
         return "island"
-    if kind == "bridge":
-        span = down.get("span_mm")
-        if not bridge.known or span is None:
+    if _is_spanned(down):
+        if not bridge.known:
             return "undecided"
-        return "bridge" if span > bridge.bounds("mm")[0] + 1e-9 else None
+        return "bridge" if down["span_mm"] > bridge.bounds("mm")[0] + 1e-9 else None
     if not overhang.known:
         return "undecided" if (down.get("max_angle_deg") or 0.0) > 1e-6 else None
     limit = overhang.bounds("deg")[0]
