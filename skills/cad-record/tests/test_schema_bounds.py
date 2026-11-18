@@ -716,6 +716,33 @@ def bound_errors(root: str, data: Any, path: tuple[Any, ...]) -> list[Any]:
     return found
 
 
+class Units(unittest.TestCase):
+    """A quantity in a unit of another dimension is refused by the schema, whatever its value. The vocabulary is
+    the closed set of manufacturing.schema.json and the own units of each quantity are those CONVERT lists."""
+
+    def quantities(self) -> list[Case]:
+        return [c for c in CASES if c.schema == CAPABILITIES and c.shape in ("quantity", "fact")]
+
+    def test_every_qty_definition_has_a_case(self) -> None:
+        defined = {name for name in document(CAPABILITIES)["$defs"] if name.startswith("qty_")}
+        self.assertEqual(defined, {(c.band_pointer or c.pointer).rsplit("/", 1)[1] for c in self.quantities()})
+
+    def test_a_quantity_refuses_every_unit_of_another_dimension(self) -> None:
+        vocabulary = document("manufacturing.schema.json")["$defs"]["units"]["enum"]
+        for case in self.quantities():
+            for unit in (u for u in vocabulary if u not in CONVERT[case.canon]):
+                with self.subTest(case.name, unit=unit):
+                    self.assertTrue(rejected(case, 1, unit), f"{unit} is not a unit of {case.canon}")
+
+    def test_a_quantity_accepts_each_unit_of_its_own_dimension(self) -> None:
+        for case in self.quantities():
+            low, _, high, _ = parse(case.bounds)
+            middle = (low + high) / 2 if low is not None and high is not None else (low + 1 if low is not None else high - 1)
+            for unit in CONVERT[case.canon]:
+                with self.subTest(case.name, unit=unit):
+                    self.assertTrue(accepted(case, shifted(case, middle, unit), unit))
+
+
 class Reached(unittest.TestCase):
     """The same matrix for a field under $defs, through the registry's validator. The document follows the path
     from a root schema to the field. Only the bound errors at that path count, so omitted sibling fields do not
