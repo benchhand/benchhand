@@ -181,7 +181,9 @@ class NotAPath(Project):
         for prose in ("Fit is ~5 mm", "thread 1/4-20 UNC", "screw M6x20", "tolerance ±0.1/0.2", "load 5 N/mm2.",
                       "speed 10 mm/s", "pass/fail", "ratio 3/8 in", "see https://example.com/datasheet.pdf",
                       "rev 1.2/1.3", "ISO 286-1 and/or ANSI B4.1", "sealed v3 (full-sweep)", "ratio 3/4",
-                      "dated 2026/11/17", "tag v1.2", "range 1.5/2.0", "layers 0.1mm/0.2mm", "pitch 2x3.5mm/4mm"):
+                      "dated 2026/11/17", "tag v1.2", "range 1.5/2.0", "layers 0.1mm/0.2mm", "pitch 2x3.5mm/4mm",
+                      "+0.2mm/\u22120.1mm", "\u00b10.1mm/\u00b10.2mm", "+0.2mm/-0.1mm", "M6x20/A2", "PLA/PETG",
+                      "TPU 95A/98A", "0.4mm/0.6mm nozzle", "ISO 4762 M5x12"):
             with self.subTest(prose):
                 self.assertEqual(self.refusal(self.entry(method=prose)), [], prose)
 
@@ -483,6 +485,44 @@ class SchemaTie(unittest.TestCase):
 
     def test_the_disposition_exclusions_match_the_findings_schema(self) -> None:
         self.check("manufacturing-findings.schema.json", "/$defs/disposition", paths_module.DISPOSITION_STRUCTURED)
+
+
+class ScratchStore(Project):
+    """Store objects under hw/.cad have no extension, so only the directory marks them as scratch."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sha = "ab" * 32
+        store = self.hw / ".cad" / "parts"
+        store.mkdir(parents=True)
+        (store / self.sha).write_bytes(b"store object")
+        git(self.root, "add", "-f", f"hw/.cad/parts/{self.sha}")  # tracked on purpose: only the scratch rule may refuse it
+        git(self.root, "commit", "-q", "-m", "store object")
+        self.paths = evidence.project_paths(self.hw)
+
+    def test_an_extensionless_store_object_is_refused_in_each_spelling(self) -> None:
+        for spelling in (f"hw/.cad/parts/{self.sha}", f".cad/parts/{self.sha}", f"./hw/.cad/parts/{self.sha}",
+                         str(self.hw / ".cad" / "parts" / self.sha), "hw/.cad"):
+            with self.subTest(spelling):
+                problems = self.refusal(self.entry(method=f"built from {spelling}."))
+                self.assertEqual([p.code for p in problems], ["evidence.scratch_path"], spelling)
+
+    def test_an_extensionless_store_object_is_refused_at_all_three_points(self) -> None:
+        entry = self.entry(method=f"geometry in hw/.cad/parts/{self.sha}")
+        assessed, ledger, inventory = self.points(entry)
+        self.assertEqual((assessed & {"evidence.scratch_path"}, ledger, inventory),
+                         ({"evidence.scratch_path"}, {"evidence.scratch_path"}, True))
+
+    def test_an_entry_that_rests_on_the_refused_store_entry_is_unknown(self) -> None:
+        record = mi.normalize_record({**{rel: doc for rel, doc in fx.tst_record().items() if not rel.startswith("_")},
+                                      "manufacturing/evidence.yaml": {"entries": [
+                                          self.entry("EV-003", method=f"geometry in hw/.cad/parts/{self.sha}"),
+                                          self.entry("EV-004", method="Same measurement as EV-003.")]}})
+        rows = evidence._rows(self.hw / "verification.csv")
+        result = evidence.assess(record, version="v1", manifest_sha256=V1, today=TODAY, paths=self.paths,
+                                 approved=lambda decision: True, verification=rows)
+        shown = {e["id"]: e["result"] for row in result.verification for e in row["evidence"]}
+        self.assertEqual(shown, {"EV-003": "unknown", "EV-004": "unknown"})
 
 
 class FiguresWithoutAPath(Project):

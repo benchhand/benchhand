@@ -21,7 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-SCRATCH_PREFIXES = (".cad-work/", "/tmp/", "/var/folders/", "~/")
+# `hw/.cad/` is the store (objects have no extension), `.cad/` its spelling relative to hw/.
+SCRATCH_PREFIXES = (".cad-work/", "hw/.cad/", ".cad/", "/tmp/", "/var/folders/", "~/")
 PROMOTE = ("promote the file into the record (for example under hw/checks/<V>/<S>/evidence/) and list it in "
            "artifacts, or cite a tracked packet")
 # Entry fields the schema does not define as prose (not $defs/text): ids, enums, hashes, dates, urls, the
@@ -43,7 +44,7 @@ DISPOSITION_STRUCTURED = frozenset({
 _TOKEN = re.compile(r"[^\s\"'`()\[\]{}<>,;=|]+")
 # A file name ends in a dot and 1 to 8 alphanumeric characters with a letter, after a stem that is not a number.
 _EXTENSION = re.compile(r"(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,8}$")
-_NUMBER = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?$")
+_NUMBER = re.compile(r"[+\-\u2212\u00b1]?[0-9]+(?:\.[0-9]+)?$")
 _URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$")
 _EVIDENCE_ID = re.compile(r"\bEV-[0-9]{3}\b")
 _LOCATION = re.compile(r"[:#].*$")
@@ -70,7 +71,9 @@ class PathProblem:
 
 def is_path_like(token: str) -> bool:
     """Whether `token` has a path shape (see the module docstring)."""
-    if token.startswith(SCRATCH_PREFIXES) or token == ".cad-work":
+    while token.startswith("./"):
+        token = token[2:]
+    if token.startswith(SCRATCH_PREFIXES) or token in (".cad-work", "hw/.cad", ".cad"):
         return True
     if token.startswith("/"):
         return re.match(r"^/[^/]+/.+|^/[^/]+\.[A-Za-z]", token) is not None
