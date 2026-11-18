@@ -639,8 +639,8 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
                 problems = [f"it was sealed from another frozen {version} manifest"]
     if problems:
         finding = validate.finding(target_rel, f"{target_rel} exists but is not the sealed release of {version} approved "
-                                               f"by {decision}: {'; '.join(problems)}; use a new revision, or wait for "
-                                               "the repair follow-up",
+                                               f"by {decision}: {'; '.join(problems)}; automatic repair is not supported; "
+                                               "use a new revision",
                                    code="release.exists")
         return 1, {**report, "findings": [finding], "status": "refused"}
     return 0, {**report, "already_sealed": True, "manifest_version": schema, "manifest_sha256": sha256(package / MANIFEST),
