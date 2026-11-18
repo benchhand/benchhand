@@ -20,7 +20,7 @@ Fixes from the first live run in Claude Code, Codex CLI, OpenCode and Kiro CLI.
 
 ## 0.1.0 (2026-10-31)
 
-First standalone release of the CAD skills, forked from [srobroek/omp-plugins](https://github.com/srobroek/omp-plugins) and adapted for Claude Code, OpenAI Codex CLI, OpenCode, and Kiro CLI without OMP or Beads dependencies. It includes the omp-plugins `cad` changes through b476fb9.
+First standalone release of the CAD skills, adapted for Claude Code, OpenAI Codex CLI, OpenCode, and Kiro CLI without OMP or Beads dependencies.
 
 - Provide a stage-based workflow from concept and design records through checked STEP AP242 models, drawings, EBOM, verification, and release packages, with user-approved gates recorded as decisions.
 - Add skills for CAD modeling, design fidelity, motion, rendering, interactive viewing, fits, analysis, BOM, drawings, record validation, and engineering critique.
@@ -37,7 +37,7 @@ First standalone release of the CAD skills, forked from [srobroek/omp-plugins](h
 - Check each made part's minimum wall at F2 (FDM 1.2 mm unless `product.yaml` `manufacturing.min_wall_mm` overrides it), and apply `block_like` only to parts whose `form_class` is `solid`.
 - Keep shared-environment launches working for scripts named `setup.py`, `pyproject.toml`, or `setup.cfg`; ignore generated output when delivering a scratch workspace; stop at gates when the lead cannot ask the user.
 
-### Coming from the omp-plugins `cad` plugin
+### Migration notes
 
 - The pair cache moved to `hw/.cad/pairs-v2.sqlite`, and sweep `timings_s` counters are renamed.
 - Records at `parts` or later need `torque` on every revolute and an `axial_retainer` on each press and locating fit (see `cad-record/references/design-rules.md`).
