@@ -404,11 +404,11 @@ class _Record:
             combined["criterion"] = {"requirements": [plain(r) for _, r in sorted(self.record.requirements.items())],
                                      "policy": _get(self.use_case, "evidence_policy")}
         combined.pop("lot", None)
-        combined.pop("occurrences", None)  # a part's own inputs: no interface, operation, requirement or product carries them
         if key == "product":  # the whole sequence, occurrence references included, which the per-part view misses
             combined["interface"] = {"parts": combined["interface"], "assembly_sequence": self.operations,
                                      "assembly_inventory": plain(self.record.assembly_inventory)}
-        combined.pop("appearance", None)  # only a part has a color
+        for domain in opt_in_domains():  # only a part carries an opt-in domain (a color, its occurrences)
+            combined.pop(domain, None)
         return combined
 
 

@@ -429,6 +429,17 @@ class PurchaseMountingStaleness(unittest.TestCase):
         prints = impact.subject_fingerprints(normalized(self.documents()))
         self.assertEqual(sorted(key for key, domains in prints.items() if "occurrences" in domains), ["TST-0103"])
 
+    def test_a_non_part_subject_carries_no_opt_in_domain_whatever_its_name(self) -> None:
+        """The synthetic domain stands for any later opt-in domain: only a part carries one."""
+        from unittest import mock  # noqa: PLC0415 - used by this test alone
+
+        record = normalized(self.documents())
+        with mock.patch.object(impact, "DOMAINS", (*impact.DOMAINS, "tst_opt_in")):
+            prints = impact.subject_fingerprints(record)
+        for key in ("product", "op:mount-a"):
+            with self.subTest(subject=key):
+                self.assertNotIn("tst_opt_in", prints[key])
+
     def test_every_other_family_keeps_its_domains_and_purchase_depends_on_occurrences(self) -> None:
         for prefix, domains in self.MAIN_FAMILIES.items():
             with self.subTest(family=prefix):
