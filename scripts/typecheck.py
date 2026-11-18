@@ -136,6 +136,7 @@ STRICT_FILES = (
     "skills/cad-model/scripts/cadmodel/threemf.py",
     "skills/cad-record/scripts/assembly_operations.py",
     "skills/cad-record/scripts/evidence.py",
+    "skills/cad-record/scripts/evidence_paths.py",
     "skills/cad-record/scripts/fail_fast.py",
     "skills/cad-record/scripts/impact.py",
     "skills/cad-record/scripts/selection.py",
