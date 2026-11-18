@@ -98,6 +98,10 @@ LAYOUT = (
     "compares references/layout.md with layout.py's output; docs_only keeps that one file out"
     " of the safe set"
 )
+CORPUS_README = (
+    "reads skills/cad-design/tests/mfg_corpus/README.md for the not-at-the-packet label; docs_only does not"
+    " treat that file as safe (it sits under tests/, deeper than references/), so an edit to it runs every shard"
+)
 
 ALLOWED = [
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_a_changed_decision_invalidates_the_published_bundle', 'DR-002.md', HW),
@@ -108,6 +112,7 @@ ALLOWED = [
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'din-spec-3105-1-checklist.md', HW),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'index.md', HW),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests.documents.capture', 'docs', HW),
+    Allow('skills/cad-design/tests/test_mfg_corpus.py', 'NotAtThePacketTests.test_the_readme_marks_the_five_families_and_says_what_their_rates_measure', 'README.md', CORPUS_README),
     Allow('skills/cad-fits/test_stackup.py', 'StackPacketTests.test_a_justified_rss_publishes_its_statistical_outcome_and_approving_decision', 'DR-001.md', HW),
     Allow('skills/cad-flow/tests/test_preflight.py', 'HarnessInstallTests.test_opencode_receipt_uses_installer_project_paths', '.opencode/agents/cad-analyst.md', STUB, 2),
     Allow('skills/cad-flow/tests/test_preflight.py', 'HarnessInstallTests.test_opencode_receipt_uses_installer_project_paths', '.opencode/skills/cad-flow/SKILL.md', STUB, 2),
