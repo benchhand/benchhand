@@ -669,6 +669,13 @@ class SignFlowTests(unittest.TestCase):
         self.assertFalse(cla.evaluate([commit(7, "dev")], (7, "dev"), api.doc, CONFIG).ok)
         self.assertEqual(api.posted()[-1]["conclusion"], "failure")
 
+    def test_a_failed_recheck_keeps_a_signature_this_run_did_not_insert(self) -> None:
+        existing = self.record(7, 99)  # this comment was already recorded by an earlier run
+        api = FakeGitHub([commit(7, "dev")], doc={"signatures": [existing]}, comment_status={99: 500})
+        self.assertEqual(self.go(self.comment_env(), api), 1)
+        self.assertEqual(api.doc, {"signatures": [existing]})
+        self.assertEqual(api.puts(), [])
+
     def test_resigning_replaces_a_stale_record_of_the_same_version(self) -> None:
         stale = self.record(7, 50)  # same version, its comment was deleted
         api = FakeGitHub([commit(7, "dev")], doc={"signatures": [stale]}, comments={99: PHRASE})

@@ -632,8 +632,18 @@ def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any],
         "pr": number, "comment_id": comment["id"], "signed_at": now,
     }
     # Reconcile first: a stale record of this version would otherwise shadow the new signature.
+    # `inserted` is whether the last attempt added this run's record; a record that was already there
+    # (an earlier run of the same comment, or an older comment of this version) is not ours to undo.
+    inserted = False
+
+    def add_record(doc: dict[str, Any]) -> dict[str, Any]:
+        nonlocal inserted
+        merged = merge_signature(reconcile(api, repo, doc, user["id"]), record)
+        inserted = record in merged["signatures"] and record not in doc.get("signatures", [])
+        return merged
+
     outcome = update_signatures(
-        sig_api, config, lambda doc: merge_signature(reconcile(api, repo, doc, user["id"]), record),
+        sig_api, config, add_record,
         f"cla: {user['login']} signed version {config.version} on {repo}#{number}",
     )
     if outcome == "conflict":
@@ -643,10 +653,15 @@ def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any],
     # landed; the revoking job saw no record then. Check again now that the record exists.
     holds = comment_holds_phrase(api, repo, comment["id"], config.version)
     if holds is None:
-        # Cannot tell whether the comment still stands: do not leave the record behind. Roll it back
-        # (blob-sha safe), refresh the affected checks, and still fail the job.
-        print("Could not re-check the signing comment; rolling the signature back.")
-        invalidate_user(api, sig_api, repo, user["id"], comment["id"], pull, config)
+        if inserted and outcome == "written":
+            # Cannot tell whether the comment still stands: do not leave our record behind. Roll it
+            # back (blob-sha safe), refresh the affected checks, and still fail the job.
+            print("Could not re-check the signing comment; rolling the signature back.")
+            invalidate_user(api, sig_api, repo, user["id"], comment["id"], pull, config)
+        else:
+            print("Could not re-check the signing comment; the existing signatures are left as they are.")
+            if outcome == "written":  # stale records were dropped: the checks need the new result
+                refresh_pull(api, sig_api, repo, pull, config, scan_open_pulls(api, repo))
         return 1
     if not holds:
         print("The signing comment changed while the signature was recorded; removing it.")
