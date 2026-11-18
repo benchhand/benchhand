@@ -66,6 +66,14 @@ class DesignReaction(unittest.TestCase):
         scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 30.0), "max": end("understated", 60.0)})})
         scenario.refused("reaction_below_design")
 
+    def test_a_fast_mode_case_is_held_to_its_design_reaction_too(self) -> None:
+        # The reaction check is a load check, not a stress check: fast mode, which reports no stress, keeps it.
+        scenario = Scenario(self)
+        scenario.case.write_text("mode: fast\n" + scenario.case.read_text(encoding="utf-8"), encoding="utf-8")
+        scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 343.1)})})
+        report = scenario.refused("reaction_below_design")
+        self.assertIn("343.1 N", report["error"]["message"])
+
     def test_a_load_that_names_no_reaction_is_not_checked(self) -> None:
         scenario = Scenario(self)
         scenario.case.write_text(scenario.case.read_text(encoding="utf-8").replace("    reaction: IF-006\n", ""), encoding="utf-8")
