@@ -60,13 +60,13 @@ precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) 2021, 3MF Consortium"
 SPDX-License-Identifier = "BSD-2-Clause"
 
-# W3C's xml.xsd. Neither this copy nor https://www.w3.org/2001/xml.xsd states a copyright or licence.
-# W3C-20150513 is W3C's permissive Software and Document licence; confirm before release.
+# W3C's xml.xsd states no licence; W3C publishes its documents under the W3C Document License
+# (https://www.w3.org/copyright/intellectual-rights/). The SPDX list has no id for it.
 [[annotations]]
 path = "skills/cad-model/tests/fixtures/3mf-schema/xml.xsd"
 precedence = "override"
 SPDX-FileCopyrightText = "World Wide Web Consortium"
-SPDX-License-Identifier = "W3C-20150513"
+SPDX-License-Identifier = "LicenseRef-W3C-Document-2023"
 
 [[annotations]]
 path = "skills/cad-record/vendor/sarif-schema-2.1.0.json"
