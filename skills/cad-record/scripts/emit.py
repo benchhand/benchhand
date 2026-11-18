@@ -17,12 +17,18 @@ wraps stdout and non-sealed `--out` files only. Sealed bundle and version files 
 
 A tool that parses another producer's stdout must start it with `json_env()` and read it with `unwrap()`.
 
+`sarif=True` (or `emit.py --sarif ENVELOPE.json [--hw DIR]` on a stored envelope) prints the envelope's findings as
+SARIF 2.1.0 instead, in full whatever the mode (see sarif.py for the mapping). It is an export only: `out` still gets
+the envelope, and the default output does not change.
+
 Standard library only.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -89,6 +95,24 @@ def envelope_text(result: Any, schema_id: str | None = SCHEMA) -> str:
     return json.dumps(document, indent=2)
 
 
+def sarif_text(result: Any, *, tool: str = "cad-agent", hw: Path | None = None) -> str:
+    """The findings of `result` as SARIF 2.1.0 JSON, without a trailing newline. `hw` lets part findings anchor on a file."""
+    document = envelope(result)
+    return json.dumps(_sarif().document(document["findings"], tool=tool, status=document["status"], hw=hw), indent=2)
+
+
+def _sarif() -> Any:
+    """The sibling sarif.py, loaded by path as every cad-record script is. A caller that never asks for SARIF never loads it."""
+    name = "cad_record_sarif"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("sarif.py"))
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
 def unwrap(document: Any) -> Any:
     """The payload of an envelope; any other document (a producer not yet switched) as it is."""
     if isinstance(document, dict) and set(document) == ENVELOPE_KEYS and str(document["schema"]).startswith("tool-result/"):
@@ -135,18 +159,23 @@ def verdict_of(result: Mapping[str, Any]) -> str:
 
 def emit(result: Any, *, tool: str, name: str, code: int, scratch: Path | None = None, out: Path | None = None,
          facts: Mapping[str, Any] | None = None, blocking: Iterable[Any] | None = None,
-         json_flag: bool = False, schema_id: str | None = SCHEMA, stream: TextIO | None = None) -> None:
+         json_flag: bool = False, schema_id: str | None = SCHEMA, stream: TextIO | None = None,
+         sarif: bool = False, hw: Path | None = None) -> None:
     """Print `result` in its envelope: in full, or as a summary in `compact` mode.
 
     `out` is the producer's `--out` file: it always gets the enveloped full JSON. Without `out`, the compact
     summary names a file in `scratch` made from `name` and a digest. When neither can hold the full JSON, or it
     is no longer than its summary, the full JSON is printed, so nothing is lost. `facts` are short key/value
-    lines; `blocking` replaces the items found by `blocking_of`.
+    lines. `blocking` replaces the items found by `blocking_of`. `sarif` prints the findings as SARIF instead, see
+    `sarif_text`. `hw` is the project's hw/ directory.
     """
     stream = sys.stdout if stream is None else stream
     text = envelope_text(result, schema_id)
     if out is not None:
         out.write_text(text + "\n", encoding="utf-8")
+    if sarif:
+        print(sarif_text(result, tool=tool, hw=hw), file=stream)
+        return
     if mode(json_flag) != "compact":
         print(text, file=stream)
         return
@@ -188,4 +217,28 @@ def _write(target: Path, text: str) -> bool:
 def _clip(line: str) -> str:
     line = " ".join(line.split())
     return line if len(line) <= MAX_LINE else line[: MAX_LINE - 1] + "…"
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`emit.py ENVELOPE.json --sarif [--hw DIR]`: print a stored envelope's findings as SARIF 2.1.0. Exit 2 on bad input."""
+    parser = argparse.ArgumentParser(prog="emit.py", description=main.__doc__)
+    parser.add_argument("envelope", type=Path, help="a stored tool-result envelope (JSON)")
+    parser.add_argument("--sarif", action="store_true", required=True, help="export the findings as SARIF 2.1.0")
+    parser.add_argument("--hw", type=Path, help="the project's hw/ directory, to anchor part findings on part.yaml")
+    parser.add_argument("--tool", default="cad-agent", help="the SARIF tool name")
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as stop:
+        return int(stop.code or 0)
+    try:
+        stored = json.loads(args.envelope.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        print(f"emit.py: cannot read {args.envelope}: {error}", file=sys.stderr)
+        return 2
+    print(sarif_text(stored, tool=args.tool, hw=args.hw))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
