@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FEA fast mode: a fast case reports the peak displacement, the stiffness check and a labelled mesh-stability
 indicator (the 95th-percentile von Mises stress over all mesh nodes), and no stress figure, safety factor or
 stress verdict. The FreeCAD process is replaced by a stand-in that writes the job's completion marker from the

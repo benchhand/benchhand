@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """What a static FEA case reports in each mode.
 
 Both modes mesh curved second-order elements with the same Gmsh settings. `full`, the default, reports the
