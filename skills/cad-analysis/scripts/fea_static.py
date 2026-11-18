@@ -222,6 +222,8 @@ def load_case(path: Path) -> dict[str, Any]:
         if "reaction" in load and (not isinstance(load["reaction"], str)
                                    or reactions.INTERFACE_REF.fullmatch(load["reaction"]) is None):
             raise CaseError(f"loads[{index}].reaction must name the stop interface it comes from, as IF-###")
+        if "limit" in load and ("reaction" not in load or load["limit"] not in reactions.LIMITS):
+            raise CaseError(f"loads[{index}].limit must be min or max, and needs loads[{index}].reaction")
     raw["_step"] = str(step)
     return raw
 

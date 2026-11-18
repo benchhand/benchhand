@@ -11,7 +11,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -24,7 +27,7 @@ import fea_reaction  # noqa: E402
 import fea_static  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
-from reaction_project import EVIDENCE, INTERFACE, SUBJECT, Scenario, end, entry  # noqa: E402
+from reaction_project import EVIDENCE, INTERFACE, SUBJECT, Scenario, current_code, end, entry  # noqa: E402
 
 
 class DesignReaction(unittest.TestCase):
@@ -145,6 +148,105 @@ class RecipeCoversTheBundle(unittest.TestCase):
         self.assertEqual((status, report["reused"]), (0, False))
         manifest = json.loads((scenario.hw / "analysis" / "v1" / "cantilever" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["recipe"]["reactions"][INTERFACE]["design_reaction_n"], 45.0)
+
+
+class NamedLimit(unittest.TestCase):
+    """`limit: min | max` on a reaction load names the joint limit it reacts against."""
+
+    def test_a_named_limit_uses_only_its_stop(self) -> None:
+        # The latched stop (min) carries 40 N, the open stop (max) is unbounded. The 50 N load reacts against the latched stop.
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry("unknown", {"min": end("bounded", 40.0), "max": end("unbounded", None)})}, outcome="unknown")
+        scenario.name_limit("min")
+        status, report = scenario.call()
+        self.assertEqual((status, report["status"]), (0, "pass"), report)
+        manifest = json.loads((scenario.hw / "analysis" / "v1" / "cantilever" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["recipe"]["reactions"][f"{INTERFACE}:min"]["design_reaction_n"], 40.0)
+
+    def test_a_named_unbounded_limit_is_refused_as_unbounded(self) -> None:
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry("unknown", {"min": end("bounded", 40.0), "max": end("unbounded", None)})}, outcome="unknown")
+        scenario.name_limit("max")
+        self.assertIn("max", scenario.refused("reaction_unbounded")["error"]["message"])
+
+    def test_each_named_limit_is_held_to_its_own_reaction(self) -> None:
+        # min needs 60 N and max 30 N; the load is 50 N.
+        for limit, code in (("max", None), ("min", "reaction_below_design")):
+            with self.subTest(limit=limit):
+                scenario = Scenario(self)
+                scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 60.0), "max": end("bounded", 30.0)})})
+                scenario.name_limit(limit)
+                if code is None:
+                    self.assertEqual(scenario.call()[0], 0)
+                else:
+                    scenario.refused(code)
+
+    def test_an_absent_limit_takes_the_larger_of_the_two_stops(self) -> None:
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 60.0), "max": end("bounded", 30.0)})})
+        scenario.refused("reaction_below_design")
+
+    def test_a_limit_the_bundle_has_no_stop_for_is_an_invalid_case(self) -> None:
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 40.0)})})
+        scenario.name_limit("max")
+        message = scenario.refused("invalid_case")["error"]["message"]
+        self.assertIn("max", message)
+        self.assertIn(INTERFACE, message)
+
+    def test_a_limit_is_min_or_max_and_needs_a_reaction(self) -> None:
+        for edit in (lambda text: text.replace("    reaction: IF-006\n", "    reaction: IF-006\n    limit: left\n"),
+                     lambda text: text.replace("    reaction: IF-006\n", "    limit: min\n")):
+            with self.subTest():
+                scenario = Scenario(self)
+                scenario.case.write_text(edit(scenario.case.read_text(encoding="utf-8")), encoding="utf-8")
+                self.assertIn("limit", scenario.refused("invalid_case")["error"]["message"])
+
+
+class CodeFingerprint(unittest.TestCase):
+    """A bundle made by other stop-reaction code than the code now in the tree is stale."""
+
+    def test_a_bundle_made_by_other_code_is_stale(self) -> None:
+        scenario = Scenario(self)
+        other = {**current_code(), "cad-analysis/scripts/stop_reaction.py": "0" * 64}
+        scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 40.0)})}, code=other)
+        message = scenario.refused("reaction_stale")["error"]["message"]
+        self.assertIn("stop-reaction code changed", message)
+        self.assertIn("stop_reaction.py", message)
+
+    def test_a_bundle_that_records_no_code_is_stale(self) -> None:
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 40.0)})}, code=None)
+        self.assertIn("no code fingerprint", scenario.refused("reaction_stale")["error"]["message"])
+
+    def test_editing_stop_reaction_in_a_copied_tree_makes_its_bundle_stale(self) -> None:
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 40.0)})})
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / "skills"
+            shutil.copytree(SKILLS, copy, ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
+            self.assertEqual(self.read_in(copy, scenario), {"design": 40.0})
+            with (copy / "cad-analysis" / "scripts" / "stop_reaction.py").open("a", encoding="utf-8") as script:
+                script.write("\n# edited\n")
+            read = self.read_in(copy, scenario)
+        self.assertEqual(read["code"], "reaction_stale")
+        self.assertIn("stop-reaction code changed", read["message"])
+
+    @staticmethod
+    def read_in(copy: Path, scenario: Scenario) -> dict[str, object]:
+        """fea_reaction.read, run from the tree at `copy`, on the scenario's version and bundle."""
+        driver = (
+            "import json, pathlib, sys\n"
+            f"sys.path.insert(0, {str(copy / 'cad-analysis' / 'scripts')!r})\n"
+            "import fea_reaction, fea_static\n"
+            "try:\n"
+            f"    basis = fea_reaction.read(fea_static.LAYOUT, pathlib.Path({str(scenario.hw)!r}), 'v1', pathlib.Path({str(scenario.version)!r}), 'IF-006')\n"
+            "    print(json.dumps({'design': basis.design_n}))\n"
+            "except fea_reaction.ReactionRefused as refusal:\n"
+            "    print(json.dumps({'code': refusal.code, 'message': str(refusal)}))\n")
+        done = subprocess.run([sys.executable, "-B", "-c", driver], capture_output=True, text=True, timeout=300, check=False)
+        assert done.returncode == 0, done.stderr
+        return json.loads(done.stdout)  # type: ignore[no-any-return]
 
 
 class BundleNameMatchesTheProducer(unittest.TestCase):

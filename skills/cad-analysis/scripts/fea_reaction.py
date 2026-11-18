@@ -6,11 +6,14 @@ solves, fea_static reads the stop-reaction bundle that cad-analysis stop_reactio
 
 - reaction_needs_version: the case is standalone, so no version has a bundle to read.
 - reaction_missing: the version has no stop-reaction bundle, or the bundle holds no assessment of the interface.
-- reaction_stale: the bundle fails its seal, its files cannot be read, or it belongs to another build of the version.
+- reaction_stale: the bundle fails its seal, its files cannot be read, it belongs to another build of the version,
+  or stop_reaction.py (with the modules and data it reads, #140's code table) changed since the bundle was made.
 - reaction_unbounded: a stop of the interface touches the pivot axis, so its rigid reaction has no bound. Only a
   contact case approved in a design record closes it, never a load copied from a number.
 - reaction_unknown: the interface is no stop, or its reaction is not established. The bundle's reason follows.
-- reaction_below_design: the load is smaller than the design reaction. With two stops, the larger one governs.
+- reaction_below_design: the load is smaller than the design reaction. With two stops, the larger one governs, unless
+  the load names `limit: min | max`: then only that stop's reaction and status apply. A limit the bundle holds no
+  stop for is invalid_case.
 
 Nothing passes silently: every path that cannot read a design reaction is a refusal. cad-record's layout supplies the
 bundle path, the seal check and the manifest name, as evidence.py does for a producer packet. The FEA recipe holds
@@ -31,6 +34,7 @@ from typing import Any
 INTERFACE_REF = re.compile(r"IF-[0-9]{3}")
 SUBJECT = "stop-reaction"  # hw/checks/<V>/stop-reaction/, the subject stop_reaction.py publishes
 EVIDENCE = "stop-reaction.json"  # the bundle's evidence/ file: the reaction of each stop of each interface
+LIMITS = ("min", "max")  # the joint limits a load may name
 BELOW_TOLERANCE = 1e-9  # relative: a load equal to the design reaction passes, whatever the rounding
 
 
@@ -46,7 +50,7 @@ class ReactionRefused(ValueError):
 class Basis:
     """The stop-reaction result a load stands on: the bundle read, its manifest sha256 and the design reaction in N."""
 
-    interface: str
+    interface: str  # the interface, with ":min" or ":max" when the load names a limit
     bundle: str
     manifest_sha256: str
     design_n: float
@@ -62,8 +66,24 @@ def _json(path: Path, what: str) -> Any:
         raise ReactionRefused("reaction_stale", f"the stop-reaction bundle's {what} cannot be read: {error}") from None
 
 
-def read(layout: Any, hw: Path, version: str, version_dir: Path, interface: str) -> Basis:
-    """The design reaction of `interface` from the sealed stop-reaction bundle of `version`, or a refusal."""
+def _code_changed(manifest: Mapping[str, Any]) -> None:
+    """Refuse a bundle that stop_reaction.py made with other code than the code in this tree: same closure as the producer."""
+    import stop_reaction  # deferred: it loads the cad-record and cad-motion modules
+
+    recorded = (manifest.get("recipe") or {}).get("code") if isinstance(manifest.get("recipe"), Mapping) else None
+    if not isinstance(recorded, Mapping) or not recorded:
+        raise ReactionRefused("reaction_stale", "the stop-reaction bundle records no code fingerprint, so it cannot be tied to "
+                                                "the stop-reaction code: run stop_reaction.py again with --replace")
+    current = stop_reaction.code_shas.closure(Path(stop_reaction.__file__), stop_reaction.VERDICT_DATA)
+    changed = sorted(name for name in {*recorded, *current} if recorded.get(name) != current.get(name))
+    if changed:
+        raise ReactionRefused("reaction_stale", f"the stop-reaction code changed since the bundle was made ({', '.join(changed)}): "
+                                                "run stop_reaction.py again with --replace")
+
+
+def read(layout: Any, hw: Path, version: str, version_dir: Path, interface: str, limit: str | None = None) -> Basis:
+    """The design reaction of `interface` (of its `limit` stop when named) from the sealed stop-reaction bundle of
+    `version`, or a refusal."""
     bundle = layout.bundle_dir(hw, "checks", version, SUBJECT)
     if not bundle.is_dir():
         raise ReactionRefused("reaction_missing", f"{version} has no stop-reaction bundle for {interface}: run "
@@ -77,17 +97,23 @@ def read(layout: Any, hw: Path, version: str, version_dir: Path, interface: str)
     if manifest.get("version_manifest_sha256") != current:
         raise ReactionRefused("reaction_stale", f"the stop-reaction bundle belongs to another build of {version}: run "
                                                 "stop_reaction.py again with --replace")
+    _code_changed(manifest)
     detail = _json(bundle / "evidence" / EVIDENCE, EVIDENCE)
     entry = (detail.get("interfaces") or {}).get(interface) if isinstance(detail, Mapping) else None
     if not isinstance(entry, Mapping):
         raise ReactionRefused("reaction_missing", f"the stop-reaction bundle of {version} holds no assessment of {interface}: "
                                                   "the interface owes no stop-reaction check, or the check has not run")
-    return _basis(layout, hw, bundle, manifest, interface, entry)
+    return _basis(layout, hw, bundle, interface, entry, limit)
 
 
-def _basis(layout: Any, hw: Path, bundle: Path, manifest: Mapping[str, Any], interface: str, entry: Mapping[str, Any]) -> Basis:
+def _basis(layout: Any, hw: Path, bundle: Path, interface: str, entry: Mapping[str, Any], limit: str | None) -> Basis:
     reactions = {label: end["reaction"] for label, end in (entry.get("ends") or {}).items()
                  if isinstance(end, Mapping) and isinstance(end.get("reaction"), Mapping)}
+    if limit is not None:
+        if limit not in reactions:
+            raise ReactionRefused("invalid_case", f"loads name limit {limit} of {interface}, but the stop-reaction bundle holds "
+                                  f"a stop at {' and '.join(sorted(reactions)) or 'no limit'} for it")
+        reactions = {limit: reactions[limit]}
     unbounded = sorted(label for label, reaction in reactions.items() if reaction.get("status") == "unbounded")
     if unbounded:
         raise ReactionRefused("reaction_unbounded", f"the stop of {interface} at its {' and '.join(unbounded)} limit has no bounded "
@@ -98,8 +124,12 @@ def _basis(layout: Any, hw: Path, bundle: Path, manifest: Mapping[str, Any], int
     if entry.get("outcome") == "not_applicable" or not designs:
         raise ReactionRefused("reaction_unknown", f"the reaction of {interface} is not established: "
                                                   f"{entry.get('reason') or 'the bundle holds no design reaction for it'}")
-    return Basis(interface, layout.relative(hw, bundle), hashlib.sha256((bundle / layout.MANIFEST).read_bytes()).hexdigest(),
+    return Basis(name(interface, limit), layout.relative(hw, bundle), hashlib.sha256((bundle / layout.MANIFEST).read_bytes()).hexdigest(),
                  float(max(designs)))
+
+
+def name(interface: str, limit: str | None) -> str:
+    return interface if limit is None else f"{interface}:{limit}"
 
 
 def resolve(layout: Any, hw: Path, version: str, version_dir: Path, loads: Sequence[Mapping[str, Any]]) -> dict[str, Basis]:
@@ -110,13 +140,15 @@ def resolve(layout: Any, hw: Path, version: str, version_dir: Path, loads: Seque
         interface = load.get("reaction")
         if interface is None:
             continue
-        if interface not in bases:
-            bases[interface] = read(layout, hw, version, version_dir, interface)
+        limit = load.get("limit")
+        key = name(interface, limit)
+        if key not in bases:
+            bases[key] = read(layout, hw, version, version_dir, interface, limit)
         magnitude = math.sqrt(sum(component * component for component in load["force"]))
-        design = bases[interface].design_n
+        design = bases[key].design_n
         if magnitude < design * (1.0 - BELOW_TOLERANCE):
             raise ReactionRefused("reaction_below_design", f"loads[{index}] carries {magnitude:.4g} N but the modelled stop "
-                                  f"reaction of {interface} is {design:.4g} N (the larger stop governs): size the load for the "
+                                  f"reaction of {key} is {design:.4g} N ({'the stop at that limit' if limit else 'the larger stop governs'}): size the load for the "
                                   "design reaction, or record it with a contact case approved in a design record")
     return bases
 

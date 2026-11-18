@@ -22,6 +22,7 @@ SKILLS = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(SCRIPTS))
 
 import fea_static  # noqa: E402
+import stop_reaction  # noqa: E402
 
 
 def load_by_path(name: str, path: Path) -> Any:
@@ -50,6 +51,11 @@ mesh_size: 5
 INTERFACE = "IF-006"
 SUBJECT = "stop-reaction"  # the bundle stop_reaction.py publishes: hw/checks/<V>/stop-reaction/
 EVIDENCE = "stop-reaction.json"
+
+
+def current_code() -> dict[str, str]:
+    """The code table stop_reaction.py puts in its recipe: the closure of the script and its VERDICT_DATA (#140)."""
+    return dict(stop_reaction.code_shas.closure(Path(stop_reaction.__file__), stop_reaction.VERDICT_DATA))
 
 
 def end(status: str, design: float | None) -> dict[str, Any]:
@@ -100,14 +106,24 @@ class Scenario:
             (record / name).write_text("{}\n", encoding="utf-8")
         self.seal()
 
+    def name_limit(self, limit: str) -> None:
+        """Make the case's load name the joint limit it reacts against."""
+        self.case.write_text(self.case.read_text(encoding="utf-8").replace("    reaction: IF-006\n", f"    reaction: IF-006\n    limit: {limit}\n"),
+                             encoding="utf-8")
+
     def seal(self) -> None:
         files = {path.relative_to(self.version).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in self.version.rglob("*") if path.is_file() and path.name != "manifest.json"}
         (self.version / "manifest.json").write_text(json.dumps({"label": "v1", "files": files}), encoding="utf-8")
 
-    def publish(self, interfaces: dict[str, Any], outcome: str = "pass", replace: bool = False) -> Path:
+    def publish(self, interfaces: dict[str, Any], outcome: str = "pass", replace: bool = False,
+                code: dict[str, str] | None | str = "current") -> Path:
+        """Seal a stop-reaction bundle. Its recipe records `code`, the current code table unless another is given
+        (None records none), the way stop_reaction.py records it."""
         detail = {"interfaces": interfaces, "limits": []}
-        recipe = {"detail": hashlib.sha256(json.dumps(detail, sort_keys=True).encode()).hexdigest()}
+        recipe: dict[str, Any] = {"detail": hashlib.sha256(json.dumps(detail, sort_keys=True).encode()).hexdigest()}
+        if code is not None:
+            recipe["code"] = current_code() if code == "current" else code
         output, _ = CHECK_PACKET.emit(LAYOUT, self.hw, "v1", SUBJECT, "cad-analysis stop_reaction.py", packet(outcome),
                                       detail, EVIDENCE, recipe, out=None, replace=replace,
                                       record_version=INTENT.RECORD_VERSION)
