@@ -4,12 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 permissions:
   contents: read
 
 concurrency:
-  # A pull request's newer push replaces its older run; every push to main keeps its own run.
+  # A pull request's newer push replaces its older run; every push to main and every merge group
+  # keeps its own run, keyed by the commit sha, so one merge group never cancels another.
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
