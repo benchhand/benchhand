@@ -85,6 +85,14 @@ class DecisionRecord:
 
 # --- validation ------------------------------------------------------------------------------------------
 
+def _shown(value: object, limit: int = 60) -> str:
+    """`value` for a diagnostic: its text cut to `limit` characters, and anything not text named by its type, so
+    an oversized integer or string never reaches a formatter."""
+    if not isinstance(value, str):
+        return f"<{type(value).__name__}>"
+    return repr(value if len(value) <= limit else value[:limit] + "...")
+
+
 def _check_text(what: str, value: object, *, single_line: bool = False) -> None:
     if not isinstance(value, str) or not value or value != value.strip():
         raise DecisionRecordError(f"{what} must be non-empty text without leading or trailing whitespace")
@@ -105,9 +113,9 @@ def _check_identity(record: DecisionRecord) -> None:
     if not FILE_NAME.fullmatch(record.file_name):
         raise DecisionRecordError(f"slug {record.slug!r} must be lower-case words joined by hyphens")
     _check_text("title", record.title, single_line=True)
-    if record.status not in STATUSES:
+    if not isinstance(record.status, str) or record.status not in STATUSES:
         raise DecisionRecordError(
-            f"status {record.status!r} must be one of {', '.join(STATUSES)}; superseded is derived from "
+            f"status {_shown(record.status)} must be one of {', '.join(STATUSES)}; superseded is derived from "
             "superseded-by, never stored as a status")
     if type(record.date) is not datetime.date:
         raise DecisionRecordError("date must be a calendar date (YYYY-MM-DD)")
@@ -117,7 +125,7 @@ def _check_supersession(record: DecisionRecord) -> None:
     _check_list("superseded-by", record.superseded_by, required=False)
     for ident in record.superseded_by:
         if not DR_ID.fullmatch(ident):
-            raise DecisionRecordError(f"superseded-by {ident!r} must be a DR-### id")
+            raise DecisionRecordError(f"superseded-by {_shown(ident)} must be a DR-### id")
         if ident == record.id:
             raise DecisionRecordError(f"{record.id} cannot supersede itself")
     if len(set(record.superseded_by)) != len(record.superseded_by):
@@ -241,6 +249,9 @@ class _FrontLoader(yaml.SafeLoader):  # type: ignore[misc]
     `status: accepted` would approve."""
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        if not isinstance(node, yaml.MappingNode):  # a sequence or scalar given a mapping tag (!!map, !!set)
+            raise yaml.constructor.ConstructorError(
+                None, None, f"expected a mapping node, found {node.id}", node.start_mark)
         seen: set[Any] = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=True)
@@ -249,7 +260,7 @@ class _FrontLoader(yaml.SafeLoader):  # type: ignore[misc]
                     None, None, "found an unhashable key", key_node.start_mark)
             if key in seen:
                 raise yaml.constructor.ConstructorError(
-                    None, None, f"the key {key!r} is given twice", key_node.start_mark)
+                    None, None, f"the key {_shown(key)} is given twice", key_node.start_mark)
             seen.add(key)
         mapping: dict[Any, Any] = super().construct_mapping(node, deep)
         return mapping
@@ -263,13 +274,17 @@ def _front(text: str) -> tuple[dict[str, Any], str]:
         raise DecisionRecordError("the YAML front matter is not closed by a '---' line")
     try:
         front = yaml.load(text[4:end + 1], Loader=_FrontLoader)  # noqa: S506  (a SafeLoader subclass)
-    except (yaml.YAMLError, ValueError) as error:
-        raise DecisionRecordError(f"the YAML front matter is invalid: {error}") from error
+    # PyYAML's constructors let these escape on malformed tagged scalars (KeyError, AttributeError, IndexError),
+    # a wrongly shaped node (TypeError), huge values (OverflowError) and deep nesting (RecursionError).
+    except (yaml.YAMLError, ValueError, KeyError, AttributeError, IndexError, TypeError, RecursionError,
+            OverflowError) as error:
+        raise DecisionRecordError(f"the YAML front matter is invalid: {str(error)[:200]}") from error
     if not isinstance(front, dict):
         raise DecisionRecordError("the YAML front matter must be a mapping")
-    unknown = sorted(set(front) - FRONT_KEYS, key=str)
+    unknown = sorted(set(front) - FRONT_KEYS, key=_shown)
     if unknown:
-        raise DecisionRecordError(f"unknown front matter keys {unknown}; MADR 4.0.0 has {sorted(FRONT_KEYS)}")
+        shown = ", ".join(_shown(key) for key in unknown[:10]) + (", ..." if len(unknown) > 10 else "")
+        raise DecisionRecordError(f"unknown front matter keys [{shown}]; MADR 4.0.0 has {sorted(FRONT_KEYS)}")
     missing = [key for key in ("status", "date") if key not in front]
     if missing:
         raise DecisionRecordError(f"front matter lacks {', '.join(missing)}")

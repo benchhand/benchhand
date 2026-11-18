@@ -232,6 +232,8 @@ ALLOWED = [
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_a_front_matter_key_given_twice_is_refused_naming_the_key', 'DR-001-twice.md', TMP),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_a_sequence_or_mapping_as_a_front_matter_key_is_refused_naming_the_file', 'DR-001-unhashable.md', TMP),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_an_impossible_calendar_date_is_refused_naming_the_file', 'DR-001-date.md', TMP),
+    Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_a_front_matter_the_yaml_constructors_cannot_convert_is_refused_naming_the_file', 'DR-001-yaml.md', TMP),
+    Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_a_huge_integer_key_or_status_is_refused_with_a_bounded_message', 'DR-001-huge.md', TMP, 2),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_unknown_front_matter_keys_of_mixed_types_are_refused_naming_the_file', 'DR-001-keys.md', TMP),
     Allow('skills/cad-record/tests/test_release.py', 'Documents.guide', 'docs', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Documents.test_the_package_okh_toml_describes_its_release', 'docs', HW),
