@@ -676,6 +676,23 @@ class SignFlowTests(unittest.TestCase):
         self.assertEqual(api.doc, {"signatures": [existing]})
         self.assertEqual(api.puts(), [])
 
+    def test_a_failed_recheck_after_a_conflicting_write_keeps_the_other_writers_record(self) -> None:
+        stale = self.record(7, 50)  # same version, its comment was deleted
+        theirs = {**self.record(7, 99), "signed_at": "other-writer"}
+        api = FakeGitHub([commit(7, "dev")], doc={"signatures": [stale]}, comments={99: PHRASE},
+                         comment_status={99: 500})
+
+        def other_writer_lands() -> None:  # between our read and our PUT, so the first PUT is rejected
+            api.doc = {"signatures": [stale, theirs]}
+            api.version += 1
+
+        api.on_put = [other_writer_lands]
+        self.assertEqual(self.go(self.comment_env(), api), 1)
+        # attempt 2 dropped the stale record and found the signature already there (not inserted by us)
+        self.assertEqual(api.doc, {"signatures": [theirs]})
+        self.assertEqual(len(api.puts()), 2)
+        self.assertEqual([p["conclusion"] for p in api.posted()], ["success"])
+
     def test_resigning_replaces_a_stale_record_of_the_same_version(self) -> None:
         stale = self.record(7, 50)  # same version, its comment was deleted
         api = FakeGitHub([commit(7, "dev")], doc={"signatures": [stale]}, comments={99: PHRASE})
