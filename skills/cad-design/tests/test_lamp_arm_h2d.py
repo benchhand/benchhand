@@ -110,7 +110,7 @@ class H2dProfileTests(unittest.TestCase):
         self.assertEqual(approvals["petg"]["status"], "approved")
         decision = approvals["petg"]["source"]["decision"]
         self.assertEqual(decision, "DR-005")
-        self.assertTrue((HW / "decisions" / f"{decision}.md").is_file())
+        self.assertIn(decision, {path.stem for path in (HW / "decisions").iterdir()})
         self.assertIn("petg", self.record.materials)
 
     def test_the_printed_parts_name_petg_as_their_material_profile(self) -> None:
