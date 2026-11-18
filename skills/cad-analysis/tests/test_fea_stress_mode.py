@@ -204,6 +204,7 @@ class Outcomes(StressCase):
             with self.subTest(name):
                 self.assertEqual((result["status"], result["status_scope"]), ("pass", "run"))
                 self.assertEqual(result["max_displacement_mm"], 0.2)  # the fine solve's, not the coarse 0.19
+                self.assertEqual(result["run_id"], self.jobs[1]["run_id"])  # the run that completed the study
 
     def test_an_unknown_study_still_passes_the_run_and_the_stiffness_check(self) -> None:
         # mesh_size 2 is the size the approved convergence study (DR-002) is bound to.
