@@ -643,7 +643,11 @@ def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any],
     # landed; the revoking job saw no record then. Check again now that the record exists.
     holds = comment_holds_phrase(api, repo, comment["id"], config.version)
     if holds is None:
-        raise RuntimeError("could not re-check the signing comment after recording the signature")
+        # Cannot tell whether the comment still stands: do not leave the record behind. Roll it back
+        # (blob-sha safe), refresh the affected checks, and still fail the job.
+        print("Could not re-check the signing comment; rolling the signature back.")
+        invalidate_user(api, sig_api, repo, user["id"], comment["id"], pull, config)
+        return 1
     if not holds:
         print("The signing comment changed while the signature was recorded; removing it.")
         return invalidate_user(api, sig_api, repo, user["id"], comment["id"], pull, config)

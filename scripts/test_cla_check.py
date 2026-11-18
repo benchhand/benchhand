@@ -661,10 +661,13 @@ class SignFlowTests(unittest.TestCase):
             last[p["head_sha"]] = p["conclusion"]
         self.assertEqual(last, {a: "failure", b: "failure"})
 
-    def test_a_failed_recheck_of_the_comment_fails_the_job(self) -> None:
+    def test_a_failed_recheck_of_the_comment_rolls_the_signature_back_and_fails_the_job(self) -> None:
         api = FakeGitHub([commit(7, "dev")], doc=sigs())
         api.after_put = [lambda: api.comment_status.__setitem__(99, 500)]
         self.assertEqual(self.go(self.comment_env(), api), 1)
+        self.assertEqual(api.doc, sigs())  # the record that was just written is gone
+        self.assertFalse(cla.evaluate([commit(7, "dev")], (7, "dev"), api.doc, CONFIG).ok)
+        self.assertEqual(api.posted()[-1]["conclusion"], "failure")
 
     def test_resigning_replaces_a_stale_record_of_the_same_version(self) -> None:
         stale = self.record(7, 50)  # same version, its comment was deleted
