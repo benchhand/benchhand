@@ -481,8 +481,6 @@ runpy.run_path(sys.argv[1], run_name="__main__")
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
     def test_a_fast_cantilever_reports_its_displacement_and_labelled_p95_from_the_full_mode_mesh(self) -> None:
-        import fea_modes
-
         with tempfile.TemporaryDirectory(prefix="cad-fea-fast-") as directory:
             root = Path(directory)
             step = self.make_cantilever_step(root)
@@ -493,7 +491,9 @@ runpy.run_path(sys.argv[1], run_name="__main__")
         self.assertEqual(status, 0, result)
         self.assertLess(abs(result["max_displacement_mm"] / 2.31884 - 1), 0.05)  # beam theory, as the full solve
         indicator = result["mesh_stability_indicator"]
-        self.assertEqual(indicator["label"], fea_modes.P95_LABEL)
+        self.assertIn("mesh-stability indicator", indicator["label"])
+        self.assertIn("not a strength value", indicator["label"])
+        self.assertIn("separate stress study", result["stress_study"])
         self.assertGreater(indicator["p95_von_mises_mpa"], 0)
         self.assertEqual(indicator["nodes"], result["node_count"])
         self.assertEqual({"max_von_mises_mpa", "safety_factor_yield", "required_safety_factor"} & set(result), set())

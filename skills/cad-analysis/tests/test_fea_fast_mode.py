@@ -158,7 +158,13 @@ class FastCase(conditions_tests.SourcedFEACase):
                 sites = p95_sites(result)
                 self.assertTrue(sites, "a fast result reports the p95 von Mises stress")
                 for site in sites:
-                    self.assertEqual(site.get("label"), fea_modes.P95_LABEL, site)
+                    self.assertIn("mesh-stability indicator", site.get("label", ""), site)
+                    self.assertIn("not a strength value", site.get("label", ""), site)
+
+    def test_a_fast_run_points_to_the_separate_stress_study_for_any_stress_figure(self) -> None:
+        for name, result in zip(("stdout", "published results.json"), self.fast_results()):
+            with self.subTest(name):
+                self.assertIn("separate stress study", result.get("stress_study", ""), result)
 
     def test_a_fast_bundle_is_keyed_by_its_mode_and_the_full_mode_mesh(self) -> None:
         report, _ = self.fast_results()
