@@ -6,8 +6,9 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["click==8.5.1", "jsonschema>=4.23", "pyyaml>=6.0"]
 # ///
+# click: --prune's store gc runs cad_model.py in this interpreter (prune.py), and cad_model.py's CLI needs it.
 """Seal a release package of the frozen version: byte copies and a version 3 manifest under hw/releases/<REV>/.
 
     uv run --script release.py HW --rev A --version v3 --decision DR-007
