@@ -35,8 +35,8 @@ TRIGGER
 - `fixed_faces`: required selector for constrained faces, using the same `indices` or `plane` forms as each `loads[].selector`.
 - `loads`: non-empty list of `{selector, force: [Fx, Fy, Fz]}` in N; `load` optionally identifies its use-case load.
 - `mesh_size`: positive maximum element size in mm.
-- `mode`: optional `full` (the default) or `fast`. See [Fast mode](#fast-mode).
-- `required_safety_factor`: optional positive check threshold; a completed solve below it fails. Fast mode refuses it.
+- `mode`: optional `full` (the default), `fast` or `stress`. See [Fast mode](#fast-mode) and [Stress mode](#stress-mode).
+- `required_safety_factor`: optional positive check threshold; a completed solve below it fails. Fast and stress mode refuse it.
 - `timeout_seconds`: optional positive whole-job limit, default 600. `null` takes the default.
 
 ## Record-bound material and evidence
@@ -78,6 +78,32 @@ A case with `mode: fast` checks displacement and stiffness only. It meshes with 
 - `status: pass` with `status_scope: run`: the solver run completed. It is no strength verdict.
 
 A fast result states no stress figure, no yield safety factor and no stress verdict. Its `engineering.strength` outcome stays `unknown`. A fast case refuses `required_safety_factor` and `acceptance.strength`. In the fast-bias campaign, displacement and p95 settled between meshes. The peak stress and the stress away from supports did not.
+
+## Stress mode
+
+A case with `mode: stress` runs the stress study. It solves two curved meshes, at `mesh_size` h and at 0.75 h. Each solve gets the case's `timeout_seconds`. `fea_stress.compare_levels` reads both `.frd` results. It compares the stress at nodes farther than 3 h from every fixed or load face.
+
+The result reports:
+
+- `stress_study.outcome` is `settled`, `settled_away_from_support` or `unknown`.
+- `settled`: an interior peak that converged within 2%. `sigma_mpa` holds the larger kept peak, and `strength_eligible` is true.
+- `settled_away_from_support`: the peak sits on the exclusion boundary. The stress near the support is higher. `sigma_info_mpa` holds the figure for information only. `sigma_mpa` is null. `strength_eligible` is false. The route to a value there is linearisation at the support (#209).
+- `unknown` carries no number. `reasons` and `message` give the cause and the figures.
+- `max_displacement_mm` comes from the fine solve.
+- `status: pass` with `status_scope: run`, as in fast mode. The status belongs to the solver runs, also when the study is `unknown`.
+
+A stress result states no `max_von_mises_mpa` and no `safety_factor_yield`. Its `engineering.strength` outcome stays `unknown` until the record maps the study onto that obligation. A stress case refuses `required_safety_factor`.
+
+A failed solve is a no-result error. `error.details.stress_study_solve` names the coarse or fine solve. A failed coarse solve stops the study.
+
+A result the study cannot read gives `unknown`, with one of these reasons:
+
+- `malformed_frd`
+- `boundary_nodes_unreadable`
+- `results_file_missing`
+- `mesh_sizes_not_ordered`
+
+The evidence keeps the files of both solves under `evidence/<run id>/`. `stress_study.runs` names those folders.
 
 ## Stop reaction
 
@@ -125,7 +151,7 @@ A stop-reaction `fail` outcome does not refuse the case. It records a contact lo
 
 ## Exit codes
 
-- `0`: analysis completed and any requested safety-factor threshold passed. A completed fast case exits 0.
+- `0`: analysis completed and any requested safety-factor threshold passed. A completed fast or stress case exits 0, whatever the study outcome.
 - `1`: analysis completed, but the required safety factor was not met.
 - `2`: no result; invalid input, unavailable or failed FreeCAD job, timeout, malformed result, or infrastructure error.
 

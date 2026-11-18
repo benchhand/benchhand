@@ -13,6 +13,11 @@ von Mises stress over all mesh nodes. It reports no stress figure, safety factor
 is the run's: `pass` means that the solver run completed, and `status_scope` says so. A peak and the stress away
 from supports did not settle between meshes in the fast-bias campaign, so stress needs the separate stress study.
 
+`stress` is that study. It solves two curved meshes, at the case's `mesh_size` h and at `STRESS_STEP_RATIO` x h,
+and fea_stress compares their stress away from the supports and loads. Each of its two solves reports the peak
+displacement and the run's status only: the stress comes from the solve's `.frd` file, and fea_stress_study
+states the outcome.
+
 Standard library only: the FreeCAD job (Python 3.11) imports these names too.
 """
 
@@ -22,8 +27,10 @@ import statistics
 from collections.abc import Sequence
 from typing import Any
 
-MODES = ("full", "fast")
+MODES = ("full", "fast", "stress")
 DEFAULT = "full"
+# The fine mesh of a stress study is this fraction of the coarse mesh size: the r2-finer step of the fast-bias campaign.
+STRESS_STEP_RATIO = 0.75
 P95_LABEL = ("mesh-stability indicator, not a strength value: the 95th-percentile von Mises stress over all mesh "
              "nodes. It shows whether the stress field settles as the mesh changes. It has no pass or fail and "
              "supports no strength, yield or safety-factor claim.")
@@ -45,6 +52,8 @@ def reported(mode: str, *, von_mises: Sequence[float], displacement: Sequence[fl
     """The result fields of a completed solve in `mode`, from its nodal von Mises stress (MPa) and nodal
     displacement magnitude (mm): its measurements and its status."""
     max_displacement = max(displacement)
+    if mode == "stress":  # one solve of a stress study: its stress is read from the results file
+        return {"max_displacement_mm": max_displacement, "status": "pass", "status_scope": "run"}
     if mode == "fast":
         return {"max_displacement_mm": max_displacement,
                 "mesh_stability_indicator": {"p95_von_mises_mpa": percentile_95(von_mises), "nodes": len(von_mises),

@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 import subprocess
+import tempfile
 import uuid
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ import yaml
 import fea_conditions as conditions
 import fea_modes as modes
 import fea_reaction as reactions
+import fea_stress_study as stress_study
 from fea_part_selection import OCCURRENCE_REF, selected_face_indices as _selected_face_indices
 from freecad_lookup import find_freecad
 import importlib.util
@@ -190,6 +192,9 @@ def load_case(path: Path) -> dict[str, Any]:
     if raw["_mode"] == "fast" and required_safety_factor is not None:
         raise CaseError("a fast case reports no stress, so required_safety_factor cannot apply: remove it, or "
                         "set mode: full for a yield safety factor")
+    if raw["_mode"] == "stress" and required_safety_factor is not None:
+        raise CaseError("a stress case reports no yield safety factor, so required_safety_factor cannot apply: "
+                        "remove it, or set mode: full for a yield safety factor")
     if raw["_mode"] == "fast" and acceptance is not None and "strength" in acceptance:
         raise CaseError("a fast case reports no stress, so acceptance.strength cannot apply: remove it, or "
                         "set mode: full for a strength check")
@@ -323,6 +328,84 @@ def run_directory(case_path: Path, run_id: str, scratch_root: Path | None = None
 def default_result_path(case_path: Path) -> Path:
     """Where a standalone run without --out writes its result: beside the case YAML."""
     return case_path.parent.resolve() / "results.json"
+
+
+def run_case(case_path: Path, case: dict[str, Any], **kwargs: Any) -> tuple[dict[str, Any], int]:
+    """Run one case: a stress case is two compared solves, any other case one solve."""
+    if case.get("_mode", modes.DEFAULT) == "stress":
+        return run_stress(case_path, case, **kwargs)
+    return run_job(case_path, case, **kwargs)
+
+
+def run_stress(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None = None,
+               result_path: Path | None = None, solver_versions: dict[str, dict[str, str]] | None = None,
+               guard: Any = None) -> tuple[dict[str, Any], int]:
+    """Run the stress study: a coarse solve at the case's mesh_size and a fine one at STRESS_STEP_RATIO times it.
+
+    Each solve is one `run_job` and gets the case's timeout. A failed solve is a no-result run: its error is
+    returned with the solve named, and a failed coarse solve stops the study before the fine one. Two completed
+    solves are compared by fea_stress_study, which states the outcome in `stress_study`. The run's `status` is the
+    solver runs' (`pass`, scope `run`), also when the study is UNKNOWN.
+    """
+    output_path = result_path or default_result_path(case_path)
+    sizes = {"coarse": float(case["mesh_size"]), "fine": float(case["mesh_size"]) * modes.STRESS_STEP_RATIO}
+    solves: dict[str, dict[str, Any]] = {}
+    with tempfile.TemporaryDirectory() as scratch:
+        for label, size in sizes.items():
+            result, status = run_job(case_path, {**case, "mesh_size": size}, scratch_root=scratch_root,
+                                     result_path=Path(scratch) / f"{label}.json", solver_versions=solver_versions,
+                                     guard=guard)
+            if status != 0:
+                failed = _failed_solve(label, size, result)
+                output_path.write_text(json.dumps(failed, indent=2) + "\n", encoding="utf-8")
+                return failed, 2
+            solves[label] = result
+    combined = _combined_stress_result(solves, sizes)
+    output_path.write_text(json.dumps(combined, indent=2) + "\n", encoding="utf-8")
+    return combined, 0
+
+
+def _failed_solve(label: str, size: float, result: dict[str, Any]) -> dict[str, Any]:
+    """The no-result error of a stress study whose `label` solve failed, with that solve named."""
+    failure = dict(result.get("error") or {})
+    failure["message"] = (f"the {label} solve of the stress study (mesh_size {size:g} mm) failed: "
+                          f"{failure.get('message', 'no result')}")
+    failure["details"] = {**(failure.get("details") or {}), "stress_study_solve": label, "mesh_size_mm": size}
+    return {**result, "status": "error", "error": failure}
+
+
+def _combined_stress_result(solves: dict[str, dict[str, Any]], sizes: dict[str, float]) -> dict[str, Any]:
+    """The result of two completed solves: the study, the fine solve's measurements, both solves' evidence.
+
+    The two run directories are siblings, so the result's `run_directory` is their parent and every retained
+    file is named from there, which keeps both solves' files apart in a published bundle.
+    """
+    coarse, fine = solves["coarse"], solves["fine"]
+    dirs = {label: Path(result["run_directory"]) for label, result in solves.items()}
+    runs = {label: stress_study.SolveRun(dirs[label], sizes[label],
+                                         stress_study.fallback_level(solves[label].get("mesh_quality") or {}))
+            for label in solves}
+    found = stress_study.run_study(runs["coarse"], runs["fine"])
+    found["runs"] = {label: {"evidence": dirs[label].name, "mesh_size_mm": sizes[label]} for label in solves}
+    return {
+        "run_id": fine["run_id"], "part": coarse.get("part"), "occurrence": coarse.get("occurrence"),
+        "solid_index": coarse.get("solid_index"), "mode": "stress",
+        "max_displacement_mm": fine["max_displacement_mm"], "status": "pass", "status_scope": "run",
+        "stress_study": found,
+        "node_count": fine.get("node_count"), "element_count": fine.get("element_count"),
+        "solve_time_seconds": sum(result.get("solve_time_seconds") or 0 for result in solves.values()),
+        "solver_versions": coarse.get("solver_versions"),
+        "warnings": [f"{label} solve: {warning}" for label, result in solves.items()
+                     for warning in result.get("warnings", [])],
+        "worst_case_pose": coarse.get("worst_case_pose"),
+        "mesh_input_hashes": {label: result.get("mesh_input_hashes") for label, result in solves.items()},
+        "mesh_quality": {label: result.get("mesh_quality") for label, result in solves.items()},
+        "mesh_input_files": [f"{dirs[label].name}/{name}" for label, result in solves.items()
+                             for name in result.get("mesh_input_files", [])],
+        "retained_files": [f"{dirs[label].name}/{name}" for label, result in solves.items()
+                           for name in result.get("retained_files", [])],
+        "run_directory": str(dirs["coarse"].parent),
+    }
 
 
 def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None = None,
@@ -676,6 +759,7 @@ def _producer_code_hashes() -> dict[str, str]:
     paths = (Path(__file__), Path(__file__).with_name("fea_part_selection.py"), Path(__file__).with_name("fea_reaction.py"),
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
              Path(__file__).with_name("mesh_quality.py"), Path(__file__).with_name("fea_modes.py"),
+             Path(__file__).with_name("fea_stress.py"), Path(__file__).with_name("fea_stress_study.py"),
              conditions.INTENT_PATH, Path(SOLVERS.__file__))
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
@@ -689,10 +773,12 @@ def _input_hashes(case: dict[str, Any]) -> dict[str, str]:
 
 
 def _case_options(case: dict[str, Any]) -> dict[str, Any]:
-    # A full case's options are as before. A fast case adds its mode, and both modes mesh with the same settings.
+    # A full case's options are as before. A fast or stress case adds its mode, and every mode meshes with the same
+    # settings. A stress case adds its step ratio: the fine mesh size is that fraction of mesh_size.
     mode = case.get("_mode", modes.DEFAULT)
     return {
-        **({"mode": mode} if mode == "fast" else {}),
+        **({"mode": mode} if mode != modes.DEFAULT else {}),
+        **({"stress_step_ratio": modes.STRESS_STEP_RATIO} if mode == "stress" else {}),
         "part": case.get("part"), "occurrence": case.get("occurrence"), "solid_index": case.get("solid_index"),
         "material": case["material"], "fixed_faces": case["fixed_faces"], "loads": case["loads"],
         "mesh_size": case["mesh_size"], "pose": case.get("pose"),
@@ -809,7 +895,7 @@ def main(argv: list[str] | None = None) -> int:
                     output = stage / "results.json"
                     job_scratch = Path(args.hw).parent / ".cad-work"
                     job_scratch.mkdir(parents=True, exist_ok=True)
-                    result, status = run_job(case_path, case, scratch_root=job_scratch,
+                    result, status = run_case(case_path, case, scratch_root=job_scratch,
                                              result_path=output, solver_versions=tools, guard=guard)
                 if status != 2:
                     conditions.report(result, assessment, case)
@@ -825,7 +911,7 @@ def main(argv: list[str] | None = None) -> int:
                         shutil.copyfile(source, target)
                         evidence_files.append(target.relative_to(stage).as_posix())
                     result["retained_files"] = evidence_files
-                    result["mesh_input_files"] = [f"evidence/{Path(name).name}"
+                    result["mesh_input_files"] = [f"evidence/{name}"
                                                    for name in result.get("mesh_input_files", [])]
                     result["run_directory"] = None
                     result["bundle"] = str(result_dir)
@@ -856,7 +942,7 @@ def main(argv: list[str] | None = None) -> int:
             # A scratch run is recorded in its project's hw/, one per case file; it is supervised either way.
             with (lifecycle.claim_run(project_hw, "fea", scope=str(case_path)) if project_hw is not None and project_hw.is_dir()
                   else contextlib.nullcontext()) as guard:
-                result, status = run_job(case_path, case, scratch_root=scratch_root, result_path=output, guard=guard)
+                result, status = run_case(case_path, case, scratch_root=scratch_root, result_path=output, guard=guard)
             if status != 2:
                 conditions.report(result, assessment, case)
                 (output or default_result_path(case_path)).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
