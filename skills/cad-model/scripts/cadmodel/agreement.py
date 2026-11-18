@@ -10,7 +10,9 @@ follows that surface within its own deflection. A mismatch beyond that is a diff
 directions together see a feature that one mesh has and the other lacks.
 
 An occurrence the data cannot judge (no deflection recorded, no node or triangles in the GLB, no shape) is
-`unknown`, never `pass`. glTF is meters, Y up. The CAD frame is mm, Z up:
+`unknown`, never `pass`. The reach assumes that the reference lies within its own deflection. The code therefore
+measures each non-planar face of the reference against the face itself (`reference_deviation`), and an occurrence whose
+reference strays farther than the reach allows is `unknown` too. glTF is meters, Y up. The CAD frame is mm, Z up:
 (x, y, z) -> (1000 x, -1000 z, 1000 y), the inverse of the exporter's own conversion.
 """
 
@@ -37,12 +39,16 @@ Vec = tuple[float, float, float]
 Rot = tuple[Vec, Vec, Vec]
 EPS_MM = 5e-3           # float32 coordinates and the exporter's own rounding, on top of the deflections
 REFERENCE_FACTOR = 0.5  # the check tessellates the STEP reference at this fraction of the GLB deflection
-REACH_MARGIN = 2.0      # the reach is this many times the sum of both deflections. On lamp-arm (0.05 mm GLB) the
+REACH_MARGIN = 2.0      # the reach is this many times the sum of both deflections, and so allows the reference this
+                        # many times its own: a reference up to 0.05 mm off (GLB 0.05 + 0.05 = 0.10 mm) is still under
+                        # the 0.155 mm reach, and a clean part passes. `unknown` beyond that. On lamp-arm (0.05 mm GLB) the
                         # worst clean point sits at 1.19 of the sum (LMP-0004, a 1.2 mm fillet torus). The reach
                         # and EPS_MM leave a 1.74x margin. A bare sum would fail that clean part
 MAX_SAMPLES = 1500      # points checked per direction and occurrence
 CELLS = 8               # grid cells along the longest side of a mesh, for the triangle lookup
 SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contribute a sample point
+PLANAR_TOLERANCE = 1e-7  # a surface this flat is a plane whatever its type, and its reference cannot stray
+CHECKED_TRIANGLES = 8  # per measured face, the largest triangles of the reference mesh
 WORST_POINTS = 5        # failing points measured exactly, to report the distance
 BATCH = 256            # query points against their candidate triangles at once
 COMPONENTS = {5121: "<u1", 5123: "<u2", 5125: "<u4", 5126: "<f4"}
@@ -149,12 +155,34 @@ def read_glb(path: Path) -> dict[str, Mesh]:
 
 # --- reference mesh of a STEP shape -----------------------------------------------------------------
 
+@dataclass(frozen=True)
+class Deviation:
+    """The reference mesh's worst measured distance from the surface of its shape: `face` is the index of the face
+    in TopExp order, `surface` its type."""
+
+    error_mm: float
+    face: int
+    surface: str
+
+
 def reference(shape: Any, linear_mm: float) -> Mesh:
     """`shape` tessellated at `linear_mm` into a mesh in its own frame (on a copy: a caller's shape keeps its mesh).
     The control-surface deflection is on for every surface type: without it BRepMesh leaves a torus fillet up to
     3 x `linear_mm` from the B-rep. The reach relies on the reference lying within `linear_mm`."""
+    return _reference(shape, linear_mm, measure=False)[0]
+
+
+def reference_deviation(shape: Any, linear_mm: float) -> Deviation | None:
+    """How far the reference mesh of `shape` lies from its surface, measured on the largest triangles of each
+    non-planar, non-cylindrical face: exact distances of their centers to the face. None when the shape has no such face."""
+    return _reference(shape, linear_mm, measure=True)[1]
+
+
+def _reference(shape: Any, linear_mm: float, measure: bool) -> tuple[Mesh, Deviation | None]:
     from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.GeomLib import GeomLib_IsPlanarSurface
     from OCP.IMeshTools import IMeshTools_Parameters
     from OCP.TopLoc import TopLoc_Location
 
@@ -169,9 +197,11 @@ def reference(shape: Any, linear_mm: float) -> Mesh:
     BRepMesh_IncrementalMesh(work, parameters)
     points: list[Vec] = []
     triangles: list[tuple[int, int, int]] = []
-    for face in occ.subshapes(work, "FACE"):
+    worst: Deviation | None = None
+    for index, face in enumerate(occ.subshapes(work, "FACE")):
+        face = occ.downcast(face, "FACE")
         location = TopLoc_Location()
-        triangulation = BRep_Tool.Triangulation_s(occ.downcast(face, "FACE"), location)
+        triangulation = BRep_Tool.Triangulation_s(face, location)
         if triangulation is None:
             continue
         transform = location.Transformation()
@@ -182,9 +212,45 @@ def reference(shape: Any, linear_mm: float) -> Mesh:
         for i in range(1, triangulation.NbTriangles() + 1):
             a, b, c = triangulation.Triangle(i).Get()
             triangles.append((base + a - 1, base + b - 1, base + c - 1))
+        if measure:
+            surface = str(BRepAdaptor_Surface(face).GetType()).split("_")[-1]
+            # Cylinders are not measured: with the deflection control on, a cylinder's reference lies the chord sagitta of
+            # its linear bound off the surface, 0.0111 mm at most over R0.5 to R46 mm, solid or bore, at 0.25 and 0.1 rad
+            # (requested: 0.025 mm. Hand value of R10 at 0.25 rad: 0.0110 mm). They are the most common face.
+            if (surface not in ("Plane", "Cylinder")
+                    and not GeomLib_IsPlanarSurface(BRep_Tool.Surface_s(face), PLANAR_TOLERANCE).IsPlanar()):
+                error = _face_error(face, np.array(points[base:]), np.array(triangles[-triangulation.NbTriangles():]) - base)
+                if error is not None and (worst is None or error > worst.error_mm):
+                    worst = Deviation(error, index, surface)
     if not triangles:
-        return Mesh(np.empty((0, 3)), np.empty((0, 3), dtype=np.int64))
-    return Mesh(np.array(points), np.array(triangles, dtype=np.int64))
+        return Mesh(np.empty((0, 3)), np.empty((0, 3), dtype=np.int64)), worst
+    return Mesh(np.array(points), np.array(triangles, dtype=np.int64)), worst
+
+
+def _face_error(face: Any, points: np.ndarray, triangles: np.ndarray) -> float | None:
+    """The largest exact distance from `face` of the centers of its `CHECKED_TRIANGLES` largest triangles (the
+    triangles that stray furthest from a curved surface in most meshes).
+
+    The result is a sample and gives no upper bound. A smaller triangle, or a point of a triangle away from its center,
+    can lie farther from the face. The check catches a mesher that misses its deflection across a face, as it does on
+    an uncontrolled torus. It can miss a local overshoot."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    from OCP.gp import gp_Pnt
+
+    if not len(triangles):
+        return None
+    corners = points[triangles]
+    area = np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
+    largest = np.argsort(area)[-CHECKED_TRIANGLES:]
+    tool = BRepExtrema_DistShapeShape()
+    tool.LoadS2(face)
+    worst = 0.0
+    for center in corners[largest].mean(axis=1):
+        tool.LoadS1(BRepBuilderAPI_MakeVertex(gp_Pnt(*map(float, center))).Vertex())
+        tool.Perform()
+        worst = max(worst, float(tool.Value()))
+    return worst
 
 
 def placed(mesh: Mesh, rot: Rot, trans: Vec) -> Mesh:
@@ -325,11 +391,14 @@ def compare(glb: Mesh, step: Mesh, linear_mm: float) -> dict[str, Any]:
 
 
 def occurrences(glb: Path, nodes: Mapping[str, str], definitions: Mapping[str, Any],
-                placements: Mapping[str, Placement], linear_mm: float | None) -> dict[str, dict[str, Any]]:
+                placements: Mapping[str, Placement], linear_mm: float | None,
+                reference_budget_mm: float | None = None) -> dict[str, dict[str, Any]]:
     """Per occurrence id: `compare` of its GLB node (`nodes`: id -> node name) with its definition at its placement.
-    `unknown` when the version records no deflection, or the occurrence has no node, mesh or shape."""
+    `unknown` when the version records no deflection, or the occurrence has no node, mesh or shape, or when the
+    reference mesh of its shape lies farther from the shape than `reference_budget_mm` (default: the reference's share
+    of the reach, REACH_MARGIN times its REFERENCE_FACTOR deflection)."""
     meshes = read_glb(glb)
-    references: dict[str, Mesh] = {}
+    references: dict[str, tuple[Mesh, Deviation | None]] = {}
     rows: dict[str, dict[str, Any]] = {}
     for oid in sorted(placements):
         place = placements[oid]
@@ -342,6 +411,13 @@ def occurrences(glb: Path, nodes: Mapping[str, str], definitions: Mapping[str, A
             rows[oid] = {"status": "unknown", "reason": f"the STEP has no shape for {place.pn}"}
         else:
             if place.pn not in references:
-                references[place.pn] = reference(definitions[place.pn], linear_mm * REFERENCE_FACTOR)
-            rows[oid] = compare(node, placed(references[place.pn], place.rot, place.trans), linear_mm)
+                references[place.pn] = _reference(definitions[place.pn], linear_mm * REFERENCE_FACTOR, measure=True)
+            reference_mesh, deviation = references[place.pn]
+            budget = REACH_MARGIN * REFERENCE_FACTOR * linear_mm if reference_budget_mm is None else reference_budget_mm
+            if deviation is not None and deviation.error_mm > budget:
+                rows[oid] = {"status": "unknown", "reason": (
+                    f"the STEP reference mesh of {place.pn} lies {deviation.error_mm:.4f} mm from the surface on face "
+                    f"{deviation.face} ({deviation.surface}), beyond the {budget:.4f} mm the reach allows it")}
+            else:
+                rows[oid] = compare(node, placed(reference_mesh, place.rot, place.trans), linear_mm)
     return rows
