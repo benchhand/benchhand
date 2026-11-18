@@ -346,7 +346,8 @@ class UnreadableResults(StressCase):
     """Results the study cannot read give UNKNOWN with a named reason: never a crash and never a number."""
 
     def assert_unknown(self, plan: list[dict[str, Any]], reason: str, fragment: str) -> dict[str, Any]:
-        status, report = self.run_stress(plan)
+        # --replace: a subtest repeats the case with other bytes, and a published bundle of the same recipe is reused.
+        status, report = self.run_stress(plan, replace=True)
         self.assertEqual(status, 0, report)
         found = report["stress_study"]
         self.assertEqual((found["outcome"], found["reasons"]), ("unknown", [reason]))
