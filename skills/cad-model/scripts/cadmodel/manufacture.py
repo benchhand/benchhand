@@ -624,7 +624,15 @@ def _threemf_files(target: Path, entry: Mapping[str, Any], record: Mapping[str, 
                    shape: Any, measures: _Measures) -> dict[str, Any]:
     """`_threemf` of part.3mf and of each component's own part.3mf, each against its own STEP read back and the
     record's declared intent.color."""
-    color = (record.get("intent") or {}).get("color")
+    declared = record.get("intent")
+    if declared is not None and not isinstance(declared, Mapping):
+        return _judge({"declared_intent_valid": False},
+                      message=f"the record's intent is not a mapping ({type(declared).__name__})")
+    color = (declared or {}).get("color")
+    if declared and "color" in declared and not load_intent().color_is_valid(color):  # PartIntent.color's own rule
+        return _judge({"declared_color_valid": False},
+                      message=f"{load_intent().COLOR_INVALID}: the record's intent.color {color!r} is not an sRGB "
+                              "#RRGGBB string")
     rows: dict[str, dict[str, Any]] = {}
     if "part.3mf" in present and shape is not None:
         rows["part.3mf"] = _threemf(target / "part.3mf", entry, color, shape, measures)
