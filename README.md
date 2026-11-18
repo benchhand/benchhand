@@ -215,14 +215,14 @@ A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:
 
 ## License
 
-Benchhand is licensed under the [Mozilla Public License 2.0](LICENSE). Two files stay under the
-[Apache License 2.0](LICENSES/Apache-2.0.txt) because they are adapted from
+Benchhand uses the [Mozilla Public License 2.0](LICENSE). Two files stay under the
+[Apache License 2.0](LICENSES/Apache-2.0.txt) because they derive from
 [AgentCAD](https://github.com/jdilla1277/agentcad):
 
 - `skills/cad-model/scripts/cadmodel/safe.py`
 - `skills/cad-model/scripts/cadmodel/occ_derived.py`
 
 The project follows the [REUSE](https://reuse.software) specification: each file's SPDX header, or
-`REUSE.toml` for files that cannot carry one, names its copyright holder and licence. Check them with
+`REUSE.toml` for files that cannot carry one, names its copyright holder and license. Check them with
 `uvx --from 'reuse[charset-normalizer]==6.3.0' reuse lint`. [NOTICE](NOTICE) records third-party
 attributions, including the font notices.
