@@ -143,15 +143,16 @@ def filleted_disc() -> tuple[Any, Any]:
     return shape, torus
 
 
-def worst_distance(points: np.ndarray, target: Any) -> float:
-    """The largest exact distance of an even sample (about 600) of `points` to `target`."""
+def worst_distance(points: np.ndarray, target: Any, sample: int | None = 600) -> float:
+    """The largest exact distance of `points` to `target`: of an even sample of about `sample` points, or of all
+    of them when `sample` is None."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
     from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 
     tool = BRepExtrema_DistShapeShape()
     tool.LoadS2(target)
     worst = 0.0
-    for point in points[::max(1, len(points) // 600)]:
+    for point in points[::1 if sample is None else max(1, len(points) // sample)]:
         tool.LoadS1(BRepBuilderAPI_MakeVertex(gp_Pnt(*[float(c) for c in point])).Vertex())
         tool.Perform()
         worst = max(worst, tool.Value())
@@ -169,27 +170,56 @@ def reference_torus_error() -> dict[str, float]:
 
 
 def glb_torus_error(folder: Path) -> dict[str, float]:
-    """The exported GLB of the filleted disc: the largest exact distance of a triangle center on the fillet to the
-    torus face (not the solid), against the deflection the exporter records."""
+    """The exported GLB of the filleted disc, judged on the fillet face's own triangles. The exporter reads the STEP
+    into an XCAF document and meshes its shape with `mesh.tessellate`. This code repeats both steps, finds the torus
+    face of the shape it reads, and measures every one of the face's triangle centers, seam edges included,
+    against that face. `matched` is the share of those centers that the exported GLB holds as a triangle center."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.collections import Sequence_TDF_Label
+    from OCP.GeomAbs import GeomAbs_Torus
     from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPCAFControl import STEPCAFControl_Reader
     from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.XCAFApp import XCAFApp_Application
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
 
-    shape, torus = filleted_disc()
+    from cadmodel import occ
+
+    shape, _ = filleted_disc()
     step = folder / "disc.step"
     writer = STEPControl_Writer()
     writer.Transfer(shape, STEPControl_AsIs)
     assert writer.Write(str(step)) == IFSelect_RetDone
     info = mesh.write_glb(step, folder / "disc.glb")
-    nodes = agreement.read_glb(folder / "disc.glb")
-    triangles = [m.points[m.triangles].mean(axis=1) for m in nodes.values()]
-    centres = np.concatenate(triangles)
-    ring = np.hypot(centres[:, 0], centres[:, 1]) - 44.85
-    height = centres[:, 2] - 8.8
-    # A center strictly inside the fillet's quarter of the minor circle can only belong to a fillet triangle:
-    # the planar top and the cylinder wall lie outside it.
-    on_fillet = (ring > 0.05) & (ring < 1.15) & (height > 0.05) & (height < 1.15) & (np.abs(np.hypot(ring, height) - 1.2) < 0.3)
-    return {"linear_mm": info["linear_deflection_mm"], "worst_mm": worst_distance(centres[on_fillet], torus),
-            "triangles": float(on_fillet.sum())}
+    glb_centres = np.concatenate([m.points[m.triangles].mean(axis=1)
+                                  for m in agreement.read_glb(folder / "disc.glb").values()])
+
+    doc = TDocStd_Document(TCollection_ExtendedString("MDTV-XCAF"))
+    XCAFApp_Application.GetApplication_s().InitDocument(doc)
+    reader = STEPCAFControl_Reader()
+    reader.SetNameMode(True)
+    assert reader.ReadFile(str(step)) == IFSelect_RetDone and reader.Transfer(doc)
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    roots = Sequence_TDF_Label()
+    tool.GetFreeShapes(roots)
+    read = tool.GetShape_s(roots.Value(1))
+    mesh.tessellate(read, info["linear_deflection_mm"])
+    (torus,) = [f for f in occ.subshapes(read, "FACE")
+                if BRepAdaptor_Surface(occ.downcast(f, "FACE")).GetType() == GeomAbs_Torus]
+    location = TopLoc_Location()
+    triangulation = BRep_Tool.Triangulation_s(occ.downcast(torus, "FACE"), location)
+    transform = location.Transformation()
+    nodes = [triangulation.Node(i).Transformed(transform) for i in range(1, triangulation.NbNodes() + 1)]
+    centres = np.array([np.mean([[nodes[k - 1].X(), nodes[k - 1].Y(), nodes[k - 1].Z()]
+                                 for k in triangulation.Triangle(i).Get()], axis=0)
+                        for i in range(1, triangulation.NbTriangles() + 1)])
+    nearest = np.array([np.linalg.norm(glb_centres - c, axis=1).min() for c in centres])
+    return {"linear_mm": info["linear_deflection_mm"], "worst_mm": worst_distance(centres, torus, sample=None),
+            "triangles": float(len(centres)), "matched": float((nearest < 1e-3).mean())}
 
 
 if __name__ == "__main__":

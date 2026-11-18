@@ -74,10 +74,12 @@ class AgreementTests(unittest.TestCase):
     def test_the_exported_glb_of_a_torus_fillet_stays_within_its_deflection_of_the_face(self) -> None:
         """The exporter records a linear deflection and the floor trusts it: the GLB must lie that close to the
         B-rep. Without the control-surface deflection on for all surfaces the exported torus fillet strayed about 3 x
-        farther. The distance is to the torus face, since a point inside the solid reads 0 from the solid. The test
-        allows 1.25 x, like the reference test."""
+        farther. The test reads the torus face's own triangulation and measures every triangle center, seam edges
+        included, against that face (the solid would read 0 inside). The GLB must hold all of those triangles. The
+        test allows 1.25 x, like the reference test."""
         torus = self.probe["glb_torus"]
         self.assertGreater(torus["triangles"], 100)  # the fillet has triangles to measure
+        self.assertEqual(torus["matched"], 1.0, torus)  # the exported GLB holds every one of them
         self.assertLessEqual(torus["worst_mm"], 1.25 * torus["linear_mm"], torus)
 
     def test_a_hole_eight_millimetres_off_does_not_agree(self) -> None:

@@ -27,6 +27,21 @@ def deflection(shape: Any) -> float:
     return min(LINEAR_MAX_MM, max(LINEAR_MIN_MM, LINEAR_RELATIVE * math.dist(low, high)))
 
 
+def tessellate(shape: Any, linear: float) -> None:
+    """Triangulate every face of `shape` in place at `linear` mm and ANGULAR_RAD, as the preview GLB does."""
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.IMeshTools import IMeshTools_Parameters
+
+    parameters = IMeshTools_Parameters()
+    parameters.Deflection = linear
+    parameters.Angle = ANGULAR_RAD
+    parameters.Relative = False
+    parameters.InParallel = True
+    parameters.ControlSurfaceDeflection = True
+    parameters.EnableControlSurfaceDeflectionAllSurfaces = True  # without it a torus strays up to 3 x `linear`
+    BRepMesh_IncrementalMesh(shape, parameters)
+
+
 def _name_untagged_instances(tool: Any) -> None:
     """Name each component that carries no `[@id]` after its product, so instance node names are
     product names for a legacy singleton (the STEP reader names an unnamed component `=>[0:1:1:2]`)."""
@@ -59,11 +74,9 @@ def write_glb(step: Path, glb: Path) -> dict[str, Any]:
 
     Node names are instance names (`_name_untagged_instances`), mesh names product names; every
     occurrence is its own node, each with its own mesh."""
-    from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.collections import IndexedDataMap_TCollection_AsciiString_TCollection_AsciiString as Metadata
     from OCP.collections import Sequence_TDF_Label
     from OCP.IFSelect import IFSelect_RetDone
-    from OCP.IMeshTools import IMeshTools_Parameters
     from OCP.Message import Message_ProgressRange
     from OCP.RWGltf import RWGltf_CafWriter
     from OCP.RWMesh import RWMesh_CoordinateSystem, RWMesh_NameFormat
@@ -88,14 +101,7 @@ def write_glb(step: Path, glb: Path) -> dict[str, Any]:
     for index in range(1, roots.Length() + 1):
         shape = tool.GetShape_s(roots.Value(index))
         linear = deflection(shape)
-        parameters = IMeshTools_Parameters()
-        parameters.Deflection = linear
-        parameters.Angle = ANGULAR_RAD
-        parameters.Relative = False
-        parameters.InParallel = True
-        parameters.ControlSurfaceDeflection = True
-        parameters.EnableControlSurfaceDeflectionAllSurfaces = True  # without it a torus strays up to 3 x `linear`
-        BRepMesh_IncrementalMesh(shape, parameters)
+        tessellate(shape, linear)
     writer = RWGltf_CafWriter(TCollection_AsciiString(str(glb)), True)
     writer.SetNodeNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Instance)
     writer.SetMeshNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Product)
