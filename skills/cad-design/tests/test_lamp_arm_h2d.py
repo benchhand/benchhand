@@ -26,6 +26,9 @@ REPO = SKILLS.parent
 HW = REPO / "examples" / "lamp-arm" / "hw"
 TODAY = date(2026, 11, 18)
 PRINTED = ("LMP-0001", "LMP-0004")
+# The one finding each print obligation reports on the h2d profile, without geometry or a built version.
+PRINT_REASONS = {"geometry": "process.fdm.geometry_unassessed", "thermal_distortion": "process.fdm.geometry_unassessed",
+                 "orientation": "process.fdm.orientation_unapproved", "support": "process.fdm.support_unplanned"}
 DEPS = importlib.util.find_spec("yaml") is not None and importlib.util.find_spec("jsonschema") is not None
 
 for folder in (SKILLS / "cad-design" / "scripts", SKILLS / "cad-model" / "scripts"):
@@ -129,8 +132,6 @@ class H2dProfileTests(unittest.TestCase):
         self.assertEqual(self.result.by_code("process.fdm.capability_unknown"), [])
         for pn in PRINTED:
             with self.subTest(part=pn):
-                for family in ("geometry", "orientation", "support", "thermal_distortion"):
-                    self.assertNotIn("process.fdm.capability_unknown", codes(self.result, f"process.fdm.{family}@{pn}/print"))
                 route = codes(self.result, f"route.consistency@{pn}")
                 self.assertEqual(route.count("route.capability_unknown"), 1)  # the drilling operation's only
                 self.assertIn("finish_holes", measured(self.result, f"route.consistency@{pn}", "route.capability_unknown"))
@@ -145,10 +146,13 @@ class H2dProfileTests(unittest.TestCase):
                     self.assertEqual(codes(self.result, f"process.drilling.{family}@{pn}/finish_holes"),
                                      ["process.drilling.capability_unknown"])
 
-    def test_an_unapproved_orientation_keeps_the_pose_checks_unknown_for_their_own_reason(self) -> None:
+    def test_each_print_obligation_stays_unknown_for_its_own_new_reason(self) -> None:
         for pn in PRINTED:
-            with self.subTest(part=pn):
-                self.assertEqual(codes(self.result, f"process.fdm.orientation@{pn}/print"), ["process.fdm.orientation_unapproved"])
+            for family, reason in PRINT_REASONS.items():
+                obligation = f"process.fdm.{family}@{pn}/print"
+                with self.subTest(obligation=obligation):
+                    self.assertEqual(self.result.outcome(obligation)["outcome"], "unknown")
+                    self.assertEqual(codes(self.result, obligation), [reason])
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
