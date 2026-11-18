@@ -501,11 +501,13 @@ class Capabilities(unittest.TestCase):
         self.assertEqual(mi.capability_limit(template, "hole_diameter_deviation", material="tst_polymer_printed").status, "refused")
 
 
-# The obligations of fx.tst_record(), a record with no loaded structural interface, as enumerated before engineering.stop_reaction existed.
+# The obligations of fx.tst_record(), a record with no loaded structural interface, as origin/main a7d007e3 enumerates them
+# without engineering.stop_reaction. That is 55 obligations: 88be42e5 added assembly.order@product to the 54 of 43ad4409.
 TST_RECORD_OBLIGATIONS = (
     'assembly.access@op:fit_bearing',
     'assembly.joint@op:fit_bearing',
     'assembly.order@op:fit_bearing',
+    'assembly.order@product',
     'cad.readback@TST-0001',
     'cad.readback@TST-0002',
     'cad.readback@TST-0004',
