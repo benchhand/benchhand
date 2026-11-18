@@ -37,7 +37,7 @@ Use `--project DIR` to select a project directory. `--dry-run` previews changes,
 Alternatively, install Claude Code as a plugin from this public GitHub repository; `gh auth` is not required for public access. Or use a local checkout:
 
 ```text
-/plugin marketplace add srobroek/cad-agent
+/plugin marketplace add benchhand/benchhand
 /plugin install cad-agent@cad-agent
 ```
 

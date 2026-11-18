@@ -3,7 +3,7 @@ CAD Agent attribution
 
 This repository is an independent fork of the CAD skills imported from
 srobroek/omp-plugins at commit ab1dac9e48. The standalone project is maintained
-as srobroek/cad-agent. The upstream repository's Apache-2.0 license is included
+as benchhand/benchhand (earlier as srobroek/cad-agent). The upstream repository's Apache-2.0 license is included
 in LICENSE; this notice records provenance and third-party attributions.
 
 The cad-model skill contains modified portions adapted from AgentCAD 0.7.0:
