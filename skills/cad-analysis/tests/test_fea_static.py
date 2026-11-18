@@ -118,6 +118,23 @@ def job_of(script: str) -> dict:
     return json.loads(ast.literal_eval(match.group(1)))
 
 
+def timeout_clock_after_phase():
+    """Patch for `fea_static.lifecycle.run`: the job's timeout clock starts once the job has written its phase
+    file, so a slow start-up cannot spend the budget. The wait is bounded at 120 s, then the clock starts anyway."""
+    real_run = fea_static.lifecycle.run
+    real_communicate = fea_static.lifecycle.Supervised.communicate
+
+    def run(argv, *, cwd, **kwargs):
+        def communicate(process, input=None, timeout=None):
+            wait_until(lambda: any(Path(cwd).glob("fea_static_*_phase.json")), timeout=120)
+            return real_communicate(process, input, timeout=timeout)
+
+        with patch.object(fea_static.lifecycle.Supervised, "communicate", communicate):
+            return real_run(argv, cwd=cwd, **kwargs)
+
+    return patch("fea_static.lifecycle.run", run)
+
+
 def hanging_case(step: Path, timeout_seconds: float) -> dict:
     return {"_step": str(step), "material": {"E": 1, "nu": 0.3, "density": 1, "yield": 1},
             "fixed_faces": {"indices": [1]}, "loads": [], "mesh_size": 1, "timeout_seconds": timeout_seconds}
@@ -996,14 +1013,14 @@ if len(sys.argv) > 1:
             step.touch()
             child_pid = root / "child.pid"
             freecad = hanging_freecad(root, child_pid)
-            case = hanging_case(step, timeout_seconds=5)
-            with patch("fea_static.find_freecad", return_value=freecad):
+            case = hanging_case(step, timeout_seconds=1)
+            with patch("fea_static.find_freecad", return_value=freecad), timeout_clock_after_phase():
                 result, status = run_job(root / "case.yaml", case,
                                          solver_versions={"calculix": {"path": "/unused/ccx", "version": "2.23"}})
             self.assertEqual(status, 2)
             self.assertEqual(result["error"]["code"], "freecad_timeout")
             self.assertEqual(result["error"]["details"], {"phase": "import"})
-            self.assertIn("timeout_seconds of 5 while importing the STEP; raise timeout_seconds in the case YAML",
+            self.assertIn("timeout_seconds of 1 while importing the STEP; raise timeout_seconds in the case YAML",
                           result["error"]["message"])
             pid = int(child_pid.read_text(encoding="utf-8"))
             self.assertTrue(wait_until(lambda: not pid_runs(pid)), "a child of the timed-out FreeCAD job is still running")
