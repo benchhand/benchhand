@@ -21,7 +21,7 @@ Codes `retention.torque_path` and `retention.axial_retainer`. Both are errors fr
 - A `transmitted` revolute needs no `torque_path`. Give one only when its child is driven through the joint by a shaft that is not modelled, such as a coupler clamped on a motor's D-shaft.
 - Every `press_fit` and `locating_fit` needs an `axial_retainer`: `shoulder`, `circlip`, `set_screw`, `nut`, `pin`, `cap`, `captured`, `press_fit` or `adhesive`. A `press_fit` retainer is valid on a press fit only. A `running_fit` is a motion fit and is exempt.
 - A hardware torque path (`key`, `set_screw`, `pin`) or hardware retainer (`circlip`, `set_screw`, `nut`, `pin`, `cap`) names its modelled occurrences in `parts`, and each must resolve to one occurrence. A decision record naming hardware nobody modelled does not count.
-- `decision: DR-###` links either one to the decision record that chose it. `validate.py` rejects a link with no `decisions/DR-###.md`, at every stage.
+- `decision: DR-###` links either one to the decision record that chose it. `validate.py` rejects a link with no `decisions/DR-###-slug.md`, at every stage.
 
 ### Retrofitting an existing record
 

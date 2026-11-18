@@ -48,6 +48,8 @@ coupling = _load_module("cad_motion_coupling", Path(__file__).resolve().parents[
 # The canonical hw/ layout (layout.json beside schemas/), the one reader of where record and output files live.
 layout = _load_module("cad_record_layout", Path(__file__).resolve().parent / "layout.py")
 emit = _load_module("cad_record_emit", Path(__file__).resolve().parent / "emit.py")
+# The MADR 4.0.0 decision records under hw/decisions/ (the one reader of DR-###-slug.md).
+decision_records = _load_module("cad_record_decision_records", Path(__file__).resolve().parent / "decision_records.py")
 # The record version 2 manufacturing intent (the one reader of use case, routes and profiles) and the
 # evidence model on it: waivers, typed verification and the acceptance digest.
 intent = _load_module("cad_record_manufacturing_intent", Path(__file__).resolve().parent / "manufacturing_intent.py")
@@ -614,36 +616,47 @@ def check_manufacture(part: dict[str, Any], path: str, hw: Path, findings: list[
         findings.append(finding(path, "manufacture: only a custom-made part (make_buy: make, or procurement/mode: "
                                       "made_to_drawing) has a manufacturing state"))
     decision = manufacture.get("decision")
-    if decision is not None and not (hw / "decisions" / f"{decision}.md").is_file():
-        findings.append(finding(path, f"manufacture/decision {decision} does not exist at decisions/{decision}.md"))
+    if decision is not None and (problem := load_decision(hw, decision)[1]) is not None:
+        findings.append(finding(path, f"manufacture/decision {decision} {problem}"))
 
 
-# A gate decision's first line is `Status: APPROVED`, `Status: PROVISIONAL` or `Status: VOID` (cad-flow
-# references/flow.md "Gate control"). A decision without that line is a plain design decision.
-GATE_STATUS = re.compile(r"Status: (?P<status>\S+)")
-GATE_STATUSES = ("APPROVED", "PROVISIONAL", "VOID")
+def load_decision(hw: Path, decision: str) -> tuple[Any, str | None]:
+    """(record, None) for decision `decision` under hw/decisions/, a MADR 4.0.0 `DR-###-slug.md`; else
+    (None, why it is unusable): not a DR-### id, no such file, or a file the reader refuses."""
+    if not isinstance(decision, str) or re.fullmatch(r"DR-[0-9]{3}", decision) is None:
+        return None, "is not a DR-### id"
+    try:
+        path = layout.decision_file(hw, decision)
+    except layout.LayoutError as error:
+        return None, f"is ambiguous: {error}"
+    if path is None:
+        return None, f"has no record: expected hw/decisions/{decision}-<slug>.md"
+    try:
+        return decision_records.read_decision(path), None
+    except decision_records.DecisionRecordError as error:
+        return None, f"is not a valid MADR record: {error}"
 
 
-def not_an_approval(record: Path) -> str | None:
-    """Why the existing decision record `record` cannot approve a freeze, a change or a release: its first
-    line marks it PROVISIONAL, VOID or an unknown gate status. None for APPROVED and for a decision
-    without a status line."""
-    first = record.read_text(encoding="utf-8", errors="replace").partition("\n")[0].strip()
-    match = GATE_STATUS.fullmatch(first)
-    if match is None or match["status"] == "APPROVED":
+# A decision approves a freeze, a change or a release only when its MADR status is `accepted`. The gate
+# statuses of cad-flow references/flow.md map to MADR as APPROVED = accepted, PROVISIONAL = proposed
+# and VOID = rejected.
+APPROVING_STATUS = "accepted"
+
+
+def not_an_approval(record: Any) -> str | None:
+    """Why the decision `record` cannot approve a freeze, a change or a release: its status is not
+    `accepted`. None for an accepted record."""
+    if record.status == APPROVING_STATUS:
         return None
-    if match["status"] in GATE_STATUSES:
-        return f"is {match['status']}, not the user's approval"
-    return (f"has the unknown gate status {match['status']!r}; its first line must be `Status: APPROVED`, "
-            "`Status: PROVISIONAL` or `Status: VOID`")
+    return f"has status {record.status}, not the user's approval ({APPROVING_STATUS})"
 
 
 def decision_approves(hw: Path, decision: str | None) -> bool:
-    """Whether decision `decision` exists under hw/decisions/ and is the user's approval (`not_an_approval`)."""
-    if not isinstance(decision, str) or re.fullmatch(r"DR-[0-9]{3}", decision) is None:
+    """Whether decision `decision` is a valid record under hw/decisions/ with status `accepted`."""
+    if not isinstance(decision, str):
         return False
-    record = hw / "decisions" / f"{decision}.md"
-    return record.is_file() and not_an_approval(record) is None
+    record, problem = load_decision(hw, decision)
+    return problem is None and not_an_approval(record) is None
 
 
 def check_flow(product: dict[str, Any], path: str, hw: Path, part_records: dict[str, Any],
@@ -655,10 +668,9 @@ def check_flow(product: dict[str, Any], path: str, hw: Path, part_records: dict[
     for where, item in (("frozen", frozen), ("change", change)):
         if item is None:
             continue
-        record = hw / "decisions" / f"{item['decision']}.md"
-        if not record.is_file():
-            findings.append(finding(path, f"flow/{where}/decision {item['decision']} does not exist at "
-                                          f"decisions/{item['decision']}.md"))
+        record, missing = load_decision(hw, item["decision"])
+        if missing is not None:
+            findings.append(finding(path, f"flow/{where}/decision {item['decision']} {missing}"))
         elif (problem := not_an_approval(record)) is not None:
             findings.append(finding(path, f"flow/{where}/decision {item['decision']} {problem}; only the user's "
                                           f"approval {approves[where]}"))
@@ -706,25 +718,25 @@ def stage_reached(product: Any, stage: str) -> bool:
 
 def check_retention_decisions(hw: Path, documents: Mapping[str, Any], valid: Mapping[str, bool],
                               findings: list[dict[str, Any]]) -> None:
-    """Each `torque_path` and `axial_retainer` decision exists under decisions/, like every DR link."""
-    def missing(decision: str | None) -> bool:
-        return decision is not None and not (hw / "decisions" / f"{decision}.md").is_file()
+    """Each `torque_path` and `axial_retainer` decision is a valid record under decisions/, like every DR link."""
+    def missing(decision: str | None) -> str | None:
+        return None if decision is None else load_decision(hw, decision)[1]
 
     if valid.get("assembly.yaml"):
         for joint in documents["assembly.yaml"].get("joints", []):
             decision = (joint.get("torque_path") or {}).get("decision")
-            if missing(decision):
-                findings.append(finding(str(hw / "assembly.yaml"), f"{joint['id']} torque_path/decision {decision} "
-                                                                   f"does not exist at decisions/{decision}.md"))
+            if (problem := missing(decision)) is not None:
+                findings.append(finding(str(hw / "assembly.yaml"),
+                                        f"{joint['id']} torque_path/decision {decision} {problem}"))
     if valid.get("interfaces.yaml"):
         for index, interface in enumerate(documents["interfaces.yaml"]["interfaces"]):
             for kind in ("press_fit", "running_fit", "locating_fit"):
                 fit = (interface.get("limits") or {}).get(kind)
                 decision = ((fit or {}).get("axial_retainer") or {}).get("decision")
-                if missing(decision):
+                if (problem := missing(decision)) is not None:
                     findings.append(finding(str(hw / "interfaces.yaml"),
                                             f"interfaces/{index}/limits/{kind}/axial_retainer/decision {decision} "
-                                            f"does not exist at decisions/{decision}.md"))
+                                            f"{problem}"))
 
 
 def check_design_rules(hw: Path, documents: Mapping[str, Any], valid: Mapping[str, bool],
@@ -943,9 +955,8 @@ def validate_project(project_dir: Path) -> list[dict[str, str]]:
             if pn in part_records:
                 findings.append(finding(str(part_path), f"duplicate part number {pn}"))
             for decision in part.get("decisions", []):
-                decision_path = hw / "decisions" / f"{decision}.md"
-                if not decision_path.is_file():
-                    findings.append(finding(str(part_path), f"decision {decision} does not exist at decisions/{decision}.md"))
+                if (unusable := load_decision(hw, decision)[1]) is not None:
+                    findings.append(finding(str(part_path), f"decision {decision} {unusable}"))
             check_part_drawing(part, str(part_path), product_drawing, findings)
             open_tolerance = open_general_tolerance(documents.get("product.yaml")) if valid.get("product.yaml") else None
             part_drawing = part.get("drawing")

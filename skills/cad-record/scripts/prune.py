@@ -126,13 +126,13 @@ def milestones(hw: Path) -> dict[str, list[str]]:
         value = flow.get(key)
         if isinstance(value, dict) and isinstance(value.get(field), str):
             reasons[value[field]].append(why)
-    for path in sorted((hw / "decisions").glob("DR-[0-9][0-9][0-9].md")):
+    for path in sorted((hw / "decisions").glob("DR-*.md")):  # any DR file might name a version
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:  # it might name a version: never prune blind
             raise layout.LayoutError(f"cannot read {layout.relative(hw, path)} before pruning: {error}") from error
         for label in sorted(set(LABEL.findall(text)), key=_number):
-            reasons[label].append(f"named by {path.stem}")
+            reasons[label].append(f"named by {path.stem[:6]}")
     return reasons
 
 

@@ -6,7 +6,7 @@ Before release, build record-derived guides for the frozen version and proposed 
 uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-record/scripts/build_guide.py hw --version vN --rev A --date YYYY-MM-DD --out hw/docs
 ```
 
-If this command refuses because a guide was not generated or was edited since generation, review its contents and rerun with `--replace` only when replacing those edits is intended. Then validate and issue the release after explicit RELEASE-gate approval recorded in `hw/decisions/DR-###.md`:
+If this command refuses because a guide was not generated or was edited since generation, review its contents and rerun with `--replace` only when replacing those edits is intended. Then validate and issue the release after explicit RELEASE-gate approval recorded in `hw/decisions/DR-###-slug.md`:
 
 ```sh
 uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-record/scripts/validate.py hw

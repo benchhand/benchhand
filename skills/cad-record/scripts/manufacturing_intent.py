@@ -1877,8 +1877,8 @@ class _Reader:
     def resolve(self) -> None:
         for kind, ident, path, pointer in self.refs:
             if kind == "decision":
-                if self.hw is not None and not (self.hw / "decisions" / f"{ident}.md").is_file():
-                    self.problem("intent.reference", path, pointer, f"{pointer}: decision {ident} has no hw/decisions/{ident}.md")
+                if self.hw is not None and _sibling("cad_record_layout", "layout.py").decision_file(self.hw, ident) is None:
+                    self.problem("intent.reference", path, pointer, f"{pointer}: decision {ident} has no hw/decisions/{ident}-<slug>.md")
                 continue
             if kind in ("case", "motion_case"):
                 folder = "analysis" if kind == "case" else "motion"

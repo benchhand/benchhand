@@ -37,6 +37,7 @@ from typing import Any, Mapping
 import yaml
 
 INTENT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "manufacturing_intent.py"
+DECISIONS_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "decision_records.py"
 PRODUCER = "cad-analysis fea_static.py"
 EXPLICIT_KEYS = ("E", "nu", "density", "yield")
 PROFILE_KEYS = ("profile", "conditions", "effective_isotropic")
@@ -56,8 +57,9 @@ FORMING = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": 
 LEVEL = "simulation_supported"
 DECISION = re.compile(r"DR-[0-9]{3}")
 REQUIREMENT = re.compile(r"REQ-[0-9]{3}")
-# A decision (mesh convergence, effective isotropic model) counts only when its first line is exactly this.
-APPROVED = "Status: APPROVED"
+# A decision (mesh convergence, effective isotropic model) counts only when its MADR status is this. It is
+# the old gate status APPROVED; PROVISIONAL is `proposed` and VOID is `rejected`, neither of them evidence.
+APPROVED_STATUS = "accepted"
 
 
 STUDY_BLOCK = re.compile(r"```mesh-convergence[ \t]*\r?\n(.*?)```", re.S)
@@ -79,9 +81,17 @@ LIMITS = (
 )
 
 
-def is_approved(text: str) -> bool:
-    """A decision is approved only when its first line is exactly `Status: APPROVED`."""
-    return text.split("\n", 1)[0].rstrip("\r") == APPROVED
+def decision_records() -> Any:
+    """cad-record decision_records.py under the name every CAD skill shares."""
+    name = "cad_record_decision_records"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, DECISIONS_PATH)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{DECISIONS_PATH} not found")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
 
 
 class Refused(ValueError):
@@ -256,10 +266,17 @@ class _Assessor:
         self.dependencies[name] = digest
         return digest
 
-    def decision(self, ref: str, name: str, code: str, what: str) -> None:
-        """An approved decision record under hw/decisions/, bound by its sha256."""
-        if self.depend(name, self.hw / "decisions" / f"{ref}.md") is None:
-            self.refuse(code, f"{what} names {ref}, but hw/decisions/{ref}.md does not exist")
+    def decision(self, ref: str, name: str, code: str, what: str) -> Any:
+        """The decision record `ref` under hw/decisions/, bound by its sha256; None (and a refusal) when the
+        reader refuses it."""
+        records = decision_records()
+        try:
+            record = records.find_decision(self.hw / "decisions", ref)
+        except records.DecisionRecordError as error:
+            self.refuse(code, f"{what} names {ref}, but {error}")
+            return None
+        self.depend(name, self.hw / "decisions" / record.file_name)
+        return record
 
     def subject(self) -> dict[str, Any]:
         """The analysed PN, from `part` or from `occurrence` through the version's assembly.yaml."""
@@ -374,12 +391,11 @@ class _Assessor:
                         f"{'; '.join(reasons)}: the static solver is isotropic, so orientation-dependent material needs "
                         "material.effective_isotropic with the approved decision justifying it")
             return {"model": "unsupported", "reasons": reasons}
-        self.decision(model["decision"], f"decision_{model['decision'].lower().replace('-', '_')}", "material.anisotropy",
-                      "material.effective_isotropic")
-        decided = self.hw / "decisions" / f"{model['decision']}.md"
-        if decided.is_file() and not is_approved(decided.read_text(encoding="utf-8", errors="replace")):
-            self.refuse("material.anisotropy", f"{model['decision']} is not approved: its first line must be exactly "
-                                               f"'{APPROVED}', because a provisional decision is not evidence")
+        decided = self.decision(model["decision"], f"decision_{model['decision'].lower().replace('-', '_')}",
+                                "material.anisotropy", "material.effective_isotropic")
+        if decided is not None and decided.status != APPROVED_STATUS:
+            self.refuse("material.anisotropy", f"{model['decision']} is not approved: its status is {decided.status}, "
+                                               f"not {APPROVED_STATUS}, and a decision that is not accepted is not evidence")
         return {"model": "effective_isotropic", "reasons": reasons, "orientation": conditions["orientation"],
                 "decision": model["decision"], "justification": model["justification"]}
 
@@ -539,13 +555,14 @@ class _Assessor:
                       "in an approved decision named by mesh_convergence.decision")
             return {"status": "not_demonstrated", "reason": reason, "problems": [reason]}
         ref = stated["decision"]
-        self.decision(ref, f"decision_{ref.lower().replace('-', '_')}", "analysis.convergence", "mesh_convergence")
-        path = self.hw / "decisions" / f"{ref}.md"
-        if not path.is_file():
-            return {"status": "not_demonstrated", "decision": ref, "problems": [f"{ref} is missing"]}
+        record = self.decision(ref, f"decision_{ref.lower().replace('-', '_')}", "analysis.convergence",
+                               "mesh_convergence")
+        if record is None:
+            return {"status": "not_demonstrated", "decision": ref, "problems": [f"{ref} is missing or not a valid record"]}
+        path = self.hw / "decisions" / record.file_name
         step = self.case.get("_step")
         geometry = hashlib.sha256(Path(step).read_bytes()).hexdigest() if step and Path(step).is_file() else None
-        study, problems = read_study(path.read_text(encoding="utf-8", errors="replace"), ref)
+        study, problems = read_study(path.read_text(encoding="utf-8"), ref, record.status)
         if study is None:
             return {"status": "not_demonstrated", "decision": ref, "problems": problems, "reason": "; ".join(problems)}
         problems += study_problems(study, geometry=geometry, profile_id=profile.id, profile_sha=profile_sha,
@@ -627,12 +644,12 @@ def _regions(loads: Any) -> dict[str, tuple[float, float, float]] | None:
 # --- the mesh convergence study --------------------------------------------------------------------------------
 
 
-def read_study(text: str, ref: str) -> tuple[dict[str, Any] | None, list[str]]:
-    """The study block of a convergence decision, or why the decision proves nothing: it is not approved (its
-    first line is not exactly `Status: APPROVED`) or holds no readable study."""
+def read_study(text: str, ref: str, status: str) -> tuple[dict[str, Any] | None, list[str]]:
+    """The study block of a convergence decision, or why the decision proves nothing: its MADR `status` is not
+    `accepted` or it holds no readable study."""
     problems = []
-    if not is_approved(text):
-        problems.append(f"{ref} is not approved: its first line must be exactly '{APPROVED}'")
+    if status != APPROVED_STATUS:
+        problems.append(f"{ref} is not approved: its status is {status}, not {APPROVED_STATUS}")
     block = STUDY_BLOCK.search(text)
     if block is None:
         problems.append(f"{ref} holds no ```mesh-convergence block with the refinement study")

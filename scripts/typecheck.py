@@ -67,6 +67,7 @@ CHANGED_FILES = (
     "skills/cad-recheck/scripts/stamp.py",
     "skills/cad-record/scripts/assembly_operations.py",
     "skills/cad-record/scripts/build_guide.py",
+    "skills/cad-record/scripts/decision_records.py",
     "skills/cad-record/scripts/design_rules.py",
     "skills/cad-record/scripts/evidence.py",
     "skills/cad-record/scripts/evidence_paths.py",
@@ -153,6 +154,7 @@ STRICT_FILES = (
     "skills/cad-record/scripts/selection.py",
     "skills/cad-record/scripts/check_packet.py",
     "skills/cad-record/scripts/cli.py",
+    "skills/cad-record/scripts/decision_records.py",
     "skills/cad-record/scripts/schema_registry.py",
     "skills/cad-record/scripts/yaml_loader.py",
 )

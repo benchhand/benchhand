@@ -367,6 +367,25 @@ def resolve(hw: Path, entry_id: str, **params: str) -> Path:
     return locate(hw, load().path(entry_id, params))
 
 
+def decision_files(hw: Path) -> list[Path]:
+    """Every decision file under hw/decisions/ whose name fits the record.decision entry
+    (`DR-###-slug.md`), sorted by name. The generated index and strays are not."""
+    folder = locate(hw, "hw/decisions")
+    grammar = re.compile(load().tokens["DR"]["pattern"])
+    return sorted(path for path in folder.glob("DR-*.md") if path.is_file() and grammar.fullmatch(path.stem))
+
+
+def decision_file(hw: Path, ident: str) -> Path | None:
+    """The file of decision `DR-###` (see `decision_files`), or None. Raises LayoutError for a
+    malformed id or two files with one id."""
+    if not re.fullmatch(r"DR-[0-9]{3}", ident):
+        raise LayoutError(f"decision id {ident!r} must be DR-###")
+    found = [path for path in decision_files(hw) if path.stem.startswith(f"{ident}-")]
+    if len(found) > 1:
+        raise LayoutError(f"{ident} is used by {', '.join(path.name for path in found)}")
+    return found[0] if found else None
+
+
 def version_dir(hw: Path, version: str) -> Path:
     return resolve(hw, "version.core", V=version)
 
