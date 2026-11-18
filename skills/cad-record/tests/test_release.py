@@ -448,13 +448,14 @@ class Pruning(ReleaseCase):
     def test_store_gc_runs_under_the_dependencies_release_py_declares(self) -> None:
         # --prune runs cad_model.py store gc in release.py's interpreter, so release.py's header must cover it
         hw = self.released()
+        # independent of gc's layout rules: each manifest.json seals its folder, bar copies inside a release package
+        found = [path.relative_to(hw).parts for path in hw.rglob("manifest.json")]
+        seals = sum(1 for parts in found if parts[0] != "releases" or len(parts) == 3)
         result = subprocess.run(scriptenv.python_command(RELEASE, "-B", str(prune.CAD_MODEL), "store", "gc", str(hw)),
                                 capture_output=True, text=True, timeout=600, check=False, env=prune.emit.json_env())
         self.assertEqual(result.returncode, 0, result.stderr)
         collected = prune.emit.unwrap(json.loads(result.stdout))
-        # every seal under hw/: v1 to v4, release A and the 18 version bundles (checks 3, drawings 11, renders 2,
-        # analysis 1, motion 1); the 14 bundle manifests copied into releases/A are payload, not seals
-        self.assertEqual((collected["status"], collected["manifests"]), ("pass", 23))
+        self.assertEqual((collected["status"], collected["manifests"]), ("pass", seals))
 
     def test_gc_failure_is_prune_incomplete_and_a_rerun_finishes(self) -> None:
         hw = self.released()
