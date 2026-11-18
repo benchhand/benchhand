@@ -564,10 +564,7 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
 def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = None) -> tuple[int, dict[str, Any]]:
     hw = hw.resolve()
     if os.path.lexists(layout.locate(hw, layout.load().path("release.package", {"REV": rev}))):
-        existing = sealed(hw, rev, version, decision)  # the same frozen manifest releases again as a no-op
-        if existing[0] == 0 or not same_frozen(hw, rev, version, decision):
-            return existing
-        # a package that fails its seal but holds this frozen manifest is repaired by the rewrite below
+        return sealed(hw, rev, version, decision)  # the same frozen manifest releases again as a no-op
     release, facts = assemble(hw, rev, version, decision, now)
     report: dict[str, Any] = {"rev": rev, "version": version, "package": release.target_rel}
     if release.findings or facts is None:
@@ -577,15 +574,9 @@ def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = 
     if release.findings:
         return 1, {**report, "findings": release.findings, "status": "refused"}
     target = layout.locate(hw, release.target_rel)
-    replaced = None
-    if os.path.lexists(target):  # the stale package of this same frozen manifest: set it aside, then claim
-        replaced = Path(tempfile.mkdtemp(prefix="replaced-", dir=staged.parent)) / target.name
-        os.rename(target, replaced)
     try:
         layout.claim(staged, target, release.target_rel)
-    except (layout.PublishConflict, layout.LayoutError) as error:
-        if replaced is not None and not os.path.lexists(target):
-            os.rename(replaced, target)
+    except layout.PublishConflict as error:
         release.refuse(release.target_rel, "exists", f"{error}; rerun to compare it with the frozen manifest")
         return 1, {**report, "findings": release.findings, "status": "refused"}
     return 0, {**report, "stage": None, "manifest_sha256": sha256(target / MANIFEST), "files": len(release.copies),
@@ -612,24 +603,10 @@ def acceptance_problems(manifest: dict[str, Any]) -> list[str]:
     return problems
 
 
-def same_frozen(hw: Path, rev: str, version: str, decision: str) -> bool:
-    """Whether the existing hw/releases/<REV>/ names `version`, `decision` and the frozen manifest sha as it
-    is now, by its manifest alone. True lets a package that fails its seal be rewritten."""
-    package = layout.locate(hw, layout.load().path("release.package", {"REV": rev}))
-    manifest = _json(package / MANIFEST) if package.is_dir() and not package.is_symlink() else None
-    frozen = _dict(manifest.get("frozen")) if isinstance(manifest, dict) else {}
-    try:
-        current = sha256(layout.built_version(hw, version)[1] / MANIFEST)
-    except layout.LayoutError:
-        return False
-    return (isinstance(manifest, dict) and manifest.get("approval") == decision and frozen.get("version") == version
-            and frozen.get("manifest_sha256") == current)
-
-
 def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
     """The existing hw/releases/<REV>/ when it verifies and holds `version` approved by `decision` from
-    the frozen manifest as it is now, so a rerun (and --prune) rewrites nothing; refused otherwise, and a
-    different frozen manifest needs a new revision. A package must be manifest version 3, and also
+    the frozen manifest as it is now, so a rerun (and --prune) rewrites nothing. A package that fails its
+    seal, or holds another frozen manifest, is refused. A package must be manifest version 3, and also
     verifies its sealed acceptance bytes and anchor. Any other manifest version is refused."""
     hw = hw.resolve()
     target_rel = layout.load().path("release.package", {"REV": rev})
@@ -662,7 +639,8 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
                 problems = [f"it was sealed from another frozen {version} manifest"]
     if problems:
         finding = validate.finding(target_rel, f"{target_rel} exists but is not the sealed release of {version} approved "
-                                               f"by {decision}: {'; '.join(problems)}; release it under a new revision",
+                                               f"by {decision}: {'; '.join(problems)}; use a new revision, or wait for "
+                                               "the repair follow-up",
                                    code="release.exists")
         return 1, {**report, "findings": [finding], "status": "refused"}
     return 0, {**report, "already_sealed": True, "manifest_version": schema, "manifest_sha256": sha256(package / MANIFEST),

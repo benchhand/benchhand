@@ -736,16 +736,11 @@ class Refusal(ReleaseCase):
         self.assertEqual((code, report["status"], report["manifest_sha256"]), (0, "released", first["manifest_sha256"]))
         self.assertEqual(tree(hw), before, "the rerun leaves the package byte-identical")
 
-    def test_a_stale_package_of_the_same_frozen_manifest_is_repaired_by_the_rewrite(self) -> None:
+    def test_a_stale_package_of_the_same_frozen_manifest_is_refused_and_left_alone(self) -> None:
         hw = self.project()
-        moment = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
-        self.assertEqual(self.release(hw, now=moment)[0], 0)
-        sealed_tree = tree(hw)
+        self.assertEqual(self.release(hw)[0], 0)
         write(hw / "releases" / "A" / "bom.csv", "edited\n")
-        self.assertEqual(release.sealed(hw, "A", "v1", "DR-005")[0], 1, "the package fails its seal")
-        code, report = self.release(hw, now=moment)
-        self.assertEqual((code, report["status"]), (0, "released"))
-        self.assertEqual(tree(hw), sealed_tree, "the rewrite restores the sealed package")
+        self.refused(hw, "hw/releases/A", "exists", "use a new revision")
 
     def test_a_stale_package_of_another_frozen_manifest_needs_a_new_revision(self) -> None:
         hw = self.project()
@@ -753,14 +748,14 @@ class Refusal(ReleaseCase):
         write(hw / "releases" / "A" / "bom.csv", "edited\n")
         manifest = hw / "versions" / "v1" / "manifest.json"
         manifest.write_text(manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-        self.refused(hw, "hw/releases/A", "exists", "release it under a new revision")
+        self.refused(hw, "hw/releases/A", "exists", "use a new revision")
 
     def test_a_changed_frozen_manifest_under_the_same_revision_needs_a_new_revision(self) -> None:
         hw = self.project()
         self.assertEqual(self.release(hw)[0], 0)
         manifest = hw / "versions" / "v1" / "manifest.json"
         manifest.write_text(manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-        self.refused(hw, "hw/releases/A", "exists", "release it under a new revision")
+        self.refused(hw, "hw/releases/A", "exists", "use a new revision")
 
     def test_the_atomic_claim_refuses_a_writer_that_loses_the_race(self) -> None:
         hw = self.project()
