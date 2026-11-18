@@ -10,6 +10,7 @@ script and result under .cad-work/.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -85,6 +86,19 @@ class Project(unittest.TestCase):
                                       "manufacturing/evidence.yaml": {"entries": [entry]}})
         return evidence.assess(record, version="v1", manifest_sha256=V1, today=TODAY, paths=self.paths,
                                approved=lambda decision: True)
+
+    def points(self, entry: dict[str, Any]) -> tuple[set[str], set[str], bool]:
+        """What the three acceptance points say about `entry`: the assessment's finding codes, the ledger
+        findings codes and whether the acceptance inventory refuses."""
+        assessed = {f.code for f in self.assessed(entry).findings}
+        acceptance.write_ledger(self.hw, [entry])
+        record = impact.read_record(self.hw)
+        ledger = {f.code for f in evidence.ledger_findings(record, approved=lambda _: True, today=TODAY, paths=self.paths)}
+        try:
+            evidence.acceptance_inventory(self.hw, record)
+        except evidence.EvidenceError:
+            return assessed, ledger, True
+        return assessed, ledger, False
 
 
 class VetoedFixture(Project):
@@ -320,6 +334,154 @@ class NestedProse(Project):
                        "producer": {"bundle": "hw/.cad/bundle", "manifest_sha256": V1}}
         self.assertEqual([p.where for p in paths_module.disposition_problems(self.paths, disposition)],
                          ["producer.bundle"])
+
+
+class Symlinks(Project):
+    """A tracked symlink that prose cites counts as the file it resolves to, not as its own name."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.outside = tempfile.TemporaryDirectory(prefix="cad-evidence-outside-")
+        self.addCleanup(self.outside.cleanup)
+        target = Path(self.outside.name) / "result.txt"
+        target.write_text("outside\n", encoding="utf-8")
+        notes = self.root / "notes"
+        (notes / "to_outside.txt").symlink_to(target)
+        (notes / "to_scratch.txt").symlink_to("../.cad-work/layout/regional_v1.py")
+        (notes / "to_hw_cad.txt").symlink_to("../hw/.cad/builds.json")
+        (notes / "to_tracked.txt").symlink_to("method.txt")
+        git(self.root, "add", "notes/to_outside.txt", "notes/to_scratch.txt", "notes/to_hw_cad.txt", "notes/to_tracked.txt")
+        git(self.root, "commit", "-q", "-m", "links")
+        self.paths = evidence.project_paths(self.hw)
+
+    def test_tracked_links_that_resolve_outside_or_into_scratch_are_refused_at_all_three_points(self) -> None:
+        for name in ("to_outside", "to_scratch", "to_hw_cad"):
+            with self.subTest(name):
+                entry = self.entry(method=f"see notes/{name}.txt")
+                self.assertEqual([p.code for p in self.refusal(entry)], ["evidence.scratch_path"])
+                assessed, ledger, inventory = self.points(entry)
+                self.assertEqual((assessed & {"evidence.scratch_path"}, ledger, inventory),
+                                 ({"evidence.scratch_path"}, {"evidence.scratch_path"}, True))
+
+    def test_a_tracked_link_to_a_tracked_file_in_the_root_passes_at_all_three_points(self) -> None:
+        entry = self.entry(method="rationale in notes/to_tracked.txt:3")
+        self.assertEqual(self.refusal(entry), [])
+        self.assertEqual(self.points(entry), (set(), set(), False))
+
+
+class Formats(Project):
+    # Any 1 to 5 character alphanumeric extension with a letter, after a stem that is not a number.
+    EXTENSIONS = (".3mf", ".3MF", ".3ds", ".3dm", ".3gp", ".7z", ".7Z", ".4dv", ".2bk")
+
+    def test_formats_in_an_unlisted_result_folder_are_refused_in_any_case(self) -> None:
+        for extension in self.EXTENSIONS:
+            with self.subTest(extension):
+                name = f"{EVIDENCE_DIR}/run{extension}"
+                (self.root / name).write_bytes(b"x")
+                problems = self.refusal(self.entry(method=f"see {name}"))
+                self.assertEqual([p.code for p in problems], ["evidence.uncited_artifact"], name)
+                self.assertEqual(self.refusal(self.entry(method=f"see {name}", artifacts=[name])), [], name)
+
+    def test_a_missing_format_is_refused(self) -> None:
+        for extension in self.EXTENSIONS:
+            with self.subTest(extension):
+                problems = self.refusal(self.entry(method=f"see results/absent{extension}"))
+                self.assertEqual([p.code for p in problems], ["evidence.scratch_path"])
+
+    def test_numeric_prose_with_a_unit_suffix_is_no_format(self) -> None:
+        for prose in ("layers 0.1mm/0.2mm", "gap 0.3mm/0.7zones", "range 1.5/2.0", "pitch 2x3.5mm/4mm", "tag v1.2/v1.3",
+                      "step 2.0mm/12.5mm", "min -0.5mm/+0.5mm", "width 0.2mm", "tag v1.2/v1.3.4"):
+            with self.subTest(prose):
+                self.assertEqual(self.refusal(self.entry(method=prose)), [], prose)
+
+
+class FileUrls(Project):
+    def test_a_file_url_with_an_anchor_or_line_suffix_to_a_tracked_file_passes_at_all_three_points(self) -> None:
+        url = (self.root / "notes" / "method.txt").as_uri()
+        for suffix in ("", "#L3", ":3", ":3:7", "#anchor"):
+            with self.subTest(suffix):
+                entry = self.entry(method=f"rationale in {url}{suffix}.")
+                self.assertEqual(self.refusal(entry), [])
+                self.assertEqual(self.points(entry), (set(), set(), False))
+
+    def test_a_file_url_with_an_anchor_to_scratch_is_still_refused(self) -> None:
+        url = (self.root / ".cad-work" / "layout" / "regional_v1.py").as_uri()
+        self.assertEqual([p.code for p in self.refusal(self.entry(method=f"see {url}#L9"))], ["evidence.scratch_path"])
+
+
+class SchemaLeaves:
+    """The leaf fields below one schema definition, each typed as prose ($defs/text) or not."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.documents: dict[str, Any] = {}
+        self.found: dict[str, bool] = {}
+
+    def resolve(self, ref: str, file: str) -> tuple[Any, str]:
+        target, _, pointer = ref.partition("#")
+        file = target or file
+        node = self.documents.setdefault(file, json.loads((self.directory / file).read_text(encoding="utf-8")))
+        for part in [x for x in pointer.split("/") if x]:
+            node = node[part]
+        return node, file
+
+    def collect(self, file: str, definition: str) -> dict[str, bool]:
+        node, file = self.resolve(f"#{definition}", file)
+        self.walk(node, file, "")
+        return self.found
+
+    def walk(self, node: Any, file: str, pointer: str) -> None:
+        if not isinstance(node, dict):
+            self.found.setdefault(pointer, False)
+            return
+        while "$ref" in node:
+            if node["$ref"].endswith("$defs/text"):
+                self.found[pointer] = True
+                return
+            node, file = self.resolve(node["$ref"], file)
+        for key in ("oneOf", "anyOf", "allOf"):
+            for part in node.get(key, []):
+                self.walk(part, file, pointer)
+        self.members(node, file, pointer)
+
+    def members(self, node: dict[str, Any], file: str, pointer: str) -> None:
+        extra = node.get("additionalProperties")
+        if "properties" in node or isinstance(extra, dict):
+            for field, part in node.get("properties", {}).items():
+                self.walk(part, file, f"{pointer}.{field}" if pointer else field)
+            if isinstance(extra, dict):
+                self.walk(extra, file, f"{pointer}.*" if pointer else "*")
+        elif node.get("type") == "array" and "items" in node:
+            self.walk(node["items"], file, pointer + "[]")
+        elif node.get("type") == "string" or any(key in node for key in ("enum", "const", "pattern")):
+            self.found.setdefault(pointer, False)
+
+
+class SchemaTie(unittest.TestCase):
+    """The skipped pointers match the non-prose fields of the ledger schemas, so a schema change that adds or retypes one fails here."""
+
+    SCHEMAS = HERE.parent / "schemas"
+
+    def leaves(self, name: str, definition: str) -> dict[str, bool]:
+        return SchemaLeaves(self.SCHEMAS).collect(name, definition)
+
+    def covered(self, skipped: frozenset[str], pointer: str) -> bool:
+        return any(pointer == s or pointer.startswith((s + ".", s + "[]")) for s in skipped)
+
+    def check(self, file: str, definition: str, skipped: frozenset[str]) -> None:
+        leaves = self.leaves(file, definition)
+        prose = {p for p, is_text in leaves.items() if is_text}
+        structured = {p for p, is_text in leaves.items() if not is_text}
+        self.assertEqual({p for p in prose if self.covered(skipped, p)}, set(), "a prose field is skipped")
+        self.assertEqual({p for p in structured if not self.covered(skipped, p)}, set(), "a structured field is scanned")
+        self.assertEqual({s for s in skipped if not any(self.covered(frozenset({s}), p) for p in structured)}, set(),
+                         "a skipped pointer matches no structured field of the schema")
+
+    def test_the_entry_exclusions_match_the_evidence_schema(self) -> None:
+        self.check("manufacturing-evidence.schema.json", "/$defs/entry", paths_module.ENTRY_STRUCTURED)
+
+    def test_the_disposition_exclusions_match_the_findings_schema(self) -> None:
+        self.check("manufacturing-findings.schema.json", "/$defs/disposition", paths_module.DISPOSITION_STRUCTURED)
 
 
 class FiguresWithoutAPath(Project):

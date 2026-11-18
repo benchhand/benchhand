@@ -41,7 +41,9 @@ DISPOSITION_STRUCTURED = frozenset({
     *(f"waiver.{name}" for name in _WAIVER_FIELDS),
 })
 _TOKEN = re.compile(r"[^\s\"'`()\[\]{}<>,;=|]+")
-_EXTENSION = re.compile(r"\.(?:[A-Za-z][A-Za-z0-9]{0,7}|3mf|3ds|3dm|7z)$")
+# A file name ends in a dot and 1 to 5 alphanumeric characters with a letter, after a stem that is not a number.
+_EXTENSION = re.compile(r"(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,5}$")
+_NUMBER = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?$")
 _URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$")
 _EVIDENCE_ID = re.compile(r"\bEV-[0-9]{3}\b")
 _LOCATION = re.compile(r"[:#].*$")
@@ -76,7 +78,8 @@ def is_path_like(token: str) -> bool:
         return False
     if ".." in token.split("/"):
         return True
-    return _EXTENSION.search(token.rsplit("/", 1)[1]) is not None
+    stem, dot, extension = token.rsplit("/", 1)[1].rpartition(".")
+    return bool(dot) and _EXTENSION.match(extension) is not None and _NUMBER.match(stem) is None
 
 
 def path_tokens(text: str) -> list[str]:
@@ -84,12 +87,13 @@ def path_tokens(text: str) -> list[str]:
     URLs other than file:// are not file paths."""
     found = []
     for raw in _TOKEN.findall(text):
-        token = _LOCATION.sub("", raw.rstrip(".:!?")) if not _URL.match(raw) else raw.rstrip(".:!?")
+        token = raw.rstrip(".:!?")
         match = _URL.match(token)
         if match:
             if match.group(1).lower() != "file":
                 continue
             token = "/" + match.group(2).lstrip("/")
+        token = _LOCATION.sub("", token)
         if token and is_path_like(token):
             found.append(token)
     return found
