@@ -4,7 +4,10 @@ Definition checks (STEP read-back volume, BRep validity, solid structure, sliver
 assembly checks run per occurrence: every component of assembly.step must be an occurrence of the
 manifest at its recorded placement, interference covers every occurrence pair (two occurrences of
 one PN included), each clearance requirement of the version's interfaces.yaml holds on its pair,
-connectivity welds occurrences, and each occurrence's GLB node is judged watertight alone. A version
+connectivity welds occurrences, the check judges the GLB node of each occurrence watertight alone and against the
+shape and placement in the assembly STEP (`glb_step_agreement`, cadmodel.agreement), and a heat-set hole diameter
+the record states must be a bore of its host (`declared_dimensions`). A check that lacks the data to judge is
+`unknown` and listed under `abstentions`. That result does not block, and no reader takes it for a pass. A version
 1 version (written before occurrences) reads as one occurrence per PN. Every file must match the
 manifest inventory (`artifact_integrity`), and the manufacturing outputs of each custom-made part
 are judged again on the sealed files (`manufacturing`, cadmodel.manufacture); `build_volume`, a
@@ -39,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
-from cadmodel import build, manufacture, mesh, occ, orientation, stepfile
+from cadmodel import agreement, build, manufacture, mesh, occ, orientation, stepfile
 from cadmodel.motion import load_incremental, load_mesh_bound, load_pair_measure, load_pair_policy, load_pose
 from cadmodel.record import load_intent, load_layout, load_yaml_loader, read_folder
 from cadmodel.stepfile import AP242, READBACK_REL
@@ -54,6 +57,7 @@ CONTACT_MM = 0.01            # distance at or below which two parts touch
 FLOAT_GAP_MM = 2.0           # beyond this a part is disconnected rather than floating
 SLIVER_FACE_MM2 = 1e-3       # faces smaller than this are slivers (advisory)
 LOOSE_TOLERANCE_MM = 0.01    # vertex/edge/face tolerance above this is loose (advisory)
+HOLE_D_DEFAULT_MM = 0.01     # a declared hole diameter without its own tolerance: how far a bore may be from it
 DRIVER_STEP = 0.1            # deg or mm: a suspect's re-evaluations move each independent joint, as the sweep's do
 
 
@@ -706,6 +710,92 @@ def mesh_watertight(folder: Path, part_map: Mapping[str, Any], ids: Iterable[str
     return {"status": _status(all(r["watertight"] for r in rows.values())), "blocking": True, "parts": rows}
 
 
+def _worst_status(statuses: Iterable[str]) -> str:
+    """fail when any row fails, else unknown when any abstains, else pass."""
+    found = set(statuses)
+    return "fail" if "fail" in found else "unknown" if "unknown" in found else "pass"
+
+
+def agreement_scope(occurrences: Mapping[str, Any], changes: Any | None) -> set[str]:
+    """The occurrence ids whose GLB mesh the check compares with the STEP. Every one, in a full check and in a
+    changed-only check without a baseline. With a baseline (`changes`, a `ChangeSet` of incremental.py), the occurrences
+    of a PN whose geometry changed, the added and the moved occurrences, and the occurrences that now carry another
+    PN than in the baseline. That catches a mutation of a changed part and a reassignment to another unchanged
+    part. The full check covers an unchanged part at its old place, and the `scope.complete` of the
+    report already says a changed-only check is not complete."""
+    if changes is None or changes.baseline is None:
+        return set(occurrences)
+    then = changes.baseline.occurrences
+    return {oid for oid, built in occurrences.items()
+            if built.pn in changes.geometry or oid in changes.added or oid in changes.moved
+            or then.get(oid, built.pn) != built.pn}
+
+
+def agreement_result(rows: Mapping[str, Mapping[str, Any]], skipped: Iterable[str], linear: float | None) -> dict[str, Any]:
+    """The `glb_step_agreement` check from its per-occurrence rows. `skipped` names the occurrences a changed-only
+    check leaves out (empty in a full check)."""
+    return {"status": _worst_status(r["status"] for r in rows.values()), "blocking": True,
+            "linear_deflection_mm": linear, "skipped": sorted(skipped), "occurrences": dict(sorted(rows.items()))}
+
+
+def glb_step_agreement(folder: Path, manifest: Mapping[str, Any], part_map: Mapping[str, Any], step: Any,
+                       examined: Iterable[str], skipped: Iterable[str] = ()) -> dict[str, Any]:
+    """Per examined occurrence: whether its GLB node depicts the shape and placement in the assembly STEP
+    (cadmodel.agreement). The check reads the GLB without the help of the manifest. A mesh of another model,
+    scale or place fails here though it is a closed solid and the STEP matches the kernel. `unknown` where the
+    data cannot judge."""
+    wanted = set(examined)
+    if not agreement.AVAILABLE:
+        reason = {"status": "unknown", "reason": "numpy is not installed: the GLB and STEP meshes cannot be compared"}
+        return agreement_result({oid: dict(reason) for oid in wanted}, skipped, None)
+    names = mesh.node_names(part_map)
+    definitions = {pn: part.shape for pn, part in step.definitions.items()}
+    placements = {}
+    for component in step.components:
+        oid = component.occurrence if component.occurrence is not None else component.pn
+        if oid in wanted and component.pn in definitions:
+            placements[oid] = agreement.Placement(component.pn, component.location.rot, component.location.trans)
+    linear = (manifest.get("glb") or {}).get("linear_deflection_mm")
+    rows = agreement.occurrences(folder / "assembly.glb", names, definitions, placements, linear) if wanted else {}
+    for oid in wanted - set(rows):
+        rows[oid] = {"status": "unknown", "reason": "assembly.step has no component for this occurrence"}
+    return agreement_result(rows, skipped, linear)
+
+
+def declared_dimensions(heat_sets: Iterable[Mapping[str, Any]], host_pns: Mapping[str, str],
+                        metrics: Mapping[str, Any]) -> dict[str, Any]:
+    """Each dimension the record states, measured on the sealed model: the `hole_d` of a heat-set insert (within its
+    `hole_tol`, else HOLE_D_DEFAULT_MM) must be the diameter of a bore of its host. `host_pns` maps occurrence id
+    to PN. `metrics` holds the metrics.json `parts` of the version. A host with no recorded bores is `unknown`.
+    A host with bores and none of the declared size fails."""
+    rows = []
+    for item in heat_sets:
+        pn = host_pns.get(item["host"])
+        holes = (metrics.get(pn) or {}).get("holes") if pn is not None else None
+        tolerance = item.get("hole_tol")
+        if tolerance is None:
+            tolerance = (-HOLE_D_DEFAULT_MM, HOLE_D_DEFAULT_MM)
+        row: dict[str, Any] = {"source": item["source"], "host": item["host"], "PN": pn, "hole_d_mm": item["hole_d"]}
+        if not isinstance(tolerance, (list, tuple)) or len(tolerance) != 2 \
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in tolerance):
+            rows.append({**row, "status": "unknown", "reason": f"hole_tol {tolerance!r} is not [low, high] in mm"})
+            continue
+        low, high = item["hole_d"] + tolerance[0], item["hole_d"] + tolerance[1]
+        row["limits_mm"] = [low, high]
+        if holes is None:
+            row |= {"status": "unknown", "reason": f"the version records no bores for host {item['host']}"}
+        else:
+            found = sorted(h["diameter_mm"] for h in holes)
+            row["bores_mm"] = found
+            if any(low - 1e-9 <= d <= high + 1e-9 for d in found):
+                row["status"] = "pass"
+            else:
+                row |= {"status": "fail", "reason": f"{pn} has no bore of {low:g} to {high:g} mm for the heat-set insert "
+                                                    f"declared at {item['source']}; its bores are {found or 'none'} mm"}
+        rows.append(row)
+    return {"status": _worst_status(r["status"] for r in rows), "blocking": True, "heat_sets": rows}
+
+
 def artifact_integrity(folder: Path) -> dict[str, Any]:
     """Every file of the version against its manifest inventory: none missing, changed, unlisted or linked."""
     problems = load_layout().verify(folder)
@@ -971,6 +1061,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                      "reason": "a changed-only check measures only the changed pairs; connection needs every pair"}
         pair_scope = chosen
         requirement_scope = [item for item in requirements if tuple(item["pair"]) in selection.selected]
+    in_scope = agreement_scope(occurrences, changes)
     checks = {
         "step_readback": step_readback(folder, manifest, parts, step, occurrences),
         "brep_validity": brep_validity(parts, manifest),
@@ -983,14 +1074,20 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
         "build_volume": build_volume(record, printed, manifest.get("manufacturing"), manufacturing["parts"]),
         "slivers_tolerances": slivers_and_tolerances(parts),
         "mesh_watertight": mesh_watertight(folder, part_map, occurrences),
+        "glb_step_agreement": glb_step_agreement(folder, manifest, part_map, step, in_scope,
+                                                 set(occurrences) - in_scope),
+        "declared_dimensions": declared_dimensions(
+            heat_sets, {oid: o.pn for oid, o in occurrences.items()}, build.read_json(folder / "metrics.json")["parts"]),
         "artifact_integrity": artifact_integrity(folder),
         "manufacturing": manufacturing,
     }
     blocking = sorted(name for name, c in checks.items() if c["blocking"] and c["status"] == "fail")
     warnings = sorted(name for name, c in checks.items() if c["status"] == "warn")
+    abstained = sorted(name for name, c in checks.items() if c["status"] == "unknown")
     counters = measurer.counters
     result = {"status": "fail" if blocking else "pass", "label": label, "pose": "nominal",
               "baseline": previous, "scope": scope, "blocking_failures": blocking, "warnings": warnings,
+              "abstentions": abstained,
               "evaluation": {"mode": "exact" if exact else "fast", "mesh": description, "band_mm": measurer.rule.band_mm,
                              "rule_sha256": measurer.rule.digest.hex(),
                              "code_sha256": _code_shas().digest(Path(__file__), VERDICT_DATA)},

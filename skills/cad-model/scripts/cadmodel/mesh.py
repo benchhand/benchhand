@@ -13,8 +13,9 @@ from cadmodel import occ, threemf
 from cadmodel.motion import load_pose
 
 # Preview tessellation: chord deviation relative to the assembly diagonal, clamped; angular deflection in rad.
+# The cap sets the GLB-STEP agreement's floor (3 x the deflection + 0.005 mm): at 0.05 mm that is 0.155 mm.
 # A manufacturing STL takes the absolute deflections of its part's manufacturing policy instead.
-LINEAR_RELATIVE, LINEAR_MIN_MM, LINEAR_MAX_MM, ANGULAR_RAD = 5e-4, 0.01, 0.2, 0.25
+LINEAR_RELATIVE, LINEAR_MIN_MM, LINEAR_MAX_MM, ANGULAR_RAD = 5e-4, 0.01, 0.05, 0.25
 DEGENERATE_MM2 = 1e-12  # a welded triangle with no more area than this bounds nothing
 STL_HEADER, STL_RECORD = 84, 50  # binary STL: 80-byte header and uint32 count, then 50 bytes per triangle
 MATCH = ("a node belongs to the occurrence whose instance name it carries: `<PN> <title>` for a part placed "
@@ -24,6 +25,21 @@ MATCH = ("a node belongs to the occurrence whose instance name it carries: `<PN>
 def deflection(shape: Any) -> float:
     low, high = occ.bbox(shape)
     return min(LINEAR_MAX_MM, max(LINEAR_MIN_MM, LINEAR_RELATIVE * math.dist(low, high)))
+
+
+def tessellate(shape: Any, linear: float) -> None:
+    """Triangulate every face of `shape` in place at `linear` mm and ANGULAR_RAD, as the preview GLB does."""
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.IMeshTools import IMeshTools_Parameters
+
+    parameters = IMeshTools_Parameters()
+    parameters.Deflection = linear
+    parameters.Angle = ANGULAR_RAD
+    parameters.Relative = False
+    parameters.InParallel = True
+    parameters.ControlSurfaceDeflection = True
+    parameters.EnableControlSurfaceDeflectionAllSurfaces = True  # without it a torus strays up to 3 x `linear`
+    BRepMesh_IncrementalMesh(shape, parameters)
 
 
 def _name_untagged_instances(tool: Any) -> None:
@@ -58,7 +74,6 @@ def write_glb(step: Path, glb: Path) -> dict[str, Any]:
 
     Node names are instance names (`_name_untagged_instances`), mesh names product names; every
     occurrence is its own node, each with its own mesh."""
-    from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.collections import IndexedDataMap_TCollection_AsciiString_TCollection_AsciiString as Metadata
     from OCP.collections import Sequence_TDF_Label
     from OCP.IFSelect import IFSelect_RetDone
@@ -86,7 +101,7 @@ def write_glb(step: Path, glb: Path) -> dict[str, Any]:
     for index in range(1, roots.Length() + 1):
         shape = tool.GetShape_s(roots.Value(index))
         linear = deflection(shape)
-        BRepMesh_IncrementalMesh(shape, linear, False, ANGULAR_RAD, True)
+        tessellate(shape, linear)
     writer = RWGltf_CafWriter(TCollection_AsciiString(str(glb)), True)
     writer.SetNodeNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Instance)
     writer.SetMeshNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Product)
