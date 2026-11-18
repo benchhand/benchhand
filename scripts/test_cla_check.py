@@ -6,9 +6,11 @@ import base64
 import json
 import re
 import sys
+import threading
 import unittest
 import urllib.parse
 from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -139,7 +141,7 @@ class EvaluateTests(unittest.TestCase):
     def test_noreply_coauthor_is_required_by_id(self) -> None:
         msg = "m\n\nCo-authored-by: Z <55+zed@users.noreply.github.com>"
         v = self.run_eval([commit(7, "dev", message=msg)], (7, "dev"), sigs((7, "3")))
-        self.assertEqual(v.unsigned, [(55, "zed")])
+        self.assertEqual(v.unsigned, [(55, None)])
 
     def test_unresolvable_coauthor_warns_but_does_not_fail(self) -> None:
         msg = "m\n\nCo-authored-by: Z <z@example.com>"
@@ -258,7 +260,9 @@ class FakeGitHub:
                  commits_status: int = 200,
                  check_post_status: dict[str, int] | None = None,
                  concurrent: list[dict[str, Any]] | None = None,
-                 after_post: list[Callable[[], None]] | None = None) -> None:
+                 after_post: list[Callable[[], None]] | None = None,
+                 after_put: list[Callable[[], None]] | None = None,
+                 on_put: list[Callable[[], None]] | None = None) -> None:
         self.commits = commits
         self.doc = doc
         self.put_failures = list(put_failures or [])
@@ -277,6 +281,8 @@ class FakeGitHub:
         self.check_post_status = check_post_status or {}
         self.concurrent = list(concurrent or [])
         self.after_post = list(after_post or [])
+        self.after_put = list(after_put or [])
+        self.on_put = list(on_put or [])
 
     def puts(self) -> list[tuple[str, str, Any]]:
         return [c for c in self.calls if c[0] == "PUT"]
@@ -294,7 +300,8 @@ class FakeGitHub:
 
     def pr_json(self, pr: Pr) -> dict[str, Any]:
         return {"number": pr.number, "user": {"id": pr.opener, "login": "dev" if pr.opener == 7 else "u"},
-                "head": {"sha": pr.sha, "ref": pr.branch, "repo": {"full_name": pr.head_repo}}}
+                "head": {"sha": pr.sha, "ref": pr.branch,
+                         "repo": {"full_name": pr.head_repo, "owner": {"login": pr.head_repo.split("/")[0]}}}}
 
     def __call__(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
         self.calls.append((method, path, body))
@@ -334,6 +341,8 @@ class FakeGitHub:
             return 200, {"content": raw, "sha": f"blob{self.version}"}
         if method == "PUT" and path == SIG_URL:
             assert body["branch"] == "main"
+            if self.on_put:
+                self.on_put.pop(0)()
             if self.put_failures:
                 return self.put_failures.pop(0), {"message": "conflict"}
             if self.concurrent:  # another signer writes between our GET and our PUT
@@ -345,6 +354,8 @@ class FakeGitHub:
                 return 409, {"message": "does not match"}
             self.doc = json.loads(base64.b64decode(body["content"]))
             self.version += 1
+            if self.after_put:
+                self.after_put.pop(0)()
             return 200, {}
         if method == "POST" and path == "/repos/o/r/check-runs":
             status = self.check_post_status.get(body["head_sha"], 201)
@@ -398,7 +409,31 @@ class ContributorTests(unittest.TestCase):
     def test_contributors_are_the_opener_the_authors_and_noreply_coauthors(self) -> None:
         msg = "m\n\nCo-authored-by: Z <55+zed@users.noreply.github.com>\nCo-authored-by: Y <y@x.io>"
         commits = [commit(7, "dev", message=msg), commit(8, "eve"), commit(None)]
-        self.assertEqual(cla.contributors(commits, (9, "opener")), {9: "opener", 7: "dev", 55: "zed", 8: "eve"})
+        # a login is known only for the opener and linked authors; a trailer gives an id and no login
+        self.assertEqual(cla.contributors(commits, (9, "opener")), {9: "opener", 7: "dev", 55: None, 8: "eve"})
+
+    def test_a_trailer_cannot_lend_an_allowlisted_login_to_an_unsigned_id(self) -> None:
+        forged = "m\n\nCo-authored-by: X <55+dependabot[bot]@users.noreply.github.com>"
+        verdict = cla.evaluate([commit(7, "dev", message=forged)], (7, "dev"), sigs((7, "3")), CONFIG)
+        self.assertEqual(verdict.unsigned, [(55, None)])
+
+    def test_the_forged_login_is_not_kept_when_the_id_later_appears_as_a_linked_author(self) -> None:
+        forged = "m\n\nCo-authored-by: X <55+dependabot[bot]@users.noreply.github.com>"
+        commits = [commit(7, "dev", message=forged), commit(55, "late")]
+        verdict = cla.evaluate(commits, (7, "dev"), sigs((7, "3")), CONFIG)
+        self.assertEqual(verdict.unsigned, [(55, "late")])
+        reversed_order = cla.evaluate(commits[::-1], (7, "dev"), sigs((7, "3")), CONFIG)
+        self.assertEqual(reversed_order.unsigned, [(55, "late")])
+
+    def test_a_signed_coauthor_id_passes_whatever_the_trailer_says(self) -> None:
+        forged = "m\n\nCo-authored-by: X <55+dependabot[bot]@users.noreply.github.com>"
+        verdict = cla.evaluate([commit(7, "dev", message=forged)], (7, "dev"), sigs((7, "3"), (55, "3")), CONFIG)
+        self.assertTrue(verdict.ok)
+
+    def test_an_unknown_login_is_reported_by_id(self) -> None:
+        forged = "m\n\nCo-authored-by: X <55+zed@users.noreply.github.com>"
+        verdict = cla.evaluate([commit(7, "dev", message=forged)], (7, "dev"), sigs((7, "3")), CONFIG)
+        self.assertIn("user id 55", cla.report(verdict, CONFIG))
 
     def test_the_same_set_drives_checking_and_signing(self) -> None:
         msg = "m\n\nCo-authored-by: Z <55+zed@users.noreply.github.com>"
@@ -595,6 +630,70 @@ class SignFlowTests(unittest.TestCase):
         self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
         self.assertEqual([r["id"] for r in api.doc["signatures"]], [8])  # type: ignore[index]
 
+    def test_a_comment_deleted_while_the_signature_is_written_is_not_resurrected(self) -> None:
+        api = FakeGitHub([commit(7, "dev")], doc=sigs())
+        api.after_put = [lambda: api.comments.pop(99)]  # the deletion lands after validation, before the end
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual(api.doc, sigs())
+        self.assertEqual(api.posted()[-1]["conclusion"], "failure")
+
+    def test_a_comment_edited_while_the_signature_is_written_is_not_resurrected(self) -> None:
+        api = FakeGitHub([commit(7, "dev")], doc=sigs())
+        api.after_put = [lambda: api.comments.__setitem__(99, "never mind")]
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual(api.doc, sigs())
+
+    def test_a_comment_observation_is_not_reused_across_retries(self) -> None:
+        old = self.record(7, 50, version="2")
+        api = FakeGitHub([commit(7, "dev")], doc={"signatures": [old]},
+                         comments={99: PHRASE, 50: cla.signing_phrase("2")}, put_failures=[409])
+        api.on_put = [lambda: api.comments.pop(50), lambda: None]  # 50 is deleted between the attempts
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual([r["comment_id"] for r in api.doc["signatures"]], [99])  # type: ignore[index]
+
+    def test_a_late_removal_refreshes_the_users_other_open_prs_too(self) -> None:
+        a, b = "1" * 40, "2" * 40
+        api = FakeGitHub([commit(7, "dev")], doc=sigs(), prs=[Pr(4, 7, a, [7]), Pr(5, 7, b, [7])])
+        api.after_put = [lambda: api.comments.pop(99)]
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        last = {}
+        for p in api.posted():
+            last[p["head_sha"]] = p["conclusion"]
+        self.assertEqual(last, {a: "failure", b: "failure"})
+
+    def test_a_failed_recheck_of_the_comment_fails_the_job(self) -> None:
+        api = FakeGitHub([commit(7, "dev")], doc=sigs())
+        api.after_put = [lambda: api.comment_status.__setitem__(99, 500)]
+        self.assertEqual(self.go(self.comment_env(), api), 1)
+
+    def test_resigning_replaces_a_stale_record_of_the_same_version(self) -> None:
+        stale = self.record(7, 50)  # same version, its comment was deleted
+        api = FakeGitHub([commit(7, "dev")], doc={"signatures": [stale]}, comments={99: PHRASE})
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual([r["comment_id"] for r in api.doc["signatures"]], [99])  # type: ignore[index]
+        self.assertEqual(api.posted()[-1]["conclusion"], "success")
+
+    def test_signing_one_pr_does_not_hide_a_failure_of_another_pr_with_the_same_head(self) -> None:
+        prs = [Pr(4, 7, HEAD, [7], "o/r", "feat"), Pr(5, 7, HEAD, [7, 8], "x/r", "other")]
+        api = FakeGitHub([commit(7, "dev")], doc=sigs(), prs=prs)
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        posted = api.posted()
+        self.assertEqual([p["head_sha"] for p in posted], [HEAD])
+        self.assertEqual(posted[0]["conclusion"], "failure")
+        self.assertIn("#5", posted[0]["output"]["summary"])
+
+    def test_revocation_aggregates_prs_sharing_a_head_and_posts_once_per_head(self) -> None:
+        prs = [Pr(4, 7, HEAD, [7], "o/r", "feat"), Pr(5, 8, HEAD, [8], "o/r", "feat"),
+               Pr(6, 7, "2" * 40, [7], "o/r", "other"), Pr(8, 9, HEAD, [9], "y/r", "third")]
+        api = FakeGitHub([commit(7, "dev")], doc=self.signed_doc(), comments={}, prs=prs)
+        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
+        posted = api.posted()
+        self.assertEqual(sorted(p["head_sha"] for p in posted), sorted([HEAD, "2" * 40]))
+        shared = next(p for p in posted if p["head_sha"] == HEAD)
+        self.assertIn("#4", shared["output"]["summary"])
+        self.assertIn("#5", shared["output"]["summary"])
+        self.assertIn("#8", shared["output"]["summary"])
+
     def test_the_fake_rejects_a_stale_blob_sha(self) -> None:
         api = FakeGitHub([], doc=sigs())
         status, _ = api("PUT", SIG_URL, {"branch": "main", "content": "e30=", "sha": "blob0"})
@@ -636,12 +735,21 @@ class SignFlowTests(unittest.TestCase):
         self.assertEqual(cla.run(env, closed_pr, closed_pr, CONFIG), 0)
         self.assertEqual([p["head_sha"] for p in api.posted()], [HEAD])
 
-    def test_open_pr_scan_is_paginated_and_bounded(self) -> None:
+    def test_open_pr_scan_is_fully_paginated_up_to_the_cap(self) -> None:
+        prs = [Pr(1000 + i, 9, f"{i:040x}", [9]) for i in range(100 * cla.MAX_OPEN_PR_PAGES - 2)]
+        prs.append(Pr(4, 7, HEAD, [7]))
+        api = FakeGitHub([commit(7, "dev")], doc=self.signed_doc(), comments={}, prs=prs)
+        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
+        listed = [c for c in api.calls if "/pulls?state=open" in c[1] and "head=" not in c[1]]
+        self.assertEqual(len(listed), cla.MAX_OPEN_PR_PAGES)
+
+    def test_a_scan_that_hits_the_cap_fails_the_job_but_still_updates_what_it_found(self) -> None:
         prs = [Pr(1000 + i, 9, f"{i:040x}", [9]) for i in range(100 * (cla.MAX_OPEN_PR_PAGES + 2))]
         api = FakeGitHub([commit(7, "dev")], doc=self.signed_doc(), comments={}, prs=prs + [Pr(4, 7, HEAD, [7])])
-        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
-        listed = [c for c in api.calls if "/pulls?state=open" in c[1]]
+        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 1)
+        listed = [c for c in api.calls if "/pulls?state=open" in c[1] and "head=" not in c[1]]
         self.assertEqual(len(listed), cla.MAX_OPEN_PR_PAGES)
+        self.assertIn(HEAD, [p["head_sha"] for p in api.posted()])
 
     def test_one_failed_post_does_not_stop_the_others_but_fails_the_job(self) -> None:
         a, b = "1" * 40, "2" * 40
@@ -686,7 +794,7 @@ class WorkflowRunPullRequestTests(unittest.TestCase):
         self.assertEqual((posted[0]["name"], posted[0]["head_sha"], posted[0]["conclusion"], posted[0]["external_id"]),
                          ("CLA", HEAD, "success", "cla:3"))
         lookup = next(c[1] for c in api.calls if "/pulls?state=open" in c[1])
-        self.assertIn("head=fork%3Afeature", lookup)
+        self.assertNotIn("head=", lookup)  # matching is by sha across every head, never narrowed
 
     def test_unsigned_author_posts_a_failure_with_the_phrase(self) -> None:
         api = FakeGitHub([commit(7, "dev")], doc=sigs(), prs=[Pr(4, 7, HEAD, [7])])
@@ -706,12 +814,24 @@ class WorkflowRunPullRequestTests(unittest.TestCase):
         self.assertEqual(self.go(api, self.fork_run()), 0)
         self.assertEqual(api.posted(), [])
 
-    def test_a_pr_from_another_fork_with_the_same_branch_name_is_not_matched(self) -> None:
-        api = FakeGitHub([commit(7, "dev")], doc=sigs((7, "3")), prs=[Pr(4, 7, HEAD, [7], head_repo="other/r")])
+    def test_prs_from_different_forks_sharing_a_sha_are_all_evaluated(self) -> None:
+        prs = [Pr(4, 7, HEAD, [7]), Pr(5, 8, HEAD, [7, 8], head_repo="other/r", branch="elsewhere")]
+        api = FakeGitHub([commit(7, "dev")], doc=sigs((7, "3")), prs=prs)
         self.assertEqual(self.go(api, self.fork_run()), 0)
-        self.assertEqual(api.posted(), [])
+        posted = api.posted()
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0]["conclusion"], "failure")
+        self.assertIn("#5", posted[0]["output"]["summary"])
 
-    def test_a_pr_with_a_deleted_head_repo_is_not_matched(self) -> None:
+    def test_the_run_does_not_have_to_name_the_head_repository(self) -> None:
+        api = FakeGitHub([commit(7, "dev")], doc=sigs((7, "3")), prs=[Pr(4, 7, HEAD, [7])])
+        payload = self.fork_run()
+        payload["workflow_run"]["head_repository"] = None
+        payload["workflow_run"]["head_branch"] = None
+        self.assertEqual(self.go(api, payload), 0)
+        self.assertEqual(api.posted()[0]["conclusion"], "success")
+
+    def test_a_pr_with_a_deleted_head_repo_is_still_evaluated(self) -> None:
         api = FakeGitHub([commit(7, "dev")], doc=sigs((7, "3")), prs=[Pr(4, 7, HEAD, [7])])
         real = api.__call__
 
@@ -723,7 +843,13 @@ class WorkflowRunPullRequestTests(unittest.TestCase):
             return status, data
 
         self.assertEqual(cla.run(event(self.tmp, "workflow_run", self.fork_run()), gone, gone, CONFIG), 0)
-        self.assertEqual(api.posted(), [])
+        self.assertEqual([p["conclusion"] for p in api.posted()], ["success"])
+
+    def test_an_incomplete_open_pr_listing_posts_a_failure_not_a_pass(self) -> None:
+        prs = [Pr(1000 + i, 9, f"{i:040x}", [9]) for i in range(100 * cla.MAX_OPEN_PR_PAGES)]
+        api = FakeGitHub([commit(7, "dev")], doc=sigs((7, "3")), prs=prs + [Pr(4, 7, HEAD, [7])])
+        self.assertEqual(self.go(api, self.fork_run()), 0)
+        self.assertEqual([p["conclusion"] for p in api.posted()], ["failure"])
 
     def test_several_prs_from_one_head_must_all_pass(self) -> None:
         prs = [Pr(4, 7, HEAD, [7]), Pr(5, 7, HEAD, [7, 8])]
@@ -910,6 +1036,103 @@ class WorkflowRunMergeGroupTests(unittest.TestCase):
         self.go(api, branch=f"gh-readonly-queue/release/1.x/pr-5-{MQ}")
         body = next(c[2] for c in api.calls if c[1] == "/graphql")
         self.assertEqual(body["variables"], {"owner": "o", "name": "r", "branch": "release/1.x"})
+
+
+class _Recorder(BaseHTTPRequestHandler):
+    """Answers from the server's ``responses`` and records what the adapter sent."""
+
+    def _serve(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        self.server.seen.append({  # type: ignore[attr-defined]
+            "method": self.command, "path": self.path, "body": body,
+            "headers": {k.lower(): v for k, v in self.headers.items()},
+        })
+        status, payload = self.server.responses.pop(0)  # type: ignore[attr-defined]
+        data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    do_GET = do_POST = do_PUT = _serve
+
+    def log_message(self, *args: Any) -> None:  # keep test output quiet
+        pass
+
+
+class HttpAdapterTests(unittest.TestCase):
+    """The production transport against a local server: headers, bodies, error mapping."""
+
+    def setUp(self) -> None:
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _Recorder)
+        self.server.seen = []  # type: ignore[attr-defined]
+        self.server.responses = []  # type: ignore[attr-defined]
+        thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def reply(self, status: int, payload: Any) -> None:
+        self.server.responses.append((status, payload))  # type: ignore[attr-defined]
+
+    def seen(self) -> list[dict[str, Any]]:
+        return self.server.seen  # type: ignore[attr-defined,no-any-return]
+
+    def test_get_sends_auth_accept_and_api_version_and_parses_json(self) -> None:
+        self.reply(200, {"ok": True})
+        status, data = cla.github_transport("tok", self.url)("GET", "/repos/o/r/pulls?state=open", None)
+        self.assertEqual((status, data), (200, {"ok": True}))
+        sent = self.seen()[0]
+        self.assertEqual((sent["method"], sent["path"]), ("GET", "/repos/o/r/pulls?state=open"))
+        self.assertEqual(sent["headers"]["authorization"], "Bearer tok")
+        self.assertEqual(sent["headers"]["accept"], "application/vnd.github+json")
+        self.assertEqual(sent["headers"]["x-github-api-version"], "2022-11-28")
+
+    def test_post_and_put_send_a_json_body_with_a_json_content_type(self) -> None:
+        self.reply(201, {"id": 1})
+        self.reply(200, {})
+        call = cla.github_transport("tok", self.url)
+        self.assertEqual(call("POST", "/repos/o/r/check-runs", {"name": "CLA"}), (201, {"id": 1}))
+        self.assertEqual(call("PUT", "/repos/o/c/contents/f", {"sha": "s"}), (200, {}))
+        post, put = self.seen()
+        self.assertEqual(json.loads(post["body"]), {"name": "CLA"})
+        self.assertEqual(json.loads(put["body"]), {"sha": "s"})
+        for sent in (post, put):
+            self.assertEqual(sent["headers"]["content-type"], "application/json")
+
+    def test_no_token_means_no_authorization_header(self) -> None:
+        self.reply(200, {})
+        cla.github_transport("", self.url)("GET", "/x", None)
+        self.assertNotIn("authorization", self.seen()[0]["headers"])
+
+    def test_json_error_body_is_returned_with_its_status(self) -> None:
+        self.reply(409, {"message": "sha does not match"})
+        self.assertEqual(cla.github_transport("t", self.url)("PUT", "/x", {}), (409, {"message": "sha does not match"}))
+
+    def test_a_404_is_a_status_not_an_exception(self) -> None:
+        self.reply(404, {"message": "Not Found"})
+        self.reply(404, b"")
+        call = cla.github_transport("t", self.url)
+        self.assertEqual(call("GET", "/a", None), (404, {"message": "Not Found"}))
+        self.assertEqual(call("GET", "/b", None), (404, {}))
+
+    def test_a_non_json_error_body_becomes_a_message(self) -> None:
+        self.reply(502, b"<html>Bad gateway</html>")
+        status, data = cla.github_transport("t", self.url)("GET", "/x", None)
+        self.assertEqual((status, data), (502, {"message": "<html>Bad gateway</html>"}))
+
+    def test_an_empty_success_body_is_an_empty_object(self) -> None:
+        self.reply(204, b"")
+        self.assertEqual(cla.github_transport("t", self.url)("GET", "/x", None), (204, {}))
+
+    def test_an_unreachable_server_is_a_runtime_error_with_a_clear_message(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()  # the port now refuses connections
+        with self.assertRaisesRegex(RuntimeError, "GET /x"):
+            cla.github_transport("t", self.url)("GET", "/x", None)
 
 
 class ConfigTests(unittest.TestCase):

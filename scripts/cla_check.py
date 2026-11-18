@@ -41,7 +41,6 @@ CHECK_NAME = "CLA"
 MAX_PR_COMMITS = 250  # the pull request commits endpoint lists at most this many
 MAX_SETTLE = 3  # evaluations posted per event while signatures keep changing underneath
 SHA = re.compile(r"[0-9a-f]{40}")
-OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?")
 QUEUE_REF = re.compile(r"gh-readonly-queue/(?P<branch>.+)/pr-(?P<number>\d+)-(?P<sha>[0-9a-f]{40})")
 QUEUE_QUERY = (
     "query($owner:String!,$name:String!,$branch:String!){repository(owner:$owner,name:$name)"
@@ -49,7 +48,7 @@ QUEUE_QUERY = (
     " pullRequest{number}}}}}}"
 )
 MAX_ATTEMPTS = 5
-MAX_OPEN_PR_PAGES = 5
+MAX_OPEN_PR_PAGES = 20  # 2000 open pull requests; beyond that the scan is incomplete and fails closed
 PAGE_SIZE = 100
 CONFIG_PATH = Path(__file__).resolve().parent.parent / ".github" / "cla.json"
 COAUTHOR = re.compile(r"^co-authored-by:\s*(.*?)\s*<([^<>]*)>\s*$", re.IGNORECASE | re.MULTILINE)
@@ -71,7 +70,7 @@ class Config:
 
 @dataclass
 class Verdict:
-    unsigned: list[tuple[int, str]] = field(default_factory=list)
+    unsigned: list[tuple[int, str | None]] = field(default_factory=list)  # login None: only an id is known
     unlinked: list[tuple[str, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -122,17 +121,22 @@ def signed_ids(doc: dict[str, Any], version: str) -> set[int]:
     return {s["id"] for s in doc.get("signatures", []) if s.get("cla_version") == version}
 
 
-def contributors(commits: list[dict[str, Any]], opener: tuple[int, str]) -> dict[int, str]:
+def contributors(commits: list[dict[str, Any]], opener: tuple[int, str]) -> dict[int, str | None]:
     """Everyone who must have signed, and who may sign: the opener, the linked commit authors and the
-    co-authors named by a GitHub noreply address. Checking and signing share this one set."""
-    people: dict[int, str] = {opener[0]: opener[1]}
+    co-authors named by a GitHub noreply address. Checking and signing share this one set.
+
+    A login is known only where the API supplied it (the opener and the commit author objects).
+    A Co-authored-by trailer is free text: it contributes an id and never a login, so it cannot
+    lend an allowlisted name such as ``dependabot[bot]`` to someone who has not signed."""
+    people: dict[int, str | None] = {opener[0]: opener[1]}
     for c in commits:
         if c.get("author") is not None:
             people.setdefault(c["author"]["id"], c["author"]["login"])
+    for c in commits:
         for _name, email in parse_coauthors(c["commit"].get("message", "")):
             identity = noreply_identity(email)
             if identity is not None:
-                people.setdefault(*identity)
+                people.setdefault(identity[0], None)
     return people
 
 
@@ -152,7 +156,7 @@ def evaluate(
     verdict.unsigned = [
         (uid, login)
         for uid, login in contributors(commits, opener).items()
-        if uid not in have and not allowlisted(login, config.allowlist)
+        if uid not in have and not (login is not None and allowlisted(login, config.allowlist))
     ]
     return verdict
 
@@ -160,7 +164,10 @@ def evaluate(
 def report(verdict: Verdict, config: Config) -> str:
     lines: list[str] = []
     if verdict.unsigned:
-        who = ", ".join(f"@{login}" for _id, login in verdict.unsigned)
+        who = ", ".join(
+            f"@{login}" if login else f"user id {uid} (named in a Co-authored-by trailer)"
+            for uid, login in verdict.unsigned
+        )
         lines += [
             f"CLA not signed by: {who}.",
             f"Read {config.document}, then comment exactly this on the pull request:",
@@ -250,6 +257,8 @@ def github_transport(token: str, api_url: str = "https://api.github.com") -> Tra
         request = urllib.request.Request(api_url + path, data=data, method=method)
         request.add_header("Accept", "application/vnd.github+json")
         request.add_header("X-GitHub-Api-Version", "2022-11-28")
+        if data is not None:
+            request.add_header("Content-Type", "application/json")
         if token:
             request.add_header("Authorization", f"Bearer {token}")
         try:
@@ -262,6 +271,8 @@ def github_transport(token: str, api_url: str = "https://api.github.com") -> Tra
                 return err.code, json.loads(text) if text else {}
             except ValueError:
                 return err.code, {"message": text}
+        except OSError as err:  # refused, reset, timed out: surface it as a failed check, not a traceback
+            raise RuntimeError(f"{method} {path} failed: {err}") from err
 
     return call
 
@@ -325,53 +336,76 @@ def update_signatures(
     return "conflict"
 
 
-def stale_comments(
-    api: Transport, repo: str, doc: dict[str, Any], user_id: int, seen: dict[int, bool]
-) -> set[int]:
-    """Comment ids of the user's records whose source comment is gone (404) or no longer exactly the
-    phrase of the record's version. A lookup error keeps the record: only proof drops it."""
+def comment_holds_phrase(api: Transport, repo: str, comment_id: int, version: str) -> bool | None:
+    """True while the comment exists with exactly the phrase of ``version``; False once it is gone
+    (404) or changed; None when the lookup failed, which is no proof either way."""
+    status, data = api("GET", f"/repos/{repo}/issues/comments/{comment_id}", None)
+    if status == 404:
+        return False
+    if status != 200:
+        return None
+    return str(data.get("body", "")).strip() == signing_phrase(version)
+
+
+def stale_comments(api: Transport, repo: str, doc: dict[str, Any], user_id: int) -> set[int]:
+    """Comment ids of the user's records whose source comment is gone or no longer exactly the phrase
+    of the record's version. Each call looks again: nothing is remembered across write retries. A
+    lookup error keeps the record, since only proof drops it."""
     stale: set[int] = set()
     for rec in doc.get("signatures", []):
         cid = rec.get("comment_id")
         if rec.get("id") != user_id or rec.get("repo") != repo or cid is None:
             continue
-        if cid not in seen:
-            status, data = api("GET", f"/repos/{repo}/issues/comments/{cid}", None)
-            if status == 404:
-                seen[cid] = False
-            elif status == 200:
-                seen[cid] = str(data.get("body", "")).strip() == signing_phrase(str(rec.get("cla_version")))
-            else:
-                seen[cid] = True
-        if not seen[cid]:
+        if comment_holds_phrase(api, repo, cid, str(rec.get("cla_version"))) is False:
             stale.add(cid)
     return stale
 
 
-def reconcile(
-    api: Transport, repo: str, doc: dict[str, Any], user_id: int, seen: dict[int, bool]
-) -> dict[str, Any]:
-    return drop_comments(doc, repo, stale_comments(api, repo, doc, user_id, seen))
+def reconcile(api: Transport, repo: str, doc: dict[str, Any], user_id: int) -> dict[str, Any]:
+    return drop_comments(doc, repo, stale_comments(api, repo, doc, user_id))
 
 
-def open_pulls(api: Transport, repo: str, head: str | None = None) -> list[dict[str, Any]]:
-    """Open pull requests, optionally only those from ``owner:branch``; bounded to a few pages."""
-    suffix = f"&head={urllib.parse.quote(head, safe='')}" if head else ""
+@dataclass
+class OpenPulls:
+    pulls: list[dict[str, Any]]
+    complete: bool  # False when the scan stopped at the page cap with more pages possible
+
+
+def scan_open_pulls(api: Transport, repo: str) -> OpenPulls:
     pulls: list[dict[str, Any]] = []
     for page in range(1, MAX_OPEN_PR_PAGES + 1):
-        status, data = api("GET", f"/repos/{repo}/pulls?state=open&per_page={PAGE_SIZE}&page={page}{suffix}", None)
+        status, data = api("GET", f"/repos/{repo}/pulls?state=open&per_page={PAGE_SIZE}&page={page}", None)
         expect(status, (200,), "listing open pull requests")
         pulls += data
         if len(data) < PAGE_SIZE:
-            break
-    return pulls
+            return OpenPulls(pulls, True)
+    return OpenPulls(pulls, False)
 
 
-def pulls_of_user(api: Transport, repo: str, user_id: int, own: dict[str, Any]) -> list[dict[str, Any]]:
-    """Open pull requests that count the user as a contributor, plus the comment's own. A PR whose
-    commits cannot be listed completely counts as affected: it is re-evaluated and fails closed."""
+INCOMPLETE_SCAN = (
+    f"More than {MAX_OPEN_PR_PAGES * PAGE_SIZE} pull requests are open, so every pull request that "
+    "shares this commit cannot be found."
+)
+
+
+def pulls_sharing_head(scan: OpenPulls, pull: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every open PR with the same head sha, whatever fork or branch it comes from. A check run
+    belongs to a sha, so its result must cover all of them. Raises when the scan is incomplete."""
+    if not scan.complete:
+        raise RuntimeError(INCOMPLETE_SCAN)
+    same = [p for p in scan.pulls if p["head"]["sha"] == pull["head"]["sha"]]
+    if all(p["number"] != pull["number"] for p in same):
+        same.append(pull)
+    return same
+
+
+def pulls_of_user(
+    user_id: int, own: dict[str, Any], scan: OpenPulls, api: Transport, repo: str
+) -> list[dict[str, Any]]:
+    """Scanned open pull requests that count the user as a contributor, plus the comment's own. A PR
+    whose commits cannot be listed completely counts as affected: it is re-evaluated and fails closed."""
     found = {own["number"]: own}
-    for pull in open_pulls(api, repo):
+    for pull in scan.pulls:
         if pull["number"] in found:
             continue
         opener = (pull["user"]["id"], pull["user"]["login"])
@@ -444,9 +478,18 @@ def settle(
     ))
 
 
-def refresh_pull(api: Transport, sig_api: Transport, repo: str, pull: dict[str, Any], config: Config) -> None:
-    settle(api, sig_api, repo, config, pull["head"]["sha"],
-           lambda doc: describe(pull_verdicts(api, repo, [pull], doc, config), config))
+def refresh_pull(
+    api: Transport, sig_api: Transport, repo: str, pull: dict[str, Any], config: Config, scan: OpenPulls
+) -> None:
+    sha = pull["head"]["sha"]
+    try:
+        pulls = pulls_sharing_head(scan, pull)
+    except RuntimeError as err:  # undetermined is a failure, never a pass
+        reason = str(err)
+        settle(api, sig_api, repo, config, sha, lambda doc: (False, "CLA could not be determined", reason))
+        return
+    settle(api, sig_api, repo, config, sha,
+           lambda doc: describe(pull_verdicts(api, repo, pulls, doc, config), config))
 
 
 def latest_check(api: Transport, repo: str, sha: str, config: Config) -> dict[str, Any] | None:
@@ -519,19 +562,14 @@ def handle_workflow_run(api: Transport, sig_api: Transport, repo: str, run: dict
         settle(api, sig_api, repo, config, sha,
                lambda doc: merge_group_result(api, repo, branch, sha, ref_pr, doc, config))
         return 0
-    head_repo = run.get("head_repository") or {}
-    full = str(head_repo.get("full_name") or "")
-    owner = str((head_repo.get("owner") or {}).get("login") or "")
-    branch_name = str(run.get("head_branch") or "")
-    if not (full and branch_name and OWNER.fullmatch(owner)):
-        print("The triggering run names no head repository or branch; nothing posted.")
+    scan = scan_open_pulls(api, repo)
+    pulls = [p for p in scan.pulls if p["head"]["sha"] == sha]
+    if not scan.complete:
+        settle(api, sig_api, repo, config, sha,
+               lambda doc: (False, "CLA could not be determined", INCOMPLETE_SCAN))
         return 0
-    pulls = [
-        p for p in open_pulls(api, repo, head=f"{owner}:{branch_name}")
-        if p["head"]["sha"] == sha and (p["head"].get("repo") or {}).get("full_name") == full
-    ]
     if not pulls:
-        print(f"No open pull request has head {sha[:7]} on {full}:{branch_name}; nothing posted.")
+        print(f"No open pull request has head {sha[:7]}; nothing posted.")
         return 0
     settle(api, sig_api, repo, config, sha,
            lambda doc: describe(pull_verdicts(api, repo, pulls, doc, config), config))
@@ -539,6 +577,44 @@ def handle_workflow_run(api: Transport, sig_api: Transport, repo: str, run: dict
 
 
 # ---- signing and revoking -----------------------------------------------------------------------
+
+
+def invalidate_user(
+    api: Transport, sig_api: Transport, repo: str, user_id: int, comment_id: int,
+    own: dict[str, Any], config: Config,
+) -> int:
+    """Remove the signature written from a comment that is gone or changed, drop the user's other
+    stale records, and post fresh results for every open PR the user is part of.
+
+    Posting happens whether or not storage changed: a retry after a failed post finds the record
+    already gone and must still invalidate. Signatures are global, so every open PR of the user is
+    refreshed, not just the one with the comment. An incomplete scan fails the job."""
+    outcome = update_signatures(
+        sig_api, config,
+        lambda doc: reconcile(api, repo, remove_signatures(doc, repo, comment_id), user_id),
+        f"cla: remove the signature from edited or deleted comment {comment_id} on {repo}#{own['number']}",
+    )
+    if outcome == "conflict":
+        print("Could not remove the signature after repeated conflicts; re-run this job.")
+        return 1
+    if outcome == "written":
+        print(f"Removed the signature recorded from comment {comment_id}.")
+    scan = scan_open_pulls(api, repo)
+    failed = 0
+    if not scan.complete:
+        print(f"{INCOMPLETE_SCAN} Pull requests beyond the scan keep their old result: re-run after closing some.")
+        failed = 1
+    done: set[str] = set()
+    for pull in pulls_of_user(user_id, own, scan, api, repo):
+        if pull["head"]["sha"] in done:
+            continue
+        done.add(pull["head"]["sha"])
+        try:
+            refresh_pull(api, sig_api, repo, pull, config, scan)
+        except RuntimeError as err:
+            print(f"Could not update the CLA check for #{pull['number']}: {err}")
+            failed = 1
+    return failed
 
 
 def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any], config: Config, now: str) -> int:
@@ -555,46 +631,32 @@ def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any],
         "id": user["id"], "login": user["login"], "cla_version": config.version, "repo": repo,
         "pr": number, "comment_id": comment["id"], "signed_at": now,
     }
-    seen: dict[int, bool] = {}
+    # Reconcile first: a stale record of this version would otherwise shadow the new signature.
     outcome = update_signatures(
-        sig_api, config, lambda doc: reconcile(api, repo, merge_signature(doc, record), user["id"], seen),
+        sig_api, config, lambda doc: merge_signature(reconcile(api, repo, doc, user["id"]), record),
         f"cla: {user['login']} signed version {config.version} on {repo}#{number}",
     )
     if outcome == "conflict":
         print("Could not record the signature after repeated conflicts; comment again to retry.")
         return 1
+    # The comment may have been deleted or edited after it was validated and before the write
+    # landed; the revoking job saw no record then. Check again now that the record exists.
+    holds = comment_holds_phrase(api, repo, comment["id"], config.version)
+    if holds is None:
+        raise RuntimeError("could not re-check the signing comment after recording the signature")
+    if not holds:
+        print("The signing comment changed while the signature was recorded; removing it.")
+        return invalidate_user(api, sig_api, repo, user["id"], comment["id"], pull, config)
     print(f"Recorded @{user['login']} for CLA version {config.version}.")
-    refresh_pull(api, sig_api, repo, pull, config)
+    refresh_pull(api, sig_api, repo, pull, config, scan_open_pulls(api, repo))
     return 0
 
 
 def revoke(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any], config: Config) -> int:
-    comment_id, number = payload["comment"]["id"], payload["issue"]["number"]
-    user_id = payload["comment"]["user"]["id"]
-    seen: dict[int, bool] = {}
-    outcome = update_signatures(
-        sig_api, config,
-        lambda doc: reconcile(api, repo, remove_signatures(doc, repo, comment_id), user_id, seen),
-        f"cla: remove the signature from edited or deleted comment {comment_id} on {repo}#{number}",
-    )
-    if outcome == "conflict":
-        print("Could not remove the signature after repeated conflicts; re-run this job.")
-        return 1
-    if outcome == "written":
-        print(f"Removed the signature recorded from comment {comment_id}.")
-    # Invalidate whether or not storage changed: a retry after a failed post finds the record gone,
-    # and posting the current evaluation is idempotent. Signatures are global, so every open PR of
-    # this user is refreshed, not just the one with the comment.
+    comment, number = payload["comment"], payload["issue"]["number"]
     status, own = api("GET", f"/repos/{repo}/pulls/{number}", None)
     expect(status, (200,), "reading the pull request")
-    failed = 0
-    for pull in pulls_of_user(api, repo, user_id, {**own, "number": number}):
-        try:
-            refresh_pull(api, sig_api, repo, pull, config)
-        except RuntimeError as err:
-            print(f"Could not update the CLA check for #{pull['number']}: {err}")
-            failed = 1
-    return failed
+    return invalidate_user(api, sig_api, repo, comment["user"]["id"], comment["id"], {**own, "number": number}, config)
 
 
 def load_payload(env: dict[str, str]) -> dict[str, Any]:
