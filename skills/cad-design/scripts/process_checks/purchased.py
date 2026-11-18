@@ -4,10 +4,10 @@ overhang, cutter, kerf) belong to made parts. The function of a bought item is i
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from .core import FAIL, PASS, UNKNOWN, Context, Draft, Result, policy, text, unknown
+from .core import FAIL, PASS, UNKNOWN, Context, Draft, Result, assembly_data, intent, policy, text, unknown
 
 TRACEABLE = frozenset({"datasheet", "standard", "supplier", "test", "calibration"})
 
@@ -161,11 +161,50 @@ def dimensions(ctx: Context) -> Result:
                   "the interface fit are not compared here")
 
 
+def _occurrence_ids(ctx: Context) -> tuple[Callable[[Any], Any], tuple[Any, ...]]:
+    """The function that maps a reference to its occurrence id, and the occurrences of the part under check, both read
+    from the assembly inventory. When the inventory fails to build (validate reports why), references stand as written."""
+    data = assembly_data()
+    frames = {pn: part.raw.get("model_frame", data.DEFAULT_FRAME) for pn, part in ctx.record.parts.items()}
+    try:
+        inventory = data.normalize(intent().thaw(ctx.record.assembly_inventory), frames)
+    except data.InventoryError:
+        return (lambda ref: ref), ()
+
+    def occurrence_id(ref: Any) -> Any:
+        try:
+            return inventory.resolve(ref).id
+        except data.UnresolvedReference:
+            return None  # a reference the inventory cannot resolve names no occurrence, so it matches none
+
+    return occurrence_id, inventory.of(ctx.pn)
+
+
 def mounting(ctx: Context) -> Result:
+    """Mounted: an interface or an operation names the part. A part placed twice or more needs an operation naming
+    each occurrence as part or into, since an interface names the part number, not one placement."""
     pn = ctx.pn
     interfaces = [i for i, item in ctx.record.interfaces.items() if pn in (item.raw.get("from"), item.raw.get("to"))]
     operations = ctx.record.assembly_operations
-    ops = [] if ctx.mi.is_fact(operations) else [o.get("id") for o in operations if pn in (o.get("part"), o.get("into"))]
+    occurrence_id, placed = _occurrence_ids(ctx)
+    mine = [o.id for o in placed] if len(placed) > 1 else [pn, *(o.id for o in placed)]
+    named: dict[str, set[str]] = {}
+    for op in () if ctx.mi.is_fact(operations) else operations:
+        for ident in {occurrence_id(op.get("part")), occurrence_id(op.get("into"))} & set(mine):
+            named.setdefault(ident, set()).add(op.get("id"))
+    ops = sorted({op for idents in named.values() for op in idents})
+    if len(placed) > 1:
+        missing = [o.ref for o in placed if o.id not in named]
+        if missing:
+            names = ", ".join(missing)
+            draft = Draft("purchase.mounting_unmounted", "major", FAIL, text(f"no assembly operation for {names}"),
+                          policy("mounting", "equals", "an assembly operation for every occurrence"),
+                          "assembly.yaml occurrences and operations", "every occurrence is read from the inventory",
+                          f"{names} of {len(placed)} placements are not installed by any operation",
+                          remedy=f"record the assembly operation that installs and retains {names}",
+                          recheck=["purchase.mounting"])
+            return Result(FAIL, "purchase mounting", f"{names} not mounted", [draft])
+        interfaces = []
     if not interfaces and not ops:
         draft = Draft("purchase.mounting_unknown", "major", UNKNOWN, unknown("no interface or assembly operation"),
                       policy("mounting", "equals", "an interface and an assembly operation that retain it"),

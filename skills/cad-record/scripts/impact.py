@@ -11,7 +11,7 @@ Each subject (a part, an interface, an assembly operation, a requirement or the 
 sha256 fingerprint per dependency domain (`DOMAINS`, the evidence ledger's `fingerprints` keys):
 use case; loads and environment; material and its condition; process, route, capability and setup;
 orientation, supports and finish; geometry, manufacturing state and components; interfaces, datums
-and assembly order; criteria and sources. Comparing the record of vM with vN (or with the current
+and assembly order; the inventory inputs of a bought part placed as occurrences; criteria and sources. Comparing the record of vM with vN (or with the current
 hw/ record) lists the domains that changed per subject, the check obligations and accepted evidence
 they make stale, the decisions they reopen, the earliest stage that accepted a changed fact and the
 flow it proposes, and the evidence whose recorded fingerprints still match: carry-forward candidates
@@ -58,10 +58,12 @@ def _load_module(name: str, path: Path) -> Any:
 mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
 # The one definition of the selection inputs and their digest (selection.input_digest over DIGEST_SCOPE).
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
+# The occurrence inventory (assembly.yaml occurrences and subassemblies) and its reference resolution.
+assembly_data = _load_module("cad_record_assembly_data", SCRIPTS / "assembly_data.py")
 
 # The evidence ledger's fingerprint domains (manufacturing-evidence.schema.json#/$defs/fingerprint_domain).
 DOMAINS = ("use_case", "load", "environment", "material", "condition", "lot", "process", "route", "capability", "setup",
-           "orientation", "finish", "geometry", "interface", "criterion", "source", "appearance")
+           "orientation", "finish", "geometry", "interface", "occurrences", "criterion", "source", "appearance")
 # The dependency domains a change is reported under, each grouping fingerprint domains.
 GROUPS: Mapping[str, tuple[str, ...]] = {
     "use_case": ("use_case",),
@@ -71,19 +73,20 @@ GROUPS: Mapping[str, tuple[str, ...]] = {
     "orientation_support_finish": ("orientation", "finish"),
     "geometry_state_components": ("geometry",),
     "appearance": ("appearance",),
-    "interface_datum_tolerance_assembly_order": ("interface",),
+    "interface_datum_tolerance_assembly_order": ("interface", "occurrences"),
     "criterion_source_calibration_policy": ("criterion", "source"),
 }
 # The earliest workflow stage that accepts a fact of each domain: a change reopens it.
 DOMAIN_STAGE: Mapping[str, str] = {
     "use_case": "intent", "load": "intent", "environment": "intent", "criterion": "specify", "interface": "specify",
+    "occurrences": "specify",
     "geometry": "layout", "material": "parts", "condition": "parts", "process": "parts", "route": "parts",
     "capability": "parts", "source": "parts", "setup": "detail", "orientation": "detail", "finish": "detail",
     "lot": "release", "appearance": "detail",
 }
-# Appearance (intent.color) is an input of the outputs that write it, such as the 3MF export, and of nothing
-# else: a family depends on it only when FAMILY_DOMAINS names it, so "every domain" below leaves it out.
-_EVERYTHING = frozenset(DOMAINS) - {"appearance"}
+# Appearance (intent.color) and occurrences are inputs of the checks and outputs that name them in FAMILY_DOMAINS,
+# and of nothing else, so "every domain" below leaves them out.
+_EVERYTHING = frozenset(DOMAINS) - {"appearance", "occurrences"}
 _JUDGED = frozenset({"criterion", "source"})  # every check is judged against criteria and sourced data
 # The domains each check family depends on, by family prefix (the longest matching prefix decides).
 FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
@@ -91,7 +94,7 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("route.", _JUDGED | {"process", "route", "capability", "setup", "orientation", "finish", "material", "condition"}),
     ("process.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                            "condition"}),
-    ("purchase.", _JUDGED | {"process", "route", "load", "environment", "geometry"}),
+    ("purchase.", _JUDGED | {"process", "route", "load", "environment", "geometry", "occurrences"}),
     ("optical.", _JUDGED | {"material", "process", "route", "finish"}),
     ("engineering.", _JUDGED | {"use_case", "geometry", "material", "condition", "load", "environment", "orientation",
                                 "process", "route", "finish"}),
@@ -186,6 +189,66 @@ def _artifacts(value: Any) -> dict[str, Any]:
     return found
 
 
+@dataclass(frozen=True)
+class InventoryProblem:
+    """The assembly inventory of a record does not normalize. `message` is the InventoryError text and `field` the
+    Record field it came from. Callers report or fingerprint it, and do not treat it as "no occurrences"."""
+
+    field: str
+    message: str
+
+
+@dataclass(frozen=True)
+class OccurrenceOperations:
+    """One occurrence of a part: its id and copyable reference (`@id`, or the PN of a legacy singleton), its
+    normalized rest placement, and the ids of the operations naming it as `part` or `into`, sorted."""
+
+    id: str
+    ref: str
+    placement: Mapping[str, Any]
+    operations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PartOccurrences:
+    """The occurrences of one part, sorted by occurrence id, and the part's model_frame."""
+
+    pn: str
+    model_frame: str
+    occurrences: tuple[OccurrenceOperations, ...]
+
+
+def part_occurrences(record: Any, pn: str) -> PartOccurrences | InventoryProblem:
+    """The occurrences of part `pn` in `record`, each with its placement and the operations naming it, resolved
+    through the record's assembly inventory (a bare PN or an `@id` in an operation's `part` or `into`).
+
+    Pure: it reads only `record`, never a file. An inventory that does not normalize returns an
+    InventoryProblem carrying the error and its field, never an empty result. A reference that names no single
+    occurrence (a PN placed twice or more, an unknown id) names none here. Validate reports it.
+
+    Built for reuse: impact.py's purchase.mounting fingerprint calls it. The operation `interface` view of
+    occurrence placements (#154) and the dependency of an operation on the operations before it (#119) take the
+    same resolution and do not resolve references again.
+    """
+    frames = {name: part.raw.get("model_frame", assembly_data.DEFAULT_FRAME) for name, part in record.parts.items()}
+    try:
+        inventory = assembly_data.normalize(plain(record.assembly_inventory), frames)
+    except assembly_data.InventoryError as error:
+        return InventoryProblem("assembly_inventory", str(error))
+    operations = record.assembly_operations
+    naming: dict[str, set[str]] = {}
+    for op in () if mi.is_fact(operations) else operations:
+        for ref in (op.get("part"), op.get("into")):
+            try:
+                occurrence = inventory.resolve(ref)
+            except assembly_data.UnresolvedReference:
+                continue
+            naming.setdefault(occurrence.id, set()).add(str(op.get("id")))
+    return PartOccurrences(pn, frames.get(pn, assembly_data.DEFAULT_FRAME), tuple(
+        OccurrenceOperations(o.id, o.ref, o.placement.record(), tuple(sorted(naming.get(o.id, ()))))
+        for o in sorted(inventory.of(pn), key=lambda occurrence: occurrence.id)))
+
+
 class _Record:
     """The raw (plain) views of one normalized Record that fingerprints read."""
 
@@ -259,7 +322,22 @@ class _Record:
         }
         sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
+        mounting = self.mounting_inputs(pn)
+        if mounting is not None:
+            values["occurrences"] = mounting
         return values
+
+    def mounting_inputs(self, pn: str) -> Any:
+        """The `occurrences` domain of a part: its inventory-derived inputs (occurrences, their placements, the
+        operations resolved through them, and its model_frame). An inventory problem fingerprints as itself. Only a
+        bought part with an explicit occurrence or a broken inventory has any. Only purchase.* depends on the
+        domain. #154 may depend on it in place of widening `interface`."""
+        if not any(op.get("kind") == "purchased" for op in self.route(pn)):
+            return None
+        found = part_occurrences(self.record, pn)
+        if isinstance(found, InventoryProblem) or any(o.ref.startswith("@") for o in found.occurrences):
+            return plain(found)
+        return None
 
     def interfaces_of(self, pn: str) -> set[str]:
         found = set()
@@ -329,7 +407,8 @@ class _Record:
         if key == "product":  # the whole sequence, occurrence references included, which the per-part view misses
             combined["interface"] = {"parts": combined["interface"], "assembly_sequence": self.operations,
                                      "assembly_inventory": plain(self.record.assembly_inventory)}
-        combined.pop("appearance", None)  # only a part has a color
+        for domain in opt_in_domains():  # only a part carries an opt-in domain (a color, its occurrences)
+            combined.pop(domain, None)
         return combined
 
 
@@ -440,14 +519,15 @@ def opt_in_domains() -> frozenset[str]:
 
 def evidence_staleness(entry: Mapping[str, Any], current: Mapping[str, str]) -> tuple[str, ...]:
     """The fingerprint domains in which accepted evidence `entry` no longer matches the current subject
-    `current`: each recorded domain that differs, each declared domain it records no fingerprint of, or
-    ("unrecorded",) when it records none. An opt-in domain counts only for a family that declares it, of a subject that has it."""
+    `current`: each recorded domain that differs or that the subject lacks, each declared domain it records
+    no fingerprint of, or ("unrecorded",) when it records none. An opt-in domain counts only for a family that
+    declares it."""
     recorded = entry.get("fingerprints")
     if not isinstance(recorded, Mapping) or not recorded:
         return ("unrecorded",)
     declared, missing, opt_in = declared_domains(entry), unrecorded_domains(entry, current), opt_in_domains()
     return tuple(d for d in DOMAINS if d in missing or (d in recorded and recorded[d] != current.get(d)
-                                                        and (d not in opt_in or (d in declared and d in current))))
+                                                        and (d not in opt_in or d in declared)))
 
 
 def _stage_min(stages: Iterable[str]) -> str | None:
