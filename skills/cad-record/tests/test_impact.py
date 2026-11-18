@@ -522,7 +522,11 @@ class PurchaseMountingStaleness(unittest.TestCase):
         return {rel: data for rel, data in docs.items() if not rel.startswith("_")}
 
     def wrong_shapes(self) -> list[tuple[str, str, Any, str]]:
-        """(name, fixture, edit of assembly.yaml, exact problem). Each fixture is valid in every other respect."""
+        """(name, fixture, edit of assembly.yaml, exact problem). The "legacy" fixtures have no explicit occurrence,
+        so the shape is the only problem. The one "placed" mapping case cannot be that clean: `_list_of`
+        (assembly_data.py:216) reads a mapping as an empty list, so the explicit occurrences stay ungrouped and the
+        membership loop (assembly_data.py:295-297) always reports them next to the shape message. That case keeps
+        the references as mapping keys, which is the shape that would read as valid without the check."""
         def subassembly(key: str, value: Any) -> Any:
             return lambda assembly: assembly["subassemblies"][0].__setitem__(key, value)
 
@@ -533,6 +537,8 @@ class PurchaseMountingStaleness(unittest.TestCase):
         return [
             ("subassembly occurrences is a mapping", "placed", subassembly("occurrences", every_reference),
              "subassembly main: occurrences must be a list"),
+            ("subassembly occurrences is a mapping and nothing else is wrong", "legacy",
+             subassembly("occurrences", {"@ring-a": 1}), "subassembly main: occurrences must be a list"),
             ("subassembly occurrences is an integer", "legacy", subassembly("occurrences", 1),
              "subassembly main: occurrences must be a list"),
             ("subassembly parts is an integer", "legacy", subassembly("parts", 1),
