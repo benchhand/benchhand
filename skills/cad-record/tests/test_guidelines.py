@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
+"""Manufacturing guideline discovery and layered resolution (benchhand-lch). Every case names the rule it proves.
+The guideline files are synthetic: written to a temporary directory from the dictionaries below, plus the files
+under fixtures/guidelines/."""
+
+from __future__ import annotations
+
+import copy
+import json
+import os
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+import yaml
+
+HERE = Path(__file__).resolve().parent
+SKILL = HERE.parent
+sys.path.insert(0, str(HERE.parents[2] / "scripts"))
+from modload import load_module as load  # noqa: E402
+
+fx = load("cad_record_mi_fixtures", HERE / "fixtures" / "manufacturing_intent.py")
+mi = fx.intent_module()
+gl = load("cad_record_guidelines", SKILL / "scripts" / "guidelines.py")
+FIXTURES = HERE / "fixtures" / "guidelines"
+SHA = "a" * 64
+
+
+def cite() -> list[dict[str, Any]]:
+    return [fx.source("datasheet", "TST guide", locator="table 2")]
+
+
+def limit(characteristic: str, operator: str, value: float | None = None, units: str = "mm", **extra: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {"characteristic": characteristic, "operator": operator, "citations": cite()}
+    if value is not None:
+        data["quantity"] = fx.quantity(value, units)
+    data.update(extra)
+    return data
+
+
+def per_line(characteristic: str, factor: float, floor: float, **extra: Any) -> dict[str, Any]:
+    return limit(characteristic, ">=", relative={"relative_to": "line_width", "factor": factor, "floor": fx.quantity(floor)}, **extra)
+
+
+def guideline(ident: str, limits: list[dict[str, Any]], revision: int = 1, **scope: Any) -> dict[str, Any]:
+    return {"schema_version": 1, "id": ident, "revision": revision, "title": f"{ident} (TST)", "scope": {"process": "fdm", **scope},
+            "limits": limits}
+
+
+def put(directory: Path, name: str, document: dict[str, Any]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{name}.yaml").write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+
+def record(*, nozzle: float | None = 0.4, family: Any = "pa", filler: Any = None, calibrations: list[dict[str, Any]] | None = None,
+           pin: list[str] | None = None, nozzle_material: str | None = None, line_width: float | None = None) -> Any:
+    parameters: dict[str, Any] = {}
+    if nozzle is not None:
+        parameters["nozzle_diameter"] = fx.known(fx.quantity(nozzle))
+    if line_width is not None:
+        parameters["line_width"] = fx.known(fx.quantity(line_width))
+    if nozzle_material is not None:
+        parameters["nozzle_material"] = fx.known(nozzle_material)
+    extra: dict[str, Any] = {"guidelines": pin} if pin else {}
+    printer = fx.capability_profile("tst_printer", "fdm", parameters=parameters, calibrations=calibrations or [], **extra)
+    facts: dict[str, Any] = {}
+    if family is not None:
+        facts["material_family"] = fx.known(family)
+    if filler is not None:
+        facts["filler"] = fx.known(filler) if filler != "none" else fx.not_applicable("unfilled")
+    material = fx.material_profile("tst_pa", level="family", form="printed", **facts)
+    return mi.normalize_record(fx.record(capabilities=[printer], materials=[material]))
+
+
+OP = types.SimpleNamespace(capability="tst_printer")
+
+
+def resolve(rec: Any, catalog: Any, characteristic: str, **extra: Any) -> Any:
+    return gl.resolve(rec, OP, characteristic, catalog=catalog, material="tst_pa", **extra)
+
+
+class Directories(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.hw, self.shipped = root / "hw", root / "shipped"
+        self.project = self.hw / "manufacturing" / "guidelines"
+
+    def catalog(self) -> Any:
+        return gl.discover(self.hw, shipped=self.shipped)
+
+
+class Discovery(Directories):
+    def test_a_project_set_shadows_the_shipped_set_of_the_same_id_and_both_revisions_are_reported(self) -> None:
+        put(self.shipped, "generic", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)], revision=1))
+        put(self.project, "generic", guideline("fdm.generic", [limit("min_wall", ">=", 1.5)], revision=3))
+        catalog = self.catalog()
+        self.assertEqual(catalog.guidelines["fdm.generic"].revision, 3)
+        self.assertEqual(catalog.guidelines["fdm.generic"].origin, "project")
+        (shadow,) = catalog.shadows
+        self.assertEqual((shadow.id, shadow.winner.revision, [g.revision for g in shadow.hidden]), ("fdm.generic", 3, [1]))
+        self.assertEqual(shadow.hidden[0].origin, "shipped")
+
+    def test_an_invalid_file_is_refused_by_name_and_never_skipped_silently(self) -> None:
+        put(self.shipped, "ok", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        broken = guideline("fdm.material.pa", [limit("min_wall", ">=", 0.8)])
+        broken["limits"][0]["bogus"] = 1
+        put(self.project, "broken", broken)
+        (self.project / "garbled.yaml").write_text("id: [unclosed\n", encoding="utf-8")
+        catalog = self.catalog()
+        self.assertEqual(sorted(r.path for r in catalog.refused), ["manufacturing/guidelines/broken.yaml", "manufacturing/guidelines/garbled.yaml"])
+        reasons = {r.path: str(r) for r in catalog.refused}
+        self.assertIn("broken.yaml is refused", reasons["manufacturing/guidelines/broken.yaml"])
+        self.assertIn("bogus", reasons["manufacturing/guidelines/broken.yaml"])
+        self.assertIn("cannot read", reasons["manufacturing/guidelines/garbled.yaml"])
+        self.assertEqual(sorted(catalog.guidelines), ["fdm.generic"])
+
+    def test_a_refused_project_override_does_not_fall_back_to_the_shipped_set_of_its_id(self) -> None:
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 0.8)], material_family=["pa"]))
+        broken = guideline("fdm.material.pa", [limit("min_wall", ">=", 0.8)], revision=2, material_family=["pa"])
+        broken["limits"][0]["quantity"]["units"] = "parsec"
+        put(self.project, "pa", broken)
+        catalog = self.catalog()
+        self.assertEqual(catalog.guidelines, {})
+        self.assertEqual(catalog.blocked, frozenset({"fdm.material.pa"}))
+
+    def test_the_fixture_file_that_breaks_the_schema_is_refused(self) -> None:
+        catalog = gl.discover(None, shipped=FIXTURES / "invalid")
+        self.assertEqual([r.path for r in catalog.refused], ["bad_operator.yaml"])
+        self.assertIn("min", str(catalog.refused[0]))
+
+    def test_two_files_of_one_id_in_one_directory_are_refused(self) -> None:
+        put(self.project, "a", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        put(self.project, "b", guideline("fdm.generic", [limit("min_wall", ">=", 0.9)]))
+        catalog = self.catalog()
+        self.assertEqual([r.path for r in catalog.refused], ["manufacturing/guidelines/b.yaml"])
+        self.assertEqual(catalog.blocked, frozenset({"fdm.generic"}))
+
+    def test_a_file_in_a_home_like_directory_is_never_discovered_and_the_home_is_never_read(self) -> None:
+        home = FIXTURES / "home"
+        put(self.shipped, "ok", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        with mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}), \
+                mock.patch.object(Path, "home", side_effect=AssertionError("the home directory is read")):
+            catalog = self.catalog()
+        self.assertTrue((home / ".config" / "benchhand" / "guidelines" / "home.yaml").is_file())
+        self.assertEqual(sorted(catalog.guidelines), ["fdm.generic"])
+        self.assertEqual(catalog.refused, ())
+
+    def test_a_catalog_digests_are_the_sha256_of_each_file(self) -> None:
+        put(self.shipped, "generic", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)], revision=2))
+        import hashlib
+        expected = hashlib.sha256((self.shipped / "generic.yaml").read_bytes()).hexdigest()
+        self.assertEqual(self.catalog().digests(), {"fdm.generic@2": expected})
+
+
+class Specificity(Directories):
+    def test_the_most_specific_scope_wins_whatever_the_load_order(self) -> None:
+        put(self.shipped, "a_pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]))
+        put(self.shipped, "z_generic", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.status, found.value), ("guideline", mi.Quantity("mm", value=1.5)))
+        self.assertEqual([p.guideline for p in found.provenance], ["fdm.material.pa@1"])
+        self.assertEqual([(s.guideline, s.layer) for s in found.provenance[0].shadowed], [("fdm.generic@1", "generic")])
+
+    def test_a_scope_that_does_not_match_does_not_apply(self) -> None:
+        put(self.shipped, "a_pc", guideline("fdm.material.pc", [limit("min_wall", ">=", 3.0)], material_family=["pc"]))
+        put(self.shipped, "z_generic", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual(found.value, mi.Quantity("mm", value=1.0))
+
+    def test_a_nozzle_interval_selects_by_the_profile_nozzle(self) -> None:
+        put(self.shipped, "n04", guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.2)],
+                                           nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
+        put(self.shipped, "n06", guideline("fdm.nozzle.d0_6", [limit("min_wall", ">=", 1.8)],
+                                           nozzle_diameter=fx.quantity(lower=0.55, upper=0.65)))
+        self.assertEqual(resolve(record(nozzle=0.4), self.catalog(), "min_wall").value, mi.Quantity("mm", value=1.2))
+        self.assertEqual(resolve(record(nozzle=0.6), self.catalog(), "min_wall").value, mi.Quantity("mm", value=1.8))
+        self.assertEqual(resolve(record(nozzle=0.8), self.catalog(), "min_wall").status, "unknown")
+
+    def test_equally_specific_sets_that_disagree_keep_the_stricter_value(self) -> None:
+        put(self.shipped, "x", guideline("fdm.material.x", [limit("min_wall", ">=", 1.0)], material_family=["pa"]))
+        put(self.shipped, "y", guideline("fdm.material.y", [limit("min_wall", ">=", 1.4)], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual(found.value, mi.Quantity("mm", value=1.4))
+        self.assertEqual([p.guideline for p in found.provenance], ["fdm.material.y@1"])
+        self.assertEqual([s.guideline for s in found.provenance[0].shadowed], ["fdm.material.x@1"])
+
+    def test_a_maximum_keeps_the_smaller_value_when_equally_specific(self) -> None:
+        put(self.shipped, "x", guideline("fdm.material.x", [limit("overhang_angle", "<=", 50, "deg")], material_family=["pa"]))
+        put(self.shipped, "y", guideline("fdm.material.y", [limit("overhang_angle", "<=", 40, "deg")], material_family=["pa"]))
+        self.assertEqual(resolve(record(), self.catalog(), "overhang_angle").value, mi.Quantity("deg", value=40))
+
+    def test_an_orientation_scoped_limit_applies_only_to_that_orientation(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0),
+                                                         limit("min_wall", ">=", 1.6, applies_to={"orientation": "vertical"})]))
+        catalog = self.catalog()
+        self.assertEqual(resolve(record(), catalog, "min_wall").value, mi.Quantity("mm", value=1.0))
+        self.assertEqual(resolve(record(), catalog, "min_wall", orientation="vertical").value, mi.Quantity("mm", value=1.6))
+
+
+class TightenOnly(Directories):
+    def setUp(self) -> None:
+        super().setUp()
+        put(self.shipped, "generic", guideline("fdm.generic", [limit("min_wall", ">=", 1.2)]))
+
+    def test_a_more_specific_limit_that_relaxes_without_relaxes_is_ignored_with_a_warning(self) -> None:
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 0.8)], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual(found.value, mi.Quantity("mm", value=1.2))
+        self.assertTrue(any("without `relaxes`" in w and "fdm.material.pa@1" in w for w in found.warnings), found.warnings)
+        self.assertIn("weaker than a less specific limit", found.provenance[0].shadowed[0].why)
+
+    def test_a_relaxation_with_relaxes_is_taken_with_a_warning(self) -> None:
+        relaxes = {"reason": "vendor profile prints thinner walls", "citation": cite()[0]}
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 0.8, relaxes=relaxes)], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.status, found.value), ("guideline", mi.Quantity("mm", value=0.8)))
+        self.assertTrue(any("relaxed to >= 0.8 mm by fdm.material.pa@1" in w for w in found.warnings), found.warnings)
+
+    def test_a_tightening_limit_needs_no_relaxes_and_gives_no_warning(self) -> None:
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.6)], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.value, found.warnings), (mi.Quantity("mm", value=1.6), ()))
+
+    def test_a_less_specific_set_cannot_loosen_a_more_specific_one(self) -> None:
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.6)], material_family=["pa"]))
+        put(self.shipped, "loose", guideline("fdm.loose", [limit("min_wall", ">=", 0.5)]))
+        self.assertEqual(resolve(record(), self.catalog(), "min_wall").value, mi.Quantity("mm", value=1.6))
+
+
+class Extends(Directories):
+    def test_an_abstract_set_is_only_inherited_never_matched(self) -> None:
+        base = guideline("fdm.base", [limit("overhang_angle", "<=", 40, "deg")])
+        base["abstract"] = True
+        child = guideline("fdm.material.pa", [limit("min_wall", ">=", 1.0)], material_family=["pa"])
+        child["extends"] = ["fdm.base"]
+        put(self.shipped, "base", base)
+        put(self.shipped, "pa", child)
+        catalog = self.catalog()
+        self.assertNotIn("fdm.base", [g.id for g in gl.applicable(catalog, gl.context_for(record().capabilities["tst_printer"]))])
+        found = resolve(record(), catalog, "overhang_angle")
+        self.assertEqual((found.value, [p.guideline for p in found.provenance]), (mi.Quantity("deg", value=40), ["fdm.base@1"]))
+
+    def test_an_abstract_set_alone_resolves_nothing(self) -> None:
+        base = guideline("fdm.base", [limit("overhang_angle", "<=", 40, "deg")])
+        base["abstract"] = True
+        put(self.shipped, "base", base)
+        self.assertEqual(resolve(record(), self.catalog(), "overhang_angle").status, "unknown")
+
+    def test_parents_are_read_in_order_and_the_child_may_tighten_them(self) -> None:
+        put(self.shipped, "a", {**guideline("fdm.a", [limit("min_wall", ">=", 1.0)]), "abstract": True})
+        put(self.shipped, "b", {**guideline("fdm.b", [limit("min_wall", ">=", 1.3)]), "abstract": True})
+        put(self.shipped, "c", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]),
+                                "extends": ["fdm.a", "fdm.b"]})
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual(found.value, mi.Quantity("mm", value=1.5))
+        self.assertEqual(sorted(s.guideline for s in found.provenance[0].shadowed), ["fdm.a@1", "fdm.b@1"])
+
+    def test_a_parent_that_is_missing_makes_the_limit_unknown_with_the_reason(self) -> None:
+        put(self.shipped, "c", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]),
+                                "extends": ["fdm.nowhere"]})
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("fdm.nowhere is not a known guideline set", found.reasons[0])
+
+    def test_a_cycle_makes_the_limit_unknown(self) -> None:
+        put(self.shipped, "a", {**guideline("fdm.a", [limit("min_wall", ">=", 1.0)]), "extends": ["fdm.b"]})
+        put(self.shipped, "b", {**guideline("fdm.b", [limit("min_wall", ">=", 1.0)]), "extends": ["fdm.a"]})
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("extends itself", found.reasons[0])
+
+
+class LineWidth(Directories):
+    def test_a_line_width_multiple_resolves_against_the_line_width_before_the_nozzle(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8)]))
+        catalog = self.catalog()
+        self.assertEqual(resolve(record(nozzle=0.4), catalog, "min_wall").value, mi.Quantity("mm", value=1.2))
+        self.assertAlmostEqual(resolve(record(nozzle=0.4, line_width=0.5), catalog, "min_wall").value.value, 1.5)
+
+    def test_the_floor_holds_when_the_multiple_is_smaller(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8)]))
+        self.assertEqual(resolve(record(nozzle=0.2), self.catalog(), "min_wall").value, mi.Quantity("mm", value=0.8))
+
+    def test_a_profile_with_neither_line_width_nor_nozzle_is_unknown_never_the_floor(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8)]))
+        found = resolve(record(nozzle=None), self.catalog(), "min_wall")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("neither a line width nor a nozzle diameter", found.reasons[0])
+
+    def test_a_relative_limit_on_an_angle_is_refused_by_name(self) -> None:
+        bad = guideline("fdm.generic", [])
+        bad["limits"] = [limit("overhang_angle", "<=", relative={"relative_to": "line_width", "factor": 1, "floor": fx.quantity(40, "deg")})]
+        put(self.shipped, "g", bad)
+        self.assertEqual([r.path for r in self.catalog().refused], ["g.yaml"])
+
+
+class Unknowns(Directories):
+    def test_a_missing_value_falls_through_to_unknown(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        found = resolve(record(), self.catalog(), "bridge_span")
+        self.assertEqual((found.status, found.value, found.source), ("unknown", None, None))
+        self.assertIn("no applicable guideline states bridge_span", found.reasons[0])
+
+    def test_a_missing_value_falls_through_to_a_less_specific_layer(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("bridge_span", "<=", 5)]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.6)], material_family=["pa"]))
+        self.assertEqual(resolve(record(), self.catalog(), "bridge_span").value, mi.Quantity("mm", value=5))
+
+    def test_a_requirement_with_an_unknown_scope_fact_stays_unknown_and_does_not_fall_through(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [{"characteristic": "enclosure", "operator": "equals", "value": False,
+                                                          "citations": cite()}]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [{"characteristic": "enclosure", "operator": "equals", "value": True,
+                                                               "citations": cite()}], material_family=["pa"]))
+        found = resolve(record(family=None), self.catalog(), "enclosure")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("scope fact is unknown", found.reasons[0])
+        self.assertIn("material_family", found.reasons[0])
+
+    def test_a_requirement_with_a_known_scope_resolves_and_the_stricter_value_wins(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [{"characteristic": "enclosure", "operator": "equals", "value": True,
+                                                          "citations": cite()}]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [{"characteristic": "nozzle_material", "operator": "one_of",
+                                                               "value": ["hardened_steel", "brass"], "citations": cite()}],
+                                          material_family=["pa"]))
+        catalog = self.catalog()
+        found = resolve(record(), catalog, "enclosure")
+        self.assertEqual((found.status, found.operator, found.value), ("guideline", "equals", True))
+        self.assertEqual(resolve(record(), catalog, "nozzle_material").value, ["brass", "hardened_steel"])
+
+    def test_a_numeric_limit_with_an_unknown_scope_fact_does_not_apply_and_warns(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.6)], material_family=["pa"]))
+        found = resolve(record(family=None), self.catalog(), "min_wall")
+        self.assertEqual(found.value, mi.Quantity("mm", value=1.0))
+        self.assertTrue(any("fdm.material.pa@1 min_wall not applied: material_family unknown" in w for w in found.warnings))
+
+    def test_a_filler_selector_matches_an_unfilled_material_as_none_only(self) -> None:
+        put(self.shipped, "cf", guideline("fdm.filler.cf", [limit("min_wall", ">=", 2.0)], filler=["cf"]))
+        self.assertEqual(resolve(record(filler="none"), self.catalog(), "min_wall").status, "unknown")
+        self.assertEqual(resolve(record(filler="cf"), self.catalog(), "min_wall").value, mi.Quantity("mm", value=2.0))
+
+    def test_equally_specific_requirements_that_share_no_value_are_unknown(self) -> None:
+        put(self.shipped, "x", guideline("fdm.material.x", [{"characteristic": "enclosure", "operator": "equals", "value": True,
+                                                             "citations": cite()}], material_family=["pa"]))
+        put(self.shipped, "y", guideline("fdm.material.y", [{"characteristic": "enclosure", "operator": "equals", "value": False,
+                                                             "citations": cite()}], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "enclosure")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("share no value", found.reasons[0])
+
+
+class Pin(Directories):
+    def test_a_pin_is_an_exhaustive_allowlist_of_id_at_revision(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.6)], material_family=["pa"]))
+        catalog = self.catalog()
+        self.assertEqual(resolve(record(pin=["fdm.generic@1"]), catalog, "min_wall").value, mi.Quantity("mm", value=1.0))
+        self.assertEqual(resolve(record(pin=["fdm.generic@1", "fdm.material.pa@1"]), catalog, "min_wall").value,
+                         mi.Quantity("mm", value=1.6))
+        self.assertEqual(resolve(record(pin=["fdm.generic@2"]), catalog, "min_wall").status, "unknown")
+
+    def test_a_pinned_set_reaches_a_machine_sample_that_no_scope_selects(self) -> None:
+        relaxes = {"reason": "the vendor prints thinner walls", "citation": cite()[0]}
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        put(self.shipped, "m", guideline("fdm.machine.tst", [limit("min_wall", ">=", 0.9, relaxes=relaxes)], material_family=["pa"]))
+        self.assertEqual(resolve(record(pin=["fdm.generic@1"]), self.catalog(), "min_wall").value, mi.Quantity("mm", value=1.0))
+
+
+class Grade(Directories):
+    def calibration(self) -> dict[str, Any]:
+        return fx.calibration("cal_wall", "min_wall", "tst_pa", fx.quantity(lower=0.7, upper=0.7))
+
+    def test_a_guideline_resolves_as_guideline_and_cites_a_guideline_source(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)], revision=4))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual(found.status, "guideline")
+        self.assertEqual((found.source["kind"], found.source["reference"], found.source["revision"]), ("guideline", "fdm.generic", "4"))
+        self.assertEqual(found.source["sha256"], self.catalog().guidelines["fdm.generic"].sha256)
+        self.assertNotEqual(found.status, "calibrated")
+
+    def test_a_calibration_beats_a_guideline_and_is_the_only_calibrated_value(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        catalog = self.catalog()
+        found = resolve(record(calibrations=[self.calibration()]), catalog, "min_wall")
+        self.assertEqual((found.status, found.source["kind"]), ("calibrated", "calibration"))
+        self.assertEqual(found.value, mi.Quantity("mm", lower=0.7, upper=0.7))
+        self.assertEqual((found.provenance[0].layer, found.provenance[0].status, found.provenance[0].guideline), ("L4", "calibrated", "cal_wall"))
+        self.assertEqual(resolve(record(), catalog, "min_wall").status, "guideline", "removing the calibration reverts the grade")
+
+    def test_a_calibration_of_another_material_does_not_beat_the_guideline(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        other = fx.calibration("cal_other", "min_wall", "tst_other", fx.quantity(lower=0.7, upper=0.7))
+        self.assertEqual(resolve(record(calibrations=[other]), self.catalog(), "min_wall").status, "guideline")
+
+    def test_an_operation_with_no_capability_profile_is_unknown(self) -> None:
+        found = gl.resolve(record(), types.SimpleNamespace(capability=fx.unknown("not chosen")), "min_wall", catalog=gl.Catalog())
+        self.assertEqual(found.status, "unknown")
+
+
+class Provenance(Directories):
+    def test_every_resolved_value_carries_its_provenance(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)], revision=2))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "min_wall")
+        (p,) = found.provenance
+        self.assertEqual((p.value, p.units, p.layer, p.guideline, p.status),
+                         ({"value": 1.5, "units": "mm"}, "mm", "material", "fdm.material.pa@1", "guideline"))
+        self.assertEqual(p.path, "pa.yaml")
+        self.assertEqual((p.citations[0]["kind"], p.citations[0]["locator"]), ("datasheet", "table 2"))
+        (shadowed,) = p.shadowed
+        self.assertEqual((shadowed.value, shadowed.guideline, shadowed.layer), (">= 1 mm", "fdm.generic@2", "generic"))
+
+    def test_the_layer_follows_what_the_scope_selects(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        put(self.shipped, "n", guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.2)], nozzle_diameter=fx.quantity(lower=0.4, upper=0.4)))
+        self.assertEqual(resolve(record(), self.catalog(), "min_wall").provenance[0].layer, "material_nozzle")
+
+
+class Trace(Directories):
+    def resolutions(self) -> list[Any]:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0), limit("bridge_span", "<=", 5)]))
+        catalog = self.catalog()
+        return [resolve(record(), catalog, "min_wall"), resolve(record(), catalog, "bridge_span"), resolve(record(), catalog, "min_hole")]
+
+    def test_the_trace_is_a_stable_json_artifact_named_by_its_hash(self) -> None:
+        items = self.resolutions()
+        document = json.loads(gl.trace_bytes(items))
+        self.assertEqual([r["characteristic"] for r in document["resolutions"]], ["bridge_span", "min_hole", "min_wall"])
+        self.assertEqual(document["resolutions"][2]["provenance"][0]["guideline"], "fdm.generic@1")
+        self.assertEqual(document["resolutions"][1]["status"], "unknown")
+        self.assertEqual(gl.trace_sha256(items), gl.trace_sha256(list(reversed(items))))
+        directory = Path(self.temp.name) / "sources"
+        path = gl.write_trace(directory, items)
+        self.assertEqual(path.name, f"guideline-trace-{gl.trace_sha256(items)[:16]}.json")
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), document)
+
+    def test_a_changed_guideline_changes_the_trace_hash(self) -> None:
+        before = gl.trace_sha256(self.resolutions())
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.1), limit("bridge_span", "<=", 5)]))
+        catalog = self.catalog()
+        after = gl.trace_sha256([resolve(record(), catalog, c) for c in ("min_wall", "bridge_span", "min_hole")])
+        self.assertNotEqual(before, after)
+
+
+class Applicable(Directories):
+    def test_the_digests_cover_the_applicable_sets_and_their_parents_only(self) -> None:
+        put(self.shipped, "base", {**guideline("fdm.base", [limit("min_wall", ">=", 1.0)]), "abstract": True})
+        put(self.shipped, "pa", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]),
+                                 "extends": ["fdm.base"]})
+        put(self.shipped, "pc", guideline("fdm.material.pc", [limit("min_wall", ">=", 2.0)], material_family=["pc"]))
+        catalog = self.catalog()
+        context = gl.context_for(record().capabilities["tst_printer"], record().materials["tst_pa"])
+        self.assertEqual(sorted(gl.applicable_digests(catalog, context)), ["fdm.base@1", "fdm.material.pa@1"])
+        edited = copy.deepcopy(guideline("fdm.material.pc", [limit("min_wall", ">=", 2.1)], material_family=["pc"]))
+        put(self.shipped, "pc", edited)
+        self.assertEqual(gl.applicable_digests(self.catalog(), context), gl.applicable_digests(catalog, context),
+                         "a set the profile cannot resolve through does not stale it")
+
+
+if __name__ == "__main__":
+    unittest.main()
