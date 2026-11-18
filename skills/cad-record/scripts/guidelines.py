@@ -202,6 +202,36 @@ def _freeze(value: Any) -> Any:
     return _intent().freeze(value)
 
 
+def _scan(directory: Path, base: Path, origin: str) -> tuple[dict[str, Guideline], list[Refusal]]:
+    """The valid sets of one directory by id, and a refusal for each file that is invalid or repeats an id."""
+    found: dict[str, Guideline] = {}
+    refused: list[Refusal] = []
+    for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else ():
+        shown = path.relative_to(base).as_posix()
+        guideline, refusal = _read(path, shown, origin)
+        if refusal is not None:
+            refused.append(refusal)
+        elif guideline is not None and guideline.id in found:
+            refused.append(Refusal(shown, guideline.id, (f"{guideline.id} is already defined by {found[guideline.id].path}",)))
+        elif guideline is not None:
+            found[guideline.id] = guideline
+    return found, refused
+
+
+def _refuse_key_collisions(winners: dict[str, Guideline]) -> list[Refusal]:
+    """Remove from `winners` each set whose packet key an earlier id already has, and refuse it."""
+    seen: dict[str, str] = {}
+    refused: list[Refusal] = []
+    for ident in sorted(winners):
+        stem = ident.replace(".", "_")
+        if stem not in seen:
+            seen[stem] = ident
+            continue
+        gone = winners.pop(ident)
+        refused.append(Refusal(gone.path, ident, (f"{packet_key(gone.ref)} is also the packet key of {seen[stem]}",)))
+    return refused
+
+
 def discover(hw: Path | None, *, shipped: Path | None = None) -> Catalog:
     """The catalog of the project's guideline sets (`hw`/manufacturing/guidelines/, when `hw` is given) over the
     shipped ones (`shipped`, default SHIPPED). No other directory is read. Every file is validated before it loads.
@@ -216,33 +246,17 @@ def discover(hw: Path | None, *, shipped: Path | None = None) -> Catalog:
     refused: list[Refusal] = []
     blocked: set[str] = set()
     for origin, directory, base in layers:
-        found: dict[str, Guideline] = {}
-        for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else ():
-            shown = path.relative_to(base).as_posix()
-            guideline, refusal = _read(path, shown, origin)
-            if refusal is not None:
-                refused.append(refusal)
-                if refusal.id is not None:
-                    blocked.add(refusal.id)
-            elif guideline is not None and guideline.id in found:
-                refused.append(Refusal(shown, guideline.id, (f"{guideline.id} is already defined by {found[guideline.id].path}",)))
-                blocked.add(guideline.id)
-            elif guideline is not None:
-                found[guideline.id] = guideline
+        found, refusals = _scan(directory, base, origin)
+        refused.extend(refusals)
+        blocked.update(r.id for r in refusals if r.id is not None)
         for ident, guideline in found.items():
             if ident in winners:
                 hidden.setdefault(ident, []).append(guideline)
             elif ident not in blocked:
                 winners[ident] = guideline
-    seen: dict[str, str] = {}
-    for ident in sorted(winners):
-        stem = ident.replace(".", "_")
-        if stem in seen:
-            gone = winners.pop(ident)
-            refused.append(Refusal(gone.path, ident, (f"{packet_key(gone.ref)} is also the packet key of {seen[stem]}",)))
-            blocked.add(ident)
-        else:
-            seen[stem] = ident
+    collisions = _refuse_key_collisions(winners)
+    refused.extend(collisions)
+    blocked.update(r.id for r in collisions if r.id is not None)
     shadows = tuple(Shadow(ident, winners[ident], tuple(items)) for ident, items in sorted(hidden.items()) if ident in winners)
     return Catalog(winners, shadows, tuple(refused), frozenset(blocked))
 
@@ -562,39 +576,31 @@ def _applies(limit: Mapping[str, Any], orientation: str | None, feature: str | N
     return len(wanted)
 
 
-def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, *, orientation: str | None = None,
-                       feature: str | None = None) -> Resolved:
-    """The guideline limit of `characteristic` for `context` (steps 2 to 5 of the module docstring)."""
+def _candidates_of(guideline: Guideline, defined: Guideline, context: Context, characteristic: str, orientation: str | None,
+                   feature: str | None, notes: tuple[list[str], list[str]]) -> list[_Candidate]:
+    """The candidates `defined`'s limits give when read through `guideline`. A requirement under an unknown scope fact adds
+    to notes[0] (uncertain), a numeric limit under one adds to notes[1] (warnings)."""
+    matched = _matches(guideline.scope, context)
+    found: list[_Candidate] = []
+    for limit in defined.limits:
+        depth = _applies(limit, orientation, feature) if limit["characteristic"] == characteristic else None
+        if depth is None:
+            continue
+        if matched is not None:
+            found.append(_Candidate(guideline, defined, limit, _Bound(None, None, None),
+                                    (int(_pinned(guideline, context)), guideline.specificity, depth), "", _layer(guideline, context)))
+            continue
+        names = ", ".join(_unknown_selectors(guideline.scope, context))
+        if limit["operator"] in ("equals", "one_of"):
+            notes[0].append(f"{guideline.ref} applies only if {names} (unknown) match")
+        else:
+            notes[1].append(f"{guideline.ref} {characteristic} not applied: {names} unknown")
+    return found
+
+
+def _prepare(candidates: list[_Candidate], context: Context, characteristic: str) -> tuple[list[_Candidate], list[str]]:
+    """The candidates as bounds in one unit, and the reasons for those that cannot be one."""
     mi = _intent()
-    warnings: list[str] = pin_warnings(catalog, context)
-    candidates: list[_Candidate] = []
-    uncertain: list[str] = []
-    for guideline in applicable(catalog, context):
-        matched = _matches(guideline.scope, context)
-        try:
-            chain = _closure(catalog, guideline.id)
-        except GuidelineError as error:
-            return Resolved(characteristic, "unknown", reasons=(str(error),))
-        for defined in chain:
-            for limit in defined.limits:
-                if limit["characteristic"] != characteristic:
-                    continue
-                depth = _applies(limit, orientation, feature)
-                if depth is None:
-                    continue
-                if matched is None:
-                    names = ", ".join(_unknown_selectors(guideline.scope, context))
-                    if limit["operator"] in ("equals", "one_of"):
-                        uncertain.append(f"{guideline.ref} applies only if {names} (unknown) match")
-                    else:
-                        warnings.append(f"{guideline.ref} {characteristic} not applied: {names} unknown")
-                    continue
-                candidates.append(_Candidate(guideline, defined, limit, _Bound(None, None, None),
-                                             (int(_pinned(guideline, context)), guideline.specificity, depth), "",
-                                             _layer(guideline, context)))
-    if uncertain:
-        return Resolved(characteristic, "unknown", warnings=tuple(warnings),
-                        reasons=tuple(f"{characteristic} is a requirement and a scope fact is unknown: {why}" for why in uncertain))
     units = None
     for candidate in candidates:
         if "quantity" in candidate.limit or "relative" in candidate.limit:
@@ -609,14 +615,41 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
             continue
         ready.append(_Candidate(candidate.guideline, candidate.defined_in, candidate.limit, bound, candidate.key, _show(bound),
                                 candidate.layer))
+    return ready, reasons
+
+
+def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, *, orientation: str | None = None,
+                       feature: str | None = None) -> Resolved:
+    """The guideline limit of `characteristic` for `context` (steps 2 to 5 of the module docstring)."""
+    warnings: list[str] = pin_warnings(catalog, context)
+    uncertain: list[str] = []
+    candidates: list[_Candidate] = []
+    try:
+        for guideline in applicable(catalog, context):
+            for defined in _closure(catalog, guideline.id):
+                candidates.extend(_candidates_of(guideline, defined, context, characteristic, orientation, feature,
+                                                 (uncertain, warnings)))
+    except GuidelineError as error:
+        return Resolved(characteristic, "unknown", reasons=(str(error),))
+    if uncertain:
+        return Resolved(characteristic, "unknown", warnings=tuple(warnings),
+                        reasons=tuple(f"{characteristic} is a requirement and a scope fact is unknown: {why}" for why in uncertain))
+    ready, reasons = _prepare(candidates, context, characteristic)
     if not ready:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=tuple(reasons) or (f"no applicable guideline states {characteristic}",))
-    return _fold(characteristic, ready, warnings, mi)
+    return _fold(characteristic, ready, warnings, _intent())
+
+
+def _merge(group: list[_Candidate]) -> _Bound | None:
+    """The bound that satisfies every candidate of an equally specific group, or None when they share no value."""
+    merged: _Bound | None = group[0].bound
+    for other in group[1:]:
+        merged = merged.intersect(other.bound) if merged is not None else None
+    return merged
 
 
 def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi: Any) -> Resolved:
-    ordered = sorted(ready, key=lambda c: c.key)
     current: _Bound | None = None
     winners: list[_Candidate] = []
     shadowed: list[Shadowed] = []
@@ -624,41 +657,36 @@ def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi:
     def hide(candidate: _Candidate, why: str) -> None:
         shadowed.append(Shadowed(candidate.shown, candidate.defined_in.ref, candidate.layer, why))
 
-    for key in sorted({c.key for c in ordered}):
-        group = [c for c in ordered if c.key == key]
-        merged: _Bound | None = group[0].bound
-        for other in group[1:]:
-            merged = merged.intersect(other.bound) if merged is not None else None
+    for key in sorted({c.key for c in ready}):
+        group = [c for c in ready if c.key == key]
+        merged = _merge(group)
         if merged is None:
             names = ", ".join(f"{c.defined_in.ref} ({c.shown})" for c in group)
             return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                             reasons=(f"{characteristic}: equally specific guidelines conflict and share no value: {names}",))
         strictest = [c for c in group if c.bound.within(merged) and merged.within(c.bound)] or group
-        if len(group) > 1:
-            for loser in (c for c in group if c not in strictest):
-                hide(loser, "equally specific; the stricter value is kept")
-        if current is None:
-            current, winners = merged, list(strictest)
-            continue
-        if merged.within(current):
-            for old in winners:
-                hide(old, f"tightened by {strictest[0].defined_in.ref}")
-            current, winners = merged, list(strictest)
-        elif all("relaxes" in c.limit for c in strictest):
-            for old in winners:
-                hide(old, f"relaxed by {strictest[0].defined_in.ref}")
+        for loser in (c for c in group if c not in strictest):
+            hide(loser, "equally specific; the stricter value is kept")
+        if current is not None and not merged.within(current):
+            if not all("relaxes" in c.limit for c in strictest):
+                for ignored in strictest:
+                    hide(ignored, "weaker than a less specific limit and states no relaxes")
+                warnings.append(f"{characteristic}: {strictest[0].defined_in.ref} ({_show(merged)}) would relax "
+                                f"{winners[0].defined_in.ref} ({_show(current)}) without `relaxes`; it is ignored")
+                continue
             warnings.append(f"{characteristic} relaxed to {_show(merged)} by {strictest[0].defined_in.ref}: "
                             f"{strictest[0].limit['relaxes']['reason']}")
-            current, winners = merged, list(strictest)
-        else:
-            for ignored in strictest:
-                hide(ignored, "weaker than a less specific limit and states no relaxes")
-            warnings.append(f"{characteristic}: {strictest[0].defined_in.ref} ({_show(merged)}) would relax "
-                            f"{winners[0].defined_in.ref} ({_show(current)}) without `relaxes`; it is ignored")
+        for old in winners:
+            hide(old, f"{'tightened' if current is None or merged.within(current) else 'relaxed'} by {strictest[0].defined_in.ref}")
+        current, winners = merged, list(strictest)
     assert current is not None
+    return _resolved(characteristic, current, winners, shadowed, warnings, mi)
+
+
+def _resolved(characteristic: str, current: _Bound, winners: list[_Candidate], shadowed: list[Shadowed], warnings: list[str],
+              mi: Any) -> Resolved:
     operator, value = _statement(current, mi)
-    units = current.units
-    provenance = tuple(Provenance(_present(candidate.bound, mi), units, candidate.layer, candidate.defined_in.ref,
+    provenance = tuple(Provenance(_present(candidate.bound, mi), current.units, candidate.layer, candidate.defined_in.ref,
                                   candidate.defined_in.path, tuple(_plain(c) for c in candidate.limit["citations"]),
                                   "guideline", tuple(shadowed)) for candidate in winners)
     source = {"kind": "guideline", "reference": winners[0].defined_in.id, "revision": str(winners[0].defined_in.revision),
