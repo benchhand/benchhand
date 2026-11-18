@@ -692,6 +692,22 @@ class NativeExitCodeTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             support.readback_verdict("KERNEL = 'cadquery'\n")  # type: ignore[call-arg]
 
+    def test_an_access_packet_command_that_fails_is_an_error_naming_the_command(self) -> None:
+        import support
+
+        def fake(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 3, "", "access.py refused the record")
+
+        def run(is_mutant: bool) -> str:
+            return support.access_packet_verdict(Path("hw"), Path("parts"), ["TST-0102=TST-0101"], "assembly.access@")
+
+        with mock.patch("subprocess.run", fake):
+            row = corpus.evaluate([corpus.Family("f", "c", (corpus.Pair("p", "d", run),))])[0]
+        self.assertEqual((row["errors"], row["missed"], row["ran"]), (1, 0, 0))
+        self.assertIn("access.py exited 3", row["results"][0]["error"])
+        self.assertIn("access.py --hw hw --parts-dir parts --attach TST-0102=TST-0101", row["results"][0]["error"])
+        self.assertIn("access.py refused the record", row["results"][0]["error"])
+
     def test_a_twin_whose_build_refuses_the_part_is_an_error_not_a_clean_twin(self) -> None:
         def fake(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(argv, 1, "", "build refused the twin")
