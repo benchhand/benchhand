@@ -124,6 +124,16 @@ class VersionSnapshots(Base):
         changed = impact.changed_domains(impact.subject_fingerprints(built), impact.subject_fingerprints(current))
         self.assertIn("source", changed.get("TST-0001", ()))
 
+    def test_an_edited_shipped_copy_in_the_snapshot_stales_the_part(self) -> None:
+        self.ship(1.5)
+        folder = self.version()
+        copy = folder / "manufacturing" / "guidelines" / "shipped--pa.yaml"
+        copy.write_text(yaml.safe_dump(guideline(1.9, "fdm.material.pa"), sort_keys=False), encoding="utf-8")
+        _documents, built = impact.read_inputs(folder, ledgers_from=self.hw)
+        _documents, current = impact.read_inputs(self.hw)
+        changed = impact.changed_domains(impact.subject_fingerprints(built), impact.subject_fingerprints(current))
+        self.assertIn("source", changed.get("TST-0001", ()))
+
     def test_a_snapshot_is_read_only_from_its_own_copies(self) -> None:
         folder = self.version()
         self.ship(1.5)

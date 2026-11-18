@@ -156,6 +156,19 @@ class Discovery(Directories):
         self.assertEqual(sorted(catalog.guidelines), ["fdm.generic"])
         self.assertEqual(catalog.refused, ())
 
+    def test_a_project_file_named_like_a_shipped_copy_is_refused_by_name(self) -> None:
+        put(self.project, "shipped--escape", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        put(self.project, "generic", guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.2)], nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
+        catalog = self.catalog()
+        self.assertEqual([r.path for r in catalog.refused], ["manufacturing/guidelines/shipped--escape.yaml"])
+        self.assertIn("shipped--", str(catalog.refused[0]))
+        self.assertEqual(sorted(catalog.guidelines), ["fdm.nozzle.d0_4"])
+
+    def test_a_snapshot_reads_the_shipped_copies_a_build_wrote(self) -> None:
+        put(self.project, "shipped--pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]))
+        catalog = gl.discover(self.hw, snapshot=True)
+        self.assertEqual((sorted(catalog.guidelines), catalog.refused), (["fdm.material.pa"], ()))
+
     def test_a_quantity_that_cannot_be_read_is_refused_by_name_and_resolution_goes_on(self) -> None:
         reversed_limit = limit("min_wall", "between")
         reversed_limit["quantity"] = fx.quantity(lower=0.6, upper=0.4)

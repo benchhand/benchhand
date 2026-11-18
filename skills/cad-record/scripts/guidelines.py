@@ -221,12 +221,16 @@ def _freeze(value: Any) -> Any:
     return _intent().freeze(value)
 
 
-def _scan(directory: Path, base: Path, origin: str) -> tuple[dict[str, Guideline], list[Refusal]]:
-    """The valid sets of one directory by id, and a refusal for each file that is invalid or repeats an id."""
+def _scan(directory: Path, base: Path, origin: str, copies: bool = False) -> tuple[dict[str, Guideline], list[Refusal]]:
+    """The valid sets of one directory by id, and a refusal for each file that is invalid or repeats an id. A file named
+    shipped--* is the copy of a shipped set that a version build writes: only a snapshot (`copies`) may hold one."""
     found: dict[str, Guideline] = {}
     refused: list[Refusal] = []
     for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else ():
         shown = path.relative_to(base).as_posix()
+        if path.name.startswith(SHIPPED_COPY) and not copies:
+            refused.append(Refusal(shown, None, (f"{SHIPPED_COPY}* names are reserved for the shipped sets a version build copies",)))
+            continue
         guideline, refusal = _read(path, shown, origin)
         if refusal is not None:
             refused.append(refusal)
@@ -267,7 +271,7 @@ def discover(hw: Path | None, *, shipped: Path | None = None, snapshot: bool = F
     refused: list[Refusal] = []
     blocked: set[str] = set()
     for origin, directory, base in layers:
-        found, refusals = _scan(directory, base, origin)
+        found, refusals = _scan(directory, base, origin, copies=snapshot)
         refused.extend(refusals)
         blocked.update(r.id for r in refusals if r.id is not None)
         for ident, guideline in found.items():
