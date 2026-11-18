@@ -60,7 +60,7 @@ interfaces:
     limits:
       thread: M10x1-6H
       heat_set:
-        - {pair: [LMP-0004, LMP-0010], engagement_length_mm: 12.7, hole_d: 11.95, hole_tol: [-0.05, 0.05], depth_min: 13.7, insert: "In-saiL QT-M10x12.7-OD12.6, thread M10x1 to order", source: "https://www.ppmcn.com/qt-m10x127-od126-product/", note: "OD 12.60 +/-0.12 (In-saiL drawing LF646) in the 11.9/12.0 hole: 0.48/0.82 diametral embedment (STK-103); 6.0 minimum wall", feature: insert_hole}
+        - {pair: [LMP-0004, LMP-0010], engagement_length_mm: 12.7, hole_d: 11.95, hole_tol: [-0.05, 0.05], depth_min: 13.7, insert: "heat-set insert M10x1-6H, L 12.7, OD 12.6 (LMP-0010; no catalogue part identified)", source: "https://www.cnckitchen.com/s/CNCKitchen_Heat-Set-Insert-Dimensions-and-Design-Guidelines.pdf", note: "The hole follows the M10 x 12.7, OD 12.6 envelope, not the pitch: CNC Kitchen gives D2 12.0, W 6.0 and a blind hole of at least L+1 mm for it, and In-saiL gives 11.9/12.0 for its M10x1.5 insert of the same envelope, whose OD 12.60 +/-0.12 sets the 0.48/0.82 diametral embedment (STK-103). No M10x1 insert publishes its own hole, so these limits are unverified for the part ordered", feature: insert_hole}
     functional:
       critical: {status: unknown, reason: not recorded before record version 2, question: Q-027}
       functions: {status: unknown, reason: not recorded before record version 2, question: Q-027}
