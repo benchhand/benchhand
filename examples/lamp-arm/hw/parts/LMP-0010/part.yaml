@@ -12,10 +12,10 @@ procurement:
   mode: catalog
   designation: "Heat-set insert, brass, thread M10x1-6H, L 12.7, OD 12.6 (no catalogue part identified)"
   specification:
-    reference: DR-004 lampholder insert requirement
+    reference: LMP-0010 insert requirement (user decision of DR-004)
     revision: "2026-10-27"
-    artifact: decisions/DR-004.md
-    sha256: c22fddf08dbf980020bc776655a6f41f43d71529675a5e711da244e350e55718
+    artifact: parts/LMP-0010/sources/lampholder-insert-requirement.md
+    sha256: c113b676a25cda537635651373807ca2bc142acc76625e07945a4c08183e008d
   open:
     manufacturer: "no catalogue M10x1 heat-set insert found; searched In-saiL, Tappex (Bossard), KerbKonus, Böllhoff, SPIROL, PEM, McMaster-Carr, E-Z LOK, ruthex and CNC Kitchen on 2026-11-18"
     manufacturer_part_number: "no catalogue M10x1 heat-set insert found; searched In-saiL, Tappex (Bossard), KerbKonus, Böllhoff, SPIROL, PEM, McMaster-Carr, E-Z LOK, ruthex and CNC Kitchen on 2026-11-18"

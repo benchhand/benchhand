@@ -55,7 +55,7 @@ PARAMS = {
     "shade_wall": 2.4,
     "socket_boss_r": 12.5,  # 6.0 minimum wall around the 12.6 insert (CNC Kitchen M10 x 12.7)
     "socket_boss_z": 50.0,
-    "insert_hole_d": 11.95,  # mid-limit of the 11.9/12.0 hole In-saiL gives for its M10x1.5 insert of this envelope
+    "insert_hole_d": 11.95,  # source UNKNOWN (see interfaces.yaml heat_set note)
     "insert_hole_depth": 13.7,  # insert L 12.7 + 1 mm (CNC Kitchen heat-set guidance)
     "grip_flutes": 20,
     "grip_r": 0.8,
