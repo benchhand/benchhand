@@ -73,5 +73,23 @@ class CheckoutLocationTests(unittest.TestCase):
         self.assertEqual(self.runs["v3"]["cache"]["manufacturing"], {"built": 1, "reused": 0})
 
 
+class OutputDataTests(unittest.TestCase):
+    def test_the_declared_data_covers_every_data_file_the_manufacturing_code_names(self) -> None:
+        sys.path.insert(0, str(SKILLS / "cad-model" / "scripts"))
+        from cadmodel import manufacture
+
+        spec = importlib.util.spec_from_file_location("cad_motion_code_shas", SKILLS / "cad-motion" / "scripts" / "code_shas.py")
+        assert spec is not None and spec.loader is not None
+        shas = sys.modules.get(spec.name)
+        if shas is None:
+            shas = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = shas
+            spec.loader.exec_module(shas)
+        declared = [entry.resolve() for entry in manufacture.OUTPUT_DATA]
+        missing = sorted(str(path.relative_to(SKILLS)) for path in shas.referenced_data(Path(manufacture.__file__))
+                         if not any(path == entry or path.is_relative_to(entry) for entry in declared))
+        self.assertEqual(missing, [], "add these to manufacture.OUTPUT_DATA")
+
+
 if __name__ == "__main__":
     unittest.main()
