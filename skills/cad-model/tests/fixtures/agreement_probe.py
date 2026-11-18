@@ -121,15 +121,12 @@ def exporter_deflections() -> dict[str, float]:
     return {"small": mesh.deflection(block()), "large": mesh.deflection(large)}
 
 
-def reference_torus_error() -> dict[str, float]:
-    """The reference mesh of a disc whose top rim has a 1.2 mm fillet, a torus of major radius 44.85 mm as on
-    LMP-0004's face 28, at the reference budget: the largest exact distance of a triangle center to the B-rep,
-    over an even sample of the centers."""
-    from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
-    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+def filleted_disc() -> tuple[Any, Any]:
+    """(a disc whose top rim has a 1.2 mm fillet, that fillet's torus face): a torus of major radius 44.85 mm,
+    as on LMP-0004's face 28."""
+    from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
     from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
-    from OCP.GeomAbs import GeomAbs_Circle
+    from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Torus
 
     from cadmodel import occ
 
@@ -141,17 +138,58 @@ def reference_torus_error() -> dict[str, float]:
         if curve.GetType() == GeomAbs_Circle and abs(curve.Circle().Location().Z() - height) < 1e-6:
             fillet.Add(1.2, edge)
     shape = fillet.Shape()
+    (torus,) = [f for f in occ.subshapes(shape, "FACE")
+                if BRepAdaptor_Surface(occ.downcast(f, "FACE")).GetType() == GeomAbs_Torus]
+    return shape, torus
+
+
+def worst_distance(points: np.ndarray, target: Any) -> float:
+    """The largest exact distance of an even sample (about 600) of `points` to `target`."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+
+    tool = BRepExtrema_DistShapeShape()
+    tool.LoadS2(target)
+    worst = 0.0
+    for point in points[::max(1, len(points) // 600)]:
+        tool.LoadS1(BRepBuilderAPI_MakeVertex(gp_Pnt(*[float(c) for c in point])).Vertex())
+        tool.Perform()
+        worst = max(worst, tool.Value())
+    return worst
+
+
+def reference_torus_error() -> dict[str, float]:
+    """The reference mesh of the filleted disc at the reference budget: the largest exact distance of a triangle
+    center to the B-rep, over an even sample of the centers."""
+    shape, _ = filleted_disc()
     budget = agreement.REFERENCE_FACTOR * LARGE_LINEAR
     reference = agreement.reference(shape, budget)
     centres = reference.points[reference.triangles].mean(axis=1)
-    tool = BRepExtrema_DistShapeShape()
-    tool.LoadS2(shape)
-    worst = 0.0
-    for centre in centres[::max(1, len(centres) // 600)]:
-        tool.LoadS1(BRepBuilderAPI_MakeVertex(gp_Pnt(*[float(c) for c in centre])).Vertex())
-        tool.Perform()
-        worst = max(worst, tool.Value())
-    return {"budget_mm": budget, "worst_mm": worst, "triangles": float(len(centres))}
+    return {"budget_mm": budget, "worst_mm": worst_distance(centres, shape), "triangles": float(len(centres))}
+
+
+def glb_torus_error(folder: Path) -> dict[str, float]:
+    """The exported GLB of the filleted disc: the largest exact distance of a triangle center on the fillet to the
+    torus face (not the solid), against the deflection the exporter records."""
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+
+    shape, torus = filleted_disc()
+    step = folder / "disc.step"
+    writer = STEPControl_Writer()
+    writer.Transfer(shape, STEPControl_AsIs)
+    assert writer.Write(str(step)) == IFSelect_RetDone
+    info = mesh.write_glb(step, folder / "disc.glb")
+    nodes = agreement.read_glb(folder / "disc.glb")
+    triangles = [m.points[m.triangles].mean(axis=1) for m in nodes.values()]
+    centres = np.concatenate(triangles)
+    ring = np.hypot(centres[:, 0], centres[:, 1]) - 44.85
+    height = centres[:, 2] - 8.8
+    # A center strictly inside the fillet's quarter of the minor circle can only belong to a fillet triangle:
+    # the planar top and the cylinder wall lie outside it.
+    on_fillet = (ring > 0.05) & (ring < 1.15) & (height > 0.05) & (height < 1.15) & (np.abs(np.hypot(ring, height) - 1.2) < 0.3)
+    return {"linear_mm": info["linear_deflection_mm"], "worst_mm": worst_distance(centres[on_fillet], torus),
+            "triangles": float(on_fillet.sum())}
 
 
 if __name__ == "__main__":
@@ -159,4 +197,4 @@ if __name__ == "__main__":
     glb = glb_case(folder)
     print(json.dumps({"cases": cases(), "glb": glb, "abstentions": abstentions(folder),
                       "exporter_deflection_mm": exporter_deflections(),
-                      "reference_torus": reference_torus_error()}))
+                      "reference_torus": reference_torus_error(), "glb_torus": glb_torus_error(folder)}))

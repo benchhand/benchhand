@@ -26,7 +26,8 @@ class AgreementTests(unittest.TestCase):
             proc = subprocess.run(["uv", "run", "--quiet", "--script", str(PROBE), folder],
                                   capture_output=True, text=True, check=False)  # cold OCP imports take minutes
         assert proc.returncode == 0, proc.stderr[-2000:]
-        cls.probe = json.loads(proc.stdout)
+        lines = proc.stdout.splitlines()  # the STEP writer logs to stdout around the JSON line
+        cls.probe = json.loads(next(line for line in lines if line.startswith('{"cases"')))
 
     def status(self, name: str) -> str:
         return self.probe["cases"][name]["status"]
@@ -69,6 +70,15 @@ class AgreementTests(unittest.TestCase):
         torus = self.probe["reference_torus"]
         self.assertAlmostEqual(torus["budget_mm"], 0.025, places=9)
         self.assertLessEqual(torus["worst_mm"], 1.25 * torus["budget_mm"], torus)
+
+    def test_the_exported_glb_of_a_torus_fillet_stays_within_its_deflection_of_the_face(self) -> None:
+        """The exporter records a linear deflection and the floor trusts it: the GLB must lie that close to the
+        B-rep. Without the control-surface deflection on for all surfaces the exported torus fillet strayed about 3 x
+        farther. The distance is to the torus face, since a point inside the solid reads 0 from the solid. The test
+        allows 1.25 x, like the reference test."""
+        torus = self.probe["glb_torus"]
+        self.assertGreater(torus["triangles"], 100)  # the fillet has triangles to measure
+        self.assertLessEqual(torus["worst_mm"], 1.25 * torus["linear_mm"], torus)
 
     def test_a_hole_eight_millimetres_off_does_not_agree(self) -> None:
         self.assertEqual(self.status("hole_moved_8_mm"), "fail")

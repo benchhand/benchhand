@@ -63,6 +63,7 @@ def write_glb(step: Path, glb: Path) -> dict[str, Any]:
     from OCP.collections import IndexedDataMap_TCollection_AsciiString_TCollection_AsciiString as Metadata
     from OCP.collections import Sequence_TDF_Label
     from OCP.IFSelect import IFSelect_RetDone
+    from OCP.IMeshTools import IMeshTools_Parameters
     from OCP.Message import Message_ProgressRange
     from OCP.RWGltf import RWGltf_CafWriter
     from OCP.RWMesh import RWMesh_CoordinateSystem, RWMesh_NameFormat
@@ -87,7 +88,14 @@ def write_glb(step: Path, glb: Path) -> dict[str, Any]:
     for index in range(1, roots.Length() + 1):
         shape = tool.GetShape_s(roots.Value(index))
         linear = deflection(shape)
-        BRepMesh_IncrementalMesh(shape, linear, False, ANGULAR_RAD, True)
+        parameters = IMeshTools_Parameters()
+        parameters.Deflection = linear
+        parameters.Angle = ANGULAR_RAD
+        parameters.Relative = False
+        parameters.InParallel = True
+        parameters.ControlSurfaceDeflection = True
+        parameters.EnableControlSurfaceDeflectionAllSurfaces = True  # without it a torus strays up to 3 x `linear`
+        BRepMesh_IncrementalMesh(shape, parameters)
     writer = RWGltf_CafWriter(TCollection_AsciiString(str(glb)), True)
     writer.SetNodeNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Instance)
     writer.SetMeshNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Product)
