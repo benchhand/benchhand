@@ -209,6 +209,7 @@ DOCUMENT_SCHEMAS: tuple[tuple[str, str], ...] = (
     ("manufacturing/selection.yaml", "manufacturing-selection.schema.json"),
     ("manufacturing/findings.yaml", "manufacturing-findings.schema.json"),
     ("manufacturing/evidence.yaml", "manufacturing-evidence.schema.json"),
+    ("manufacturing/guidelines/*.yaml", "manufacturing-guideline.schema.json"),
 )
 REQUIRED_DESIGN_FILES = ("manufacturing/capabilities.yaml", "manufacturing/materials.yaml", "manufacturing/selection.yaml")
 
