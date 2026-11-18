@@ -1,11 +1,3 @@
-<!--
-Rendered from the Contributor Agreements chooser template
-https://github.com/contributoragreements/ca-cla-chooser @ 7b15a9851b638a1c77cdf09b52aced9bc56373eb
-file: agreement-template-unified.html (identical to https://contributoragreements.org/chooser/agreement-template-unified.html, fetched 2026-11-18)
-Options: Individual / Non-Exclusive / Traditional Patent License / Outbound Option 1 (fsfe) / no media licences.
-Template text licensed CC BY-SA 4.0 (see "Licence and attribution" at the end).
--->
-
 <!-- slopvac-disable -->
 
 # Contributor Agreement
@@ -104,45 +96,8 @@ If any provision of this Agreement is found void and unenforceable, such provisi
 
 You agree to notify Us of any facts or circumstances of which you become aware that would make Your representations under this Agreement inaccurate in any respect.
 
-### You
-
-Date:
-
-Name:
-
-Title:
-
-Address:
-
-### Us
-
-Date:
-
-Name:
-
-Title:
-
-Address:
-
----
-
-#### Licence and attribution
+## License and attribution
 
 <!-- slopvac-enable -->
 
-This text comes from the chooser at <https://contributoragreements.org/>. The chooser source is <https://github.com/contributoragreements/ca-cla-chooser> at commit `7b15a9851b638a1c77cdf09b52aced9bc56373eb`. The chooser text is available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). This file is available under the same terms.
-
-The chooser output uses these options:
-
-- Individual
-- Non-Exclusive
-- Traditional Patent License
-- Outbound Option 1
-- no media license
-
-Sjors Robroek changed the chooser output in these places:
-
-- The "Approximation of disclaimer and damage waiver" section names the "Disclaimer" section. The chooser text named a "Disclaimer of warranty" subsection that does not exist.
-- The definition of "You" covers only an individual. The chooser text also covered a Legal Entity.
-- The "Term" section adds the "Consequential damage waiver" and the "Approximation of disclaimer and damage waiver" sections to the sections that survive termination, as in earlier versions of the template.
-- The contact and instruction links point to `CONTRIBUTING.md`. The chooser text had a placeholder for an email address.
+Sjors Robroek adapted this agreement from the [Contributor Agreements](https://contributoragreements.org/) chooser, [ca-cla-chooser](https://github.com/contributoragreements/ca-cla-chooser) at commit `7b15a985`. The chooser text and this modified file are both available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
