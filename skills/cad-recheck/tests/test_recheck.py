@@ -287,6 +287,28 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("is below flow.recheck_from parts", result.stderr)
 
+    def test_a_fresh_committed_stamp_below_recheck_from_is_refused_in_committed_mode(self) -> None:
+        self.write_product("specify", "parts")
+        self.git("add", "hw")
+        self.git("commit", "-qn", "-m", "raise the threshold before the stage is due")
+        self.provisional_gate("parts", "parts")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)  # the writer does not enforce the threshold
+        self.git("commit", "-qn", "-m", "stage, stamp and threshold together")  # tree and record hashes now match
+        result = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("is below flow.recheck_from parts", result.stderr)
+
+    def test_a_raised_threshold_of_a_project_below_the_repository_root_is_refused(self) -> None:
+        project = self.move_project("examples/proj")
+        product = project / "hw" / "product.yaml"
+        data = json.loads(product.read_text(encoding="utf-8"))
+        data["flow"] = {"stage": "specify", "recheck_from": "parts"}  # still below the raised threshold
+        product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        self.git("add", "examples/proj")
+        result = self.run_python(STAMP, "--verify", "--hw", "examples/proj/hw", cwd=self.root)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("later than HEAD's layout", result.stderr)
+
     def test_a_failing_layout_check_blocks_the_stamp_and_the_commit(self) -> None:
         self.provisional_gate("parts")
         refused = self.stamp_gate("layout", outcome="fail")
