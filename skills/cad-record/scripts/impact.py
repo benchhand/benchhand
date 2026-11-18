@@ -331,7 +331,7 @@ class _Record:
         """The `occurrences` domain of a part: its inventory-derived inputs (occurrences, their placements, the
         operations resolved through them, and its model_frame). An inventory problem fingerprints as itself. Only a
         bought part with an explicit occurrence or a broken inventory has any. Only purchase.* depends on the
-        domain for now. #154 may depend on it in place of widening `interface`."""
+        domain. #154 may depend on it in place of widening `interface`."""
         if not any(op.get("kind") == "purchased" for op in self.route(pn)):
             return None
         found = part_occurrences(self.record, pn)
