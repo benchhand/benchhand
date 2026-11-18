@@ -44,6 +44,8 @@ NOT Edit generated bundles, frozen versions, or releases in place.
 
 LOAD [design-rules.md](references/design-rules.md) when repairing a coded design-rule finding.
 
+LOAD [schema-bounds.md](references/schema-bounds.md) when adding a tunable to a schema or reading its bounds and defaults.
+
 ## Output
 
 Report validator, evidence, freeze or release status from the command result and list cited record paths.
