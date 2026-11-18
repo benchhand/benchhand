@@ -131,31 +131,48 @@ class StressStudy:
 
 # --- .frd reading -------------------------------------------------------------------------------
 
-def _values(line: str) -> list[float]:
-    """Fixed-width ` -1` record: a 10-character node id, then 12-character values."""
-    body = line[13:].rstrip("\n")
-    return [float(body[i:i + 12]) for i in range(0, len(body), 12) if body[i:i + 12].strip()]
-
-
 class FrdError(ValueError):
     """The .frd text is incomplete or malformed; its results cannot be trusted."""
 
 
-def _records(lines: list[str], start: int, block: str) -> Iterable[tuple[int, list[float]]]:
+# Values per ` -1` record that `read_frd` needs: x, y, z; the three displacement components (a fourth,
+# the magnitude, may follow); the six stress components.
+_NODE_VALUES, _DISP_VALUES, _STRESS_VALUES = 3, 3, 6
+_FIELD = 12  # width of one value in a ` -1` record, which is ` -1`, a 10-character node id, then values
+
+
+def _record(line: str, block: str, width: int) -> tuple[int, list[float]]:
+    """Parse a ` -1` record into its node id and at least `width` values; anything else is a `FrdError`."""
+    try:
+        node = int(line[3:13])
+    except ValueError:
+        raise FrdError(f"{block} record has no node id: {line.strip()[:40]!r}") from None
+    body = line[13:].rstrip()
+    if len(body) % _FIELD:
+        raise FrdError(f"{block} record of node {node} is cut off inside a value: {line.strip()[:40]!r}")
+    try:
+        values = [float(body[i:i + _FIELD]) for i in range(0, len(body), _FIELD)]
+    except ValueError:
+        raise FrdError(f"{block} record of node {node} has a value that is not a number: "
+                       f"{line.strip()[:40]!r}") from None
+    if len(values) < width:
+        raise FrdError(f"{block} record of node {node} has {len(values)} of {width} values")
+    return node, values
+
+
+def _records(lines: list[str], start: int, block: str, width: int) -> Iterable[tuple[int, list[float]]]:
     """Yield the ` -1` records of the block opened just before `start`; the block must end with ` -3`."""
     for line in lines[start:]:
         if line.startswith(" -3"):
             return
         if line.startswith(" -1"):
-            yield int(line[3:13]), _values(line)
+            yield _record(line, block, width)
         elif not line.startswith((" -2", " -5")):
             raise FrdError(f"{block} block is cut off by {line.strip()[:20] or 'a blank line'!r}")
     raise FrdError(f"{block} block is cut off by the end of the file")
 
 
 def _von_mises(s: list[float]) -> float:
-    if len(s) < 6:
-        raise FrdError(f"a STRESS record has {len(s)} of 6 components")
     sxx, syy, szz, sxy, syz, szx = s[:6]
     return math.sqrt(0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2)
                      + 3.0 * (sxy ** 2 + syz ** 2 + szx ** 2))
@@ -165,7 +182,8 @@ def read_frd(text: str) -> FrdResult:
     """Parse node coordinates, von Mises stress and displacement magnitude from ccx `.frd` text.
 
     The last STRESS and DISP blocks are used (the final increment). Raises `FrdError` (a ValueError) when
-    the file has no node, stress or displacement block, or when a block lacks its ` -3` terminator.
+    the file has no node, stress or displacement block, when a block lacks its ` -3` terminator, or when a record is malformed (no numeric node id,
+    a value that is not a number or is cut off, too few values).
     Whether every node has a result is checked by `compare_levels`.
     """
     lines = text.splitlines()
@@ -174,12 +192,12 @@ def read_frd(text: str) -> FrdResult:
     displacement: dict[int, float] = {}
     for index, line in enumerate(lines):
         if line.startswith("    2C"):
-            coordinates = {node: (v[0], v[1], v[2]) for node, v in _records(lines, index + 1, 'node')}
+            coordinates = {node: (v[0], v[1], v[2]) for node, v in _records(lines, index + 1, 'node', _NODE_VALUES)}
         elif line.startswith(" -4  STRESS"):
-            stress = {node: _von_mises(v) for node, v in _records(lines, index + 1, 'STRESS')}
+            stress = {node: _von_mises(v) for node, v in _records(lines, index + 1, 'STRESS', _STRESS_VALUES)}
         elif line.startswith(" -4  DISP"):
             displacement = {node: math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
-                            for node, v in _records(lines, index + 1, 'DISP')}
+                            for node, v in _records(lines, index + 1, 'DISP', _DISP_VALUES)}
     if not coordinates or not stress or not displacement:
         raise FrdError("frd file lacks a node, STRESS or DISP block")
     return FrdResult(coordinates, stress, displacement)
