@@ -50,7 +50,8 @@ class Fingerprints(unittest.TestCase):
     def test_each_record_domain_is_fingerprinted_and_stable(self) -> None:
         record = normalized(documents())
         prints = impact.fingerprints(record, {"PN": "TST-0001"}, GEOMETRY)
-        self.assertEqual(set(prints), set(impact.DOMAINS) - {"lot"}, "the lot belongs to physical evidence, not the record")
+        self.assertEqual(set(prints), set(impact.DOMAINS) - {"lot", "occurrences"},
+                         "the lot belongs to physical evidence, and occurrences only to a bought part placed as occurrences")
         self.assertEqual(prints, impact.fingerprints(normalized(documents()), {"PN": "TST-0001"}, GEOMETRY))
         self.assertEqual(impact.fingerprints(record, {"PN": "TST-0001", "operation": "print", "feature": "pivot_bore"},
                                              GEOMETRY), prints, "operations and features share their part's fingerprints")
@@ -320,6 +321,14 @@ class OptInDomain(unittest.TestCase):
         self.assertEqual(impact.evidence_staleness(self.entry(self.DECLARING, **{self.NEW: "n1"}), current), ())
         self.assertEqual(impact.unrecorded_domains(self.entry(self.DECLARING), current), ())
 
+LEGACY_INTERFACE_DIGEST = "919639c091011df20121336be1bb29f1a123a5a422d75fbffcd3eff8b602ed40"  # impact.py on origin/main bc8d3f94
+# The interface digest of TST-0103 in PurchaseMountingStaleness.documents(), computed with origin/main's impact.py.
+OCCURRENCE_INTERFACE_DIGEST = "25016f8a4c143f1b7f00ff2ac329d64b72375dcf55b3c64f4412bea46e8b866c"
+# The fingerprint domains on origin/main bc8d3f94, sorted.
+MAIN_DOMAINS = ("capability", "condition", "criterion", "environment", "finish", "geometry", "interface", "load", "lot",
+                "material", "orientation", "process", "route", "setup", "source", "use_case")
+
+
 class PurchaseMountingStaleness(unittest.TestCase):
     """purchase.mounting depends on the assembly inventory, the operations resolved through occurrences and each part's
     model_frame, and no other family takes those inputs."""
@@ -345,8 +354,8 @@ class PurchaseMountingStaleness(unittest.TestCase):
         "assembly.": ("criterion", "geometry", "interface", "source"),
         "function.": ("condition", "criterion", "environment", "finish", "geometry", "interface", "load", "material",
                       "process", "source"),
-        "requirement.": tuple(sorted(impact.DOMAINS)),
-        "policy.": tuple(sorted(impact.DOMAINS)),
+        "requirement.": MAIN_DOMAINS,
+        "policy.": MAIN_DOMAINS,
     }
 
     def documents(self, rings: tuple[str, ...] = ("ring-a", "ring-b"), operations: list[dict[str, Any]] | None = None,
@@ -406,13 +415,26 @@ class PurchaseMountingStaleness(unittest.TestCase):
         docs = {rel: data for rel, data in docs.items() if not rel.startswith("_")}
         prints = impact.fingerprints(normalized(docs), {"PN": "TST-0103"})
         self.assertEqual(prints["interface"], LEGACY_INTERFACE_DIGEST)
+        self.assertNotIn("occurrences", prints)
 
-    def test_every_other_family_keeps_its_domains_and_purchase_gains_interface(self) -> None:
+    def test_an_occurrence_placed_part_keeps_its_interface_fingerprint(self) -> None:
+        moved = {"ring-a": {"translation_mm": [5, 0, 0]}}
+        for name, docs in (("placed", self.documents()), ("one moved", self.documents(placements=moved))):
+            with self.subTest(case=name):
+                prints = impact.fingerprints(normalized(docs), {"PN": "TST-0103"})
+                self.assertEqual(prints["interface"], OCCURRENCE_INTERFACE_DIGEST)
+                self.assertIn("occurrences", prints)
+
+    def test_no_subject_but_an_occurrence_placed_bought_part_carries_the_occurrences_domain(self) -> None:
+        prints = impact.subject_fingerprints(normalized(self.documents()))
+        self.assertEqual(sorted(key for key, domains in prints.items() if "occurrences" in domains), ["TST-0103"])
+
+    def test_every_other_family_keeps_its_domains_and_purchase_depends_on_occurrences(self) -> None:
         for prefix, domains in self.MAIN_FAMILIES.items():
             with self.subTest(family=prefix):
                 self.assertEqual(tuple(sorted(impact.family_domains(prefix))), domains)
         main_purchase = {"criterion", "source", "process", "route", "load", "environment", "geometry"}
-        self.assertEqual(impact.family_domains("purchase."), main_purchase | {"interface"})
+        self.assertEqual(impact.family_domains("purchase."), main_purchase | {"occurrences"})
 
     def test_a_part_without_a_valid_inventory_reports_the_problem_and_never_an_empty_result(self) -> None:
         broken = normalized(self.documents(frame=None))
@@ -432,12 +454,9 @@ class PurchaseMountingStaleness(unittest.TestCase):
         self.assertEqual(found.model_frame, "part_local")
 
     def test_a_broken_inventory_never_fingerprints_like_a_valid_one(self) -> None:
-        valid = impact.fingerprints(normalized(self.documents()), {"PN": "TST-0103"})["interface"]
-        broken = impact.fingerprints(normalized(self.documents(frame=None)), {"PN": "TST-0103"})["interface"]
+        valid = impact.fingerprints(normalized(self.documents()), {"PN": "TST-0103"})["occurrences"]
+        broken = impact.fingerprints(normalized(self.documents(frame=None)), {"PN": "TST-0103"})["occurrences"]
         self.assertNotEqual(valid, broken)
-
-
-LEGACY_INTERFACE_DIGEST = "919639c091011df20121336be1bb29f1a123a5a422d75fbffcd3eff8b602ed40"  # impact.py on origin/main bc8d3f94
 
 
 class EvidenceAndFlow(unittest.TestCase):

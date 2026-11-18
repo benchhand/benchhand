@@ -11,7 +11,7 @@ Each subject (a part, an interface, an assembly operation, a requirement or the 
 sha256 fingerprint per dependency domain (`DOMAINS`, the evidence ledger's `fingerprints` keys):
 use case; loads and environment; material and its condition; process, route, capability and setup;
 orientation, supports and finish; geometry, manufacturing state and components; interfaces, datums
-and assembly order; criteria and sources. Comparing the record of vM with vN (or with the current
+and assembly order; the inventory inputs of a bought part placed as occurrences; criteria and sources. Comparing the record of vM with vN (or with the current
 hw/ record) lists the domains that changed per subject, the check obligations and accepted evidence
 they make stale, the decisions they reopen, the earliest stage that accepted a changed fact and the
 flow it proposes, and the evidence whose recorded fingerprints still match: carry-forward candidates
@@ -63,7 +63,7 @@ assembly_data = _load_module("cad_record_assembly_data", SCRIPTS / "assembly_dat
 
 # The evidence ledger's fingerprint domains (manufacturing-evidence.schema.json#/$defs/fingerprint_domain).
 DOMAINS = ("use_case", "load", "environment", "material", "condition", "lot", "process", "route", "capability", "setup",
-           "orientation", "finish", "geometry", "interface", "criterion", "source", "appearance")
+           "orientation", "finish", "geometry", "interface", "occurrences", "criterion", "source", "appearance")
 # The dependency domains a change is reported under, each grouping fingerprint domains.
 GROUPS: Mapping[str, tuple[str, ...]] = {
     "use_case": ("use_case",),
@@ -73,19 +73,20 @@ GROUPS: Mapping[str, tuple[str, ...]] = {
     "orientation_support_finish": ("orientation", "finish"),
     "geometry_state_components": ("geometry",),
     "appearance": ("appearance",),
-    "interface_datum_tolerance_assembly_order": ("interface",),
+    "interface_datum_tolerance_assembly_order": ("interface", "occurrences"),
     "criterion_source_calibration_policy": ("criterion", "source"),
 }
 # The earliest workflow stage that accepts a fact of each domain: a change reopens it.
 DOMAIN_STAGE: Mapping[str, str] = {
     "use_case": "intent", "load": "intent", "environment": "intent", "criterion": "specify", "interface": "specify",
+    "occurrences": "specify",
     "geometry": "layout", "material": "parts", "condition": "parts", "process": "parts", "route": "parts",
     "capability": "parts", "source": "parts", "setup": "detail", "orientation": "detail", "finish": "detail",
     "lot": "release", "appearance": "detail",
 }
-# Appearance (intent.color) is an input of the outputs that write it, such as the 3MF export, and of nothing
-# else: a family depends on it only when FAMILY_DOMAINS names it, so "every domain" below leaves it out.
-_EVERYTHING = frozenset(DOMAINS) - {"appearance"}
+# Appearance (intent.color) and occurrences are inputs of the checks and outputs that name them in FAMILY_DOMAINS,
+# and of nothing else, so "every domain" below leaves them out.
+_EVERYTHING = frozenset(DOMAINS) - {"appearance", "occurrences"}
 _JUDGED = frozenset({"criterion", "source"})  # every check is judged against criteria and sourced data
 # The domains each check family depends on, by family prefix (the longest matching prefix decides).
 FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
@@ -93,7 +94,7 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("route.", _JUDGED | {"process", "route", "capability", "setup", "orientation", "finish", "material", "condition"}),
     ("process.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                            "condition"}),
-    ("purchase.", _JUDGED | {"process", "route", "load", "environment", "geometry", "interface"}),
+    ("purchase.", _JUDGED | {"process", "route", "load", "environment", "geometry", "occurrences"}),
     ("optical.", _JUDGED | {"material", "process", "route", "finish"}),
     ("engineering.", _JUDGED | {"use_case", "geometry", "material", "condition", "load", "environment", "orientation",
                                 "process", "route", "finish"}),
@@ -323,13 +324,14 @@ class _Record:
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
         mounting = self.mounting_inputs(pn)
         if mounting is not None:
-            values["interface"]["mounting"] = mounting
+            values["occurrences"] = mounting
         return values
 
     def mounting_inputs(self, pn: str) -> Any:
-        """What purchase.mounting reads beyond the interface domain: the part's occurrences with their placements and
-        operations, and its model_frame. An inventory problem fingerprints as itself. Only a bought part with an
-        explicit occurrence or a broken inventory has any, so every other part's interface fingerprint stays equal."""
+        """The `occurrences` domain of a part: its inventory-derived inputs (occurrences, their placements, the
+        operations resolved through them, and its model_frame). An inventory problem fingerprints as itself. Only a
+        bought part with an explicit occurrence or a broken inventory has any. Only purchase.* depends on the
+        domain for now. #154 may depend on it in place of widening `interface`."""
         if not any(op.get("kind") == "purchased" for op in self.route(pn)):
             return None
         found = part_occurrences(self.record, pn)
@@ -402,6 +404,7 @@ class _Record:
             combined["criterion"] = {"requirements": [plain(r) for _, r in sorted(self.record.requirements.items())],
                                      "policy": _get(self.use_case, "evidence_policy")}
         combined.pop("lot", None)
+        combined.pop("occurrences", None)  # a part's own inputs: no interface, operation, requirement or product carries them
         if key == "product":  # the whole sequence, occurrence references included, which the per-part view misses
             combined["interface"] = {"parts": combined["interface"], "assembly_sequence": self.operations,
                                      "assembly_inventory": plain(self.record.assembly_inventory)}
