@@ -31,17 +31,19 @@ H_COARSE, H_FINE = 1.0, 0.5  # exclusion cutoff = 3 x 1.0 = 3 mm, hot-spot toler
 
 def level(h, *, kept=200, excluded=20, peak=100.0, peak_x=50.0, disp=1.0, fallback=None,
           bad_stress=None, bad_disp=None):
-    """A mesh of `excluded` nodes near the fixed face, `kept` nodes between x=10 and x=90, and a node on each
-    face. The kept node nearest `peak_x` carries `peak`; every other node carries half of it."""
+    """A mesh of a node on each face, `excluded` nodes next to the fixed one, and `kept` nodes along the bar.
+
+    One kept node sits at `peak_x` and carries `peak`; the others spread between x=10 and x=90 and carry
+    half of it. The node on the load face has displacement `disp`, every other node half of it."""
     coords, stress, displacement = {1: (0.0, 0.0, 0.0), 2: (LENGTH, 0.0, 0.0)}, {}, {1: 0.0, 2: disp}
-    for i in range(excluded):  # inside the cutoff of the fixed node, with distinct positions
-        coords[10 + i] = (1.0, 0.001 * (i + 1), 0.0)
-    xs = [10.0 + 80.0 * i / max(kept - 1, 1) for i in range(kept)]
-    for i, x in enumerate(xs):
-        coords[100_000 + i] = (x, 0.0, 0.0)
-    peak_node = 100_000 + min(range(kept), key=lambda i: abs(xs[i] - peak_x)) if kept else None
+    for i in range(excluded):  # within 1 mm of the fixed node, with distinct positions
+        coords[10 + i] = (1.0, 0.0001 * (i + 1), 0.0)
+    for i in range(max(kept - 1, 0)):
+        coords[100_000 + i] = (10.0 + 80.0 * i / max(kept - 2, 1), 0.0, 0.0)
+    if kept:
+        coords[99_999] = (peak_x, 0.0, 0.0)
     for node in coords:
-        stress[node] = peak if node == peak_node else peak / 2
+        stress[node] = peak if node == 99_999 else peak / 2
         displacement.setdefault(node, disp / 2)
     if bad_stress is not None:
         stress[100_000] = bad_stress
@@ -168,9 +170,9 @@ class SettleTests(unittest.TestCase):
             fs.compare_levels(level(0.5), level(1.0))
 
     def test_the_reason_names_both_sizes_peaks_change_hot_spot_face_and_kept_region(self) -> None:
-        message = study({"peak": 90.0, "peak_x": 50.0}, {"peak": 100.0, "peak_x": 50.0}).message
+        message = study({"peak": 90.0, "peak_x": 60.0}, {"peak": 100.0, "peak_x": 60.0}).message
         for expected in ("h_coarse=1 mm", "h_fine=0.5 mm", "coarse=90 MPa", "fine=100 MPa", "change=10.00%",
-                         "hot spot=(50.0", "nearest face (fine)=load face at", "kept region coarse=200 nodes (",
+                         "hot spot=(60.0, 0.0, 0.0) moved 0 mm", "nearest face (fine)=load face at 40 mm", "kept region coarse=200 nodes (",
                          "fine=2000 nodes (", "floor 10% on both, 1000 nodes on fine"):
             with self.subTest(expected):
                 self.assertIn(expected, message)
@@ -237,7 +239,8 @@ class CampaignPairTests(unittest.TestCase):
         self.assertIsNone(result.sigma_mpa)
         self.assertIsNone(result.sigma_info_mpa)
         for expected in ("h_coarse=6 mm", "h_fine=4.5 mm", "coarse=82.54 MPa", "fine=95.89 MPa", "change=13.93%",
-                         "hot spot=(257.077, 8.929, 84.0)", "nearest face (fine)=load face at"):
+                         "hot spot=(257.077, 8.929, 84.0)", "nearest face (fine)=load face at 62.9 mm",
+                         "kept region coarse=2689 nodes (83.2%)"):
             with self.subTest(expected):
                 self.assertIn(expected, result.message)
 
