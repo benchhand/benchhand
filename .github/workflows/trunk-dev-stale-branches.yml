@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# bash runs each step with -eo pipefail, so a failed bd query fails the step instead of reporting no stale branches.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   stale-bead-branches:
     runs-on: ubuntu-24.04
