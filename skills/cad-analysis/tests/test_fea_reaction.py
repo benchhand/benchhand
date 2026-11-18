@@ -32,7 +32,7 @@ import fea_reaction  # noqa: E402
 import fea_static  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
-from reaction_project import EVIDENCE, INTERFACE, SUBJECT, Scenario, current_code, end, entry  # noqa: E402
+from reaction_project import INTERFACE, Scenario, bare_end, current_code, end, entry  # noqa: E402
 
 
 class DesignReaction(unittest.TestCase):
@@ -50,6 +50,16 @@ class DesignReaction(unittest.TestCase):
                 scenario.publish({INTERFACE: entry(ends={"min": end("bounded", design)})})
                 status, report = scenario.call()
                 self.assertEqual((status, report["status"]), (0, "pass"), report)
+
+    def test_a_failing_bundle_still_carries_a_load_that_meets_its_design_reaction(self) -> None:
+        # The recorded contact load (20 N) is below the 40 N design reaction, so stop_reaction reports a fail. The design
+        # reaction itself is valid: the 50 N FEA case that closes the gap runs, with that reaction as its basis.
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry("fail", {"min": end("understated", 40.0)}, recorded_contact_load_n=20.0)}, outcome="fail")
+        status, report = scenario.call()
+        self.assertEqual((status, report["status"], scenario.solves), (0, "pass", 1), report)
+        manifest = json.loads((scenario.hw / "analysis" / "v1" / "cantilever" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["recipe"]["reactions"][INTERFACE]["design_reaction_n"], 40.0)
 
     def test_the_larger_of_two_stops_governs(self) -> None:
         scenario = Scenario(self)
@@ -192,12 +202,32 @@ class NamedLimit(unittest.TestCase):
         scenario.refused("reaction_below_design")
 
     def test_a_limit_the_bundle_has_no_stop_for_is_an_invalid_case(self) -> None:
+        for name, ends in (("absent", {"min": end("bounded", 40.0)}),
+                           ("not touching", {"min": end("bounded", 40.0), "max": bare_end(touching=False)})):
+            with self.subTest(max=name):
+                scenario = Scenario(self)
+                scenario.publish({INTERFACE: entry(ends=ends)})
+                scenario.name_limit("max")
+                message = scenario.refused("invalid_case")["error"]["message"]
+                self.assertIn("max", message)
+                self.assertIn(INTERFACE, message)
+
+    def test_a_named_stop_with_no_known_force_is_unknown_with_the_producers_reason(self) -> None:
+        # The min limit touches but its force is unknown, so stop_reaction.py emits no reaction for it.
+        reason = "IF-006 is a stop at the min limit of J1, but no load on it is recorded"
         scenario = Scenario(self)
-        scenario.publish({INTERFACE: entry(ends={"min": end("bounded", 40.0)})})
-        scenario.name_limit("max")
-        message = scenario.refused("invalid_case")["error"]["message"]
-        self.assertIn("max", message)
-        self.assertIn(INTERFACE, message)
+        scenario.publish({INTERFACE: entry("unknown", {"min": bare_end(), "max": bare_end(touching=False)}, reason=reason)},
+                         outcome="unknown")
+        scenario.name_limit("min")
+        self.assertIn(reason, scenario.refused("reaction_unknown")["error"]["message"])
+
+    def test_a_named_limit_of_an_interface_that_is_no_stop_is_unknown(self) -> None:
+        reason = "IF-006: the parts are not in contact at either limit of J1: not a stop"
+        scenario = Scenario(self)
+        scenario.publish({INTERFACE: entry("not_applicable", {"min": bare_end(touching=False), "max": bare_end(touching=False)},
+                                           reason=reason)}, outcome="not_applicable")
+        scenario.name_limit("min")
+        self.assertIn(reason, scenario.refused("reaction_unknown")["error"]["message"])
 
     def test_a_limit_is_min_or_max_and_needs_a_reaction(self) -> None:
         for edit in (lambda text: text.replace("    reaction: IF-006\n", "    reaction: IF-006\n    limit: left\n"),
@@ -255,11 +285,19 @@ class CodeFingerprint(unittest.TestCase):
 
 
 class BundleNameMatchesTheProducer(unittest.TestCase):
-    def test_the_subject_and_evidence_names_are_the_producers(self) -> None:
-        self.assertEqual((fea_reaction.SUBJECT, fea_reaction.EVIDENCE), (SUBJECT, EVIDENCE))
-        source = (SCRIPTS / "stop_reaction.py").read_text(encoding="utf-8")
-        self.assertIn(f'SUBJECT = "{SUBJECT}"', source)
-        self.assertIn(f'"{EVIDENCE}"', source)
+    def test_a_bundle_the_producer_publishes_is_found_and_read(self) -> None:
+        """stop_reaction.py publishes for a record that owes no stop-reaction check (the scenario's record has no stop). The
+        reader finds that bundle and its evidence file: it reports the interface unassessed, not the bundle missing or unreadable."""
+        import stop_reaction
+
+        scenario = Scenario(self)
+        with patch("sys.stdout", io.StringIO()):
+            status = stop_reaction.main(["--hw", str(scenario.hw), "--version", "v1"])
+        self.assertEqual(status, 0)
+        with self.assertRaises(fea_reaction.ReactionRefused) as raised:
+            fea_reaction.read(fea_static.LAYOUT, scenario.hw, "v1", scenario.version, INTERFACE)
+        self.assertEqual(raised.exception.code, "reaction_missing")
+        self.assertIn("holds no assessment of IF-006", str(raised.exception))
 
 
 if __name__ == "__main__":

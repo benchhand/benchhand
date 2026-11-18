@@ -84,10 +84,18 @@ def packet(outcome: str) -> dict[str, Any]:
             "result": "pass" if outcome == "not_applicable" else outcome}
 
 
-def entry(outcome: str = "pass", ends: dict[str, Any] | None = None, reason: str | None = None) -> dict[str, Any]:
+def bare_end(touching: bool = True) -> dict[str, Any]:
+    """A limit of the pivot with no calculated reaction: stop_reaction.py reports one for a stop whose force is unknown."""
+    return {"touching": touching}
+
+
+def entry(outcome: str = "pass", ends: dict[str, Any] | None = None, reason: str | None = None,
+          recorded_contact_load_n: float | None = None) -> dict[str, Any]:
     data: dict[str, Any] = {"outcome": outcome, "ends": ends or {}}
     if reason:
         data["reason"] = reason
+    if recorded_contact_load_n is not None:
+        data["recorded_contact_load_n"] = recorded_contact_load_n
     return data
 
 
