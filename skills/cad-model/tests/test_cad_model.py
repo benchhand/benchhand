@@ -2278,6 +2278,32 @@ class InspectMeasurementTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the OCP environment")
+class InspectReadTests(unittest.TestCase):
+    """manufacture.inspect on a part with component STEP and 3MF outputs (fixtures/read_once_probe.py): when the
+    step check and the 3MF check both need a part STEP, one call reads it once, and a second call reads afresh."""
+
+    PATHS = {"part.step", "components/A/part.step", "components/B/part.step"}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "read_once_probe.py"), tmp],
+                                  capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        cls.report = json.loads(proc.stdout)
+
+    def test_every_3mf_of_the_part_and_its_components_is_judged_against_its_step(self) -> None:
+        self.assertEqual(self.report["threemf"], {"part.3mf": True, "components/A/part.3mf": True,
+                                                  "components/B/part.3mf": True})
+
+    def test_each_step_is_read_once_within_one_call(self) -> None:
+        self.assertEqual(self.report["first"], {path: 1 for path in self.PATHS})
+
+    def test_a_second_call_reads_each_step_afresh(self) -> None:
+        self.assertEqual(self.report["second"], {path: 1 for path in self.PATHS})
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the OCP environment")
 class ContainmentTests(unittest.TestCase):
     """A part buried in another, no faces touching, interferes whether the container reads back as
     a SOLID or as a COMPOUND, in either argument order (fixtures/containment_probe.py)."""
