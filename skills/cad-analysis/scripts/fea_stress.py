@@ -51,6 +51,11 @@ MIN_KEPT_FRACTION = 0.10
 MIN_FINE_KEPT_NODES = 1000
 
 # Strength-eligible: an interior peak and every convergence criterion.
+# Largest grid cell index the face hash may use. A float holds integers exactly up to 2**53, so beyond it the
+# division that places a node in a cell rounds, the 27-cell search stops being exact, and a nearest face can be
+# missed. A coordinate that needs more cells, or a division that overflows, gives UNKNOWN.
+MAX_GRID_CELLS = 2 ** 53
+
 SETTLED = "settled"
 # Every convergence criterion holds, but the peak sits on the exclusion boundary: the stress there rises
 # toward the support, so sigma_kept is information only and never a strength value.
@@ -302,6 +307,24 @@ def _input_problems(label: str, level: Level) -> list[tuple[str, str]]:
     return problems
 
 
+def _mesh_size_problems(coarse: Level, fine: Level) -> list[tuple[str, str]]:
+    """(reason, detail) pairs for a mesh size that is not finite and positive: zero, negative, nan or inf."""
+    return [("invalid_mesh_size", f"{label} mesh size h={level.h:g} mm must be finite and positive")
+            for label, level in (("coarse", coarse), ("fine", fine))
+            if not (math.isfinite(level.h) and level.h > 0)]
+
+
+def _grid_problems(label: str, level: Level, radius: float) -> list[tuple[str, str]]:
+    """(reason, detail) pairs when a node cannot be placed in a grid of cells with edge `radius`."""
+    if not math.isfinite(radius):
+        return [("grid_out_of_range", f"the grid cell edge overflows ({label} mesh)")]
+    worst = max((abs(c) for p in level.result.coordinates.values() for c in p), default=0.0)
+    if worst > MAX_GRID_CELLS * radius:
+        return [("grid_out_of_range", f"coordinate {worst:.3g} mm needs more than {MAX_GRID_CELLS} grid cells "
+                                      f"of {radius:.3g} mm ({label} mesh)")]
+    return []
+
+
 def _empty_peak(level: Level) -> LevelPeak:
     return LevelPeak(level.h, None, None, None, None, 0, len(level.result.coordinates), math.nan)
 
@@ -391,13 +414,20 @@ def _describe(coarse: Level, fine: Level, c: LevelPeak, f: LevelPeak, delta_sigm
 def compare_levels(coarse: Level, fine: Level) -> StressStudy:
     """Compare the coarse and fine solves; return the settled peak or UNKNOWN with the reasons.
 
-    Raises ValueError when `coarse.h` is not larger than `fine.h`.
+    Raises ValueError when both mesh sizes are valid and `coarse.h` is not larger than `fine.h`. A mesh size
+    that is not finite and positive, a gap or non-finite value in the results, and a coordinate the face
+    grid cannot index all give UNKNOWN instead.
     """
-    if not coarse.h > fine.h > 0:
-        raise ValueError(f"coarse h ({coarse.h}) must exceed fine h ({fine.h}) and both must be positive")
-    problems = _input_problems("coarse", coarse) + _input_problems("fine", fine)
+    problems = _mesh_size_problems(coarse, fine)
+    if not problems and not coarse.h > fine.h:
+        raise ValueError(f"coarse h ({coarse.h}) must exceed fine h ({fine.h})")
+    problems += _input_problems("coarse", coarse) + _input_problems("fine", fine)
+    if not problems:
+        radius = K_EXCLUSION * coarse.h + coarse.h  # the query radius _kept_peak uses
+        problems = _grid_problems("coarse", coarse, radius) + _grid_problems("fine", fine, radius)
     if problems:
-        # Nothing is indexed or compared: gaps and non-finite values would make any peak a guess.
+        # Nothing is indexed or compared: a bad mesh size, a gap, a non-finite value or an unindexable coordinate
+        # would make any peak a guess.
         refused = tuple(dict.fromkeys(reason for reason, _ in problems))
         message = (f"UNKNOWN ({', '.join(refused)}): h_coarse={coarse.h:g} mm h_fine={fine.h:g} mm; "
                    + "; ".join(detail for _, detail in problems))
