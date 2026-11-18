@@ -525,6 +525,29 @@ class ScratchStore(Project):
         self.assertEqual(shown, {"EV-003": "unknown", "EV-004": "unknown"})
 
 
+class DotSlashNames(Project):
+    """A leading ./ is no path shape of its own: ./measurement.json is a file name that the rule must judge."""
+
+    def test_a_missing_or_untracked_dot_slash_file_is_refused_at_all_three_points(self) -> None:
+        for state in ("missing", "untracked"):
+            with self.subTest(state):
+                if state == "untracked":
+                    (self.root / "measurement.json").write_text("{}\n", encoding="utf-8")
+                entry = self.entry(method="result in ./measurement.json")
+                self.assertEqual([p.code for p in self.refusal(entry)], ["evidence.scratch_path"])
+                assessed, ledger, inventory = self.points(entry)
+                self.assertEqual((assessed & {"evidence.scratch_path"}, ledger, inventory),
+                                 ({"evidence.scratch_path"}, {"evidence.scratch_path"}, True))
+
+    def test_other_dot_slash_names_are_judged_and_numbers_are_not(self) -> None:
+        for name in ("./out.3mf", "./a.7z", "./notes/untracked.txt"):
+            with self.subTest(name):
+                self.assertEqual([p.code for p in self.refusal(self.entry(method=f"see {name}"))],
+                                 ["evidence.scratch_path"])
+        self.assertEqual(self.refusal(self.entry(method="width ./0.2mm")), [])
+        self.assertEqual(self.refusal(self.entry(method="rationale in ./notes/method.txt")), [])
+
+
 class FiguresWithoutAPath(Project):
     """What the rule cannot see: figures that come from a result the text never names."""
 

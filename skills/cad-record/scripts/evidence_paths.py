@@ -71,9 +71,10 @@ class PathProblem:
 
 def is_path_like(token: str) -> bool:
     """Whether `token` has a path shape (see the module docstring)."""
-    while token.startswith("./"):
-        token = token[2:]
-    if token.startswith(SCRATCH_PREFIXES) or token in (".cad-work", "hw/.cad", ".cad"):
+    bare = token
+    while bare.startswith("./"):
+        bare = bare[2:]
+    if bare.startswith(SCRATCH_PREFIXES) or bare in (".cad-work", "hw/.cad", ".cad"):
         return True
     if token.startswith("/"):
         return re.match(r"^/[^/]+/.+|^/[^/]+\.[A-Za-z]", token) is not None
