@@ -23,6 +23,7 @@ Test fixtures and vendored data keep their own licences:
 
   skills/cad-model/tests/fixtures/3mf-schema/  3MF Consortium XML schemas,
       BSD 2-Clause (LICENSE.spec_core, LICENSE.test_suites beside them).
+      xml.xsd there is the W3C XML namespace schema (W3C-20150513).
   skills/cad-record/vendor/sarif-schema-2.1.0.json  OASIS SARIF 2.1.0 JSON
       schema, under the OASIS terms in LICENSES/LicenseRef-OASIS-SARIF.txt.
 

@@ -47,19 +47,26 @@ path = [
     "skills/cad-model/tests/fixtures/3mf-schema/LICENSE.spec_core",
 ]
 precedence = "override"
-SPDX-FileCopyrightText = "2018 3MF Consortium"
+SPDX-FileCopyrightText = "Copyright (c) 2018, 3MF Consortium"
 SPDX-License-Identifier = "BSD-2-Clause"
 
 [[annotations]]
 path = [
     "skills/cad-model/tests/fixtures/3mf-schema/opc-contentTypes.xsd",
     "skills/cad-model/tests/fixtures/3mf-schema/opc-relationships.xsd",
-    "skills/cad-model/tests/fixtures/3mf-schema/xml.xsd",
     "skills/cad-model/tests/fixtures/3mf-schema/LICENSE.test_suites",
 ]
 precedence = "override"
-SPDX-FileCopyrightText = "2021 3MF Consortium"
+SPDX-FileCopyrightText = "Copyright (c) 2021, 3MF Consortium"
 SPDX-License-Identifier = "BSD-2-Clause"
+
+# W3C's xml.xsd. Neither this copy nor https://www.w3.org/2001/xml.xsd states a copyright or licence.
+# W3C-20150513 is W3C's permissive Software and Document licence; confirm before release.
+[[annotations]]
+path = "skills/cad-model/tests/fixtures/3mf-schema/xml.xsd"
+precedence = "override"
+SPDX-FileCopyrightText = "World Wide Web Consortium"
+SPDX-License-Identifier = "W3C-20150513"
 
 [[annotations]]
 path = "skills/cad-record/vendor/sarif-schema-2.1.0.json"
