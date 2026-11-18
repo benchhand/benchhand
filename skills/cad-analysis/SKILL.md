@@ -35,7 +35,8 @@ TRIGGER
 - `fixed_faces`: required selector for constrained faces, using the same `indices` or `plane` forms as each `loads[].selector`.
 - `loads`: non-empty list of `{selector, force: [Fx, Fy, Fz]}` in N; `load` optionally identifies its use-case load.
 - `mesh_size`: positive maximum element size in mm.
-- `required_safety_factor`: optional positive check threshold; a completed solve below it fails.
+- `mode`: optional `full` (the default) or `fast`. See [Fast mode](#fast-mode).
+- `required_safety_factor`: optional positive check threshold; a completed solve below it fails. Fast mode refuses it.
 - `timeout_seconds`: optional positive whole-job limit, default 600. `null` takes the default.
 
 ## Record-bound material and evidence
@@ -67,6 +68,17 @@ Completed results record reproducibility settings in `mesh_settings`: one Gmsh t
 
 `fea_static.py` publishes a v2 engineering packet at `hw/checks/<V>/fea-<case>/`; `stdout.check_bundle` names it. Only `engineering.strength`, `engineering.stiffness` and `engineering.anisotropy` are in static solver scope. Creep, fatigue, impact and life remain physical-validation obligations.
 
+## Fast mode
+
+A case with `mode: fast` checks displacement and stiffness only. It meshes with the same settings as a full case. The result reports these fields:
+
+- `max_displacement_mm`, which the stiffness check reads.
+- `mesh_stability_indicator`, with `p95_von_mises_mpa` over all mesh nodes (`nodes`) and its `label`: "mesh-stability indicator, not a strength value". The p95 value sits at rank position (n − 1) × 0.95, linear between the two nearest ranks.
+- `stress_study`, which names the separate stress study as the only source of a stress figure.
+- `status: pass` with `status_scope: run`: the solver run completed. It is no strength verdict.
+
+A fast result states no stress figure, no yield safety factor and no stress verdict. Its `engineering.strength` outcome stays `unknown`. A fast case refuses `required_safety_factor` and `acceptance.strength`. In the fast-bias campaign, displacement and p95 settled between meshes. The peak stress and the stress away from supports did not.
+
 ## Stop reaction
 
 A hard stop's reaction comes from the modeled contact, never from a hand estimate. `stop_reaction.py` is a layout-stage producer. It covers `engineering.stop_reaction@IF-###`. The record requires that check of each critical structural interface that carries a load. Run it as follows:
@@ -88,7 +100,7 @@ Strength of the load path is a separate question for `fea_static.py`. This check
 
 ## Exit codes
 
-- `0`: analysis completed and any requested safety-factor threshold passed.
+- `0`: analysis completed and any requested safety-factor threshold passed. A completed fast case exits 0.
 - `1`: analysis completed, but the required safety factor was not met.
 - `2`: no result; invalid input, unavailable or failed FreeCAD job, timeout, malformed result, or infrastructure error.
 
@@ -119,6 +131,8 @@ NOT A yield safety factor is not a fatigue, buckling, physical test or certifica
 
 ```text
 L1 ANALYSIS {case}: {PASS|FAIL|NO-RESULT}; {peak stress} MPa, {displacement} mm, {yield safety factor}
+   Evidence -- {analysis bundle and engineering check packet paths}
+L1 ANALYSIS {case} (fast): {DONE|NO-RESULT}; {displacement} mm; p95 {p95} MPa (mesh-stability indicator, not a strength value)
    Evidence -- {analysis bundle and engineering check packet paths}
 ```
 CAP 120w clean · 220w with failures

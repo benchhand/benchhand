@@ -25,6 +25,7 @@ from typing import Any, cast
 import yaml
 
 import fea_conditions as conditions
+import fea_modes as modes
 from fea_part_selection import OCCURRENCE_REF, selected_face_indices as _selected_face_indices
 from freecad_lookup import find_freecad
 import importlib.util
@@ -181,6 +182,16 @@ def load_case(path: Path) -> dict[str, Any]:
         or required_safety_factor <= 0
     ):
         raise CaseError("required_safety_factor must be a positive finite number")
+    mode = raw.get("mode")
+    if mode is not None and mode not in modes.MODES:
+        raise CaseError(f"mode must be one of {', '.join(modes.MODES)}; omit it for {modes.DEFAULT}")
+    raw["_mode"] = mode or modes.DEFAULT
+    if raw["_mode"] == "fast" and required_safety_factor is not None:
+        raise CaseError("a fast case reports no stress, so required_safety_factor cannot apply: remove it, or "
+                        "set mode: full for a yield safety factor")
+    if raw["_mode"] == "fast" and acceptance is not None and "strength" in acceptance:
+        raise CaseError("a fast case reports no stress, so acceptance.strength cannot apply: remove it, or "
+                        "set mode: full for a strength check")
     timeout = raw.get("timeout_seconds")
     if timeout is not None and (
         not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0
@@ -327,8 +338,10 @@ def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None 
     marker_path = run_dir / f"fea_static_{run_id}.json"
     phase_path = run_dir / f"fea_static_{run_id}_phase.json"
     output_path = result_path or default_result_path(case_path)
+    mode = case.get("_mode", modes.DEFAULT)
     job = {
         "run_id": run_id,
+        "mode": mode,
         "step": case["_step"],
         "part": case.get("part"),
         "occurrence": case.get("occurrence"),
@@ -363,6 +376,7 @@ from ccx_failure import applied_loads, unapplied_load, zero_result
 from fea_solvers import resolve_in_freecad
 from ccx_failure import ccx_failure
 from mesh_quality import mesh_quality, needs_fallback, read_c3d10
+from fea_modes import reported
 CONTAINERS=("App::LinkGroup", "App::Part")
 class AnalysisError(RuntimeError):
     def __init__(self, error):
@@ -521,19 +535,17 @@ def run():
         if results is None: raise RuntimeError("CalculiX did not produce a result object")
         stress=[float(v) for v in results.vonMises]; displacement=[float(v) for v in results.DisplacementLengths]
         if not stress or not displacement: raise RuntimeError("solver returned no stress or displacement results")
-        max_stress=max(stress); max_displacement=max(displacement); y=float(JOB["material"]["yield"])
+        max_stress=max(stress); max_displacement=max(displacement)
         empty=zero_result(max_stress, max_displacement, loads)
         if empty: raise AnalysisError(empty)
-        safety_factor=y/max_stress if max_stress else None
-        result={{"run_id":JOB["run_id"], "part":JOB.get("part"), "occurrence":JOB.get("occurrence"), "solid_index":JOB.get("solid_index"), "max_von_mises_mpa":max_stress, "max_displacement_mm":max_displacement, "safety_factor_yield":safety_factor, "node_count":nodes, "element_count":elements, "solve_time_seconds":solve_seconds}}
+        # The mode decides what the result reports: a fast case states no stress figure, safety factor or verdict.
+        result={{"run_id":JOB["run_id"], "part":JOB.get("part"), "occurrence":JOB.get("occurrence"), "solid_index":JOB.get("solid_index"), "mode":JOB["mode"], **reported(JOB["mode"], von_mises=stress, displacement=displacement, yield_mpa=float(JOB["material"]["yield"]), required_safety_factor=JOB.get("required_safety_factor")), "node_count":nodes, "element_count":elements, "solve_time_seconds":solve_seconds}}
         result["solver_versions"]=JOB["solver_versions"]
         result["warnings"]=[]
         result["worst_case_pose"]={{"step":JOB["step"], **({{"pose":JOB["pose"]}} if JOB.get("pose") is not None else {{}}), **({{"evidence":JOB["evidence"]}} if JOB.get("evidence") is not None else {{}})}}
-        result["required_safety_factor"]=JOB.get("required_safety_factor")
         result["mesh_input_hashes"]=mesh_inputs
         result["mesh_quality"]=quality
         result["mesh_input_files"]=["GmshGeometry.brep", "GmshInput.geo"]
-        result["status"]="fail" if result["required_safety_factor"] is not None and safety_factor is not None and safety_factor < result["required_safety_factor"] else "pass"
         result["retained_files"]=[os.path.relpath(os.path.join(root,name), JOB["run_directory"]).replace(os.sep,"/")
                                   for root,dirs,files in os.walk(JOB["run_directory"]) for name in files
                                   if not name.endswith(".pyc") and "__pycache__" not in os.path.relpath(root, JOB["run_directory"]).split(os.sep)]
@@ -583,7 +595,7 @@ except Exception as e:
         return error(f"cannot parse FreeCAD result marker: {exc}", code="invalid_result"), 2
     if result.get("run_id") != run_id:
         return error("FreeCAD result marker run id does not match this invocation", code="invalid_result"), 2
-    if result.get("status") != "error":
+    if result.get("status") != "error" and mode == "full":
         result = apply_required_safety_factor(result, case.get("required_safety_factor"))
     result["run_directory"] = str(run_dir)
     result["warnings"] = result.get("warnings", [])
@@ -657,7 +669,7 @@ def _is_solver_evidence(relative_path: str) -> bool:
 def _producer_code_hashes() -> dict[str, str]:
     paths = (Path(__file__), Path(__file__).with_name("fea_part_selection.py"),
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
-             Path(__file__).with_name("mesh_quality.py"),
+             Path(__file__).with_name("mesh_quality.py"), Path(__file__).with_name("fea_modes.py"),
              conditions.INTENT_PATH, Path(SOLVERS.__file__))
     return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
@@ -671,7 +683,10 @@ def _input_hashes(case: dict[str, Any]) -> dict[str, str]:
 
 
 def _case_options(case: dict[str, Any]) -> dict[str, Any]:
+    # A full case's options are as before. A fast case adds its mode, and both modes mesh with the same settings.
+    mode = case.get("_mode", modes.DEFAULT)
     return {
+        **({"mode": mode} if mode == "fast" else {}),
         "part": case.get("part"), "occurrence": case.get("occurrence"), "solid_index": case.get("solid_index"),
         "material": case["material"], "fixed_faces": case["fixed_faces"], "loads": case["loads"],
         "mesh_size": case["mesh_size"], "pose": case.get("pose"),
