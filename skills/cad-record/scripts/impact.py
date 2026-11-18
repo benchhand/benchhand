@@ -58,6 +58,8 @@ def _load_module(name: str, path: Path) -> Any:
 mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
 # The one definition of the selection inputs and their digest (selection.input_digest over DIGEST_SCOPE).
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
+# The occurrence inventory (assembly.yaml occurrences and subassemblies) and its reference resolution.
+assembly_data = _load_module("cad_record_assembly_data", SCRIPTS / "assembly_data.py")
 
 # The evidence ledger's fingerprint domains (manufacturing-evidence.schema.json#/$defs/fingerprint_domain).
 DOMAINS = ("use_case", "load", "environment", "material", "condition", "lot", "process", "route", "capability", "setup",
@@ -91,7 +93,7 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("route.", _JUDGED | {"process", "route", "capability", "setup", "orientation", "finish", "material", "condition"}),
     ("process.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                            "condition"}),
-    ("purchase.", _JUDGED | {"process", "route", "load", "environment", "geometry"}),
+    ("purchase.", _JUDGED | {"process", "route", "load", "environment", "geometry", "interface"}),
     ("optical.", _JUDGED | {"material", "process", "route", "finish"}),
     ("engineering.", _JUDGED | {"use_case", "geometry", "material", "condition", "load", "environment", "orientation",
                                 "process", "route", "finish"}),
@@ -186,6 +188,66 @@ def _artifacts(value: Any) -> dict[str, Any]:
     return found
 
 
+@dataclass(frozen=True)
+class InventoryProblem:
+    """The assembly inventory of a record does not normalize. `message` is the InventoryError text and `field` the
+    Record field it came from. Callers report or fingerprint it, and do not treat it as "no occurrences"."""
+
+    field: str
+    message: str
+
+
+@dataclass(frozen=True)
+class OccurrenceOperations:
+    """One occurrence of a part: its id and copyable reference (`@id`, or the PN of a legacy singleton), its
+    normalized rest placement, and the ids of the operations naming it as `part` or `into`, sorted."""
+
+    id: str
+    ref: str
+    placement: Mapping[str, Any]
+    operations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PartOccurrences:
+    """The occurrences of one part, sorted by occurrence id, and the part's model_frame."""
+
+    pn: str
+    model_frame: str
+    occurrences: tuple[OccurrenceOperations, ...]
+
+
+def part_occurrences(record: Any, pn: str) -> PartOccurrences | InventoryProblem:
+    """The occurrences of part `pn` in `record`, each with its placement and the operations naming it, resolved
+    through the record's assembly inventory (a bare PN or an `@id` in an operation's `part` or `into`).
+
+    Pure: it reads only `record`, never a file. An inventory that does not normalize returns an
+    InventoryProblem carrying the error and its field, never an empty result. A reference that names no single
+    occurrence (a PN placed twice or more, an unknown id) names none here. Validate reports it.
+
+    Built for reuse: impact.py's purchase.mounting fingerprint calls it. The operation `interface` view of
+    occurrence placements (#154) and the dependency of an operation on the operations before it (#119) take the
+    same resolution and do not resolve references again.
+    """
+    frames = {name: part.raw.get("model_frame", assembly_data.DEFAULT_FRAME) for name, part in record.parts.items()}
+    try:
+        inventory = assembly_data.normalize(plain(record.assembly_inventory), frames)
+    except assembly_data.InventoryError as error:
+        return InventoryProblem("assembly_inventory", str(error))
+    operations = record.assembly_operations
+    naming: dict[str, set[str]] = {}
+    for op in () if mi.is_fact(operations) else operations:
+        for ref in (op.get("part"), op.get("into")):
+            try:
+                occurrence = inventory.resolve(ref)
+            except assembly_data.UnresolvedReference:
+                continue
+            naming.setdefault(occurrence.id, set()).add(str(op.get("id")))
+    return PartOccurrences(pn, frames.get(pn, assembly_data.DEFAULT_FRAME), tuple(
+        OccurrenceOperations(o.id, o.ref, o.placement.record(), tuple(sorted(naming.get(o.id, ()))))
+        for o in sorted(inventory.of(pn), key=lambda occurrence: occurrence.id)))
+
+
 class _Record:
     """The raw (plain) views of one normalized Record that fingerprints read."""
 
@@ -259,7 +321,21 @@ class _Record:
         }
         sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
+        mounting = self.mounting_inputs(pn)
+        if mounting is not None:
+            values["interface"]["mounting"] = mounting
         return values
+
+    def mounting_inputs(self, pn: str) -> Any:
+        """What purchase.mounting reads beyond the interface domain: the part's occurrences with their placements and
+        operations, and its model_frame. An inventory problem fingerprints as itself. Only a bought part with an
+        explicit occurrence or a broken inventory has any, so every other part's interface fingerprint stays equal."""
+        if not any(op.get("kind") == "purchased" for op in self.route(pn)):
+            return None
+        found = part_occurrences(self.record, pn)
+        if isinstance(found, InventoryProblem) or any(o.ref.startswith("@") for o in found.occurrences):
+            return plain(found)
+        return None
 
     def interfaces_of(self, pn: str) -> set[str]:
         found = set()
