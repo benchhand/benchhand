@@ -144,20 +144,34 @@ def operation_plan(ctx: Context) -> Result:
     parts: list[tuple[str, str]] = []
     setup = op.setup or {}
 
-    def need(ok: bool, what: str, consequence: str, severity: str = "minor") -> None:
-        if ok:
+    def need(state: str, field: str, what: str, consequence: str, severity: str = "minor") -> None:
+        """`state` is "present", "open" (recorded but undecided: UNKNOWN) or "missing" (not recorded at all: FAIL)."""
+        if state == "present":
             parts.append((PASS, what))
-            return
-        findings.append(Draft("route.plan_incomplete", severity, UNKNOWN, unknown(f"{what} not recorded"),
-                              policy("operation_plan", "equals", what), "part.yaml route", "not recorded", consequence,
-                              remedy=f"record {what} for {op.id}", recheck=["route.operation_plan"], feature=None))
-        parts.append((UNKNOWN, f"{what} missing"))
+        elif state == "open":
+            findings.append(Draft("route.plan_incomplete", severity, UNKNOWN, unknown(f"{what} not recorded"),
+                                  policy("operation_plan", "equals", what), "part.yaml route", "not recorded", consequence,
+                                  remedy=f"record {what} for {op.id}", recheck=["route.operation_plan"], feature=None))
+            parts.append((UNKNOWN, f"{what} missing"))
+        else:
+            findings.append(Draft("route.operation_plan_field_missing", severity, FAIL, text(f"{field} missing from the plan of {op.id}"),
+                                  policy("operation_plan", "equals", what), "part.yaml route", "record content", consequence,
+                                  remedy=f"record {what} for {op.id}", recheck=["route.operation_plan"], feature=None))
+            parts.append((FAIL, f"{field} missing"))
 
+    def recorded(value: Any, ok: bool) -> str:
+        """Missing when absent, open when a Fact or not yet in its settled form, present otherwise."""
+        if value is None or (not mi.is_fact(value) and not value):
+            return "missing"
+        return "present" if ok else "open"
+
+    mi = ctx.mi
     if op.kind in ADDITIVE:
         orientation = op.orientation
-        need(isinstance(orientation, Mapping) and orientation.get("status") == "approved", "an approved orientation",
-             "the pose the part prints in is not fixed", "major")
-        need(isinstance(op.supports, Mapping), "a support strategy", "where supports go is unplanned", "major")
+        need(recorded(orientation, isinstance(orientation, Mapping) and orientation.get("status") == "approved"), "orientation",
+             "an approved orientation", "the pose the part prints in is not fixed", "major")
+        need(recorded(op.supports, isinstance(op.supports, Mapping)), "supports", "a support strategy",
+             "where supports go is unplanned", "major")
     elif op.kind in SECONDARY:
         earlier = ctx.before()
         if not earlier and not op.input_state:
@@ -166,22 +180,24 @@ def operation_plan(ctx: Context) -> Result:
                                   "record content", f"{op.id} has nothing to act on", remedy="order the route", recheck=["route.operation_plan"]))
             parts.append((FAIL, "no predecessor"))
         if op.kind != "coating":  # a coat locates on nothing; every other secondary operation locates on datums
-            need(bool(setup.get("datums")), "the datums it locates on", "the datum transfer from the earlier operation is unknown",
-                 "major")
+            need(recorded(setup.get("datums"), True), "datums", "the datums it locates on",
+                 "the datum transfer from the earlier operation is unknown", "major")
         if op.kind not in ("inspection", "coating"):  # a coat without targets covers the whole part
-            need(bool(op.targets), "its target features", "what it acts on is unknown", "major")
+            need(recorded(op.targets, True), "targets", "its target features", "what it acts on is unknown", "major")
     else:
         first = not ctx.before()
         if first:
-            need(bool(setup.get("stock")), "its stock", "what it is made from is unknown", "major")
+            need(recorded(setup.get("stock"), True), "stock", "its stock", "what it is made from is unknown", "major")
         if op.kind in SHEET:
             stock = setup.get("stock") or {}
             thickness = stock.get("thickness")
-            need(isinstance(thickness, Mapping) and thickness.get("status") == "known", "the stock thickness",
-                 "the sheet thickness that sets kerf and fits is unknown", "major")
+            need(recorded(thickness, isinstance(thickness, Mapping) and thickness.get("status") == "known"), "stock thickness",
+                 "the stock thickness", "the sheet thickness that sets kerf and fits is unknown", "major")
         elif op.kind not in ("sheet_forming",):
-            need(bool(setup.get("workholding")) or op.kind in ("casting", "moulding", "extrusion"),
-                 "its workholding", "how the part is held is unknown")
+            if op.kind in ("casting", "moulding", "extrusion"):
+                parts.append((PASS, "its workholding"))
+            else:
+                need(recorded(setup.get("workholding"), True), "workholding", "its workholding", "how the part is held is unknown")
     inspections = ctx.inspections()
     made = ctx.targets() or ({s.feature for s in ctx.surfaces()} if op.kind not in SECONDARY else set())
     for surface in ctx.surfaces():
