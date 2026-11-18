@@ -9,6 +9,7 @@ rules out (layer height, shrinkage, Z strength, a press fit) ships."""
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from modload import load_module as load  # noqa: E402
 
 fx = load("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py")
 registry = fx.schema_registry_module()
+gl = load("cad_record_guidelines", SKILL / "scripts" / "guidelines.py")
 SCHEMA = "manufacturing-guideline.schema.json"
 ACCESSED = "2026-11-18"
 EXPECTED_IDS = {
@@ -136,6 +138,62 @@ class ShippedValues(unittest.TestCase):
 
     def test_tpu_85a_needs_a_nozzle_of_at_least_0_6_mm(self) -> None:
         self.assertEqual(bare(limit_of("fdm.compat.tpu_85a", "nozzle_diameter")), (">=", (0.6, "mm")))
+
+
+CATALOG = gl.discover(None)  # the shipped sets only, as the program reads them
+
+
+def resolved(characteristic: str, pin: tuple[str, ...] | None = None, **facts: str) -> Any:
+    """What a profile with these scope facts (and, with `pin`, this guidelines pin) resolves `characteristic` to."""
+    return gl.resolve_guidelines(CATALOG, gl.Context("fdm", facts, pin=pin), characteristic)
+
+
+def stated(found: Any) -> tuple[Any, ...]:
+    """(status, operator, number or text, units, limits ignored as relaxations) of a resolved limit."""
+    value = found.value
+    ignored = tuple(w for w in found.warnings if "would relax" in w)
+    return (found.status, found.operator, getattr(value, "value", value), getattr(value, "units", None), ignored)
+
+
+class ShippedResolution(unittest.TestCase):
+    """The shipped catalog resolved through the program, with no set patched in: each case fails when its limit is
+    deleted or changed, or when another shipped set overrides it. Expected values are the surveyed figures."""
+
+    def test_pc_needs_a_nozzle_of_at_least_0_4_mm(self) -> None:
+        self.assertEqual(stated(resolved("nozzle_diameter", material_family="pc")), ("guideline", ">=", 0.4, "mm", ()))
+
+    def test_tpu_95a_needs_a_nozzle_of_at_least_0_4_mm(self) -> None:
+        self.assertEqual(stated(resolved("nozzle_diameter", material_family="tpu", shore="95a")),
+                         ("guideline", ">=", 0.4, "mm", ()))
+
+    def test_tpu_85a_needs_a_nozzle_of_at_least_0_6_mm_unpinned_and_pinned_to_the_h2d_sample(self) -> None:
+        facts = {"material_family": "tpu", "shore": "85a"}
+        self.assertEqual(stated(resolved("nozzle_diameter", **facts)), ("guideline", ">=", 0.6, "mm", ()))
+        self.assertEqual(stated(resolved("nozzle_diameter", pin=("fdm.machine.bambu_h2d@1",), **facts)),
+                         ("guideline", ">=", 0.6, "mm", ()))
+
+    def test_a_filler_needs_a_hardened_steel_nozzle_of_at_least_0_4_mm(self) -> None:
+        for filler in ("cf", "gf"):
+            with self.subTest(filler):
+                facts = {"material_family": "pla", "filler": filler}
+                self.assertEqual(stated(resolved("nozzle_diameter", **facts)), ("guideline", ">=", 0.4, "mm", ()))
+                self.assertEqual(stated(resolved("nozzle_material", **facts)),
+                                 ("guideline", "equals", "hardened_steel", None, ()))
+
+
+class SnapshotInventory(unittest.TestCase):
+    def test_a_version_snapshot_copies_exactly_the_18_shipped_sets(self) -> None:
+        """The list is typed out here, so a set a helper leaves out or adds fails here and not in a computed list."""
+        by_hand = {
+            "fdm.generic", "fdm.nozzle.d0_2", "fdm.nozzle.d0_4", "fdm.nozzle.d0_6", "fdm.nozzle.d0_8",
+            "fdm.material.pla", "fdm.material.petg", "fdm.material.abs", "fdm.material.asa", "fdm.material.tpu_95a",
+            "fdm.material.tpu_85a", "fdm.material.pa", "fdm.material.pc", "fdm.material.pa_cf",
+            "fdm.filler.cf", "fdm.filler.gf", "fdm.compat.tpu_85a", "fdm.machine.bambu_h2d"}
+        self.assertEqual(len(by_hand), 18)
+        with tempfile.TemporaryDirectory() as hw:
+            copies = gl.snapshot_files(Path(hw))
+        self.assertEqual(set(copies), {f"manufacturing/guidelines/shipped--{name}.yaml" for name in by_hand})
+        self.assertTrue(all(copies.values()))
 
 
 if __name__ == "__main__":

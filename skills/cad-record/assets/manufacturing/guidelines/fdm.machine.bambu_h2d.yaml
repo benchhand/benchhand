@@ -5,19 +5,7 @@
 schema_version: 1
 id: fdm.machine.bambu_h2d
 revision: 1
-title: 'Bambu Lab H2D (SAMPLE, reached only through a profile pin): Bambu publishes no overhang, bridge, wall, feature, hole or clearance figure, so only the supported nozzle diameters are stated'
+title: 'Bambu Lab H2D (SAMPLE, for a profile pin): Bambu publishes no overhang, bridge, wall, feature or hole figure; its supported nozzle diameters (0.2, 0.4, 0.6 and 0.8 mm) are a discrete set that no guideline limit can state, so the set holds no limit'
 scope:
   process: fdm
-limits:
-- characteristic: nozzle_diameter
-  operator: between
-  quantity:
-    lower: 0.2
-    upper: 0.8
-    units: mm
-  citations:
-  - kind: supplier
-    reference: Bambu Lab H2D technical specifications
-    url: https://bambulab.com/en/h2d/tech-specs
-    accessed: '2026-11-18'
-    locator: 'Toolhead table, Supported Nozzle Diameter: 0.2 mm, 0.4 mm, 0.6 mm, 0.8 mm'
+limits: []
