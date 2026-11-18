@@ -383,11 +383,13 @@ class ExtremeInputTests(unittest.TestCase):
 
     NAN, INF = math.nan, math.inf
 
-    def compare(self, coarse_h, fine_h, *, coarse_move=None):
-        coarse = level(coarse_h, kept=200)
+    def compare(self, coarse_h, fine_h, *, coarse_move=None, fine_move=None):
+        coarse, fine = level(coarse_h, kept=200), level(fine_h, kept=2000)
         if coarse_move is not None:
             coarse = with_coordinates(coarse, 100_000, coarse_move)
-        return fs.compare_levels(coarse, level(fine_h, kept=2000))
+        if fine_move is not None:
+            fine = with_coordinates(fine, 100_000, fine_move)
+        return fs.compare_levels(coarse, fine)
 
     def test_a_mesh_size_that_is_not_finite_and_positive_gives_unknown(self) -> None:
         cases = (("coarse zero", 0.0, 0.5), ("coarse negative", -1.0, 0.5), ("coarse nan", self.NAN, 0.5),
@@ -428,6 +430,12 @@ class ExtremeInputTests(unittest.TestCase):
         self.assertEqual((beyond.status, beyond.reasons), (fs.UNKNOWN, ("grid_out_of_range",)))
         negative = self.compare(1.0, 0.5, coarse_move=(0.0, -(2.0 ** 56), 0.0))
         self.assertEqual(negative.reasons, ("grid_out_of_range",))
+
+    def test_a_coordinate_beyond_the_grid_on_the_fine_mesh_names_the_fine_mesh(self) -> None:
+        result = self.compare(1.0, 0.5, fine_move=(2.0 ** 56, 0.0, 0.0))
+        self.assertEqual((result.status, result.reasons), (fs.UNKNOWN, ("grid_out_of_range",)))
+        self.assertIn("(fine mesh)", result.message)
+        self.assertNotIn("(coarse mesh)", result.message)
 
     def test_a_cell_edge_that_overflows_gives_unknown(self) -> None:
         # 4 x 1e308 is not a float, so the grid has no finite cell edge.
