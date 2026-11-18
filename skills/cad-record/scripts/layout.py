@@ -752,6 +752,44 @@ def recipe_sha256(recipe: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_json(recipe)).hexdigest()
 
 
+def input_key(material: Mapping[str, Any], allow: Iterable[str] | None = None) -> str:
+    """The store key of a cached output: `recipe_sha256` of its inputs. `material` names its record `format` (an
+    integer) and `kind`. With `allow`, every key of `material` must be one of those inputs, so a timing such as
+    `build_s` or a whole manifest never enters a key by mistake."""
+    if not isinstance(material.get("format"), int) or isinstance(material.get("format"), bool):
+        raise ValueError("an input key needs an integer format")
+    if not isinstance(material.get("kind"), str) or not material["kind"]:
+        raise ValueError("an input key needs a kind")
+    if allow is not None:
+        extra = sorted(set(material) - set(allow))
+        if extra:
+            raise ValueError(f"input key material holds {', '.join(extra)}, which its allowlist does not name")
+    return recipe_sha256(material)
+
+
+def code_shas(root: Path, paths: Iterable[str]) -> dict[str, str]:
+    """sha256 of each file of an explicit list, keyed by its path relative to `root` (POSIX)."""
+    found = {}
+    for rel in sorted(set(paths)):
+        with (Path(root) / rel).open("rb") as stream:
+            found[PurePosixPath(rel).as_posix()] = hashlib.file_digest(stream, "sha256").hexdigest()
+    return found
+
+
+def tool_versions(dists: Iterable[str]) -> dict[str, str]:
+    """The installed version of each Python distribution, or `missing` (importlib.metadata). The caller adds
+    the version of a tool inside FreeCAD, which this process cannot see."""
+    import importlib.metadata
+
+    versions = {}
+    for dist in dists:
+        try:
+            versions[dist] = importlib.metadata.version(dist)
+        except importlib.metadata.PackageNotFoundError:
+            versions[dist] = "missing"
+    return versions
+
+
 def _tree(directory: Path) -> tuple[set[str], list[str], list[str]]:
     """(regular files, symlinks or special files or unsafe names, empty directories) below `directory`."""
     files: set[str] = set()
@@ -1141,17 +1179,19 @@ def markdown() -> str:
               "declares its own `volume_rel_tolerance` or `volume_abs_tolerance_mm3`.", ""]
     lines += ["## Part store", "",
               "`cad-model run` stores each part output once: the definition and state STEP of every part and the",
-              "manufacturing files of every custom-made part, in `hw/.cad/parts/{SHA}`, named by the sha256 of its",
-              "bytes. A version's `parts/{PN}.step` and `manufacturing/{PN}/` files are hard links to those objects",
-              "where the filesystem allows them, else byte copies; the paths and manifests are those of any version,",
-              "and verification hashes file content, never the inode. `hw/.cad/builds/{SHA}.json` records, under",
+              "manufacturing files of every custom-made part, in `hw/.cad/cache/objects/{SHA}`, named by the sha256",
+              "of its bytes. A version's `parts/{PN}.step` and `manufacturing/{PN}/` files",
+              "are hard links to those objects where the filesystem allows them, else byte copies; the paths and",
+              "manifests are those of any version, and verification hashes file content, never the inode.",
+              "`hw/.cad/cache/records/{SHA}.json` records, under",
               "the sha256 of a part's build inputs, the objects and facts its build produced. A part whose inputs",
               "are unchanged reuses them once every object still hashes to its name, so a run builds only the",
               "changed parts. Objects and the version files linked to them are read-only (0444), so an in-place",
-              "write fails instead of changing every version that shares the bytes. Both folders ignore",
-              "themselves in git. After deleting versions, `cad_model.py store gc <hw> [--dry-run]` removes every",
-              "object no version or release manifest references, and the build records no referenced output",
-              "needs, and reports the bytes freed; it never removes an object a manifest names.", ""]
+              "write fails instead of changing every version that shares the bytes. The store ignores",
+              "itself in git. After deleting versions, `cad_model.py store gc <hw> [--dry-run]` removes every",
+              "object no sealed manifest references, and the build records no referenced output",
+              "needs, and reports the bytes freed; it never removes an object a manifest names.", "",
+              "`store gc` also removes the former part store, `hw/.cad/parts/` and `hw/.cad/builds/`.", ""]
     storage = lay.storage
     approved, ignored = git_storage(True)[".gitattributes"], git_storage(None)[".gitignore"]
     lfs = ", ".join(f"`*{suffix}`" for suffix in storage["lfs_suffixes"])

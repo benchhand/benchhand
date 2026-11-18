@@ -54,9 +54,10 @@ check runs the geometry checks on a built version; diff compares two built versi
       newest built version before vN); its report is partial (`scope.complete` false).
 latest points hw/versions/latest.json at the newest built version after `run` sealed it but could
       not write the pointer; it verifies the version against its manifest first and rebuilds nothing.
-store gc removes from the part store (hw/.cad/parts, hw/.cad/builds) every object no version or
-      release manifest references and no build record of a referenced output needs, and every other
-      build record; it reports the bytes freed. --dry-run removes nothing.
+store gc removes from the store (hw/.cad/cache, cad-record store.py) every object no sealed
+      manifest references and no build record of a referenced output needs, and every other
+      build record, and the former part store hw/.cad/parts and hw/.cad/builds; it reports the
+      bytes freed. --dry-run removes nothing.
 
 stdout: one JSON document in the tool-result envelope (cad-record emit.py; --out files hold it too). stderr: diagnostics.
 Exit codes: 0 pass, 1 a part model or a manufacturing output failed (run) or a blocking check failed
@@ -260,7 +261,7 @@ def latest(**params: Any) -> int:
     return execute("latest", params)
 
 
-@cli.command(help="maintain the part store hw/.cad/parts and hw/.cad/builds")
+@cli.command(help="maintain the store hw/.cad/cache")
 @click.argument("action", type=click.Choice(("gc",)))
 @HW_ARGUMENT
 @click.option("--dry-run", is_flag=True, help="report what gc would remove; remove nothing")
