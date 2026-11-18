@@ -47,11 +47,11 @@ if LAYOUT is None:
     LAYOUT_SPEC.loader.exec_module(LAYOUT)
 
 
-def load_reaction_tests():
-    """test_fea_reaction.py, which builds sealed versions with a real stop-reaction bundle."""
-    name = "cad_analysis_test_fea_reaction"
+def load_reaction_project():
+    """fixtures/reaction_project.py: sealed versions with a real stop-reaction bundle."""
+    name = "cad_analysis_reaction_project"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "test_fea_reaction.py")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "fixtures" / "reaction_project.py")
         assert spec and spec.loader
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
@@ -949,7 +949,7 @@ if flag is not None:
     def reaction_run(self, root: Path, design_n: float) -> tuple[subprocess.CompletedProcess[str], Path]:
         """Run the 50 N cantilever case as a versioned case whose load names IF-006, whose sealed stop-reaction bundle
         holds a design reaction of `design_n`. The $CCX stand-in records every call. The real FreeCAD does the rest."""
-        reaction = load_reaction_tests()
+        reaction = load_reaction_project()
         scenario = reaction.Scenario(self)
         step = self.make_cantilever_step(root)
         shutil.copyfile(step, scenario.case_dir / "beam.step")
