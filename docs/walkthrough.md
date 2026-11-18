@@ -50,7 +50,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Type:** `Compare credible complete architecture, per-part material and ordered process routes against each mandatory requirement. Include sourced property/condition evidence, real capability, setup, secondary operations, finishing, inspection, interfaces, assembly, quantity-specific cost/time, maintenance and accepted tradeoffs. Eliminate any mandatory FAIL before preference scoring. Mark UNKNOWN conditional and do not rank it as feasible. Present primary, prototype, end-use and fallback routes as useful, with evidence limits and what would change the recommendation. Do not invent prices, ratings, properties, capability or life. Do not silently change requirements or the product.`
 
-**Review:** comparison rows show requirement outcome, method, criterion/source, value/units, uncertainty, route/capability evidence, pros/cons/tradeoffs and unresolved questions. A prototype service class may use a route different from end use; state what it can validate and what it cannot. Rigor (maker/pro/regulated) remains a separate documentation-depth choice.
+**Review:** comparison rows show requirement outcome, method, criterion/source, value/units, uncertainty, route/capability evidence, pros/cons/tradeoffs and unresolved questions. A prototype service class may use a route different from end use; state what it can validate and what it cannot.
 
 **Approve:** approve, revise or decline consequential choices explicitly. An optical/transparency requirement eliminates opaque routes; consider only identified transparent purchased parts or identified stock on an appropriate sourced/capable route. No see-through FDM or unidentified clear plastic.
 
