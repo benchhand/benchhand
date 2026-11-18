@@ -668,6 +668,26 @@ class ValidatorLayout(TempProject):
         self.assertEqual(others, [], "only layout findings are expected")
         return code, found
 
+    GUIDELINE = (
+        "schema_version: 1\nid: fdm.generic\nrevision: 1\ntitle: TST guideline\nscope: {process: fdm}\nlimits:\n"
+        "  - characteristic: min_wall\n    operator: \">=\"\n    quantity: {value: 0.8, units: mm}\n    citations:\n"
+        "      - {kind: datasheet, reference: TST guide, url: \"https://example.invalid/g\", accessed: \"2026-01-01\"}\n")
+
+    def test_a_valid_project_guideline_set_is_managed_and_accepted_at_design_freeze(self) -> None:
+        write(self.hw / "manufacturing" / "guidelines" / "generic.yaml", self.GUIDELINE)
+        self.set_flow(stage="design_freeze")
+        code, found = self.layout_findings()
+        self.assertEqual((code, found), (0, {}), "the authored guideline directory is a layout entry, not a stray")
+
+    def test_an_invalid_project_guideline_set_is_an_error_by_name(self) -> None:
+        bad = self.GUIDELINE.replace('">="', "min") + "bogus: 1\n"
+        path = write(self.hw / "manufacturing" / "guidelines" / "bad.yaml", bad)
+        code, report = self.run_validator()
+        errors = [item for item in report["findings"] if str(path.name) in json.dumps(item)]
+        self.assertEqual(code, 1, report["findings"])
+        self.assertTrue(errors, f"no finding names {path.name}: {report['findings']}")
+        self.assertTrue(any("bogus" in json.dumps(item) or "operator" in json.dumps(item) for item in errors), errors)
+
     def test_stray_flat_print_step_warns_before_freeze_and_fails_from_freeze_on(self) -> None:
         stray = write(self.hw / "print" / "LMP-0004_flat.step")
         write(self.hw / "print" / "export_flat_plug.py")
