@@ -741,6 +741,28 @@ def _relative(hw: Path, label: str, pn: str) -> str:
     return cast(str, layout.manufacturing_dir(hw, label, pn).relative_to(layout.version_dir(hw, label)).as_posix())
 
 
+_SKILLS = Path(__file__).resolve().parents[3]
+# The data files make()'s code reads, hashed with that code into each part's outputs key (code_shas). Without a
+# trace of which of them reach the output bytes, all of them count: the ISO 286 tables (fits.py:39), the bundle
+# layout (layout.py:34) and the record and packet schemas (manufacturing_intent.py:36, schema_registry.py:28-29).
+OUTPUT_DATA = (_SKILLS / "cad-fits" / "data" / "iso286.json", _SKILLS / "cad-record" / "layout.json",
+               _SKILLS / "cad-record" / "schemas", _SKILLS / "cad-concept" / "assets" / "schemas")
+
+
+def _code_shas() -> Any:
+    """cad-motion's code_shas, loaded once per process under the name cad-model's check loads it by."""
+    import importlib.util
+    import sys
+
+    name = "cad_motion_code_shas"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, _SKILLS / "cad-motion" / "scripts" / "code_shas.py")
+        assert spec is not None and spec.loader is not None
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
 def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered: Mapping[str, str],
          products: Mapping[str, str], definitions: Mapping[str, Any], built: Mapping[str, Mapping[str, Any]],
          states: Mapping[str, Any], parts_store: store.Store, state_shas: Mapping[str, str],
@@ -759,7 +781,8 @@ def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered:
     for pn, message in sorted(uncovered.items()):
         entries[pn] = rows[pn] = {"PN": pn, "path": None, "status": "warn", "complete": False, "blocking_failures": [],
                                   "coverage": "unknown", "message": message}
-    identity = {"runtime": provenance.runtime({}), "sources": provenance.sources([provenance.SKILLS])}
+    # skills-relative paths (code_shas), so a copy of the skills tree in another folder keys its outputs the same
+    identity = {"runtime": provenance.runtime({}), "sources": _code_shas().closure(Path(__file__), OUTPUT_DATA)}
     for pn, part_plan in sorted(plans.items()):
         if pn not in definitions:
             entries[pn] = rows[pn] = {"PN": pn, "path": None, "status": "warn", "complete": False,
