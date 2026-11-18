@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Tests for the complexity ratchet, with ruff output injected."""
 
 from __future__ import annotations

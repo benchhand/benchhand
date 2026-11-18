@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Design rules over the cad-record documents: clearance margins, retention and visibility bindings.
 
 Transparency is not a rule here: an optical requirement is a hard constraint of the manufacturing

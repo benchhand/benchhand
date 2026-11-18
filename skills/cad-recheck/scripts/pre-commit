@@ -1,4 +1,9 @@
 #!/bin/sh
+
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 # Enforce a passing, current recheck stamp once the project's recheck threshold is reached.
 set -eu
 

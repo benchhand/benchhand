@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Pair measurements for cad-motion `sweep.py` and cad-model `check`: the one evaluator of both.
 
 A request asks for the (minimum distance mm, overlap volume mm^3) of two part definitions:

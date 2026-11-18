@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Kernel-free occurrence inventory of an assembly record: normalization and reference resolution.
 
 The one reader of `assembly.yaml` occurrences, shared by cad-record `validate.py` and cad-motion

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Manufacturing features recognised on a part's final B-rep: what a complete drawing must dimension.
 
 Two stages. ``facts`` asks the solid, through a ``Probe``, the only questions faces cannot answer:

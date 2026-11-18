@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Export a checked drawing SVG to a sheet-sized PDF and PNG preview.
 
 FreeCAD's bundled Qt renders graphics and PDF text. Osifont provides standard drawing lettering.

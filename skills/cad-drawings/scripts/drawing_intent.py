@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Part drawing intent: the record's datums, features and requests, measured against the bound STEP.
 
 ``part.yaml`` ``drawing`` names datum features, a coordinate frame, views, per-feature intent,

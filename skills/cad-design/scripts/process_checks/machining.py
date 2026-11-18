@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """CNC machining handler: stock, setups and workholding, tool access, features and precision.
 
 Tools come from the operation's setup.access.tools and the capability profile's tools, each with its

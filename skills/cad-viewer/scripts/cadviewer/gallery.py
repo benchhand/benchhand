@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The preview gallery: what one hardware record holds to look at, per cad-model version.
 
 The host serves it read-only beside the panel (`/gallery`, `/api/gallery`, `/gallery/file`). One

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Assembly sheets: view layout, item balloons, the parts list, assembly notes and page composition.
 
 Kernel-free; ``assembly_drawing.py`` feeds it measured views and resolved operations.

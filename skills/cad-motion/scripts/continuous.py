@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The between-sample check of cad-motion `sweep.py`: whether a pair can collide, or come closer
 than its clearance minimum, between two consecutive samples of a sweep path.
 

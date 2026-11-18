@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Guard: CI installs its test pins from the requirements files, and every pin is used.
 
 A `--with <pkg>==<ver>` in ci.yml is a second copy of a pin, and dev run scripts drift from it.

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """A producer's required-check packet and its publication: the one definition cad-motion access.py and
 play.py, cad-analysis fea_static.py and cad-fits stackup.py publish through (cad-design form_check.py
 builds its packet in process_checks and publishes it the same way). Load it by path as

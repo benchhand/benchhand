@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The viewer session: one host process per harness session, found through a session file.
 
 `serve` starts `viewer.py host` detached and records its ports and PID; every other command

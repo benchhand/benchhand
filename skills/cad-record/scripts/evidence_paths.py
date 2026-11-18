@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Where the files an accepted ledger entry cites may live.
 
 Evidence in the record must be reproducible from the record: a file inside the project root that is

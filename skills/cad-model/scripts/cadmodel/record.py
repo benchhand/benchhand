@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The cad-record modules, loaded from their sibling skill, and the record snapshot a version is built from."""
 
 from __future__ import annotations

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Decide whether a pull request can skip the skill test shards.
 
 A shard is skipped only when every changed path is one that no skill test is known to read:

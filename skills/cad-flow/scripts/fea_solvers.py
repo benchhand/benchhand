@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Find the CalculiX ccx and the Gmsh that FreeCAD's FEM runs, with their versions.
 
 The lookup runs inside FreeCAD. An AppImage mounts its bundle at a transient /tmp/.mount_* directory

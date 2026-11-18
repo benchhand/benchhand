@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Kernel runner core: execute part model scripts in one kernel's environment, write per-part STEP.
 
 Each `run_<kernel>.py` is a uv script that pins one kernel environment and calls `main`. The

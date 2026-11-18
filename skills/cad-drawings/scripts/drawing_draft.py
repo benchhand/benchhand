@@ -1,4 +1,9 @@
 #!/usr/bin/env -S uv run --script
+
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 # /// script
 # requires-python = ">=3.12,<3.15"
 # dependencies = ["defusedxml>=0.7.1", "pyyaml>=6.0", "jsonschema>=4.23"]

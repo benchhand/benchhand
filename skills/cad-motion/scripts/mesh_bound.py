@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Conservative bounds on pose.py's pair distance from tessellated meshes, for pair_measure.py's
 fast mode and for the parent's per-pose boxes (cad-motion `sweep.py`); numpy and python-fcl,
 imported only when that mode is on.

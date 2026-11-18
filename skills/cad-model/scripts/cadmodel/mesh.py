@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Binary glTF from the assembly STEP, the occurrence -> mesh-node map, mesh watertightness, and the binary
 STL and welded triangles (for the 3MF) of a manufactured part, with the STL read-back report."""
 

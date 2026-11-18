@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Animated glTF from a cad-model version's assembly.glb; standard library only.
 
 `animate` keeps the version GLB's nodes, meshes and materials and appends one animation clip: a

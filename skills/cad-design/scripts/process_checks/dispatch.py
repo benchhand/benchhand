@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The closed dispatch table: which handler judges each expected obligation, and the check-result packet.
 
 `expected(record)` is the subset of `manufacturing_intent.required_checks(record)` this producer owns,

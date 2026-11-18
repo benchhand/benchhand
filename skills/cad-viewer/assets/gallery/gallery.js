@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sjors Robroek
+//
+// SPDX-License-Identifier: MPL-2.0
+
 // cad-viewer preview gallery: one version's renders, viewer captures, drawings, and concept
 // screenshots, read from /api/gallery. Read-only: every image and PDF comes from /gallery/file,
 // which serves only files inside the open project's hw/. Each tile shows its absolute path.

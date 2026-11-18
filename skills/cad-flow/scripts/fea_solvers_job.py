@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FreeCAD-side job of fea_solvers.probe: report the ccx, Gmsh and TechDraw templates this FreeCAD has.
 
 freecad_runtime.run_job starts it under freecadcmd; CAD_DRAWING_JOB names its JSON job file, whose

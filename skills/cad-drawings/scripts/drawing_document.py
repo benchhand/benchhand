@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Drawing documents: sheet specifications, page composition and checked package publication.
 
 One sheet contract generates every page, so sizes differ only in their dimensions:

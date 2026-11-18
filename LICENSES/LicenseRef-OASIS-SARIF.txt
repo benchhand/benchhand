@@ -1,0 +1,17 @@
+OASIS SARIF TC repository licence terms
+
+Source: https://github.com/oasis-tcs/sarif-spec/blob/main/LICENSE.md (retrieved 2026-11-18)
+
+Content in the oasis-tcs/sarif-spec repository has been contributed by OASIS TC
+Members, and is governed by the OASIS policies, including the Intellectual
+Property Rights (IPR) Policy (https://www.oasis-open.org/policies-guidelines/ipr),
+the Technical Committee (TC) Process, Bylaws, and the Technical Committee's
+choice of IPR Mode (RF on RAND Terms Mode), including any applicable
+declarations. Feedback from non-TC members, if any, is governed by the terms of
+the OASIS Feedback License.
+
+OASIS has stated (oasis-tcs/sarif-spec issue 583) that implementers are free to
+incorporate the SARIF schema into their implementation without special
+permission or paperwork from OASIS.
+
+This is not an SPDX-listed licence; it is referenced as LicenseRef-OASIS-SARIF.

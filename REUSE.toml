@@ -1,0 +1,68 @@
+version = 1
+
+# Files that cannot carry a comment header: data, documents, generated output and test inputs.
+# Source files (.py, .js, .css, .html, workflows) carry their own SPDX headers, so a new source
+# file without one fails `reuse lint`.
+
+[[annotations]]
+path = [
+    "**/*.json",
+    "**/*.json5",
+    "**/*.yaml",
+    "**/*.csv",
+    "**/*.txt",
+    "**/*.toml",
+    "**/*.ini",
+    "**/*.lock",
+    "**/*.pin",
+    "**/.gitignore",
+    "**/.gitkeep",
+    "**/NOTICE",
+    "**/*.md",
+]
+SPDX-FileCopyrightText = "2026 Sjors Robroek"
+SPDX-License-Identifier = "MPL-2.0"
+
+# Test inputs and project templates: source-shaped files whose bytes tests or users depend on.
+[[annotations]]
+path = [
+    "skills/**/fixtures/**",
+    "skills/cad-record/assets/project-template/**",
+    "skills/cad-record/assets/docs-templates/**",
+]
+SPDX-FileCopyrightText = "2026 Sjors Robroek"
+SPDX-License-Identifier = "MPL-2.0"
+
+# Generated harness profiles are byte-compared with the generator output, so they stay unchanged.
+[[annotations]]
+path = ["harness/claude/**", "harness/codex/**", "harness/opencode/**", "harness/kiro/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Sjors Robroek"
+SPDX-License-Identifier = "MPL-2.0"
+
+# Third-party files keep their own copyright and licence (see NOTICE). Later tables win.
+[[annotations]]
+path = [
+    "skills/cad-model/tests/fixtures/3mf-schema/3mf-core.xsd",
+    "skills/cad-model/tests/fixtures/3mf-schema/LICENSE.spec_core",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2018 3MF Consortium"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = [
+    "skills/cad-model/tests/fixtures/3mf-schema/opc-contentTypes.xsd",
+    "skills/cad-model/tests/fixtures/3mf-schema/opc-relationships.xsd",
+    "skills/cad-model/tests/fixtures/3mf-schema/xml.xsd",
+    "skills/cad-model/tests/fixtures/3mf-schema/LICENSE.test_suites",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2021 3MF Consortium"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = "skills/cad-record/vendor/sarif-schema-2.1.0.json"
+precedence = "override"
+SPDX-FileCopyrightText = "OASIS Open"
+SPDX-License-Identifier = "LicenseRef-OASIS-SARIF"

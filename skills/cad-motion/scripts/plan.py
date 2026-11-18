@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Motion plans: choreography as data over cad-motion's Chain, with its coverage check; kernel-free.
 
 A plan names an ordered list of segments that move the record's independent joints. `expand` turns

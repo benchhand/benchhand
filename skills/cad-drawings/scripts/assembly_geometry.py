@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Assembly occurrences for assembly drawings, read once from a built assembly STEP.
 
 ``read_assembly(hw, assembly_step, workdir)`` adapts cad-motion's canonical STEP reader

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Where a path may touch a fitted partner by design: the engagement of an interference-type fit.
 
 A press fit or heat-set insert touches its partner over the last stretch of the insertion path.

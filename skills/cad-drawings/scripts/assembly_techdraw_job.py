@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FreeCAD-side TechDraw job for assembly_drawing.py; freecadcmd runs this file headless.
 
 The CAD_DRAWING_JOB environment variable names a JSON job file (see ``assembly_drawing.techdraw_job``).

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Remove the versions a sealed release supersedes, with their version-bound bundles, recoverably.
 
 release.py calls this only after hw/releases/<REV>/ is sealed. `plan` lists what stays and why, what goes,

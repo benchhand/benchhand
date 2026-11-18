@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Material conditions and evidence of a static FEA case: where E, nu, density and yield come from, and
 what a completed solve can support.
 

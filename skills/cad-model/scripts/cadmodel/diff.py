@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """`diff`: per-part volume and bounding-box deltas and exact shared / A-only / B-only volumes, and the
 manufacturing state, policy and output differences of each custom-made part, reported separately."""
 

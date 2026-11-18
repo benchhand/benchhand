@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The sha256 of a producer script and of every skill module it loads, for the recipe of what it publishes.
 
 A published result is reusable only while the code that decided it is unchanged, so a producer puts

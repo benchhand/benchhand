@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Additive handlers: FDM and resin. Criteria come only from the operation's capability-profile
 calibrations for the component's material; the plugin's old universal FDM numbers stay form_check
 diagnostics. Geometry is the exported component in its approved pose (bed frame, build direction +Z).

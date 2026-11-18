@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Route handlers: the consistency of a component's whole route, each operation's plan, and the optical
 route rule (decision 2: a transparency or optical requirement is met only by a purchased transparent part
 or identified transparent stock on a suitable process; opaque processes are eliminated)."""

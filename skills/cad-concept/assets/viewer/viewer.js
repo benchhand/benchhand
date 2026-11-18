@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sjors Robroek
+//
+// SPDX-License-Identifier: MPL-2.0
+
 // cad-concept viewer: renders concept scene variants side by side at their nominal joints.
 // Frames match scripts/concept.py: Z up, mm, XYZ Euler degrees.
 import * as THREE from "three";

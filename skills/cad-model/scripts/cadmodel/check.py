@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """`check`: blocking and advisory geometry checks over one built version.
 
 Definition checks (STEP read-back volume, BRep validity, solid structure, slivers) run once per PN;

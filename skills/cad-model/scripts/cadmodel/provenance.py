@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """What produced a cached output besides its inputs: the interpreter and installed distributions of the
 process, and the Python files it loaded from the plugin or the project.
 

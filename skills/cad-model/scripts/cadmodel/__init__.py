@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """cad-model: run part model scripts, then check and diff the versions they produce.
 
 Kernel-neutral below the runners: every module here works on raw OCP `TopoDS_Shape` values, so

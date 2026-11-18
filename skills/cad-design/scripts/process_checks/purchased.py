@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Purchased-item handler: identity, specification, ratings, mounting and availability only. The made-part checks (wall,
 overhang, cutter, kerf) belong to made parts. The function of a bought item is its rating."""
 

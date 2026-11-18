@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Sheet handlers: laser, waterjet and plasma cutting, each against its own capability profile (no laser
 assumption is inherited by waterjet or plasma), and sheet-metal forming.
 

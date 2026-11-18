@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Shared lookup for the FreeCAD command-line executable."""
 
 from __future__ import annotations

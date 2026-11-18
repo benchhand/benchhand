@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FreeCAD-side job for drawing.py; freecadcmd runs this file headless.
 
 The CAD_DRAWING_JOB environment variable names a JSON job file. Every mode reads one part STEP:

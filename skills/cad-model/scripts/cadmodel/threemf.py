@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """A deterministic 3MF writer and a strict reader, stdlib only.
 
 The package targets 3MF Core 1.4.0 (ISO/IEC 25422:2025) in millimetres. It has three entries in a fixed order,

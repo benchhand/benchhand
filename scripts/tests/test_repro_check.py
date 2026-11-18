@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Comparison logic of scripts/repro_check.py, on synthetic hw trees."""
 
 from __future__ import annotations

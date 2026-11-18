@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The manufacturing components of a custom-made part: every disconnected solid of its manufacturing
 state, bound once each to the component its record declares.
 

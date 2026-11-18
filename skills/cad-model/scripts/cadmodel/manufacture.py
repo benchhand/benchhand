@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The manufacturing outputs of a version's custom-made parts, and the checks that judge them.
 
 `run` writes hw/versions/<V>/manufacturing/<PN>/ for every custom-made part (cad-record layout

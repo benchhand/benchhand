@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The vocabulary every process handler shares: results, finding drafts, the per-operation context and
 the geometry facts adapter.
 

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """import_check reports unavailable packages as skipped and fails on every other import error."""
 
 from __future__ import annotations

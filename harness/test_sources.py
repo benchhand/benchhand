@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Shipped instruction text names no path on the machine it was written on.
 
 Skills and agent prompts are installed into other people's harnesses and loaded into the model's

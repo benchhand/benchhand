@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The cad-motion kinematics, pair policy, pair measurer, mesh bounds and incremental selection, loaded from its sibling skill; cad-model never re-implements posing or measuring."""
 
 from __future__ import annotations

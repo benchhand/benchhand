@@ -1,4 +1,10 @@
 /*
+ * SPDX-FileCopyrightText: 2026 Sjors Robroek
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
+/*
  * Renderer scene tokens. render.js reads them through getComputedStyle, so the photographed
  * backdrop and shadow have one source. The status line's chrome tokens (colours, spacing, type)
  * are cad-concept's assets/viewer/tokens.css, which render.py serves as /concept-tokens.css.

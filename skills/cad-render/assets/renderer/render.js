@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sjors Robroek
+//
+// SPDX-License-Identifier: MPL-2.0
+
 // Static product renderer for cad-render. render.py serves this page with /render/scene.json
 // (parts, PBR materials, views, explode offsets) and /render/model.glb (the version GLB), then
 // calls window.cadRender.capture(view) once per view. Each capture returns the beauty frame as a

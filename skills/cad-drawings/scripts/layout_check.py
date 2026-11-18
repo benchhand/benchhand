@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Pure layout checks over a generated drawing SVG.
 
 The check reads element coordinates from the SVG itself and relies on the ids and classes that

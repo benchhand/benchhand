@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FreeCAD-independent STEP solid and occurrence selection for static analysis."""
 
 from __future__ import annotations

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Drawing inputs as one verified context: the design record and one built model version, bound by hashes.
 
 ``load_context(hw, version_dir)`` is the first proof stage of every drawing: the record passes

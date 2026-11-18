@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Normalize built-version occurrences for render, viewer and model check.
 
 cad-record owns paths and manifests; this module shares occurrence identity and validates manifest schema.

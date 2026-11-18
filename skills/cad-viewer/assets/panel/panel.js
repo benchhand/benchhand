@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Sjors Robroek
+//
+// SPDX-License-Identifier: MPL-2.0
+
 // cad-viewer side panel. State lives in the host: every button posts to /api/*, the host changes
 // the OCP viewers through ocp_viewer's Python API, and the panel re-renders the state it returns.
 

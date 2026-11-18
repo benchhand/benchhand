@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """OCP measurements and Booleans shared by the kernel runners, safe edits, check, and diff.
 
 Everything takes and returns raw `TopoDS_Shape` values; `to_topods` lowers a CadQuery or build123d
