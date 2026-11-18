@@ -35,17 +35,25 @@ play = load("cad_motion_play", SCRIPTS / "play.py")
 
 ISO286 = "cad-fits/data/iso286.json"
 ISO286_IT6_EDIT = (b'"6": [6, ', b'"6": [7, ')  # one table value: IT6 up to 3 mm, 6 um -> 7 um
+# A valid JSON Schema (2020-12) that a test adds to the folder play declares (cad-record/schemas).
+ADDED_SCHEMA = (b'{"$schema": "https://json-schema.org/draft/2020-12/schema", '
+                b'"$id": "https://srobroek.com/cad/schemas/zz-added.schema.json", "type": "object"}\n')
 PROBE_TIMEOUT_S = 300
-# Each edit of the copied tree, and the producer keys it must change.
+ALL = ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check")
+# Each edit of the copied tree: (how, path, the producer keys it must change). `append` adds a comment line,
+# `space` a newline (for JSON), `iso` changes one ISO 286 value, `add` writes ADDED_SCHEMA, `delete` removes the file.
 EDITS = {
-    "cad-motion/scripts/play.py": ("play",),
-    "cad-motion/scripts/plan.py": ("play",),
-    "cad-motion/scripts/sweep.py": ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
-    "cad-fits/scripts/fits.py": ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
-    "cad-record/scripts/assembly_data.py": ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
-    "cad-motion/scripts/merge_sweeps.py": ("merge_sweeps",),
-    "cad-motion/scripts/spot_check.py": ("spot_check",),
-    ISO286: ("play", "sweep", "sweep_equivalence", "merge_sweeps", "spot_check"),
+    "play.py": ("append", "cad-motion/scripts/play.py", ("play",)),
+    "plan.py": ("append", "cad-motion/scripts/plan.py", ("play",)),
+    "sweep.py": ("append", "cad-motion/scripts/sweep.py", ALL),
+    "fits.py": ("append", "cad-fits/scripts/fits.py", ALL),
+    "assembly_data.py": ("append", "cad-record/scripts/assembly_data.py", ALL),
+    "merge_sweeps.py": ("append", "cad-motion/scripts/merge_sweeps.py", ("merge_sweeps",)),
+    "spot_check.py": ("append", "cad-motion/scripts/spot_check.py", ("spot_check",)),
+    "iso286.json value": ("iso", ISO286, ALL),
+    "schema edited": ("space", "cad-record/schemas/bom-row.schema.json", ("play",)),
+    "schema added": ("add", "cad-record/schemas/zz-added.schema.json", ("play",)),
+    "schema deleted": ("delete", "cad-record/schemas/release-manifest.schema.json", ("play",)),
 }
 
 
@@ -54,6 +62,25 @@ def probe(tree: Path) -> dict[str, str]:
                           check=False, timeout=PROBE_TIMEOUT_S)
     assert done.returncode == 0, done.stderr[-2000:]
     return json.loads(done.stdout)
+
+
+def apply(path: Path, how: str) -> bytes | None:
+    """Make edit `how` to `path` and return the bytes that undo it. An added file returns None."""
+    original = path.read_bytes() if path.exists() else None
+    if how == "append":
+        path.write_bytes(original + b"\n# edited\n")
+    elif how == "space":
+        path.write_bytes(original + b"\n")
+    elif how == "iso":
+        assert original is not None and original.count(ISO286_IT6_EDIT[0]) == 1, "the ISO 286 edit no longer matches"
+        path.write_bytes(original.replace(*ISO286_IT6_EDIT))
+    elif how == "add":
+        assert original is None, f"{path} exists already"
+        path.write_bytes(ADDED_SCHEMA)
+    else:
+        assert how == "delete" and original is not None, (how, path)
+        path.unlink()
+    return original
 
 
 class EditTests(unittest.TestCase):
@@ -65,18 +92,16 @@ class EditTests(unittest.TestCase):
         tree = Path(shutil.copytree(SKILLS, Path(cls.tmp.name) / "skills", ignore=shutil.ignore_patterns("__pycache__")))
         cls.before, cls.again = probe(tree), probe(tree)
         cls.after: dict[str, dict[str, str]] = {}
-        for relative in EDITS:
+        for label, (how, relative, _) in EDITS.items():
             path = tree / relative
-            original = path.read_bytes()
-            if relative == ISO286:
-                assert original.count(ISO286_IT6_EDIT[0]) == 1, "the ISO 286 edit no longer matches one value"
-                path.write_bytes(original.replace(*ISO286_IT6_EDIT))
-            else:
-                path.write_bytes(original + b"\n# edited\n")
+            original = apply(path, how)
             try:
-                cls.after[relative] = probe(tree)
+                cls.after[label] = probe(tree)
             finally:
-                path.write_bytes(original)
+                if original is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(original)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -84,13 +109,15 @@ class EditTests(unittest.TestCase):
 
     def assert_changes(self, producer: str) -> None:
         self.assertEqual(self.again[producer], self.before[producer], "the key is not stable without an edit")
-        edits = [relative for relative, producers in EDITS.items() if producer in producers]
-        self.assertIn(ISO286, edits)
-        for relative in edits:
-            with self.subTest(edited=relative):
-                self.assertNotEqual(self.after[relative][producer], self.before[producer])
+        edits = [label for label, (_, _, producers) in EDITS.items() if producer in producers]
+        self.assertIn("iso286.json value", edits)
+        for label in edits:
+            with self.subTest(edited=label):
+                self.assertNotEqual(self.after[label][producer], self.before[producer])
 
     def test_editing_play_its_modules_or_its_data_changes_its_packet_recipe(self) -> None:
+        """Through a real publication: its data folder counts too, so editing, adding or deleting a schema in it
+        changes the sealed recipe."""
         self.assert_changes("play")
 
     def test_editing_sweep_its_modules_or_its_data_changes_its_bundle_recipe(self) -> None:

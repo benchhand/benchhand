@@ -38,6 +38,9 @@ if code_shas is None:
     _spec.loader.exec_module(code_shas)
 
 ISO286_IT6_EDIT = (b'"6": [6, ', b'"6": [7, ')  # one table value: IT6 up to 3 mm, 6 um -> 7 um
+# A valid JSON Schema (2020-12) that a test adds to the folder the check declares (cad-record/schemas).
+ADDED_SCHEMA = (b'{"$schema": "https://json-schema.org/draft/2020-12/schema", '
+                b'"$id": "https://srobroek.com/cad/schemas/zz-added.schema.json", "type": "object"}\n')
 PROBE_TIMEOUT_S = 300
 
 
@@ -57,6 +60,30 @@ def edited(tree: Path, relative: str, change: tuple[bytes, bytes] | None = None)
     else:
         assert original.count(change[0]) == 1, f"{relative} does not hold {change[0]!r} once"
         path.write_bytes(original.replace(*change))
+    try:
+        yield
+    finally:
+        path.write_bytes(original)
+
+
+@contextlib.contextmanager
+def schema_changed(tree: Path, how: str) -> Iterator[None]:
+    """One file of the declared cad-record/schemas folder in the copy `tree` edited, added or deleted for the duration."""
+    folder = tree / "cad-record" / "schemas"
+    if how == "added":
+        path = folder / "zz-added.schema.json"
+        path.write_bytes(ADDED_SCHEMA)
+        try:
+            yield
+        finally:
+            path.unlink()
+        return
+    path = folder / ("bom-row.schema.json" if how == "edited" else "release-manifest.schema.json")
+    original = path.read_bytes()
+    if how == "edited":
+        path.write_bytes(original + b"\n")
+    else:
+        path.unlink()
     try:
         yield
     finally:
@@ -87,6 +114,16 @@ class ReadbackRecipeTests(unittest.TestCase):
                                      ("cad-fits/data/iso286.json", ISO286_IT6_EDIT),
                                      ("cad-model/assets/materials.yaml", None)):
                 with self.subTest(edited=relative), edited(tree, relative, change):
+                    after = probe(tree)
+                    self.assertNotEqual(after["readback"], before["readback"])
+                    self.assertNotEqual(after["code_sha256"], before["code_sha256"])
+
+    def test_a_schema_edited_added_or_deleted_in_a_declared_folder_changes_the_readback_recipe(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            tree = copy_skills(Path(folder))
+            before = probe(tree)
+            for how in ("edited", "added", "deleted"):
+                with self.subTest(schema=how), schema_changed(tree, how):
                     after = probe(tree)
                     self.assertNotEqual(after["readback"], before["readback"])
                     self.assertNotEqual(after["code_sha256"], before["code_sha256"])
