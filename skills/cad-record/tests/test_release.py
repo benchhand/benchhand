@@ -757,6 +757,12 @@ class Refusal(ReleaseCase):
         manifest.write_text(manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8")
         self.refused(hw, "hw/releases/A", "exists", "automatic repair is not supported; use a new revision")
 
+    def test_a_rerun_from_a_version_that_fails_its_manifest_is_refused_and_changes_nothing(self) -> None:
+        hw = self.project()
+        self.assertEqual(self.release(hw)[0], 0)
+        (hw / "versions" / "v1" / "assembly.glb").unlink()
+        self.refused(hw, "hw/releases/A", "exists", "automatic repair is not supported; use a new revision")
+
     def test_the_atomic_claim_refuses_a_writer_that_loses_the_race(self) -> None:
         hw = self.project()
         real_claim = release.layout.claim
