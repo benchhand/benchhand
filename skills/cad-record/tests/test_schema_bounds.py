@@ -201,6 +201,8 @@ CASES: tuple[Case, ...] = (
     quantity(44, "calibration.bridge_span", "bridge_span", "[0, 256]", {"max": 50}, "mm"),
     quantity(44, "calibration.overhang_angle", "overhang_angle", "[0, 90]", {"min": 20, "max": 70}, "deg"),
     quantity(44, "calibration.min_wall", "min_wall", "[0.1, 25]", {"min": 0.4, "max": 3}, "mm"),
+    quantity(44, "calibration.min_feature", "min_feature", "[0.2, 20]", {"min": 0.4, "max": 5}, "mm"),
+    quantity(44, "calibration.min_hole", "min_hole", "[0.1, 25]", {"min": 0.5, "max": 10}, "mm"),
     quantity(44, "calibration.deviation", "deviation", "[-2, 2]", {"min": -0.5, "max": 0.5}, "mm"),
     quantity(0, "calibration.min_bed_contact_area", "min_bed_contact_area", "(0,)", None, "mm2"),
     fact(45, "nozzle_diameter", "(0, 3]", {"min": 0.2, "max": 1.2}, "mm"),
@@ -262,7 +264,8 @@ FACTS = {
     "profile_tolerance_mm", "zone_mm", "limit_um", "edge_limits", "deviation_mm", "heat_set.hole_d", "heat_set.depth_min",
     "limits.linear_mm", "limits.angular_deg", "min_wall_mm.cnc", "volume_rel_tolerance", "volume_abs_tolerance_mm3",
     "material.E", "material.density", "material.yield", "material.nu", "calibration.samples", "calibration.bridge_span",
-    "calibration.overhang_angle", "calibration.min_wall", "calibration.deviation", "calibration.min_bed_contact_area", "nozzle_diameter", "layer_height",
+    "calibration.overhang_angle", "calibration.min_wall", "calibration.min_feature", "calibration.min_hole", "calibration.deviation",
+    "calibration.min_bed_contact_area", "nozzle_diameter", "layer_height",
     "hotend_max_temperature", "bed_max_temperature", "max_speed", "travel_x", "travel_y", "travel_z", "spindle_max_speed",
     "power", "pump_pressure", "press_brake_force", "modulus", "density", "temperature", "poisson_ratio", "min_clearance_mm",
     "tol", "tol_plus", "tol_minus", "confidence", "weight", "crank_radius_mm", "rod_length_mm",
@@ -580,7 +583,7 @@ MATERIALS = "manufacturing-materials.schema.json"
 # The calibration characteristics and material property names that dispatch to a bounded definition
 CALIBRATION_NAMES = {
     "calibration.bridge_span": ["bridge_span"], "calibration.overhang_angle": ["overhang_angle"],
-    "calibration.min_wall": ["min_wall"],
+    "calibration.min_wall": ["min_wall"], "calibration.min_feature": ["min_feature"], "calibration.min_hole": ["min_hole"],
     "calibration.deviation": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"],
     "calibration.min_bed_contact_area": ["min_bed_contact_area"],
 }
@@ -636,7 +639,7 @@ class Documents(unittest.TestCase):
 
     def test_every_calibration_limit_is_bounded_by_its_characteristic(self) -> None:
         cases = [c for c in CASES if c.name in CALIBRATION_NAMES]
-        self.assertEqual(len(cases), 5)
+        self.assertEqual(len(cases), 7)
         for case in cases:
             for name in CALIBRATION_NAMES[case.name]:
                 def edit(document: Any, limits: Any, name: str = name) -> None:

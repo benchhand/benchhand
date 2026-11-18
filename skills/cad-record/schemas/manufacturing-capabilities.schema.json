@@ -218,6 +218,24 @@
         {"if": {"required": ["units"], "properties": {"units": {"const": "um"}}}, "then": {"properties": {"value": {"minimum": 100, "maximum": 25000.000000000004}, "lower": {"minimum": 100, "maximum": 25000.000000000004}, "upper": {"minimum": 100, "maximum": 25000.000000000004}}}}
       ]
     },
+    "qty_min_feature": {
+      "description": "Calibrated smallest reliable pin or boss diameter: 0.2 to 20 mm",
+      "x-plausible": {"min": 0.4, "max": 5, "units": "mm"},
+      "allOf": [
+        {"if": {"required": ["units"], "properties": {"units": {"const": "mm"}}}, "then": {"properties": {"value": {"minimum": 0.2, "maximum": 20}, "lower": {"minimum": 0.2, "maximum": 20}, "upper": {"minimum": 0.2, "maximum": 20}}}},
+        {"if": {"required": ["units"], "properties": {"units": {"const": "m"}}}, "then": {"properties": {"value": {"minimum": 0.0002, "maximum": 0.02}, "lower": {"minimum": 0.0002, "maximum": 0.02}, "upper": {"minimum": 0.0002, "maximum": 0.02}}}},
+        {"if": {"required": ["units"], "properties": {"units": {"const": "um"}}}, "then": {"properties": {"value": {"minimum": 200, "maximum": 20000}, "lower": {"minimum": 200, "maximum": 20000}, "upper": {"minimum": 200, "maximum": 20000}}}}
+      ]
+    },
+    "qty_min_hole": {
+      "description": "Calibrated smallest reliable cut hole diameter: 0.1 to 25 mm",
+      "x-plausible": {"min": 0.5, "max": 10, "units": "mm"},
+      "allOf": [
+        {"if": {"required": ["units"], "properties": {"units": {"const": "mm"}}}, "then": {"properties": {"value": {"minimum": 0.1, "maximum": 25}, "lower": {"minimum": 0.1, "maximum": 25}, "upper": {"minimum": 0.1, "maximum": 25}}}},
+        {"if": {"required": ["units"], "properties": {"units": {"const": "m"}}}, "then": {"properties": {"value": {"minimum": 0.0001, "maximum": 0.025}, "lower": {"minimum": 0.0001, "maximum": 0.025}, "upper": {"minimum": 0.0001, "maximum": 0.025}}}},
+        {"if": {"required": ["units"], "properties": {"units": {"const": "um"}}}, "then": {"properties": {"value": {"minimum": 100, "maximum": 25000}, "lower": {"minimum": 100, "maximum": 25000}, "upper": {"minimum": 100, "maximum": 25000}}}}
+      ]
+    },
     "qty_deviation": {
       "description": "Calibrated as-made minus nominal deviation: -2 to 2 mm",
       "x-plausible": {"min": -0.5, "max": 0.5, "units": "mm"},
@@ -285,6 +303,8 @@
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "bridge_span"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_bridge_span"}}}}}},
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "overhang_angle"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_overhang_angle"}}}}}},
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "min_wall"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_min_wall"}}}}}},
+        {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "min_feature"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_min_feature"}}}}}},
+        {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "min_hole"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_min_hole"}}}}}},
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"const": "min_bed_contact_area"}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_min_bed_contact_area"}}}}}},
         {"if": {"required": ["characteristic"], "properties": {"characteristic": {"enum": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"]}}}, "then": {"properties": {"result": {"properties": {"limits": {"$ref": "#/$defs/qty_deviation"}}}}}}
       ]
