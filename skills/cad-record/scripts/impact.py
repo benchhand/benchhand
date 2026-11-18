@@ -430,16 +430,21 @@ def unrecorded_domains(entry: Mapping[str, Any], current: Mapping[str, str]) -> 
     return tuple(d for d in DOMAINS if d in declared and d in current and not (isinstance(recorded, Mapping) and d in recorded))
 
 
+def opt_in_domains() -> frozenset[str]:
+    """The domains `_EVERYTHING` leaves out: a check family depends on one only by declaring it in FAMILY_DOMAINS."""
+    return frozenset(DOMAINS) - _EVERYTHING
+
+
 def evidence_staleness(entry: Mapping[str, Any], current: Mapping[str, str]) -> tuple[str, ...]:
     """The fingerprint domains in which accepted evidence `entry` no longer matches the current subject
     `current`: each recorded domain that differs, each declared domain it records no fingerprint of, or
-    ("unrecorded",) when it records none. The appearance domain counts only for a family that declares it."""
+    ("unrecorded",) when it records none. An opt-in domain counts only for a family that declares it, of a subject that has it."""
     recorded = entry.get("fingerprints")
     if not isinstance(recorded, Mapping) or not recorded:
         return ("unrecorded",)
-    declared, missing = declared_domains(entry), unrecorded_domains(entry, current)
-    return tuple(d for d in DOMAINS if d in missing or ((d != "appearance" or d in declared)
-                                                        and d in recorded and recorded[d] != current.get(d)))
+    declared, missing, opt_in = declared_domains(entry), unrecorded_domains(entry, current), opt_in_domains()
+    return tuple(d for d in DOMAINS if d in missing or (d in recorded and recorded[d] != current.get(d)
+                                                        and (d not in opt_in or (d in declared and d in current))))
 
 
 def _stage_min(stages: Iterable[str]) -> str | None:

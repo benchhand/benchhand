@@ -19,7 +19,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
-
+from unittest import mock
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -261,6 +261,46 @@ class ProductOrderStaleness(unittest.TestCase):
         result = self.compare(docs, after)
         self.assertNotIn(self.PRODUCT, result.stale_obligations)
         self.assertEqual(result.changed["TST-0102"], ("finish",), "the edit is seen, just not by the order check")
+
+
+class OptInDomain(unittest.TestCase):
+    """A domain `_EVERYTHING` leaves out is opt-in: it counts for evidence only when the entry's family declares it
+    and the subject has it. The synthetic domain below stands in for any later one."""
+
+    NEW = "tst_opt_in"
+    DECLARING = "tst_declares.check@TST-0001"
+    OTHER = "engineering.strength@TST-0001"
+
+    def setUp(self) -> None:
+        domains = (*impact.DOMAINS, self.NEW)
+        family = ("tst_declares.", frozenset({"geometry", self.NEW}))
+        patch = mock.patch.multiple(impact, DOMAINS=domains, FAMILY_DOMAINS=(family, *impact.FAMILY_DOMAINS))
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.current = {"geometry": "g", "load": "l", self.NEW: "n2"}
+
+    def entry(self, obligation: str, **recorded: str) -> dict[str, Any]:
+        return {"obligation": obligation, "fingerprints": {"geometry": "g", "load": "l", **recorded}}
+
+    def test_a_family_that_declares_it_goes_stale_when_only_that_domain_changes(self) -> None:
+        entry = self.entry(self.DECLARING, **{self.NEW: "n1"})
+        self.assertEqual(impact.evidence_staleness(entry, self.current), (self.NEW,))
+        self.assertEqual(impact.unrecorded_domains(entry, self.current), ())
+
+    def test_a_family_that_declares_it_must_record_it(self) -> None:
+        entry = self.entry(self.DECLARING)
+        self.assertEqual(impact.unrecorded_domains(entry, self.current), (self.NEW,))
+        self.assertEqual(impact.evidence_staleness(entry, self.current), (self.NEW,))
+
+    def test_a_family_that_does_not_declare_it_ignores_a_change_in_it(self) -> None:
+        entry = self.entry(self.OTHER, **{self.NEW: "n1"})
+        self.assertEqual(impact.evidence_staleness(entry, self.current), ())
+        self.assertEqual(impact.evidence_staleness(self.entry(self.OTHER), self.current), ())
+
+    def test_a_declared_domain_the_subject_lacks_is_not_counted(self) -> None:
+        current = {"geometry": "g", "load": "l"}
+        self.assertEqual(impact.evidence_staleness(self.entry(self.DECLARING, **{self.NEW: "n1"}), current), ())
+        self.assertEqual(impact.unrecorded_domains(self.entry(self.DECLARING), current), ())
 
 
 class EvidenceAndFlow(unittest.TestCase):
