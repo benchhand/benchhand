@@ -137,15 +137,25 @@ def _values(line: str) -> list[float]:
     return [float(body[i:i + 12]) for i in range(0, len(body), 12) if body[i:i + 12].strip()]
 
 
-def _records(lines: list[str], start: int) -> Iterable[tuple[int, list[float]]]:
+class FrdError(ValueError):
+    """The .frd text is incomplete or malformed; its results cannot be trusted."""
+
+
+def _records(lines: list[str], start: int, block: str) -> Iterable[tuple[int, list[float]]]:
+    """Yield the ` -1` records of the block opened just before `start`; the block must end with ` -3`."""
     for line in lines[start:]:
         if line.startswith(" -3"):
             return
         if line.startswith(" -1"):
             yield int(line[3:13]), _values(line)
+        elif not line.startswith((" -2", " -5")):
+            raise FrdError(f"{block} block is cut off by {line.strip()[:20] or 'a blank line'!r}")
+    raise FrdError(f"{block} block is cut off by the end of the file")
 
 
 def _von_mises(s: list[float]) -> float:
+    if len(s) < 6:
+        raise FrdError(f"a STRESS record has {len(s)} of 6 components")
     sxx, syy, szz, sxy, syz, szx = s[:6]
     return math.sqrt(0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2)
                      + 3.0 * (sxy ** 2 + syz ** 2 + szx ** 2))
@@ -154,8 +164,9 @@ def _von_mises(s: list[float]) -> float:
 def read_frd(text: str) -> FrdResult:
     """Parse node coordinates, von Mises stress and displacement magnitude from ccx `.frd` text.
 
-    The last STRESS and DISP blocks are used (the final increment). Raises ValueError when the file has
-    no node, stress or displacement block.
+    The last STRESS and DISP blocks are used (the final increment). Raises `FrdError` (a ValueError) when
+    the file has no node, stress or displacement block, or when a block lacks its ` -3` terminator.
+    Whether every node has a result is checked by `compare_levels`.
     """
     lines = text.splitlines()
     coordinates: dict[int, Point] = {}
@@ -163,14 +174,14 @@ def read_frd(text: str) -> FrdResult:
     displacement: dict[int, float] = {}
     for index, line in enumerate(lines):
         if line.startswith("    2C"):
-            coordinates = {node: (v[0], v[1], v[2]) for node, v in _records(lines, index + 1)}
+            coordinates = {node: (v[0], v[1], v[2]) for node, v in _records(lines, index + 1, 'node')}
         elif line.startswith(" -4  STRESS"):
-            stress = {node: _von_mises(v) for node, v in _records(lines, index + 1)}
+            stress = {node: _von_mises(v) for node, v in _records(lines, index + 1, 'STRESS')}
         elif line.startswith(" -4  DISP"):
             displacement = {node: math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
-                            for node, v in _records(lines, index + 1)}
+                            for node, v in _records(lines, index + 1, 'DISP')}
     if not coordinates or not stress or not displacement:
-        raise ValueError("frd file lacks a node, STRESS or DISP block")
+        raise FrdError("frd file lacks a node, STRESS or DISP block")
     return FrdResult(coordinates, stress, displacement)
 
 
@@ -238,8 +249,24 @@ def _kept_peak(level: Level, cutoff: float, band: float) -> LevelPeak:
 
 # --- the comparison -----------------------------------------------------------------------------
 
-def _all_finite(level: Level) -> bool:
-    return all(math.isfinite(v) for v in (*level.result.von_mises.values(), *level.result.displacement.values()))
+def _input_problems(label: str, level: Level) -> list[tuple[str, str]]:
+    """(reason, detail) pairs for a mesh whose results cannot be compared: gaps, then non-finite values."""
+    result = level.result
+    problems = []
+    for block, values in (("STRESS", result.von_mises), ("DISP", result.displacement)):
+        missing = sum(1 for node in result.coordinates if node not in values)
+        if missing:
+            problems.append(("incomplete_results",
+                             f"incomplete results: block {block} missing {missing} nodes ({label} mesh)"))
+    if not all(math.isfinite(c) for p in result.coordinates.values() for c in p):
+        problems.append(("non_finite_coordinates", f"node coordinates are not finite ({label} mesh)"))
+    if not all(math.isfinite(v) for v in (*result.von_mises.values(), *result.displacement.values())):
+        problems.append(("non_finite_stress", f"stress or displacement is not finite ({label} mesh)"))
+    return problems
+
+
+def _empty_peak(level: Level) -> LevelPeak:
+    return LevelPeak(level.h, None, None, None, None, 0, len(level.result.coordinates), math.nan)
 
 
 def _nearest_face(peak: LevelPeak, level: Level) -> str:
@@ -270,10 +297,8 @@ def _change(coarse: float, fine: float) -> float:
 
 
 def _screen(coarse: Level, fine: Level, c: LevelPeak, f: LevelPeak) -> list[str]:
-    """Reasons that hold whatever the peaks are: non-finite values, a fallback mismatch, a thin kept region."""
+    """Reasons that hold whatever the peaks are: a fallback mismatch, a thin kept region."""
     reasons = []
-    if not (_all_finite(coarse) and _all_finite(fine)):
-        reasons.append("non_finite_stress")
     if coarse.high_order_fallback != fine.high_order_fallback:
         reasons.append("high_order_fallback_differs")
     if min(c.kept_share, f.kept_share) < MIN_KEPT_FRACTION or f.kept_count < MIN_FINE_KEPT_NODES:
@@ -333,11 +358,18 @@ def compare_levels(coarse: Level, fine: Level) -> StressStudy:
     """
     if not coarse.h > fine.h > 0:
         raise ValueError(f"coarse h ({coarse.h}) must exceed fine h ({fine.h}) and both must be positive")
+    problems = _input_problems("coarse", coarse) + _input_problems("fine", fine)
+    if problems:
+        # Nothing is indexed or compared: gaps and non-finite values would make any peak a guess.
+        reasons = tuple(dict.fromkeys(reason for reason, _ in problems))
+        message = (f"UNKNOWN ({', '.join(reasons)}): h_coarse={coarse.h:g} mm h_fine={fine.h:g} mm; "
+                   + "; ".join(detail for _, detail in problems))
+        return StressStudy(UNKNOWN, None, None, reasons, message, _empty_peak(coarse), _empty_peak(fine))
     cutoff = K_EXCLUSION * coarse.h
     c, f = _kept_peak(coarse, cutoff, coarse.h), _kept_peak(fine, cutoff, coarse.h)
 
     reasons = _screen(coarse, fine, c, f)
-    peaks = None if "non_finite_stress" in reasons else _compare_peaks(coarse.h, cutoff, c, f)
+    peaks = _compare_peaks(coarse.h, cutoff, c, f)
     if peaks:
         reasons += peaks.reasons
     delta_displacement = None
