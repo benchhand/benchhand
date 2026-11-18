@@ -480,7 +480,7 @@ runpy.run_path(sys.argv[1], run_name="__main__")
         self.assertGreater(quality["min_scaled_jacobian"], 0)
 
     @unittest.skipUnless(FREECAD_PRESENT, "FreeCAD 1.1.4 freecadcmd is not installed (shared lookup)")
-    def test_a_fast_cantilever_reports_its_displacement_and_labelled_p95_from_a_straight_sided_mesh(self) -> None:
+    def test_a_fast_cantilever_reports_its_displacement_and_labelled_p95_from_the_full_mode_mesh(self) -> None:
         import fea_modes
 
         with tempfile.TemporaryDirectory(prefix="cad-fea-fast-") as directory:
@@ -497,9 +497,10 @@ runpy.run_path(sys.argv[1], run_name="__main__")
         self.assertGreater(indicator["p95_von_mises_mpa"], 0)
         self.assertEqual(indicator["nodes"], result["node_count"])
         self.assertEqual({"max_von_mises_mpa", "safety_factor_yield", "required_safety_factor"} & set(result), set())
-        self.assertEqual(result["mesh_quality"]["high_order_optimize"], 0)
-        self.assertRegex(geo, r"(?m)^Mesh[.]SecondOrderLinear = 1;")
-        self.assertRegex(geo, r"(?m)^Mesh[.]HighOrderOptimize = 0;")
+        # Fast mode withholds stress only: it meshes curved second-order elements at full mode's high-order level.
+        self.assertEqual(result["mesh_quality"]["high_order_optimize"], fea_static.HIGH_ORDER["optimize"])
+        self.assertRegex(geo, r"(?m)^Mesh[.]SecondOrderLinear = 0;")
+        self.assertRegex(geo, r"(?m)^Mesh[.]HighOrderOptimize = %d;" % fea_static.HIGH_ORDER["optimize"])
 
     def solve_tube(self, root: Path, high_order: dict) -> tuple[dict, int]:
         """A thin brass tube (outer radius 3.985, bore 2.55, 8 long) at mesh_size 4, solved in `root`: with no

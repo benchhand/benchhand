@@ -92,8 +92,8 @@ EXPLICIT_TAIL = ("material: {E: 69000, nu: 0.33, density: 2700, yield: 276}\n"
 
 
 class FastCase(conditions_tests.SourcedFEACase):
-    """A versioned fast case with sourced strength and stiffness criteria, covered loads and an approved
-    convergence study: everything a full solve needs to pass both checks."""
+    """A versioned fast case with a sourced stiffness criterion, covered loads and an approved convergence study:
+    everything a full solve needs to pass the stiffness check."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -122,45 +122,61 @@ class FastCase(conditions_tests.SourcedFEACase):
             status = fea_static.main([str(case_path), "--hw", str(self.hw), "--version", "v1", *extra])
         return status, json.loads(output.getvalue())
 
-    def published(self, report: dict[str, Any]) -> dict[str, Any]:
-        return dict(json.loads((Path(report["bundle"]) / "results.json").read_text(encoding="utf-8")))
+    def fast_case(self) -> Path:
+        path = self.case({"conditions": conditions_tests.SERVICE}, mode="fast", acceptance={"stiffness": "REQ-002"},
+                         mesh_convergence={"decision": "DR-002"})
+        self.approve(self.study(path))
+        return path
+
+    def fast_results(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The fast case's stdout report and its published results.json."""
+        self.build(conditions_tests.documents())
+        status, report = self.call(self.fast_case())
+        self.assertEqual(status, 0, report)
+        return report, dict(json.loads((Path(report["bundle"]) / "results.json").read_text(encoding="utf-8")))
 
     def test_a_fast_result_passes_the_stiffness_check_and_leaves_strength_unknown(self) -> None:
-        self.build(conditions_tests.documents())
-        status, report = self.call(self.convergent_case(mode="fast"))
-        self.assertEqual(status, 0, report)
+        report, _ = self.fast_results()
         self.assertEqual(self.outcomes(report), {f"engineering.stiffness@{PN}": "pass",
                                                  f"engineering.strength@{PN}": "unknown"})
         self.assertEqual(report["engineering"]["result"], "unknown")
 
     def test_a_fast_run_reports_the_peak_displacement_and_no_stress_figure_or_stress_verdict(self) -> None:
-        self.build(conditions_tests.documents())
-        status, report = self.call(self.convergent_case(mode="fast"))
-        self.assertEqual(status, 0, report)
-        for name, result in (("stdout", report), ("published results.json", self.published(report))):
+        for name, result in zip(("stdout", "published results.json"), self.fast_results()):
             with self.subTest(name):
                 self.assertEqual(result["max_displacement_mm"], 0.2)
                 self.assertEqual(keys(result) & STRESS_KEYS, set())
 
+    def test_a_fast_run_states_that_its_status_is_the_runs_and_not_a_strength_verdict(self) -> None:
+        for name, result in zip(("stdout", "published results.json"), self.fast_results()):
+            with self.subTest(name):
+                self.assertEqual((result["status"], result["status_scope"]), ("pass", "run"))
+
     def test_every_p95_the_run_reports_carries_the_mesh_stability_label(self) -> None:
-        self.build(conditions_tests.documents())
-        status, report = self.call(self.convergent_case(mode="fast"))
-        self.assertEqual(status, 0, report)
-        for name, result in (("stdout", report), ("published results.json", self.published(report))):
+        for name, result in zip(("stdout", "published results.json"), self.fast_results()):
             with self.subTest(name):
                 sites = p95_sites(result)
-                self.assertTrue(sites, "a fast result reports the 95th-percentile von Mises stress")
+                self.assertTrue(sites, "a fast result reports the p95 von Mises stress")
                 for site in sites:
                     self.assertEqual(site.get("label"), fea_modes.P95_LABEL, site)
 
-    def test_a_fast_case_that_asks_for_a_required_safety_factor_is_refused_before_the_solve(self) -> None:
+    def test_a_fast_bundle_is_keyed_by_its_mode_and_the_full_mode_mesh(self) -> None:
+        report, _ = self.fast_results()
+        options = json.loads((Path(report["bundle"]) / "manifest.json").read_text(encoding="utf-8"))["recipe"]["options"]
+        self.assertEqual(options["mode"], "fast")
+        self.assertEqual(options["mesh_settings"]["high_order_optimize"], fea_static.HIGH_ORDER["optimize"])
+        self.assertNotIn("second_order_linear", options["mesh_settings"])
+
+    def test_a_fast_case_that_asks_for_a_strength_verdict_is_refused_before_the_solve(self) -> None:
         self.build(conditions_tests.documents())
-        status, report = self.call(self.case({"conditions": conditions_tests.DRY_23C}, mode="fast",
-                                             required_safety_factor=2))
-        self.assertEqual(status, 2, report)
-        self.assertEqual(report["error"]["code"], "invalid_case")
-        self.assertIn("required_safety_factor", report["error"]["message"])
-        self.assertEqual(self.jobs, [], "a refused case must never reach the solver")
+        for name, extra in (("required_safety_factor", {"required_safety_factor": 2}),
+                            ("acceptance.strength", {"acceptance": {"strength": "REQ-001", "stiffness": "REQ-002"}})):
+            with self.subTest(name):
+                status, report = self.call(self.case({"conditions": conditions_tests.DRY_23C}, mode="fast", **extra))
+                self.assertEqual(status, 2, report)
+                self.assertEqual(report["error"]["code"], "invalid_case")
+                self.assertIn(name, report["error"]["message"])
+                self.assertEqual(self.jobs, [], "a refused case must never reach the solver")
 
 
 def job_of(script: str) -> dict[str, Any]:
