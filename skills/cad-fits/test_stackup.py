@@ -279,6 +279,14 @@ class IntentStackContractTests(unittest.TestCase):
         spacer["source"] = fx.source("user", "drawing tolerance")
         self.assertEqual(stackup.compute(stack)["outcome"], "unknown")
 
+    def test_a_guideline_source_does_not_qualify_manufacturing_variation(self) -> None:
+        stack = fixture("closing_gap.yaml")
+        spacer = contributor(stack, "S")
+        spacer["source"] = fx.source("guideline", "fdm.generic", revision="1", sha256="a" * 64)
+        result = stackup.compute(stack)
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertIn("stack.limits_unqualified", codes(result))
+
     def test_as_manufactured_size_of_a_reamed_feature_is_a_state_mismatch(self) -> None:
         stack = fixture("closing_gap.yaml")
         housing = contributor(stack, "H")
