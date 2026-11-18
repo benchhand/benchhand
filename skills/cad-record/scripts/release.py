@@ -615,7 +615,8 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
     problems = ["it is not a directory"]
     if package.is_dir() and not package.is_symlink():
         if reason := layout.stale(package):
-            return 1, {**report, "findings": [validate.finding(target_rel, reason, code="release.stale")],
+            return 1, {**report, "findings": [validate.finding(
+                target_rel, f"{reason}; automatic repair is not supported; use a new revision", code="release.stale")],
                        "status": "refused"}
         problems = []
     manifest = _json(package / MANIFEST) if not problems else None

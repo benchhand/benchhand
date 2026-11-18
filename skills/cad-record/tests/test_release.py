@@ -740,7 +740,8 @@ class Refusal(ReleaseCase):
         hw = self.project()
         self.assertEqual(self.release(hw)[0], 0)
         write(hw / "releases" / "A" / "bom.csv", "edited\n")
-        self.refused(hw, "hw/releases/A", "exists", "automatic repair is not supported; use a new revision")
+        self.refused(hw, "hw/releases/A", "stale", "stale: bom.csv changed after it was sealed")
+        self.refused(hw, "hw/releases/A", "stale", "automatic repair is not supported; use a new revision")
 
     def test_a_stale_package_of_another_frozen_manifest_needs_a_new_revision(self) -> None:
         hw = self.project()
@@ -748,7 +749,8 @@ class Refusal(ReleaseCase):
         write(hw / "releases" / "A" / "bom.csv", "edited\n")
         manifest = hw / "versions" / "v1" / "manifest.json"
         manifest.write_text(manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-        self.refused(hw, "hw/releases/A", "exists", "automatic repair is not supported; use a new revision")
+        self.refused(hw, "hw/releases/A", "stale", "stale: bom.csv changed after it was sealed")
+        self.refused(hw, "hw/releases/A", "stale", "automatic repair is not supported; use a new revision")
 
     def test_a_changed_frozen_manifest_under_the_same_revision_needs_a_new_revision(self) -> None:
         hw = self.project()
