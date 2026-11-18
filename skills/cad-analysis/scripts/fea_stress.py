@@ -32,7 +32,7 @@ Standard library only; it reads CalculiX `.frd` results and takes no FreeCAD or 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import product
 from typing import Any
@@ -178,6 +178,24 @@ def _von_mises(s: list[float]) -> float:
                      + 3.0 * (sxy ** 2 + syz ** 2 + szx ** 2))
 
 
+def _magnitude(v: list[float]) -> float:
+    return math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+
+
+def _derive(block: str, node: int, compute: Callable[[list[float]], float], values: list[float]) -> float:
+    """Apply `compute` to a record's values. Squaring a finite value above about 1e154 raises OverflowError.
+
+    That is the only exception the conversion chain can raise once `_record` has validated the text.
+    `int()` of a field of at most ten characters cannot overflow. `float()` of "1e999" returns `inf`
+    instead of raising. `inf` and `nan` text square without error. Those non-finite values stay in
+    the result for `compare_levels` to screen, which names the reason.
+    """
+    try:
+        return compute(values)
+    except OverflowError:
+        raise FrdError(f"{block} record of node {node} has a value too large to square") from None
+
+
 def read_frd(text: str) -> FrdResult:
     """Parse node coordinates, von Mises stress and displacement magnitude from ccx `.frd` text.
 
@@ -194,9 +212,10 @@ def read_frd(text: str) -> FrdResult:
         if line.startswith("    2C"):
             coordinates = {node: (v[0], v[1], v[2]) for node, v in _records(lines, index + 1, 'node', _NODE_VALUES)}
         elif line.startswith(" -4  STRESS"):
-            stress = {node: _von_mises(v) for node, v in _records(lines, index + 1, 'STRESS', _STRESS_VALUES)}
+            stress = {node: _derive('STRESS', node, _von_mises, v)
+                      for node, v in _records(lines, index + 1, 'STRESS', _STRESS_VALUES)}
         elif line.startswith(" -4  DISP"):
-            displacement = {node: math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+            displacement = {node: _derive('DISP', node, _magnitude, v)
                             for node, v in _records(lines, index + 1, 'DISP', _DISP_VALUES)}
     if not coordinates or not stress or not displacement:
         raise FrdError("frd file lacks a node, STRESS or DISP block")
