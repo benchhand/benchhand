@@ -212,3 +212,17 @@ python3 "$BENCHHAND/harness/install.py" --harness all --project . \
 ```
 
 A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:` prefix and a `provider/model[#variant]` value, and never gets `model: inherit`. Rendering adds `model: "<m>"` to Claude (instead of `inherit`) and OpenCode, `model = "<m>"` to Codex, and `"model"` to Kiro. A tier with no entry adds no model line, so a default install matches the committed profiles. `--tier-model` needs PyYAML.
+
+## License
+
+Benchhand is licensed under the [Mozilla Public License 2.0](LICENSE). Two files stay under the
+[Apache License 2.0](LICENSES/Apache-2.0.txt) because they are adapted from
+[AgentCAD](https://github.com/jdilla1277/agentcad):
+
+- `skills/cad-model/scripts/cadmodel/safe.py`
+- `skills/cad-model/scripts/cadmodel/occ_derived.py`
+
+The project follows the [REUSE](https://reuse.software) specification: each file's SPDX header, or
+`REUSE.toml` for files that cannot carry one, names its copyright holder and licence. Check them with
+`uvx --from 'reuse[charset-normalizer]==6.3.0' reuse lint`. [NOTICE](NOTICE) records third-party
+attributions, including the font notices.

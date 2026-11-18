@@ -8,7 +8,8 @@
     {
       "name": "benchhand",
       "source": "./",
-      "description": "Agent-assisted mechanical CAD from rapid concept through verified STEP AP242 release."
+      "description": "Agent-assisted mechanical CAD from rapid concept through verified STEP AP242 release.",
+      "license": "MPL-2.0"
     }
   ]
 }
