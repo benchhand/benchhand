@@ -324,9 +324,8 @@ def _version_entry(hw: Path, label: str) -> dict[str, Any]:
         folder = api.version_dir(hw, label)
         entry["previews"] = version_previews(hw, label)
         manifest_path = folder / "manifest.json"
-        problems = api.verify(folder)
-        if problems:
-            raise ViewerError(f"{label} fails its manifest: {'; '.join(problems)}")
+        if reason := api.stale(folder):
+            raise ViewerError(f"{label}: {reason}")
         manifest = read_json(manifest_path)
     except (ViewerError, OSError, api.LayoutError) as error:
         entry["error"] = str(error)

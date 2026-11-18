@@ -301,13 +301,12 @@ def select_bundle(release: Release, kind: str, subject: str, version_sha: str, w
     if not (directory / MANIFEST).is_file():
         release.refuse(rel, "missing", f"{rel} is missing: {why}")
         return
-    problems = layout.verify(directory)
-    if problems:
-        release.refuse(rel, "tampered", f"{rel} fails its manifest: {'; '.join(problems)}")
+    if reason := layout.stale(directory):
+        release.refuse(rel, "stale", reason)
         return
     manifest = _json(directory / MANIFEST)
     if manifest.get("layout") != f"bundle.{kind}" or manifest.get("path") != rel:
-        release.refuse(rel, "tampered", f"{rel}/manifest.json names {manifest.get('layout')} at {manifest.get('path')}")
+        release.refuse(rel, "stale", f"stale: manifest.json names {manifest.get('layout')} at {manifest.get('path')}")
         return
     if manifest.get("version_manifest_sha256") != version_sha:
         release.refuse(rel, "stale", f"{rel} is not bound to the frozen {release.version} manifest; produce it again")
@@ -544,7 +543,7 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
             continue
         copied = sha256(target)
         if copied != item.sha256:
-            release.refuse(item.original, "tampered", f"{item.original} does not hold the bytes its seal or record names")
+            release.refuse(item.original, "stale", f"stale: {item.original} changed since it was checked")
         files[package] = {"sha256": copied, "original": item.original}
     if release.acceptance is None:
         release.refuse("hw/product.yaml", "acceptance", "the release has no accepted evidence to seal")
@@ -559,7 +558,7 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
     validate.validate_document(manifest, "release-manifest.schema.json", layout.relative(hw, path), release.findings)
     path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     for problem in layout.verify(staged):
-        release.refuse(layout.relative(hw, staged), "tampered", problem)
+        release.refuse(layout.relative(hw, staged), "stale", f"stale: {problem}")
     return staged
 
 
@@ -612,7 +611,12 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
     target_rel = layout.load().path("release.package", {"REV": rev})
     package = layout.locate(hw, target_rel)
     report: dict[str, Any] = {"rev": rev, "version": version, "package": target_rel}
-    problems = layout.verify(package) if package.is_dir() and not package.is_symlink() else ["it is not a directory"]
+    problems = ["it is not a directory"]
+    if package.is_dir() and not package.is_symlink():
+        if reason := layout.stale(package):
+            return 1, {**report, "findings": [validate.finding(target_rel, reason, code="release.stale")],
+                       "status": "refused"}
+        problems = []
     manifest = _json(package / MANIFEST) if not problems else None
     frozen = manifest.get("frozen") if isinstance(manifest, dict) else None
     schema = manifest.get("schema_version") if isinstance(manifest, dict) else None

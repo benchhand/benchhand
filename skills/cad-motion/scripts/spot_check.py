@@ -173,9 +173,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         version, version_dir, record_hw = pose.LAYOUT.built_version(args.hw, args.version)
         bundle = args.result
-        problems = pose.LAYOUT.verify(bundle)
-        if problems:
-            raise pose.MotionError(f"{bundle} does not verify: {problems[0]}")
+        if reason := pose.LAYOUT.stale(bundle):
+            raise pose.MotionError(f"{bundle}: {reason}; run the sweep again")
         try:
             statistics, provenance, _ = sweep.read_statistics(bundle / "evidence")
         except (OSError, ValueError, KeyError) as error:

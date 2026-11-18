@@ -74,12 +74,13 @@ The recipe is a JSON object. Put every input that must make a different bundle i
 
 Keep wall time, ports, absolute paths and random ids out of it.
 
-When the bundle exists, `publish` does one of three things:
+When the bundle exists, `publish` does one of these:
 
 - Same `recipe_sha256` and version manifest, and the bundle verifies: it deletes the staging folder
   and returns the existing bundle with `result.reused` set.
-- Any other bundle, without `replace`: it raises `PublishConflict`.
-- Any other bundle, with `replace=True`: it moves the old bundle to
+- A stale bundle: `publish` replaces it, as below.
+- A sound bundle with another recipe, without `replace`: it raises `PublishConflict`.
+- A sound bundle with another recipe, with `replace=True`: it moves the old bundle to
   `.cad-work/replaced/<path>/<stamp>/` (`result.replaced`). The new manifest's `replaces` records the
   old manifest sha256, the old recipe sha256 and the new location.
 
@@ -89,6 +90,9 @@ Expose `replace` as the command's `--replace` flag. After a failure the staging 
 Before you use a bundle or a version as input, call `verify(directory)`. It returns a list of
 problems against the manifest inventory. An empty list means the folder verifies. It also reads a
 v2 release manifest, whose `files` map each path to its `sha256` and `original`.
+
+Any problem makes the folder stale. `stale(directory)` returns `None`, or `stale: <reason>`: the
+first problem and a count of the rest. A stale bundle never passes, and its producer runs again.
 
 `release.py` writes a sealed directory that is not a bundle. Such a writer stages under `.cad-work/`
 and lands with `claim(staged, target, target_rel)`. `claim` takes the target with an exclusive
@@ -102,11 +106,11 @@ one behaviour:
 
 - `built_version(hw, requested)` takes `--version` (a label or `latest`) and returns
   `(label, version folder, record snapshot folder)`. It raises `LayoutError` when the version is not
-  built, fails its manifest or has no `record/` snapshot. Read part, interface and assembly records
+  built, is stale or has no `record/` snapshot. Read part, interface and assembly records
   from the snapshot, not from the current `hw/` files.
 - `reusable(hw, entry_id, params, recipe, replace=False)` runs before the expensive work. It returns
-  the bundle `publish` would return unchanged, or `None` when there is nothing to reuse. Another
-  recipe raises `PublishConflict` unless `replace`.
+  the bundle `publish` would return unchanged, or `None` when there is nothing to reuse, which
+  includes a stale bundle. Another recipe on a sound bundle raises `PublishConflict` unless `replace`.
 - `scratch_path(hw, path, option)` checks an explicit output override such as `--out`. It accepts
   only a path under `.cad-work/`; `option` names the flag in the error.
 

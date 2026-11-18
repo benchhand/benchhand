@@ -93,10 +93,9 @@ def read(layout: Any, hw: Path, version: str, version_dir: Path, interface: str,
     if not bundle.is_dir():
         raise ReactionRefused("reaction_missing", f"{version} has no stop-reaction bundle for {interface}: run "
                                                   f"stop_reaction.py --hw HW --version {version}")
-    problems = layout.verify(bundle)
-    if problems:
-        raise ReactionRefused("reaction_stale", f"the stop-reaction bundle of {version} fails its seal ({'; '.join(problems)}): "
-                                                "run stop_reaction.py again with --replace")
+    if reason := layout.stale(bundle):
+        raise ReactionRefused("reaction_stale", f"the stop-reaction bundle of {version} is {reason}: "
+                                                "run stop_reaction.py again")
     manifest = _json(bundle / layout.MANIFEST, layout.MANIFEST)
     current = hashlib.sha256((version_dir / layout.MANIFEST).read_bytes()).hexdigest()
     if manifest.get("version_manifest_sha256") != current:

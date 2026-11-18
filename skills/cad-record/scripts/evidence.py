@@ -53,7 +53,7 @@ only while an obligation it covers (FAMILY_PRODUCERS) is stale or open and due a
 read in the fail-fast order, stopping the producers still running at the first blocking result;
 the full scope runs them one after another. Exit 0 when every step passes (and, in the full scope,
 the packet's gate passes); 1 when a step blocks, the gate of a full run blocks, the record is
-not record version 2 or the version is not built or fails its manifest (refused: build it again); 2 on a
+not record version 2 or the version is not built or is stale (refused: build it again); 2 on a
 usage error, a stray run (its stop commands are listed) or a producer that gave no result (an exit
 status other than 0 and 1, or an exit 0 without a JSON report). `check` stays separate: it recomputes the
 packet without producers.
@@ -955,11 +955,9 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
     claimed = {a.get("path"): a.get("sha256") for a in entry.get("artifacts") or () if isinstance(a, Mapping)}
     if isinstance(entry.get("bundle"), Mapping):
         claimed[f"{entry['bundle'].get('path')}/{layout.MANIFEST}"] = entry["bundle"].get("manifest_sha256")
-    altered = sorted(str(rel) for rel, sha in claimed.items() if artifact_sha is not None and artifact_sha(str(rel)) != sha)
-    if altered:
-        findings.append(Finding("evidence.altered", path, f"{ident} cites {', '.join(altered)}, which no longer hold the "
-                                "bytes it names: the evidence is void until it is accepted again"))
-        return "unknown", (f"{ident} cites altered evidence",), findings
+    drifted = sorted(str(rel) for rel, sha in claimed.items() if artifact_sha is not None and artifact_sha(str(rel)) != sha)
+    if drifted:
+        return "stale", (f"stale: {ident} cites {', '.join(drifted)}, which changed",), findings
     cited = [a.get("path") for a in entry.get("artifacts") or () if isinstance(a, Mapping)]
     if isinstance(entry.get("bundle"), Mapping):
         cited.append(entry["bundle"].get("path"))
@@ -1149,7 +1147,7 @@ def _sha256(path: Path) -> str:
 def collect_packets(hw: Path, version: str, version_manifest_sha256: str) -> tuple[list[ProducerPacket], list[Finding]]:
     """The producer check packets sealed for `version` (hw/checks/<V>/<S>/result.json, each a
     manufacturing check result), and a packet.invalid finding for each bundle whose result.json cannot be
-    read or is no required-check packet, that has no manifest, fails its seal or belongs to another build
+    read or is no required-check packet, that has no manifest, is stale (fails its seal) or belongs to another build
     of the version."""
     hw = Path(hw)
     root = layout.locate(hw, f"hw/checks/{version}")
@@ -1171,10 +1169,11 @@ def collect_packets(hw: Path, version: str, version_manifest_sha256: str) -> tup
         if not (directory / layout.MANIFEST).is_file():
             problems.append(f"it has no {layout.MANIFEST}")
         elif not problems:
-            problems = layout.verify(directory)  # a sealed bundle's manifest parses
-            manifest = json.loads((directory / layout.MANIFEST).read_text(encoding="utf-8")) if not problems else {}
-            if not problems and manifest.get("version_manifest_sha256") != version_manifest_sha256:
-                problems = [f"it is bound to another build of {version}"]
+            if reason := layout.stale(directory):  # a sealed bundle's manifest parses
+                problems = [reason]
+            elif json.loads((directory / layout.MANIFEST).read_text(encoding="utf-8")).get(
+                    "version_manifest_sha256") != version_manifest_sha256:
+                problems = [f"stale: it is bound to another build of {version}"]
         if problems:
             findings.append(Finding("packet.invalid", rel, f"{rel}: " + "; ".join(problems)))
             continue

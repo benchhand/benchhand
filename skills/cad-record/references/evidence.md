@@ -35,7 +35,7 @@ Producer packets remain immutable. `manufacturing/findings.yaml` contains dispos
 - The report follows `schemas/evidence-run.schema.json`.
 - The full scope needs `--stage`, the stage of the gate it checks. A provisional approval has already moved `flow.stage` on. Without `--stage` the run is a usage error with exit 2.
 - The commit scope uses `flow.stage` when `--stage` is absent.
-- The run refuses a version that is not built or fails its manifest, with exit 1. Build it again.
+- The run refuses a version that is not built or is stale, with exit 1. Build it again.
 
 The run works in this order:
 
@@ -84,6 +84,6 @@ A prior result carries only when its exact subject, geometry/configuration, requ
 
 Release claims state purpose, scope, operating limits, exclusions, required obligations, evidence levels and any approved trial status. Service class describes intended-use maturity and consequence. Values are `appearance_concept`, `fit_assembly`, `functional_demo`, `working_prototype`, `production` and `safety_critical`. Prototype is a service class. Increasingly consequential use needs evidence at the appropriate level. Unknown service blocks final selection and new manufacturing freeze/release. CAD and static simulation never certify physical performance or regulatory compliance.
 
-Evidence codes include `evidence.unqualified`, `.stale`, `.subject`, `.carry_forward`, `.altered`, `.csv_unsupported`, `.physical_claim`; `packet.invalid`, `.unexpected`; `waiver.unapproved`, `.expired`, `.scope`, `.forbidden`; and `finding.critical`.
+Evidence codes include `evidence.unqualified`, `.stale`, `.subject`, `.carry_forward`, `.csv_unsupported`, `.physical_claim`; `packet.invalid`, `.unexpected`; `waiver.unapproved`, `.expired`, `.scope`, `.forbidden`; and `finding.critical`.
 Gate/release codes include `gate.record`, `.fail`, `.stale`, `.unresolved`, `.use_case`, `.selection`, `.selection_approval`; `release.service_class`, `.scope`, `.trial_not_permitted`, `.waiver_forbidden`.
 Selection codes include `selection.use_case_incomplete`, `.not_assessed`, `.candidate_eliminated`, `.recorded_route_eliminated`, `.primary_unknown`, `.candidate_unknown`, `.no_feasible_candidate`, `.evaluation_conflict`, `.evaluation_mismatch`, `.assessment_stale`, `.recorded_recommendation_eliminated`, `.final_unsupported`, `.recommendation_differs`. Reports carry subject, severity, outcome and evidence fields. Freeze and release block on missing candidates/selection.
