@@ -63,8 +63,8 @@ Try Beads in your own projects:
 # Install Beads
 curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
 
-# Initialize in your repo
-bd init
+# Initialize in your repo (skip hooks so the system Git hooks stay in force)
+bd init --skip-hooks --skip-agents
 
 # Create your first issue
 bd create "Try out Beads"
