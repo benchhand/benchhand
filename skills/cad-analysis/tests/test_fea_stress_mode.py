@@ -17,9 +17,11 @@ the 0.75 h of its solve: the comparison reads the sizes from the case, and the s
 from __future__ import annotations
 
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -121,7 +123,8 @@ class StressCase(conditions_tests.SourcedFEACase):
             (run_dir / name).write_text(f"{name} of solve {position}\n", encoding="utf-8")
         for key, name in (("frd", "GmshMesh.frd"), ("inp", "GmshMesh.inp")):
             if plan.get(key) is not None:
-                (run_dir / name).write_text(plan[key], encoding="utf-8")
+                content = plan[key]
+                (run_dir / name).write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
                 written.append(name)
         marker = {"run_id": job["run_id"], "mode": job["mode"],
                   **fea_modes.reported(job["mode"], von_mises=[0.0, 1.0], displacement=plan["displacement"],
@@ -230,6 +233,62 @@ def stress_tests_keys(value: Any) -> set[str]:
     return fast_tests.keys(value)
 
 
+class StrengthAcceptance(StressCase):
+    """A stress case that names a sourced acceptance.strength (REQ-001, yield safety factor at least 2): the
+    criterion exists, the study yields a figure or none, and the strength obligation stays unknown because the
+    result carries no yield safety factor. Nothing in the published result states one either."""
+
+    STRESS_RESULT_KEYS = {"safety_factor_yield", "max_von_mises_mpa", "required_safety_factor", "sigma_away_mpa"}
+
+    def strength_case(self, mesh_size: float) -> Path:
+        path = self.case({"conditions": conditions_tests.SERVICE}, mode="stress", mesh_size=mesh_size,
+                         acceptance={"strength": "REQ-001", "stiffness": "REQ-002"},
+                         mesh_convergence={"decision": "DR-002"})
+        self.approve(self.study(path))
+        return path
+
+    def test_strength_stays_unknown_for_every_outcome_and_no_yield_safety_factor_is_published(self) -> None:
+        for outcome, plan, size in (("settled", interior_plan(), 1.0),
+                                    ("settled_away_from_support", cantilever_plan(), 4.5),
+                                    ("unknown", truss_plan(), 6.0)):
+            with self.subTest(outcome):
+                self.plan = plan
+                self.build(conditions_tests.documents())
+                status, report = self.call(self.strength_case(size), "--replace")
+                self.assertEqual(status, 0, report)
+                published = self.published(report)
+                self.assertEqual(report["stress_study"]["outcome"], outcome)
+                self.assertEqual(published["stress_study"]["outcome"], outcome)
+                self.assertEqual(self.outcomes(report)[f"engineering.strength@{PN}"], "unknown")
+                self.assertEqual(report["engineering"]["result"], "unknown")
+                for name, result in (("stdout", report), ("published results.json", published)):
+                    self.assertEqual(fast_tests.keys(result) & self.STRESS_RESULT_KEYS, set(), name)
+
+    def test_the_strength_finding_names_the_sourced_criterion_and_states_no_measured_value(self) -> None:
+        self.plan = interior_plan()
+        self.build(conditions_tests.documents())
+        status, report = self.call(self.strength_case(1.0))
+        self.assertEqual(status, 0, report)
+        finding = next(row for row in report["engineering"]["findings"] if row["code"] == "fea.strength.unverified")
+        self.assertEqual(finding["measured"]["status"], "unknown")
+        self.assertIn("REQ-001", json.dumps(finding["criterion"]))
+        self.assertNotEqual(finding["criterion"].get("status"), "unknown")
+
+    def test_the_sealed_check_packet_carries_the_same_unknown_strength_and_evidence_reads_it(self) -> None:
+        self.plan = interior_plan()
+        self.build(conditions_tests.documents())
+        status, report = self.call(self.strength_case(1.0))
+        self.assertEqual((status, report["check_bundle"]), (0, "hw/checks/v1/fea-bracket"), report)
+        bundle = self.hw / "checks" / "v1" / "fea-bracket"
+        packet = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
+        self.assertEqual(packet, report["engineering"])
+        self.assertEqual({row["obligation"]: row["outcome"] for row in packet["outcomes"]}[f"engineering.strength@{PN}"],
+                         "unknown")
+        manifest_sha = hashlib.sha256((self.hw / "versions" / "v1" / "manifest.json").read_bytes()).hexdigest()
+        packets, findings = conditions_tests.evidence_module().collect_packets(self.hw, "v1", manifest_sha)
+        self.assertEqual((findings, [p.bundle for p in packets]), ([], ["hw/checks/v1/fea-bracket"]))
+
+
 class Solves(StressCase):
     def test_the_study_solves_two_curved_meshes_at_h_and_three_quarters_of_h(self) -> None:
         self.run_stress(cantilever_plan(), mesh_size=4.5)
@@ -324,6 +383,24 @@ class UnreadableResults(StressCase):
                 plan = cantilever_plan()
                 plan[0]["inp"] = text
                 self.assert_unknown(plan, "boundary_nodes_unreadable", "coarse mesh")
+
+    def test_a_frd_that_is_not_utf8_text_gives_unknown_and_names_the_file(self) -> None:
+        for position, label in ((0, "coarse"), (1, "fine")):
+            with self.subTest(label):
+                self.jobs.clear()
+                plan = cantilever_plan()
+                plan[position]["frd"] = b"\xff\xfe" + plan[position]["frd"].encode("utf-8")
+                found = self.assert_unknown(plan, "malformed_frd", f"{label} mesh")
+                self.assertIn("GmshMesh.frd is not UTF-8 text", found["message"])
+
+    def test_a_ccx_input_that_is_not_utf8_text_gives_unknown_and_names_the_file(self) -> None:
+        for position, label in ((0, "coarse"), (1, "fine")):
+            with self.subTest(label):
+                self.jobs.clear()
+                plan = cantilever_plan()
+                plan[position]["inp"] = plan[position]["inp"].encode("utf-8") + b"\n** \xe9\xff\n"
+                found = self.assert_unknown(plan, "boundary_nodes_unreadable", f"{label} mesh")
+                self.assertIn("GmshMesh.inp is not UTF-8 text", found["message"])
 
     def test_a_missing_ccx_input_gives_unknown(self) -> None:
         plan = cantilever_plan()
@@ -462,6 +539,32 @@ class StudyWiring(unittest.TestCase):
         self.assertEqual(found["reasons"], ["incomplete_results"])
         self.assertIsNone(found["coarse"]["max_displacement_mm"])
         self.assertEqual(json.loads(json.dumps(found, allow_nan=False)), found)
+
+    def test_a_node_id_with_more_digits_than_python_converts_is_not_a_node_record(self) -> None:
+        # int() refuses a string of more than 4300 digits with a ValueError of its own.
+        with self.assertRaises(study.BoundaryNodesError):
+            study.boundary_nodes("*NSET,NSET=FixedFaces\n" + "9" * 5000 + ",\n*CLOAD\n5,3,-1.0\n")
+
+    def test_a_node_id_written_in_other_digits_is_not_a_node_record(self) -> None:
+        with self.assertRaises(study.BoundaryNodesError):
+            study.boundary_nodes("*NSET,NSET=FixedFaces\n\u0661\u0662,\n*CLOAD\n5,3,-1.0\n")
+
+    def test_a_results_file_that_is_a_directory_gives_unknown_and_names_the_file(self) -> None:
+        coarse, fine = self.runs(4.5, 3.375)
+        (fine.run_dir / "GmshMesh.frd").unlink()
+        (fine.run_dir / "GmshMesh.frd").mkdir()
+        found = study.run_study(coarse, fine)
+        self.assertEqual(found["reasons"], ["results_file_missing"])
+        self.assertIn("GmshMesh.frd", found["message"])
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads any file")
+    def test_a_results_file_the_study_may_not_read_gives_unknown_and_names_the_file(self) -> None:
+        coarse, fine = self.runs(4.5, 3.375)
+        (coarse.run_dir / "GmshMesh.inp").chmod(0)
+        self.addCleanup((coarse.run_dir / "GmshMesh.inp").chmod, 0o644)
+        found = study.run_study(coarse, fine)
+        self.assertEqual(found["reasons"], ["results_file_missing"])
+        self.assertIn("GmshMesh.inp", found["message"])
 
     def test_the_boundary_nodes_of_a_freecad_written_input_are_its_fixed_and_cload_nodes(self) -> None:
         fixed, load = study.boundary_nodes((FIXTURES / "cantilever_r1_4.5mm.faces.inp").read_text())
