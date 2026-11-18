@@ -90,6 +90,9 @@ INSTALLER = (
     "names harness/install.py in the expected command; the installer is mocked. setup.py:170"
     " checks that the file exists, which is why docs_only keeps install.py out of the safe set"
 )
+INSTALL_FILES = (
+    "reads harness/install.py, which is in docs_only.READ_BY_SKILL_TESTS, so its changes run the skill shards"
+)
 ROOT_NOTE = (
     "a file outside hw/ in a temporary project that the test stages to show --verify ignores it; never a"
     " file of this repository"
@@ -120,6 +123,7 @@ ALLOWED = [
     Allow('skills/cad-flow/tests/test_preflight.py', 'HarnessInstallTests.test_receipt_must_include_installed_skills_and_agents_at_contract_paths', '.codex/agents/cad-analyst.toml', STUB, 3),
     Allow('skills/cad-flow/tests/test_setup.py', 'PlanTests.test_install_uses_checkout_installer_with_project_relative_destination', 'harness', INSTALLER),
     Allow('skills/cad-flow/tests/test_setup.py', 'PlanTests.test_requested_harness_is_planned_but_not_implicit', 'harness/install.py', INSTALLER),
+    Allow('skills/cad-model/tests/test_cad_model.py', 'RebuildTriggerTests.setUpClass', 'harness', INSTALL_FILES),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.provisional_gate', 'DR-001.md', HW),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.test_frozen_pre_freeze_stage_refuses_a_stray_file', 'hw/stray.md', HW),
     Allow('skills/cad-recheck/tests/test_recheck.py', 'RecheckHookTests.test_verify_passes_a_commit_that_stages_no_hw_change_and_checks_one_that_does', 'notes.md', ROOT_NOTE, 2),
