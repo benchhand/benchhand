@@ -17,8 +17,13 @@ operation (the parts present then):
     kept; the start is taken as reachable), else the default, reported as such: a straight line along
     its `direction` (rotated from the receiving occurrence's model frame into the assembly frame) from
     beyond the separating plane of every present part to its installed pose; a disassemble operation
-    moves it the other way. The receiving part and the parts interfaces.yaml declares fitted or
-    inserted with the moving part are in contact by design and are not obstacles.
+    moves it the other way. The receiving part is in contact by design and is not an obstacle. A part that
+    interfaces.yaml declares a press fit or heat-set with the moving part is an obstacle too, except over
+    its engagement: the unbroken interference that starts at the installed pose, continues across waypoints
+    and is capped at that declaration's engagement_length_mm (cad-motion engagement.py). The length is the
+    travel over which the interfering surface still overlaps its partner: for a press fit the bore depth, an
+    entry chamfer may be ignored, and for a heat-set the embedded length of the insert. Interference elsewhere on the path is a collision. An engagement with no declared length keeps the path unknown.
+    A running or locating fit never exempts interference.
   - each tool: a `tool_access` entry whose envelope fact cites an artifact, a STEP solid of the tool
     and holder in the operated part's model frame at the engaged pose, moves along its `approach`
     (receiving occurrence's frame) to that pose, past every present part except the operated one.
@@ -32,7 +37,8 @@ pass. Not covered: curved motion between declared points, part or tool rotation 
 forces, deflection, and any joint pose but the nominal. No path planner: the path is the declared one.
 
 With --version the packet is published to hw/checks/<V>/assembly-access/ (bundle.checks): result.json
-(schemas/manufacturing-check-result.schema.json) and evidence/access.json (every path and sample).
+(schemas/manufacturing-check-result.schema.json) and evidence/access.json (every path and sample). A rerun reuses
+the bundle only when the inputs, the options and the sources of this policy (access.py, engagement.py) are the same.
 Exit 0 = every obligation passes, 1 = a failure or an unknown, 2 = usage or input error.
 """
 
@@ -67,6 +73,7 @@ SKILLS = HERE.parents[1]
 pose = _load("cad_motion_pose", HERE / "pose.py")
 pair_policy = _load("cad_motion_pair_policy", HERE / "pair_policy.py")
 pair_measure = _load("cad_motion_pair_measure", HERE / "pair_measure.py")
+engagement_module = _load("cad_motion_engagement", HERE / "engagement.py")
 operations_module = _load("cad_record_assembly_operations", SKILLS / "cad-record" / "scripts" / "assembly_operations.py")
 intent_module = _load("cad_record_manufacturing_intent", SKILLS / "cad-record" / "scripts" / "manufacturing_intent.py")
 check_packet = _load("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
@@ -81,9 +88,9 @@ ACCESS_METHOD = ("part paths (the declared insertion legs, else the default stra
                  "translation (1-Lipschitz) bound between samples (cad-motion access.py)")
 ACCESS_COVERAGE = ("the part's declared insertion path, else the default straight line along its direction from the "
                    "separating plane, and each tool envelope's approach, in the declared assembly state at the nominal joint "
-                   "pose; contact with the receiving part, fitted partners and the operated part is by design and not "
-                   "checked; a declared path's start is taken as reachable; curved paths, tool posture, hands, forces and "
-                   "other poses are not covered")
+                   "pose; contact with the receiving part and the operated part, and with a press-fit or heat-set partner over "
+                   "its declared engagement length, is by design and not checked; a declared path's start is taken as reachable; curved paths, tool "
+                   "posture, hands, forces and other poses are not covered")
 ROUTES = {"straight_default": "the default straight path along the direction", "declared_path": "the declared insertion path",
           "approach": "the declared tool approach"}
 RULE_SOURCE = {"kind": "policy", "reference": "cad-motion access path clearance rule", "origin": "cad-agent",
@@ -124,7 +131,9 @@ class Travel:
     """One straight path: `moving` (a definition key) placed `world` at arrival, arriving along unit
     `direction` (assembly frame), past `obstacles` [(occurrence, definition key, world placement)].
     `leg_mm` is a declared leg's length; None travels from beyond the separating plane. `route` is a
-    ROUTES key: what the path is."""
+    ROUTES key: what the path is. `engagement` maps each obstacle that is a press-fit or heat-set partner of
+    the moving part to its declared engagement length (None when absent): contact with it is by design only
+    over that engagement (engagement.py). `tail_mm` is the path length from this leg's end to the installed pose."""
 
     label: str
     moving: str
@@ -132,6 +141,8 @@ class Travel:
     direction: tuple[float, float, float]
     obstacles: list[tuple[str, str, Any]]
     leg_mm: float | None = None
+    engagement: Mapping[str, float | None] = field(default_factory=dict)
+    tail_mm: float = 0.0
     route: str = "straight_default"
     travel_mm: float = 0.0
     status: str = "unknown"  # clear, collision or unknown
@@ -139,13 +150,16 @@ class Travel:
     collisions: list[dict[str, Any]] = field(default_factory=list)
     unproven: list[dict[str, Any]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    engaged_mm: dict[str, float] = field(default_factory=dict)  # obstacle -> path length of its engagement from the installed pose
 
     def report(self) -> dict[str, Any]:
         return {"label": self.label, "route": self.route, "moving": self.moving,
                 "direction": [round(v, 9) + 0.0 for v in self.direction],
                 "travel_mm": round(self.travel_mm, 6), "obstacles": [o for o, _, _ in self.obstacles],
                 "status": self.status, "samples": self.samples, "collisions": self.collisions,
-                "unproven": self.unproven, "failures": self.failures}
+                "unproven": self.unproven, "failures": self.failures,
+                "engagement": {o: {"declared_mm": cap, "engaged_to_mm": self.engaged_mm.get(o)}
+                               for o, cap in self.engagement.items()}}
 
 
 def separation_travel(measurer: Any, path: Travel) -> float:
@@ -158,7 +172,76 @@ def separation_travel(measurer: Any, path: Travel) -> float:
     return max(0.0, ahead - behind) + SEPARATION_MARGIN_MM
 
 
-def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step_mm: float) -> None:
+def _read_outcomes(path: Travel, pending: list[tuple[int, float]], outcomes: Sequence[Any], fitted: set[int],
+                   overlap: dict[int, dict[float, float | None]], lower: dict[tuple[int, float], float]) -> None:
+    """Record what each measured sample of `pending` says: the shared volume of a fitted partner, a collision with
+    any other obstacle, the distance bound, or the failure."""
+    for (index, s), outcome in zip(pending, outcomes):
+        occurrence = path.obstacles[index][0]
+        if isinstance(outcome, pair_measure.Measured):
+            if index in fitted:
+                overlap[index][s] = outcome.overlap_mm3
+            elif outcome.overlap_mm3 > pose.INTERFERENCE_MM3:
+                path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
+                                        "overlap_mm3": round(outcome.overlap_mm3, 6)})
+            lower[(index, s)] = outcome.distance_mm
+        elif isinstance(outcome, (pair_measure.Cleared, pair_measure.Pruned)):
+            if index in fitted:
+                overlap[index][s] = 0.0
+            lower[(index, s)] = outcome.lower_mm
+        else:
+            if index in fitted:
+                overlap[index][s] = None
+            path.failures.append(f"{occurrence} at {s:.6f} mm: "
+                                 f"{outcome.message if outcome is not None else 'not measured before the deadline'}")
+            lower[(index, s)] = -math.inf
+
+
+def _classify_engagements(path: Travel, fitted: set[int], overlap: dict[int, dict[float, float | None]],
+                          lower: dict[tuple[int, float], float], incoming: Mapping[str, bool], outgoing: dict[str, bool],
+                          seen: set[tuple[int, float]], min_step_mm: float) -> list[tuple[int, float]]:
+    """Sort the samples of each fitted partner into engagement and collisions. Record the missing length, and return
+    the positions to sample before the end of an engagement shows."""
+    resample: list[tuple[int, float]] = []
+    for index in sorted(fitted):
+        occurrence = path.obstacles[index][0]
+        verdict = engagement_module.classify(
+            overlap[index], tail_mm=path.tail_mm, engaged=path.tail_mm == 0.0 or incoming.get(occurrence, False),
+            cap_mm=path.engagement[occurrence], min_step_mm=min_step_mm, threshold=pose.INTERFERENCE_MM3)
+        resample.extend((index, s) for s in verdict.needs)
+        if verdict.needs:
+            continue  # the end of the run needs more samples first
+        outgoing[occurrence] = verdict.reached_start
+        if verdict.exempt:
+            path.engaged_mm[occurrence] = round(path.tail_mm + verdict.extent, 6)
+        for s in verdict.exempt:
+            lower[(index, s)] = math.inf  # engaged by design: no clearance to prove
+        for s in verdict.collisions:
+            if (index, s) not in seen:
+                seen.add((index, s))
+                path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
+                                        "overlap_mm3": round(overlap[index][s] or 0.0, 6)})
+        reason = f"{occurrence}: interferes over its engagement and declares no engagement_length_mm"
+        if verdict.unknown and reason not in path.failures:
+            path.failures.append(reason)
+    return resample
+
+
+def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step_mm: float,
+             engaged: dict[str, bool] | None = None) -> None:
+    """Sample and refine `path`. Run the legs of one insertion from the last to the first. `engaged` carries from each
+    leg to the next whether an engagement reached its start. A leg reads it as it was at the leg's start and writes it
+    when the leg is done, so refining a leg cannot change what the leg reads."""
+    engaged = {} if engaged is None else engaged
+    outgoing: dict[str, bool] = {}
+    try:
+        _sample_path(session, measurer, path, step_mm, min_step_mm, dict(engaged), outgoing)
+    finally:
+        engaged.update(outgoing)
+
+
+def _sample_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step_mm: float,
+                 incoming: Mapping[str, bool], outgoing: dict[str, bool]) -> None:
     """Sample and refine `path`; sets its status (see the module docstring)."""
     path.travel_mm = separation_travel(measurer, path) if path.leg_mm is None else path.leg_mm
     if path.travel_mm == 0.0:
@@ -167,6 +250,9 @@ def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step
     count = max(1, math.ceil(path.travel_mm / step_mm))
     positions = sorted({path.travel_mm * i / count for i in range(count + 1)})
     lower: dict[tuple[int, float], float] = {}  # (obstacle index, s) -> distance lower bound
+    fitted = {index for index, (occurrence, _, _) in enumerate(path.obstacles) if occurrence in path.engagement}
+    overlap: dict[int, dict[float, float | None]] = {index: {} for index in fitted}  # obstacle -> s -> shared volume
+    seen: set[tuple[int, float]] = set()
     pending = [(index, s) for index in range(len(path.obstacles)) for s in positions]
     open_segments: dict[int, list[tuple[float, float]]] = {
         index: list(zip(positions, positions[1:])) or [(0.0, 0.0)] for index in range(len(path.obstacles))}
@@ -179,24 +265,16 @@ def run_path(session: Any, measurer: Any, path: Travel, step_mm: float, min_step
                                                  sample_id=f"{path.label}@{s:.6f}"))
         outcomes = session.measure(requests)
         path.samples += len(requests)
-        for (index, s), outcome in zip(pending, outcomes):
-            occurrence = path.obstacles[index][0]
-            if isinstance(outcome, pair_measure.Measured):
-                if outcome.overlap_mm3 > pose.INTERFERENCE_MM3:
-                    path.collisions.append({"obstacle": occurrence, "at_mm": round(s, 6),
-                                            "overlap_mm3": round(outcome.overlap_mm3, 6)})
-                lower[(index, s)] = outcome.distance_mm
-            elif isinstance(outcome, (pair_measure.Cleared, pair_measure.Pruned)):
-                lower[(index, s)] = outcome.lower_mm
-            else:
-                path.failures.append(f"{occurrence} at {s:.6f} mm: "
-                                     f"{outcome.message if outcome is not None else 'not measured before the deadline'}")
-                lower[(index, s)] = -math.inf
+        _read_outcomes(path, pending, outcomes, fitted, overlap, lower)
+        resample = _classify_engagements(path, fitted, overlap, lower, incoming, outgoing, seen, min_step_mm)
         if path.collisions:
             path.status = "collision"
             return
-        pending = []
+        pending = resample
+        unresolved = {index for index, _ in resample}
         for index, segments in open_segments.items():
+            if index in unresolved:
+                continue  # its engagement needs more samples first, so its segments wait
             still = []
             for start, end in segments:
                 width = end - start
@@ -232,8 +310,22 @@ class OperationAccess:
         return "pass"
 
 
+def engagement_caps(*declarations: Iterable[dict[str, Any]]) -> dict[tuple[str, str], float | None]:
+    """The declared engagement length of each press-fit or heat-set pair, None when a declaration of the pair gives
+    none. Running and locating fits are clearance fits, so interference with them is never exempt and they are not listed."""
+    caps: dict[tuple[str, str], float | None] = {}
+    for items in declarations:
+        for item in items:
+            pair = (str(item["pair"][0]), str(item["pair"][1]))
+            length = item.get("engagement_length_mm")
+            if pair in caps and caps[pair] is None:
+                continue
+            caps[pair] = None if length is None else max(float(length), caps.get(pair) or 0.0)
+    return caps
+
+
 def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], definitions: Mapping[str, Any],
-               fitted: set[tuple[str, str]], tools: Mapping[tuple[str, int], tuple[str, Any]]) -> list[OperationAccess]:
+               caps: Mapping[tuple[str, str], float | None], tools: Mapping[tuple[str, int], tuple[str, Any]]) -> list[OperationAccess]:
     """The paths of each operation's AccessRequest; `tools` maps (operation id, tool index) to the
     envelope definition key and its shape, for the tools whose solid was read."""
     plans = []
@@ -247,11 +339,14 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
             continue
         rotation = world[frame]
 
+        def partners(names: Iterable[str], moving: str) -> dict[str, float | None]:
+            """The obstacles in a press-fit or heat-set pair with `moving`, each with its declared engagement length."""
+            return {name: caps[(min(name, moving), max(name, moving))] for name in names
+                    if (min(name, moving), max(name, moving)) in caps}
+
         def obstacles(names: Iterable[str], moving: str | None) -> list[tuple[str, str, Any]]:
             found = []
             for name in sorted(names):
-                if moving is not None and tuple(sorted((name, moving))) in fitted:
-                    continue
                 if name not in world or chain.pn(name) not in definitions:
                     entry.unknown.append(f"{op.id}: obstacle {name} has no geometry")
                     continue
@@ -264,13 +359,15 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
                 entry.unknown.append(f"{op.id}: {moving} has no geometry")
             elif request.path is not None:
                 entry.paths.extend(declared_legs(op.id, chain.pn(moving), world[moving], rotation, request.path,
-                                                 obstacles(request.path_obstacles, moving)))
+                                                 obstacles(request.path_obstacles, moving),
+                                                 partners(request.path_obstacles, moving)))
             else:
                 direction = _rotate(rotation, request.direction)
                 if request.removal:
                     direction = (-direction[0], -direction[1], -direction[2])
                 entry.paths.append(Travel(f"{op.id}/part", chain.pn(moving), world[moving], direction,
-                                         obstacles(request.path_obstacles, moving)))
+                                         obstacles(request.path_obstacles, moving),
+                                         engagement=partners(request.path_obstacles, moving)))
         operated = request.part
         for number, tool in enumerate(request.tools):
             if not tool.declared or tool.approach is None or (op.id, number) not in tools:
@@ -286,18 +383,20 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
 
 
 def declared_legs(ident: str, moving: str, installed: Any, frame: Any, points: Sequence[Sequence[float]],
-                  obstacles: list[tuple[str, str, Any]]) -> list[Travel]:
+                  obstacles: list[tuple[str, str, Any]], engagement: Mapping[str, float | None] | None = None) -> list[Travel]:
     """The straight legs of a declared insertion path: `points` (start, then via) are the moving part's
     offsets from its `installed` placement in the receiving occurrence's frame (`frame`'s rotation);
-    the last leg ends at the installed pose. Each leg is a Travel of its own length, arriving at its end."""
+    the last leg ends at the installed pose. Each leg is a Travel of its own length, arriving at its end,
+    with `tail_mm` the length of the legs after it: an engagement can reach back across waypoints."""
     offsets = [_rotate(frame, p) for p in points] + [(0.0, 0.0, 0.0)]
+    lengths = [math.dist(start, end) for start, end in zip(offsets, offsets[1:])]
     legs = []
     for number, (start, end) in enumerate(zip(offsets, offsets[1:]), start=1):
-        length = math.dist(start, end)
+        length = lengths[number - 1]
         dx, dy, dz = ((e - s) / length for s, e in zip(start, end))
         arrival = pose.Rigid(pose.Rigid.identity().rot, end) @ installed
-        legs.append(Travel(f"{ident}/part/leg{number}", moving, arrival, (dx, dy, dz), list(obstacles),
-                           leg_mm=length, route="declared_path"))
+        legs.append(Travel(f"{ident}/part/leg{number}", moving, arrival, (dx, dy, dz), list(obstacles), leg_mm=length,
+                           engagement=dict(engagement or {}), tail_mm=sum(lengths[number:]), route="declared_path"))
     return legs
 
 
@@ -398,6 +497,37 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
 # --------------------------------------------------------------------------- run
 
 
+def declared_engagements(record_hw: Path, assembly: Any) -> dict[tuple[str, str], float | None]:
+    """The engagement caps of the record's press fits and heat-sets. Running and locating fits never exempt, but a
+    malformed declaration of either is still an input error."""
+    try:
+        interfaces = pair_policy.read_interfaces(record_hw)
+        caps = engagement_caps(pair_policy.declared_press_fits(record_hw, interfaces, assembly),
+                               pair_policy.declared_heat_sets(record_hw, interfaces, assembly))
+        pair_policy.declared_running_fits(record_hw, interfaces, assembly)
+        pair_policy.declared_locating_fits(record_hw, interfaces, assembly)
+    except pair_policy.PolicyError as error:
+        raise AccessError(str(error)) from error
+    return caps
+
+
+def measure_plans(plans: Sequence[OperationAccess], definitions: Mapping[str, Any],
+                  tools: Mapping[tuple[str, int], tuple[str, Any]], step_mm: float, min_step_mm: float) -> None:
+    """Measure every path of `plans` with one pair evaluator over the parts and the tool envelopes."""
+    shapes = {pn: part.shape for pn, part in definitions.items()}
+    parts = dict(definitions)
+    for key, shape in tools.values():
+        shapes[key] = shape
+        parts[key] = pose.Part(key, key, shape)
+    measurer = pair_measure.PairMeasurer(shapes, geometry_ids=pose.geometry_ids(parts),
+                                         rule=pair_measure.RuleVersion.current(), threads=False)
+    with pose.stdout_to_stderr(), measurer.session() as session:
+        for entry in plans:
+            engaged: dict[str, bool] = {}
+            for path in reversed(entry.paths):  # last leg first, so an engagement carries back from it
+                run_path(session, measurer, path, step_mm, min_step_mm, engaged)
+
+
 def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the packet, the evidence detail) of one run."""
     import yaml
@@ -426,33 +556,15 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         tools, tool_problems, digests = read_tools(requests, record_hw, args.hw)
         for index, (artifact, sha) in enumerate(sorted(digests.items())):
             dependencies[f"tool_envelope_{index + 1}"] = sha
-        try:
-            interfaces = pair_policy.read_interfaces(record_hw)
-            fitted = pair_policy.fitted_pairs(
-                pair_policy.declared_press_fits(record_hw, interfaces, assembly),
-                pair_policy.declared_running_fits(record_hw, interfaces, assembly),
-                pair_policy.declared_locating_fits(record_hw, interfaces, assembly),
-                pair_policy.declared_heat_sets(record_hw, interfaces, assembly))
-        except pair_policy.PolicyError as error:
-            raise AccessError(str(error)) from error
+        caps = declared_engagements(record_hw, assembly)
         values = chain.complete({})
         world = chain.transforms(values)
         detail["nominal"] = {jid: value for jid, value in values.items()}
-        plans = plan_paths(requests, chain, world, definitions, fitted, tools)
+        plans = plan_paths(requests, chain, world, definitions, caps, tools)
         for entry in plans:
             entry.unknown.extend(reason for (op_id, _), reason in sorted(tool_problems.items())
                                  if op_id == entry.operation.id)
-        shapes = {pn: part.shape for pn, part in definitions.items()}
-        parts = dict(definitions)
-        for key, shape in tools.values():
-            shapes[key] = shape
-            parts[key] = pose.Part(key, key, shape)
-        measurer = pair_measure.PairMeasurer(shapes, geometry_ids=pose.geometry_ids(parts),
-                                             rule=pair_measure.RuleVersion.current(), threads=False)
-        with pose.stdout_to_stderr(), measurer.session() as session:
-            for entry in plans:
-                for path in entry.paths:
-                    run_path(session, measurer, path, args.step_mm, args.min_step_mm)
+        measure_plans(plans, definitions, tools, args.step_mm, args.min_step_mm)
         for entry in plans:
             mine = access_findings(entry)
             findings.extend(mine)
@@ -461,6 +573,15 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     detail["limits"] = [ACCESS_COVERAGE, "the order check covers the declared sequence only"]
     expected = [o for o in intent_module.required_checks(record) if o.family in FAMILIES]
     return check_packet.build(record, expected, PRODUCER, outcomes, findings, dependencies), detail
+
+
+def policy_digest() -> str:
+    """The sha256 of the access policy sources. The pair evaluator's rule digest covers neither, so a changed policy
+    must reach the recipe, or the next run would reuse a packet from before the change."""
+    digest = hashlib.sha256()
+    for source in (Path(__file__), Path(engagement_module.__file__)):
+        digest.update(source.name.encode() + b"\0" + hashlib.sha256(source.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -480,7 +601,8 @@ def main(argv: list[str] | None = None) -> int:
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
         result, detail = assess(args, version, record_hw)
         recipe = {"options": {"step_mm": args.step_mm, "min_step_mm": args.min_step_mm, "attach": list(args.attach)},
-                  "dependencies": result["dependencies"], "rule_sha256": pair_measure.RuleVersion.current().digest.hex()}
+                  "dependencies": result["dependencies"], "rule_sha256": pair_measure.RuleVersion.current().digest.hex(),
+                  "access_policy_sha256": policy_digest()}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "access.json",
                                            recipe, out=args.out, replace=args.replace,
                                            record_version=intent_module.RECORD_VERSION)
