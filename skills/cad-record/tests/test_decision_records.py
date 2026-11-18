@@ -287,6 +287,22 @@ class ReadTests(Base):
             self.assertIn("DR-001-huge.md", str(caught.exception))
             self.assertLess(len(str(caught.exception)), 1000)
 
+    def test_an_oversized_diagnostic_value_is_cut_in_the_message_naming_the_file(self) -> None:
+        keys = "".join(f"unknown-key-{index}-{'k' * 100}: x\n" for index in range(200))
+        cases = {
+            "superseded-by": ("status: accepted\ndate: 2026-10-26\nsuperseded-by: [" + "d" * 5000 + "]\n", "d" * 61),
+            "tagged boolean": ("status: !!bool " + "b" * 5000 + "\ndate: 2026-10-26\n", "b" * 201),
+            "unknown keys": ("status: accepted\ndate: 2026-10-26\n" + keys, "unknown-key-11-"),
+        }
+        for label, (front, leaked) in cases.items():
+            path = self.put("DR-001-long.md", document(front))
+            with self.subTest(label), self.assertRaises(dr.DecisionRecordError) as caught:
+                dr.read_decision(path)
+            message = str(caught.exception)
+            self.assertIn("DR-001-long.md", message)
+            self.assertLess(len(message), 1500)
+            self.assertNotIn(leaked, message)
+
     def test_an_impossible_calendar_date_is_refused_naming_the_file(self) -> None:
         path = self.put("DR-001-date.md", document("status: accepted\ndate: 2026-13-45\n"))
         with self.assertRaisesRegex(dr.DecisionRecordError, r"DR-001-date\.md.*YAML front matter is invalid"):

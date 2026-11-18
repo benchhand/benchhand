@@ -480,6 +480,14 @@ class ValidateProject(unittest.TestCase):
     def test_a_very_long_sexagesimal_float_is_a_finding_not_a_crash(self) -> None:
         self.front_matter_finding("status: accepted\nx: !!float " + ":".join(["1"] * 6000))
 
+    def test_oversized_diagnostic_values_stay_bounded_in_the_finding(self) -> None:
+        unknown = "".join(f"unknown-key-{index}-{'k' * 100}: x\n" for index in range(200))
+        for front in ("status: accepted\nsuperseded-by: [" + "d" * 5000 + "]",
+                      "status: !!bool " + "b" * 5000,
+                      "status: accepted\n" + unknown.rstrip("\n")):
+            with self.subTest(front[:30]):
+                self.front_matter_finding(front)
+
     def test_a_huge_integer_key_or_status_is_a_bounded_finding_not_a_crash(self) -> None:
         huge = "0x" + "f" * 4000
         for front in (f"status: accepted\n? {huge}\n: x", f"status: {huge}"):
