@@ -125,6 +125,14 @@ class ReadFrdTests(unittest.TestCase):
                 with self.assertRaises(fs.FrdError):
                     fs.read_frd(drop_terminator(text, header))
 
+    def test_a_terminated_stress_block_with_a_short_record_is_refused_as_an_frd_error(self) -> None:
+        # Five of the six components: the block is complete, so only the record itself is wrong.
+        text = frd_text({1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0)},
+                        {1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 0.0)},
+                        {1: (100.0, 0.0, 0.0, 0.0, 0.0, 0.0), 2: (100.0, 0.0, 0.0, 0.0, 0.0)})
+        with self.assertRaises(fs.FrdError):
+            fs.read_frd(text)
+
     def test_a_stress_block_cut_off_by_the_end_of_the_file_is_refused(self) -> None:
         text = level_as_frd(level(H_COARSE, kept=5, excluded=2))
         cut = text[:text.index(" 9999")].rstrip("\n").rsplit("\n", 2)[0] + "\n"  # no terminator, last rows gone
