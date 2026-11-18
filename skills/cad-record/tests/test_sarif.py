@@ -277,10 +277,24 @@ class LocationTests(unittest.TestCase):
                 self.assertEqual(self.anchor({key: "TST-0001"})["artifactLocation"]["uri"], "hw/parts/TST-0001/part.yaml")
 
     def test_a_part_with_neither_file_gets_no_physical_location(self) -> None:
-        for pn in ("TST-0003", "TST-9999", "../escape"):
+        for pn in ("TST-0003", "TST-9999"):
             with self.subTest(pn=pn):
                 [result] = results_of([{"code": "x", "message": "m", "subject": {"PN": pn}}], hw=self.hw)
                 self.assertNotIn("physicalLocation", result["locations"][0])
+
+    def test_a_part_number_that_is_a_path_is_refused_even_when_files_exist_where_it_points(self) -> None:
+        outside = Path(self.tmp.name) / "outside"
+        targets = {"../escape": self.hw / "escape", "sub/dir": self.hw / "parts" / "sub" / "dir",
+                   "..": self.hw, str(outside): outside}
+        for pn, folder in targets.items():
+            folder.mkdir(parents=True, exist_ok=True)
+            for name in ("part.yaml", "model.py"):
+                (folder / name).write_text("x\n", encoding="utf-8")
+        for pn in targets:
+            with self.subTest(pn=pn):
+                [result] = results_of([{"code": "x", "message": "m", "subject": {"PN": pn}}], hw=self.hw)
+                self.assertNotIn("physicalLocation", result["locations"][0])
+                self.assertEqual(result["locations"][0]["logicalLocations"][0]["name"], pn)
 
     def test_the_findings_own_file_and_line_win(self) -> None:
         found = self.anchor({"subject": {"PN": "TST-0001"}, "location": {"file": "hw/product.yaml", "line": 12}})
