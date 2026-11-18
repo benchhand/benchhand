@@ -716,6 +716,44 @@ def bound_errors(root: str, data: Any, path: tuple[Any, ...]) -> list[Any]:
     return found
 
 
+class MinHoleBand(unittest.TestCase):
+    """The min_hole band is a heuristic without a source table, so it may only warn. The public validator turns each
+    schema error into a finding, so a record outside the band and inside the hard bound yields none."""
+
+    def findings(self, limit: float) -> list[dict[str, str]]:
+        sys.path.insert(0, str(SKILL.parents[1] / "scripts"))
+        from modload import load_module  # noqa: PLC0415 - path set just above
+        fixtures = load_module("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py")
+        validate = load("cad_record_validate", SKILL / "scripts" / "validate.py")
+        document = copy.deepcopy(fixtures.tst_record()["manufacturing/capabilities.yaml"])
+        calibration = document["profiles"][0]["calibrations"][0]
+        calibration["characteristic"] = "min_hole"
+        calibration["result"]["limits"] = {"value": limit, "units": "mm"}
+        found: list[dict[str, str]] = []
+        validate.validate_document(document, CAPABILITIES, "capabilities.yaml", found)
+        return found
+
+    def test_a_value_outside_the_band_and_inside_the_hard_bound_is_no_error(self) -> None:
+        band = BY_NAME["calibration.min_hole"].band
+        assert band is not None
+        for limit in (0.1, 0.3, 15, 25):
+            with self.subTest(limit=limit):
+                self.assertTrue(limit < band["min"] or limit > band["max"], "the value misses the band, which only warns")
+                self.assertEqual(self.findings(limit), [])
+
+    def test_a_value_outside_the_hard_bound_is_still_an_error(self) -> None:
+        for limit in (0.05, 26):
+            with self.subTest(limit=limit):
+                self.assertNotEqual(self.findings(limit), [])
+
+    def test_the_description_says_the_band_is_a_heuristic_and_names_the_sourced_value(self) -> None:
+        description = node(CAPABILITIES, "/$defs/qty_min_hole")["description"]
+        self.assertIn("heuristic", description)
+        self.assertIn("no source table", description)
+        self.assertIn("2.0 mm", description)
+        self.assertIn("Protolabs", description)
+
+
 class Units(unittest.TestCase):
     """A quantity in a unit of another dimension is refused by the schema, whatever its value. The vocabulary is
     the closed set of manufacturing.schema.json and the own units of each quantity are those CONVERT lists."""

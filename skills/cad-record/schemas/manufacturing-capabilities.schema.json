@@ -244,7 +244,7 @@
       ]
     },
     "qty_min_hole": {
-      "description": "Calibrated smallest reliable cut hole diameter: 0.1 to 25 mm",
+      "description": "Calibrated smallest reliable cut hole diameter: 0.1 to 25 mm. The 0.5 to 10 mm plausibility band is a heuristic with no source table and only warns; the sourced guideline value is 2.0 mm (Protolabs, S3 in the FDM survey)",
       "x-plausible": {"min": 0.5, "max": 10, "units": "mm"},
       "properties": {"units": {"enum": ["mm", "m", "um"]}},
       "allOf": [
