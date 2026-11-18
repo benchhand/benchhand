@@ -84,8 +84,8 @@ def cantilever_plan() -> list[dict[str, Any]]:
 
 def truss_plan() -> list[dict[str, Any]]:
     coarse, fine = frd_text("truss_r1_6mm"), frd_text("truss_r2_4.5mm")
-    return [{"frd": coarse, "inp": plane_inp(coarse, TRUSS_PLANES), "displacement": [0.0, 0.8]},
-            {"frd": fine, "inp": plane_inp(fine, TRUSS_PLANES), "displacement": [0.0, 0.81]}]
+    return [{"frd": coarse, "inp": plane_inp(coarse, TRUSS_PLANES), "displacement": [0.0, 0.4]},
+            {"frd": fine, "inp": plane_inp(fine, TRUSS_PLANES), "displacement": [0.0, 0.41]}]
 
 
 def interior_plan(coarse_peak: float = 99.0, fine_peak: float = 100.0) -> list[dict[str, Any]]:
@@ -148,10 +148,11 @@ class StressCase(conditions_tests.SourcedFEACase):
         self.approve(self.study(path))
         return path
 
-    def run_stress(self, plan: list[dict[str, Any]], mesh_size: float = 4.5) -> tuple[int, dict[str, Any]]:
+    def run_stress(self, plan: list[dict[str, Any]], mesh_size: float = 4.5, *,
+                   replace: bool = False) -> tuple[int, dict[str, Any]]:
         self.plan = plan
         self.build(conditions_tests.documents())
-        return self.call(self.stress_case(mesh_size))
+        return self.call(self.stress_case(mesh_size), *(["--replace"] if replace else []))
 
     def published(self, report: dict[str, Any]) -> dict[str, Any]:
         return dict(json.loads((Path(report["bundle"]) / "results.json").read_text(encoding="utf-8")))
@@ -204,7 +205,8 @@ class Outcomes(StressCase):
                 self.assertEqual(result["max_displacement_mm"], 0.2)  # the fine solve's, not the coarse 0.19
 
     def test_an_unknown_study_still_passes_the_run_and_the_stiffness_check(self) -> None:
-        status, report = self.run_stress(truss_plan(), mesh_size=6)
+        # mesh_size 2 is the size the approved convergence study (DR-002) is bound to.
+        status, report = self.run_stress(truss_plan(), mesh_size=2)
         self.assertEqual(status, 0, report)
         self.assertEqual((report["status"], report["status_scope"]), ("pass", "run"))
         self.assertEqual(self.outcomes(report)[f"engineering.stiffness@{PN}"], "pass")
@@ -216,7 +218,7 @@ class Outcomes(StressCase):
                                  ("unknown", truss_plan(), 6)):
             with self.subTest(name):
                 self.jobs.clear()
-                status, report = self.run_stress(plan, size)
+                status, report = self.run_stress(plan, size, replace=True)
                 self.assertEqual(status, 0, report)
                 self.assertEqual(self.outcomes(report)[f"engineering.strength@{PN}"], "unknown")
                 self.assertEqual(stress_tests_keys(report) & {"max_von_mises_mpa", "safety_factor_yield"}, set())
@@ -293,7 +295,9 @@ class UnreadableResults(StressCase):
 
     def test_a_frd_cut_off_before_its_terminator_gives_unknown_not_an_error(self) -> None:
         plan = cantilever_plan()
-        plan[1]["frd"] = "\n".join(plan[1]["frd"].splitlines()[:-300]) + "\n"
+        lines = plan[1]["frd"].splitlines()
+        stress = max(i for i, line in enumerate(lines) if line.startswith(" -4  STRESS"))
+        plan[1]["frd"] = "\n".join(lines[:stress + 500]) + "\n"  # the STRESS block stops without its terminator
         self.assert_unknown(plan, "malformed_frd", "fine mesh")
 
     def test_a_malformed_frd_record_in_the_coarse_solve_gives_unknown(self) -> None:
@@ -446,9 +450,15 @@ class StudyWiring(unittest.TestCase):
         self.assertEqual(study.run_study(coarse, fine)["outcome"], "settled_away_from_support")
 
     def test_the_result_fields_hold_no_value_that_json_cannot_write(self) -> None:
+        # A frd that lacks one node's stress ends the comparison early, with no kept peak and a nan displacement.
         coarse, fine = self.runs(4.5, 3.375)
-        (fine.run_dir / "GmshMesh.inp").write_text("*NSET,NSET=FixedFaces\n")
+        lines = (fine.run_dir / "GmshMesh.frd").read_text().splitlines()
+        stress = max(i for i, line in enumerate(lines) if line.startswith(" -4  STRESS"))
+        del lines[next(i for i in range(stress, len(lines)) if lines[i].startswith(" -1"))]
+        (fine.run_dir / "GmshMesh.frd").write_text("\n".join(lines) + "\n")
         found = study.run_study(coarse, fine)
+        self.assertEqual(found["reasons"], ["incomplete_results"])
+        self.assertIsNone(found["coarse"]["max_displacement_mm"])
         self.assertEqual(json.loads(json.dumps(found, allow_nan=False)), found)
 
     def test_the_boundary_nodes_of_a_freecad_written_input_are_its_fixed_and_cload_nodes(self) -> None:
