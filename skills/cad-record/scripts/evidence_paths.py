@@ -24,14 +24,24 @@ from typing import Any
 SCRATCH_PREFIXES = (".cad-work/", "/tmp/", "/var/folders/", "~/")
 PROMOTE = ("promote the file into the record (for example under hw/checks/<V>/<S>/evidence/) and list it in "
            "artifacts, or cite a tracked packet")
-# String values of a ledger entry that are identifiers, enums, hashes, dates, urls or structured paths, not prose.
-STRUCTURED_KEYS = frozenset({
+# Entry fields the schema does not define as prose (not $defs/text): ids, enums, hashes, dates, urls, the
+# structured subject, configuration, fingerprints, artifacts and bundle, and the structured source fields. A
+# pointer names the field exactly (`[]` stands for any list index), so `physical.configuration` stays prose.
+_SOURCE_FIELDS = ("accessed", "artifact", "date", "decision", "kind", "sha256", "url")
+_WAIVER_FIELDS = ("decision", "expires", "obligation", "subject")
+ENTRY_STRUCTURED = frozenset({
     "id", "requirement", "obligation", "subject", "level", "result", "configuration", "fingerprints", "artifacts",
-    "bundle", "decisions", "decision", "date", "expires", "url", "accessed", "sha256", "manifest_sha256", "kind",
-    "operator", "property", "units", "state", "value", "finding", "code", "status", "replacement_evidence",
+    "bundle", "decisions", "physical.date",
+    "criterion.id", "criterion.property", "criterion.operator", "criterion.value", "criterion.units", "criterion.state",
+    *(f"source.{name}" for name in _SOURCE_FIELDS), *(f"criterion.source.{name}" for name in _SOURCE_FIELDS),
+    *(f"waiver.{name}" for name in _WAIVER_FIELDS),
+})
+DISPOSITION_STRUCTURED = frozenset({
+    "finding", "code", "producer", "status", "decision", "replacement_evidence",
+    *(f"waiver.{name}" for name in _WAIVER_FIELDS),
 })
 _TOKEN = re.compile(r"[^\s\"'`()\[\]{}<>,;=|]+")
-_EXTENSION = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,7}$")
+_EXTENSION = re.compile(r"\.(?:[A-Za-z][A-Za-z0-9]{0,7}|3mf|3ds|3dm|7z)$")
 _URL = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$")
 _EVIDENCE_ID = re.compile(r"\bEV-[0-9]{3}\b")
 _LOCATION = re.compile(r"[:#].*$")
@@ -143,17 +153,18 @@ class ProjectPaths:
                 and re.fullmatch(r"v[1-9][0-9]*", parts[2]) is not None)
 
 
-def _strings(node: Any, key: str = "") -> Iterable[tuple[str, str]]:
-    """(dotted key, text) of every prose string below `node`."""
+def _strings(node: Any, skip: frozenset[str], key: str = "", pointer: str = "") -> Iterable[tuple[str, str]]:
+    """(dotted key, text) of every string below `node` whose exact pointer is not in `skip`."""
+    if pointer in skip:
+        return
     if isinstance(node, str):
         yield key, node
     elif isinstance(node, Mapping):
         for name, value in node.items():
-            if name not in STRUCTURED_KEYS and name != "artifact":
-                yield from _strings(value, f"{key}.{name}" if key else str(name))
+            yield from _strings(value, skip, f"{key}.{name}" if key else str(name), f"{pointer}.{name}" if pointer else str(name))
     elif isinstance(node, Sequence):
         for index, value in enumerate(node):
-            yield from _strings(value, f"{key}[{index}]")
+            yield from _strings(value, skip, f"{key}[{index}]", f"{pointer}[]")
 
 
 def entry_problems(paths: ProjectPaths, entry: Mapping[str, Any]) -> list[PathProblem]:
@@ -166,25 +177,34 @@ def entry_problems(paths: ProjectPaths, entry: Mapping[str, Any]) -> list[PathPr
     bundle = entry.get("bundle")
     if isinstance(bundle, Mapping):
         structured.append(("bundle", bundle.get("path")))
-    source = entry.get("source")
-    if isinstance(source, Mapping) and isinstance(source.get("artifact"), str):
-        structured.append(("source.artifact", f"hw/{source['artifact']}"))
+    for where, holder in (("source.artifact", entry.get("source")),
+                          ("criterion.source.artifact", (entry.get("criterion") or {}).get("source"))):
+        if isinstance(holder, Mapping) and isinstance(holder.get("artifact"), str):
+            problems.extend(_structured_problems(paths, [(where, f"hw/{holder['artifact']}")]))
     for where, cited in structured:
-        if not isinstance(cited, str):
-            continue
-        verdict = paths.judge(cited, structured=True)
-        if verdict.problem:
-            problems.append(PathProblem("evidence.scratch_path", where,
-                                        f"{where} {cited} {verdict.problem}: {PROMOTE}"))
-        elif where != "source.artifact" and verdict.rel:
-            listed.append(verdict.rel)
-    problems.extend(_text_problems(paths, entry, listed))
+        if isinstance(cited, str):
+            found = _structured_problems(paths, [(where, cited)])
+            problems.extend(found)
+            verdict = paths.judge(cited, structured=True)
+            if not found and verdict.rel:
+                listed.append(verdict.rel)
+    problems.extend(_text_problems(paths, entry, listed, ENTRY_STRUCTURED))
     return problems
 
 
-def _text_problems(paths: ProjectPaths, node: Mapping[str, Any], listed: Sequence[str] | None) -> list[PathProblem]:
+def _structured_problems(paths: ProjectPaths, cited: Iterable[tuple[str, str]]) -> list[PathProblem]:
+    problems = []
+    for where, path in cited:
+        verdict = paths.judge(path, structured=True)
+        if verdict.problem:
+            problems.append(PathProblem("evidence.scratch_path", where, f"{where} {path} {verdict.problem}: {PROMOTE}"))
+    return problems
+
+
+def _text_problems(paths: ProjectPaths, node: Mapping[str, Any], listed: Sequence[str] | None,
+                   skip: frozenset[str]) -> list[PathProblem]:
     problems: list[PathProblem] = []
-    for key, text in _strings(node):
+    for key, text in _strings(node, skip):
         for token in path_tokens(text):
             verdict = paths.judge(token)
             if verdict.problem:
@@ -200,14 +220,16 @@ def _text_problems(paths: ProjectPaths, node: Mapping[str, Any], listed: Sequenc
 
 def disposition_problems(paths: ProjectPaths, disposition: Mapping[str, Any]) -> list[PathProblem]:
     """The text-field problems of one finding disposition (it lists no artifacts, so only the inside rule applies)."""
-    return _text_problems(paths, {k: v for k, v in disposition.items() if k != "producer"}, None)
+    bundle = (disposition.get("producer") or {}).get("bundle")
+    found = _structured_problems(paths, [("producer.bundle", bundle)] if isinstance(bundle, str) else [])
+    return found + _text_problems(paths, disposition, None, DISPOSITION_STRUCTURED)
 
 
 def evidence_refs(entry: Mapping[str, Any]) -> list[str]:
     """The other evidence ids that the prose of `entry` names, in order of first mention."""
     own = entry.get("id")
     found: dict[str, None] = {}
-    for _, text in _strings(entry):
+    for _, text in _strings(entry, ENTRY_STRUCTURED):
         found.update((ident, None) for ident in _EVIDENCE_ID.findall(text) if ident != own)
     return list(found)
 

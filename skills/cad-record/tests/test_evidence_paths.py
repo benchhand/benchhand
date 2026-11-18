@@ -166,7 +166,8 @@ class NotAPath(Project):
     def test_prose_that_is_not_a_path_passes(self) -> None:
         for prose in ("Fit is ~5 mm", "thread 1/4-20 UNC", "screw M6x20", "tolerance ±0.1/0.2", "load 5 N/mm2.",
                       "speed 10 mm/s", "pass/fail", "ratio 3/8 in", "see https://example.com/datasheet.pdf",
-                      "rev 1.2/1.3", "ISO 286-1 and/or ANSI B4.1", "sealed v3 (full-sweep)"):
+                      "rev 1.2/1.3", "ISO 286-1 and/or ANSI B4.1", "sealed v3 (full-sweep)", "ratio 3/4",
+                      "dated 2026/11/17", "tag v1.2", "range 1.5/2.0", "layers 0.1mm/0.2mm", "pitch 2x3.5mm/4mm"):
             with self.subTest(prose):
                 self.assertEqual(self.refusal(self.entry(method=prose)), [], prose)
 
@@ -237,6 +238,88 @@ class DependentEvidence(Project):
                                           self.entry("EV-004", method="Same measurement as EV-003.")])
         with self.assertRaisesRegex(evidence.EvidenceError, "EV-004.*EV-003"):
             evidence.acceptance_inventory(self.hw, impact.read_record(self.hw))
+
+    def test_a_refused_evidence_id_in_physical_configuration_makes_the_entry_unknown(self) -> None:
+        entries = [self.entry("EV-003", method=VETOED_METHOD),
+                   self.entry("EV-004", physical={**acceptance.PHYSICAL, "configuration": "as measured in EV-003"})]
+        shown, found = self.results(entries)
+        self.assertEqual(shown, {"EV-003": "unknown", "EV-004": "unknown"})
+        self.assertIn("EV-003", found[0].message)
+
+    def test_the_scratch_physical_configuration_is_refused_at_all_three_acceptance_points(self) -> None:
+        entry = self.entry(physical={**acceptance.PHYSICAL, "configuration": "see .cad-work/x.json"})
+        shown, _ = self.results([entry])
+        self.assertEqual(shown, {"EV-001": "unknown"})
+        acceptance.write_ledger(self.hw, [entry])
+        record = impact.read_record(self.hw)
+        found = evidence.ledger_findings(record, approved=lambda _: True, today=TODAY, paths=self.paths)
+        self.assertEqual({f.code for f in found}, {"evidence.scratch_path"})
+        with self.assertRaisesRegex(evidence.EvidenceError, r"\.cad-work/x\.json"):
+            evidence.acceptance_inventory(self.hw, record)
+
+
+class Extensions(Project):
+    def test_alphanumeric_extensions_are_scanned(self) -> None:
+        sealed = self.hw / "versions" / "v3" / "manufacturing" / "TST-0001"
+        sealed.mkdir(parents=True)
+        (sealed / "part.3mf").write_bytes(b"3mf")
+        (self.root / "notes" / "untracked.3mf").write_bytes(b"3mf")
+        cases = {
+            "missing 3mf": ("see manufacturing/TST-0001/part.3mf", "evidence.scratch_path"),
+            "untracked 3mf": ("see notes/untracked.3mf", "evidence.scratch_path"),
+            "uncited sealed 3mf": ("see hw/versions/v3/manufacturing/TST-0001/part.3mf", "evidence.uncited_artifact"),
+            "missing mp4": ("see results/run.mp4", "evidence.scratch_path"),
+            "missing h5": ("see data/out.h5", "evidence.scratch_path"),
+            "scratch 3mf": ("see .cad-work/part.3mf", "evidence.scratch_path"),
+        }
+        for name, (method, code) in cases.items():
+            with self.subTest(name):
+                self.assertEqual([p.code for p in self.refusal(self.entry(method=method))], [code], method)
+
+    def test_a_listed_sealed_3mf_is_accepted(self) -> None:
+        sealed = self.hw / "versions" / "v3" / "manufacturing" / "TST-0001"
+        sealed.mkdir(parents=True)
+        (sealed / "part.3mf").write_bytes(b"3mf")
+        path = "hw/versions/v3/manufacturing/TST-0001/part.3mf"
+        self.assertEqual(self.refusal(self.entry(method=f"read back {path}", artifacts=[path])), [])
+
+
+class NestedProse(Project):
+    """Nested prose fields, such as physical.configuration, get the same scan as top-level text."""
+
+    def physical(self, text: str) -> dict[str, Any]:
+        return {"physical": {**acceptance.PHYSICAL, "configuration": text}}
+
+    def test_scratch_geometry_in_physical_configuration_is_refused(self) -> None:
+        problems = self.refusal(self.entry(**self.physical("as built from .cad-work/layout/regional_v1.py")))
+        self.assertEqual([p.code for p in problems], ["evidence.scratch_path"])
+        self.assertEqual(problems[0].where, "physical.configuration")
+
+    def test_the_structured_configuration_object_is_not_prose(self) -> None:
+        self.assertEqual(self.refusal(self.entry()), [])
+
+    def test_the_other_prose_fields_below_nested_objects_are_scanned(self) -> None:
+        for where, extra in {"criterion.conditions": {"criterion": {"conditions": "see /tmp/x.json"}},
+                             "criterion.source.reference": {"criterion": {"source": {"reference": "see /tmp/x.json"}}},
+                             "waiver.reason": {"waiver": {"reason": "see /tmp/x.json"}},
+                             "source.origin": {"source": {"origin": "see /tmp/x.json"}}}.items():
+            with self.subTest(where):
+                entry = self.entry()
+                for key, value in extra.items():
+                    entry[key] = {**entry.get(key, {}), **value}
+                self.assertEqual([p.where for p in self.refusal(entry)], [where])
+
+    def test_a_scratch_criterion_source_artifact_is_refused(self) -> None:
+        entry = self.entry()
+        entry["criterion"] = {**entry["criterion"], "source": {"kind": "test", "reference": "TST",
+                                                              "artifact": "../../outside.pdf", "sha256": "0" * 64}}
+        self.assertEqual([p.where for p in self.refusal(entry)], ["criterion.source.artifact"])
+
+    def test_a_scratch_producer_bundle_of_a_disposition_is_refused(self) -> None:
+        disposition = {"finding": "f1", "status": "declined", "decision": "DR-001", "reason": "TST",
+                       "producer": {"bundle": "hw/.cad/bundle", "manifest_sha256": V1}}
+        self.assertEqual([p.where for p in paths_module.disposition_problems(self.paths, disposition)],
+                         ["producer.bundle"])
 
 
 class FiguresWithoutAPath(Project):
