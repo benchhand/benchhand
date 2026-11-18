@@ -57,6 +57,12 @@ def edges(shape: Any) -> list[Any]:
     return _explore(shape, TopAbs_EDGE, "Edge")
 
 
+def solids(shape: Any) -> list[Any]:
+    from OCP.TopAbs import TopAbs_SOLID
+
+    return _explore(shape, TopAbs_SOLID, "Solid")
+
+
 def faces(shape: Any) -> list[Any]:
     from OCP.TopAbs import TopAbs_FACE
 
@@ -118,6 +124,20 @@ def linear_range(shape: Any, gradient: Vec, origin: Vec) -> tuple[float, float]:
             values += [_dot(gradient, _sub(p, origin)) for p in data]
         else:
             values += _arc_linear(data, gradient, origin)
+    return min(values), max(values)
+
+
+def sampled_range(shape: Any, gradient: Vec, origin: Vec, samples: int = 256) -> tuple[float, float]:
+    """(min, max) of gradient . (p - origin) over the vertices of `shape` and `samples` points on each curved edge.
+    An estimate that is tight where `linear_range` is only a bound. It measures a sliver of overlap and decides nothing."""
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+
+    values: list[float] = []
+    for edge in edges(shape):
+        curve = BRepAdaptor_Curve(edge)
+        first, last = curve.FirstParameter(), curve.LastParameter()
+        steps = 1 if classify(edge)[0] == "line" else samples
+        values += [_dot(gradient, _sub(_xyz(curve.Value(first + (last - first) * i / steps)), origin)) for i in range(steps + 1)]
     return min(values), max(values)
 
 

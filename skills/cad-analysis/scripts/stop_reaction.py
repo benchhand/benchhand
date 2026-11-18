@@ -166,9 +166,8 @@ def overlap(fixed_face: Any, moving_face: Any) -> list[Any]:
 
 def overlap_of(moving: Any, fixed: Any) -> tuple[float, float]:
     """(volume in mm3, depth in mm) of the volume the two parts share, or (0, 0) when they only touch. Overlap is a
-    shared volume above pose.INTERFERENCE_MM3, the rule cad-motion's sweep and cad-model check use. The depth is the
-    thinnest width of the shared region along the normal of one of its planar faces, exact for lines and arcs: a
-    sliver of overlap is as thick as its flat faces say. A region with no planar face gets its smallest oriented box side."""
+    shared volume above pose.INTERFERENCE_MM3, the rule cad-motion's sweep and cad-model check use. The depth is that
+    of the deepest connected piece (see `thinnest`). A region with no planar face gets its smallest oriented box side."""
     from OCP.Bnd import Bnd_OBB
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
     from OCP.BRepBndLib import BRepBndLib
@@ -185,17 +184,27 @@ def overlap_of(moving: Any, fixed: Any) -> tuple[float, float]:
     volume = float(pose.volume_properties(shared).Mass())
     if volume <= pose.INTERFERENCE_MM3:
         return 0.0, 0.0
+    return volume, max(thinnest(piece) for piece in extrema.solids(shared) or [shared])
+
+
+def thinnest(piece: Any) -> float:
+    """The thinnest width of one connected piece of overlap along the normal of one of its planar faces, estimated
+    from points on its edges: a sliver of overlap is as thick as its flat faces say. A piece with no planar face gets
+    its smallest oriented box side."""
+    from OCP.Bnd import Bnd_OBB
+    from OCP.BRepBndLib import BRepBndLib
+
     widths = []
-    for face in extrema.faces(shared):
+    for face in extrema.faces(piece):
         plane = plane_of(face)
         if plane is not None:
-            low, high = extrema.linear_range(shared, plane[1], plane[0])
+            low, high = extrema.sampled_range(piece, plane[1], plane[0])
             widths.append(high - low)
     if widths:
-        return volume, min(widths)
+        return min(widths)
     box = Bnd_OBB()
-    BRepBndLib.AddOBB_s(shared, box, False, True, False)
-    return volume, 2.0 * min(box.XHSize(), box.YHSize(), box.ZHSize())
+    BRepBndLib.AddOBB_s(piece, box, False, True, False)
+    return float(2.0 * min(box.XHSize(), box.YHSize(), box.ZHSize()))
 
 
 def face_area(face: Any) -> float:

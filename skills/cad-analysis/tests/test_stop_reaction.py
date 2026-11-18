@@ -344,7 +344,8 @@ class StopGeometryTests(unittest.TestCase):
         # it crosses the disc's top plane z = -3 at x = 3 (1 - cos 20) / sin 20 = 0.529 mm. For x between 0 and 0.529 the
         # lever dips below z = -3 inside the disc, which starts at the rim point (0, 2). The deepest point is that rim
         # point, 3 (1 - cos 20) = 0.181 mm from the underside plane (0.192 mm below z = -3). The lever tilts 20 deg to
-        # the disc top, so no parallel pair exists, but the cause is the overlap and the reason must say so.
+        # the disc top, so no parallel pair exists, but the cause is the overlap and the reason must say so. The disc
+        # variant has no open stop, so this sliver is the only overlap: the shared volume there is 0.17 mm3.
         code, result = self.run_stop("overlap", joint={**JOINT, "max": 20}, variant="disk")
         [row] = result["outcomes"]
         self.assertEqual((code, row["outcome"]), (1, "unknown"))

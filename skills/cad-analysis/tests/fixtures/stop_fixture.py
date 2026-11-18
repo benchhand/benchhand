@@ -20,11 +20,11 @@ LATCHED_GAP_MM (default 0) lowers the latched stop's top face by that much, so t
 
 VARIANT changes one thing:
   ring   adds TST-0303, a small ring at the lever's tip, for a second joint
-  disk   the latched stop is a disc of radius 10 centred at x 10, y 2 whose rim touches the axis line at x 0, so its
-         nearest arm is exactly 0, at a rim point that is no vertex and falls between the 64 samples of a sampled
+  disk   the bracket has the latched stop only, a disc of radius 10 centered at x 10, y 2. Its rim touches the axis
+         line at x 0, so its nearest arm is exactly 0, at a rim point that is no vertex and falls between the 64 samples of a sampled
          outline. Its lever starts at x -2, past the axis line
-  disk3  the same disc centred at x 13, so its rim is nearest the axis line at x 3, at the rim point (3, 2)
-  round  the lever ends in a cylinder of radius 10 centred at x 70, so its farthest point from the axis, at x 80,
+  disk3  the same disc centered at x 13, so its rim is nearest the axis line at x 3, at the rim point (3, 2)
+  round  the lever ends in a cylinder of radius 10 centered at x 70, so its farthest point from the axis, at x 80,
          is on an arc between sampled points
 
 OUT_DIR/parts/<PN>.step.
@@ -87,16 +87,20 @@ def fused(*shapes):
 
 def shapes(latched_gap: float = 0.0, variant: str = "") -> dict[str, object]:
     base = box(-30, -14, -16, 30, 14, -8)
-    if variant in ("disk", "disk3"):
+    discs = variant in ("disk", "disk3")
+    if discs:
         latched_stop = cylinder(10 if variant == "disk" else 13, 2, -8, "z", 10, 5 - latched_gap)
     else:
         latched_stop = box(7, -4, -8, 13, 4, -3 - latched_gap)  # top face at z -3: the lever's underside rests on it at 0 deg
-    open_stop = turned(box(0, -4, 3, 7, 4, 9), OPEN_DEGREES)  # its face lies in the lever's top plane at 75 deg
-    post = box(-12, -4, -8, -4, 4, 10)
-    lever = box(-2 if variant == "disk" else 0, -4, -3, 80, 4, 3)  # the disc variant's lever runs past the axis line
+    if discs:  # the disc variants have the latched stop only, since their lever runs past the axis line
+        bracket = fused(base, latched_stop)
+    else:
+        open_stop = turned(box(0, -4, 3, 7, 4, 9), OPEN_DEGREES)  # its face lies in the lever's top plane at 75 deg
+        bracket = fused(base, latched_stop, open_stop, box(-12, -4, -8, -4, 4, 10))
+    lever = box(-2 if variant == "disk" else 0, -4, -3, 80, 4, 3)
     if variant == "round":
         lever = fused(box(0, -4, -3, 70, 4, 3), cylinder(70, -4, 0, "y", 10, 8))
-    parts = {"TST-0301": fused(base, latched_stop, open_stop, post), "TST-0302": lever}
+    parts = {"TST-0301": bracket, "TST-0302": lever}
     if variant == "ring":
         parts["TST-0303"] = box(84, -3, -3, 90, 3, 3)
     return parts
