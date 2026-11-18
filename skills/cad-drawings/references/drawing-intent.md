@@ -113,7 +113,7 @@ datums. Instances with a missing or extra node keep one location each.
 - `locating_fit`
 - each `heat_set[]` entry
 
-It is a number above 0, in mm. It is the distance that the pin, shaft or insert enters its mating bore during assembly. It has no default. Do not derive it from other fields, such as `depth_min`.
+It is a number above 0, in mm, with no default. It is the travel along the insertion axis, back from the installed pose, over which the inserted part still overlaps its partner. For a press fit seated on a bore floor, use the bore depth and ignore any entry chamfer or counterbore. Do not use the press-band length or the overlap at the installed pose. For a heat-set insert, use its embedded length, and only press or heat-set fits get assembly exemption up to it plus one minimum sampling step. Do not derive it from other fields, such as `depth_min`.
 
 ## Recognised features
 
