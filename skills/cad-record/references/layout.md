@@ -127,9 +127,9 @@ reported with the action below; `vcs` paths are accepted.
 |---|---|---|---|
 | `hw/versions/.{V}.partial-{PID}`/ | transient | cad-model cad_model.py run | An interrupted cad-model run left this staging folder. Delete it once no run is in progress. |
 | `hw/versions/.latest.json.tmp` | transient | cad-model cad_model.py run | An interrupted cad-model run left this temporary pointer. Delete it once no run is in progress. |
-| `hw/.cad/cache/objects/.{SHA}.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-stored object. Delete it once no run is in progress. |
-| `hw/.cad/cache/records/.{SHA}.json.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written record. Delete it once no run is in progress. |
-| `hw/.cad/cache/.gitignore.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written .gitignore. Delete it once no run is in progress. |
+| `hw/.cad/cache/objects/.{SHA}.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-stored object. Once no run is in progress, delete it. |
+| `hw/.cad/cache/records/.{SHA}.json.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written record. Once no run is in progress, delete it. |
+| `hw/.cad/cache/.gitignore.{PID}.{TID}.tmp` | transient | cad-record store.py | An interrupted store write left this half-written .gitignore. Once no run is in progress, delete it. |
 | `hw/renders/.{V}.partial-{STAMP}`/ | transient | cad-render render.py | An interrupted render left this staging folder. Delete it once no render is in progress. |
 | `hw/renders/.{V}.old-{STAMP}`/ | transient | cad-render render.py | An interrupted render left the set it was replacing. Delete it once no render is in progress. |
 | `hw/.cad/.recheck.json.tmp` | transient | cad-recheck stamp.py | An interrupted stamp left this temporary file. Delete it once no stamp is in progress. |
