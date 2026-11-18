@@ -219,11 +219,19 @@ SIG_URL = "/repos/o/cla-signers/contents/signatures/v1/cla.json"
 
 
 class FakeGitHub:
-    """Stub transport for the REST calls cla_check makes, for the code repo and the signatures repo."""
+    """Stub transport for the REST calls cla_check makes, for the code repo and the signatures repo.
+
+    ``comments`` maps comment id to body; by default it holds the signing comment 99 and the source
+    comment of every record in the starting document. ``open_prs`` lists the open pull requests as
+    (number, opener id, head sha, commit author ids); PR 4 is always readable by number."""
 
     def __init__(self, commits: list[dict[str, Any]], doc: dict[str, Any] | None = None,
                  put_failures: list[int] | None = None,
-                 runs: list[dict[str, Any]] | None = None) -> None:
+                 runs: list[dict[str, Any]] | None = None,
+                 comments: dict[int, str] | None = None,
+                 open_prs: list[tuple[int, int, str, list[int]]] | None = None,
+                 runs_by_sha: dict[str, list[dict[str, Any]]] | None = None,
+                 comment_status: dict[int, int] | None = None) -> None:
         self.commits = commits
         self.doc = doc
         self.put_failures = list(put_failures or [])
@@ -233,17 +241,45 @@ class FakeGitHub:
             {"id": 11, "status": "completed", "conclusion": "failure"},
             {"id": 10, "status": "completed", "conclusion": "failure"},
         ]
+        self.runs_by_sha = runs_by_sha
+        if comments is None:
+            comments = {99: PHRASE}
+            for rec in (doc or {}).get("signatures", []):
+                comments.setdefault(rec["comment_id"], cla.signing_phrase(rec["cla_version"]))
+        self.comments = comments
+        self.comment_status = comment_status or {}
+        self.open_prs = open_prs if open_prs is not None else [(4, 7, "headsha", [7])]
 
     def writes(self) -> list[tuple[str, str, Any]]:
         return [c for c in self.calls if c[0] != "GET"]
 
+    def pr_commits(self, number: int) -> list[dict[str, Any]]:
+        if number == 4:
+            return self.commits
+        return [commit(a, "u") for n, _o, _s, authors in self.open_prs if n == number for a in authors]
+
     def __call__(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
         self.calls.append((method, path, body))
-        if method == "GET" and "/pulls/4/commits" in path:
+        found = re.search(r"/pulls/(\d+)/commits", path)
+        if method == "GET" and found:
             page = int(re.search(r"[?&]page=(\d+)", path).group(1))  # type: ignore[union-attr]
-            return 200, self.commits[(page - 1) * 100 : page * 100]
+            items = self.pr_commits(int(found.group(1)))
+            return 200, items[(page - 1) * 100 : page * 100]
         if method == "GET" and path.endswith("/pulls/4"):
             return 200, {"head": {"sha": "headsha"}, "user": {"id": 7, "login": "dev"}}
+        if method == "GET" and "/repos/o/r/pulls?state=open" in path:
+            page = int(re.search(r"[?&]page=(\d+)", path).group(1))  # type: ignore[union-attr]
+            items = [{"number": n, "user": {"id": o, "login": "u"}, "head": {"sha": sha}}
+                     for n, o, sha, _a in self.open_prs]
+            return 200, items[(page - 1) * 100 : page * 100]
+        comment = re.search(r"/repos/o/r/issues/comments/(\d+)$", path)
+        if method == "GET" and comment:
+            cid = int(comment.group(1))
+            if cid in self.comment_status:
+                return self.comment_status[cid], {}
+            if cid not in self.comments:
+                return 404, {}
+            return 200, {"id": cid, "body": self.comments[cid]}
         if method == "GET" and path == f"{SIG_URL}?ref=main":
             if self.doc is None:
                 return 404, {}
@@ -257,6 +293,9 @@ class FakeGitHub:
             self.version += 1
             return 200, {}
         if method == "GET" and "/repos/o/r/actions/workflows/cla.yml/runs" in path:
+            if self.runs_by_sha is not None:
+                sha = re.search(r"head_sha=(\w+)", path).group(1)  # type: ignore[union-attr]
+                return 200, {"workflow_runs": self.runs_by_sha.get(sha, [])}
             return 200, {"workflow_runs": self.runs}
         if method == "POST" and "/repos/o/r/actions/runs/" in path:
             return 201, {}
@@ -413,6 +452,103 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
         self.assertEqual(api.doc, {"signatures": []})
 
+    # ---- reconcile: a signature stands only while its source comment still holds the phrase ----
+
+    def record(self, uid: int, comment_id: int, repo: str = "o/r", version: str = "3") -> dict[str, Any]:
+        return {"id": uid, "login": "u", "cla_version": version, "repo": repo, "pr": 4,
+                "comment_id": comment_id, "signed_at": "t"}
+
+    def test_signing_drops_the_signers_records_whose_comment_is_gone_or_changed(self) -> None:
+        doc = {"signatures": [self.record(7, 50, version="2"), self.record(7, 51, version="2")]}
+        api = FakeGitHub([commit(7, "dev")], doc=doc, comments={99: PHRASE, 51: "edited away"})
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual([r["comment_id"] for r in api.doc["signatures"]], [99])  # type: ignore[index]
+
+    def test_reconcile_keeps_a_record_whose_comment_still_holds_its_own_versions_phrase(self) -> None:
+        old = self.record(7, 50, version="2")
+        api = FakeGitHub([commit(7, "dev")], doc={"signatures": [old]},
+                         comments={99: PHRASE, 50: cla.signing_phrase("2")})
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual([r["comment_id"] for r in api.doc["signatures"]], [50, 99])  # type: ignore[index]
+
+    def test_reconcile_leaves_other_users_and_other_repos_alone(self) -> None:
+        doc = {"signatures": [self.record(8, 60), self.record(7, 61, repo="other/r", version="2")]}
+        api = FakeGitHub([commit(7, "dev")], doc=doc, comments={99: PHRASE})
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual([r["comment_id"] for r in api.doc["signatures"]], [60, 61, 99])  # type: ignore[index]
+        self.assertFalse(any("/comments/60" in c[1] or "/comments/61" in c[1] for c in api.calls))
+
+    def test_reconcile_keeps_a_record_when_the_comment_lookup_errors(self) -> None:
+        doc = {"signatures": [self.record(7, 50, version="2")]}
+        api = FakeGitHub([commit(7, "dev")], doc=doc, comments={99: PHRASE}, comment_status={50: 500})
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual([r["comment_id"] for r in api.doc["signatures"]], [50, 99])  # type: ignore[index]
+
+    def test_a_signing_comment_deleted_before_processing_records_nothing(self) -> None:
+        api = FakeGitHub([commit(7, "dev")], doc=sigs(), comments={})
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual(api.doc, sigs())
+
+    def test_deleting_a_comment_also_drops_the_users_other_stale_records(self) -> None:
+        doc = {"signatures": [self.record(7, 50, version="2"), self.record(7, 99)]}
+        api = FakeGitHub([commit(7, "dev")], doc=doc, comments={})
+        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
+        self.assertEqual(api.doc, {"signatures": []})
+
+    # ---- a revocation is global: every open PR of the user is re-checked ----
+
+    def two_runs(self) -> dict[str, list[dict[str, Any]]]:
+        done = lambda i: [{"id": i, "status": "completed", "conclusion": "success"}]  # noqa: E731
+        return {"headsha": done(40), "h5": done(50), "h6": done(60), "h9": done(90)}
+
+    def test_revocation_reruns_every_open_pr_where_the_user_is_opener_or_author(self) -> None:
+        prs = [(4, 7, "headsha", [7]), (5, 8, "h5", [8, 7]), (6, 9, "h6", [9]), (7, 7, "h9", [])]
+        api = FakeGitHub([commit(7, "dev")], doc=self.signed_doc(), comments={},
+                         open_prs=prs, runs_by_sha=self.two_runs())
+        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
+        posts = sorted(c[1] for c in api.calls if c[0] == "POST")
+        self.assertEqual(posts, [
+            "/repos/o/r/actions/runs/40/rerun",
+            "/repos/o/r/actions/runs/50/rerun",
+            "/repos/o/r/actions/runs/90/rerun",
+        ])
+
+    def test_revocation_still_reruns_the_comments_own_pr_when_it_is_not_listed_open(self) -> None:
+        api = FakeGitHub([commit(7, "dev")], doc=self.signed_doc(), comments={},
+                         open_prs=[], runs_by_sha=self.two_runs())
+        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
+        self.assertEqual([c[1] for c in api.calls if c[0] == "POST"], ["/repos/o/r/actions/runs/40/rerun"])
+
+    def test_open_pr_scan_is_paginated_and_bounded(self) -> None:
+        prs = [(1000 + i, 9, f"x{i}", [9]) for i in range(100 * (cla.MAX_OPEN_PR_PAGES + 2))]
+        api = FakeGitHub([commit(7, "dev")], doc=self.signed_doc(), comments={}, open_prs=prs, runs_by_sha={})
+        self.assertEqual(self.go(self.comment_env(action="deleted"), api), 0)
+        listed = [c for c in api.calls if "/pulls?state=open" in c[1]]
+        self.assertEqual(len(listed), cla.MAX_OPEN_PR_PAGES)
+
+    def test_one_failed_rerun_does_not_stop_the_others_but_fails_the_job(self) -> None:
+        prs = [(4, 7, "headsha", [7]), (5, 7, "h5", [7])]
+        api = FakeGitHub([commit(7, "dev")], doc=self.signed_doc(), comments={}, open_prs=prs,
+                         runs_by_sha=self.two_runs())
+        real = api.__call__
+
+        def flaky(method: str, path: str, body: Any = None) -> tuple[int, Any]:
+            if method == "POST" and "/runs/40/" in path:
+                return 403, {}
+            return real(method, path, body)
+
+        self.assertEqual(cla.run(self.comment_env(action="deleted"), flaky, flaky, CONFIG), 1)
+        self.assertTrue(any(c[0] == "POST" and "/runs/50/rerun" in c[1] for c in api.calls))
+
+    def test_a_grant_reruns_only_the_signed_pr(self) -> None:
+        prs = [(4, 7, "headsha", [7]), (5, 7, "h5", [7])]
+        api = FakeGitHub([commit(7, "dev")], doc=sigs(), open_prs=prs,
+                         runs_by_sha={"headsha": [{"id": 40, "status": "completed", "conclusion": "failure"}],
+                                      "h5": [{"id": 50, "status": "completed", "conclusion": "failure"}]})
+        self.assertEqual(self.go(self.comment_env(), api), 0)
+        self.assertEqual([c[1] for c in api.calls if c[0] == "POST"],
+                         ["/repos/o/r/actions/runs/40/rerun-failed-jobs"])
+
     def test_match_only_is_true_for_sign_and_revoke_events_only(self) -> None:
         self.assertTrue(cla.matches(self.comment_env(), CONFIG))
         self.assertTrue(cla.matches(self.comment_env(action="deleted"), CONFIG))
@@ -490,6 +626,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(job["permissions"], {})
         self.assertNotIn("secrets.", json.dumps(job))
         self.assertNotIn("actions/checkout", json.dumps(job))
+
+    def test_sign_job_has_no_shared_concurrency_slot(self) -> None:
+        # a fixed group lets a newer pending run replace a queued revocation
+        self.assertNotIn("concurrency", self.doc()["jobs"]["sign"])
 
     def test_comment_trigger_covers_edits_and_deletes(self) -> None:
         on = self.doc()[True]  # PyYAML reads the bare key `on` as True

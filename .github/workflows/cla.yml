@@ -53,10 +53,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-    # One writer at a time keeps the signature file's blob sha fresh.
-    concurrency:
-      group: cla-sign
-      cancel-in-progress: false
+    # No concurrency group: a fixed one keeps a single pending run, so a newer comment event could
+    # replace a queued revocation. The contents API blob sha makes concurrent writers retry instead.
     steps:
       - name: Check out the default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
