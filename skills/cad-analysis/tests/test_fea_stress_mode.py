@@ -252,6 +252,7 @@ class StrengthAcceptance(StressCase):
                                     ("settled_away_from_support", cantilever_plan(), 4.5),
                                     ("unknown", truss_plan(), 6.0)):
             with self.subTest(outcome):
+                self.jobs.clear()
                 self.plan = plan
                 self.build(conditions_tests.documents())
                 status, report = self.call(self.strength_case(size), "--replace")
@@ -271,8 +272,9 @@ class StrengthAcceptance(StressCase):
         self.assertEqual(status, 0, report)
         finding = next(row for row in report["engineering"]["findings"] if row["code"] == "fea.strength.unverified")
         self.assertEqual(finding["measured"]["status"], "unknown")
-        self.assertIn("REQ-001", json.dumps(finding["criterion"]))
-        self.assertNotEqual(finding["criterion"].get("status"), "unknown")
+        criterion = finding["criterion"]
+        self.assertEqual((criterion["property"], criterion["operator"], criterion["value"]),
+                         ("yield_safety_factor", ">=", 2.0))  # REQ-001's sourced criterion
 
     def test_the_sealed_check_packet_carries_the_same_unknown_strength_and_evidence_reads_it(self) -> None:
         self.plan = interior_plan()
