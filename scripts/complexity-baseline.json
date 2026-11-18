@@ -1,7 +1,7 @@
 {
  "counts": {
-  "C901": 171,
-  "PLR0912": 87,
+  "C901": 169,
+  "PLR0912": 86,
   "PLR0915": 50
  },
  "offenders": [
@@ -25,6 +25,7 @@
   "C901 skills/cad-design/scripts/process_checks/shaping.py::draft",
   "C901 skills/cad-design/scripts/process_checks/sheet.py::_tab_slot_fits",
   "C901 skills/cad-design/scripts/process_checks/sheet.py::material",
+  "C901 skills/cad-design/tests/test_mfg_corpus.py::oracle_reach",
   "C901 skills/cad-drawings/scripts/assembly_check.py::_bind_items",
   "C901 skills/cad-drawings/scripts/assembly_check.py::_check_parts_list",
   "C901 skills/cad-drawings/scripts/assembly_check.py::_resolve_operations",
@@ -78,9 +79,7 @@
   "C901 skills/cad-model/scripts/cadmodel/runner.py::feature_locators",
   "C901 skills/cad-model/tests/fixtures/build123d/hole_case.py::build",
   "C901 skills/cad-model/tests/fixtures/cadquery/hole_case.py::build",
-  "C901 skills/cad-motion/scripts/access.py::assess",
   "C901 skills/cad-motion/scripts/access.py::plan_paths",
-  "C901 skills/cad-motion/scripts/access.py::run_path",
   "C901 skills/cad-motion/scripts/continuous.py::merge",
   "C901 skills/cad-motion/scripts/coupling.py::_mechanism_output",
   "C901 skills/cad-motion/scripts/coupling.py::_mechanisms",
@@ -174,7 +173,6 @@
   "C901 skills/cad-viewer/scripts/cadviewer/gallery.py::_renders",
   "C901 skills/cad-viewer/scripts/cadviewer/host.py::make_server",
   "C901 skills/cad-viewer/scripts/cadviewer/host.py::make_server.Handler._route",
-  "C901 skills/cad-viewer/scripts/cadviewer/record.py::part_findings",
   "C901 skills/cad-viewer/scripts/viewer.py::request_body",
   "PLR0912 harness/generate.py::parse_agent",
   "PLR0912 skills/cad-analysis/scripts/fea_static.py::load_case",
@@ -210,7 +208,6 @@
   "PLR0912 skills/cad-model/scripts/cadmodel/manufacture.py::plan",
   "PLR0912 skills/cad-model/scripts/cadmodel/manufacture.py::version_check",
   "PLR0912 skills/cad-model/scripts/cadmodel/runner.py::feature_locators",
-  "PLR0912 skills/cad-motion/scripts/access.py::run_path",
   "PLR0912 skills/cad-motion/scripts/coupling.py::_mechanisms",
   "PLR0912 skills/cad-motion/scripts/coupling.py::_profiles",
   "PLR0912 skills/cad-motion/scripts/freecad_assembly.py::main",
