@@ -30,6 +30,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import load_module as load  # noqa: E402
 
 fx = load("cad_record_mi_fixtures", SKILLS / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
+sys.path.insert(0, str(SCRIPT.parent))  # stop_reaction imports its siblings by name
+code_shas = load("cad_motion_code_shas", SKILLS / "cad-motion" / "scripts" / "code_shas.py")
+stop_reaction = load("cad_analysis_stop_reaction", SCRIPT)
+ISO286 = "cad-fits/data/iso286.json"
 
 JOINT = {"id": "J-001", "type": "revolute", "parent": "TST-0301", "child": "TST-0302", "axis": [0, -1, 0],
          "origin": [0, 0, 0], "min": 0, "max": 75, "nominal": 0}
@@ -67,6 +71,27 @@ def documents(contact_load: float | None = None, joint: dict | None = None, kind
 
 def validator(definition: str):
     return fx.ref_validator(f"https://srobroek.com/cad/schemas/manufacturing.schema.json#/$defs/{definition}")
+
+
+def covered(path: Path, declared: tuple[Path, ...]) -> bool:
+    path = path.resolve()
+    return any(path == entry.resolve() or path.is_relative_to(entry.resolve()) for entry in declared)
+
+
+class DeclaredDataTests(unittest.TestCase):
+    """The recipe names the data that decides the verdict as well as the code (#128, #140). Kernel-free."""
+
+    def test_the_verdict_data_covers_every_data_file_the_code_names(self) -> None:
+        missing = sorted(str(path.relative_to(SKILLS)) for path in code_shas.referenced_data(SCRIPT)
+                         if not covered(path, stop_reaction.VERDICT_DATA))
+        self.assertEqual(missing, [], "add these to stop_reaction.VERDICT_DATA")
+
+    def test_the_recipe_hashes_the_declared_data_with_the_code(self) -> None:
+        table = code_shas.closure(SCRIPT, stop_reaction.VERDICT_DATA)
+        self.assertIn(ISO286, table)
+        self.assertIn("cad-analysis/scripts/stop_reaction.py", table)
+        self.assertIn("cad-analysis/scripts/stop_extrema.py", table)
+        self.assertNotIn(ISO286, code_shas.closure(SCRIPT), "the table is data, not code")
 
 
 class StopGeometryTests(unittest.TestCase):

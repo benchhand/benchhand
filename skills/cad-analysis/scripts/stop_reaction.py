@@ -72,12 +72,19 @@ def _load_module(name: str, path: Path) -> Any:
 SKILLS = Path(__file__).resolve().parents[2]
 pose = _load_module("cad_motion_pose", SKILLS / "cad-motion" / "scripts" / "pose.py")
 fits = _load_module("cad_fits_fits", SKILLS / "cad-fits" / "scripts" / "fits.py")
+code_shas = _load_module("cad_motion_code_shas", SKILLS / "cad-motion" / "scripts" / "code_shas.py")
 check_packet = _load_module("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
 intent = _load_module("cad_record_manufacturing_intent", SKILLS / "cad-record" / "scripts" / "manufacturing_intent.py")
 LAYOUT = pose.LAYOUT
 
 PRODUCER = "cad-analysis stop_reaction.py"
 SUBJECT = "stop-reaction"
+# The data files that decide this producer's verdict, hashed with its code into the packet recipe (code_shas):
+# the ISO 286 tables (fits.py:39, read at fits.py:51 through contact_tolerance), the bundle layout (layout.py:34,
+# read at layout.py:325) and the schemas that validate the packet and the record (check_packet.py:26,
+# manufacturing_intent.py:36, schema_registry.py:28-29).
+VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas")
 FAMILY = "engineering.stop_reaction"
 CONTACT_MM = 1e-4  # parts at or under this distance touch; planes this close are coincident
 # A joint limit whose parts are this close counts as the stop. A stop with a small gap in the model then gets a
@@ -167,10 +174,8 @@ def overlap(fixed_face: Any, moving_face: Any) -> list[Any]:
 def overlap_of(moving: Any, fixed: Any) -> tuple[float, float]:
     """(volume in mm3, depth in mm) of the volume the two parts share, or (0, 0) when they only touch. Overlap is a
     shared volume above pose.INTERFERENCE_MM3, the rule cad-motion's sweep and cad-model check use. The depth is that
-    of the deepest connected piece (see `thinnest`). A region with no planar face gets its smallest oriented box side."""
-    from OCP.Bnd import Bnd_OBB
+    of the deepest connected piece (see `thinnest`)."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-    from OCP.BRepBndLib import BRepBndLib
 
     common = BRepAlgoAPI_Common()
     common.SetArguments(pose.shape_list([moving]))
@@ -535,17 +540,6 @@ def outcome_row(entry: Assessment, obligation: str, mine: Sequence[Mapping[str, 
     return row
 
 
-def producer_code_hashes() -> dict[str, str]:
-    """sha256 of every file whose content decides this producer's packet: its own code and the modules and data it
-    loads, so an edit to any of them blocks reuse of a published bundle. A hand-kept list, like
-    fea_static's _producer_code_hashes. #140's code_shas helper takes over once it lands."""
-    here = Path(__file__).resolve()
-    paths = [here, here.with_name("stop_statics.py"), here.with_name("stop_extrema.py"), Path(pose.__file__), pose.COUPLING_PATH,
-             pose.ASSEMBLY_DATA_PATH, pose.YAML_LOADER_PATH, Path(pose.LAYOUT.__file__), Path(check_packet.__file__),
-             Path(intent.__file__), Path(fits.__file__), fits.DATA]
-    return {path.resolve().relative_to(SKILLS).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-
-
 def file_hashes(record_hw: Path, names: Iterable[str]) -> dict[str, str]:
     return {name.replace(".", "_"): hashlib.sha256((record_hw / name).read_bytes()).hexdigest()
             for name in names if (record_hw / name).is_file()}
@@ -587,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
         result, detail = assess(args, version, record_hw)
         recipe = {"options": {"attach": list(args.attach)}, "dependencies": result["dependencies"],
-                  "producer_code_sha256": producer_code_hashes()}
+                  "code": code_shas.closure(Path(__file__), VERDICT_DATA)}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "stop-reaction.json",
                                            recipe, out=args.out, replace=args.replace, record_version=intent.RECORD_VERSION)
         json.dump(output, sys.stdout, indent=2)
