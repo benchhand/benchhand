@@ -56,6 +56,11 @@ jobs:
       - name: Scoped Python type check
         run: uv run --no-project --locked --script scripts/typecheck.py
 
+      # CI has nothing staged, so --committed checks the stamp against HEAD's hw/ tree. The fixture
+      # stands in until examples/lamp-arm can be stamped (issue #159).
+      - name: Committed recheck stamp of the verify-project fixture
+        run: uv run --no-project --python 3.12 --with pyyaml==6.0.3 --with jsonschema==4.26.0 python -B skills/cad-recheck/scripts/stamp.py --verify --committed --hw skills/cad-recheck/tests/fixtures/verify-project/hw
+
   changes:
     name: Skill shard gate
     runs-on: ubuntu-24.04
