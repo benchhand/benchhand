@@ -361,10 +361,10 @@ def compare_levels(coarse: Level, fine: Level) -> StressStudy:
     problems = _input_problems("coarse", coarse) + _input_problems("fine", fine)
     if problems:
         # Nothing is indexed or compared: gaps and non-finite values would make any peak a guess.
-        reasons = tuple(dict.fromkeys(reason for reason, _ in problems))
-        message = (f"UNKNOWN ({', '.join(reasons)}): h_coarse={coarse.h:g} mm h_fine={fine.h:g} mm; "
+        refused = tuple(dict.fromkeys(reason for reason, _ in problems))
+        message = (f"UNKNOWN ({', '.join(refused)}): h_coarse={coarse.h:g} mm h_fine={fine.h:g} mm; "
                    + "; ".join(detail for _, detail in problems))
-        return StressStudy(UNKNOWN, None, None, reasons, message, _empty_peak(coarse), _empty_peak(fine))
+        return StressStudy(UNKNOWN, None, None, refused, message, _empty_peak(coarse), _empty_peak(fine))
     cutoff = K_EXCLUSION * coarse.h
     c, f = _kept_peak(coarse, cutoff, coarse.h), _kept_peak(fine, cutoff, coarse.h)
 
