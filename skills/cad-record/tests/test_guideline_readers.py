@@ -10,6 +10,11 @@ snapshot (benchhand-lch, review P1). Every case names the rule it proves."""
 from __future__ import annotations
 
 import copy
+import contextlib
+import hashlib
+import io
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -124,6 +129,13 @@ class VersionSnapshots(Base):
         changed = impact.changed_domains(impact.subject_fingerprints(built), impact.subject_fingerprints(current))
         self.assertIn("source", changed.get("TST-0001", ()))
 
+    def test_a_build_refuses_a_project_file_named_like_a_shipped_copy(self) -> None:
+        pns = sorted(path.parent.name for path in (self.hw / "parts").glob("*/part.yaml"))
+        (self.hw / "manufacturing" / "guidelines" / "shipped--escape.yaml").write_text("schema_version: 1\n", encoding="utf-8")
+        with self.assertRaises(build.RecordError) as raised:
+            build.snapshot(self.hw, pns)
+        self.assertIn("shipped--escape.yaml", str(raised.exception))
+
     def test_an_edited_shipped_copy_in_the_snapshot_stales_the_part(self) -> None:
         self.ship(1.5)
         folder = self.version()
@@ -139,6 +151,70 @@ class VersionSnapshots(Base):
         self.ship(1.5)
         _documents, built = impact.read_inputs(folder, ledgers_from=self.hw)
         self.assertEqual(dict(built.guideline_digests), {}, "a shipped set added after the build is not part of the version")
+
+
+class Built(Base):
+    """A hw/ with one built version, laid out the way test_impact's CLI cases do."""
+
+    def build_version(self, label: str = "v1") -> None:
+        for pn in ("TST-0001", "TST-0002", "TST-0004"):
+            (self.hw / "parts" / pn / "model.py").write_text(f"# {pn}\n", encoding="utf-8")
+        folder = self.hw / "versions" / label
+        pns = sorted(p.parent.name for p in (self.hw / "parts").glob("*/part.yaml"))
+        build.write_snapshot(folder / "record", build.snapshot(self.hw, pns))
+        files = {p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(folder.rglob("*")) if p.is_file()}
+        parts = {path.parent.name: {"source_sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in sorted(self.hw.glob("parts/*/model.py"))}
+        (folder / "manifest.json").write_text(json.dumps({"label": label, "parts": parts, "files": files}), encoding="utf-8")
+
+
+class IsolatedCli(Built):
+    def test_the_script_in_its_own_environment_reports_an_edited_guideline(self) -> None:
+        self.write(0.8)
+        self.build_version()
+        self.write(0.9)
+        result = subprocess.run(["uv", "run", "--script", str(SKILL / "scripts" / "impact.py"), "--hw", str(self.hw),
+                                 "--since-version", "v1"], capture_output=True, text=True, timeout=600, check=False)
+        report = json.loads(result.stdout)
+        self.assertEqual((result.returncode, report["status"]), (1, "impact"), result.stderr[-400:])
+        self.assertIn("source", report["changed"]["TST-0001"])
+
+    def test_every_script_that_reads_a_record_declares_the_validator_discovery_needs(self) -> None:
+        for relative in ("cad-record/scripts/impact.py", "cad-record/scripts/evidence.py", "cad-fits/scripts/stackup.py",
+                         "cad-motion/scripts/play.py", "cad-motion/scripts/access.py", "cad-analysis/scripts/stop_reaction.py"):
+            with self.subTest(relative):
+                header = (SKILL.parent / relative).read_text(encoding="utf-8").split("# ///")[1]
+                self.assertIn("jsonschema", header)
+
+
+class Infrastructure(Built):
+    def missing_validator(self) -> Any:
+        registry = sys.modules["cad_record_schema_registry"]
+        return mock.patch.object(registry, "document_validator", side_effect=ImportError("No module named 'jsonschema'"))
+
+    def test_a_missing_validator_is_an_error_and_never_a_refused_file(self) -> None:
+        self.write(0.8)
+        with self.missing_validator(), self.assertRaises(ImportError):
+            gl.discover(self.hw)
+
+    def test_loading_a_record_without_the_validator_fails_instead_of_skipping_staleness(self) -> None:
+        self.write(0.8)
+        with self.missing_validator(), self.assertRaises(mi.IntentError) as raised:
+            mi.load_record(self.hw)
+        self.assertIn("jsonschema", str(raised.exception))
+
+    def test_the_impact_script_reports_a_missing_validator_as_an_error_not_as_unchanged(self) -> None:
+        self.write(0.8)
+        self.build_version()
+        out = io.StringIO()
+        with self.missing_validator(), contextlib.redirect_stdout(out):
+            code = impact.main(["--hw", str(self.hw), "--since-version", "v1"])
+        report = json.loads(out.getvalue())
+        self.assertEqual((code, report["status"]), (2, "error"))
+        self.assertIn("jsonschema", report["message"])
+
+    def test_a_record_with_no_guideline_files_needs_no_validator(self) -> None:
+        with self.missing_validator():
+            self.assertEqual(dict(mi.load_record(self.hw).guideline_digests), {})
 
 
 if __name__ == "__main__":

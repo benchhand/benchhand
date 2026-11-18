@@ -18,6 +18,7 @@ LAYOUT_SCRIPT = RECORD_SCRIPTS / "layout.py"
 INTENT_SCRIPT = RECORD_SCRIPTS / "manufacturing_intent.py"
 YAML_LOADER_SCRIPT = RECORD_SCRIPTS / "yaml_loader.py"
 GUIDELINES_SCRIPT = RECORD_SCRIPTS / "guidelines.py"
+RESERVED_COPIES = "manufacturing/guidelines/shipped--"  # guidelines.SHIPPED_COPY below PROJECT_RELATIVE
 
 
 class RecordError(ValueError):
@@ -58,6 +59,9 @@ def snapshot(hw: Path, pns: Iterable[str]) -> dict[str, bytes]:
     win over the project's are copied beside them as manufacturing/guidelines/shipped--<name>, byte for byte, so a later
     reader sees the sets this version was built with. Never the findings or evidence ledgers, which checks produce afterwards."""
     files = {name: (hw / name).read_bytes() for name in load_layout().snapshot_names(hw, pns)}
+    reserved = sorted(name for name in files if name.startswith(RESERVED_COPIES))
+    if reserved:
+        raise RecordError(f"hw/{reserved[0]} uses a name reserved for the shipped guideline sets a build copies (shipped--*); rename it")
     files.update(_load("cad_record_guidelines", GUIDELINES_SCRIPT).snapshot_files(hw))
     return files
 

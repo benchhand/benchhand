@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -173,17 +174,27 @@ def validate(data: Any) -> list[str]:
         return problems
     mi = _intent()
     scope = data["scope"]
-    for where, quantity in [("scope/nozzle_diameter", scope["nozzle_diameter"])] if "nozzle_diameter" in scope else []:
-        problems.extend(_quantity_problems(mi, where, quantity))
+    if "nozzle_diameter" in scope:
+        problems.extend(_quantity_problems(mi, "scope/nozzle_diameter", scope["nozzle_diameter"]))
     for index, limit in enumerate(data["limits"]):
-        relative = limit.get("relative")
-        if "quantity" in limit:
-            problems.extend(_quantity_problems(mi, f"limits/{index}/quantity", limit["quantity"]))
-        if relative is not None:
-            floor_problems = _quantity_problems(mi, f"limits/{index}/relative/floor", relative["floor"])
-            problems.extend(floor_problems)
-            if not floor_problems and mi.quantity(relative["floor"]).dimension != "length":
-                problems.append(f"limits/{index}/relative: the floor of a line-width limit is a length")
+        problems.extend(_limit_problems(mi, index, limit))
+    return problems
+
+
+def _limit_problems(mi: Any, index: int, limit: Mapping[str, Any]) -> list[str]:
+    """The quantities of one limit that the resolver could not read: its value, and a relative factor and floor."""
+    problems: list[str] = []
+    if "quantity" in limit:
+        problems.extend(_quantity_problems(mi, f"limits/{index}/quantity", limit["quantity"]))
+    relative = limit.get("relative")
+    if relative is None:
+        return problems
+    if not math.isfinite(relative["factor"]):
+        problems.append(f"limits/{index}/relative/factor: {relative['factor']} is not finite")
+    floor_problems = _quantity_problems(mi, f"limits/{index}/relative/floor", relative["floor"])
+    problems.extend(floor_problems)
+    if not floor_problems and mi.quantity(relative["floor"]).dimension != "length":
+        problems.append(f"limits/{index}/relative: the floor of a line-width limit is a length")
     return problems
 
 
@@ -208,6 +219,8 @@ def _read(path: Path, shown: str, origin: str) -> tuple[Guideline | None, Refusa
     ident = data.get("id") if isinstance(data, Mapping) and isinstance(data.get("id"), str) else None
     try:
         problems = validate(data)
+    except ImportError:
+        raise  # a validator that is missing is an infrastructure failure, never a refusal of the file
     except Exception as error:  # noqa: BLE001 - a value the checks cannot read is still a refusal by name
         problems = [f"cannot check the file: {error}"]
     if problems:
@@ -393,8 +406,9 @@ def _unknown_selectors(scope: Mapping[str, Any], context: Context) -> list[str]:
     return names
 
 
-def _closure(catalog: Catalog, ident: str, seen: tuple[str, ...] = ()) -> list[Guideline]:
-    """`ident` and its parents, parents first; GuidelineError for a cycle or a parent that is missing or refused."""
+def _closure(catalog: Catalog, ident: str, seen: tuple[str, ...] = (), context: Context | None = None) -> list[Guideline]:
+    """`ident` and its parents, parents first; GuidelineError for a cycle, a parent that is missing or refused, or (with
+    `context`) a set whose revision the profile's pin names differently: the pin holds across the whole extends closure."""
     if ident in seen:
         raise GuidelineError(f"{' -> '.join((*seen, ident))} extends itself")
     if ident in catalog.blocked:
@@ -402,9 +416,12 @@ def _closure(catalog: Catalog, ident: str, seen: tuple[str, ...] = ()) -> list[G
     guideline = catalog.guidelines.get(ident)
     if guideline is None:
         raise GuidelineError(f"{ident} is not a known guideline set")
+    if context is not None and not _allowed(guideline, context):
+        pinned = next(pin.split("@", 1)[1] for pin in context.pin or () if pin.startswith(f"{ident}@"))
+        raise GuidelineError(f"{ident} is pinned at revision {pinned}, but the catalog has revision {guideline.revision}")
     chain: list[Guideline] = []
     for parent in guideline.extends:
-        chain.extend(g for g in _closure(catalog, parent, (*seen, ident)) if g not in chain)
+        chain.extend(g for g in _closure(catalog, parent, (*seen, ident), context) if g not in chain)
     chain.append(guideline)
     return chain
 
@@ -451,7 +468,7 @@ def applicable_digests(catalog: Catalog, context: Context) -> dict[str, str]:
     found: dict[str, str] = {}
     for guideline in applicable(catalog, context):
         try:
-            chain = _closure(catalog, guideline.id)
+            chain = _closure(catalog, guideline.id, context=context)
         except GuidelineError:
             chain = [guideline]
         found.update({g.ref: g.sha256 for g in chain})
@@ -560,6 +577,8 @@ def _bound(limit: Mapping[str, Any], context: Context, units: str | None) -> tup
                           else "the profile states neither a line width nor a nozzle diameter")
         floor = mi.quantity(relative["floor"])
         number = round(max(float(relative["factor"]) * base, floor.to("mm").value), 9)
+        if not math.isfinite(number):
+            return None, f"the computed limit {number} mm is not finite"
         quantity = mi.Quantity("mm", value=number)
     else:
         quantity = mi.quantity(limit["quantity"])
@@ -661,7 +680,7 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
     candidates: list[_Candidate] = []
     try:
         for guideline in applicable(catalog, context):
-            chain = _closure(catalog, guideline.id)
+            chain = _closure(catalog, guideline.id, context=context)
             for position, defined in enumerate(chain):
                 candidates.extend(_candidates_of(guideline, defined, len(chain) - 1 - position, context, characteristic,
                                                  orientation, feature, (uncertain, warnings)))
@@ -786,7 +805,7 @@ def trace_document(resolutions: Iterable[Resolved]) -> dict[str, Any]:
 
 
 def trace_bytes(resolutions: Iterable[Resolved]) -> bytes:
-    return (json.dumps(trace_document(resolutions), indent=2, sort_keys=True) + "\n").encode("utf-8")
+    return (json.dumps(trace_document(resolutions), indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
 
 
 def trace_sha256(resolutions: Sequence[Resolved]) -> str:

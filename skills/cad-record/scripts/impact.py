@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["pyyaml>=6.0"]
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
 # ///
 """Change impact over the manufacturing-intent dependency domains of a record version 2 design record.
 
@@ -30,9 +30,10 @@ DIGEST_SCOPE): changed inputs, or a selection.yaml assessment that records anoth
 selection's assessment decision; the recorded choice counts again only once it is re-assessed and
 confirmed through the approval gate.
 
-The module is standard library only; load it by path as `cad_record_impact` (dataclasses look it up
-in sys.modules). The CLI reads YAML with PyYAML. Prints one JSON report: exit 0 no impact, 1 impact
-found (report only), 2 usage or infrastructure error.
+The module needs PyYAML to read the record, and jsonschema to check guideline sets when a project or the plugin
+has any (a missing jsonschema is an error, exit 2, never "unchanged"). Load it by path as `cad_record_impact`
+(dataclasses look it up in sys.modules). Prints one JSON report: exit 0 no impact, 1 impact found (report only),
+2 usage or infrastructure error.
 """
 
 from __future__ import annotations

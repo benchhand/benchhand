@@ -927,9 +927,8 @@ def with_guidelines(record: Record, hw: Path, *, snapshot: bool = False) -> Reco
     problems = list(record.problems)
     try:
         catalog = guidelines.discover(hw, snapshot=snapshot)
-    except ImportError as error:  # jsonschema missing: the files cannot be checked, so no digest is claimed
-        problems.append(Problem("intent.guideline", "hw/manufacturing/guidelines", "", f"guideline sets not read: {error}", "warning"))
-        return _with_problems(record, problems)
+    except ImportError as error:  # the validator is missing: a check that cannot run is an error, never "no change"
+        raise IntentError(f"the guideline sets cannot be checked: {error}. Run with jsonschema installed.") from error
     for refusal in catalog.refused:
         shown = f"hw/{refusal.path}" if refusal.path.startswith(f"{guidelines.PROJECT_RELATIVE.as_posix()}/") else refusal.path
         problems.append(Problem("intent.guideline", shown, "", "; ".join(refusal.problems)))

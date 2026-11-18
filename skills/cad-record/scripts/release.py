@@ -184,6 +184,9 @@ def check_record(release: Release, record: Path, manifest: dict[str, Any]) -> No
     except layout.LayoutError as error:
         release.refuse("hw/parts", "changed", str(error))
         return
+    for name in sorted(current):
+        if name.startswith(SHIPPED_COPIES):  # shipped-- names belong to the copies a build writes; a project file never carries one
+            release.refuse(f"hw/{name}", "reserved", f"hw/{name} uses a name reserved for the shipped guideline sets a build copies")
     for name in sorted(current - set(snapshot)):
         release.refuse(f"hw/{name}", "changed", f"hw/{name} is new since {version} was frozen")
     for name in sorted(set(snapshot) - current):

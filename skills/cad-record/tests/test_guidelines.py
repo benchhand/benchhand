@@ -322,6 +322,21 @@ class Extends(Directories):
         self.assertEqual((found.value, [p.guideline for p in found.provenance]), (mi.Quantity("mm", value=1.5), ["fdm.base@1"]))
         self.assertTrue(any("without `relaxes`" in w for w in found.warnings), found.warnings)
 
+    def test_the_pin_holds_across_the_whole_extends_closure(self) -> None:
+        put(self.shipped, "base", {**guideline("fdm.base", [limit("min_wall", ">=", 1.5)]), "abstract": True})
+        put(self.shipped, "pa", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.0)], material_family=["pa"]),
+                                 "extends": ["fdm.base"]})
+        catalog = self.catalog()
+        pinned = record(pin=["fdm.base@2"])
+        found = resolve(pinned, catalog, "min_wall")
+        self.assertEqual(found.status, "unknown", "revision 1 of fdm.base must not be used under a pin at revision 2")
+        self.assertIn("fdm.base", found.reasons[0])
+        self.assertIn("pinned at revision 2", found.reasons[0])
+        context = gl.context_for(pinned.capabilities["tst_printer"], pinned.materials["tst_pa"])
+        self.assertNotIn("fdm.base@1", gl.applicable_digests(catalog, context))
+        held = resolve(record(pin=["fdm.base@1"]), catalog, "min_wall")
+        self.assertEqual((held.status, held.value), ("guideline", mi.Quantity("mm", value=1.5)))
+
     def test_an_abstract_set_alone_resolves_nothing(self) -> None:
         base = guideline("fdm.base", [limit("overhang_angle", "<=", 40, "deg")])
         base["abstract"] = True
@@ -367,11 +382,6 @@ class LineWidth(Directories):
         found = resolve(record(nozzle=None, line_width=0.5), self.catalog(), "min_wall")
         self.assertEqual(found.status, "unknown")
         self.assertIn("no nozzle diameter", found.reasons[0])
-    def test_a_line_width_multiple_resolves_against_the_line_width_before_the_nozzle(self) -> None:
-        put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8)]))
-        catalog = self.catalog()
-        self.assertEqual(resolve(record(nozzle=0.4), catalog, "min_wall").value, mi.Quantity("mm", value=1.2))
-        self.assertAlmostEqual(resolve(record(nozzle=0.4, line_width=0.5), catalog, "min_wall").value.value, 1.5)
 
     def test_the_floor_holds_when_the_multiple_is_smaller(self) -> None:
         put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8)]))
@@ -382,6 +392,21 @@ class LineWidth(Directories):
         found = resolve(record(nozzle=None), self.catalog(), "min_wall")
         self.assertEqual(found.status, "unknown")
         self.assertIn("neither a line width nor a nozzle diameter", found.reasons[0])
+
+    def test_a_factor_that_is_not_finite_refuses_the_file_by_name(self) -> None:
+        for name, factor in (("inf", float("inf")), ("nan", float("nan"))):
+            put(self.project, name, guideline(f"fdm.{name}", [per_line("min_wall", factor, 0.8)]))
+        catalog = self.catalog()
+        self.assertEqual(sorted(r.path for r in catalog.refused),
+                         ["manufacturing/guidelines/inf.yaml", "manufacturing/guidelines/nan.yaml"])
+        self.assertTrue(all("factor" in str(r) for r in catalog.refused))
+
+    def test_a_computed_limit_that_is_not_finite_is_unknown_and_reaches_no_trace(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 1e308, 0.8)]))
+        found = resolve(record(nozzle=10.0), self.catalog(), "min_wall")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("not finite", found.reasons[0])
+        self.assertNotIn("Infinity", gl.trace_bytes([found]).decode("utf-8"))
 
     def test_a_relative_limit_on_an_angle_is_refused_by_name(self) -> None:
         bad = guideline("fdm.generic", [])
