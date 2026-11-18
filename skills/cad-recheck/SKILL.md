@@ -43,6 +43,28 @@ uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.
 
 Exit 0 permits the commit; exit 2 means do not commit. Fix stderr's reason, restamp, and verify again.
 
+`stamp.py` reads `hw/` at the git root by default.
+
+For a project below the root, such as `examples/lamp-arm`, add `--hw <hw-directory>` to both commands. It names the `hw/` directory itself, as in `evidence.py --hw`. Pass `examples/lamp-arm/hw`, not `examples/lamp-arm`.
+
+A relative path starts at the current directory. The project is the parent of that directory. Under it, `stamp.py` reads and writes only these paths:
+
+- `hw/product.yaml`
+- `hw/.cad/recheck.json`
+- the staged `hw/` tree
+
+At commit time, `--verify` reads the index. It skips a commit that stages no `hw/` change.
+
+```sh
+uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --hw examples/lamp-arm/hw
+```
+
+CI has nothing staged. Add `--committed` there. It checks the stamp against the `hw/` tree in HEAD and never skips.
+
+```sh
+uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --committed --hw examples/lamp-arm/hw
+```
+
 The installer refuses to replace a different repository-local `core.hooksPath` or ignore non-sample hooks in `.git/hooks/`. Integrate the CAD hook with existing hooks, or explicitly pass `--force` to replace or ignore them. Commit the generated `.githooks/` directory so the hook and its stamp verifier are available to other checkouts.
 
 When the system or global git config sets `core.hooksPath` (Git Defender does), the installer exits 3 and changes nothing, even with `--force`. A repository-local hooks path would stop those managed hooks from running. In that case, verify the stamp yourself before each commit of `hw/` changes. Stage the changes. Then run this command from the project repository:

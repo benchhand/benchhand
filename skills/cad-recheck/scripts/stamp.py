@@ -16,6 +16,8 @@ the digest of the staged selection inputs), passes, so a stale, failed or unknow
 recorded final choice the selection does not support, cannot be stamped as passed.
 `--verify` reads the staged index: the record inputs, the stamp and its packet, never the work tree
 beyond the layout audit. It is the whole pre-commit check: a commit that stages no hw/ change passes.
+`--hw` names the hw/ directory, as in evidence.py (default: hw/ at the git root). `--verify --committed` checks HEAD's
+hw/ tree and stamp instead of the index, and never skips: CI runs it on a clean checkout.
 flow.recheck_from is the threshold and may only stay or move earlier than
 HEAD's: raising it would suppress the checks of the stages it skips.
 """
@@ -68,14 +70,25 @@ intent = validate.intent
 evidence = validate.evidence
 
 
-def staged_inputs(root: Path) -> dict[str, bytes]:
-    """The staged record inputs (cad-record evidence.is_record_input) by path below hw/, read from the index."""
-    files = {}
-    for raw in git("ls-files", "-z", "--", "hw/", cwd=root).split(b"\0"):
-        path = raw.decode("utf-8", errors="surrogateescape")
-        if path.startswith("hw/") and evidence.is_record_input(path[3:]):
-            files[path[3:]] = git("show", f":{path}", cwd=root)
-    return files
+def tree_blob(root: Path, path: str, committed: bool) -> bytes:
+    """The content of `path` (relative to the project) in the index, or in HEAD when `committed`."""
+    return git("show", f"{'HEAD' if committed else ''}:./{path}", cwd=root)
+
+
+def tree_paths(root: Path, committed: bool) -> list[str]:
+    """The paths below hw/ in the index, or in HEAD when `committed`."""
+    if committed:
+        raw = git("ls-tree", "-r", "-z", "--name-only", "HEAD", "--", "hw/", cwd=root)
+    else:
+        raw = git("ls-files", "-z", "--", "hw/", cwd=root)
+    return [name.decode("utf-8", errors="surrogateescape") for name in raw.split(b"\0") if name]
+
+
+def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:
+    """The staged record inputs (cad-record evidence.is_record_input) by path below hw/, read from the index
+    (from HEAD when `committed`)."""
+    return {path[3:]: tree_blob(root, path, committed) for path in tree_paths(root, committed)
+            if path.startswith("hw/") and evidence.is_record_input(path[3:])}
 
 
 @dataclass(frozen=True)
@@ -88,9 +101,9 @@ class Staged:
     selection_sha256: str
 
 
-def staged_record(root: Path) -> Staged:
+def staged_record(root: Path, committed: bool = False) -> Staged:
     """The normalized record of the staged index and the digests of its record and selection inputs."""
-    files = staged_inputs(root)
+    files = staged_inputs(root, committed)
     documents = {}
     for rel, data in files.items():
         if intent.schema_for(rel) is None:
@@ -112,7 +125,7 @@ def require_migrated(record: Any) -> None:
 def require_threshold_kept(root: Path, threshold: str) -> None:
     """flow.recheck_from may stay or move earlier than HEAD's, never later."""
     try:
-        head = yaml_loader.safe_load(git("show", "HEAD:hw/product.yaml", cwd=root).decode("utf-8"))
+        head = yaml_loader.safe_load(git("show", "HEAD:./hw/product.yaml", cwd=root).decode("utf-8"))
     except (RuntimeError, UnicodeError, yaml.YAMLError):
         return  # no commit or no product.yaml yet: nothing to raise it from
     before = (head.get("flow") or {}).get("recheck_from") if isinstance(head, dict) and isinstance(head.get("flow"), dict) else None
@@ -137,7 +150,7 @@ def require_evidence(packet: Any, staged: Staged, stage: str) -> list[str]:
 def staged_product(root: Path, stage: str | None = None) -> dict[str, Any]:
     """Read the index version of product.yaml to grade layout paths at the staged stage."""
     try:
-        raw = git("show", ":hw/product.yaml", cwd=root).decode("utf-8")
+        raw = git("show", ":./hw/product.yaml", cwd=root).decode("utf-8")
         product = yaml_loader.safe_load(raw)
     except (RuntimeError, UnicodeError, yaml.YAMLError) as error:
         if stage is None:
@@ -172,13 +185,35 @@ def git(*args: str, cwd: Path) -> bytes:
     return result.stdout
 
 
-def project_root(start: Path) -> Path:
-    return Path(git("rev-parse", "--show-toplevel", cwd=start).decode().strip())
+def project_root(start: Path, hw: Path | None) -> Path:
+    """The directory holding hw/: the parent of `hw` (relative to `start`) when given, else the git root of `start`.
+
+    `hw` is the hw/ directory itself, as in evidence.py. Every git call runs in the project, so the paths git
+    prints and the `:./` index paths are relative to it."""
+    if hw is None:
+        return Path(git("rev-parse", "--show-toplevel", cwd=start).decode().strip())
+    hw_dir = (start / hw).resolve()
+    if hw_dir.name != "hw" or not hw_dir.is_dir():
+        raise RuntimeError(f"--hw must name an hw directory (for example examples/lamp-arm/hw); got {hw}")
+    git("rev-parse", "--show-toplevel", cwd=hw_dir)  # refuses a directory outside a git work tree
+    return hw_dir.parent
 
 
-def staged_tree_hash(root: Path) -> str:
-    """Hash index entries for hw/, except the generated recheck metadata."""
-    entries = git("ls-files", "-s", "--", "hw/", cwd=root)
+def tree_entries(root: Path, committed: bool) -> bytes:
+    """The entries of hw/ as `git ls-files -s` prints them, from the index or, when `committed`, from HEAD."""
+    if not committed:
+        return git("ls-files", "-s", "--", "hw/", cwd=root)
+    lines = []
+    for line in git("ls-tree", "-r", "HEAD", "--", "hw/", cwd=root).splitlines(keepends=True):
+        meta, separator, path = line.partition(b"\t")
+        mode, _, sha = meta.replace(b" blob ", b" ").partition(b" ")
+        lines.append(mode + b" " + sha + b" 0" + separator + path)
+    return b"".join(lines)
+
+
+def staged_tree_hash(root: Path, committed: bool = False) -> str:
+    """Hash index entries for hw/, except the generated recheck metadata. With `committed` they come from HEAD."""
+    entries = tree_entries(root, committed)
     digest = hashlib.sha256()
     for entry in entries.splitlines(keepends=True):
         _, separator, path = entry.partition(b"\t")
@@ -285,8 +320,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage", choices=validate.stages(), help="stage for a newly written recheck stamp")
     parser.add_argument("--checks", type=Path, help="JSON check results")
     parser.add_argument("--passed", action="store_true", help="record that every required check passed")
+    parser.add_argument("--hw", type=Path, help="the hw/ directory, inside the repository (default: hw/ at the git root); "
+                        "the stamp and every path read or written are under it")
     parser.add_argument("--verify", action="store_true", help="verify the staged stamp against the current staged hash")
+    parser.add_argument("--committed", action="store_true",
+                        help="with --verify: check HEAD's hw/ tree and stamp, even when nothing is staged (for CI)")
     args = parser.parse_args()
+    if args.committed and not args.verify:
+        parser.error("--committed needs --verify")
     if args.verify:
         if args.stage is not None or args.checks is not None or args.passed:
             parser.error("--verify cannot be combined with --stage, --checks, or --passed")
@@ -300,14 +341,16 @@ def main() -> int:
     args = parse_args()
     try:
         start = Path.cwd()
-        root = project_root(start)
+        root = project_root(start, args.hw)
         if args.verify:
-            # What the pre-commit hook skipped: a commit that stages no hw/ change needs no stamp.
-            if not git("diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB", "--", "hw/", cwd=root).strip():
+            committed = args.committed
+            # What the pre-commit hook skipped: a commit that stages no hw/ change needs no stamp. --committed
+            # checks HEAD instead, so it never skips.
+            if not committed and not git("diff", "--cached", "--name-only", "--diff-filter=ACDMRTUXB", "--", "hw/", cwd=root).strip():
                 print(json.dumps({"passed": True, "required": False, "reason": "no staged hw/ change"}))
                 return 0
             try:
-                product_data = git("show", ":hw/product.yaml", cwd=root).decode("utf-8")
+                product_data = tree_blob(root, "hw/product.yaml", committed).decode("utf-8")
             except (RuntimeError, UnicodeError) as error:
                 raise RuntimeError(f"cannot read staged hw/product.yaml: {error}") from error
             try:
@@ -326,19 +369,20 @@ def main() -> int:
             if not isinstance(threshold, str) or threshold not in validate.stages():
                 raise RuntimeError("staged hw/product.yaml has a missing or unknown flow.recheck_from")
             require_clean_layout(root, product)
-            require_threshold_kept(root, threshold)
+            if not committed:
+                require_threshold_kept(root, threshold)
             if validate.stages().index(current_stage) < validate.stages().index(threshold):
                 print(json.dumps({"passed": True, "required": False, "stage": current_stage}))
                 return 0
-            staged = staged_record(root)
+            staged = staged_record(root, committed)
             require_migrated(staged.record)
             try:
-                record_data = json.loads(git("show", ":hw/.cad/recheck.json", cwd=root).decode("utf-8"))
+                record_data = json.loads(tree_blob(root, "hw/.cad/recheck.json", committed).decode("utf-8"))
             except (RuntimeError, UnicodeError, json.JSONDecodeError) as error:
                 raise RuntimeError(f"no staged hw/.cad/recheck.json exists or cannot read it: {error}") from error
             if not isinstance(record_data, dict):
                 raise RuntimeError("recheck stamp must be a JSON object")
-            actual_hash = staged_tree_hash(root)
+            actual_hash = staged_tree_hash(root, committed)
             order = validate.stages()
             stamped_stage = record_data.get("stage")
             if not isinstance(stamped_stage, str) or stamped_stage not in order:
