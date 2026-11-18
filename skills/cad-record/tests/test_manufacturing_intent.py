@@ -502,7 +502,7 @@ class Capabilities(unittest.TestCase):
 
 
 # The obligations of fx.tst_record(), a record with no loaded structural interface, as origin/main a7d007e3 enumerates them
-# without engineering.stop_reaction. That is 55 obligations: 88be42e5 added assembly.order@product to the 54 of 43ad4409.
+# without engineering.stop_reaction. 88be42e5 added assembly.order@product to the 54 of 43ad4409, making 55.
 TST_RECORD_OBLIGATIONS = (
     'assembly.access@op:fit_bearing',
     'assembly.joint@op:fit_bearing',
