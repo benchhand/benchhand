@@ -32,9 +32,11 @@ Resolution, per characteristic:
   1. A calibration of the capability profile (L4, manufacturing_intent.capability_limit) beats every
      guideline and resolves as `calibrated`. A guideline is never `calibrated`.
   2. Otherwise every limit of the applicable guideline sets is a candidate. A set is applicable when
-     the profile's `guidelines` pin allows it (the pin is exhaustive; without one every set whose scope
-     matches applies) and every scope selector matches. Specificity is the number of selectors beyond
-     `process`, never the load order. The most specific candidate wins.
+     its scope matches (every selector). A set that the profile's `guidelines` pin names (id@revision)
+     is a machine set (L3): it outranks every unpinned set, whatever their scope, and is applicable on
+     the same terms. A pin naming another revision of a set excludes that set and warns. Among unpinned
+     sets, specificity is the number of selectors beyond `process`, never the load order. The highest
+     ranked candidate wins.
   3. A more specific limit may only tighten. One that relaxes needs `relaxes` and is taken with a
      warning; without it the limit is ignored and reported. Candidates of equal specificity that
      disagree keep the intersection (the stricter value); an empty one is unknown.
@@ -327,8 +329,34 @@ def _closure(catalog: Catalog, ident: str, seen: tuple[str, ...] = ()) -> list[G
     return chain
 
 
+def _pinned(guideline: Guideline, context: Context) -> bool:
+    """Whether the capability profile's `guidelines` pin names exactly this revision of this set."""
+    return context.pin is not None and guideline.ref in context.pin
+
+
 def _allowed(guideline: Guideline, context: Context) -> bool:
-    return context.pin is None or guideline.ref in context.pin
+    """False when the pin names another revision of the set: a pin fixes the revision, so a build is reproducible."""
+    if context.pin is None:
+        return True
+    return guideline.ref in context.pin or all(not pin.startswith(f"{guideline.id}@") for pin in context.pin)
+
+
+def _layer(guideline: Guideline, context: Context) -> str:
+    """machine (L3) for a pinned set, else the layer its scope selects."""
+    return "machine" if _pinned(guideline, context) else guideline.layer
+
+
+def pin_warnings(catalog: Catalog, context: Context) -> list[str]:
+    """The pin entries that match no set of the catalog: absent, refused or another revision."""
+    found = []
+    for pin in context.pin or ():
+        ident = pin.split("@", 1)[0]
+        have = catalog.guidelines.get(ident)
+        if have is None:
+            found.append(f"pinned {pin} is not in the catalog")
+        elif have.ref != pin:
+            found.append(f"pinned {pin}, but the catalog has revision {have.revision}: not applied")
+    return found
 
 
 def applicable(catalog: Catalog, context: Context) -> list[Guideline]:
@@ -417,8 +445,9 @@ class _Candidate:
     defined_in: Guideline  # the set that states it
     limit: Mapping[str, Any]
     bound: _Bound
-    key: tuple[int, int]  # specificity of the scope, then of applies_to
+    key: tuple[int, int, int]  # pinned (machine), specificity of the scope, then of applies_to
     shown: str
+    layer: str
 
 
 def _bound(limit: Mapping[str, Any], context: Context, units: str | None) -> tuple[_Bound | None, str | None]:
@@ -490,7 +519,7 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
                        feature: str | None = None) -> Resolved:
     """The guideline limit of `characteristic` for `context` (steps 2 to 5 of the module docstring)."""
     mi = _intent()
-    warnings: list[str] = []
+    warnings: list[str] = pin_warnings(catalog, context)
     candidates: list[_Candidate] = []
     uncertain: list[str] = []
     for guideline in applicable(catalog, context):
@@ -513,7 +542,9 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
                     else:
                         warnings.append(f"{guideline.ref} {characteristic} not applied: {names} unknown")
                     continue
-                candidates.append(_Candidate(guideline, defined, limit, _Bound(None, None, None), (guideline.specificity, depth), ""))
+                candidates.append(_Candidate(guideline, defined, limit, _Bound(None, None, None),
+                                             (int(_pinned(guideline, context)), guideline.specificity, depth), "",
+                                             _layer(guideline, context)))
     if uncertain:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=tuple(f"{characteristic} is a requirement and a scope fact is unknown: {why}" for why in uncertain))
@@ -529,7 +560,8 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
         if bound is None:
             reasons.append(f"{candidate.defined_in.ref} {characteristic}: {why}")
             continue
-        ready.append(_Candidate(candidate.guideline, candidate.defined_in, candidate.limit, bound, candidate.key, _show(bound)))
+        ready.append(_Candidate(candidate.guideline, candidate.defined_in, candidate.limit, bound, candidate.key, _show(bound),
+                                candidate.layer))
     if not ready:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=tuple(reasons) or (f"no applicable guideline states {characteristic}",))
@@ -543,7 +575,7 @@ def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi:
     shadowed: list[Shadowed] = []
 
     def hide(candidate: _Candidate, why: str) -> None:
-        shadowed.append(Shadowed(candidate.shown, candidate.defined_in.ref, candidate.guideline.layer, why))
+        shadowed.append(Shadowed(candidate.shown, candidate.defined_in.ref, candidate.layer, why))
 
     for key in sorted({c.key for c in ordered}):
         group = [c for c in ordered if c.key == key]
@@ -579,7 +611,7 @@ def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi:
     assert current is not None
     operator, value = _statement(current, mi)
     units = current.units
-    provenance = tuple(Provenance(_present(candidate.bound, mi), units, candidate.guideline.layer, candidate.defined_in.ref,
+    provenance = tuple(Provenance(_present(candidate.bound, mi), units, candidate.layer, candidate.defined_in.ref,
                                   candidate.defined_in.path, tuple(_plain(c) for c in candidate.limit["citations"]),
                                   "guideline", tuple(shadowed)) for candidate in winners)
     source = {"kind": "guideline", "reference": winners[0].defined_in.id, "revision": str(winners[0].defined_in.revision),

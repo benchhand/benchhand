@@ -361,20 +361,54 @@ class Unknowns(Directories):
 
 
 class Pin(Directories):
-    def test_a_pin_is_an_exhaustive_allowlist_of_id_at_revision(self) -> None:
+    def setUp(self) -> None:
+        super().setUp()
         put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
-        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.6)], material_family=["pa"]))
-        catalog = self.catalog()
-        self.assertEqual(resolve(record(pin=["fdm.generic@1"]), catalog, "min_wall").value, mi.Quantity("mm", value=1.0))
-        self.assertEqual(resolve(record(pin=["fdm.generic@1", "fdm.material.pa@1"]), catalog, "min_wall").value,
-                         mi.Quantity("mm", value=1.6))
-        self.assertEqual(resolve(record(pin=["fdm.generic@2"]), catalog, "min_wall").status, "unknown")
+        put(self.shipped, "n", guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.2)], material_family=["pa"],
+                                         nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
 
-    def test_a_pinned_set_reaches_a_machine_sample_that_no_scope_selects(self) -> None:
+    def machine(self, value: float, **extra: Any) -> None:
+        put(self.shipped, "m", guideline("fdm.machine.tst", [limit("min_wall", ">=", value, **extra)]))
+
+    def test_a_pinned_machine_set_outranks_every_scope_matched_set(self) -> None:
         relaxes = {"reason": "the vendor prints thinner walls", "citation": cite()[0]}
-        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
-        put(self.shipped, "m", guideline("fdm.machine.tst", [limit("min_wall", ">=", 0.9, relaxes=relaxes)], material_family=["pa"]))
-        self.assertEqual(resolve(record(pin=["fdm.generic@1"]), self.catalog(), "min_wall").value, mi.Quantity("mm", value=1.0))
+        self.machine(0.9, relaxes=relaxes)
+        found = resolve(record(pin=["fdm.machine.tst@1"]), self.catalog(), "min_wall")
+        self.assertEqual((found.value, [(p.guideline, p.layer) for p in found.provenance]),
+                         (mi.Quantity("mm", value=0.9), [("fdm.machine.tst@1", "machine")]))
+        self.assertTrue(any("relaxed to >= 0.9 mm by fdm.machine.tst@1" in w for w in found.warnings), found.warnings)
+        self.assertEqual(sorted((s.guideline, s.layer) for s in found.provenance[0].shadowed),
+                         [("fdm.generic@1", "generic"), ("fdm.nozzle.d0_4@1", "material_nozzle")])
+
+    def test_a_pinned_machine_sets_tighter_value_beats_a_material_nozzle_value(self) -> None:
+        self.machine(1.4)
+        found = resolve(record(pin=["fdm.machine.tst@1"]), self.catalog(), "min_wall")
+        self.assertEqual((found.value, found.provenance[0].layer, found.warnings), (mi.Quantity("mm", value=1.4), "machine", ()))
+
+    def test_a_pinned_set_that_loosens_without_relaxes_is_ignored_with_a_warning(self) -> None:
+        self.machine(0.9)
+        found = resolve(record(pin=["fdm.machine.tst@1"]), self.catalog(), "min_wall")
+        self.assertEqual((found.value, found.provenance[0].guideline), (mi.Quantity("mm", value=1.2), "fdm.nozzle.d0_4@1"))
+        self.assertTrue(any("fdm.machine.tst@1" in w and "without `relaxes`" in w for w in found.warnings), found.warnings)
+
+    def test_the_same_set_unpinned_ranks_by_its_scope_and_is_not_a_machine_set(self) -> None:
+        relaxes = {"reason": "the vendor prints thinner walls", "citation": cite()[0]}
+        self.machine(0.9, relaxes=relaxes)
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.value, found.provenance[0].layer), (mi.Quantity("mm", value=1.2), "material_nozzle"))
+
+    def test_a_calibration_beats_the_pinned_machine_set(self) -> None:
+        self.machine(1.4)
+        calibration = fx.calibration("cal_wall", "min_wall", "tst_pa", fx.quantity(lower=0.7, upper=0.7))
+        found = resolve(record(pin=["fdm.machine.tst@1"], calibrations=[calibration]), self.catalog(), "min_wall")
+        self.assertEqual((found.status, found.provenance[0].layer), ("calibrated", "L4"))
+
+    def test_a_pin_of_another_revision_excludes_the_set_and_warns(self) -> None:
+        self.machine(1.4)
+        found = resolve(record(pin=["fdm.machine.tst@2", "fdm.absent@1"]), self.catalog(), "min_wall")
+        self.assertEqual(found.value, mi.Quantity("mm", value=1.2))
+        self.assertIn("pinned fdm.machine.tst@2, but the catalog has revision 1: not applied", found.warnings)
+        self.assertIn("pinned fdm.absent@1 is not in the catalog", found.warnings)
 
 
 class Grade(Directories):
