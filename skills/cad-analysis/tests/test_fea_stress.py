@@ -145,6 +145,66 @@ class ReadFrdTests(unittest.TestCase):
         self.assertEqual(fs.plane_node_ids(result, "x", 4.0), frozenset({3}))
 
 
+class MalformedRecordTests(unittest.TestCase):
+    """Every malformed record of a block `read_frd` parses raises FrdError, never IndexError or ValueError."""
+
+    BLOCKS = (("node", "    2C"), ("DISP", " -4  DISP"), ("STRESS", " -4  STRESS"))
+    FIELD = 12  # width of one value; a record is ` -1`, a 10-character node id, then values
+
+    @staticmethod
+    def corrupt(text, header, change):
+        """`text` with the first record of the block opened by `header` replaced by `change(record)`."""
+        lines = text.splitlines()
+        start = next(i for i, line in enumerate(lines) if line.startswith(header))
+        record = next(i for i in range(start, len(lines)) if lines[i].startswith(" -1"))
+        lines[record] = change(lines[record])
+        return "\n".join(lines) + "\n"
+
+    def good(self):
+        return frd_text({1: (0.0, 0.0, 0.0), 2: (1.0, 2.0, 3.0)},
+                        {1: (1.0, 2.0, 2.0), 2: (0.0, 0.0, 0.0)},
+                        {1: (5.0, 0.0, 0.0, 0.0, 0.0, 0.0), 2: (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)})
+
+    def assert_refused(self, block, header, change, label):
+        with self.subTest(block=block, malformed=label):
+            with self.assertRaisesRegex(fs.FrdError, block):
+                fs.read_frd(self.corrupt(self.good(), header, change))
+
+    def test_the_unchanged_text_parses(self) -> None:
+        result = fs.read_frd(self.good())
+        self.assertEqual(result.coordinates[2], (1.0, 2.0, 3.0))
+        self.assertAlmostEqual(result.displacement[1], 3.0)
+        self.assertAlmostEqual(result.von_mises[1], 5.0)
+
+    def test_a_record_with_too_few_values_is_refused(self) -> None:
+        f = self.FIELD
+        for block, header in self.BLOCKS:
+            wanted = 6 if block == "STRESS" else 3
+            for have in (0, 1, wanted - 1):
+                self.assert_refused(block, header, lambda r, have=have: r[:13 + have * f], f"{have} values")
+
+    def test_a_value_that_is_not_a_number_is_refused(self) -> None:
+        f = self.FIELD
+        for block, header in self.BLOCKS:
+            for position in (0, 2):
+                self.assert_refused(block, header,
+                                    lambda r, position=position: r[:13 + position * f] + "xxxxxxxxxxxx" + r[13 + (position + 1) * f:],
+                                    f"value {position + 1}")
+
+    def test_a_node_id_that_is_not_a_number_or_is_blank_is_refused(self) -> None:
+        for block, header in self.BLOCKS:
+            self.assert_refused(block, header, lambda r: r[:3] + "abcdefghij" + r[13:], "text id")
+            self.assert_refused(block, header, lambda r: r[:3] + " " * 10 + r[13:], "blank id")
+
+    def test_a_record_cut_off_inside_a_field_is_refused(self) -> None:
+        for block, header in self.BLOCKS:
+            self.assert_refused(block, header, lambda r: r[:-5], "cut inside the last field")
+
+    def test_a_record_marker_without_an_id_is_refused(self) -> None:
+        for block, header in self.BLOCKS:
+            self.assert_refused(block, header, lambda r: r[:3], "marker only")
+
+
 class SettleTests(unittest.TestCase):
     def test_an_interior_peak_that_converges_is_strength_eligible_and_reports_the_larger_peak(self) -> None:
         result = study({"peak": 99.0}, {"peak": 100.0})
