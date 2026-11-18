@@ -21,6 +21,7 @@ CONFIG = ROOT / "mypy.ini"
 CHANGED_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
+    "skills/cad-analysis/scripts/fea_reaction.py",
     "skills/cad-analysis/scripts/fea_static.py",
     "skills/cad-analysis/scripts/mesh_quality.py",
     "skills/cad-analysis/scripts/stop_extrema.py",
@@ -122,6 +123,7 @@ CHANGED_FILES = (
 STRICT_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
+    "skills/cad-analysis/scripts/fea_reaction.py",
     "skills/cad-analysis/scripts/mesh_quality.py",
     "skills/cad-analysis/scripts/stop_statics.py",
     "skills/cad-flow/scripts/fea_solvers.py",
