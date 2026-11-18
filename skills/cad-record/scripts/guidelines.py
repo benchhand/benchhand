@@ -262,9 +262,10 @@ def _text_fact(data: Any) -> str | None:
 
 
 def _millimetres(fact: Any) -> float | None:
-    quantity = getattr(fact, "value", None)
+    quantity: Any = getattr(fact, "value", None)
     if getattr(fact, "known", False) and hasattr(quantity, "to") and quantity.dimension == "length" and quantity.value is not None:
-        return float(quantity.to("mm").value)
+        converted: Any = quantity.to("mm")
+        return float(converted.value)
     return None
 
 
