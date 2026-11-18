@@ -931,6 +931,15 @@ class ConfigTests(unittest.TestCase):
              "sjorsr-cla-bot[bot]", "srobroek"),
         )
 
+    def test_contributing_shows_the_phrase_the_script_expects(self) -> None:
+        text = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        blocks = re.findall(r"```text\n(.*?)\n```", text, re.DOTALL)
+        self.assertEqual(blocks, [cla.signing_phrase(self.config.version)])
+
+    def test_the_configured_document_exists(self) -> None:
+        self.assertEqual(self.config.document, "CLA.md")
+        self.assertTrue((ROOT / self.config.document).is_file())
+
     def test_the_phrase_names_the_configured_version(self) -> None:
         self.assertTrue(self.config.version)
         self.assertIn(self.config.version, cla.signing_phrase(self.config.version))
