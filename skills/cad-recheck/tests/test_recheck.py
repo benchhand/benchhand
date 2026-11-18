@@ -566,5 +566,54 @@ class RecheckHookTests(unittest.TestCase):
         return digest.hexdigest()
 
 
+class CommittedFixtureTests(unittest.TestCase):
+    """The committed verify project (tests/fixtures/verify-project): a record whose layout gate passes, stamped
+    from real build and evidence output. CI verifies it with `stamp.py --verify --hw`; these tests do the same in a
+    scratch repository, where the project is staged and so is not skipped as "no staged hw/ change"."""
+
+    FIXTURE = Path(__file__).resolve().parent / "fixtures" / "verify-project"
+    HW = "verify-project/hw"
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        # Copy what a checkout holds: the tracked files, not the build outputs a local run left beside them.
+        listed = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=self.FIXTURE,
+                                capture_output=True, check=True).stdout.decode().split("\0")
+        for name in filter(None, listed):
+            target = self.root / "verify-project" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.FIXTURE / name, target)
+        self.git("init", "-q")
+        self.git("add", "-A")
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def git(self, *args: str) -> None:
+        env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, env=env)
+
+    def verify(self) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+        return subprocess.run([sys.executable, str(STAMP), "--verify", "--hw", self.HW], cwd=self.root, text=True,
+                              capture_output=True, check=False, env=env)
+
+    def test_the_committed_stamp_verifies(self) -> None:
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["passed"], True)
+        self.assertNotIn("required", json.loads(result.stdout))  # the stamp was checked, not skipped
+
+    def test_a_staged_edit_of_a_record_input_makes_the_committed_stamp_stale(self) -> None:
+        part = self.root / self.HW / "parts" / "FXT-0001" / "part.yaml"
+        part.write_text(part.read_text(encoding="utf-8").replace("title: Test block", "title: Test block (edited)", 1),
+                        encoding="utf-8")
+        self.git("add", "-A")
+        result = self.verify()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("stamp is stale", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
