@@ -47,8 +47,8 @@ def limit(characteristic: str, operator: str, value: float | None = None, units:
     return data
 
 
-def per_line(characteristic: str, factor: float, floor: float, **extra: Any) -> dict[str, Any]:
-    return limit(characteristic, ">=", relative={"relative_to": "line_width", "factor": factor, "floor": fx.quantity(floor)}, **extra)
+def per_line(characteristic: str, factor: float, floor: float, base: str = "line_width", **extra: Any) -> dict[str, Any]:
+    return limit(characteristic, ">=", relative={"relative_to": base, "factor": factor, "floor": fx.quantity(floor)}, **extra)
 
 
 def guideline(ident: str, limits: list[dict[str, Any]], revision: int = 1, **scope: Any) -> dict[str, Any]:
@@ -156,6 +156,23 @@ class Discovery(Directories):
         self.assertEqual(sorted(catalog.guidelines), ["fdm.generic"])
         self.assertEqual(catalog.refused, ())
 
+    def test_a_quantity_that_cannot_be_read_is_refused_by_name_and_resolution_goes_on(self) -> None:
+        reversed_limit = limit("min_wall", "between")
+        reversed_limit["quantity"] = fx.quantity(lower=0.6, upper=0.4)
+        not_finite = limit("min_wall", ">=", float("nan"))
+        reversed_scope = guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.2)], nozzle_diameter=fx.quantity(lower=0.6, upper=0.4))
+        reversed_floor = guideline("fdm.generic", [per_line("min_wall", 3, 0.8)])
+        reversed_floor["limits"][0]["relative"]["floor"] = fx.quantity(lower=0.9, upper=0.8)
+        cases = {"limit interval": guideline("fdm.a", [reversed_limit]), "limit not finite": guideline("fdm.b", [not_finite]),
+                 "scope interval": reversed_scope, "relative floor interval": reversed_floor}
+        put(self.shipped, "good", guideline("fdm.good", [limit("min_wall", ">=", 1.0)]))
+        for name, document in cases.items():
+            put(self.project, name.replace(" ", "_"), document)
+        catalog = self.catalog()
+        self.assertEqual(sorted(r.path for r in catalog.refused), sorted(f"manufacturing/guidelines/{n.replace(' ', '_')}.yaml" for n in cases))
+        self.assertEqual(sorted(catalog.guidelines), ["fdm.good"])
+        self.assertEqual(resolve(record(), catalog, "min_wall").value, mi.Quantity("mm", value=1.0))
+
     def test_a_catalog_digests_are_the_sha256_of_each_file(self) -> None:
         put(self.shipped, "generic", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)], revision=2))
         import hashlib
@@ -177,6 +194,29 @@ class Specificity(Directories):
         put(self.shipped, "z_generic", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
         found = resolve(record(), self.catalog(), "min_wall")
         self.assertEqual(found.value, mi.Quantity("mm", value=1.0))
+
+    def test_the_number_of_selectors_ranks_a_set_whatever_the_discovery_order(self) -> None:
+        relaxes = {"reason": "the nozzle set prints thinner walls", "citation": cite()[0]}
+        for first, second in (("a_two", "b_one"), ("b_two", "a_one")):
+            with self.subTest(order=(first, second)):
+                shipped = Path(self.temp.name) / f"order_{first}"
+                put(shipped, first, guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.0, relaxes=relaxes)],
+                                              material_family=["pa"], nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
+                put(shipped, second, guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]))
+                found = resolve(record(), gl.discover(None, shipped=shipped), "min_wall")
+                self.assertEqual((found.value, found.provenance[0].guideline), (mi.Quantity("mm", value=1.0), "fdm.nozzle.d0_4@1"))
+                self.assertTrue(any("relaxed to >= 1 mm by fdm.nozzle.d0_4@1" in w for w in found.warnings), found.warnings)
+
+    def test_a_set_with_two_selectors_that_loosens_without_relaxes_stays_under_one_with_a_single_selector(self) -> None:
+        for first, second in (("a_two", "b_one"), ("b_two", "a_one")):
+            with self.subTest(order=(first, second)):
+                shipped = Path(self.temp.name) / f"loose_{first}"
+                put(shipped, first, guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.0)], material_family=["pa"],
+                                              nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
+                put(shipped, second, guideline("fdm.material.pa", [limit("min_wall", ">=", 1.5)], material_family=["pa"]))
+                found = resolve(record(), gl.discover(None, shipped=shipped), "min_wall")
+                self.assertEqual((found.value, found.provenance[0].guideline), (mi.Quantity("mm", value=1.5), "fdm.material.pa@1"))
+                self.assertTrue(any("without `relaxes`" in w for w in found.warnings), found.warnings)
 
     def test_a_nozzle_interval_selects_by_the_profile_nozzle(self) -> None:
         put(self.shipped, "n04", guideline("fdm.nozzle.d0_4", [limit("min_wall", ">=", 1.2)],
@@ -251,6 +291,24 @@ class Extends(Directories):
         found = resolve(record(), catalog, "overhang_angle")
         self.assertEqual((found.value, [p.guideline for p in found.provenance]), (mi.Quantity("deg", value=40), ["fdm.base@1"]))
 
+    def test_a_child_that_relaxes_its_parent_with_relaxes_wins_over_the_parent(self) -> None:
+        relaxes = {"reason": "the child prints thinner walls", "citation": cite()[0]}
+        put(self.shipped, "base", {**guideline("fdm.base", [limit("min_wall", ">=", 1.5)]), "abstract": True})
+        put(self.shipped, "pa", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.0, relaxes=relaxes)], material_family=["pa"]),
+                                 "extends": ["fdm.base"]})
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.value, [p.guideline for p in found.provenance]), (mi.Quantity("mm", value=1.0), ["fdm.material.pa@1"]))
+        self.assertTrue(any("relaxed to >= 1 mm by fdm.material.pa@1" in w for w in found.warnings), found.warnings)
+        self.assertEqual([(s.guideline, s.layer) for s in found.provenance[0].shadowed], [("fdm.base@1", "material")])
+
+    def test_a_child_that_loosens_its_parent_without_relaxes_keeps_the_parent_value_with_a_warning(self) -> None:
+        put(self.shipped, "base", {**guideline("fdm.base", [limit("min_wall", ">=", 1.5)]), "abstract": True})
+        put(self.shipped, "pa", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.0)], material_family=["pa"]),
+                                 "extends": ["fdm.base"]})
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.value, [p.guideline for p in found.provenance]), (mi.Quantity("mm", value=1.5), ["fdm.base@1"]))
+        self.assertTrue(any("without `relaxes`" in w for w in found.warnings), found.warnings)
+
     def test_an_abstract_set_alone_resolves_nothing(self) -> None:
         base = guideline("fdm.base", [limit("overhang_angle", "<=", 40, "deg")])
         base["abstract"] = True
@@ -282,6 +340,20 @@ class Extends(Directories):
 
 
 class LineWidth(Directories):
+    def test_a_line_width_limit_uses_the_line_width_and_a_nozzle_limit_uses_the_nozzle(self) -> None:
+        for base, nozzle, width, expected in (("line_width", 0.4, 0.5, 1.5), ("nozzle_diameter", 0.4, 0.5, 1.2),
+                                              ("line_width", 0.4, None, 1.2), ("nozzle_diameter", 0.6, 0.5, 1.8)):
+            with self.subTest(base=base, nozzle=nozzle, width=width):
+                shipped = Path(self.temp.name) / f"shipped_{base}_{nozzle}_{width}"
+                put(shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8, base=base)]))
+                catalog = gl.discover(None, shipped=shipped)
+                self.assertAlmostEqual(resolve(record(nozzle=nozzle, line_width=width), catalog, "min_wall").value.value, expected)
+
+    def test_a_nozzle_limit_without_a_nozzle_is_unknown_and_does_not_borrow_the_line_width(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8, base="nozzle_diameter")]))
+        found = resolve(record(nozzle=None, line_width=0.5), self.catalog(), "min_wall")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("no nozzle diameter", found.reasons[0])
     def test_a_line_width_multiple_resolves_against_the_line_width_before_the_nozzle(self) -> None:
         put(self.shipped, "g", guideline("fdm.generic", [per_line("min_wall", 3, 0.8)]))
         catalog = self.catalog()
@@ -431,6 +503,15 @@ class Grade(Directories):
         self.assertEqual(found.value, mi.Quantity("mm", lower=0.7, upper=0.7))
         self.assertEqual((found.provenance[0].layer, found.provenance[0].status, found.provenance[0].guideline), ("L4", "calibrated", "cal_wall"))
         self.assertEqual(resolve(record(), catalog, "min_wall").status, "guideline", "removing the calibration reverts the grade")
+
+    def test_a_source_locator_survives_from_normalization_to_the_trace(self) -> None:
+        calibration = self.calibration()
+        calibration["source"]["locator"] = "table 2"
+        rec = record(calibrations=[calibration])
+        self.assertEqual(rec.capabilities["tst_printer"].calibrations[0].source.locator, "table 2")
+        found = resolve(rec, gl.Catalog(), "min_wall")
+        self.assertEqual(found.source["locator"], "table 2")
+        self.assertEqual(json.loads(gl.trace_bytes([found]))["resolutions"][0]["source"]["locator"], "table 2")
 
     def test_a_calibration_of_another_material_does_not_beat_the_guideline(self) -> None:
         put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))

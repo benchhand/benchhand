@@ -379,6 +379,7 @@ class Source:
     decision: str | None = None
     date: str | None = None
     document: str | None = None  # the document that holds a policy
+    locator: str | None = None  # where in the source the value is stated
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any]) -> Source:

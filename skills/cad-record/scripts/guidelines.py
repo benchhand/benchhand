@@ -170,11 +170,28 @@ def validate(data: Any) -> list[str]:
     if problems:
         return problems
     mi = _intent()
+    scope = data["scope"]
+    for where, quantity in [("scope/nozzle_diameter", scope["nozzle_diameter"])] if "nozzle_diameter" in scope else []:
+        problems.extend(_quantity_problems(mi, where, quantity))
     for index, limit in enumerate(data["limits"]):
         relative = limit.get("relative")
-        if relative is not None and mi.quantity(relative["floor"]).dimension != "length":
-            problems.append(f"limits/{index}/relative: the floor of a line-width limit is a length")
+        if "quantity" in limit:
+            problems.extend(_quantity_problems(mi, f"limits/{index}/quantity", limit["quantity"]))
+        if relative is not None:
+            floor_problems = _quantity_problems(mi, f"limits/{index}/relative/floor", relative["floor"])
+            problems.extend(floor_problems)
+            if not floor_problems and mi.quantity(relative["floor"]).dimension != "length":
+                problems.append(f"limits/{index}/relative: the floor of a line-width limit is a length")
     return problems
+
+
+def _quantity_problems(mi: Any, where: str, data: Any) -> list[str]:
+    """Why `data` is not a quantity the resolver can read: an unknown unit, a number that is not finite or a reversed interval."""
+    try:
+        mi.quantity(data)
+    except mi.IntentError as error:
+        return [f"{where}: {error}"]
+    return []
 
 
 def _read(path: Path, shown: str, origin: str) -> tuple[Guideline | None, Refusal | None]:
@@ -506,7 +523,7 @@ class _Candidate:
     defined_in: Guideline  # the set that states it
     limit: Mapping[str, Any]
     bound: _Bound
-    key: tuple[int, int, int]  # pinned (machine), specificity of the scope, then of applies_to
+    key: tuple[int, int, int, int]  # pinned (machine), scope specificity, applies_to, then minus the distance from the applicable set
     shown: str
     layer: str
 
@@ -521,9 +538,10 @@ def _bound(limit: Mapping[str, Any], context: Context, units: str | None) -> tup
     infinity = float("inf")
     if "relative" in limit:
         relative = limit["relative"]
-        base = context.base_mm
+        base = context.nozzle_diameter_mm if relative["relative_to"] == "nozzle_diameter" else context.base_mm
         if base is None:
-            return None, "the profile states neither a line width nor a nozzle diameter"
+            return None, ("the profile states no nozzle diameter" if relative["relative_to"] == "nozzle_diameter"
+                          else "the profile states neither a line width nor a nozzle diameter")
         floor = mi.quantity(relative["floor"])
         number = round(max(float(relative["factor"]) * base, floor.to("mm").value), 9)
         quantity = mi.Quantity("mm", value=number)
@@ -576,10 +594,11 @@ def _applies(limit: Mapping[str, Any], orientation: str | None, feature: str | N
     return len(wanted)
 
 
-def _candidates_of(guideline: Guideline, defined: Guideline, context: Context, characteristic: str, orientation: str | None,
-                   feature: str | None, notes: tuple[list[str], list[str]]) -> list[_Candidate]:
-    """The candidates `defined`'s limits give when read through `guideline`. A requirement under an unknown scope fact adds
-    to notes[0] (uncertain), a numeric limit under one adds to notes[1] (warnings)."""
+def _candidates_of(guideline: Guideline, defined: Guideline, distance: int, context: Context, characteristic: str,
+                   orientation: str | None, feature: str | None, notes: tuple[list[str], list[str]]) -> list[_Candidate]:
+    """The candidates `defined`'s limits give when read through `guideline`, `distance` sets above it in its extends chain
+    (0 for its own limits). A requirement under an unknown scope fact adds to notes[0] (uncertain), a numeric limit under
+    one adds to notes[1] (warnings)."""
     matched = _matches(guideline.scope, context)
     found: list[_Candidate] = []
     for limit in defined.limits:
@@ -588,7 +607,7 @@ def _candidates_of(guideline: Guideline, defined: Guideline, context: Context, c
             continue
         if matched is not None:
             found.append(_Candidate(guideline, defined, limit, _Bound(None, None, None),
-                                    (int(_pinned(guideline, context)), guideline.specificity, depth), "", _layer(guideline, context)))
+                                    (int(_pinned(guideline, context)), guideline.specificity, depth, -distance), "", _layer(guideline, context)))
             continue
         names = ", ".join(_unknown_selectors(guideline.scope, context))
         if limit["operator"] in ("equals", "one_of"):
@@ -626,9 +645,10 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
     candidates: list[_Candidate] = []
     try:
         for guideline in applicable(catalog, context):
-            for defined in _closure(catalog, guideline.id):
-                candidates.extend(_candidates_of(guideline, defined, context, characteristic, orientation, feature,
-                                                 (uncertain, warnings)))
+            chain = _closure(catalog, guideline.id)
+            for position, defined in enumerate(chain):
+                candidates.extend(_candidates_of(guideline, defined, len(chain) - 1 - position, context, characteristic,
+                                                 orientation, feature, (uncertain, warnings)))
     except GuidelineError as error:
         return Resolved(characteristic, "unknown", reasons=(str(error),))
     if uncertain:

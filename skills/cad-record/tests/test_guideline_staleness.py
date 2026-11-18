@@ -115,6 +115,16 @@ class Staleness(unittest.TestCase):
         self.assertIn("bogus", found[0].message)
 
 
+class Fingerprints(unittest.TestCase):
+    def test_a_source_without_a_locator_fingerprints_as_it_did_before_the_field_existed(self) -> None:
+        plain = impact.plain(mi.Source.from_data(fx.source("datasheet", "TST guide")))
+        self.assertNotIn("locator", plain)
+
+    def test_a_source_locator_is_part_of_the_fingerprint_when_stated(self) -> None:
+        stated = impact.plain(mi.Source.from_data(fx.source("datasheet", "TST guide", locator="table 2")))
+        self.assertEqual(stated["locator"], "table 2")
+
+
 class PacketKeys(unittest.TestCase):
     def test_a_resolved_set_has_a_dependency_key_the_check_result_schema_accepts(self) -> None:
         key = gl.packet_key("fdm.material.pa_cf@12")

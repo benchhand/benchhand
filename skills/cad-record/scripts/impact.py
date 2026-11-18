@@ -157,7 +157,8 @@ def subject_key(subject: Mapping[str, Any]) -> str:
 def plain(value: Any) -> Any:
     """`value` as plain JSON data: dataclasses as dicts of their fields, mappings as dicts, sequences as lists."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {f.name: plain(getattr(value, f.name)) for f in dataclasses.fields(value) if f.name != "raw"}
+        return {f.name: plain(getattr(value, f.name)) for f in dataclasses.fields(value)
+                if f.name != "raw" and not (f.name == "locator" and getattr(value, f.name) is None)}
     if isinstance(value, Mapping):
         return {str(key): plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
