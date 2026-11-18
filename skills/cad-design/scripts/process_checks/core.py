@@ -31,8 +31,8 @@ PARALLEL_COS = math.cos(math.radians(1.0))  # a feature axis within 1 degree of 
 
 # The plugin rules this module applies are policy, never product facts or capability numbers.
 POLICY = types.MappingProxyType({
-    "kind": "policy", "reference": "cad-agent manufacturing-intent dispatch policy (cad-design process_checks)",
-    "origin": "cad-agent plugin", "document": "skills/cad-design/scripts/process_checks/__init__.py"})
+    "kind": "policy", "reference": "benchhand manufacturing-intent dispatch policy (cad-design process_checks)",
+    "origin": "benchhand plugin", "document": "skills/cad-design/scripts/process_checks/__init__.py"})
 
 
 def intent() -> Any:

@@ -78,7 +78,7 @@ class InstallerTests(unittest.TestCase):
                 self.assertFalse((project / agents_relative).exists())
                 if harness == "opencode":
                     self.assertFalse((project / ".opencode/commands").exists())
-                self.assertFalse((project / ".cad-agent-install.json").exists())
+                self.assertFalse((project / ".benchhand-install.json").exists())
 
     def test_user_install_and_uninstall_use_contract_roots(self) -> None:
         for harness in HARNESS_PATHS:

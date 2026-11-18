@@ -32,7 +32,7 @@ HALOGENATED = re.compile(r"(?<![a-z])(pvc|cpvc|polyvinyl[\s_-]*chloride|vinyl|pv
                          r"fep|pvdf|chlorinated|fluoropolymer)(?![a-z])", re.IGNORECASE)
 LASER_POLICY = {"kind": "policy", "reference": "laser cutting material safety: reject PVC and other halogenated polymers; "
                 "require identified, approved stock, coating and extraction",
-                "origin": "cad-agent plugin", "document": "skills/cad-design/scripts/process_checks/sheet.py"}
+                "origin": "benchhand plugin", "document": "skills/cad-design/scripts/process_checks/sheet.py"}
 SHAPING = frozenset({"cnc", "drilling", "reaming", "finishing"})
 
 

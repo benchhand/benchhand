@@ -52,7 +52,7 @@ class Namespace:
 
 # The producer's own metadata namespace. Metadata names outside the core namespace must carry a prefix declared
 # on the model element, and an optional namespace is ignorable to a consumer that does not know it.
-PRODUCER = Namespace("cadagent", "https://github.com/srobroek/cad-agent/ns/3mf/2026")
+PRODUCER = Namespace("cadagent", "https://github.com/benchhand/benchhand/ns/3mf/2026")
 # Extensions the model declares. Empty: the package is Core only. Materials 1.2.1 would add
 # Namespace("m", "http://schemas.microsoft.com/3dmanufacturing/material/2015/02") here, Production 1.1.2
 # Namespace("p", "http://schemas.microsoft.com/3dmanufacturing/production/2015/06") with uuid5 identifiers.

@@ -13,7 +13,7 @@ Codex's `workspace-write` sandbox can block loopback listeners, Chromium, or Fre
 
 The generated Kiro agent profiles use V3 configuration. Run the flow with a working V3 engine, such as `kiro-cli chat --v3`. Do not use the legacy V1 engine with these profiles. See the [Kiro V3 agent configuration docs](https://kiro.dev/docs/cli/v3/agent-config/).
 
-The Claude plugin entry point is `/cad-agent:cad-flow`. To complete a gate, give explicit approval. The lead records the approval and rationale in a new `hw/decisions/DR-###.md`. A preview, successful check, or agent recommendation is not approval.
+The Claude plugin entry point is `/benchhand:cad-flow`. To complete a gate, give explicit approval. The lead records the approval and rationale in a new `hw/decisions/DR-###.md`. A preview, successful check, or agent recommendation is not approval.
 
 LAYOUT freeze, PARTS, DETAIL and ANALYSIS each come as two gates. Once the built version passes the fast checks, the lead records a decision marked PROVISIONAL, without asking you, and the next stage may start. The human gate follows the full check, which checks every pair and runs the full motion sweep; only your approval closes it. A failed full check, a MAJOR finding of the L2 light review, or a change you name at the human gate voids the provisional decision. The lead then reopens that stage and every later stage built on that version, and `hw/product.yaml` `flow.stage` returns to the reopened stage.
 
@@ -22,14 +22,14 @@ LAYOUT freeze, PARTS, DETAIL and ANALYSIS each come as two gates. Once the built
 Run the environment check from the project root:
 
 ```sh
-uv run --script /path/to/cad-agent/skills/cad-flow/scripts/preflight.py
+uv run --script /path/to/benchhand/skills/cad-flow/scripts/preflight.py
 ```
 
 If Chromium or the render cache needs installation, run `preflight.py --warm`. Setup can plan or run user-level setup:
 
 ```sh
-uv run --script /path/to/cad-agent/skills/cad-flow/scripts/setup.py
-uv run --script /path/to/cad-agent/skills/cad-flow/scripts/setup.py --yes
+uv run --script /path/to/benchhand/skills/cad-flow/scripts/setup.py
+uv run --script /path/to/benchhand/skills/cad-flow/scripts/setup.py --yes
 ```
 
 The shared launcher also works for `setup.py` and keeps its declared dependencies in the shared environment: `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/setup.py [--yes]`.

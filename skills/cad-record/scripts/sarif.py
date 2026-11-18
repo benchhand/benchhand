@@ -54,7 +54,7 @@ PART_FILES = ("part.yaml", "model.py")
 PART_NUMBER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
-def document(findings: Iterable[Any], *, tool: str = "cad-agent", status: str | None = None,
+def document(findings: Iterable[Any], *, tool: str = "benchhand", status: str | None = None,
              hw: Path | None = None) -> dict[str, Any]:
     """The SARIF 2.1.0 document of `findings`. `hw` is the project's hw/ directory and locates part files."""
     rules: dict[str, dict[str, Any]] = {}

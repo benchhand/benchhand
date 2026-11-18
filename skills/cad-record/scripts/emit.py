@@ -95,7 +95,7 @@ def envelope_text(result: Any, schema_id: str | None = SCHEMA) -> str:
     return json.dumps(document, indent=2)
 
 
-def sarif_text(result: Any, *, tool: str = "cad-agent", hw: Path | None = None) -> str:
+def sarif_text(result: Any, *, tool: str = "benchhand", hw: Path | None = None) -> str:
     """The findings of `result` as SARIF 2.1.0 JSON, without a trailing newline. `hw` lets part findings anchor on a file."""
     document = envelope(result)
     return json.dumps(_sarif().document(document["findings"], tool=tool, status=document["status"], hw=hw), indent=2)
@@ -228,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("envelope", type=Path, help="a stored tool-result envelope (JSON)")
     parser.add_argument("--sarif", action="store_true", required=True, help="export the findings as SARIF 2.1.0")
     parser.add_argument("--hw", type=Path, help="the project's hw/ directory, to anchor part findings on part.yaml")
-    parser.add_argument("--tool", default="cad-agent", help="the SARIF tool name")
+    parser.add_argument("--tool", default="benchhand", help="the SARIF tool name")
     try:
         args = parser.parse_args(argv)
     except SystemExit as stop:

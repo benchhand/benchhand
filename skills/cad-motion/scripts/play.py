@@ -114,7 +114,7 @@ PLAY_COVERAGE = ("the corners of the declared play box and the nominal, centred 
                  "cases, else the per-joint sweep with the other joints at nominal; motion between samples, intermediate "
                  "offsets and other directions, loads beyond the declared compliance, contact forces, friction and "
                  "dynamics are not covered")
-RULE_SOURCE = {"kind": "policy", "reference": "cad-motion play extremes rule", "origin": "cad-agent",
+RULE_SOURCE = {"kind": "policy", "reference": "cad-motion play extremes rule", "origin": "benchhand",
                "document": "skills/cad-motion/scripts/play.py"}
 
 

@@ -101,7 +101,7 @@ COVERAGE = ("the reaction of one pivot at its joint limits under the peak record
             "moving part's farthest point from the axis, perpendicular to the lever, because its location is not "
             "recorded; strength and stiffness of the load path, friction, dynamics and non-planar contact are not covered")
 RULE_SOURCE = {"kind": "policy", "reference": "cad-analysis stop reaction rule: a stop's design reaction is the applied moment over "
-                                              "its smallest contact arm", "origin": "cad-agent",
+                                              "its smallest contact arm", "origin": "benchhand",
                "document": "skills/cad-analysis/scripts/stop_reaction.py"}
 REMEDY_UNBOUNDED = ("add an FEA contact case for this stop (cad-analysis fea_static.py) and approve it in a design record, or "
                     "move the stop face so its nearest edge is clear of the pivot axis")

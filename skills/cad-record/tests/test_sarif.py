@@ -485,7 +485,7 @@ class CommandLineProcessTests(unittest.TestCase):
 
     def test_without_hw_no_part_anchor_is_found_and_the_default_tool_name_is_used(self) -> None:
         shown = json.loads(self.run_emit(str(self.envelope), "--sarif").stdout)
-        self.assertEqual(shown["runs"][0]["tool"]["driver"]["name"], "cad-agent")
+        self.assertEqual(shown["runs"][0]["tool"]["driver"]["name"], "benchhand")
         self.assertEqual(len(shown["runs"][0]["results"]), len(self.cases))
         self.assertTrue(all("physicalLocation" not in r.get("locations", [{}])[0] for r in shown["runs"][0]["results"]))
 
