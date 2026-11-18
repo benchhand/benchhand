@@ -20,6 +20,8 @@ register the module in `sys.modules` before executing it, because dataclasses lo
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import fnmatch
 import functools
 import hashlib
@@ -31,7 +33,7 @@ import shutil
 import sys
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -851,8 +853,19 @@ def stale(directory: Path) -> str | None:
 
 
 def _stale_bundle(target: Path) -> bool:
-    """A sealed bundle that fails its seal. A directory with no manifest.json is another writer's claim."""
-    return (target / MANIFEST).is_file() and stale(target) is not None
+    """A populated directory that fails its seal. Only an empty directory is another writer's claim."""
+    return target.is_dir() and not target.is_symlink() and any(target.iterdir()) and stale(target) is not None
+
+
+@contextlib.contextmanager
+def _target_lock(hw: Path, target_rel: str) -> Iterator[None]:
+    """Hold an exclusive lock on one bundle path, so inspecting an existing bundle and replacing it are
+    one step per writer. The OS drops the lock when its holder ends."""
+    lock = Path(hw).parent / SCRATCH / "locks" / (target_rel.replace("/", "_") + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
 
 
 def _bundle_entry(entry_id: str) -> Entry:
@@ -981,7 +994,8 @@ def publish(hw: Path, entry_id: str, params: Mapping[str, str], staged: Path, *,
     and version manifest that still verifies is returned unchanged. A stale one (see `stale`) is
     replaced. Any other existing bundle is a
     PublishConflict unless `replace`: then it moves to .cad-work/replaced/ and the new manifest's
-    `replaces` records it. On failure `staged` stays as scratch.
+    `replaces` records it. A lock on the bundle path (`_target_lock`) makes inspecting the existing
+    bundle and replacing it one step per writer. On failure `staged` stays as scratch.
     """
     hw, staged = Path(hw), Path(staged)
     lay, entry = load(), _bundle_entry(entry_id)
@@ -998,50 +1012,51 @@ def publish(hw: Path, entry_id: str, params: Mapping[str, str], staged: Path, *,
     recipe = json.loads(canonical_json(recipe))
     recipe_sha = recipe_sha256(recipe)
 
-    replaces = None
-    retained = None
-    if os.path.lexists(target):
-        existing = _reusable(target, recipe_sha, version_sha)
-        if existing is not None:
-            shutil.rmtree(staged)
-            return Published(target, existing, reused=True, replaced=None)
-        try:
-            existing = json.loads((target / MANIFEST).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            existing = None
-        if not replace and not _stale_bundle(target):
-            raise _recipe_conflict(target_rel)
-        stamp = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}"
-        retained = hw.parent / SCRATCH / "replaced" / target_rel / stamp
-        old_manifest = target / MANIFEST
-        replaces = {"manifest_sha256": _sha256(old_manifest) if old_manifest.is_file() else None,
-                    "recipe_sha256": _sha_or_none(existing.get("recipe_sha256")) if isinstance(existing, dict) else None,
-                    "moved_to": f"{SCRATCH}/replaced/{target_rel}/{stamp}"}
-        retained.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.rename(target, retained)
-        except FileNotFoundError as error:
-            raise PublishConflict(f"another writer replaced {target_rel} meanwhile") from error
+    with _target_lock(hw, target_rel):
+        replaces = None
+        retained = None
+        if os.path.lexists(target):
+            existing = _reusable(target, recipe_sha, version_sha)
+            if existing is not None:
+                shutil.rmtree(staged)
+                return Published(target, existing, reused=True, replaced=None)
+            try:
+                existing = json.loads((target / MANIFEST).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                existing = None
+            if not replace and not _stale_bundle(target):
+                raise _recipe_conflict(target_rel)
+            stamp = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}"
+            retained = hw.parent / SCRATCH / "replaced" / target_rel / stamp
+            old_manifest = target / MANIFEST
+            replaces = {"manifest_sha256": _sha256(old_manifest) if old_manifest.is_file() else None,
+                        "recipe_sha256": _sha_or_none(existing.get("recipe_sha256")) if isinstance(existing, dict) else None,
+                        "moved_to": f"{SCRATCH}/replaced/{target_rel}/{stamp}"}
+            retained.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.rename(target, retained)
+            except FileNotFoundError as error:
+                raise PublishConflict(f"another writer replaced {target_rel} meanwhile") from error
 
-    manifest: dict[str, Any] = {
-        "schema_version": BUNDLE_SCHEMA_VERSION, "layout": entry_id, "path": target_rel,
-        "params": dict(sorted(params.items())), "version_manifest_sha256": version_sha, "producer": producer,
-    }
-    if status is not None:
-        manifest["status"] = status
-    manifest.update(recipe=recipe, recipe_sha256=recipe_sha, files=files, replaces=replaces)
-    manifest_path = staged / MANIFEST
-    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        claim(staged, target, target_rel)
-    except PublishConflict as error:
-        manifest_path.unlink()
-        kept = f"; the bundle it replaced is kept at {replaces['moved_to']}" if replaces else ""
-        raise PublishConflict(f"{error}{kept}") from error.__cause__
-    except LayoutError:
-        manifest_path.unlink(missing_ok=True)
-        raise
-    return Published(target, manifest, reused=False, replaced=retained)
+        manifest: dict[str, Any] = {
+            "schema_version": BUNDLE_SCHEMA_VERSION, "layout": entry_id, "path": target_rel,
+            "params": dict(sorted(params.items())), "version_manifest_sha256": version_sha, "producer": producer,
+        }
+        if status is not None:
+            manifest["status"] = status
+        manifest.update(recipe=recipe, recipe_sha256=recipe_sha, files=files, replaces=replaces)
+        manifest_path = staged / MANIFEST
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        try:
+            claim(staged, target, target_rel)
+        except PublishConflict as error:
+            manifest_path.unlink()
+            kept = f"; the bundle it replaced is kept at {replaces['moved_to']}" if replaces else ""
+            raise PublishConflict(f"{error}{kept}") from error.__cause__
+        except LayoutError:
+            manifest_path.unlink(missing_ok=True)
+            raise
+        return Published(target, manifest, reused=False, replaced=retained)
 
 
 def claim(staged: Path, target: Path, target_rel: str) -> None:

@@ -9,6 +9,7 @@ enforcement in validate.py."""
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -16,9 +17,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -307,6 +310,67 @@ class Publication(TempProject):
         write(self.target / "iso.png", "edited\n")
         write(self.target / "extra.png")
         self.assertEqual(layout.stale(self.target), "stale: iso.png changed after it was sealed (+1 more)")
+
+    def test_a_populated_bundle_without_a_readable_manifest_is_stale_and_reruns(self) -> None:
+        for damage in ("missing", "directory"):
+            with self.subTest(damage):
+                publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"}, recipe={"size": 800})
+                (self.target / "manifest.json").unlink()
+                if damage == "directory":
+                    write(self.target / "manifest.json" / "inner.txt")
+                self.assertTrue(layout.stale(self.target).startswith("stale: cannot read"), damage)
+                self.assertIsNone(layout.reusable(self.hw, "bundle.renders", self.params, {"size": 800}))
+                rerun = publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"}, recipe={"size": 800})
+                self.assertFalse(rerun.reused)
+                self.assertEqual(layout.verify(self.target), [])
+                shutil.rmtree(self.target)
+
+    def test_a_writer_that_repaired_a_stale_bundle_is_not_moved_aside_by_a_slower_writer(self) -> None:
+        publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"}, recipe={"size": 800})
+        write(self.target / "iso.png", "edited\n")
+        a_paused, b_trying, release_a = threading.Event(), threading.Event(), threading.Event()
+        guard = 30  # seconds: only a hang guard, never part of the logic
+        outcome: dict[str, Any] = {}
+        real, hooked = layout._stale_bundle, []
+
+        def stale_then_pause(target: Path) -> bool:
+            found = real(target)
+            if found and not hooked:  # writer A has seen the stale bundle and waits here
+                hooked.append(True)
+                a_paused.set()
+                release_a.wait(guard)
+            return found
+
+        def writer_a() -> None:
+            with mock.patch.object(layout, "_stale_bundle", stale_then_pause):
+                outcome["a"] = publish(self.hw, "bundle.renders", self.params, {"iso.png": "a\n"}, recipe={"size": 800})
+
+        def writer_b() -> None:
+            b_trying.set()
+            try:
+                outcome["b"] = publish(self.hw, "bundle.renders", self.params, {"iso.png": "b\n"}, recipe={"size": 1600})
+            except layout.PublishConflict as error:
+                outcome["b"] = error
+
+        a, b = threading.Thread(target=writer_a, daemon=True), threading.Thread(target=writer_b, daemon=True)
+        a.start()
+        try:
+            self.assertTrue(a_paused.wait(guard), "writer A never reached its pause")
+            lock = self.project / ".cad-work" / "locks" / "hw_renders_v1_assembly.lock"
+            with lock.parent.joinpath(lock.name).open("a") as probe:
+                with self.assertRaises(BlockingIOError, msg="writer A holds no lock on the bundle while it is paused"):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            b.start()
+            self.assertTrue(b_trying.wait(guard))
+        finally:
+            release_a.set()
+        a.join(guard)
+        b.join(guard)
+        self.assertFalse(a.is_alive() or b.is_alive(), "a writer hung")
+        self.assertIsInstance(outcome["b"], layout.PublishConflict, "B finds A's sound bundle and another recipe")
+        self.assertEqual(layout.verify(self.target), [])
+        moved = [p for p in (self.project / ".cad-work" / "replaced").rglob("manifest.json")]
+        self.assertTrue(all(layout.verify(p.parent) for p in moved), "no sound bundle was moved aside")
 
     def test_a_sealed_v2_release_verifies_and_a_tampered_copy_is_reported(self) -> None:
         release = self.hw / "releases" / "A"
