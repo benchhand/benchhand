@@ -34,7 +34,7 @@ listed files and nothing else.
 
 | Id | Path | Kind | Files (role) | Writer | Appears at | Mutability | Meaning |
 |---|---|---|---|---|---|---|---|
-| `record.product` | `hw/product.yaml` | record | (source) | lead (cad-record workflow) | ground | controlled | product identity, rigor, regime, tolerances and workflow state, including the frozen anchor |
+| `record.product` | `hw/product.yaml` | record | (source) | lead (cad-record workflow) | ground | controlled | product identity, regime, tolerances and workflow state, including the frozen anchor |
 | `record.requirements` | `hw/requirements.yaml` | record | (source) | lead (cad-record workflow) | specify | controlled | REQ-### requirements with verification methods |
 | `record.interfaces` | `hw/interfaces.yaml` | record | (source) | lead (cad-record workflow) | specify | controlled | mating, motion, clearance and fit contracts |
 | `record.assembly` | `hw/assembly.yaml` | record | (source) | lead (cad-record workflow) | layout | controlled | subassemblies, occurrences and joints |

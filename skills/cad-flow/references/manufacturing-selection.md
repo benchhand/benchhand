@@ -20,7 +20,7 @@ Separate **requirements**, **preferences**, **assumptions** and **open questions
 
 ### One use-case classification table
 
-Use the user's description to record the service class; ask when the description does not resolve a row. The service class describes intended-use maturity and consequence. Choose rigor separately as documentation depth using `maker`, `pro` or `regulated`; never derive rigor from a prototype label.
+Use the user's description to record the service class; ask when the description does not resolve a row. The service class describes intended-use maturity and consequence.
 
 | User's description | `service_class` | Required clarification |
 |---|---|---|
@@ -61,4 +61,4 @@ Physical claims need an as-built configuration, suitable protocol and calibrated
 
 For every change, compare impact on use case, loads, environment, duty/life, material, route, capability, setup, tools, orientation, support, finish, geometry, interfaces, tolerance and acceptance evidence. Recheck dependent plans/results from the earliest affected stage. Missing dependency metadata stays unknown and requires rerun or assessed carry-forward. Prior PASS does not carry by default.
 
-Evidence must follow two separate axes. The use-case **service class** (`appearance_concept`, `fit_assembly`, `functional_demo`, `working_prototype`, `production`, `safety_critical`) describes use maturity and consequence. Product **rigor** (`maker`, `pro`, `regulated`) describes documentation depth. A prototype is a service class, never a rigor level; neither axis substitutes for the other. Fit prototypes need interface, stack and assembly evidence. Supervised demos need evidence for claimed loads/use limits. Working prototypes need representative service evidence. Production and high-consequence/regulated use need governing requirements, qualified route/material evidence, inspection and accountable authority. Unknown service blocks final selection and new manufacturing freeze/release. A permitted trial waiver must be safe, approved and scoped; it remains waived and untested.
+The use-case **service class** (`appearance_concept`, `fit_assembly`, `functional_demo`, `working_prototype`, `production`, `safety_critical`) describes use maturity and consequence. A prototype is a service class. Fit prototypes need interface, stack and assembly evidence. Supervised demos need evidence for claimed loads/use limits. Working prototypes need representative service evidence. Production and high-consequence/regulated use need governing requirements, qualified route/material evidence, inspection and accountable authority. Unknown service blocks final selection and new manufacturing freeze/release. A permitted trial waiver must be safe, approved and scoped; it remains waived and untested.
