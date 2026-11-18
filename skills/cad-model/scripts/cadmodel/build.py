@@ -298,7 +298,7 @@ def reusable(cached: Mapping[str, Any], request: Mapping[str, Any], hw: Path, se
             and sources_hold(cached.get("sources"), hw, seen))
 
 
-def cache_part(parts_store: Any, key: str, fresh: Mapping[str, Any], request: Mapping[str, Any], hw: Path,
+def cache_part(parts_store: store.PartStore, key: str, fresh: Mapping[str, Any], request: Mapping[str, Any], hw: Path,
                label: str) -> str:
     """Store the record of a part just built under its key, and return the store's outcome. A record already
     there that `reusable` rejects, such as one whose runner sources changed, gives way to this one. Raises

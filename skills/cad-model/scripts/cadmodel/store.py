@@ -11,14 +11,40 @@ key is the sha256 of exactly the inputs each one names below, never a timing or 
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from cadmodel.record import RECORD_SCRIPTS, _load, load_layout
 
 STORE_SCRIPT = RECORD_SCRIPTS / "store.py"
 PART_INPUTS = ("format", "kind", "kernel", "runtime", "request", "inputs")
 MANUFACTURING_INPUTS = ("format", "kind", "entry", "state", "features", "process")
+
+
+class Lookup(Protocol):
+    """What `record` returns: the record, or None and why."""
+
+    record: dict[str, Any] | None
+    reason: str
+
+
+class PartStore(Protocol):
+    """The cad-record `Store` methods that cad-model calls, so build and manufacture check against them."""
+
+    def record(self, key: str) -> Lookup: ...
+
+    def intern(self, path: Path) -> str: ...
+
+    def place_object(self, digest: str, target: Path) -> bool: ...
+
+    def claim(self, key: str, record: Mapping[str, Any], *, version_labels: tuple[str, ...] = ()) -> str: ...
+
+    def retire(self, key: str) -> None: ...
+
+    def lock(self, key: str) -> AbstractContextManager[None]: ...
+
+    def gc(self, dry_run: bool = False) -> dict[str, Any]: ...
 
 
 def load_store() -> Any:
@@ -36,5 +62,5 @@ def file_sha(path: Path) -> str:
     return str(load_store().file_sha(path))
 
 
-def Store(hw: Path) -> Any:  # noqa: N802 - the cad-record class, constructed under its own name
-    return load_store().Store(hw)
+def Store(hw: Path) -> PartStore:  # noqa: N802 - the cad-record class, constructed under its own name
+    return load_store().Store(hw)  # type: ignore[no-any-return]  # loaded by path, so mypy sees Any

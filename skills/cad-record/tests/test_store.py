@@ -153,6 +153,18 @@ class Records(Fixture):
         self.assertEqual(layout.classify(self.hw / ".cad" / "cache" / "records" / f"{key('k')}.json", self.hw).entry.id,
                          "cache.part_records")
 
+    def test_a_record_of_the_old_shape_is_a_miss_and_the_next_claim_replaces_it(self) -> None:
+        record = self.claimed(key("o"), {"mesh.unv": b"UNV"})
+        path = self.hw / ".cad" / "cache" / "records" / f"{key('o')}.json"
+        kept = json.loads(path.read_text(encoding="utf-8"))
+        old = {"format": kept["format"], "kind": "test", "objects": record["members"]}  # before members replaced objects
+        path.write_text(json.dumps(old), encoding="utf-8")
+        found = self.store.record(key("o"))
+        self.assertIsNone(found.record)
+        self.assertRegex(found.reason, r"^miss: a record needs members")
+        self.assertRegex(self.store.claim(key("o"), record), r"^replaced: miss: a record needs members")
+        self.assertEqual(self.store.record(key("o")).record["members"], record["members"])
+
     def test_a_missing_record_is_a_miss_and_a_changed_object_is_stale_with_its_reason(self) -> None:
         self.assertTrue(self.store.record(key("m")).reason.startswith("miss"))
         record = self.claimed(key("s"), {"mesh.unv": b"UNV"})

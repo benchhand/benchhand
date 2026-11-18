@@ -736,9 +736,16 @@ def _code_shas() -> Any:
     return sys.modules[name]
 
 
+def reusable_outputs(cached: Mapping[str, Any]) -> bool:
+    """Whether a record read from the store can stand in for making a part's outputs: it is a manufacturing record
+    with the `derived` facts and the `row` that `make` reads. Any other record is a miss, so the outputs are made."""
+    return cached.get("kind") == "manufacturing" and isinstance(cached.get("derived"), Mapping) \
+        and isinstance(cached.get("row"), Mapping)
+
+
 def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered: Mapping[str, str],
          products: Mapping[str, str], definitions: Mapping[str, Any], built: Mapping[str, Mapping[str, Any]],
-         states: Mapping[str, Any], parts_store: Any, state_shas: Mapping[str, str],
+         states: Mapping[str, Any], parts_store: store.PartStore, state_shas: Mapping[str, str],
          features: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
     """Write and judge the outputs of every planned part below the partial version folder `work`.
 
@@ -771,7 +778,8 @@ def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered:
         located = features.get(pn)
         outputs_key = store.key(outputs_recipe(entry, state_shas.get(pn) if different else None, located, identity))
         cached = parts_store.record(outputs_key).record
-        if cached is not None and all(parts_store.place_object(sha, target / name) for name, sha in cached["members"].items()):
+        if (cached is not None and reusable_outputs(cached)
+                and all(parts_store.place_object(sha, target / name) for name, sha in cached["members"].items())):
             entry.update(cached["derived"])
             row, files = cached["row"], dict(cached["members"])
             reused.add(pn)
@@ -796,8 +804,13 @@ def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered:
                                           encoding="utf-8")
             files = {**outputs, SIDECAR: sha256(target / SIDECAR)}
             if row["status"] != "fail":
-                parts_store.claim(outputs_key, {"kind": "manufacturing", "pn": pn, "derived": derived, "row": row,
-                                                "members": {name: parts_store.intern(target / name) for name in files}})
+                with parts_store.lock(outputs_key):  # a record reuse rejected gives way, as cache_part does for a part
+                    kept = parts_store.record(outputs_key).record
+                    if kept is not None and not reusable_outputs(kept):
+                        parts_store.retire(outputs_key)
+                    parts_store.claim(outputs_key, {"kind": "manufacturing", "pn": pn, "derived": derived, "row": row,
+                                                    "members": {name: parts_store.intern(target / name)
+                                                                for name in files}})
         rows[pn] = row
         entries[pn] = {**entry, "files": files, **{key: row[key] for key in ("status", "complete", "blocking_failures")}}
     return entries, rows, reused

@@ -2662,6 +2662,53 @@ class ManufacturingColorTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
+class ManufacturingStaleRecordTests(unittest.TestCase):
+    """A manufacturing record the code cannot use is a cache miss: the outputs are made again, the run exits 0 and
+    the record that replaces it is reused. Two shapes: a record before `members` replaced `objects`, and one whose
+    members are fine but that lacks the `derived` and `row` facts."""
+
+    SHAPES = {"old shape": lambda record: {"format": record["format"], "kind": "manufacturing",
+                                           "objects": record["members"]},
+              "no facts": lambda record: {key: value for key, value in record.items() if key not in ("derived", "row")}}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.hw = hw = projects().loose_project(Path(cls.tmp.name) / "hw", "cadquery", [])
+        cls.runs = {"v1": cli("run", str(hw), "--label", "v1")}
+        labels = iter(("v2", "v3", "v4", "v5"))
+        cls.order = {}
+        for shape, damage in cls.SHAPES.items():
+            cls.damage(hw, damage)
+            made, reused = next(labels), next(labels)
+            cls.order[shape] = (made, reused)
+            cls.runs[made] = cli("run", str(hw), "--label", made)
+            cls.runs[reused] = cli("run", str(hw), "--label", reused)
+
+    @classmethod
+    def damage(cls, hw: Path, shape) -> None:
+        records = [path for path in (hw / ".cad" / "cache" / "records").glob("*.json")
+                   if json.loads(path.read_text(encoding="utf-8")).get("kind") == "manufacturing"]
+        assert len(records) == 1, records
+        record = json.loads(records[0].read_text(encoding="utf-8"))
+        records[0].write_text(json.dumps(shape(record)), encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def test_a_record_the_code_cannot_use_is_a_miss_that_remakes_the_outputs_and_is_then_replaced(self) -> None:
+        for shape, (made, reused) in self.order.items():
+            with self.subTest(shape=shape):
+                for label in (made, reused):
+                    proc = self.runs[label][0]
+                    self.assertNotIn("Traceback", proc.stdout + proc.stderr)
+                    self.assertEqual(proc.returncode, 0, label + proc.stderr[-3000:])
+                self.assertEqual(self.runs[made][1]["cache"]["manufacturing"], {"built": 1, "reused": 0})
+                self.assertEqual(self.runs[reused][1]["cache"]["manufacturing"], {"built": 0, "reused": 1})
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class ManufacturingInputCacheTests(unittest.TestCase):
     """A record version 2 part (CadQuery only): a material, orientation or process change remakes its
     manufacturing outputs and never its B-rep; the post-check ledgers change nothing. v5 changes the
