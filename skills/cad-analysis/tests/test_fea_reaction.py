@@ -32,7 +32,7 @@ import fea_reaction  # noqa: E402
 import fea_static  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
-from reaction_project import INTERFACE, Scenario, bare_end, current_code, end, entry  # noqa: E402
+from reaction_project import EVIDENCE, INTERFACE, Scenario, bare_end, current_code, end, entry  # noqa: E402
 
 
 class DesignReaction(unittest.TestCase):
