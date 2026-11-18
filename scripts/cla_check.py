@@ -1,17 +1,24 @@
 """In-repo CLA check: verify that every contributor on a pull request signed the current CLA.
 
-Two flows, chosen by the workflow event (``route``):
+The CLA result is a check run named ``CLA`` that the CLA GitHub App creates. Workflow jobs cannot
+supply it: a fork PR can edit any workflow that runs on ``pull_request`` and make a job pass. Three
+flows run from the default branch (``route``), never from PR code:
 
-* ``check`` (pull_request): list the PR's commits and fail unless every author, and the PR opener,
-  is allowlisted or has a signature for the current CLA version in ``signatures/cla.json`` on the
-  ``cla-signatures`` branch.
+* ``workflow_run`` (the trigger-only ``CLA`` workflow finished): for a ``pull_request`` run, find the
+  open PR by head repository, branch and sha, evaluate its contributors and post the check run on
+  the head sha. For a ``merge_group`` run, resolve the queue entries up to that group through the
+  merge queue API, require every PR to pass now and to hold a current-version passing app check
+  run, and post on the group commit. The workflow's own conclusion is never trusted.
 * ``sign`` (issue_comment on a PR): when the comment is exactly the signing phrase and the commenter
-  is a commit author or the opener, record the signature on that branch, then re-run the latest
-  failed CLA run for the PR head.
+  is a contributor of that PR, record the signature, then post a fresh check run for that PR.
+* ``revoke`` (a signing comment was edited away or deleted): remove the signature, reconcile the
+  user's other records against their source comments, then post a fresh check run for every open
+  PR of that user. Posting happens whether or not storage changed, so a retry finishes a half-done
+  invalidation.
 
 Identity is the numeric GitHub user id; logins change. Only the allowlist matches by login.
-Nothing here executes PR content, and the comment body is read from the event payload, never from
-a shell expression. Stdlib only. The pure functions come first; HTTP and file access sit at the end.
+Nothing here executes PR content, and event data is read from the payload file, never from a shell
+expression. Stdlib only. The pure functions come first; HTTP and file access sit at the end.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -29,7 +37,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-WORKFLOW_FILE = "cla.yml"
+CHECK_NAME = "CLA"
+MAX_PR_COMMITS = 250  # the pull request commits endpoint lists at most this many
+MAX_SETTLE = 3  # evaluations posted per event while signatures keep changing underneath
+SHA = re.compile(r"[0-9a-f]{40}")
+OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?")
+QUEUE_REF = re.compile(r"gh-readonly-queue/(?P<branch>.+)/pr-(?P<number>\d+)-(?P<sha>[0-9a-f]{40})")
+QUEUE_QUERY = (
+    "query($owner:String!,$name:String!,$branch:String!){repository(owner:$owner,name:$name)"
+    "{mergeQueue(branch:$branch){entries(first:100){totalCount nodes{position headCommit{oid}"
+    " pullRequest{number}}}}}}"
+)
 MAX_ATTEMPTS = 5
 MAX_OPEN_PR_PAGES = 5
 PAGE_SIZE = 100
@@ -48,6 +66,7 @@ class Config:
     signatures_repo: str = "benchhand/cla-signers"
     signatures_branch: str = "main"
     signatures_path: str = "signatures/v1/cla.json"
+    app_id: int = 0
 
 
 @dataclass
@@ -69,6 +88,7 @@ def parse_config(raw: dict[str, Any]) -> Config:
         signatures_repo=str(raw["signatures_repo"]),
         signatures_branch=str(raw["signatures_branch"]),
         signatures_path=str(raw["signatures_path"]),
+        app_id=int(raw.get("app_id", 0)),
     )
 
 
@@ -102,31 +122,36 @@ def signed_ids(doc: dict[str, Any], version: str) -> set[int]:
     return {s["id"] for s in doc.get("signatures", []) if s.get("cla_version") == version}
 
 
+def contributors(commits: list[dict[str, Any]], opener: tuple[int, str]) -> dict[int, str]:
+    """Everyone who must have signed, and who may sign: the opener, the linked commit authors and the
+    co-authors named by a GitHub noreply address. Checking and signing share this one set."""
+    people: dict[int, str] = {opener[0]: opener[1]}
+    for c in commits:
+        if c.get("author") is not None:
+            people.setdefault(c["author"]["id"], c["author"]["login"])
+        for _name, email in parse_coauthors(c["commit"].get("message", "")):
+            identity = noreply_identity(email)
+            if identity is not None:
+                people.setdefault(*identity)
+    return people
+
+
 def evaluate(
     commits: list[dict[str, Any]], opener: tuple[int, str], doc: dict[str, Any], config: Config
 ) -> Verdict:
     """Decide who still has to sign. Unlinked authors fail; unverifiable co-authors only warn."""
     verdict = Verdict()
-    required: dict[int, str] = {opener[0]: opener[1]}
     for c in commits:
-        author = c.get("author")
-        message = c["commit"].get("message", "")
-        if author is None:
+        if c.get("author") is None:
             email = c["commit"].get("author", {}).get("email", "")
             verdict.unlinked.append((c["sha"], email))
-        else:
-            required.setdefault(author["id"], author["login"])
-        for _name, email in parse_coauthors(message):
-            identity = noreply_identity(email)
-            if identity is None:
-                if email not in verdict.warnings:
-                    verdict.warnings.append(email)
-            else:
-                required.setdefault(*identity)
+        for _name, email in parse_coauthors(c["commit"].get("message", "")):
+            if noreply_identity(email) is None and email not in verdict.warnings:
+                verdict.warnings.append(email)
     have = signed_ids(doc, config.version)
     verdict.unsigned = [
         (uid, login)
-        for uid, login in required.items()
+        for uid, login in contributors(commits, opener).items()
         if uid not in have and not allowlisted(login, config.allowlist)
     ]
     return verdict
@@ -151,6 +176,21 @@ def report(verdict: Verdict, config: Config) -> str:
     return "\n".join(lines) or "CLA satisfied."
 
 
+def external_id(config: Config) -> str:
+    return f"cla:{config.version}"
+
+
+def check_run_body(head_sha: str, ok: bool, title: str, summary: str, config: Config) -> dict[str, Any]:
+    return {
+        "name": CHECK_NAME,
+        "head_sha": head_sha,
+        "status": "completed",
+        "conclusion": "success" if ok else "failure",
+        "external_id": external_id(config),
+        "output": {"title": title, "summary": summary[:65535]},
+    }
+
+
 def merge_signature(doc: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     """Add the record unless that user already signed that version; the first record wins."""
     existing = doc.get("signatures", [])
@@ -161,10 +201,8 @@ def merge_signature(doc: dict[str, Any], record: dict[str, Any]) -> dict[str, An
 
 def route(event_name: str, payload: dict[str, Any]) -> str:
     action = payload.get("action")
-    if event_name == "merge_group":
-        return "skip"
-    if event_name == "pull_request" and action in {"opened", "synchronize", "reopened"}:
-        return "check"
+    if event_name == "workflow_run" and action == "completed":
+        return "workflow_run"
     if (
         event_name == "issue_comment"
         and action in {"created", "edited", "deleted"}
@@ -234,6 +272,8 @@ def expect(status: int, ok: tuple[int, ...], what: str) -> None:
 
 
 def list_commits(api: Transport, repo: str, number: int) -> list[dict[str, Any]]:
+    """All commits of a PR. The endpoint stops at 250, so a list that long may be truncated: fail
+    closed rather than check part of a PR."""
     commits: list[dict[str, Any]] = []
     page = 1
     while True:
@@ -241,8 +281,14 @@ def list_commits(api: Transport, repo: str, number: int) -> list[dict[str, Any]]
         expect(status, (200,), "listing pull request commits")
         commits += data
         if len(data) < PAGE_SIZE:
-            return commits
+            break
         page += 1
+    if len(commits) >= MAX_PR_COMMITS:
+        raise RuntimeError(
+            f"#{number} has {MAX_PR_COMMITS} or more commits, and GitHub lists at most {MAX_PR_COMMITS}, "
+            "so the CLA cannot be checked completely. Split the pull request."
+        )
+    return commits
 
 
 def read_signatures(api: Transport, config: Config) -> tuple[dict[str, Any], str | None]:
@@ -279,31 +325,6 @@ def update_signatures(
     return "conflict"
 
 
-def rerun_check(api: Transport, repo: str, head_sha: str, *, failed_only: bool) -> None:
-    """Re-run the newest CLA run for the head commit. Fork runs list no pull requests, so match by
-    head sha and workflow file. A grant re-runs a failed run; a revoke re-runs a finished run."""
-    query = f"head_sha={head_sha}&event=pull_request&per_page=20"
-    status, data = api("GET", f"/repos/{repo}/actions/workflows/{WORKFLOW_FILE}/runs?{query}", None)
-    expect(status, (200,), "listing CLA runs")
-    runs = data.get("workflow_runs", [])
-    if failed_only:
-        wanted = [r for r in runs if r.get("conclusion") == "failure"]
-    else:
-        wanted = [r for r in runs if r.get("status", "completed") == "completed"]
-    if wanted:
-        suffix = "rerun-failed-jobs" if failed_only else "rerun"
-        status, _ = api("POST", f"/repos/{repo}/actions/runs/{wanted[0]['id']}/{suffix}", None)
-        expect(status, (201,), "re-running the CLA check")
-
-
-def check(api: Transport, sig_api: Transport, repo: str, pr: dict[str, Any], config: Config) -> int:
-    doc, _ = read_signatures(sig_api, config)
-    opener = (pr["user"]["id"], pr["user"]["login"])
-    verdict = evaluate(list_commits(api, repo, pr["number"]), opener, doc, config)
-    print(report(verdict, config))
-    return 0 if verdict.ok else 1
-
-
 def stale_comments(
     api: Transport, repo: str, doc: dict[str, Any], user_id: int, seen: dict[int, bool]
 ) -> set[int]:
@@ -333,10 +354,12 @@ def reconcile(
     return drop_comments(doc, repo, stale_comments(api, repo, doc, user_id, seen))
 
 
-def open_pulls(api: Transport, repo: str) -> list[dict[str, Any]]:
+def open_pulls(api: Transport, repo: str, head: str | None = None) -> list[dict[str, Any]]:
+    """Open pull requests, optionally only those from ``owner:branch``; bounded to a few pages."""
+    suffix = f"&head={urllib.parse.quote(head, safe='')}" if head else ""
     pulls: list[dict[str, Any]] = []
     for page in range(1, MAX_OPEN_PR_PAGES + 1):
-        status, data = api("GET", f"/repos/{repo}/pulls?state=open&per_page={PAGE_SIZE}&page={page}", None)
+        status, data = api("GET", f"/repos/{repo}/pulls?state=open&per_page={PAGE_SIZE}&page={page}{suffix}", None)
         expect(status, (200,), "listing open pull requests")
         pulls += data
         if len(data) < PAGE_SIZE:
@@ -345,16 +368,177 @@ def open_pulls(api: Transport, repo: str) -> list[dict[str, Any]]:
 
 
 def pulls_of_user(api: Transport, repo: str, user_id: int, own: dict[str, Any]) -> list[dict[str, Any]]:
-    """Open pull requests that have the user as opener or commit author, plus the comment's own."""
+    """Open pull requests that count the user as a contributor, plus the comment's own. A PR whose
+    commits cannot be listed completely counts as affected: it is re-evaluated and fails closed."""
     found = {own["number"]: own}
     for pull in open_pulls(api, repo):
         if pull["number"] in found:
             continue
-        if pull["user"]["id"] == user_id or any(
-            c.get("author") and c["author"]["id"] == user_id for c in list_commits(api, repo, pull["number"])
-        ):
+        opener = (pull["user"]["id"], pull["user"]["login"])
+        try:
+            people = contributors(list_commits(api, repo, pull["number"]), opener)
+        except RuntimeError:
+            found[pull["number"]] = pull
+            continue
+        if user_id in people:
             found[pull["number"]] = pull
     return list(found.values())
+
+
+# ---- check runs ---------------------------------------------------------------------------------
+
+Result = tuple[bool, str, str]
+
+
+def post_check(api: Transport, repo: str, body: dict[str, Any]) -> None:
+    status, _ = api("POST", f"/repos/{repo}/check-runs", body)
+    expect(status, (201,), "creating the CLA check run")
+
+
+def describe(verdicts: list[tuple[int, Verdict]], config: Config) -> Result:
+    ok = all(v.ok for _n, v in verdicts)
+    if len(verdicts) == 1:
+        summary = report(verdicts[0][1], config)
+    else:
+        summary = "\n\n".join(f"#{n}: {report(v, config)}" for n, v in verdicts)
+    return ok, "CLA signed" if ok else "CLA not satisfied", summary
+
+
+def pull_verdicts(
+    api: Transport, repo: str, pulls: list[dict[str, Any]], doc: dict[str, Any], config: Config
+) -> list[tuple[int, Verdict]]:
+    out = []
+    for pull in pulls:
+        commits = list_commits(api, repo, pull["number"])
+        opener = (pull["user"]["id"], pull["user"]["login"])
+        out.append((pull["number"], evaluate(commits, opener, doc, config)))
+    return out
+
+
+def settle(
+    api: Transport, sig_api: Transport, repo: str, config: Config, head_sha: str,
+    compute: Callable[[dict[str, Any]], Result],
+) -> None:
+    """Post the result for the signatures as they are now, and again if they changed meanwhile.
+
+    The signatures are read first and re-read after the post, so an evaluation that raced a sign or
+    revoke is replaced by one that saw it. Every writer (this job, the sign job) posts after its own
+    read, so the last post reflects the newest signatures except in one window: a write that lands
+    after the re-read is followed by that writer's own post. If the signatures keep changing past
+    ``MAX_SETTLE`` rounds, the last word is a failure: never a stale pass.
+    """
+    for _ in range(MAX_SETTLE):
+        doc, _ = read_signatures(sig_api, config)
+        try:
+            ok, title, summary = compute(doc)
+        except RuntimeError as err:  # undetermined is a failure, never a pass
+            ok, title, summary = False, "CLA could not be determined", str(err)
+        post_check(api, repo, check_run_body(head_sha, ok, title, summary, config))
+        again, _ = read_signatures(sig_api, config)
+        if again == doc:
+            return
+    post_check(api, repo, check_run_body(
+        head_sha, False, "CLA could not be determined",
+        "The signatures kept changing during evaluation. Comment or re-run the CLA workflow to refresh.",
+        config,
+    ))
+
+
+def refresh_pull(api: Transport, sig_api: Transport, repo: str, pull: dict[str, Any], config: Config) -> None:
+    settle(api, sig_api, repo, config, pull["head"]["sha"],
+           lambda doc: describe(pull_verdicts(api, repo, [pull], doc, config), config))
+
+
+def latest_check(api: Transport, repo: str, sha: str, config: Config) -> dict[str, Any] | None:
+    query = f"check_name={CHECK_NAME}&app_id={config.app_id}&filter=latest&per_page=100"
+    status, data = api("GET", f"/repos/{repo}/commits/{sha}/check-runs?{query}", None)
+    expect(status, (200,), "reading CLA check runs")
+    runs = data.get("check_runs", [])
+    return max(runs, key=lambda r: r["id"]) if runs else None
+
+
+def queued_prs(api: Transport, repo: str, branch: str, head_sha: str, ref_pr: int) -> list[int]:
+    """Numbers of the PRs in the merge group whose head commit is ``head_sha``, and of every entry
+    ahead of it (their commits are part of the group). Anything unclear raises."""
+    owner, name = repo.split("/")
+    status, data = api("POST", "/graphql", {
+        "query": QUEUE_QUERY, "variables": {"owner": owner, "name": name, "branch": branch},
+    })
+    expect(status, (200,), "reading the merge queue")
+    queue = ((data.get("data") or {}).get("repository") or {}).get("mergeQueue")
+    if data.get("errors") or queue is None:
+        raise RuntimeError(f"the merge queue for {branch} could not be read")
+    entries = queue["entries"]
+    nodes = entries["nodes"]
+    if entries["totalCount"] > len(nodes):
+        raise RuntimeError("the merge queue is longer than the listing; its entries cannot all be checked")
+    matched = [n for n in nodes if (n.get("headCommit") or {}).get("oid") == head_sha]
+    if ref_pr not in {n["pullRequest"]["number"] for n in matched}:
+        raise RuntimeError(f"merge group {head_sha[:7]} is not a queue entry of #{ref_pr}")
+    top = max(n["position"] for n in matched)
+    return [n["pullRequest"]["number"] for n in nodes if n["position"] <= top]
+
+
+def merge_group_result(
+    api: Transport, repo: str, branch: str, sha: str, ref_pr: int, doc: dict[str, Any], config: Config
+) -> Result:
+    problems: list[str] = []
+    for number in queued_prs(api, repo, branch, sha, ref_pr):
+        status, pull = api("GET", f"/repos/{repo}/pulls/{number}", None)
+        expect(status, (200,), f"reading #{number}")
+        ((_n, verdict),) = pull_verdicts(api, repo, [{**pull, "number": number}], doc, config)
+        if not verdict.ok:
+            problems.append(f"#{number}: {report(verdict, config)}")
+        latest = latest_check(api, repo, pull["head"]["sha"], config)
+        if latest is None:
+            problems.append(f"#{number}: no CLA check run from the CLA app on its head commit.")
+        elif latest.get("conclusion") != "success":
+            problems.append(f"#{number}: its latest CLA check run did not pass.")
+        elif latest.get("external_id") != external_id(config):
+            problems.append(f"#{number}: its CLA check run is for another CLA version.")
+    if problems:
+        return False, "CLA not satisfied", "\n\n".join(problems)
+    return True, "CLA signed", "Every pull request in the merge group passed the CLA check."
+
+
+def handle_workflow_run(api: Transport, sig_api: Transport, repo: str, run: dict[str, Any], config: Config) -> int:
+    """Evaluate the commit a finished trigger workflow ran for. All of ``run`` is untrusted data:
+    it only selects what to look up, and the lookup must find a real PR or queue entry."""
+    kind, sha = run.get("event"), str(run.get("head_sha", ""))
+    if kind not in {"pull_request", "merge_group"}:
+        return 0
+    if not SHA.fullmatch(sha):
+        print("The triggering run has no usable head sha; nothing posted.")
+        return 1
+    if kind == "merge_group":
+        queue_ref = QUEUE_REF.fullmatch(str(run.get("head_branch") or ""))
+        if queue_ref is None or queue_ref["sha"] != sha:
+            print("The merge group branch name does not match its commit; nothing posted.")
+            return 1
+        branch, ref_pr = queue_ref["branch"], int(queue_ref["number"])
+        settle(api, sig_api, repo, config, sha,
+               lambda doc: merge_group_result(api, repo, branch, sha, ref_pr, doc, config))
+        return 0
+    head_repo = run.get("head_repository") or {}
+    full = str(head_repo.get("full_name") or "")
+    owner = str((head_repo.get("owner") or {}).get("login") or "")
+    branch_name = str(run.get("head_branch") or "")
+    if not (full and branch_name and OWNER.fullmatch(owner)):
+        print("The triggering run names no head repository or branch; nothing posted.")
+        return 0
+    pulls = [
+        p for p in open_pulls(api, repo, head=f"{owner}:{branch_name}")
+        if p["head"]["sha"] == sha and (p["head"].get("repo") or {}).get("full_name") == full
+    ]
+    if not pulls:
+        print(f"No open pull request has head {sha[:7]} on {full}:{branch_name}; nothing posted.")
+        return 0
+    settle(api, sig_api, repo, config, sha,
+           lambda doc: describe(pull_verdicts(api, repo, pulls, doc, config), config))
+    return 0
+
+
+# ---- signing and revoking -----------------------------------------------------------------------
 
 
 def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any], config: Config, now: str) -> int:
@@ -362,10 +546,10 @@ def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any],
     user = comment["user"]
     status, pull = api("GET", f"/repos/{repo}/pulls/{number}", None)
     expect(status, (200,), "reading the pull request")
-    commits = list_commits(api, repo, number)
-    eligible = {pull["user"]["id"]} | {c["author"]["id"] for c in commits if c.get("author")}
-    if user["id"] not in eligible:
-        print(f"@{user['login']} is neither the opener nor a commit author; signature not recorded.")
+    pull = {**pull, "number": number}
+    people = contributors(list_commits(api, repo, number), (pull["user"]["id"], pull["user"]["login"]))
+    if user["id"] not in people:
+        print(f"@{user['login']} is neither the opener nor a contributor of this pull request; not recorded.")
         return 0
     record = {
         "id": user["id"], "login": user["login"], "cla_version": config.version, "repo": repo,
@@ -380,7 +564,7 @@ def sign(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any],
         print("Could not record the signature after repeated conflicts; comment again to retry.")
         return 1
     print(f"Recorded @{user['login']} for CLA version {config.version}.")
-    rerun_check(api, repo, pull["head"]["sha"], failed_only=True)
+    refresh_pull(api, sig_api, repo, pull, config)
     return 0
 
 
@@ -396,19 +580,19 @@ def revoke(api: Transport, sig_api: Transport, repo: str, payload: dict[str, Any
     if outcome == "conflict":
         print("Could not remove the signature after repeated conflicts; re-run this job.")
         return 1
-    if outcome == "unchanged":
-        return 0
-    print(f"Removed the signature recorded from comment {comment_id}.")
+    if outcome == "written":
+        print(f"Removed the signature recorded from comment {comment_id}.")
+    # Invalidate whether or not storage changed: a retry after a failed post finds the record gone,
+    # and posting the current evaluation is idempotent. Signatures are global, so every open PR of
+    # this user is refreshed, not just the one with the comment.
     status, own = api("GET", f"/repos/{repo}/pulls/{number}", None)
     expect(status, (200,), "reading the pull request")
-    own = {**own, "number": number}
     failed = 0
-    # Signatures are global: every open pull request of this user loses the pass, not just this one.
-    for pull in pulls_of_user(api, repo, user_id, own):
+    for pull in pulls_of_user(api, repo, user_id, {**own, "number": number}):
         try:
-            rerun_check(api, repo, pull["head"]["sha"], failed_only=False)
+            refresh_pull(api, sig_api, repo, pull, config)
         except RuntimeError as err:
-            print(f"Could not re-run the CLA check for #{pull['number']}: {err}")
+            print(f"Could not update the CLA check for #{pull['number']}: {err}")
             failed = 1
     return failed
 
@@ -426,23 +610,24 @@ def matches(env: dict[str, str], config: Config) -> bool:
 def run(env: dict[str, str], api: Transport, sig_api: Transport, config: Config, now: str | None = None) -> int:
     payload = load_payload(env)
     repo = env["GITHUB_REPOSITORY"]
-    match route(env["GITHUB_EVENT_NAME"], payload):
-        case "check":
-            return check(api, sig_api, repo, payload["pull_request"], config)
-        case "comment":
-            match comment_action(payload, config):
-                case "sign":
-                    stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    return sign(api, sig_api, repo, payload, config, stamp)
-                case "revoke":
-                    return revoke(api, sig_api, repo, payload, config)
-                case _:
-                    return 0
-        case "skip":
-            print("Merge queue: the pull request already passed the CLA check.")
-            return 0
-        case _:
-            return 0
+    try:
+        match route(env["GITHUB_EVENT_NAME"], payload):
+            case "workflow_run":
+                return handle_workflow_run(api, sig_api, repo, payload["workflow_run"], config)
+            case "comment":
+                match comment_action(payload, config):
+                    case "sign":
+                        stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        return sign(api, sig_api, repo, payload, config, stamp)
+                    case "revoke":
+                        return revoke(api, sig_api, repo, payload, config)
+                    case _:
+                        return 0
+            case _:
+                return 0
+    except RuntimeError as err:
+        print(f"CLA check failed: {err}")
+        return 1
 
 
 def main(argv: list[str]) -> int:
@@ -458,8 +643,8 @@ def main(argv: list[str]) -> int:
             print(line, end="")
         return 0
     url = env.get("GITHUB_API_URL", "https://api.github.com")
-    # SIGNATURES_TOKEN writes the signatures repo; GITHUB_TOKEN reads and re-runs on this one. The
-    # check job has no SIGNATURES_TOKEN and reads the public signatures repo with its own token.
+    # GITHUB_TOKEN (the app's, scoped to this repo) reads pull requests and creates check runs.
+    # SIGNATURES_TOKEN writes the signatures repo; without it the public repo is read with GITHUB_TOKEN.
     api = github_transport(env.get("GITHUB_TOKEN", ""), url)
     sig_api = github_transport(env.get("SIGNATURES_TOKEN") or env.get("GITHUB_TOKEN", ""), url)
     return run(env, api, sig_api, config)

@@ -1,99 +1,20 @@
 name: CLA
 
-# The check runs in the pull request's own context (never the privileged fork-PR trigger), so a fork
-# gets a read-only token and no secrets. It checks out the base commit, so PR code never runs here.
-# Signing happens on issue_comment, which GitHub always runs from the default branch.
-# Signatures live in a separate public repository (.github/cla.json names it).
+# Trigger only. Nothing trusted runs here: a pull request can rewrite this file, so its result means
+# nothing. The "CLA" check that the ruleset requires is a check run created by the CLA GitHub App
+# from cla-check.yml, which GitHub runs from the default branch after this workflow finishes.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
   merge_group:
-  issue_comment:
-    types: [created, edited, deleted]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
-  cla:
-    name: CLA
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Check out the base commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-
-      - name: Verify signatures
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/cla_check.py
-
-  # The merge queue only forms from pull requests that already passed the CLA job. The same name
-  # satisfies the required check on merge_group runs.
-  cla-merge-group:
-    name: CLA
-    if: github.event_name == 'merge_group'
+  trigger:
+    name: CLA trigger
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     permissions: {}
     steps:
-      - run: echo "CLA already verified before queueing."
-
-  sign:
-    name: Sign
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    # No concurrency group: a fixed one keeps a single pending run, so a newer comment event could
-    # replace a queued revocation. The contents API blob sha makes concurrent writers retry instead.
-    steps:
-      - name: Check out the default branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-
-      # Reads the comment from the event payload; no expression carries untrusted text into a shell.
-      - name: Is this a signing comment, or one edited away or deleted
-        id: phrase
-        run: python3 -B scripts/cla_check.py --match-only
-
-      # Two narrow tokens: one writes the signatures repository, one re-runs the CLA check here.
-      - name: Mint the signatures token
-        id: signatures
-        if: steps.phrase.outputs.matches == 'true'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ secrets.CLA_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CLA_APP_PRIVATE_KEY }}
-          owner: benchhand
-          repositories: cla-signers
-          permission-contents: write
-
-      - name: Mint the re-run token
-        id: rerun
-        if: steps.phrase.outputs.matches == 'true'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ secrets.CLA_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CLA_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-actions: write
-          permission-pull-requests: read
-
-      - name: Update the signature record
-        if: steps.phrase.outputs.matches == 'true'
-        env:
-          GITHUB_TOKEN: ${{ steps.rerun.outputs.token }}
-          SIGNATURES_TOKEN: ${{ steps.signatures.outputs.token }}
-        run: python3 -B scripts/cla_check.py
+      - run: echo "CLA check requested; the CLA app posts the result."
