@@ -85,6 +85,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import itertools
 import json
 import math
 import sys
@@ -93,7 +94,7 @@ import traceback
 from collections.abc import Iterator, Sequence
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 LAYOUT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "layout.py"
@@ -674,6 +675,7 @@ PROBE_GRID = 8  # UV samples per direction on each face for normals, down-facing
 PROBE_RAY_SAMPLES = 16  # samples per face whose visibility rays are cast along each requested direction
 PROBE_TOL_MM = 1e-3  # a locator patch point this close to a face lies on it (cad-model components.BIND_TOLERANCE_MM)
 PROBE_RAY_OFFSET_MM = 1e-4
+ROOF_PARALLEL_TOL = 1e-6  # sine of the allowed angle between two edges that bound one bridged strip
 PROBE_LEVEL_MM = 1e-6  # faces this close to the lowest z lie on the bed
 FULL_TURN = 2.0 * math.pi - 1e-6
 
@@ -734,10 +736,24 @@ def _face_samples(face: Any) -> list[tuple[tuple[float, float, float], tuple[flo
     return found
 
 
-def _edges(face: Any) -> list[tuple[tuple[float, ...], tuple[float, float, float], tuple[float, float, float]]]:
-    """(rounded midpoint key, midpoint, chord direction) of each non-degenerate edge of `face`."""
+class _Edge(NamedTuple):
+    """One non-degenerate edge of a face: a rounded midpoint key, the midpoint, the chord, both ends, whether it is a
+    line and, for a circular arc, its radius (else 0)."""
+
+    key: tuple[float, ...]
+    mid: tuple[float, float, float]
+    chord: tuple[float, float, float]
+    start: tuple[float, float, float]
+    end: tuple[float, float, float]
+    straight: bool
+    radius: float = 0.0
+
+
+def _edges(face: Any) -> list[_Edge]:
+    """Each non-degenerate edge of `face`."""
     from OCP.BRep import BRep_Tool
     from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Line
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
 
@@ -753,9 +769,186 @@ def _edges(face: Any) -> list[tuple[tuple[float, ...], tuple[float, float, float
         curve = BRepAdaptor_Curve(edge)
         first, last = curve.FirstParameter(), curve.LastParameter()
         mid = _xyz(curve.Value((first + last) / 2.0))
-        chord = _sub(_xyz(curve.Value(last)), _xyz(curve.Value(first)))
-        found.append((tuple(round(c, 5) for c in mid), mid, chord))
+        start, end = _xyz(curve.Value(first)), _xyz(curve.Value(last))
+        radius = curve.Circle().Radius() if curve.GetType() == GeomAbs_Circle else 0.0
+        found.append(_Edge(tuple(round(c, 5) for c in mid), mid, _sub(end, start), start, end, curve.GetType() == GeomAbs_Line,
+                           radius))
     return found
+
+
+def _touch(a: _Edge, b: _Edge) -> bool:
+    return any(_norm(_sub(p, q)) <= PROBE_TOL_MM for p in (a.start, a.end) for q in (b.start, b.end))
+
+
+def _runs(anchors: list[_Edge]) -> list[_Edge]:
+    """`anchors` with each chain of contiguous collinear line edges joined into one edge. Arcs stay as they are."""
+    runs = list(anchors)
+    joined = True
+    while joined:
+        joined = False
+        for i, j in itertools.combinations(range(len(runs)), 2):
+            a, b = runs[i], runs[j]
+            length = _norm(a.chord)
+            if not (a.straight and b.straight and length > PROBE_TOL_MM and _touch(a, b)):
+                continue
+            along = tuple(c / length for c in a.chord)
+            if _norm(_cross(along, b.chord)) > ROOF_PARALLEL_TOL * _norm(b.chord) or \
+                    _norm(_cross(_sub(b.start, a.start), along)) > PROBE_TOL_MM:
+                continue
+            ends = (a.start, a.end, b.start, b.end)
+            low, high = min(ends, key=lambda p: _dot(p, along)), max(ends, key=lambda p: _dot(p, along))
+            mid = ((low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0, (low[2] + high[2]) / 2.0)
+            runs[i] = _Edge(low + high, mid, _sub(high, low), low, high, True)
+            del runs[j]
+            joined = True
+            break
+    return runs
+
+
+def _near(p: Sequence[float], q: Sequence[float]) -> bool:
+    return _norm(_sub(p, q)) <= PROBE_TOL_MM
+
+
+def _wire_count(face: Any) -> int:
+    from OCP.TopAbs import TopAbs_WIRE
+    from OCP.TopExp import TopExp_Explorer
+
+    explorer, wires = TopExp_Explorer(face, TopAbs_WIRE), 0
+    while explorer.More():
+        wires += 1
+        explorer.Next()
+    return wires
+
+
+def _on_run(edge: _Edge, run: _Edge, along: Sequence[float]) -> bool:
+    """Whether the line `edge` lies on the line edge `run`, between its ends, in either direction of `run`."""
+    base = min((run.start, run.end), key=lambda p: _dot(p, along))
+    length = _norm(run.chord)
+    return edge.straight and all(
+        _norm(_cross(_sub(p, base), along)) <= PROBE_TOL_MM and -PROBE_TOL_MM <= _dot(_sub(p, base), along) <= length + PROBE_TOL_MM
+        for p in (edge.start, edge.end))
+
+
+def _joins(edge: _Edge, p: Sequence[float], q: Sequence[float]) -> bool:
+    return (_near(edge.start, p) and _near(edge.end, q)) or (_near(edge.start, q) and _near(edge.end, p))
+
+
+def _is_end(edge: _Edge, a: _Edge, gap: float, along: Sequence[float]) -> bool:
+    """Whether `edge` closes the strip at an end of `a`: a straight edge, or a convex half circle of radius gap / 2.
+    Only a circle has a radius above 0, so another curve never passes the radius comparison."""
+    if edge.straight:
+        return True
+    length = _norm(a.chord)
+    foot = _dot(_sub(edge.start, a.start), along)
+    top = _dot(_sub(edge.mid, a.start), along)
+    low = abs(foot) <= PROBE_TOL_MM and top <= -gap / 2.0 + PROBE_TOL_MM
+    high = abs(foot - length) <= PROBE_TOL_MM and top >= length + gap / 2.0 - PROBE_TOL_MM
+    return edge.radius > 0.0 and abs(edge.radius - gap / 2.0) <= PROBE_TOL_MM and (low or high)
+
+
+class _Frame(NamedTuple):
+    """Roof coordinates of a strip: u along the runs from the start of run `a`, v across from run `a`."""
+
+    origin: tuple[float, float, float]
+    along: tuple[float, ...]
+    across: tuple[float, ...]
+    length: float
+    gap: float
+
+    def at(self, point: Sequence[float]) -> tuple[float, float]:
+        offset = _sub(point, self.origin)
+        return _dot(offset, self.along), _dot(offset, self.across)
+
+
+def _corner_arc(arc: _Edge, foot: Sequence[float], frame: _Frame) -> bool:
+    """Whether `arc` is a convex corner arc of radius at most gap / 2 that starts at `foot`, the end of a run, tangent to
+    that run and, at its other end, to an end edge across the strip."""
+    radius = arc.radius
+    if arc.straight or radius <= PROBE_TOL_MM or radius > frame.gap / 2.0 + PROBE_TOL_MM:  # radius 0: not a circle
+        return False
+    far = arc.end if _near(arc.start, foot) else arc.start
+    (u, v), (far_u, far_v), (mid_u, mid_v) = frame.at(foot), frame.at(far), frame.at(arc.mid)
+    low, high = abs(u) <= PROBE_TOL_MM, abs(u - frame.length) <= PROBE_TOL_MM
+    side_a, side_b = abs(v) <= PROBE_TOL_MM, abs(v - frame.gap) <= PROBE_TOL_MM
+    if not ((low or high) and (side_a or side_b)):
+        return False
+    out, inward, bulge = (-1.0 if low else 1.0), (1.0 if side_a else -1.0), math.sqrt(0.5)
+    expected = ((u + out * radius, v + inward * radius), (u + out * radius * bulge, v + inward * radius * (1.0 - bulge)))
+    return all(abs(x - y) <= PROBE_TOL_MM for found, want in (((far_u, far_v), expected[0]), ((mid_u, mid_v), expected[1]))
+               for x, y in zip(found, want))
+
+
+def _end_ok(chain: list[_Edge], feet: tuple[Sequence[float], Sequence[float]], a: _Edge, frame: _Frame) -> bool:
+    """Whether the edges `chain` from run `a` to the other run are an allowed end: one straight edge, one half circle,
+    or a straight edge across with a convex corner arc at each side."""
+    if len(chain) == 1:
+        return _is_end(chain[0], a, frame.gap, frame.along)
+    if len(chain) != 3:
+        return False
+    first, across, last = chain
+    return (across.straight and _norm(across.chord) > PROBE_TOL_MM and abs(_dot(across.chord, frame.along)) <= PROBE_TOL_MM
+            and _corner_arc(first, feet[0], frame) and _corner_arc(last, feet[1], frame))
+
+
+def _walk(start: Sequence[float], remaining: list[_Edge], b: _Edge) -> tuple[list[_Edge], Sequence[float]] | None:
+    """The edges taken out of `remaining` that chain from `start` to an end of `b` (at most three), and where they end."""
+    chain: list[_Edge] = []
+    here = start
+    while len(chain) < 3:
+        edge = next((e for e in remaining if _near(e.start, here) or _near(e.end, here)), None)
+        if edge is None:
+            return None
+        remaining.remove(edge)
+        chain.append(edge)
+        here = edge.end if _near(edge.start, here) else edge.start
+        if _near(here, b.start) or _near(here, b.end):
+            return chain, here
+    return None
+
+
+def _strip_gap(a: _Edge, b: _Edge, roof: list[_Edge]) -> float | None:
+    """The distance between `a` and `b` when the roof outline is exactly four parts in order, else None.
+
+    The parts are the two runs `a` and `b` (parallel lines of one length that overlap along their whole length) and
+    two ends that join them. Each end is one straight edge across, one convex half circle of radius gap / 2, or a
+    straight edge across with one convex corner arc at each side, tangent to the run and to that edge, of radius at
+    most gap / 2. Any other edge, notch, hole or cap shape leaves it None."""
+    length, other = _norm(a.chord), _norm(b.chord)
+    if not (a.straight and b.straight) or min(length, other) <= PROBE_TOL_MM:
+        return None
+    along = tuple(c / length for c in a.chord)
+    if _norm(_cross(along, b.chord)) > ROOF_PARALLEL_TOL * other:
+        return None
+    offset = _sub(b.start, a.start)
+    skew = _sub(offset, tuple(_dot(offset, along) * c for c in along))
+    gap = _norm(skew)
+    reach = sorted(_dot(_sub(p, a.start), along) for p in (b.start, b.end))
+    if gap <= PROBE_TOL_MM or abs(reach[0]) > PROBE_TOL_MM or abs(reach[1] - length) > PROBE_TOL_MM:
+        return None
+    remaining = [edge for edge in roof if not _on_run(edge, a, along) and not _on_run(edge, b, along)]
+    low, high = _walk(a.start, remaining, b), _walk(a.end, remaining, b)
+    if remaining or low is None or high is None:
+        return None
+    frame = _Frame(a.start, along, tuple(c / gap for c in skew), length, gap)
+    if abs(frame.at(low[1])[0]) > PROBE_TOL_MM or abs(frame.at(high[1])[0] - length) > PROBE_TOL_MM:
+        return None  # each end must join the same end of both runs, or the outline crosses itself
+    return gap if _end_ok(low[0], (a.start, low[1]), a, frame) and _end_ok(high[0], (a.end, high[1]), a, frame) else None
+
+
+def _roof_span(roof: list[_Edge], held: set[tuple[float, ...]], wires: int) -> tuple[str, float | None]:
+    """(kind, span_mm) of a horizontal ceiling with outline `roof` of `wires` wires, held at the edges whose keys are in `held`.
+
+    Filament crosses the roof between opposing anchors, so the span is the gap between the closest pair of anchor
+    runs (contiguous collinear anchor edges joined) when the roof is exactly that strip: one wire, the two runs, and
+    two straight or half-circle ends. Anchors that all touch or a lone anchor run hold a cantilever: an "overhang".
+    Any other roof (an L, a ring around a pillar, a taper, a notch, a boss, a hole, rounded corners) is a "bridge" of
+    unknown span: the best single filament direction is not worked out here."""
+    anchors = _runs([edge for edge in roof if edge.key in held])
+    pairs = list(itertools.combinations(anchors, 2))
+    if not any(not _touch(a, b) for a, b in pairs):
+        return "overhang", None
+    gaps = [gap for a, b in pairs if wires == 1 and (gap := _strip_gap(a, b, roof)) is not None]
+    return "bridge", min(gaps, default=None)
 
 
 def _distance(point: tuple[float, float, float], shape: Any) -> float:
@@ -887,11 +1080,11 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
         rows.append(row)
         edges = _edges(face)
         edges_of.append(edges)
-        for edge_key, _, _ in edges:
-            adjacency.setdefault(edge_key, []).append(n)
+        for edge in edges:
+            adjacency.setdefault(edge.key, []).append(n)
 
     def neighbours(n: int) -> list[tuple[int, Any]]:
-        return [(m, edge) for edge in edges_of[n] for m in adjacency.get(edge[0], ()) if m != n]
+        return [(m, edge) for edge in edges_of[n] for m in adjacency.get(edge.key, ()) if m != n]
 
     starts: dict[int, set[int]] = {}
     for n, row in enumerate(rows):
@@ -921,11 +1114,9 @@ def probe_solid(solid: Any, index: int, locators: dict[str, Any], plan: dict[str
         if face_low > bed_z + PROBE_LEVEL_MM and all(rows[m]["z_mm"][0] >= face_low - PROBE_LEVEL_MM for m, _ in others):
             kind = "island"  # a local lowest region off the bed: supports must start under it
         elif row["type"] == "plane" and row.get("normal", [0, 0, 0])[2] < -1.0 + 1e-6:
-            # A horizontal ceiling anchored where a neighbour continues downward: two or more anchors bridge it.
-            anchored = [edge[1] for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM]
-            if len(anchored) >= 2:
-                span = max(_norm(_sub(a, b)) for a in anchored for b in anchored)
-                kind = "bridge" if span > PROBE_TOL_MM else kind
+            # A horizontal ceiling: anchored where a neighbour continues downward, it bridges between opposing anchors.
+            held = {edge.key for m, edge in others if rows[m]["z_mm"][0] < face_low - PROBE_LEVEL_MM}
+            kind, span = _roof_span(edges_of[n], held, _wire_count(faces[n]))
         row["down"] = {"area_mm2": round(sum(angles.values()), 6), "max_angle_deg": float(max(angles)),
                        "angles": [[float(a), round(v, 6)] for a, v in sorted(angles.items())], "kind": kind,
                        "span_mm": None if span is None else round(span, 6),
