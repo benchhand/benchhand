@@ -2,6 +2,7 @@
 
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -9,9 +10,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "release-please-config.json"
-MANIFEST = ROOT / ".release-please-manifest.json"
 WORKFLOW = ROOT / ".github" / "workflows" / "release-please.yml"
-VERSION_FILES = [ROOT / ".claude-plugin" / "plugin.json", ROOT / ".claude-plugin" / "marketplace.json"]
 SHA_REF = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 
 
@@ -32,31 +31,86 @@ def package() -> dict:
     return load(CONFIG)["packages"]["."]
 
 
-def manifest_version() -> str:
-    return load(MANIFEST)["."]
+SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$")
+# release-please inserts new entries above the first match of this pattern.
+ENTRY_HEADING = re.compile(r"\n###? v?[0-9[]")
+# `## 0.2.0 (date)`, `## v0.2.0`, or release-please's `## [0.2.0](url) (date)`.
+HEADING_VERSION = re.compile(r"^###? v?\[?([^\]\s]+)")
 
 
-class ManifestTests(unittest.TestCase):
-    def test_manifest_is_the_latest_tagged_version(self) -> None:
-        self.assertEqual(manifest_version(), "0.1.1")
+def release_state_problems(root: Path) -> list[str]:
+    """Return how the version records under `root` disagree; empty when they agree.
 
-    def test_version_files_that_carry_a_version_match_the_manifest(self) -> None:
-        # plugin.json and marketplace.json hold no version today; if one is added it must agree.
-        for path in VERSION_FILES:
-            for found in re.findall(r'"version"\s*:\s*"([^"]+)"', path.read_text(encoding="utf-8")):
-                self.assertEqual(found, manifest_version(), path.name)
+    The manifest is the source of truth, so the check holds across release PRs, which bump
+    the manifest, CHANGELOG.md and version.txt together. `## Unreleased` is optional.
+    """
+    problems: list[str] = []
+    version = json.loads((root / ".release-please-manifest.json").read_text(encoding="utf-8"))["."]
+    if not SEMVER.match(version):
+        problems.append(f"manifest version {version!r} is not semver")
+
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    match = ENTRY_HEADING.search(changelog)
+    if match is None:
+        problems.append("CHANGELOG.md has no release heading")
+    else:
+        heading = changelog[match.start() + 1 :].splitlines()[0]
+        found = HEADING_VERSION.match(heading)
+        if found is None or found.group(1) != version:
+            problems.append(f"first CHANGELOG release heading {heading!r} is not {version}")
+
+    for relative in (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
+        text = (root / relative).read_text(encoding="utf-8")
+        for found_version in re.findall(r'"version"\s*:\s*"([^"]+)"', text):
+            if found_version != version:
+                problems.append(f"{relative} version {found_version} is not {version}")
+
+    version_txt = root / "version.txt"
+    if version_txt.exists() and version_txt.read_text(encoding="utf-8").strip() != version:
+        problems.append(f"version.txt is not {version}")
+    return problems
 
 
-class ChangelogTests(unittest.TestCase):
-    # release-please inserts new entries above the first match of this pattern.
-    ENTRY_HEADING = re.compile(r"\n###? v?[0-9[]")
+def write_release_state(root: Path, version: str, *, unreleased: bool, version_txt: str | None = None) -> None:
+    (root / ".claude-plugin").mkdir()
+    (root / ".claude-plugin" / "plugin.json").write_text(f'{{"version": "{version}"}}', encoding="utf-8")
+    (root / ".claude-plugin" / "marketplace.json").write_text('{"plugins": [{"name": "x"}]}', encoding="utf-8")
+    (root / ".release-please-manifest.json").write_text(json.dumps({".": version}), encoding="utf-8")
+    sections = ["# Changelog\n", "## Unreleased\n\n- pending\n"] if unreleased else ["# Changelog\n"]
+    sections += [
+        f"## [{version}](https://example.test/compare) (2027-01-01)\n\n### Features\n\n- new\n",
+        "## 0.1.1 (2026-11-02)\n\n- fix\n",
+    ]
+    (root / "CHANGELOG.md").write_text("\n".join(sections), encoding="utf-8")
+    if version_txt is not None:
+        (root / "version.txt").write_text(version_txt + "\n", encoding="utf-8")
 
-    def test_first_release_heading_is_the_manifest_version(self) -> None:
-        text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        match = self.ENTRY_HEADING.search(text)
-        self.assertIsNotNone(match)
-        heading = text[match.start() + 1 :].splitlines()[0]
-        self.assertRegex(heading, rf"^## v?{re.escape(manifest_version())}( |$)")
+
+class ReleaseStateTests(unittest.TestCase):
+    def test_repository_release_state_is_consistent(self) -> None:
+        self.assertEqual(release_state_problems(ROOT), [])
+
+    def test_bumped_release_pr_state_passes_with_or_without_unreleased(self) -> None:
+        for unreleased in (True, False):
+            with self.subTest(unreleased=unreleased), tempfile.TemporaryDirectory() as tmp:
+                write_release_state(Path(tmp), "0.2.0", unreleased=unreleased, version_txt="0.2.0")
+                self.assertEqual(release_state_problems(Path(tmp)), [])
+
+    def test_every_disagreeing_record_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_release_state(root, "0.2.0", unreleased=False, version_txt="0.1.1")
+            (root / ".claude-plugin" / "plugin.json").write_text('{"version": "0.1.1"}', encoding="utf-8")
+            problems = release_state_problems(root)
+        self.assertEqual(len(problems), 2, problems)  # plugin.json and version.txt
+
+    def test_invalid_manifest_version_and_stale_changelog_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_release_state(root, "0.2.0", unreleased=True)
+            (root / ".release-please-manifest.json").write_text('{".": "0.3"}', encoding="utf-8")
+            problems = release_state_problems(root)
+        self.assertEqual(len(problems), 3, problems)  # not semver, changelog heading, plugin.json
 
 
 class ConfigTests(unittest.TestCase):
