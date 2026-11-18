@@ -1016,7 +1016,8 @@ def readback_recipe(layout: Any, packet: Mapping[str, Any]) -> dict[str, Any]:
 # (layout.py:34, read at layout.py:325), the record and packet schemas (check_packet.py:26, manufacturing_intent.py:36,
 # schema_registry.py:28-29).
 VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
-                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas")
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas",
+                SKILLS / "cad-record" / "assets" / "manufacturing" / "guidelines")
 
 
 def _code_shas() -> Any:
