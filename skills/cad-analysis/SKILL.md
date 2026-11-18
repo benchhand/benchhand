@@ -70,13 +70,14 @@ Completed results record reproducibility settings in `mesh_settings`: one Gmsh t
 
 ## Fast mode
 
-A case with `mode: fast` checks displacement and stiffness only. Gmsh meshes straight-sided second-order elements: `Mesh.SecondOrderLinear = 1`, with no high-order optimization. The result reports these fields:
+A case with `mode: fast` checks displacement and stiffness only. It meshes with the same settings as a full case. The result reports these fields:
 
 - `max_displacement_mm`, which the stiffness check reads.
 - `mesh_stability_indicator`, with `p95_von_mises_mpa` over all mesh nodes (`nodes`) and its `label`: "mesh-stability indicator, not a strength value". The p95 value sits at rank position (n − 1) × 0.95, linear between the two nearest ranks.
 - `stress_study`, which names the separate stress study as the only source of a stress figure.
+- `status: pass` with `status_scope: run`: the solver run completed. It is no strength verdict.
 
-A fast result states no stress figure, no yield safety factor and no stress verdict. Its `engineering.strength` outcome stays `unknown`, and a fast case refuses `required_safety_factor`. In the fast-bias campaign, displacement and p95 settled between meshes. The peak stress and the stress away from supports did not.
+A fast result states no stress figure, no yield safety factor and no stress verdict. Its `engineering.strength` outcome stays `unknown`. A fast case refuses `required_safety_factor` and `acceptance.strength`. In the fast-bias campaign, displacement and p95 settled between meshes. The peak stress and the stress away from supports did not.
 
 ## Stop reaction
 

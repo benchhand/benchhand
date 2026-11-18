@@ -189,6 +189,9 @@ def load_case(path: Path) -> dict[str, Any]:
     if raw["_mode"] == "fast" and required_safety_factor is not None:
         raise CaseError("a fast case reports no stress, so required_safety_factor cannot apply: remove it, or "
                         "set mode: full for a yield safety factor")
+    if raw["_mode"] == "fast" and acceptance is not None and "strength" in acceptance:
+        raise CaseError("a fast case reports no stress, so acceptance.strength cannot apply: remove it, or "
+                        "set mode: full for a strength check")
     timeout = raw.get("timeout_seconds")
     if timeout is not None and (
         not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0
@@ -357,8 +360,7 @@ def run_job(case_path: Path, case: dict[str, Any], *, scratch_root: Path | None 
         "freecadcmd": str(freecad),
         "solvers_module": str(Path(SOLVERS.__file__).resolve()),
         "ccx_environment": CCX_ENVIRONMENT,
-        "high_order": _high_order(mode),
-        "second_order_linear": int(mode == "fast"),
+        "high_order": HIGH_ORDER,
         "solver_versions": versions,
     }
     job_json = json.dumps(job)
@@ -486,9 +488,6 @@ def run():
         source_geo=re.sub(r"(?m)^Mesh[.]Optimize[ \t]*=[ \t]*[^;]+;", "Mesh.Optimize = 0;", source_geo)
         source_geo=re.sub(r"(?m)^Mesh[.]OptimizeNetgen[ \t]*=[ \t]*[^;]+;", "Mesh.OptimizeNetgen = 0;", source_geo)
         source_geo=re.sub(r"(?m)^Mesh[.]RandomFactor3D[ \t]*=[ \t]*[^;]+;", "Mesh.RandomFactor3D = 0;", source_geo)
-        # A fast case's mid-side nodes stay on the straight edges; a full case curves them onto the geometry.
-        source_geo, count=re.subn(r"(?m)^Mesh[.]SecondOrderLinear[ \t]*=[ \t]*[^;]+;", "Mesh.SecondOrderLinear = %d;" % JOB["second_order_linear"], source_geo)
-        if count != 1: raise RuntimeError("the Gmsh input sets Mesh.SecondOrderLinear %d times, not once" % count)
         source_geo="Mesh.RandomSeed = 1;\\n" + source_geo
         def mesh_at(level):
             # Mesh the normalised input at one high-order optimisation level; the run keeps the input it meshed last.
@@ -569,9 +568,8 @@ except Exception as e:
         phase = _job_phase(phase_path)
         during = {
             "import": "while importing the STEP",
-            "mesh": f"while Gmsh meshed at mesh_size {case['mesh_size']} mm, "
-                    + ("placing its straight-sided second-order elements" if mode == "fast"
-                       else "optimising its curved second-order elements"),
+            "mesh": f"while Gmsh meshed at mesh_size {case['mesh_size']} mm, optimising its curved "
+                    "second-order elements",
             "solve": "while CalculiX ccx was solving",
             "results": "while reading the CalculiX results",
         }
@@ -615,11 +613,6 @@ except Exception as e:
         result = error("FreeCAD result has an unknown status", code="invalid_result")
     output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result, status
-
-
-def _high_order(mode: str) -> dict[str, int]:
-    """The Gmsh high-order levels, at the first mesh and at the fallback, of a case in `mode`."""
-    return modes.FAST_HIGH_ORDER if mode == "fast" else HIGH_ORDER
 
 
 def _job_phase(path: Path) -> str | None:
@@ -690,22 +683,19 @@ def _input_hashes(case: dict[str, Any]) -> dict[str, str]:
 
 
 def _case_options(case: dict[str, Any]) -> dict[str, Any]:
+    # A full case's options are as before. A fast case adds its mode, and both modes mesh with the same settings.
     mode = case.get("_mode", modes.DEFAULT)
-    high_order = _high_order(mode)
-    # A full case's options are as before. A fast case adds its mode and its straight-sided mesh settings.
-    fast = {"mode": mode} if mode == "fast" else {}
     return {
-        **fast,
+        **({"mode": mode} if mode == "fast" else {}),
         "part": case.get("part"), "occurrence": case.get("occurrence"), "solid_index": case.get("solid_index"),
         "material": case["material"], "fixed_faces": case["fixed_faces"], "loads": case["loads"],
         "mesh_size": case["mesh_size"], "pose": case.get("pose"),
         "required_safety_factor": case.get("required_safety_factor"),
         "mesh_settings": {
             "threads": 1, "random_seed": 1, "random_factor_3d": 0,
-            "optimize": False, "optimize_netgen": False, "high_order_optimize": high_order["optimize"],
-            **({"high_order_fallback": high_order["fallback"]} if high_order["fallback"] != high_order["optimize"]
+            "optimize": False, "optimize_netgen": False, "high_order_optimize": HIGH_ORDER["optimize"],
+            **({"high_order_fallback": HIGH_ORDER["fallback"]} if HIGH_ORDER["fallback"] != HIGH_ORDER["optimize"]
                else {}),
-            **({"second_order_linear": 1} if fast else {}),
             "calculix_matrix_solver": "spooles",
             "calculix_environment": CCX_ENVIRONMENT,
         },
