@@ -14,7 +14,7 @@ TRIGGER
 ## Workflow
 
 1. LOAD `references/material-evidence.md`. Prepare a version-bound case with a checked STEP, intended part or occurrence, load/support model, mesh parameters and material conditions matched to the real part and requirement. Unknown or mismatched properties cannot support acceptance.
-2. Store each authored case at `hw/analysis/cases/<case>/case.yaml`; include `step`, `fixed_faces`, non-empty `loads`, `mesh_size` and a record-bound `material` profile plus `conditions`. A face selector is exactly `{indices: [<1-based-face-index>, ...]}` or `{plane: {axis: x|y|z, value: <mm>, tolerance: <mm>}}`. Each load is `{selector: <face selector>, force: [Fx, Fy, Fz]}` in N, optionally with `load: <use-case-load-id>`.
+2. Store each authored case at `hw/analysis/cases/<case>/case.yaml`; include `step`, `fixed_faces`, non-empty `loads`, `mesh_size` and a record-bound `material` profile plus `conditions`. A face selector is exactly `{indices: [<1-based-face-index>, ...]}` or `{plane: {axis: x|y|z, value: <mm>, tolerance: <mm>}}`. Each load is `{selector: <face selector>, force: [Fx, Fy, Fz]}` in N, optionally with `load: <use-case-load-id>` and `reaction: IF-###` (see Loads that come from a stop reaction).
 3. Run from the project root:
 
    ```sh
@@ -97,6 +97,19 @@ It publishes `hw/checks/<V>/stop-reaction/` (`result.json` and `evidence/stop-re
 - `understated`: a `functional.contact.load` below the design reaction fails with severity major. Records cite the check's bundle. Prose is not parsed.
 
 Strength of the load path is a separate question for `fea_static.py`. This check covers planar contact only and no friction or dynamics.
+
+## Loads that come from a stop reaction
+
+A load may name the stop it stands for: `reaction: IF-006` beside `selector` and `force`. A versioned run then reads the sealed stop-reaction bundle of the version. `stop_reaction.py` writes it to `hw/checks/<V>/stop-reaction/`. The run compares the load's magnitude, the length of `force`, with the design reaction of the interface. When an interface has two stops, the larger reaction governs. The run refuses before it meshes, before it probes the solvers and before ccx starts. It exits `2` with one of these `error.code` values:
+
+- `reaction_below_design`: the load is smaller than the design reaction.
+- `reaction_missing`: the version has no stop-reaction bundle, or the bundle holds no assessment of the interface.
+- `reaction_stale`: the bundle fails its seal or belongs to another build of the version. Run `stop_reaction.py` again with `--replace`.
+- `reaction_unbounded`: a stop of the interface touches the pivot axis, so its rigid reaction has no bound. Only an FEA contact case approved in a design record closes it.
+- `reaction_unknown`: the interface is no stop, or its reaction is not established. The bundle's reason follows.
+- `reaction_needs_version`: a standalone case cannot name a reaction.
+
+The recipe of such a case records the bundle's path, its manifest sha256 and the design reaction under `reactions`. A new stop-reaction result changes the recipe, so a repeat run needs `--replace`. A case with no `reaction` key keeps the shape of its recipe.
 
 ## Exit codes
 

@@ -26,6 +26,7 @@ import yaml
 
 import fea_conditions as conditions
 import fea_modes as modes
+import fea_reaction as reactions
 from fea_part_selection import OCCURRENCE_REF, selected_face_indices as _selected_face_indices
 from freecad_lookup import find_freecad
 import importlib.util
@@ -218,6 +219,9 @@ def load_case(path: Path) -> dict[str, Any]:
             raise CaseError(f"loads[{index}].force must not be zero")
         if "load" in load and (not isinstance(load["load"], str) or not load["load"]):
             raise CaseError(f"loads[{index}].load must name the use-case load it represents")
+        if "reaction" in load and (not isinstance(load["reaction"], str)
+                                   or reactions.INTERFACE_REF.fullmatch(load["reaction"]) is None):
+            raise CaseError(f"loads[{index}].reaction must name the stop interface it comes from, as IF-###")
     raw["_step"] = str(step)
     return raw
 
@@ -667,7 +671,7 @@ def _is_solver_evidence(relative_path: str) -> bool:
 
 
 def _producer_code_hashes() -> dict[str, str]:
-    paths = (Path(__file__), Path(__file__).with_name("fea_part_selection.py"),
+    paths = (Path(__file__), Path(__file__).with_name("fea_part_selection.py"), Path(__file__).with_name("fea_reaction.py"),
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
              Path(__file__).with_name("mesh_quality.py"), Path(__file__).with_name("fea_modes.py"),
              conditions.INTENT_PATH, Path(SOLVERS.__file__))
@@ -770,6 +774,8 @@ def main(argv: list[str] | None = None) -> int:
                 if not isinstance(part_record, dict):
                     raise CaseError(f"version part snapshot for {case['part']} must contain a mapping")
                 case["material"].setdefault("name", part_record.get("material", "Case material"))
+            # A load that names a stop reaction meets the version's sealed stop-reaction bundle first.
+            reaction_bases = reactions.resolve(LAYOUT, args.hw, version, version_dir, case["loads"])
             # Material, criteria and evidence basis, settled (or refused) before anything is solved.
             assessment = conditions.assess_version(case, record_dir=record_dir, hw=args.hw, version=version)
             recipe_inputs = {**_input_hashes(case), **_snapshot_record_hashes(record_dir, case)}
@@ -784,6 +790,9 @@ def main(argv: list[str] | None = None) -> int:
                 "options": _case_options(case),
                 "producer_code_sha256": _producer_code_hashes(),
                 "conditions": assessment.recipe(),
+                # The stop-reaction results the loads stand on, so a new result re-runs the case. Present only for a
+                # case that names a reaction: every other case keeps the shape of its recipe.
+                **({"reactions": {name: basis.recipe() for name, basis in reaction_bases.items()}} if reaction_bases else {}),
             }
             reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
             if reused is not None:
@@ -830,6 +839,7 @@ def main(argv: list[str] | None = None) -> int:
             if status != 2:
                 result["check_bundle"] = publish_engineering(args.hw, version, case_id, result, args.replace)
         else:
+            reactions.refuse_standalone(case["loads"])
             if case["_material_form"] != "explicit":
                 raise CaseError("material.conditions needs --hw and --version: the part, its material profile and its "
                                 "route come from a built version's record")
@@ -848,6 +858,9 @@ def main(argv: list[str] | None = None) -> int:
             if status != 2:
                 conditions.report(result, assessment, case)
                 (output or default_result_path(case_path)).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    except reactions.ReactionRefused as exc:
+        print(json.dumps(error(str(exc), code=exc.code)))
+        return 2
     except conditions.Refused as exc:
         refusal = error(str(exc), code="analysis_refused")
         refusal["error"]["details"] = {"problems": exc.problems}
