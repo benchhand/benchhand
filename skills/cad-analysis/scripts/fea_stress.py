@@ -299,6 +299,7 @@ def _compare_peaks(h_coarse: float, cutoff: float, c: LevelPeak, f: LevelPeak) -
         reasons.append("stress_not_settled")
     distances = [p.distance_to_face for p in (c, f) if p.distance_to_face is not None]
     # Governed by a support or load: the peak is within h_coarse of an actual face.
+    # Fires only when K < 1; at K = 3 every kept node is at least 3·h_coarse from a face.
     if any(d <= h_coarse for d in distances):
         reasons.append("boundary_governed")
     # On the exclusion boundary: the peak is within h_coarse of the cutoff.
