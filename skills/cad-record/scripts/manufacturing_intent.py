@@ -1374,9 +1374,10 @@ class _Reader:
             self.ref("decision", rationale.get("decision"), path, "intent/rationale/decision")
             self.ref("candidate", rationale.get("selection"), path, "intent/rationale/selection")
         color = data.get("color")
-        if color is not None and not color_is_valid(color):
+        if "color" in data and not color_is_valid(color):
             self.problem(COLOR_INVALID, path, "intent/color",
-                         f"{pn}: intent.color {color!r} is not an sRGB #RRGGBB string; the part is exported without a color")
+                         f"{pn}: intent.color {color!r} is not an sRGB #RRGGBB string; quote it, because an unquoted # "
+                         "starts a YAML comment and leaves null. The part is exported without a color")
             color = None
         return PartIntent(functions, material, data.get("selection"), service, tuple(components), surfaces, route,
                           freeze(rationale) if isinstance(rationale, Mapping) else None, color)

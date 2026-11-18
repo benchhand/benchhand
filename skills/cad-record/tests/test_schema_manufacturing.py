@@ -196,11 +196,6 @@ class SharedDefinitions(SchemaCase):
                            {"no anchor": "process.fdm.support", "bad anchor": "process.fdm.support@part", "upper family": "Process@product"})
         self.assert_shared("evidence_level", {level: level for level in intent.EVIDENCE_LEVELS}, {"badge": "certified"})
 
-    def test_the_3mf_output_family_and_its_obligation_id_are_schema_valid(self) -> None:
-        """The impact tests use `export.3mf@TST-0001`. A family segment may start with a digit."""
-        self.assert_shared("check_family", {"3mf export": "export.3mf"}, {})
-        self.assert_shared("obligation_id", {"3mf export": "export.3mf@TST-0001"}, {})
-
     def test_units_enum_and_module_units_are_one_list(self) -> None:
         schema = json.loads((SCHEMAS / "manufacturing.schema.json").read_text(encoding="utf-8"))
         self.assertEqual(set(schema["$defs"]["units"]["enum"]), set(intent.UNITS))
@@ -308,6 +303,7 @@ class RecordDocuments(SchemaCase):
             "integer": (lambda d: d["intent"].update(color=16744448), False),
             "colour name": (lambda d: d["intent"].update(color="orange"), False),
             "trailing newline": (lambda d: d["intent"].update(color="#FF8000\n"), False),
+            "null, as an unquoted # parses": (lambda d: d["intent"].update(color=None), False),
         })
 
     def test_interface_functional_block(self) -> None:

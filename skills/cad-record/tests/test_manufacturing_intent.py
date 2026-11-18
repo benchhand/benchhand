@@ -422,7 +422,7 @@ class PartColor(unittest.TestCase):
 
     def test_an_invalid_color_is_a_named_problem_and_reads_as_none(self) -> None:
         for label, bad in (("three digits", "#abc"), ("integer", 16744448), ("trailing newline", "#FF8000\n"),
-                           ("colour name", "orange"), ("lists", ["#FF8000"])):
+                           ("colour name", "orange"), ("lists", ["#FF8000"]), ("null", None)):
             with self.subTest(label):
                 documents = fx.tst_record()
                 documents["parts/TST-0001/part.yaml"]["intent"]["color"] = bad
@@ -431,6 +431,7 @@ class PartColor(unittest.TestCase):
                 self.assertEqual([(p.path, p.pointer, p.severity) for p in found],
                                  [("hw/parts/TST-0001/part.yaml", "intent/color", "error")])
                 self.assertIn(repr(bad), found[0].message)
+                self.assertIn("quote", found[0].message, "the message names the unquoted # YAML comment as the likely cause")
                 self.assertIsNone(record.parts["TST-0001"].intent.color)
 
     def test_a_valid_color_raises_no_problem_in_either_case(self) -> None:

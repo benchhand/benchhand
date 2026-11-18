@@ -896,7 +896,8 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
         return "stale", (f"{ident} is evidence of revision {configuration.get('part_rev')}, not {part.raw.get('rev')}",), findings
     recorded = _mapping(entry.get("fingerprints"))
     domains = _REQUIRED_DOMAINS[_subject_kind(record, subject)]
-    missing = sorted((domains.get(level, frozenset()) if isinstance(level, str) else frozenset()) - set(recorded))
+    required = domains.get(level, frozenset()) if isinstance(level, str) else frozenset()
+    missing = sorted((required | {"appearance"} if impact.depends_on_appearance(entry) else required) - set(recorded))
     if missing:
         findings.append(Finding("evidence.unqualified", path, f"{ident} ({level} {result}) records no fingerprint of "
                                 f"{', '.join(missing)}: the evidence is not tied to what it relied on"))

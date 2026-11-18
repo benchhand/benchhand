@@ -134,6 +134,19 @@ class Variants(unittest.TestCase):
         self.assertEqual(result.stale_obligations, {"export.3mf@TST-0001": ("appearance",)})
         self.assertEqual(result.stale_evidence, {})
 
+    def test_a_color_change_stales_export_3mf_evidence_and_no_other_accepted_evidence(self) -> None:
+        def colour(docs: dict[str, Any]) -> None:
+            docs["parts/TST-0001/part.yaml"]["intent"]["color"] = "#FF8000"
+        entries = [acceptance.entry(self.before, "EV-001", {"PN": "TST-0001"}, "simulation_supported",
+                                    obligation="engineering.strength@TST-0001", version="v1", manifest_sha256="a" * 64,
+                                    geometry=GEOMETRY),
+                   acceptance.entry(self.before, "EV-002", {"PN": "TST-0001"}, "cad_valid",
+                                    obligation="export.3mf@TST-0001", version="v1", manifest_sha256="a" * 64,
+                                    geometry=GEOMETRY)]
+        self.docs["manufacturing/evidence.yaml"] = {"entries": entries}
+        self.before = normalized(self.docs)
+        self.assertEqual(self.compare(colour).stale_evidence, {"EV-002": ("appearance",)})
+
     def test_a_colour_change_leaves_every_catch_all_family_current_but_a_geometry_change_stales_it(self) -> None:
         """policy.*, requirement.* and an unlisted family depend on every domain except appearance."""
         cases = {

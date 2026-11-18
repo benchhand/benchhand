@@ -51,6 +51,7 @@ INSPECTION = "feature.inspection@TST-0001#pivot_bore"
 TRIAL = "process.fdm.trial@TST-0001/print"
 SUPPORT = "process.fdm.support@TST-0001/print"
 SIMULATION = "requirement.simulation_supported@REQ-001"
+EXPORT_3MF = "export.3mf@TST-0001"
 
 
 def approved(decision: str | None) -> bool:
@@ -209,6 +210,40 @@ class StaleEvidence(unittest.TestCase):
         result = assess(normalized(changed, [entry]))
         self.assertEqual(result.statuses[SIMULATION].result, "stale")
         self.assertIn("material", " ".join(result.statuses[SIMULATION].reasons))
+
+    def colored(self) -> dict[str, Any]:
+        changed = copy.deepcopy(self.docs)
+        changed["parts/TST-0001/part.yaml"]["intent"]["color"] = "#FF8000"
+        return changed
+
+    def export_3mf(self) -> dict[str, Any]:
+        return acceptance.entry(self.base, "EV-003", {"PN": "TST-0001"}, "cad_valid", obligation=EXPORT_3MF,
+                                version="v1", manifest_sha256=V1)
+
+    def test_a_color_change_makes_accepted_export_3mf_evidence_stale_even_when_the_sealed_files_match(self) -> None:
+        entry = self.export_3mf()
+        self.assertEqual(assess(normalized(self.docs, [entry])).statuses[EXPORT_3MF].result, "pass")
+        result = assess(normalized(self.colored(), [entry]), stale_since_build={EXPORT_3MF: ("appearance",)})
+        self.assertEqual(result.statuses[EXPORT_3MF].result, "stale")
+        self.assertIn("appearance", " ".join(result.statuses[EXPORT_3MF].reasons))
+
+    def test_a_color_change_leaves_accepted_evidence_of_a_family_without_appearance_current(self) -> None:
+        entries = [self.simulation(), acceptance.entry(self.base, "EV-002", {"PN": "TST-0001"}, "simulation_supported",
+                                                       obligation=STRENGTH, version="v1", manifest_sha256=V1)]
+        result = assess(normalized(self.colored(), entries))
+        self.assertEqual((result.statuses[SIMULATION].result, result.statuses[STRENGTH].result), ("pass", "pass"))
+
+    def test_export_3mf_evidence_that_records_no_appearance_fingerprint_is_unqualified(self) -> None:
+        domains = tuple(d for d in impact.DOMAINS if d not in ("appearance", "lot"))
+        entry = acceptance.entry(self.base, "EV-003", {"PN": "TST-0001"}, "cad_valid", obligation=EXPORT_3MF,
+                                 version="v1", manifest_sha256=V1, domains=domains)
+        result = assess(normalized(self.docs, [entry]))
+        self.assertEqual(result.statuses[EXPORT_3MF].result, "unknown")
+        self.assertIn("evidence.unqualified", codes(result.findings))
+        control = acceptance.entry(self.base, "EV-004", {"PN": "TST-0001"}, "cad_valid", obligation=STRENGTH,
+                                   version="v1", manifest_sha256=V1, domains=domains)
+        self.assertEqual(assess(normalized(self.docs, [control])).statuses[STRENGTH].result, "pass",
+                         "a family without appearance needs no appearance fingerprint")
 
     def test_evidence_that_records_no_fingerprint_of_its_dependencies_is_unqualified(self) -> None:
         result = assess(normalized(self.docs, [self.simulation(domains=("use_case",))]))

@@ -2386,7 +2386,7 @@ class Build123dLooseComponentTests(LooseComponentChecks, unittest.TestCase):
 class ManufacturingInvalidColorTests(unittest.TestCase):
     """A record whose intent.color is not #RRGGBB makes `run` refuse the part with a named finding, never a traceback."""
 
-    BAD = {"three digits": "#abc", "integer": 16744448, "trailing newline": "#FF8000\n"}
+    BAD = {"three digits": "#abc", "integer": 16744448, "trailing newline": "#FF8000\n", "null": None}
 
     @classmethod
     def setUpClass(cls) -> None:

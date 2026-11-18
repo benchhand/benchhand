@@ -416,13 +416,22 @@ def stale_obligations(obligations: Iterable[Any], changed: Mapping[str, Iterable
     return stale
 
 
+def depends_on_appearance(entry: Mapping[str, Any]) -> bool:
+    """Whether accepted evidence `entry` is of a check family that names the appearance domain in FAMILY_DOMAINS,
+    by the family of its obligation id. Evidence of any other family ignores a colour change."""
+    obligation = entry.get("obligation")
+    return isinstance(obligation, str) and "appearance" in family_domains(obligation.split("@", 1)[0])
+
+
 def evidence_staleness(entry: Mapping[str, Any], current: Mapping[str, str]) -> tuple[str, ...]:
     """The fingerprint domains in which accepted evidence `entry` no longer matches the current subject
-    `current`: each recorded domain that differs, or ("unrecorded",) when it records none."""
+    `current`: each recorded domain that differs, or ("unrecorded",) when it records none. The appearance
+    domain counts only for evidence of a family that depends on it (depends_on_appearance)."""
     recorded = entry.get("fingerprints")
     if not isinstance(recorded, Mapping) or not recorded:
         return ("unrecorded",)
-    return tuple(d for d in DOMAINS if d != "appearance" and d in recorded and recorded[d] != current.get(d))
+    appearance = depends_on_appearance(entry)
+    return tuple(d for d in DOMAINS if (d != "appearance" or appearance) and d in recorded and recorded[d] != current.get(d))
 
 
 def _stage_min(stages: Iterable[str]) -> str | None:
