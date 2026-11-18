@@ -200,6 +200,51 @@ class MalformedRecordTests(unittest.TestCase):
         for block, header in self.BLOCKS:
             self.assert_refused(block, header, lambda r: r[:-5], "cut inside the last field")
 
+    def test_a_value_too_large_to_square_is_refused_with_its_block_and_node(self) -> None:
+        # 1.0E+200 squared overflows a float: Python raises OverflowError for `**`, which must not escape.
+        f = self.FIELD
+        for block, header, position in (("DISP", " -4  DISP", 0), ("DISP", " -4  DISP", 2),
+                                        ("STRESS", " -4  STRESS", 0), ("STRESS", " -4  STRESS", 3)):
+            with self.subTest(block=block, position=position):
+                text = self.corrupt(self.good(), header, lambda r: r[:13 + position * f] + "1.00000E+200" + r[13 + (position + 1) * f:])
+                with self.assertRaisesRegex(fs.FrdError, rf"{block} record of node 1 "):
+                    fs.read_frd(text)
+
+    def test_a_node_id_of_ten_digits_is_accepted_and_a_longer_or_infinite_one_is_not(self) -> None:
+        widest = self.corrupt(self.good(), "    2C", lambda r: r[:3] + "9999999999" + r[13:])
+        self.assertIn(9_999_999_999, fs.read_frd(widest).coordinates)
+        for label, field in (("inf", "       inf"), ("nan", "       nan"), ("exponent", "     1.0e10")):
+            with self.subTest(label):
+                with self.assertRaisesRegex(fs.FrdError, "node record has no node id"):
+                    fs.read_frd(self.corrupt(self.good(), "    2C", lambda r, field=field: r[:3] + field[:10] + r[13:]))
+
+    def test_inf_and_nan_values_are_accepted_for_the_finiteness_screen_to_judge(self) -> None:
+        f = self.FIELD
+        def put(text, header, position, word):
+            return self.corrupt(text, header, lambda r: r[:13 + position * f] + word.rjust(f) + r[13 + (position + 1) * f:])
+        text = put(put(put(self.good(), "    2C", 0, "inf"), " -4  DISP", 1, "nan"), " -4  STRESS", 0, "inf")
+        result = fs.read_frd(text)
+        self.assertTrue(math.isinf(result.coordinates[1][0]))
+        self.assertTrue(math.isnan(result.displacement[1]))
+        self.assertFalse(math.isfinite(result.von_mises[1]))
+
+    def test_inf_and_nan_text_in_a_result_gives_unknown_not_a_number(self) -> None:
+        f = self.FIELD
+        def inject(lvl, header, word):
+            lines = level_as_frd(lvl).splitlines()
+            start = max(i for i, line in enumerate(lines) if line.startswith(header))
+            row = next(i for i in range(start, len(lines)) if lines[i].startswith(f" -1{99_999:10d}"))
+            lines[row] = lines[row][:13] + word.rjust(f) + lines[row][13 + f:]
+            return dataclasses.replace(lvl, result=fs.read_frd("\n".join(lines) + "\n"))
+        coarse, fine = level(H_COARSE, kept=200), level(H_FINE, kept=2000)
+        for word in ("inf", "nan"):
+            for header, reason in ((" -4  STRESS", "non_finite_stress"), (" -4  DISP", "non_finite_stress"),
+                                   ("    2C", "non_finite_coordinates")):
+                with self.subTest(word=word, header=header):
+                    result = fs.compare_levels(inject(coarse, header, word), fine)
+                    self.assertEqual((result.status, result.reasons), (fs.UNKNOWN, (reason,)))
+                    self.assertIsNone(result.sigma_mpa)
+
     def test_a_record_marker_without_an_id_is_refused(self) -> None:
         for block, header in self.BLOCKS:
             self.assert_refused(block, header, lambda r: r[:3], "marker only")
