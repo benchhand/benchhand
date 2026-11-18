@@ -2661,6 +2661,80 @@ class ManufacturingColorTests(unittest.TestCase):
         self.assertEqual(self.model("v3"), self.model("v2"))
 
 
+PROBE = """
+import os, runpy, sys
+sys.path.insert(0, {scripts!r})
+from cadmodel import manufacture
+manufacture._color = lambda plan: None  # the color is lost where the manifest entry is built
+if os.environ.get("PROBE_BLIND_GATE"):  # and the run's own gate judges the record without the declared color
+    inspect = manufacture.inspect
+    manufacture.inspect = lambda target, entry, record, *rest, **kw: inspect(
+        target, entry, {{**record, "intent": {{k: v for k, v in record["intent"].items() if k != "color"}}}}, *rest, **kw)
+sys.argv[0] = {cli!r}
+runpy.run_path({cli!r}, run_name="__main__")
+"""
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
+class ManufacturingColorLostBeforeExportTests(unittest.TestCase):
+    """A part declares intent.color #FF8000 and a bug drops it in the manufacturing entry builder, so the
+    manifest and part.3mf both leave it out. The declared intent, not the manifest, is what part.3mf must show."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        mp = projects()
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = Path(cls.tmp.name)
+        header = "".join(CLI.read_text(encoding="utf-8").splitlines(keepends=True)[:4])  # the PEP 723 block
+        cls.probe = root / "probe.py"
+        cls.probe.write_text(header + PROBE.format(scripts=str(SCRIPTS), cli=str(CLI)),
+                             encoding="utf-8")
+        cls.hw = {}
+        for name, color in (("refused", "#FF8000"), ("lost", "#FF8000"), ("none", mp.UNSET), ("kept", "#FF8000")):
+            cls.hw[name] = mp.loose_project(root / name, "cadquery", [], color=color)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def probed(self, *args: str, blind: bool = False) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, **({"PROBE_BLIND_GATE": "1"} if blind else {})}
+        return subprocess.run(["uv", "run", "--quiet", "--script", str(self.probe), *args], capture_output=True,
+                              text=True, check=False, env=env)
+
+    def outcomes(self, hw: Path) -> dict[str, dict]:
+        packet = json.loads((hw / "checks" / "v1" / "cad" / "result.json").read_text(encoding="utf-8"))
+        return {o["obligation"]: o for o in packet["outcomes"]}
+
+    def test_a_declared_color_lost_before_export_refuses_the_run_naming_the_color(self) -> None:
+        proc = self.probed("run", str(self.hw["refused"]), "--label", "v1")
+        self.assertEqual(proc.returncode, 1, proc.stdout[-2000:] + proc.stderr[-2000:])
+        self.assertIn("color_matches", proc.stdout)
+        self.assertIn("#FF8000", proc.stdout)
+
+    def test_a_declared_color_lost_before_export_fails_the_export_3mf_obligation(self) -> None:
+        hw = self.hw["lost"]
+        proc = self.probed("run", str(hw), "--label", "v1", blind=True)  # a version sealed without the gate
+        self.assertEqual(proc.returncode, 0, proc.stdout[-2000:] + proc.stderr[-2000:])
+        checked, _, _ = cli("check", "v1", "--hw", str(hw))
+        self.assertEqual(checked.returncode, 1, checked.stdout[-2000:] + checked.stderr[-2000:])
+        self.assertEqual(self.outcomes(hw)["export.3mf@TST-0001"]["outcome"], "fail")
+        self.assertIn("color_matches", checked.stdout)
+        self.assertIn("#FF8000", checked.stdout)
+
+    def test_a_part_declaring_no_color_passes_export_3mf(self) -> None:
+        hw = self.hw["none"]
+        self.assertEqual(cli("run", str(hw), "--label", "v1")[0].returncode, 0)
+        self.assertEqual(cli("check", "v1", "--hw", str(hw))[0].returncode, 0)
+        self.assertEqual(self.outcomes(hw)["export.3mf@TST-0001"]["outcome"], "pass")
+
+    def test_a_part_whose_3mf_shows_the_declared_color_passes_export_3mf(self) -> None:
+        hw = self.hw["kept"]
+        self.assertEqual(cli("run", str(hw), "--label", "v1")[0].returncode, 0)
+        self.assertEqual(cli("check", "v1", "--hw", str(hw))[0].returncode, 0)
+        self.assertEqual(self.outcomes(hw)["export.3mf@TST-0001"]["outcome"], "pass")
+
+
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class ManufacturingInputCacheTests(unittest.TestCase):
     """A record version 2 part (CadQuery only): a material, orientation or process change remakes its

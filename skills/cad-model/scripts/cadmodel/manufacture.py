@@ -506,7 +506,8 @@ def inspect(target: Path, entry: Mapping[str, Any], record: Mapping[str, Any], e
                           if "part.stl" in present and part is not None
                           else _judge({"present_with_readable_step": False}))
     if "part.3mf" in entry["outputs"]:
-        checks["threemf"] = _threemf_files(target, entry, present, part.shape if part is not None else None, measures)
+        checks["threemf"] = _threemf_files(target, entry, record, present, part.shape if part is not None else None,
+                                           measures)
     checks["placement"] = _placement(entry, entry["placement"], part.shape if part is not None else None, measures)
     if entry.get("components"):  # sidecar schema 2; earlier versions hold one unbound output
         checks["components"] = _components(target, entry, present, part.shape if part is not None else None,
@@ -582,10 +583,12 @@ def _mesh(path: Path, entry: Mapping[str, Any], shape: Any, measures: _Measures)
                   angular_deflection_rad=entry["mesh"]["angular_deflection_rad"])
 
 
-def _threemf(path: Path, entry: Mapping[str, Any], shape: Any, measures: _Measures) -> dict[str, Any]:
+def _threemf(path: Path, entry: Mapping[str, Any], color: str | None, shape: Any,
+             measures: _Measures) -> dict[str, Any]:
     """Judge the 3MF against the STEP it came from. The reader accepts the package (its parts, ids and
     indices resolve). It holds one millimetre mesh object, built once with no transform, closed and consistently
-    wound outward by its indices. It names the part's material and shows its color. Its volume is within the
+    wound outward by its indices. It names the part's material and shows the color the part declares (`color`, from
+    its record snapshot, not the manifest entry, which could have lost it). Its volume is within the
     declared chord deviation of the exact solid (at most area x deflection), and so is each box face. The check
     repairs nothing."""
     try:
@@ -605,23 +608,26 @@ def _threemf(path: Path, entry: Mapping[str, Any], shape: Any, measures: _Measur
     m_low, m_high = report["bbox_mm"]["min"], report["bbox_mm"]["max"]
     return _judge({"millimetres": model.unit == threemf.UNIT, "one_object": True, "no_transform": item.transform is None,
                    "material_named": obj.metadata.get(threemf.MATERIAL_METADATA) == entry["material"],
-                   "color_matches": obj.color == (f"{color.upper()}FF" if (color := entry.get("color")) else None),
+                   "color_matches": obj.color == (f"{color.upper()}FF" if color else None),
                    "watertight": report["watertight"], "winding_consistent": report["winding_consistent"],
                    "outward": report["volume_mm3"] > 0, "volume_within_deflection": volume_error <= bound,
                    "box_within_deflection": all(low[i] - slack <= m_low[i] <= low[i] + deflection + slack
                                                 and high[i] - deflection - slack <= m_high[i] <= high[i] + slack
                                                 for i in range(3))},
                   **report, standard=threemf.VERSION, material=obj.metadata.get(threemf.MATERIAL_METADATA),
+                  expected_color=color,
                   step_volume_mm3=step_volume, volume_error_mm3=volume_error, volume_bound_mm3=bound,
                   linear_deflection_mm=deflection)
 
 
-def _threemf_files(target: Path, entry: Mapping[str, Any], present: list[str], shape: Any,
-                   measures: _Measures) -> dict[str, Any]:
-    """`_threemf` of part.3mf and of each component's own part.3mf, each against its own STEP read back."""
+def _threemf_files(target: Path, entry: Mapping[str, Any], record: Mapping[str, Any], present: list[str],
+                   shape: Any, measures: _Measures) -> dict[str, Any]:
+    """`_threemf` of part.3mf and of each component's own part.3mf, each against its own STEP read back and the
+    record's declared intent.color."""
+    color = (record.get("intent") or {}).get("color")
     rows: dict[str, dict[str, Any]] = {}
     if "part.3mf" in present and shape is not None:
-        rows["part.3mf"] = _threemf(target / "part.3mf", entry, shape, measures)
+        rows["part.3mf"] = _threemf(target / "part.3mf", entry, color, shape, measures)
     else:
         rows["part.3mf"] = _judge({"present_with_readable_step": False})
     for name in entry.get("component_outputs") or []:
@@ -629,7 +635,7 @@ def _threemf_files(target: Path, entry: Mapping[str, Any], present: list[str], s
             continue
         part, _ = (measures.part(target / name.replace("part.3mf", "part.step"), entry["PN"])
                    if name in present else (None, None))
-        rows[name] = _threemf(target / name, entry, part.shape, measures) if part is not None else _judge(
+        rows[name] = _threemf(target / name, entry, color, part.shape, measures) if part is not None else _judge(
             {"present_with_readable_step": False})
     return _judge({name: row["status"] == "pass" for name, row in rows.items()}, files=rows)
 
