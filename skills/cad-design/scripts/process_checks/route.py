@@ -135,53 +135,87 @@ def _states(ctx: Context, ops: list[Any], outputs: dict[str, Any], findings: lis
     return parts
 
 
+class _Plan:
+    """The plan fields of one operation, judged one by one into `parts` and `findings`."""
+
+    def __init__(self, ctx: Context) -> None:
+        self.ctx, self.op, self.mi = ctx, ctx.operation, ctx.mi
+        self.setup = self.op.setup or {}
+        self.findings: list[Draft] = []
+        self.parts: list[tuple[str, str]] = []
+
+    def recorded(self, value: Any, ok: bool) -> str:
+        """Missing when absent, open when a Fact or not yet in its settled form, present otherwise."""
+        if value is None or (not self.mi.is_fact(value) and not value):
+            return "missing"
+        return "present" if ok else "open"
+
+    def need(self, state: str, field: str, what: str, consequence: str, severity: str = "minor") -> None:
+        """`state` is "present", "open" (recorded but undecided: UNKNOWN) or "missing" (not recorded at all: FAIL)."""
+        op = self.op
+        if state == "present":
+            self.parts.append((PASS, what))
+        elif state == "open":
+            self.findings.append(Draft("route.plan_incomplete", severity, UNKNOWN, unknown(f"{what} not recorded"),
+                                       policy("operation_plan", "equals", what), "part.yaml route", "not recorded", consequence,
+                                       remedy=f"record {what} for {op.id}", recheck=["route.operation_plan"], feature=None))
+            self.parts.append((UNKNOWN, f"{what} missing"))
+        else:
+            self.findings.append(Draft("route.operation_plan_field_missing", severity, FAIL,
+                                       text(f"{field} missing from the plan of {op.id}"),
+                                       policy("operation_plan", "equals", what), "part.yaml route", "record content", consequence,
+                                       remedy=f"record {what} for {op.id}", recheck=["route.operation_plan"], feature=None))
+            self.parts.append((FAIL, f"{field} missing"))
+
+    def additive(self) -> None:
+        orientation = self.op.orientation
+        self.need(self.recorded(orientation, isinstance(orientation, Mapping) and orientation.get("status") == "approved"),
+                  "orientation", "an approved orientation", "the pose the part prints in is not fixed", "major")
+        self.need(self.recorded(self.op.supports, isinstance(self.op.supports, Mapping)), "supports", "a support strategy",
+                  "where supports go is unplanned", "major")
+
+    def secondary(self) -> None:
+        op = self.op
+        if not self.ctx.before() and not op.input_state:
+            self.findings.append(Draft("route.plan_order", "major", FAIL, text(f"{op.id} first"),
+                                       policy("input_state", "equals", "an earlier operation"), "part.yaml route order",
+                                       "record content", f"{op.id} has nothing to act on", remedy="order the route",
+                                       recheck=["route.operation_plan"]))
+            self.parts.append((FAIL, "no predecessor"))
+        if op.kind != "coating":  # a coat locates on nothing; every other secondary operation locates on datums
+            self.need(self.recorded(self.setup.get("datums"), True), "datums", "the datums it locates on",
+                      "the datum transfer from the earlier operation is unknown", "major")
+        if op.kind not in ("inspection", "coating"):  # a coat without targets covers the whole part
+            self.need(self.recorded(op.targets, True), "targets", "its target features", "what it acts on is unknown", "major")
+
+    def shaping(self) -> None:
+        op, setup = self.op, self.setup
+        if not self.ctx.before():
+            self.need(self.recorded(setup.get("stock"), True), "stock", "its stock", "what it is made from is unknown", "major")
+        if op.kind in SHEET:
+            thickness = (setup.get("stock") or {}).get("thickness")
+            self.need(self.recorded(thickness, isinstance(thickness, Mapping) and thickness.get("status") == "known"),
+                      "stock thickness", "the stock thickness", "the sheet thickness that sets kerf and fits is unknown", "major")
+        elif op.kind in ("casting", "moulding", "extrusion"):
+            self.parts.append((PASS, "its workholding"))
+        elif op.kind != "sheet_forming":
+            self.need(self.recorded(setup.get("workholding"), True), "workholding", "its workholding",
+                      "how the part is held is unknown")
+
+
 def operation_plan(ctx: Context) -> Result:
     """route.operation_plan: the operation records the plan its kind needs (orientation and supports,
     setup and stock, datums and targets) and an inspection for each critical surface it makes."""
     op = ctx.operation
     method = f"{op.kind} operation plan: setup, orientation, supports, allowances and inspection recorded"
-    findings: list[Draft] = []
-    parts: list[tuple[str, str]] = []
-    setup = op.setup or {}
-
-    def need(ok: bool, what: str, consequence: str, severity: str = "minor") -> None:
-        if ok:
-            parts.append((PASS, what))
-            return
-        findings.append(Draft("route.plan_incomplete", severity, UNKNOWN, unknown(f"{what} not recorded"),
-                              policy("operation_plan", "equals", what), "part.yaml route", "not recorded", consequence,
-                              remedy=f"record {what} for {op.id}", recheck=["route.operation_plan"], feature=None))
-        parts.append((UNKNOWN, f"{what} missing"))
-
+    plan = _Plan(ctx)
+    findings, parts = plan.findings, plan.parts
     if op.kind in ADDITIVE:
-        orientation = op.orientation
-        need(isinstance(orientation, Mapping) and orientation.get("status") == "approved", "an approved orientation",
-             "the pose the part prints in is not fixed", "major")
-        need(isinstance(op.supports, Mapping), "a support strategy", "where supports go is unplanned", "major")
+        plan.additive()
     elif op.kind in SECONDARY:
-        earlier = ctx.before()
-        if not earlier and not op.input_state:
-            findings.append(Draft("route.plan_order", "major", FAIL, text(f"{op.id} first"),
-                                  policy("input_state", "equals", "an earlier operation"), "part.yaml route order",
-                                  "record content", f"{op.id} has nothing to act on", remedy="order the route", recheck=["route.operation_plan"]))
-            parts.append((FAIL, "no predecessor"))
-        if op.kind != "coating":  # a coat locates on nothing; every other secondary operation locates on datums
-            need(bool(setup.get("datums")), "the datums it locates on", "the datum transfer from the earlier operation is unknown",
-                 "major")
-        if op.kind not in ("inspection", "coating"):  # a coat without targets covers the whole part
-            need(bool(op.targets), "its target features", "what it acts on is unknown", "major")
+        plan.secondary()
     else:
-        first = not ctx.before()
-        if first:
-            need(bool(setup.get("stock")), "its stock", "what it is made from is unknown", "major")
-        if op.kind in SHEET:
-            stock = setup.get("stock") or {}
-            thickness = stock.get("thickness")
-            need(isinstance(thickness, Mapping) and thickness.get("status") == "known", "the stock thickness",
-                 "the sheet thickness that sets kerf and fits is unknown", "major")
-        elif op.kind not in ("sheet_forming",):
-            need(bool(setup.get("workholding")) or op.kind in ("casting", "moulding", "extrusion"),
-                 "its workholding", "how the part is held is unknown")
+        plan.shaping()
     inspections = ctx.inspections()
     made = ctx.targets() or ({s.feature for s in ctx.surfaces()} if op.kind not in SECONDARY else set())
     for surface in ctx.surfaces():
