@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """A load case that names the stop reaction it comes from (#153).
 
 An FEA load may carry `reaction: IF-###`, the interface whose stop reaction the load stands for. Before the case

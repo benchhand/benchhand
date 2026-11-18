@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FEA load cases that name the stop reaction they come from (fea_reaction.py, #153).
 
 A load with `reaction: IF-###` is checked against the sealed stop-reaction bundle of the version before anything is

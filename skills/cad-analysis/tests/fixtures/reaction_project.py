@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """A project with a sealed version and a published stop-reaction bundle, for the tests of FEA reaction loads (#153).
 
 It needs no fea_reaction.py: the bundle is written through cad-record's check_packet and layout, and the case runs
