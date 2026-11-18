@@ -137,15 +137,11 @@ reported with the action below; `vcs` paths are accepted.
 | `hw/**/.gitattributes` | vcs | user or lead | Repository metadata; accepted. |
 | `hw/**/.gitkeep` | vcs | user or lead | Placeholder that keeps an empty directory in git; accepted. |
 
-## Misplaced and legacy paths
+## Misplaced paths
 
 | Path | Finding | Canonical location | Action |
 |---|---|---|---|
 | `hw/**/.cad-work`/ | `layout.nested_scratch` | `.cad-work/` | Scratch lives in the project's .cad-work/ beside hw/, never inside it. Move the tree there; nothing in it counts as record evidence. Nothing was changed. |
-| `hw/drawings/{PN}/**` | `layout.legacy` | `hw/drawings/<V>/{PN}/` | Regenerate the drawing with cad-drawings for a built version, or migrate it explicitly with its provenance; never guess the version from file dates. Nothing was changed. |
-| `hw/renders/{V}/{NAME}` | `layout.legacy` | `hw/renders/{V}/<subject>/` | Renders are one sealed bundle per version and subject. Re-render the version with cad-render, then delete this flat set after review. Nothing was changed. |
-| `hw/captures/{V}/{NAME}` | `layout.legacy` | `hw/captures/{V}/<subject>/` | Captures are one sealed bundle per version and subject. Capture again with cad-viewer, then delete this flat set after review. Nothing was changed. |
-| `hw/concept/screenshots/{NAME}` | `layout.legacy` | `hw/concept/screenshots/<scene-sha256>/<capture-sha256>/` | Concept previews are bundles bound to their scene and state. Take the screenshot again with cad-concept serve.py, then delete this one after review. Nothing was changed. |
 | a file part.yaml `procurement/specification/artifact` names | `layout.misplaced` | `hw/parts/{PN}/sources/{NAME}` | Move the file to hw/parts/{PN}/sources/ and update procurement/specification/artifact in hw/parts/{PN}/part.yaml; its sha256 is unchanged. Nothing was changed. |
 
 ## Stray files
@@ -172,7 +168,6 @@ the stage is missing or unknown. Errors fail validation (exit 1); warnings are r
 |---|---|---|
 | `layout.stray` | stage | a path no layout entry, exception or rule accepts; its class says where it belongs |
 | `layout.misplaced` | stage | a recognised file in the wrong place |
-| `layout.legacy` | stage | an output from an older layout; regenerate it |
 | `layout.nested_scratch` | stage | a .cad-work tree inside hw/ |
 | `layout.foreign` | stage | a file inside a bundle or version directory that its entry does not hold |
 | `layout.empty_directory` | stage | an empty directory no layout entry names |

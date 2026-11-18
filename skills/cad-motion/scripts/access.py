@@ -8,8 +8,8 @@ assembly operation, beside the pure `assembly.order` check, as one required-chec
 Usage: uv run --script access.py --hw hw (--version vN | --parts-dir DIR | --step STEP) [--attach REF=PARENT]...
        [--step-mm 1.0] [--min-step-mm 0.05] [--replace] [--out .cad-work/access.json]
 
-Operations come from cad-record assembly_operations (top-level `operations`, or legacy
-`drawing.operations`; both is refused). Order and closure are the pure check of that module. Access
+Operations come from cad-record assembly_operations (top-level `operations`;
+`drawing.operations` is refused). Order and closure are the pure check of that module. Access
 is geometric, at the nominal joint pose, in the assembly state the declared sequence gives each
 operation (the parts present then):
   - the part path: the operation's declared insertion `path` (assembly_operations: legs from its start

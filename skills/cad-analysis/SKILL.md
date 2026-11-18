@@ -40,7 +40,7 @@ TRIGGER
 
 ## Record-bound material and evidence
 
-For v2, use `material: {profile?, conditions: {conditioning, temperature, orientation?}, effective_isotropic?: {decision, justification}}` with `--hw hw --version vN`. A v2 case selects `part` or an `occurrence`; do not pass numeric material properties or `solid_index`. Legacy explicit `{E, nu, density, yield}` is accepted only for standalone/record-v1 exploratory cases and is never service evidence.
+For v2, use `material: {profile?, conditions: {conditioning, temperature, orientation?}, effective_isotropic?: {decision, justification}}` with `--hw hw --version vN`. A v2 case selects `part` or an `occurrence`; do not pass numeric material properties or `solid_index`. Explicit `{E, nu, density, yield}` is accepted only for standalone exploratory cases and is never service evidence.
 
 Optional case keys: `acceptance: {strength: REQ-###, stiffness: REQ-###}`, `mesh_convergence: {decision: DR-###}`, and `loads[].load`. The referenced requirement needs a structured criterion. Result blocks include material, evidence, mesh, binding and engineering packet.
 

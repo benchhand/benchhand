@@ -296,7 +296,5 @@ def stl_report(path: Path) -> dict[str, Any]:
 
 
 def node_names(part_map_data: Mapping[str, Any]) -> dict[str, str]:
-    """Occurrence id -> GLB node name from a written part map (version 1: PN -> its first node)."""
-    if part_map_data.get("schema_version", 1) == 1:
-        return {pn: entry["nodes"][0] for pn, entry in part_map_data["parts"].items() if entry["nodes"]}
+    """Occurrence id -> GLB node name from a written part map."""
     return {oid: entry["nodes"][0] for oid, entry in part_map_data["occurrences"].items() if entry["nodes"]}

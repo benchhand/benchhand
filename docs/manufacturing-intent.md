@@ -8,8 +8,6 @@ Record intended-use service class: `appearance_concept`, `fit_assembly`, `functi
 
 Ask about purpose/users, loads, motion, duty/life, environment, required accuracy/finish/stability, failure consequences/standards, quantity/budget/lead time, maintenance/repair, actual equipment/operators and outsourcing. Keep requirements, preferences, bounded assumptions and open questions distinct. Cite facts. Geometry does not establish service. Unknown facts remain unknown.
 
-For a v1 project, run `cad-record/scripts/migrate.py <project|hw> [--dry-run|--apply] [--json]`. Dry-run is the default and writes nothing. Review every proposed per-file change. Only the project owner applies migration. Migration records unknowns and questions; it invents no process, material, capability, criterion or certification. Historical versions/releases remain unchanged and readable. Gated actions and new record-writing builds wait for migration.
-
 ## Compare complete routes
 
 Compare architecture, material and process together for each part. Include ordered secondary operations, joining, finishing, inspection, capability, interfaces, assembly, quantity-specific cost/time, maintenance and tradeoffs. Cite material and supplier evidence. State estimate basis and uncertainty. A material family or machine envelope does not prove grade properties or accuracy.

@@ -73,8 +73,7 @@ def read_folder(folder: Path) -> dict[str, bytes]:
 @dataclass(frozen=True)
 class Snapshot:
     """A version's record snapshot, read once: its bytes, its parsed record documents (supporting source
-    files stay bytes) and the normalized manufacturing-intent record (`manufacturing_intent.Record`; a
-    record version 1 reads with every manufacturing-intent field unknown, never defaulted)."""
+    files stay bytes) and the normalized manufacturing-intent record (`manufacturing_intent.Record`)."""
 
     files: Mapping[str, bytes]
     documents: Mapping[str, Any]

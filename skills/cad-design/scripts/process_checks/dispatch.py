@@ -43,7 +43,7 @@ class HandlerError(RuntimeError):
 
 
 class NotAssessable(ValueError):
-    """The record cannot be assessed: a record version 1 record, before migrate.py."""
+    """The record cannot be assessed: it is not record version 2."""
 
 
 def owned(obligation: Any) -> bool:
@@ -55,7 +55,7 @@ def owned(obligation: Any) -> bool:
 def expected(record: Any) -> tuple[Any, ...]:
     """The obligations this producer must answer, enumerated from the record before anything runs."""
     if record.version != intent().RECORD_VERSION:
-        problem = intent().migration_problem(dict(record.product))
+        problem = intent().version_problem(dict(record.product))
         raise NotAssessable(f"{problem.message}; {problem.action}" if problem is not None
                             else "the record is not record version 2")
     return tuple(o for o in intent().required_checks(record) if owned(o))

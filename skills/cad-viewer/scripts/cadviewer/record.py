@@ -72,7 +72,7 @@ def _yaml_loader() -> Any:
 
 @dataclass(frozen=True)
 class Part:
-    """One displayed occurrence: a placement of the PN definition `pn` (a legacy part's id is its PN)."""
+    """One displayed occurrence: a placement of the PN definition `pn` (a singleton's id is its PN)."""
 
     id: str
     pn: str
@@ -216,18 +216,6 @@ def load_groups(hw: Path) -> list[tuple[str, str]]:
             if isinstance(sub, dict) and isinstance(sub.get("id"), str)]
 
 
-def legacy_groups(hw: Path) -> dict[str, str]:
-    """PN -> first subassembly listing it in `parts`: the grouping a version 1 manifest did not record."""
-    data = read_yaml(hw / "assembly.yaml") if (hw / "assembly.yaml").is_file() else {}
-    grouped: dict[str, str] = {}
-    for sub in (data or {}).get("subassemblies") or []:
-        if isinstance(sub, dict) and isinstance(sub.get("id"), str):
-            for pn in sub.get("parts") or []:
-                if isinstance(pn, str):
-                    grouped.setdefault(pn, sub["id"])
-    return grouped
-
-
 def load_version(hw: Path, version: str = "latest") -> Version:
     hw = hw.resolve()
     label, folder, record_dir = version_files(hw, version)
@@ -238,7 +226,7 @@ def load_version(hw: Path, version: str = "latest") -> Version:
     manifest = read_json(files["manifest"])
     reader = _cad_render_module("versions")
     try:
-        occurrences = reader.built_occurrences(read_json(files["part_map"]), manifest, legacy_groups(record_dir))
+        occurrences = reader.built_occurrences(read_json(files["part_map"]), manifest)
     except reader.VersionError as error:
         raise ViewerError(f"{label}: {error}") from error
     product_id = str(manifest.get("product_id") or "assembly")
@@ -485,7 +473,7 @@ def panel_model(version: Version, check: dict[str, Any] | None) -> dict[str, Any
     placed = version.metrics.get("occurrences") or {}  # schema_version 2: nominal-pose geometry per occurrence
     for part in version.parts:
         m = metric_parts.get(part.pn) or {}
-        spatial = placed.get(part.id) or m  # a version 1 part is modeled in place: its PN box is its spatial box
+        spatial = placed.get(part.id) or m  # an occurrence without placed metrics falls back to its PN box
         parts.append({
             "id": part.id, "ref": part.ref,
             "pn": part.pn, "product": part.product, "title": part.title, "material": part.material,

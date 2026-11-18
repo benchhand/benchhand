@@ -26,8 +26,8 @@ build   runs cad-model `run` on the scratch hw/ under the next scratch label, ca
         into the unit's own PNs and the rest; only the unit's own blocking findings block it. A
         finding form_check marks `blocking: false` is a diagnostic (a legacy heuristic such as a
         minimum wall or block_like proposal): reported as own_diagnostics, never a pass or a
-        failure, since manufacturability comes from the declared route's checks: for a record
-        version 2 version form_check runs as `--version`, which also publishes the process packet
+        failure, since manufacturability comes from the declared route's checks: form_check runs
+        as `--version`, which also publishes the process packet
         in the scratch hw (form.process); a failed process check of the unit's own part blocks it,
         an unknown one is reported (own_unknown). Each --attach is
         passed to cad-model `run` and recorded in the scratch version, so a unit builds and
@@ -256,13 +256,11 @@ def build(hw: Path, unit: str, kernel: str, fidelity: str,
                        "blocking_failures": (checked or {}).get("blocking_failures"),
                        "warnings": (checked or {}).get("warnings")}
 
-    # A record version 2 version: form_check --version runs the same fidelity checks and the process-dispatched
-    # manufacturing checks of the declared routes, publishing the process packet in the scratch hw only.
-    current = json.loads((version / "manifest.json").read_text(encoding="utf-8")).get("record_version") == 2
-    source = ["--version", label] if current else ["--parts-dir", str(version / "parts")]
+    # form_check --version runs the same fidelity checks and the process-dispatched manufacturing checks of
+    # the declared routes, publishing the process packet in the scratch hw only.
     form_out = work / f"form-{label}.json"
     form_log = work / f"form-{label}.log"
-    form_code, form = run_tool([str(FORM_CHECK), "--hw", str(scratch_hw), *source, "--fidelity", fidelity], form_log)
+    form_code, form = run_tool([str(FORM_CHECK), "--hw", str(scratch_hw), "--version", label, "--fidelity", fidelity], form_log)
     findings = (form or {}).get("findings", [])
     if form is not None:
         form_out.write_text(json.dumps(form, indent=2) + "\n", encoding="utf-8")
@@ -271,7 +269,7 @@ def build(hw: Path, unit: str, kernel: str, fidelity: str,
                       "own_findings": [f for f in mine if f.get("blocking") is not False],
                       "own_diagnostics": [f for f in mine if f.get("blocking") is False],
                       "other_findings": [f for f in findings if f.get("part") not in own]}
-    if current and form is not None:
+    if form is not None:
         process = form.get("manufacturing") or {}
         own_open = [o for o in process.get("open") or () if _anchor_pn(o["obligation"]) in own]
         report["form"]["process"] = {"status": process.get("status"), "complete": process.get("complete"),

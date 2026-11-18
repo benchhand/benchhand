@@ -120,10 +120,9 @@ def build_manufacture(params: dict):
   product keeps the name `"<PN> <title>"`.
 - Share construction between `build` and `build_manufacture` through private helpers of the
   model.py, so both states follow one set of parameters.
-- Model the state in any frame and orientation. A record version 2 part fixes its export pose in
+- Model the state in any frame and orientation. A part fixes its export pose in
   its route: the approved `orientation.rotation` of the additive operation that shapes it, applied
-  to the frame `build_manufacture` returns (or the model frame). A record version 1 part keeps the
-  labelled, unapproved envelope auto-fit. `run` sets an additive part on the bed (one proper
+  to the frame `build_manufacture` returns (or the model frame). `run` sets an additive part on the bed (one proper
   rotation, no mirror) and keeps any other part in its model frame.
 - The run fails and writes no version when the state differs from the installed definition. That
   is a kernel volume difference beyond the declared tolerance, another solid count, or an invalid

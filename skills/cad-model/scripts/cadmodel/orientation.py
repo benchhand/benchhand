@@ -5,10 +5,10 @@ never a reflection, a scaling or a shear. A permutation name such as `xzy` says 
 printer axis takes; alone it can describe a mirror, so `permutation_rotation` reverses the printer X
 row whenever the plain permutation has determinant -1.
 
-A record version 2 part fixes its orientation in its route: the additive operation's approved
+A part fixes its orientation in its route: the additive operation's approved
 `orientation.rotation` (`rotation_of`) is the pose its outputs are exported in, and the envelope check
-verifies that very pose (`pose_fit`). `fit` searches the envelope for a pose: it is the legacy export of a
-record version 1 part and a proposal otherwise, never an approved orientation. Fitting an envelope is
+verifies that very pose (`pose_fit`). `fit` searches the envelope for a pose: a proposal, never an
+approved orientation. Fitting an envelope is
 geometry only; it says nothing about whether the part can be printed.
 """
 
@@ -79,8 +79,7 @@ class Pose:
     """The pose one manufacturing component is exported in, and where it comes from.
 
     `status`: `approved` (the route's approved orientation), `proposed`, `not_applicable` or `unknown`
-    for a record version 2 part; `unapproved_auto_fit` or `unapproved_native` for the legacy envelope
-    search of a record version 1 part; `model_frame` for a part that is not built on a bed."""
+    for an additive part; `model_frame` for a part that is not built on a bed."""
 
     status: str
     rotation: Rot
@@ -115,8 +114,8 @@ def pose_fit(low: Vec, high: Vec, volume: BuildVolume, slack: float) -> bool:
 @dataclass(frozen=True)
 class BuildVolume:
     """A machine envelope: its size, the margin reserved at both ends of each axis, the permutations a
-    legacy auto-fit may try, and where it is declared: product.yaml `build_volume` (a record version 1
-    declaration) or a capability profile's measured `envelope`."""
+    auto-fit may try, and where it is declared: product.yaml `build_volume` or a capability profile's
+    measured `envelope`."""
 
     size_mm: Vec
     margin_mm: float

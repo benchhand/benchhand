@@ -648,8 +648,6 @@ def _inventory(hw: Path, rel: str, entry: Entry, params: Mapping[str, str]) -> t
     if not isinstance(data, dict):
         return None, "the manifest is not a JSON object"
     name = posixpath.basename(rel)
-    if entry.manifest == "release" and "schema_version" not in data:
-        return None, None  # a version 1 release lists project files in place; validate.py checks them
     if entry.manifest == "version" and data.get("label", name) != name:
         return None, f"label {data.get('label')!r} is not the folder name {name}"
     if entry.manifest == "bundle":
@@ -1091,7 +1089,7 @@ def markdown() -> str:
               "| Path | Kind | Writer | Action |", "|---|---|---|---|"]
     lines += [f"| {_code(e.path)}{'/' if e.directory else ''} | {e.kind} | {_cell(e.writer)} | {_cell(e.action)} |"
               for e in lay.exemptions]
-    lines += ["", "## Misplaced and legacy paths", "",
+    lines += ["", "## Misplaced paths", "",
               "| Path | Finding | Canonical location | Action |", "|---|---|---|---|"]
     for rule in lay.rules:
         where = (f"a file part.yaml `{rule.referenced_by}` names" if rule.referenced_by

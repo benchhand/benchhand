@@ -48,7 +48,7 @@ only while an obligation it covers (FAMILY_PRODUCERS) is stale or open and due a
 read in the fail-fast order, stopping the producers still running at the first blocking result;
 the full scope runs them one after another. Exit 0 when every step passes (and, in the full scope,
 the packet's gate passes); 1 when a step blocks, the gate of a full run blocks, the record is
-record version 1 or the version is not built or fails its manifest (refused: build it again); 2 on a
+not record version 2 or the version is not built or fails its manifest (refused: build it again); 2 on a
 usage error, a stray run (its stop commands are listed) or a producer that gave no result (an exit
 status other than 0 and 1, or an exit 0 without a JSON report). `check` stays separate: it recomputes the
 packet without producers.
@@ -406,7 +406,7 @@ class Assessment:
         if stage not in STAGES:
             raise ValueError(f"unknown stage {stage!r}")
         if self.record.version != mi.RECORD_VERSION:
-            problem = mi.migration_problem(self.record.product)
+            problem = mi.version_problem(self.record.product)
             message = problem.message if problem is not None else "the record is not record version 2"
             action = f"; {problem.action}" if problem is not None and problem.action else ""
             return (Finding("gate.record", "hw/product.yaml", message + action),)
@@ -1582,10 +1582,10 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
     report.update(stage=stage, version=label, version_manifest_sha256=_sha256(folder / layout.MANIFEST),
                   record_sha256=record_digest(record_inputs(hw)))
     if record.version != mi.RECORD_VERSION:
-        problem = mi.migration_problem(record.product)
+        problem = mi.version_problem(record.product)
         message = problem.message if problem is not None else "the record is not record version 2"
         action = f"; {problem.action}" if problem is not None and problem.action else ""
-        return 1, {**report, "findings": [Finding(mi.MIGRATION_REQUIRED, "hw/product.yaml", message + action).as_dict()]}
+        return 1, {**report, "findings": [Finding(mi.VERSION_UNSUPPORTED, "hw/product.yaml", message + action).as_dict()]}
     assessment, _ = build_assessment(hw, label, today)
     work = run_plan(hw, label, scope, stage, assessment, since_version=since_version)
     outcome = _fail_fast().execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),

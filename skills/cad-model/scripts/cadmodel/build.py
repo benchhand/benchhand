@@ -12,11 +12,9 @@ project sources the runner loaded. Every other part reuses its earlier output fr
 hard link to it where the filesystem allows, else a copy. Profile, route and evidence changes never
 rebuild a B-rep; the manufacturing outputs carry their own complete key (cadmodel.manufacture).
 
-Mass comes from the part's material profile (record version 2: hw/manufacturing/materials.yaml,
+Mass comes from the part's material profile (hw/manufacturing/materials.yaml,
 `manufacturing_intent.resolve_property` of `density`), never from a default; a profile without a
-resolvable density leaves mass and centre of mass unknown. A record version 1 part keeps its labelled
-legacy estimate from the density-only table assets/materials.yaml, which never supplies any other
-property.
+resolvable density leaves mass and centre of mass unknown.
 """
 
 from __future__ import annotations
@@ -42,13 +40,12 @@ from cadmodel.motion import load_pose
 from cadmodel.runner import MANUFACTURE_FRAME
 
 SCRIPTS = Path(__file__).resolve().parents[1]
-LEGACY_DENSITIES = SCRIPTS.parent / "assets" / "materials.yaml"  # record version 1 mass estimates only
 KERNELS = ("cadquery", "build123d")
 RUNNERS = {kernel: SCRIPTS / f"run_{kernel}.py" for kernel in KERNELS}
 ORCHESTRATOR_DISTS = ("cadquery-ocp-novtk", "trimesh", "numpy", "pyyaml")
 FEATURES_FILE = "drawing-features.json"  # the drawing_features hook results of one version
 MANUFACTURING_FEATURES_FILE = "manufacturing-features.json"  # the manufacture_features hook results
-# part-map.json, metrics.json and manifest.json format: 2 adds occurrences; files without the key are version 1
+# part-map.json, metrics.json and manifest.json format: 2 adds occurrences
 SCHEMA_VERSION = 2
 CACHE_FORMAT = 2  # bump when what a runner writes for a part changes without any keyed input changing
 REQUEST_FIELDS = ("pn", "name", "model_frame", "manufacture")  # the request fields a part build depends on
@@ -147,16 +144,6 @@ def discover(hw: Path, records: Mapping[str, Mapping[str, Any]]) -> tuple[list[P
     if not parts and not findings:
         raise UsageError(f"no hw/parts/<PN>/model.py under {hw}")
     return parts, findings
-
-
-def load_densities() -> dict[str, float]:
-    """The density-only legacy table: record version 1 mass estimates, never a property source."""
-    data = record.load_yaml_loader().safe_load(LEGACY_DENSITIES.read_text(encoding="utf-8"))
-    return {" ".join(name.lower().split()): float(value) for name, value in data["densities_g_cm3"].items()}
-
-
-def density_for(material: str | None, table: dict[str, float]) -> float | None:
-    return table.get(" ".join(material.lower().split())) if isinstance(material, str) else None
 
 
 def select_kernels(parts: list[PartSource], requested: str) -> tuple[dict[str, list[PartSource]], list[dict[str, Any]]]:
@@ -319,21 +306,6 @@ def orchestrator_tools() -> dict[str, str]:
     return versions
 
 
-def legacy_mass(material: str | None, volume: float, centre: Iterable[float], table: Mapping[str, float]) -> dict[str, Any]:
-    """A record version 1 part's labelled mass estimate: the installed volume at the legacy table's
-    nominal fully dense bulk density of its `material` string; unknown when the table has none."""
-    density = density_for(material, dict(table))
-    known = density is not None
-    return {"density_g_cm3": density, "mass_g": volume * density / 1000.0 if density is not None else None,
-            "centre_of_mass_mm": list(centre) if known else None,
-            "mass": {"status": "known" if known else "unknown", "source": "legacy_density_table", "basis": "estimate",
-                     "method": MASS_METHOD, "table": LEGACY_DENSITIES.relative_to(SCRIPTS.parent).as_posix(),
-                     "material": material,
-                     "note": "a record version 1 estimate from a nominal bulk density; the table is never a material "
-                             "profile and never supplies strength or any other property",
-                     "reasons": [] if known else [f"material {material!r} is not in the legacy density table"]}}
-
-
 def _density(snapshot: record.Snapshot, reference: Any) -> tuple[dict[str, Any], Any]:
     """(how one material reference's density resolves, its Quantity in g_cm3 or None)."""
     intent = record.load_intent()
@@ -411,14 +383,12 @@ def profile_mass(snapshot: record.Snapshot, pn: str, volume: float, centre: Iter
             "mass": {**block, "status": "known", "value_g": low, "reasons": reasons}}
 
 
-def part_metrics(shape: Any, source: PartSource, snapshot: record.Snapshot, entry: Mapping[str, Any] | None,
-                 table: Mapping[str, float]) -> dict[str, Any]:
+def part_metrics(shape: Any, source: PartSource, snapshot: record.Snapshot,
+                 entry: Mapping[str, Any] | None) -> dict[str, Any]:
     """Definition-level metrics of one PN, in its model frame; `entry` is its manufacturing entry, if any."""
     vol, centre = occ.mass_properties(shape)
     low, high = occ.bbox(shape)
-    mass = (legacy_mass(source.material, vol, centre, table)
-            if snapshot.version == record.load_intent().LEGACY_RECORD_VERSION
-            else profile_mass(snapshot, source.pn, vol, centre, entry))
+    mass = profile_mass(snapshot, source.pn, vol, centre, entry)
     return {
         "product": source.product,
         "model_frame": source.model_frame,
@@ -534,7 +504,6 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
     findings += kernel_findings + [finding(pn, "manufacture", message) for pn, message in refused]
     if findings:
         return 1, {"status": "fail", "label": label, "findings": findings}
-    migration = record.load_intent().migration_problem(snapshot.documents.get("product.yaml"))
 
     layout = record.load_layout()
     record_dir = layout.resolve(hw, "version.record", V=label).relative_to(layout.version_dir(hw, label)).as_posix()
@@ -625,19 +594,16 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
         timings["glb_s"] = round(time.perf_counter() - mark, 3)
         write_json(work / "part-map.json", {"schema_version": SCHEMA_VERSION, **mapping})
 
-        table = load_densities()
-        metrics = {pn: part_metrics(parts[pn].shape, by_pn[pn], snapshot, made.get(pn), table) for pn in sorted(parts)}
+        metrics = {pn: part_metrics(parts[pn].shape, by_pn[pn], snapshot, made.get(pn)) for pn in sorted(parts)}
         placed = {oid: occurrence_metrics(chain.pn(oid), parts[chain.pn(oid)].shape, transforms[oid],
                                           metrics[chain.pn(oid)]) for oid in chain.ids}
         quantity = {pn: sum(1 for oid in chain.ids if chain.pn(oid) == pn) for pn in parts}
-        legacy = snapshot.version == record.load_intent().LEGACY_RECORD_VERSION
         write_json(work / "metrics.json", {
             "schema_version": SCHEMA_VERSION, "label": label,
             "frame": ("parts: each PN's model_frame (assembly_zero: assembly coordinates at the zero pose); "
                       "occurrences: assembly coordinates at the built (nominal) pose"),
             "units": {"length": "mm", "mass": "g"},
-            "mass_source": "legacy_density_table" if legacy else "material_profiles",
-            "density_table": LEGACY_DENSITIES.relative_to(SCRIPTS.parent).as_posix() if legacy else None,
+            "mass_source": "material_profiles",
             "parts": metrics,
             "occurrences": placed,
             "totals": totals(metrics, placed, quantity),
@@ -726,7 +692,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
     made_paths = {pn for pn, entry in made.items() if entry["path"] is not None}
     return 0, {
         "status": "pass", "label": label, "version_dir": str(final),
-        "record": {"version": snapshot.version, "problems": [migration.finding()] if migration is not None else []},
+        "record": {"version": snapshot.version},
         "parts": {pn: {"kernel": built[pn][0], "build": "reused" if pn in reused else "built",
                        "volume_mm3": metrics[pn]["volume_mm3"], "solids": metrics[pn]["solids"],
                        "mass_g": metrics[pn]["mass_g"], "mass": metrics[pn]["mass"]["status"],

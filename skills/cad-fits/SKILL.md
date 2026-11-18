@@ -23,7 +23,7 @@ TRIGGER
    ```
 
    The stack YAML is positional. An intent result publishes at `hw/analysis/vN/<case>/` and its required-check packet at `hw/checks/vN/stack-<case>/`. A standalone stack can use `--out .cad-work/<unit>/stack.json`, but `--out` cannot combine with `--hw` and `--version`. Exit 0 is pass; 1 is a completed violation or UNKNOWN; 2 is invalid input or infrastructure error.
-3. Report the computed worst-case result. Worst case governs collision, binding, lost function and critical fits. `justified_rss` applies only to suitable non-governing consequences and needs sourced stable centered distributions, supported independence/correlation, coverage/probability and approved decision. Legacy `rss` is unqualified quadrature, never a probability claim.
+3. Report the computed worst-case result. Worst case governs collision, binding, lost function and critical fits. `justified_rss` applies only to suitable non-governing consequences and needs sourced stable centered distributions, supported independence/correlation, coverage/probability and approved decision. A plain quadrature sum is never a probability claim.
 
 ## Rules
 

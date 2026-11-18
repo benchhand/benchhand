@@ -10,8 +10,8 @@ Kernel-free; ``assembly_drawing.py`` uses it in the run, and the CLI re-checks a
     uv run --script assembly_check.py PACKAGE_DIR
 
 ``read_intent`` normalizes ``assembly.yaml`` ``drawing``, and takes its installation operations from
-cad-record ``assembly_operations`` (top-level ``operations``, or a legacy ``drawing.operations``; both
-is invalid intent). ``reconcile`` binds it to the version's occurrences, the BOM and the interfaces: one
+cad-record ``assembly_operations`` (top-level ``operations``; ``drawing.operations`` is
+invalid intent). ``reconcile`` binds it to the version's occurrences, the BOM and the interfaces: one
 item row per PN, every occurrence of the drawing scope in exactly one item, quantity = the item's
 occurrences = the BOM roll-up, and each operation resolved to its two items and, for a press fit,
 heat-set insert or retaining ring, its interface limit (fit, insert or ring). An operation with a
@@ -211,7 +211,7 @@ def _operations_module() -> Any:
 
 def drawing_operations(assembly: Mapping[str, Any]) -> list[Operation]:
     """The installing operations of a parsed assembly.yaml, in record order, as the drawing presents
-    them; IntentError for operations held in both authorities or malformed. Service steps (adjust,
+    them; IntentError for operations held in drawing.operations or malformed. Service steps (adjust,
     inspect, disassemble) and unknown operations add none."""
     module = _operations_module()
     try:

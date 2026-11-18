@@ -18,8 +18,8 @@ optical.route; physically validated ones belong to the evidence ledger) gets one
 exported manufacturing component files (versions/<V>/manufacturing/<PN>[/components/<COMP>]) in their
 export pose, against capability-profile calibrations only. The packet
 (manufacturing-check-result.schema.json) is published as hw/checks/<V>/process/result.json (reused when
-the recipe matches; --replace for another), or written to --out instead. A record version 1 snapshot is
-`not_assessed` with record.migration_required.
+the recipe matches; --replace for another), or written to --out instead. A snapshot of an unsupported record version is
+`not_assessed` with record.version_unsupported.
 
 Parts: one STEP per part in DIR, named `<PN>.step` (cad-motion `--parts-dir`
 rules). Process comes from hw/parts/<PN>/part.yaml (`fdm`, `cnc`, `purchased`); a bought part
@@ -77,7 +77,7 @@ stdout: JSON in the tool-result envelope (cad-record emit.py) whose payload is {
 the packet's status, complete, bundle, outcome counts, open obligations and its major and critical
 findings. stderr: diagnostics.
 Exit 0 = no blocking finding and (--version) a passing packet, 1 = a blocking finding or a failing,
-unknown or incomplete packet (or a record that needs migration), 2 = usage or infrastructure error.
+unknown or incomplete packet (or a record of an unsupported version), 2 = usage or infrastructure error.
 """
 
 from __future__ import annotations
@@ -1478,7 +1478,7 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
     record = model_record.read_snapshot(model_record.read_folder(record_dir)).intent
     blocking = report["status"] == "fail"
     if record.version != pc.intent().RECORD_VERSION:
-        problem = pc.intent().migration_problem(dict(record.product), f"hw/versions/{label}/record/product.yaml")
+        problem = pc.intent().version_problem(dict(record.product), f"hw/versions/{label}/record/product.yaml")
         report["manufacturing"] = {"status": "not_assessed", "record_version": record.version,
                                    "problems": [problem.finding()] if problem is not None else []}
         return report, 1

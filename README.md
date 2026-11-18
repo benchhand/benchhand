@@ -2,7 +2,7 @@
 
 Agent-assisted mechanical CAD guides a product from concept through versioned CAD. It produces drawings, an engineering bill of materials (EBOM), scoped verification evidence and documentation. It assesses intended service, per-part routes, interfaces and evidenced capability. Missing evidence or coverage stays unknown. An FDM part also gets a 3MF with its geometry, bed orientation and material name. It does not slice, or generate slicer/CAM toolpaths, operate equipment or certify physical performance.
 
-Manufacturing intent is recorded per project and part: a v2 record captures intended use, requirements, candidate selection, material/process routes, real capability, assembly interfaces and evidence. Unknown facts remain unknown. The use-case **service class** describes maturity/consequence; product **rigor** (`maker|pro|regulated`) describes documentation depth. Prototype is a service class, never a rigor level. Existing v1 project records remain readable but require explicit `migrate.py --dry-run`, reviewed and owner-applied `--apply`, before gated actions or new record-writing builds. New freezes/releases require a recorded material/process selection; no selection or other required unknown blocks. See `docs/manufacturing-intent.md`.
+Manufacturing intent is recorded per project and part: a v2 record captures intended use, requirements, candidate selection, material/process routes, real capability, assembly interfaces and evidence. Unknown facts remain unknown. The use-case **service class** describes maturity/consequence; product **rigor** (`maker|pro|regulated`) describes documentation depth. Prototype is a service class, never a rigor level. Only record version 2 is read; any other `record_version`, or none, is refused. New freezes/releases require a recorded material/process selection; no selection or other required unknown blocks. See `docs/manufacturing-intent.md`.
 
 This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Kiro CLI through native skills and agent profiles.
 
@@ -149,7 +149,7 @@ The `cad-flow` skill guides these stages:
 
 GROUND captures product use and operating conditions. The lead records requirements, preferences, assumptions and open questions separately. INTENT compares complete part-level architecture/material/process routes against mandatory criteria. Mandatory failures are eliminated before preference ranking. Unknowns stay conditional.
 
-Do not assume a printer, material, process, capability, tolerance or service requirement. For a v1 project, review the `migrate.py` dry run. Migration is an explicit owner action before gated actions or new record builds. Optical requirements exclude opaque processes. Use traceably identified purchased transparent parts or identified transparent stock on an appropriate evidenced route. Do not suggest see-through FDM or unidentified clear plastic. SPECIFY records per-part intent, separate capability profiles, functional interfaces, assembly access and evidence obligations. See the [manufacturing-intent guide](docs/manufacturing-intent.md).
+Do not assume a printer, material, process, capability, tolerance or service requirement. Optical requirements exclude opaque processes. Use traceably identified purchased transparent parts or identified transparent stock on an appropriate evidenced route. Do not suggest see-through FDM or unidentified clear plastic. SPECIFY records per-part intent, separate capability profiles, functional interfaces, assembly access and evidence obligations. See the [manufacturing-intent guide](docs/manufacturing-intent.md).
 
 The lead maintains the `hw/` record and integrates stage work. The lead builds immutable L1-L4 versions and runs established checks in fail-fast order. Gate ownership and sequence remain with `cad-flow`.
 
@@ -182,7 +182,7 @@ The mypy command is development-only. Its PEP 723 lock pins the current verified
 | Skill | Responsibility |
 |---|---|
 | `cad-flow` | Stage sequence, gates, and project workflow |
-| `cad-record` | Structured design record, validation, migration, evidence and release |
+| `cad-record` | Structured design record, validation, evidence and release |
 | `cad-concept` | Rapid concept variants and previews |
 | `cad-model` | CadQuery/build123d model builds and geometry checks |
 | `cad-design` | F0-F3 appearance fidelity and manufacturing dispatch guidance |

@@ -836,26 +836,12 @@ class Measurer:
         return tolerance
 
     def _post_process_check(self, feature: ResolvedFeature, tolerance: Tolerance) -> None:
-        """Whether the drawn fit is planned to be achieved. Record version 2 judges the feature's own route
-        operations and inspection (finished_state_findings); a version 1 record keeps its legacy diagnostic,
-        an FDM interface tighter than its tolerance policy left as printed."""
+        """Whether the drawn fit is planned to be achieved: the feature's own route operations and
+        inspection (finished_state_findings)."""
         if self.vendor:
             return  # a vendor item's specification states its limits
-        if _intent().record_version(self.product) == _intent().RECORD_VERSION:
-            for item in finished_state_findings(self.pn, self.part, feature.id, tolerance.source):
-                self.add(item)
-            return
-        if self.part["process"] != "fdm":
-            return
-        policy = self.policy(feature.id)
-        manufacturing = self.drawing.get("manufacturing") or {}
-        if policy is None or policy.kind != "limits":
-            return
-        if (tolerance.upper - tolerance.lower) < Decimal(str(2 * policy.linear_mm)) and \
-                manufacturing.get("interface_condition", "as_printed") == "as_printed":
-            self.add(finding("fit_geometry_mismatch", f"{feature.id}: {tolerance.source} is tighter than the "
-                             f"{policy.name} process ({policy.label}) and drawing.manufacturing leaves the interface "
-                             f"as printed", feature=feature.id))
+        for item in finished_state_findings(self.pn, self.part, feature.id, tolerance.source):
+            self.add(item)
 
     def _bore(self, feature: ResolvedFeature, frame: DatumFrame) -> None:
         self._round_feature(feature, frame, inward=True)

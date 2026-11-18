@@ -25,7 +25,7 @@ run   executes every hw/parts/<PN>/model.py in its declared kernel's own uv envi
         assembly.glb      binary glTF of assembly.step, metres, +Y up, one node per occurrence
         part-map.json     occurrence -> glTF nodes and meshes, plus the PN aggregate
         metrics.json      per PN: volume, area, bbox, solids, holes, mass from its material profile's
-                          density (record version 1: the legacy density table), unknown without one;
+                          density, unknown without one;
                           per occurrence: placement, placed bbox, centre and holes; totals by quantity
         manifest.json     per PN: kernel, model frame, model path, source and record sha256, params,
                           kernel volume; occurrences with rest placements; tool versions; pose

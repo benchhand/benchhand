@@ -183,19 +183,15 @@ def _read_manifest(path: Path) -> dict[str, Any] | None:
 
 
 def _holds(manifest: Mapping[str, Any], product_id: str, version: str) -> bool:
-    """Whether a release manifest releases `version`, read by its own manifest version: version 2 and 3
-    name it in frozen.version, version 1 lists its files in place. A manifest version this guide does
-    not know releases nothing it can cite."""
+    """Whether a release manifest releases `version`, read by its manifest version 3, which names it in
+    frozen.version. Any other manifest version releases nothing this guide can cite."""
     if manifest.get("product_id") != product_id:
         return False
     schema = manifest.get("schema_version")
-    if schema in (2, 3):
-        frozen = manifest.get("frozen")
-        return isinstance(frozen, Mapping) and frozen.get("version") == version
-    if schema is not None:
+    if schema != 3:
         return False
-    return any(re.search(rf"(?:^|/)versions/{re.escape(version)}(?:/|$)", item)
-               for item in manifest.get("files", []) if isinstance(item, str))
+    frozen = manifest.get("frozen")
+    return isinstance(frozen, Mapping) and frozen.get("version") == version
 
 
 def release_reference(hw: Path, product_id: str, version: str, rev: str | None,
@@ -440,7 +436,7 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
         raise GuideError(f"cannot read version manifest {version_manifest}: {exc}") from exc
 
     product = read_yaml(hw / "product.yaml", optional=True)
-    problem = record_intent.migration_problem(product)
+    problem = record_intent.version_problem(product)
     if problem is not None:
         raise GuideError(f"{problem.code}: {problem.message}. {problem.action or ''}".strip())
     assembly = read_yaml(hw / "assembly.yaml", optional=True)
@@ -574,7 +570,7 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
     if not any(operation.tools or operation.consumables for operation in operations.items):
         sections[3] = "## Tools and consumables\n\n" + table(
             ("Step", "Items", "Tool or consumable"),
-            [(f"MISSING: assembly.yaml {'operations' if operations.authority == 'operations' else 'drawing.operations'}"
+            [("MISSING: assembly.yaml operations"
               "[].tools / consumables", None, None)])
     bom_path = hw / "bom.csv"
     guide = (f"# {text(product_id)} build guide\n\n"

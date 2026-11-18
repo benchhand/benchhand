@@ -6,11 +6,9 @@
 inspection and service operations, and their pure order, closure and joint checks. Stdlib only, no
 file reads and no CAD kernel: callers pass the parsed assembly.yaml mapping or a normalized record.
 
-Authority. Record version 2 keeps operations in assembly.yaml top-level `operations` (a list, or an
-unknown fact); record version 1 kept installation operations in `drawing.operations`. `normalize`
-reads exactly one of them; a record holding both is refused (`intent.dual_authority`), and no
-drawing, guide or check reads either list directly. The migration moves the legacy list verbatim,
-so both shapes normalize to the same operations.
+Authority. Operations live in assembly.yaml top-level `operations` (a list, or an unknown fact).
+`normalize` reads only that; a `drawing.operations` list is refused (`intent.dual_authority`), and no
+drawing, guide or check reads the operations any other way.
 
 Order model. Record order is the assembly sequence; `predecessors` are constraints that sequence must
 satisfy. A part an installing operation (press_fit, heat_set, retaining_ring, insert, fasten, join,
@@ -30,7 +28,7 @@ receiving part's frame, installed orientation kept), from `start` through `via` 
 pose, whose last leg must arrive along `direction`. Without one the part travels the default straight
 line along `direction`, and access reports that default.
 
-Tools. A legacy `tools` entry is a display name: its reach and envelope stay unknown. A
+Tools. A plain `tools` entry is a display name: its reach and envelope stay unknown. A
 `tool_access` entry may name a capability profile, an approach (receiver-local, like `direction`),
 a reach and an envelope; an envelope fact whose source carries an artifact (a STEP solid of the tool
 and holder in the operated part's model frame at the engaged pose) is what a geometric check uses.
@@ -56,10 +54,9 @@ from typing import Any, TypeGuard
 Vec = tuple[float, float, float]
 
 KINDS = ("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "adjust", "inspect", "disassemble")
-LEGACY_KINDS = ("press_fit", "heat_set", "retaining_ring")  # the kinds drawing.operations held
 INSTALLING = frozenset(("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close"))
 JOINING = frozenset(("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join"))
-INTERFACE_LIMIT_KINDS = frozenset(LEGACY_KINDS)  # the fit, insert or ring comes from the interface limit of this kind
+INTERFACE_LIMIT_KINDS = frozenset(("press_fit", "heat_set", "retaining_ring"))  # the fit, insert or ring comes from the interface limit of this kind
 ACCEPTANCE = {"seated": 2, "standoff": 2, "flush": 2, "engaged": 1, "torqued": 1, "adjusted": 1, "inspected": 1}
 GEOMETRIC_ACCEPTANCE = frozenset(("seated", "standoff", "flush", "engaged"))  # measurable on the assembled model
 REQUIRED = {  # schema: assembly.schema.json#/$defs/assembly_operation allOf
@@ -88,7 +85,7 @@ ORDER_COVERAGE = ("the declared sequence only: the receiving part present, the p
 
 
 class OperationsError(ValueError):
-    """Operations that cannot be normalized; `code` is intent.dual_authority or intent.schema."""
+    """Operations that cannot be normalized; `code` is intent.dual_authority (drawing.operations) or intent.schema."""
 
     def __init__(self, message: str, code: str = "intent.schema") -> None:
         super().__init__(message)
@@ -97,7 +94,7 @@ class OperationsError(ValueError):
 
 @dataclass(frozen=True)
 class Tool:
-    """A tool that must reach the operation: a display name (`declared` False: legacy `tools`) or a
+    """A tool that must reach the operation: a display name (`declared` False: plain `tools`) or a
     `tool_access` entry with its optional capability, approach, reach and envelope facts."""
 
     name: str
@@ -169,7 +166,7 @@ class Operations:
     """The normalized operations of one record. `authority` names the list they came from; `unknown`
     holds the reason when the record states them unknown (or holds none)."""
 
-    authority: str  # operations, drawing.operations or none
+    authority: str  # operations or none
     items: tuple[AssemblyOperation, ...]
     unknown: str | None = None
 
@@ -182,22 +179,20 @@ class Operations:
 
 
 def normalize(assembly: Mapping[str, Any]) -> Operations:
-    """The operations of a parsed assembly.yaml: top-level `operations`, else legacy `drawing.operations`;
-    OperationsError when both are present or an entry is malformed."""
+    """The operations of a parsed assembly.yaml: top-level `operations`;
+    OperationsError when `drawing.operations` is present or an entry is malformed."""
     if not isinstance(assembly, Mapping):
         raise OperationsError("assembly.yaml must be a mapping")
     drawing = assembly.get("drawing")
     legacy = drawing.get("operations") if isinstance(drawing, Mapping) else None
-    if "operations" in assembly and legacy is not None:
-        raise OperationsError("assembly.yaml holds installation operations in both top-level operations and "
-                              "drawing.operations: keep them in top-level operations only", "intent.dual_authority")
+    if legacy is not None:
+        raise OperationsError("assembly.yaml holds installation operations in drawing.operations: "
+                              "keep them in top-level operations only", "intent.dual_authority")
     if "operations" in assembly:
         data = assembly["operations"]
         if isinstance(data, Mapping) and data.get("status") in ("unknown", "not_applicable"):
             return Operations("operations", (), str(data.get("reason") or f"operations are {data['status']}"))
         return Operations("operations", _items(data, "operations"))
-    if legacy is not None:
-        return Operations("drawing.operations", _items(legacy, "drawing/operations"))
     return Operations("none", (), "assembly.yaml records no operations")
 
 
@@ -206,8 +201,7 @@ def from_record(record: Any) -> Operations:
     data = record.assembly_operations
     if not isinstance(data, (list, tuple)):  # an unknown or not_applicable Fact
         return Operations("operations", (), data.reason or f"operations are {data.status}")
-    authority = "operations" if getattr(record, "version", 2) >= 2 else "drawing.operations"
-    return Operations(authority, _items(_thaw(data), "operations"))
+    return Operations("operations", _items(_thaw(data), "operations"))
 
 
 def _thaw(value: Any) -> Any:

@@ -9,12 +9,12 @@ and no file is invented. The state is the installed definition, or the `build_ma
 shape of a part whose part.yaml declares `manufacture.relationship: different`.
 
 Every disconnected solid of the state is a manufacturing component (cadmodel.components): a sole solid
-is the implicit `main`; a record version 2 part with several declares them, and each is also exported
+is the implicit `main`; a part with several declares them, and each is also exported
 alone to components/<COMP>/part.step (and part.stl), in its own pose. An additive component is
 exported in the pose its route fixes: the approved orientation of the additive operation that shapes
 it. A proposed or unknown orientation exports the native frame and leaves the output incomplete; the
-envelope auto-fit (cadmodel.orientation.fit) exports only a record version 1 part, labelled
-unapproved. `inspect` reads the written files back and judges them; `run` seals the version only
+envelope auto-fit (cadmodel.orientation.fit) only proposes a pose, never an approved one. `inspect`
+reads the written files back and judges them; `run` seals the version only
 when no part fails a blocking check, and `check` repeats `inspect` on the sealed files.
 
 A part's outputs are a function of its manifest facts (its record fields, state, tolerance and its
@@ -54,16 +54,10 @@ class Plan:
     pn: str
     record: Mapping[str, Any]  # its part.yaml
     policy: Any  # cad-record layout ManufacturePolicy
-    version: int  # the snapshot's record version
-    part: Any  # its cad-record manufacturing_intent.Part (record version 2), or None
+    part: Any  # its cad-record manufacturing_intent.Part
     intent: Mapping[str, Any]  # the manifest `intent` block: what the outputs depend on beyond geometry
     declared: orientation.BuildVolume | None  # product.yaml build_volume
     envelopes: Mapping[str, orientation.BuildVolume]  # additive operation id -> its capability's measured envelope
-
-    @property
-    def legacy(self) -> bool:
-        legacy_version: int = load_intent().LEGACY_RECORD_VERSION
-        return self.version == legacy_version
 
     @property
     def additive(self) -> bool:
@@ -117,8 +111,6 @@ def _intent_block(snapshot: Snapshot, part: Any) -> dict[str, Any]:
     of the record its outputs depend on: the part's raw intent, the material and capability profiles and
     requirements it names, and the bytes of every source artifact those cite."""
     intent = load_intent()
-    if snapshot.version != intent.RECORD_VERSION or part is None:
-        return {"record_version": snapshot.version, "status": "unknown", "reason": intent.LEGACY_REASON}
     raw = _thaw(part.raw.get("intent"))
     materials = {name: _thaw(snapshot.intent.materials[name].raw) if name in snapshot.intent.materials else None
                  for name in sorted(_named(raw, frozenset({"material_profile"})))}
@@ -218,26 +210,25 @@ def plan(snapshot: Snapshot) -> tuple[dict[str, Plan], list[tuple[str, str]], di
                 continue
         part = snapshot.intent.parts.get(pn)
         envelopes: dict[str, orientation.BuildVolume] = {}
-        if snapshot.version == intent.RECORD_VERSION:
-            if refusal := _part_refusal(snapshot, pn, part):
-                refused.append((pn, refusal))
-                continue
-            problems = []
-            for op_id, data in _orientations(part):
-                try:
-                    orientation.rotation_of(data.get("rotation"))
-                except ValueError as error:
-                    problems.append(f"part.yaml intent route {op_id} orientation: {error}")
-            if problems:
-                refused.append((pn, "; ".join(problems)))
-                continue
-            route = part.intent.route
-            for op in () if intent.is_fact(route) else route:
-                profile = snapshot.intent.capabilities.get(op.capability) if isinstance(op.capability, str) else None
-                found = _envelope(profile) if op.kind in intent.ADDITIVE_KINDS and profile is not None else None
-                if found is not None:
-                    envelopes[op.id] = found
-        plans[pn] = Plan(pn, record, policy, snapshot.version, part, _intent_block(snapshot, part), declared, envelopes)
+        if refusal := _part_refusal(snapshot, pn, part):
+            refused.append((pn, refusal))
+            continue
+        problems = []
+        for op_id, data in _orientations(part):
+            try:
+                orientation.rotation_of(data.get("rotation"))
+            except ValueError as error:
+                problems.append(f"part.yaml intent route {op_id} orientation: {error}")
+        if problems:
+            refused.append((pn, "; ".join(problems)))
+            continue
+        route = part.intent.route
+        for op in () if intent.is_fact(route) else route:
+            profile = snapshot.intent.capabilities.get(op.capability) if isinstance(op.capability, str) else None
+            found = _envelope(profile) if op.kind in intent.ADDITIVE_KINDS and profile is not None else None
+            if found is not None:
+                envelopes[op.id] = found
+        plans[pn] = Plan(pn, record, policy, part, _intent_block(snapshot, part), declared, envelopes)
     return plans, refused, uncovered
 
 
@@ -284,15 +275,6 @@ def facts(plan: Plan, product: str, installed: Mapping[str, Any], native: Mappin
 def pose(plan: Plan, component: str | None, shape: Any) -> tuple[orientation.Pose, orientation.BuildVolume | None]:
     """The pose component `component` (None: the whole part) is exported in, and the envelope it is set in."""
     intent = load_intent()
-    if plan.legacy:
-        if not plan.additive:
-            return orientation.Pose("model_frame", orientation.IDENTITY, "identity", "identity"), None
-        found = orientation.fit(shape, plan.declared)[1] if plan.declared is not None else None
-        why = "a record version 1 part: the envelope auto-fit is a legacy diagnostic, never an approved orientation"
-        if found is not None:
-            return orientation.Pose("unapproved_auto_fit", found.rotation, found.method, found.orientation,
-                                    reason=why), plan.declared
-        return orientation.Pose("unapproved_native", orientation.IDENTITY, "native", "xyz", reason=why), plan.declared
     route = plan.part.intent.route
     shaping = None if intent.is_fact(route) else next(
         (op for op in route if op.kind in intent.ADDITIVE_KINDS and (not op.components or component in op.components)),
@@ -358,17 +340,16 @@ def _component_facts(plan: Plan, bound: components.Bound, placement: Mapping[str
     """What a process check, fit or access check reads of one component: its binding, profile, planned
     operations, files, export placement and each member solid's native-frame geometry."""
     intent = load_intent()
-    declared = next((c for c in plan.part.intent.components if c.id == bound.id), None) if plan.part is not None else None
+    declared = next((c for c in plan.part.intent.components if c.id == bound.id), None)
     profile = declared.material_profile if declared is not None and declared.material_profile is not None else (
-        plan.part.intent.material_profile if plan.part is not None and not plan.legacy else None)
-    route = None if plan.part is None or plan.legacy else plan.part.intent.route
+        plan.part.intent.material_profile)
+    route = plan.part.intent.route
     operations = (None if route is None or intent.is_fact(route)
                   else [op.id for op in route if not op.components or bound.id in op.components])
     return {"binding": bound.binding, "points_mm": [list(point) for point in bound.points],
             "locator": _thaw(bound.locator) if bound.locator is not None else None,
             "multiplicity": len(bound.members),
-            "material_profile": (reference(profile) if profile is not None
-                                 else {"status": "unknown", "reason": intent.LEGACY_REASON}),
+            "material_profile": reference(profile),
             "operations": operations, "planned": None if operations is None else bool(operations),
             "files": files, "placement": dict(placement), "volume_mm3": bound.volume_mm3,
             "members": [member.facts() for member in bound.members]}
@@ -381,18 +362,8 @@ def export(target: Path, plan: Plan, entry: Mapping[str, Any], shape: Any,
     component's own files below components/<COMP>/ when there are several. Returns what the export
     derived: the placement, the components, their files and the identity status.
     BindingError when the solids cannot be bound without guessing."""
-    declared = () if plan.legacy or plan.part is None else plan.part.intent.components
-    try:
-        bound = components.bind(shape, declared, features)
-    except components.BindingError as error:
-        if not plan.legacy:
-            raise
-        chosen, volume = pose(plan, None, shape)
-        placement = _place(shape, chosen, volume)
-        _write(target, entry, shape, placement)
-        return {"placement": _placement_facts(chosen, placement, volume), "components": {}, "component_outputs": [],
-                "component_identity": {"status": "unknown", "reason": f"{load_intent().LEGACY_REASON}: {error}",
-                                       "solids": [solid.facts() for solid in components.solids(shape)]}}
+    declared = plan.part.intent.components
+    bound = components.bind(shape, declared, features)
     poses = {item.id: pose(plan, item.id if declared else None, item.shape) for item in bound}
     distinct = {(chosen.status, chosen.rotation, chosen.operation, volume) for chosen, volume in poses.values()}
     if len(distinct) == 1:
@@ -677,9 +648,7 @@ def _placement(entry: Mapping[str, Any], placement: Mapping[str, Any], shape: An
     on_bed = _judge({"proper_rotation": proper, "bed_contact": abs(low[2]) <= BED_MM}, **facts_of)
     if on_bed["status"] == "fail":
         return on_bed
-    legacy = (entry.get("intent") or {}).get("record_version", load_intent().LEGACY_RECORD_VERSION) == \
-        load_intent().LEGACY_RECORD_VERSION
-    if not legacy and not placement.get("approved"):
+    if not placement.get("approved"):
         return _incomplete(f"exported in its {placement.get('pose')} pose, not an approved orientation"
                            + (f": {placement['reason']}" if placement.get("reason") else ""), **facts_of)
     if placement.get("pose") == "per_component":  # the combined file of components each set in its own pose
