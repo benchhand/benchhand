@@ -262,6 +262,69 @@ def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{100 * value:.2f}%"
 
 
+def _change(coarse: float, fine: float) -> float:
+    """Change from the fine value to the coarse one, relative to the fine one."""
+    if fine > 0:
+        return abs(coarse - fine) / fine
+    return 0.0 if coarse == fine else math.inf
+
+
+def _screen(coarse: Level, fine: Level, c: LevelPeak, f: LevelPeak) -> list[str]:
+    """Reasons that hold whatever the peaks are: non-finite values, a fallback mismatch, a thin kept region."""
+    reasons = []
+    if not (_all_finite(coarse) and _all_finite(fine)):
+        reasons.append("non_finite_stress")
+    if coarse.high_order_fallback != fine.high_order_fallback:
+        reasons.append("high_order_fallback_differs")
+    if min(c.kept_share, f.kept_share) < MIN_KEPT_FRACTION or f.kept_count < MIN_FINE_KEPT_NODES:
+        reasons.append("kept_region_too_small")
+    return reasons
+
+
+@dataclass(frozen=True)
+class _PeakComparison:
+    reasons: list[str]
+    delta_sigma: float
+    shift: float
+    on_cutoff: bool
+
+
+def _compare_peaks(h_coarse: float, cutoff: float, c: LevelPeak, f: LevelPeak) -> _PeakComparison | None:
+    """Compare the kept peaks of the two meshes, or None when either mesh has no kept node."""
+    if c.sigma_kept is None or f.sigma_kept is None or c.hot_spot is None or f.hot_spot is None:
+        return None
+    reasons = []
+    delta_sigma = _change(c.sigma_kept, f.sigma_kept)
+    if delta_sigma > SETTLE_TOLERANCE:
+        reasons.append("stress_not_settled")
+    distances = [p.distance_to_face for p in (c, f) if p.distance_to_face is not None]
+    # Governed by a support or load: the peak is within h_coarse of an actual face.
+    if any(d <= h_coarse for d in distances):
+        reasons.append("boundary_governed")
+    # On the exclusion boundary: the peak is within h_coarse of the cutoff.
+    on_cutoff = any(d <= cutoff + h_coarse for d in distances)
+    shift = math.dist(c.hot_spot, f.hot_spot)
+    # Hot-spot movement is compared only for an interior peak: on the cutoff it follows the cutoff.
+    if not on_cutoff and shift > h_coarse:
+        reasons.append("hot_spot_moved")
+    return _PeakComparison(reasons, delta_sigma, shift, on_cutoff)
+
+
+def _describe(coarse: Level, fine: Level, c: LevelPeak, f: LevelPeak, delta_sigma: float | None,
+              delta_displacement: float | None, shift: float | None) -> str:
+    """The figures every outcome names."""
+    hot = f.hot_spot or c.hot_spot
+    return (
+        f"h_coarse={coarse.h:g} mm h_fine={fine.h:g} mm; "
+        f"sigma_kept coarse={_fmt(c.sigma_kept)} MPa fine={_fmt(f.sigma_kept)} MPa; "
+        f"change={_pct(delta_sigma)}; displacement change={_pct(delta_displacement)}; "
+        f"hot spot={'n/a' if hot is None else tuple(round(v, 3) for v in hot)}"
+        f" moved {_fmt(shift)} mm; nearest face (fine)={_nearest_face(f, fine)}; "
+        f"kept region coarse={c.kept_count} nodes ({100 * c.kept_share:.1f}%), "
+        f"fine={f.kept_count} nodes ({100 * f.kept_share:.1f}%) "
+        f"(floor {100 * MIN_KEPT_FRACTION:g}% on both, {MIN_FINE_KEPT_NODES} nodes on fine)")
+
+
 def compare_levels(coarse: Level, fine: Level) -> StressStudy:
     """Compare the coarse and fine solves; return the settled peak or UNKNOWN with the reasons.
 
@@ -272,58 +335,26 @@ def compare_levels(coarse: Level, fine: Level) -> StressStudy:
     cutoff = K_EXCLUSION * coarse.h
     c, f = _kept_peak(coarse, cutoff, coarse.h), _kept_peak(fine, cutoff, coarse.h)
 
-    reasons: list[str] = []
-    delta_sigma = delta_displacement = shift = None
-
-    if not (_all_finite(coarse) and _all_finite(fine)):
-        reasons.append("non_finite_stress")
-    if coarse.high_order_fallback != fine.high_order_fallback:
-        reasons.append("high_order_fallback_differs")
-    if (min(c.kept_share, f.kept_share) < MIN_KEPT_FRACTION or f.kept_count < MIN_FINE_KEPT_NODES):
-        reasons.append("kept_region_too_small")
-    on_cutoff = False
-    if c.sigma_kept is not None and f.sigma_kept is not None and "non_finite_stress" not in reasons:
-        if f.sigma_kept > 0:
-            delta_sigma = abs(c.sigma_kept - f.sigma_kept) / f.sigma_kept
-            if delta_sigma > SETTLE_TOLERANCE:
-                reasons.append("stress_not_settled")
-        elif c.sigma_kept != f.sigma_kept:
-            reasons.append("stress_not_settled")
-        # Governed by a support or load: the peak is within h_coarse of an actual face.
-        if any(p.distance_to_face is not None and p.distance_to_face <= coarse.h for p in (c, f)):
-            reasons.append("boundary_governed")
-        # On the exclusion boundary: the peak is within h_coarse of the cutoff.
-        on_cutoff = any(p.distance_to_face is not None and p.distance_to_face <= cutoff + coarse.h
-                        for p in (c, f))
-        assert c.hot_spot is not None and f.hot_spot is not None
-        shift = math.dist(c.hot_spot, f.hot_spot)
-        # Hot-spot movement is compared only for an interior peak: on the cutoff it follows the cutoff.
-        if not on_cutoff and shift > coarse.h:
-            reasons.append("hot_spot_moved")
-    if math.isfinite(c.max_displacement) and math.isfinite(f.max_displacement) and f.max_displacement > 0:
-        delta_displacement = abs(c.max_displacement - f.max_displacement) / f.max_displacement
+    reasons = _screen(coarse, fine, c, f)
+    peaks = None if "non_finite_stress" in reasons else _compare_peaks(coarse.h, cutoff, c, f)
+    if peaks:
+        reasons += peaks.reasons
+    delta_displacement = None
+    if math.isfinite(c.max_displacement) and math.isfinite(f.max_displacement):
+        delta_displacement = _change(c.max_displacement, f.max_displacement)
         if delta_displacement > SETTLE_TOLERANCE:
             reasons.append("displacement_not_settled")
 
-    hot = f.hot_spot or c.hot_spot
-    message = (
-        f"h_coarse={coarse.h:g} mm h_fine={fine.h:g} mm; "
-        f"sigma_kept coarse={_fmt(c.sigma_kept)} MPa fine={_fmt(f.sigma_kept)} MPa; "
-        f"change={_pct(delta_sigma)}; displacement change={_pct(delta_displacement)}; "
-        f"hot spot={'n/a' if hot is None else tuple(round(v, 3) for v in hot)}"
-        f" moved {_fmt(shift)} mm; nearest face (fine)={_nearest_face(f, fine)}; "
-        f"kept region coarse={c.kept_count} nodes ({100 * c.kept_share:.1f}%), "
-        f"fine={f.kept_count} nodes ({100 * f.kept_share:.1f}%) "
-        f"(floor {100 * MIN_KEPT_FRACTION:g}% on both, {MIN_FINE_KEPT_NODES} nodes on fine)")
+    delta_sigma, shift = (peaks.delta_sigma, peaks.shift) if peaks else (None, None)
+    message = _describe(coarse, fine, c, f, delta_sigma, delta_displacement, shift)
     extras = {"cutoff_mm": cutoff, "coarse_fallback": coarse.high_order_fallback,
               "fine_fallback": fine.high_order_fallback}
-    if reasons:
+    if reasons or peaks is None or c.sigma_kept is None or f.sigma_kept is None:
         unique = tuple(dict.fromkeys(reasons))
         return StressStudy(UNKNOWN, None, None, unique, f"UNKNOWN ({', '.join(unique)}): {message}", c, f,
                            delta_sigma, delta_displacement, shift, extras)
-    assert c.sigma_kept is not None and f.sigma_kept is not None
     sigma = max(c.sigma_kept, f.sigma_kept)
-    if on_cutoff:
+    if peaks.on_cutoff:
         note = ("governed by the exclusion boundary, the support stress is higher; see #209; "
                 "sigma_kept is information only, not a strength value")
         return StressStudy(SETTLED_AWAY_FROM_SUPPORT, None, sigma, ("exclusion_boundary",),
