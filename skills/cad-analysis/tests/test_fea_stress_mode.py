@@ -116,8 +116,9 @@ class StressCase(conditions_tests.SourcedFEACase):
             marker: dict[str, Any] = {"status": "error", "run_id": job["run_id"], "error": plan["error"], "warnings": []}
             Path(job["output"]).write_text(json.dumps(marker), encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, "", "")
-        written = ["solver.dat"]
-        (run_dir / "solver.dat").write_text("solver output\n", encoding="utf-8")
+        written = ["solver.dat", "GmshGeometry.brep", "GmshInput.geo"]
+        for name in written:
+            (run_dir / name).write_text(f"{name} of solve {position}\n", encoding="utf-8")
         for key, name in (("frd", "GmshMesh.frd"), ("inp", "GmshMesh.inp")):
             if plan.get(key) is not None:
                 (run_dir / name).write_text(plan[key], encoding="utf-8")
@@ -242,9 +243,9 @@ class Solves(StressCase):
         bundle = Path(report["bundle"])
         frds = [name for name in published["retained_files"] if name.endswith("GmshMesh.frd")]
         self.assertEqual(len(frds), 2, published["retained_files"])
+        self.assertEqual(len(published["mesh_input_files"]), 4)  # the BRep and the Gmsh input of each solve
         for name in published["retained_files"] + published["mesh_input_files"]:
-            if name.endswith(("solver.dat", "GmshMesh.frd", "GmshMesh.inp")):
-                self.assertTrue((bundle / name).is_file(), name)
+            self.assertTrue((bundle / name).is_file(), name)
         self.assertEqual(set(published["stress_study"]["runs"]), {"coarse", "fine"})
 
     def test_a_failed_second_solve_is_an_error_result_that_names_the_fine_solve(self) -> None:
