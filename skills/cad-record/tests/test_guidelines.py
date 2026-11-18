@@ -495,6 +495,29 @@ class Pin(Directories):
         found = resolve(record(pin=["fdm.machine.tst@1"]), self.catalog(), "min_wall")
         self.assertEqual((found.value, found.provenance[0].layer, found.warnings), (mi.Quantity("mm", value=1.4), "machine", ()))
 
+    def test_an_abstract_machine_set_applies_only_when_the_profile_pins_it(self) -> None:
+        put(self.shipped, "m", {**guideline("fdm.machine.tst", [limit("min_wall", ">=", 1.4)]), "abstract": True})
+        catalog = self.catalog()
+        unpinned = record()
+        found = resolve(unpinned, catalog, "min_wall")
+        self.assertEqual((found.value, found.provenance[0].guideline), (mi.Quantity("mm", value=1.2), "fdm.nozzle.d0_4@1"))
+        context = gl.context_for(unpinned.capabilities["tst_printer"], unpinned.materials["tst_pa"])
+        self.assertNotIn("fdm.machine.tst", [g.id for g in gl.applicable(catalog, context)])
+        self.assertNotIn("fdm.machine.tst@1", gl.applicable_digests(catalog, context))
+        pinned = record(pin=["fdm.machine.tst@1"])
+        held = resolve(pinned, catalog, "min_wall")
+        self.assertEqual((held.value, held.provenance[0].guideline, held.provenance[0].layer),
+                         (mi.Quantity("mm", value=1.4), "fdm.machine.tst@1", "machine"))
+        pinned_context = gl.context_for(pinned.capabilities["tst_printer"], pinned.materials["tst_pa"])
+        self.assertIn("fdm.machine.tst@1", gl.applicable_digests(catalog, pinned_context))
+
+    def test_an_abstract_parent_reached_through_extends_works_without_a_pin(self) -> None:
+        put(self.shipped, "base", {**guideline("fdm.base", [limit("min_wall", ">=", 1.5)]), "abstract": True})
+        put(self.shipped, "child", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.0)], material_family=["pa"]),
+                                    "extends": ["fdm.base"]})
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.value, found.provenance[0].guideline), (mi.Quantity("mm", value=1.5), "fdm.base@1"))
+
     def test_a_pinned_set_that_loosens_without_relaxes_is_ignored_with_a_warning(self) -> None:
         self.machine(0.9)
         found = resolve(record(pin=["fdm.machine.tst@1"]), self.catalog(), "min_wall")

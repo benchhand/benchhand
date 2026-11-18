@@ -457,9 +457,10 @@ def pin_warnings(catalog: Catalog, context: Context) -> list[str]:
 
 
 def applicable(catalog: Catalog, context: Context) -> list[Guideline]:
-    """The non-abstract sets that apply to `context`, or may once an unknown scope fact is known, in id order."""
+    """The sets that apply to `context`, or may once an unknown scope fact is known, in id order. An abstract set applies
+    only when the profile's pin names it (a machine set); otherwise it is reached only through `extends`."""
     return [g for g in sorted(catalog.guidelines.values(), key=lambda g: g.id)
-            if not g.abstract and _allowed(g, context) and _matches(g.scope, context) is not False]
+            if (not g.abstract or _pinned(g, context)) and _allowed(g, context) and _matches(g.scope, context) is not False]
 
 
 def applicable_digests(catalog: Catalog, context: Context) -> dict[str, str]:
