@@ -25,9 +25,8 @@ Test fixtures and vendored data keep their own licences:
       BSD 2-Clause (LICENSE.spec_core, LICENSE.test_suites beside them).
       xml.xsd there is the W3C XML namespace schema, (c) World Wide Web
       Consortium, under the W3C Document License
-      (LICENSES/LicenseRef-W3C-Document-2023.txt). It is the copy distributed
-      with the 3MF test suites; its text matches https://www.w3.org/2001/xml.xsd
-      apart from whitespace, attribute order and an added xmlns:xml declaration.
+      (LICENSES/LicenseRef-W3C-Document-2023.txt). It is shipped unmodified,
+      as fetched from https://www.w3.org/2001/xml.xsd on 2026-11-18.
   skills/cad-record/vendor/sarif-schema-2.1.0.json  OASIS SARIF 2.1.0 JSON
       schema, under the OASIS terms in LICENSES/LicenseRef-OASIS-SARIF.txt.
 
