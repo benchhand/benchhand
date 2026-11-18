@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Tests for cla_check.py: pure decisions first, then the I/O flows against a stubbed GitHub API."""
 
 from __future__ import annotations

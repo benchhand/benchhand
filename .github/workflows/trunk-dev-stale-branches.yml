@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 # Replaceable sink: non-zero exit notifies the workflow's schedule owner through GitHub Actions.
 name: Stale Bead Branches
 

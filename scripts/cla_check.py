@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """In-repo CLA check: verify that every contributor on a pull request signed the current CLA.
 
 The CLA result is a check run named ``CLA`` that the CLA GitHub App creates. Workflow jobs cannot

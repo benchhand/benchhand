@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 name: CLA sign
 
 # Runs on issue_comment, which GitHub always takes from the default branch. A comment that is exactly

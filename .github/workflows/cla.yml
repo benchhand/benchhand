@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 name: CLA
 
 # Trigger only. Nothing trusted runs here: a pull request can rewrite this file, so its result means

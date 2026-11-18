@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 name: CLA check
 
 # GitHub runs workflow_run from the default branch, in the base repository's context. The event data
