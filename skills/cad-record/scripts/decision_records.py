@@ -244,7 +244,10 @@ class _FrontLoader(yaml.SafeLoader):  # type: ignore[misc]
         seen: set[Any] = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=True)
-            if isinstance(key, Hashable) and key in seen:
+            if not isinstance(key, Hashable):
+                raise yaml.constructor.ConstructorError(
+                    None, None, "found an unhashable key", key_node.start_mark)
+            if key in seen:
                 raise yaml.constructor.ConstructorError(
                     None, None, f"the key {key!r} is given twice", key_node.start_mark)
             seen.add(key)

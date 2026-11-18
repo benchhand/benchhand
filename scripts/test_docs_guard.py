@@ -230,6 +230,7 @@ ALLOWED = [
     Allow('skills/cad-record/tests/test_release.py', 'Pruning.test_a_stray_decision_file_that_names_a_version_still_keeps_it', 'DR-007.md', HW),
     Allow('skills/cad-record/tests/test_manufacturing_intent.py', 'Normalization.test_a_decision_the_layout_cannot_resolve_is_a_reference_problem_not_a_crash', 'DR-009-second.md', HW),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_a_front_matter_key_given_twice_is_refused_naming_the_key', 'DR-001-twice.md', TMP),
+    Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_a_sequence_or_mapping_as_a_front_matter_key_is_refused_naming_the_file', 'DR-001-unhashable.md', TMP),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_an_impossible_calendar_date_is_refused_naming_the_file', 'DR-001-date.md', TMP),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_unknown_front_matter_keys_of_mixed_types_are_refused_naming_the_file', 'DR-001-keys.md', TMP),
     Allow('skills/cad-record/tests/test_release.py', 'Documents.guide', 'docs', HW),

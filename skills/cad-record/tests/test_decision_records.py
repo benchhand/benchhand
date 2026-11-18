@@ -251,6 +251,13 @@ class ReadTests(Base):
                                                              r"DR-001-twice\.md.*(status|date).*twice"):
                 dr.read_decision(path)
 
+    def test_a_sequence_or_mapping_as_a_front_matter_key_is_refused_naming_the_file(self) -> None:
+        for key in ("[a, b]", "{a: b}"):
+            path = self.put("DR-001-unhashable.md", document(f"status: accepted\ndate: 2026-10-26\n? {key}\n: x\n"))
+            with self.subTest(key), self.assertRaisesRegex(dr.DecisionRecordError,
+                                                           r"DR-001-unhashable\.md.*YAML front matter is invalid"):
+                dr.read_decision(path)
+
     def test_an_impossible_calendar_date_is_refused_naming_the_file(self) -> None:
         path = self.put("DR-001-date.md", document("status: accepted\ndate: 2026-13-45\n"))
         with self.assertRaisesRegex(dr.DecisionRecordError, r"DR-001-date\.md.*YAML front matter is invalid"):

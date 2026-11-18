@@ -441,6 +441,14 @@ class ValidateProject(unittest.TestCase):
         validate = load_module("cad_record_validate", SKILL / "scripts" / "validate.py")
         self.assertFalse(validate.decision_approves(self.hw, "DR-009"))
 
+    def test_a_collection_as_a_front_matter_key_is_a_finding_not_a_crash(self) -> None:
+        record = write_test_decision(self.hw, "DR-009")
+        record.write_text(record.read_text(encoding="utf-8").replace("status: accepted", "status: accepted\n? [a, b]\n: x", 1),
+                          encoding="utf-8")
+        [message] = self.anchor_on("DR-009", None)
+        self.assertTrue(message.startswith("flow/frozen/decision DR-009 is not a valid MADR record: "), message)
+        self.assertIn(record.name, message)
+
     def test_an_old_form_decision_file_is_no_record(self) -> None:
         (self.hw / "decisions" / "DR-009.md").write_text("Status: APPROVED\n\n# DR-009 Gate\n", encoding="utf-8")
         self.assertEqual(self.anchor_on("DR-009", None),
