@@ -316,10 +316,19 @@ class OptInDomain(unittest.TestCase):
         self.assertEqual(impact.evidence_staleness(entry, self.current), ())
         self.assertEqual(impact.evidence_staleness(self.entry(self.OTHER), self.current), ())
 
-    def test_a_declared_domain_the_subject_lacks_is_not_counted(self) -> None:
+    def test_a_declared_domain_the_subject_lacks_counts_only_when_the_entry_recorded_it(self) -> None:
         current = {"geometry": "g", "load": "l"}
-        self.assertEqual(impact.evidence_staleness(self.entry(self.DECLARING, **{self.NEW: "n1"}), current), ())
+        self.assertEqual(impact.evidence_staleness(self.entry(self.DECLARING, **{self.NEW: "n1"}), current), (self.NEW,))
+        self.assertEqual(impact.evidence_staleness(self.entry(self.DECLARING), current), ())
         self.assertEqual(impact.unrecorded_domains(self.entry(self.DECLARING), current), ())
+
+    def test_export_3mf_evidence_that_recorded_appearance_goes_stale_when_the_subject_has_none(self) -> None:
+        """The same transition for the family that declares `appearance`: the rule is not specific to purchase.*."""
+        current = {"geometry": "g", "material": "m"}
+        recorded = {"obligation": "export.3mf@TST-0001", "fingerprints": {"geometry": "g", "material": "m", "appearance": "a"}}
+        unrecorded = {"obligation": "export.3mf@TST-0001", "fingerprints": {"geometry": "g", "material": "m"}}
+        self.assertEqual(impact.evidence_staleness(recorded, current), ("appearance",))
+        self.assertEqual(impact.evidence_staleness(unrecorded, current), ())
 
 LEGACY_INTERFACE_DIGEST = "919639c091011df20121336be1bb29f1a123a5a422d75fbffcd3eff8b602ed40"  # impact.py on origin/main bc8d3f94
 # The interface digest of TST-0103 in PurchaseMountingStaleness.documents(), computed with origin/main's impact.py.
@@ -520,6 +529,24 @@ class PurchaseMountingStaleness(unittest.TestCase):
                   "acceptance": {"kind": "standoff", "features": ["foot", "top"]}}]
         docs = fx.record(parts=[ring, fx.part("TST-0104", "Housing", process="cnc")], operations=mount)
         return {rel: data for rel, data in docs.items() if not rel.startswith("_")}
+
+    def plain_documents(self) -> dict[str, Any]:
+        """The bought part and its housing with no explicit occurrence and no operation."""
+        docs = self.legacy_documents()
+        docs["assembly.yaml"]["operations"] = []
+        return docs
+
+    def test_an_accepted_entry_goes_stale_when_the_part_loses_its_last_explicit_occurrence(self) -> None:
+        before, after = self.documents(rings=("ring-a",)), self.plain_documents()
+        interface = [impact.fingerprints(normalized(docs), {"PN": "TST-0103"})["interface"] for docs in (before, after)]
+        self.assertEqual(interface[0], interface[1], "only the occurrences domain can tell these two records apart")
+        result = self.accepted_result(before, after)
+        self.assertEqual(result.statuses[self.OBLIGATION].result, "stale", result.statuses[self.OBLIGATION])
+        self.assertIn("occurrences", " ".join(result.statuses[self.OBLIGATION].reasons))
+
+    def test_an_accepted_entry_that_never_recorded_occurrences_stays_current_while_the_part_has_none(self) -> None:
+        result = self.accepted_result(self.plain_documents(), self.plain_documents())
+        self.assertEqual(result.statuses[self.OBLIGATION].result, "pass", result.statuses[self.OBLIGATION])
 
     def wrong_shapes(self) -> list[tuple[str, str, Any, str]]:
         """(name, fixture, edit of assembly.yaml, exact problem). The "legacy" fixtures have no explicit occurrence,

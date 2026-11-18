@@ -519,14 +519,15 @@ def opt_in_domains() -> frozenset[str]:
 
 def evidence_staleness(entry: Mapping[str, Any], current: Mapping[str, str]) -> tuple[str, ...]:
     """The fingerprint domains in which accepted evidence `entry` no longer matches the current subject
-    `current`: each recorded domain that differs, each declared domain it records no fingerprint of, or
-    ("unrecorded",) when it records none. An opt-in domain counts only for a family that declares it, of a subject that has it."""
+    `current`: each recorded domain that differs or that the subject lacks, each declared domain it records
+    no fingerprint of, or ("unrecorded",) when it records none. An opt-in domain counts only for a family that
+    declares it."""
     recorded = entry.get("fingerprints")
     if not isinstance(recorded, Mapping) or not recorded:
         return ("unrecorded",)
     declared, missing, opt_in = declared_domains(entry), unrecorded_domains(entry, current), opt_in_domains()
     return tuple(d for d in DOMAINS if d in missing or (d in recorded and recorded[d] != current.get(d)
-                                                        and (d not in opt_in or (d in declared and d in current))))
+                                                        and (d not in opt_in or d in declared)))
 
 
 def _stage_min(stages: Iterable[str]) -> str | None:

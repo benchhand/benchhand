@@ -781,6 +781,14 @@ class PurchasedMountingOccurrenceTests(Checks):
         self.assertEqual(self.outcome(result, self.OBLIGATION), "fail")
         self.assertIn("@ring-c", self.finding(result, "purchase.mounting_unmounted")["measured"]["text"])
 
+    def test_an_operation_naming_a_part_the_inventory_lacks_mounts_nothing(self) -> None:
+        """The part is in no subassembly, so `TST-0603` resolves to no occurrence and the operation mounts nothing.
+        The old code compared the unresolved reference as written, and it equalled the part number."""
+        operations = [self.install("mount-x", "TST-0603")]
+        result = self.assess(self.documents(operations, rings=()))
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "unknown")
+        self.assertIn("purchase.mounting_unknown", self.codes(result, self.OBLIGATION))
+
 
 # --- row 18: unsupported process ------------------------------------------------------------------------------------
 

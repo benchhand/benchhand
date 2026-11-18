@@ -175,7 +175,7 @@ def _occurrence_ids(ctx: Context) -> tuple[Callable[[Any], Any], tuple[Any, ...]
         try:
             return inventory.resolve(ref).id
         except data.UnresolvedReference:
-            return ref
+            return None  # a reference the inventory cannot resolve names no occurrence, so it matches none
 
     return occurrence_id, inventory.of(ctx.pn)
 
