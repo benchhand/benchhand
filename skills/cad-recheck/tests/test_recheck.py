@@ -567,9 +567,9 @@ class RecheckHookTests(unittest.TestCase):
 
 
 class CommittedFixtureTests(unittest.TestCase):
-    """The committed verify project (tests/fixtures/verify-project): a record whose layout gate passes, stamped
-    from real build and evidence output. CI verifies it with `stamp.py --verify --hw`; these tests do the same in a
-    scratch repository, where the project is staged and so is not skipped as "no staged hw/ change"."""
+    """The committed verify project (tests/fixtures/verify-project) holds a record whose layout gate passes. Real
+    build and evidence output stamped it. These tests run `stamp.py --verify --hw` on a scratch copy of it with
+    every file staged. Staging matters: verify skips a project that has no staged hw/ change."""
 
     FIXTURE = Path(__file__).resolve().parent / "fixtures" / "verify-project"
     HW = "verify-project/hw"
@@ -603,7 +603,7 @@ class CommittedFixtureTests(unittest.TestCase):
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["passed"], True)
-        self.assertNotIn("required", json.loads(result.stdout))  # the stamp was checked, not skipped
+        self.assertNotIn("required", json.loads(result.stdout))  # a skipped verify would say required: false
 
     def test_a_staged_edit_of_a_record_input_makes_the_committed_stamp_stale(self) -> None:
         part = self.root / self.HW / "parts" / "FXT-0001" / "part.yaml"
