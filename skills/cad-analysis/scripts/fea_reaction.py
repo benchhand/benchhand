@@ -14,10 +14,11 @@ solves, fea_static reads the stop-reaction bundle that cad-analysis stop_reactio
   or stop_reaction.py (with the modules and data it reads, #140's code table) changed since the bundle was made.
 - reaction_unbounded: a stop of the interface touches the pivot axis, so its rigid reaction has no bound. Only a
   contact case approved in a design record closes it, never a load copied from a number.
-- reaction_unknown: the interface is no stop, or its reaction is not established. The bundle's reason follows.
+- reaction_unknown: the interface is no stop, or its reaction is not established (a stop whose force is unknown has
+  none). The bundle's reason follows.
 - reaction_below_design: the load is smaller than the design reaction. With two stops, the larger one governs, unless
-  the load names `limit: min | max`: then only that stop's reaction and status apply. A limit the bundle holds no
-  stop for is invalid_case.
+  the load names `limit: min | max`: then only that stop's reaction and status apply. A limit with no stop (the parts
+  do not touch there) is invalid_case.
 
 Nothing passes silently: every path that cannot read a design reaction is a refusal. cad-record's layout supplies the
 bundle path, the seal check and the manifest name, as evidence.py does for a producer packet. The FEA recipe holds
@@ -111,13 +112,17 @@ def read(layout: Any, hw: Path, version: str, version_dir: Path, interface: str,
 
 
 def _basis(layout: Any, hw: Path, bundle: Path, interface: str, entry: Mapping[str, Any], limit: str | None) -> Basis:
-    reactions = {label: end["reaction"] for label, end in (entry.get("ends") or {}).items()
-                 if isinstance(end, Mapping) and isinstance(end.get("reaction"), Mapping)}
+    if entry.get("outcome") == "not_applicable":
+        raise ReactionRefused("reaction_unknown", f"the reaction of {interface} is not established: "
+                                                  f"{entry.get('reason') or 'the interface is no stop'}")
+    ends = {label: end for label, end in (entry.get("ends") or {}).items() if isinstance(end, Mapping)}
+    stops = sorted(label for label, end in ends.items() if end.get("touching") is True)  # a stop exists where the parts touch
     if limit is not None:
-        if limit not in reactions:
+        if limit not in stops:
             raise ReactionRefused("invalid_case", f"loads name limit {limit} of {interface}, but the stop-reaction bundle holds "
-                                  f"a stop at {' and '.join(sorted(reactions)) or 'no limit'} for it")
-        reactions = {limit: reactions[limit]}
+                                  f"a stop at {' and '.join(stops) or 'no limit'} for it")
+        ends = {limit: ends[limit]}
+    reactions = {label: end["reaction"] for label, end in ends.items() if isinstance(end.get("reaction"), Mapping)}
     unbounded = sorted(label for label, reaction in reactions.items() if reaction.get("status") == "unbounded")
     if unbounded:
         raise ReactionRefused("reaction_unbounded", f"the stop of {interface} at its {' and '.join(unbounded)} limit has no bounded "
@@ -125,7 +130,7 @@ def _basis(layout: Any, hw: Path, bundle: Path, interface: str, entry: Mapping[s
                               "in a design record, not with a load")
     designs = [reaction["design_reaction_n"] for reaction in reactions.values()
                if isinstance(reaction.get("design_reaction_n"), (int, float)) and math.isfinite(reaction["design_reaction_n"])]
-    if entry.get("outcome") == "not_applicable" or not designs:
+    if not designs:
         raise ReactionRefused("reaction_unknown", f"the reaction of {interface} is not established: "
                                                   f"{entry.get('reason') or 'the bundle holds no design reaction for it'}")
     return Basis(name(interface, limit), layout.relative(hw, bundle), hashlib.sha256((bundle / layout.MANIFEST).read_bytes()).hexdigest(),
