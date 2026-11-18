@@ -431,14 +431,45 @@ class PurchaseMountingStaleness(unittest.TestCase):
 
     def test_a_non_part_subject_carries_no_opt_in_domain_whatever_its_name(self) -> None:
         """The synthetic domain stands for any later opt-in domain: only a part carries one."""
-        from unittest import mock  # noqa: PLC0415 - used by this test alone
-
         record = normalized(self.documents())
         with mock.patch.object(impact, "DOMAINS", (*impact.DOMAINS, "tst_opt_in")):
             prints = impact.subject_fingerprints(record)
         for key in ("product", "op:mount-a"):
             with self.subTest(subject=key):
                 self.assertNotIn("tst_opt_in", prints[key])
+
+    def old_entry_result(self, docs: dict[str, Any], current: dict[str, Any]) -> Any:
+        """The assessment of `current` with a purchase.mounting entry recorded against `docs` before the
+        occurrences domain existed: it holds every domain fingerprint but that one, the appearance and the lot."""
+        from datetime import date  # noqa: PLC0415 - used by these tests alone
+
+        before = normalized(docs)
+        old = tuple(d for d in impact.DOMAINS if d not in ("occurrences", "appearance", "lot"))
+        entry = acceptance.entry(before, "EV-009", {"PN": "TST-0103", "operation": "buy"}, "cad_valid",
+                                 obligation=self.OBLIGATION, version="v1", manifest_sha256="a" * 64, domains=old)
+        after = copy.deepcopy(current)
+        after["manufacturing/evidence.yaml"] = {"entries": [entry]}
+        return acceptance.evidence.assess(normalized(after), version="v1", manifest_sha256="a" * 64, packets=(),
+                                          approved=lambda decision: True, today=date(2026, 11, 18))
+
+    def test_an_old_entry_is_unqualified_once_a_bought_part_is_placed_as_occurrences(self) -> None:
+        unmounted = [self.install("mount-a", "@ring-a"), self.install("mount-b", "@ring-b")]
+        result = self.old_entry_result(self.documents(), self.documents(rings=("ring-a", "ring-b", "ring-c"),
+                                                                         operations=unmounted))
+        self.assertEqual(result.statuses[self.OBLIGATION].result, "unknown")
+        self.assertIn("evidence.unqualified", {finding.code for finding in result.findings})
+
+    def test_an_old_entry_of_a_bought_part_without_occurrences_stays_current(self) -> None:
+        ring = fx.part("TST-0103", "Ring", process="purchased", make_buy="buy",
+                       part_intent=fx.intent(route=[fx.operation("buy", "purchased")],
+                                             material_profile=fx.not_applicable("catalogue item")))
+        legacy = [{"id": "mount", "kind": "join", "part": "TST-0103", "into": "TST-0104", "direction": [0, 0, -1],
+                   "acceptance": {"kind": "standoff", "features": ["foot", "top"]}}]
+        docs = fx.record(parts=[ring, fx.part("TST-0104", "Housing", process="cnc")], operations=legacy)
+        docs = {rel: data for rel, data in docs.items() if not rel.startswith("_")}
+        result = self.old_entry_result(docs, docs)
+        self.assertEqual(result.statuses[self.OBLIGATION].result, "pass")
+        self.assertNotIn("evidence.unqualified", {finding.code for finding in result.findings})
 
     def test_every_other_family_keeps_its_domains_and_purchase_depends_on_occurrences(self) -> None:
         for prefix, domains in self.MAIN_FAMILIES.items():
