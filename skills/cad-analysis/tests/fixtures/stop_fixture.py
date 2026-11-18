@@ -20,12 +20,33 @@ LATCHED_GAP_MM (default 0) lowers the latched stop's top face by that much, so t
 
 VARIANT changes one thing:
   ring   adds TST-0303, a small ring at the lever's tip, for a second joint
-  disk   the bracket has the latched stop only, a disc of radius 10 centered at x 10, y 2. Its rim touches the axis
-         line at x 0, so its nearest arm is exactly 0, at a rim point that is no vertex and falls between the 64 samples of a sampled
-         outline. Its lever starts at x -2, past the axis line
+  disk   a bracket with the latched stop only, a disc of radius 10 centered at x 10, y 2 and 5 mm thick (z -8 to -3).
+         Its rim touches the axis line at x 0, so its nearest arm is exactly 0, at a rim point that is no vertex and
+         falls between the 64 samples of a sampled outline. Its lever starts at x -2, past the axis line, so that
+         rim point lies inside the lever's underside and the zero-arm line crosses no edge of the contact patch.
   disk3  the same disc centered at x 13, so its rim is nearest the axis line at x 3, at the rim point (3, 2)
   round  the lever ends in a cylinder of radius 10 centered at x 70, so its farthest point from the axis, at x 80,
          is on an arc between sampled points
+
+The disc variants have no open stop and no post. They model a round latched stop on its own. At d7e4c0bf they still
+carried the open-stop block, and the lever's extension to x -2 ran into it at 20 deg: the probe reported an overlap
+depth of 1.47 mm and a volume of 1.2642 mm3 (the same volume as cad-motion's sweep), against 0.181 mm by hand. The
+code's output showed the mismatch. The geometry then explained it: at 20 deg the lever's back-top corner is at
+(x, z) = (-2.905, 2.135), and the block's inner face passes x = -2.534 at that height, so the corner is 0.37 mm inside
+the block. The block is no part of what the disc variants model, so it was removed.
+
+Pivot ranges of the records that use the disc variants, from the geometry (the pivot turns about -Y, so a point
+(x, z) moves to (x cos t - z sin t, x sin t + z cos t)):
+  0 to 75 deg, the latch's own travel, for the tangent and posed-reaction cases. At 75 deg the lever's back-bottom
+         corner (-2, -3) is at z = -2.71, 0.29 mm above the disc top, which is more than the 0.15 mm contact tolerance,
+         so only the 0 deg limit is a stop.
+  0 to 20 deg for the overlap case. The posed underside is the plane z = x tan t - 3 / cos t. At t = 20 deg that is
+         z = 0.36397 x - 3.19253, and it is below the disc top (z -3) for x < 0.19253 / 0.36397 = 0.529 mm. So the
+         lever enters the disc over x from the rim to 0.529 mm: 0.529 mm is the run of that wedge along the disc top, and
+         its thickness is the run times tan t. The deepest point is the rim point (0, 2): 3 / cos t - 3 = 0.19253 mm
+         below the disc top, and 0.19253 * cos t = 3 (1 - cos t) = 0.18092 mm from the underside plane. The shared
+         volume is (tan t / 2) * the integral of (0.529 - u^2 / 20)^2 du over u = y - 2 from -3.25 to 2, which is about
+         0.1675 mm3 (the Boolean gives 0.1668).
 
 OUT_DIR/parts/<PN>.step.
 """

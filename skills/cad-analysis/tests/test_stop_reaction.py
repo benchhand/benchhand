@@ -322,6 +322,7 @@ class StopGeometryTests(unittest.TestCase):
         # x from -2, |y| <= 4) in the part of the disc with |y| <= 4. The arm of a point is its x, and the rim reaches
         # x = 0 at (0, 2), inside the lever's width. So the smallest arm is 0 at a point that is no vertex and that
         # no 64-sample outline of the clipped rim hits: the sampled outline gave 5.6e-5 mm and a "bounded" reaction.
+        # The pivot runs 0 to 75 deg, the latch travel: at 75 deg the lever is 0.29 mm clear of the disc (fixture docstring).
         code, result = self.run_stop("disk", variant="disk")
         latched = self.latched_end(result)
         self.assertLess(abs(latched["patch"]["min_arm_mm"]), 1e-6)
