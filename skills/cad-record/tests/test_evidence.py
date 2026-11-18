@@ -499,6 +499,17 @@ class PacketFiles(unittest.TestCase):
                 self.assertIn(reason, findings[0].message)
                 shutil.rmtree(folder)
 
+    def test_a_sealed_packet_bound_to_another_build_is_stale_and_never_collected(self) -> None:
+        self.bundle("other", json.dumps(acceptance.producer_packet(self.record)), manifest=False)
+        folder = self.hw / "checks" / "v1" / "other"
+        inventory = {"result.json": hashlib.sha256((folder / "result.json").read_bytes()).hexdigest()}
+        (folder / "manifest.json").write_text(json.dumps({"files": inventory, "version_manifest_sha256": "f" * 64}),
+                                              encoding="utf-8")
+        packets, findings = evidence.collect_packets(self.hw, "v1", V1)
+        self.assertEqual(packets, [])
+        self.assertEqual([(f.code, f.path, f.message) for f in findings],
+                         [("packet.invalid", "hw/checks/v1/other", "hw/checks/v1/other: stale: it is bound to another build of v1")])
+
     def test_emit_refuses_a_packet_that_breaks_its_schema_and_writes_nothing(self) -> None:
         good = acceptance.producer_packet(self.record)
         check_packet.validate(good)

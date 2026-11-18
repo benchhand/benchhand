@@ -356,7 +356,7 @@ class Publication(TempProject):
         a.start()
         try:
             self.assertTrue(a_paused.wait(guard), "writer A never reached its pause")
-            lock = self.project / ".cad-work" / "locks" / "hw_renders_v1_assembly.lock"
+            lock = layout._lock_path(self.hw, "hw/renders/v1/assembly")
             with lock.parent.joinpath(lock.name).open("a") as probe:
                 with self.assertRaises(BlockingIOError, msg="writer A holds no lock on the bundle while it is paused"):
                     fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -364,13 +364,24 @@ class Publication(TempProject):
             self.assertTrue(b_trying.wait(guard))
         finally:
             release_a.set()
-        a.join(guard)
-        b.join(guard)
+            a.join(guard)
+            if b.ident is not None:
+                b.join(guard)
         self.assertFalse(a.is_alive() or b.is_alive(), "a writer hung")
         self.assertIsInstance(outcome["b"], layout.PublishConflict, "B finds A's sound bundle and another recipe")
         self.assertEqual(layout.verify(self.target), [])
         moved = [p for p in (self.project / ".cad-work" / "replaced").rglob("manifest.json")]
         self.assertTrue(all(layout.verify(p.parent) for p in moved), "no sound bundle was moved aside")
+
+    def test_a_long_subject_still_publishes_and_repairs_a_stale_bundle(self) -> None:
+        subject = "s" * 240  # a valid folder name whose flattened lock name would pass 255 characters
+        params = {"V": "v1", "S": subject}
+        target = self.hw / "renders" / "v1" / subject
+        publish(self.hw, "bundle.renders", params, {"iso.png": "png\n"}, recipe={"size": 800})
+        write(target / "iso.png", "edited\n")
+        rerun = publish(self.hw, "bundle.renders", params, {"iso.png": "png\n"}, recipe={"size": 800})
+        self.assertFalse(rerun.reused)
+        self.assertEqual(layout.verify(target), [])
 
     def test_a_sealed_v2_release_verifies_and_a_tampered_copy_is_reported(self) -> None:
         release = self.hw / "releases" / "A"

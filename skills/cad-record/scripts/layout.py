@@ -857,11 +857,16 @@ def _stale_bundle(target: Path) -> bool:
     return target.is_dir() and not target.is_symlink() and any(target.iterdir()) and stale(target) is not None
 
 
+def _lock_path(hw: Path, target_rel: str) -> Path:
+    """The lock file of one bundle path. Its name is a digest, so a long subject cannot pass the name limit."""
+    return Path(hw).parent / SCRATCH / "locks" / (hashlib.sha256(target_rel.encode()).hexdigest() + ".lock")
+
+
 @contextlib.contextmanager
 def _target_lock(hw: Path, target_rel: str) -> Iterator[None]:
     """Hold an exclusive lock on one bundle path, so inspecting an existing bundle and replacing it are
     one step per writer. The OS drops the lock when its holder ends."""
-    lock = Path(hw).parent / SCRATCH / "locks" / (target_rel.replace("/", "_") + ".lock")
+    lock = _lock_path(hw, target_rel)
     lock.parent.mkdir(parents=True, exist_ok=True)
     with lock.open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
