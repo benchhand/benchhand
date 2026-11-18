@@ -181,6 +181,23 @@ class ShippedResolution(unittest.TestCase):
                                  ("guideline", "equals", "hardened_steel", None, ()))
 
 
+class H2DSample(unittest.TestCase):
+    """The sample machine set is reached only through a profile pin that names it (abstract sets apply only when pinned)."""
+
+    H2D = "fdm.machine.bambu_h2d"
+    FACTS = {"material_family": "tpu", "shore": "85a"}
+
+    def applying(self, pin: tuple[str, ...] | None) -> set[str]:
+        return {g.id for g in gl.applicable(CATALOG, gl.Context("fdm", self.FACTS, pin=pin))}
+
+    def test_an_unpinned_profile_never_sees_the_h2d_sample(self) -> None:
+        self.assertNotIn(self.H2D, self.applying(None))
+        self.assertNotIn(self.H2D, self.applying(("fdm.generic@1",)))
+
+    def test_a_profile_that_pins_the_h2d_sample_gets_it(self) -> None:
+        self.assertIn(self.H2D, self.applying((f"{self.H2D}@1",)))
+
+
 class SnapshotInventory(unittest.TestCase):
     def test_a_version_snapshot_copies_exactly_the_18_shipped_sets(self) -> None:
         """The list is typed out here, so a set a helper leaves out or adds fails here and not in a computed list."""
