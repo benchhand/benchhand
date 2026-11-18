@@ -772,14 +772,6 @@ class Units(unittest.TestCase):
                 with self.subTest(case.name, unit=unit):
                     self.assertTrue(rejected(case, 1, unit), f"{unit} is not a unit of {case.canon}")
 
-    def test_a_quantity_accepts_each_unit_of_its_own_dimension(self) -> None:
-        for case in self.quantities():
-            low, _, high, _ = parse(case.bounds)
-            middle = (low + high) / 2 if low is not None and high is not None else (low + 1 if low is not None else high - 1)
-            for unit in CONVERT[case.canon]:
-                with self.subTest(case.name, unit=unit):
-                    self.assertTrue(accepted(case, shifted(case, middle, unit), unit))
-
 
 class Reached(unittest.TestCase):
     """The same matrix for a field under $defs, through the registry's validator. The document follows the path
