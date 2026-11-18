@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from stop_statics import Patch, reaction  # noqa: E402
+from stop_statics import STOP_ARM_EPSILON_MM, Patch, reaction  # noqa: E402
 
 # A 30 N handle load 80 mm from the pivot is a moment of 2400 N*mm. The expected figures below are worked
 # by hand from M / arm: a strip with arms 7..13 mm (the latched stop) and one with arms 0..7 mm (the open stop).
@@ -37,10 +37,19 @@ class DesignReaction(unittest.TestCase):
         self.assertIn("FEA contact case", result.message)
         self.assertIn("design record", result.message)
 
-    def test_an_edge_on_the_axis_within_rounding_is_unbounded(self) -> None:
-        # Posing and the Boolean carry rounding of the order 1e-15 mm; an edge that close to the axis is on it.
-        result = reaction(30.0, 80.0, Patch.strip(1e-9, 7.0))
-        self.assertEqual((result.status, result.outcome), ("unbounded", "unknown"))
+    def test_an_edge_on_the_axis_within_rounding_is_unbounded_on_both_sides_of_zero(self) -> None:
+        # Posing and the Boolean carry rounding of order 1e-15 mm, so a smallest arm of -7e-16 or +7e-16 is the
+        # same edge on the axis. Up to the epsilon (1e-6 mm, 1 nm) the reaction is unbounded.
+        self.assertEqual(STOP_ARM_EPSILON_MM, 1e-6)
+        for arm in (0.0, -7e-16, 7e-16, 1e-9, -1e-9, STOP_ARM_EPSILON_MM):
+            with self.subTest(arm=arm):
+                result = reaction(30.0, 80.0, Patch.strip(arm, 7.0))
+                self.assertEqual((result.status, result.outcome), ("unbounded", "unknown"))
+
+    def test_an_arm_above_the_epsilon_gives_a_finite_reaction(self) -> None:
+        result = reaction(30.0, 80.0, Patch.strip(1e-3, 7.0))
+        self.assertEqual((result.status, result.outcome), ("bounded", "pass"))
+        self.assertAlmostEqual(result.design_n, 2400.0 / 1e-3, places=6)
 
     def test_an_arm_past_the_axis_is_unbounded_too(self) -> None:
         result = reaction(30.0, 80.0, Patch.strip(-2.0, 5.0))

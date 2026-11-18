@@ -18,6 +18,7 @@ CHANGED_FILES = (
     "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-analysis/scripts/fea_static.py",
     "skills/cad-analysis/scripts/mesh_quality.py",
+    "skills/cad-analysis/scripts/stop_extrema.py",
     "skills/cad-analysis/scripts/stop_reaction.py",
     "skills/cad-analysis/scripts/stop_statics.py",
     "skills/cad-design/scripts/form_check.py",

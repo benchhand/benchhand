@@ -24,7 +24,7 @@ BOUNDED = "bounded"
 UNBOUNDED = "unbounded"
 UNDERSTATED = "understated"
 RECORDED_TOLERANCE = 1e-9  # relative: a recorded figure equal to the design reaction passes
-ON_AXIS_MM = 1e-6  # an arm this small is on the axis: posing and the Boolean leave rounding of order 1e-15 mm
+STOP_ARM_EPSILON_MM = 1e-6  # float noise: an arm this small is on the axis, so rounding to either side of zero changes no verdict
 
 
 @dataclass(frozen=True)
@@ -74,7 +74,7 @@ def reaction(force_n: float, load_arm_mm: float, patch: Patch, recorded_n: float
         pin_load = design + force_n if design is not None else None
         return Reaction(status, outcome, severity, moment, design, lower, uniform, compliant, pin_load, message)
 
-    if patch.min_arm <= ON_AXIS_MM:
+    if patch.min_arm <= STOP_ARM_EPSILON_MM:
         return result(UNBOUNDED, "unknown", "critical", None,
                       f"the contact reaches the pivot axis (smallest arm {patch.min_arm:.4g} mm), so a rigid stop has no "
                       "bounded reaction: model the contact in an FEA contact case and approve it in a design record")

@@ -52,6 +52,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import stop_extrema as extrema
 import stop_statics as statics
 
 
@@ -86,7 +87,6 @@ STOP_CONTACT_TOLERANCE_MM = 0.15
 STOP_CONTACT_EPSILON_MM = 1e-6  # float noise: a gap on the tolerance gets no verdict from rounding
 NORMAL_TOL = 1e-6  # |n1 . n2 + 1| under this: opposite-facing faces
 MIN_AREA_MM2 = 1e-6
-CURVE_SAMPLES = 64  # points per curved edge when its outline is read
 METHOD = ("rigid statics of the modelled stop contact: the peak use-case force times the moving part's farthest point "
           "from the pivot axis, over the smallest arm of the overlap of the touching planar faces (cad-analysis "
           "stop_reaction.py)")
@@ -116,48 +116,11 @@ def cross(a: Vec, b: Vec) -> Vec:
     return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
 
-def distance_from_axis(point: Vec, origin: Vec, axis: Vec) -> float:
-    return math.sqrt(dot(c := cross(sub(point, origin), axis), c))
-
-
 # --------------------------------------------------------------------------- geometry (OCP)
 
 
 def xyz(point: Any) -> Vec:
     return (point.X(), point.Y(), point.Z())
-
-
-def faces(shape: Any) -> list[Any]:
-    from OCP.TopAbs import TopAbs_FACE
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
-
-    found, explorer = [], TopExp_Explorer(shape, TopAbs_FACE)
-    cast = getattr(TopoDS, "Face_s", None) or TopoDS.Face
-    while explorer.More():
-        found.append(cast(explorer.Current()))
-        explorer.Next()
-    return found
-
-
-def outline_points(shape: Any) -> list[Vec]:
-    """The vertices of `shape` and CURVE_SAMPLES points along each of its curved edges."""
-    from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.GeomAbs import GeomAbs_Line
-    from OCP.TopAbs import TopAbs_EDGE
-    from OCP.TopExp import TopExp_Explorer
-    from OCP.TopoDS import TopoDS
-
-    points = [xyz(p) for p in pose._vertex_points(shape)]
-    cast = getattr(TopoDS, "Edge_s", None) or TopoDS.Edge
-    explorer = TopExp_Explorer(shape, TopAbs_EDGE)
-    while explorer.More():
-        curve = BRepAdaptor_Curve(cast(explorer.Current()))
-        if curve.GetType() != GeomAbs_Line:
-            first, last = curve.FirstParameter(), curve.LastParameter()
-            points += [xyz(curve.Value(first + (last - first) * i / CURVE_SAMPLES)) for i in range(CURVE_SAMPLES + 1)]
-        explorer.Next()
-    return points
 
 
 def plane_of(face: Any) -> tuple[Vec, Vec] | None:
@@ -198,7 +161,41 @@ def overlap(fixed_face: Any, moving_face: Any) -> list[Any]:
     common.Build()
     if not common.IsDone():
         raise pose.MotionError("contact patch computation failed")
-    return [face for face in faces(common.Shape()) if face_area(face) > MIN_AREA_MM2]
+    return [face for face in extrema.faces(common.Shape()) if face_area(face) > MIN_AREA_MM2]
+
+
+def overlap_of(moving: Any, fixed: Any) -> tuple[float, float]:
+    """(volume in mm3, depth in mm) of the volume the two parts share, or (0, 0) when they only touch. Overlap is a
+    shared volume above pose.INTERFERENCE_MM3, the rule cad-motion's sweep and cad-model check use. The depth is the
+    thinnest width of the shared region along the normal of one of its planar faces, exact for lines and arcs: a
+    sliver of overlap is as thick as its flat faces say. A region with no planar face gets its smallest oriented box side."""
+    from OCP.Bnd import Bnd_OBB
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    from OCP.BRepBndLib import BRepBndLib
+
+    common = BRepAlgoAPI_Common()
+    common.SetArguments(pose.shape_list([moving]))
+    common.SetTools(pose.shape_list([fixed]))
+    common.SetNonDestructive(True)
+    common.SetFuzzyValue(pose.FUZZY_MM)
+    common.Build()
+    if not common.IsDone():
+        raise pose.MotionError("overlap computation failed")
+    shared = common.Shape()
+    volume = float(pose.volume_properties(shared).Mass())
+    if volume <= pose.INTERFERENCE_MM3:
+        return 0.0, 0.0
+    widths = []
+    for face in extrema.faces(shared):
+        plane = plane_of(face)
+        if plane is not None:
+            low, high = extrema.linear_range(shared, plane[1], plane[0])
+            widths.append(high - low)
+    if widths:
+        return volume, min(widths)
+    box = Bnd_OBB()
+    BRepBndLib.AddOBB_s(shared, box, False, True, False)
+    return volume, 2.0 * min(box.XHSize(), box.YHSize(), box.ZHSize())
 
 
 def face_area(face: Any) -> float:
@@ -245,9 +242,9 @@ def contact_faces(fixed: Any, moving: Any, tolerance: float) -> list[tuple[Any, 
     """(overlap face, outward normal of the fixed part's face) for the closest opposite-facing parallel planar faces
     of the two parts, at most `tolerance` apart. The moving face moves onto the fixed face's plane first, so a
     stop with a small gap in the model gives the same overlap as one that touches."""
-    moving_planes = [(face, plane_of(face)) for face in faces(moving)]
+    moving_planes = [(face, plane_of(face)) for face in extrema.faces(moving)]
     found: list[tuple[float, Any, Vec]] = []
-    for fixed_face in faces(fixed):
+    for fixed_face in extrema.faces(fixed):
         fixed_plane = plane_of(fixed_face)
         if fixed_plane is None:
             continue
@@ -275,7 +272,7 @@ def patch_of(contact: Sequence[tuple[Any, Vec]], origin: Vec, axis: Vec, sign: f
     area = first = second = 0.0
     for face, normal in contact:
         gradient = scale(cross(normal, axis), sign)
-        arms += [dot(gradient, sub(point, origin)) for point in outline_points(face)]
+        arms += list(extrema.linear_range(face, gradient, origin))
         props = GProp_GProps()
         BRepGProp.SurfaceProperties_s(face, props)
         size2 = dot(gradient, gradient)
@@ -359,8 +356,7 @@ def end_geometry(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, value
     transforms = chain.transforms(values)
     shapes = {name: pose.placed(definitions[chain.pn(occurrence)].shape, transforms[occurrence])
               for name, occurrence in (("moving", pivot.moving), ("fixed", pivot.fixed))}
-    reach = max(distance_from_axis(point, origin, axis) for point in outline_points(shapes["moving"]))
-    return {"origin": origin, "axis": axis, "reach": reach, **shapes}
+    return {"origin": origin, "axis": axis, "reach": extrema.reach(shapes["moving"], origin, axis), **shapes}
 
 
 def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: str, tolerance: float) -> dict[str, Any]:
@@ -371,11 +367,14 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
     geometry = end_geometry(chain, definitions, pivot, value)
     gap = separation(geometry["moving"], geometry["fixed"])
     contact = gap <= tolerance + STOP_CONTACT_EPSILON_MM
-    patch = None
+    patch, volume, depth = None, 0.0, 0.0
+    if gap <= CONTACT_MM:
+        volume, depth = overlap_of(geometry["moving"], geometry["fixed"])
     if contact:
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)
         patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)
-    return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"]}
+    return {"label": label, "value": value, "touching": contact, "gap": gap, "patch": patch, "reach": geometry["reach"],
+            "overlap_volume": volume, "overlap_depth": depth}
 
 
 def patch_report(patch: statics.Patch | None) -> dict[str, Any] | None:
@@ -395,27 +394,38 @@ def unresolved(if_id: str, outcome: str, reason: str, **detail: Any) -> Assessme
     return Assessment(if_id, outcome, [reason], {}, {"outcome": outcome, "reason": reason, **detail})
 
 
-def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, definitions: Mapping[str, Any]) -> Assessment:
+def resolve_ends(chain: Any, interface: Any, if_id: str) -> tuple[list[str], Assessment | None]:
+    """The occurrence ids of the interface's two parts, or the assessment that ends the check. A reference that names
+    no occurrence is not a stop between two parts (not applicable). One that names two or more is ambiguous, and the
+    stop it may be stays unassessed (unknown)."""
     ends = []
     for key in ("from", "to"):
+        ref = interface.raw.get(key) or ""
         try:
-            ends.append(chain.resolve(interface.raw.get(key) or "", f"{if_id} {key}: "))
+            ends.append(chain.resolve(ref, f"{if_id} {key}: "))
         except pose.MotionError as error:
-            return unresolved(if_id, "not_applicable", f"{if_id} joins a part outside the posed assembly ({error}): not a stop")
+            if isinstance(ref, str) and not ref.startswith("@") and len(chain.inventory.of(ref)) > 1:
+                return [], unresolved(if_id, "unknown", f"{if_id}: {error}; the stop it may be is not assessed")
+            return [], unresolved(if_id, "not_applicable", f"{if_id} joins a part outside the posed assembly ({error}): not a stop")
+    return ends, None
+
+
+def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, definitions: Mapping[str, Any]) -> Assessment:
+    """Whether the interface is a stop comes first, and only a stop needs a force."""
+    ends, stopped = resolve_ends(chain, interface, if_id)
+    if stopped is not None:
+        return stopped
     pivot, why = pivot_between(chain, ends[0], ends[1])
     if pivot is None:
         return unresolved(if_id, "not_applicable" if why.startswith("no movable") else "unknown", f"{if_id}: {why}")
-    force, loads, why = applied_force(record, interface)
-    if force is None:
-        return unresolved(if_id, "unknown", f"{if_id}: {why}", pivot=pivot.joint.id)
     tolerance, source = contact_tolerance(interface)
     states = [assess_end(chain, definitions, pivot, label, tolerance) for label in ("min", "max")]
     detail: dict[str, Any] = {"pivot": pivot.joint.id, "moving": chain.ref(pivot.moving), "fixed": chain.ref(pivot.fixed),
-                              "contact_tolerance": {"mm": tolerance, "source": source},
-                              "loads": loads, "peak_force_n": force, "ends": {}}
+                              "contact_tolerance": {"mm": tolerance, "source": source}, "ends": {}}
     for state in states:
         detail["ends"][state["label"]] = {"joint_value": state["value"], "touching": state["touching"],
-                                          "gap_mm": state["gap"],
+                                          "gap_mm": state["gap"], "overlap_volume_mm3": state["overlap_volume"],
+                                          "overlap_depth_mm": state["overlap_depth"],
                                           "farthest_point_from_axis_mm": state["reach"], "patch": patch_report(state["patch"])}
     stops = [state for state in states if state["touching"]]
     if not stops:
@@ -423,11 +433,22 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
         reason = (f"{if_id}: the parts are not in contact at either limit of {pivot.joint.id} "
                   f"(gaps: {gaps}; tolerance {tolerance:.4g} mm): not a stop")
         return Assessment(if_id, "not_applicable", [reason], {}, {"outcome": "not_applicable", "reason": reason, **detail})
+    overlapping = [state for state in stops if state["overlap_volume"] > 0.0]
+    if overlapping:
+        where = " and ".join(f"at the {state['label']} limit ({state['value']:g} {pivot.joint.unit})" for state in overlapping)
+        depth = max(state["overlap_depth"] for state in overlapping)
+        reason = f"{if_id}: the parts overlap by {depth:.3g} mm {where}: a design defect, not a stop"
+        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     flat = [state["label"] for state in stops if state["patch"] is None]
     if flat:
         reason = (f"{if_id}: at the {' and '.join(flat)} limit of {pivot.joint.id} the parts are within {tolerance:.4g} mm, "
                   "but no parallel opposite-facing planar faces are that close, so no contact patch can be taken")
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+    force, loads, why = applied_force(record, interface)
+    if force is None:
+        reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"
+        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
+    detail.update(loads=loads, peak_force_n=force)
     return judge_stops(if_id, stops, force, recorded_load_n(interface), detail)
 
 
@@ -505,6 +526,17 @@ def outcome_row(entry: Assessment, obligation: str, mine: Sequence[Mapping[str, 
     return row
 
 
+def producer_code_hashes() -> dict[str, str]:
+    """sha256 of every file whose content decides this producer's packet: its own code and the modules and data it
+    loads, so an edit to any of them blocks reuse of a published bundle. A hand-kept list, like
+    fea_static's _producer_code_hashes. #140's code_shas helper takes over once it lands."""
+    here = Path(__file__).resolve()
+    paths = [here, here.with_name("stop_statics.py"), here.with_name("stop_extrema.py"), Path(pose.__file__), pose.COUPLING_PATH,
+             pose.ASSEMBLY_DATA_PATH, pose.YAML_LOADER_PATH, Path(pose.LAYOUT.__file__), Path(check_packet.__file__),
+             Path(intent.__file__), Path(fits.__file__), fits.DATA]
+    return {path.resolve().relative_to(SKILLS).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+
+
 def file_hashes(record_hw: Path, names: Iterable[str]) -> dict[str, str]:
     return {name.replace(".", "_"): hashlib.sha256((record_hw / name).read_bytes()).hexdigest()
             for name in names if (record_hw / name).is_file()}
@@ -545,7 +577,8 @@ def main(argv: list[str] | None = None) -> int:
             version, version_dir, record_hw = LAYOUT.built_version(args.hw, args.version)
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
         result, detail = assess(args, version, record_hw)
-        recipe = {"options": {"attach": list(args.attach)}, "dependencies": result["dependencies"]}
+        recipe = {"options": {"attach": list(args.attach)}, "dependencies": result["dependencies"],
+                  "producer_code_sha256": producer_code_hashes()}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "stop-reaction.json",
                                            recipe, out=args.out, replace=args.replace, record_version=intent.RECORD_VERSION)
         json.dump(output, sys.stdout, indent=2)

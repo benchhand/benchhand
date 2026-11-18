@@ -11,12 +11,15 @@ compliant M * 24.5 / 114.333 = 514.647 N are estimates.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 SKILLS = HERE.parents[1]
@@ -38,20 +41,27 @@ def load_entry(ident: str, newtons: float = 30.0) -> dict:
 
 
 def documents(contact_load: float | None = None, joint: dict | None = None, kind: str = "other",
-              limits: dict | None = None) -> dict:
+              limits: dict | None = None, *, joints: list[dict] | None = None, ends: tuple[str, str] = ("TST-0302", "TST-0301"),
+              pns: tuple[str, ...] = ("TST-0301", "TST-0302"), loads: str = "known") -> dict:
     """A record of the fixture parts: IF-006 the lever-to-bracket stops, critical and structural, under two 30 N loads.
-    `joint` replaces the pivot, `kind` is the interface type and `limits` its declared fits."""
-    functional = {"critical": fx.known(True), "functions": [{"function": "locating"}, {"function": "structural"}],
-                  "loads": ["handle_close_at_latched_stop", "handle_open_at_open_stop"]}
+    `joint` replaces the pivot (`joints`, all the joints), `kind` is the interface type, `limits` its declared fits,
+    `ends` its from and to, and `loads` is "known", "unknown" (named, magnitude unknown) or "none" (not named)."""
+    functional = {"critical": fx.known(True), "functions": [{"function": "locating"}, {"function": "structural"}]}
+    if loads != "none":
+        functional["loads"] = ["handle_close_at_latched_stop", "handle_open_at_open_stop"]
     if contact_load is not None:
         unknown = {"status": "unknown", "reason": "not needed by the fixture"}
         functional["contact"] = {"materials": [unknown, unknown], "load": fx.known(fx.quantity(contact_load, "N"))}
-    use = fx.use_case("draft", loads=[load_entry("handle_close_at_latched_stop"), load_entry("handle_open_at_open_stop")])
-    docs = fx.record(product_data=fx.product(use),
-                     parts=[fx.part("TST-0301", "Bracket", process="cnc"), fx.part("TST-0302", "Lever", process="cnc")],
-                     interfaces=[fx.interface("IF-006", "TST-0302", "TST-0301", kind, functional,
+    entries = [load_entry("handle_close_at_latched_stop"), load_entry("handle_open_at_open_stop")]
+    if loads == "unknown":
+        for entry in entries:
+            entry["magnitude"] = fx.unknown("the handle force is not measured")
+    use = fx.use_case("draft", loads=entries)
+    titles = {"TST-0301": "Bracket", "TST-0302": "Lever", "TST-0303": "Ring"}
+    docs = fx.record(product_data=fx.product(use), parts=[fx.part(pn, titles[pn], process="cnc") for pn in pns],
+                     interfaces=[fx.interface("IF-006", ends[0], ends[1], kind, functional,
                                               **({"limits": limits} if limits else {}))])
-    docs["assembly.yaml"]["joints"] = [dict(joint or JOINT)]
+    docs["assembly.yaml"]["joints"] = [dict(j) for j in (joints or [joint or JOINT])]
     return docs
 
 
@@ -76,20 +86,21 @@ class StopGeometryTests(unittest.TestCase):
         cls.folder.cleanup()
 
     @classmethod
-    def built(cls, gap: float) -> Path:
+    def built(cls, gap: float, variant: str = "") -> Path:
         """The fixture parts with the latched stop `gap` mm below the lever, built once."""
-        folder = cls.root / f"geometry-{gap}"
+        folder = cls.root / f"geometry-{gap}-{variant}"
         if not folder.exists():
-            build = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "stop_fixture.py"), str(folder), str(gap)],
-                                   capture_output=True, text=True, timeout=900, check=False)
+            build = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "stop_fixture.py"), str(folder), str(gap),
+                                    variant], capture_output=True, text=True, timeout=900, check=False)
             if build.returncode != 0:
                 raise RuntimeError(build.stdout + build.stderr)
         return folder
 
     def run_stop(self, name: str, contact_load: float | None = None, joint: dict | None = None,
-                 kind: str = "other", gap: float | None = None, limits: dict | None = None) -> tuple[int, dict]:
-        hw = fx.write_record(self.root / name / "hw", documents(contact_load, joint, kind, limits))
-        geometry = self.root / "geometry" if gap is None else self.built(gap)
+                 kind: str = "other", gap: float | None = None, limits: dict | None = None, variant: str = "",
+                 **record: Any) -> tuple[int, dict]:
+        hw = fx.write_record(self.root / name / "hw", documents(contact_load, joint, kind, limits, **record))
+        geometry = self.root / "geometry" if gap is None and not variant else self.built(gap or 0.0, variant)
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw), "--parts-dir",
                                str(geometry / "parts")], capture_output=True, text=True, timeout=1800, check=False)
         self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
@@ -230,6 +241,217 @@ class StopGeometryTests(unittest.TestCase):
         self.assertEqual((code, row["outcome"]), (1, "unknown"))
         self.assertIn("no parallel opposite-facing planar faces", row["uncertainty"])
         self.assertAlmostEqual(self.latched_end(result)["gap_mm"], 0.0611, places=3)
+
+    def test_an_ambiguous_reference_is_unknown_never_a_quiet_not_applicable(self) -> None:
+        # TST-0302 has two occurrences, so a bare TST-0302 names two of them: absence and ambiguity differ.
+        documents_ = documents(ends=("TST-0302", "TST-0301"), joints=[
+            {**JOINT, "child": "@lever-a"},
+            {"id": "J-002", "type": "fixed", "parent": "TST-0301", "child": "@lever-b", "axis": [0, 0, 1],
+             "origin": [0, 20, 0], "min": 0, "max": 0, "nominal": 0}])
+        documents_["assembly.yaml"]["subassemblies"] = [{"id": "main", "title": "Main", "parts": ["TST-0301"],
+                                                         "occurrences": ["@lever-a", "@lever-b"]}]
+        documents_["assembly.yaml"]["occurrences"] = [
+            {"id": "lever-a", "PN": "TST-0302"},
+            {"id": "lever-b", "PN": "TST-0302", "placement": {"translation_mm": [0, 20, 0]}}]
+        documents_["parts/TST-0302/part.yaml"]["model_frame"] = "part_local"  # a part with two occurrences uses its own origin
+        hw = fx.write_record(self.root / "ambiguous" / "hw", documents_)
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw), "--parts-dir",
+                               str(self.root / "geometry" / "parts")], capture_output=True, text=True, timeout=1800, check=False)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        [row] = result["outcomes"]
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("ambiguous", row["uncertainty"])
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
+    def test_a_part_outside_the_assembly_is_absent_and_not_applicable(self) -> None:
+        code, result = self.run_stop("absent", ends=("TST-0302", "a 3 mm steel panel"))
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"], result["findings"]), (0, "not_applicable", []))
+        self.assertIn("names no occurrence", row["coverage"])
+
+    def test_a_free_swinging_pivot_is_not_a_stop_whatever_is_known_of_the_load(self) -> None:
+        free = {**JOINT, "min": 10, "max": 30, "nominal": 10}
+        for name, options in (("free-unknown-loads", {"loads": "unknown"}),
+                              ("free-contact-load-only", {"loads": "none", "contact_load": 240.0})):
+            with self.subTest(case=name):
+                code, result = self.run_stop(name, joint=free, **options)
+                [row] = result["outcomes"]
+                self.assertEqual((code, row["outcome"], result["findings"]), (0, "not_applicable", []))
+
+    def test_a_stop_with_no_known_force_is_unknown(self) -> None:
+        for name, options in (("stop-unknown-loads", {"loads": "unknown"}), ("stop-contact-load-only", {"loads": "none", "contact_load": 240.0})):
+            with self.subTest(case=name):
+                code, result = self.run_stop(name, joint={**JOINT, "max": 30}, **options)
+                [row] = result["outcomes"]
+                self.assertEqual((code, row["outcome"]), (1, "unknown"))
+                self.assertRegex(row["uncertainty"], "force|use-case load")
+                self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
+    def assertUnknownPivot(self, name: str, reason: str, **options: Any) -> None:
+        code, result = self.run_stop(name, **options)
+        [row] = result["outcomes"]
+        self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+        self.assertIn(reason, row["uncertainty"])
+        [finding] = result["findings"]
+        self.assertEqual((finding["code"], finding["severity"], finding["outcome"]),
+                         ("engineering.stop_reaction_unknown", "major", "unknown"))
+        self.assertIn(reason, finding["uncertainty"])
+
+    def test_several_movable_joints_between_the_parts_leave_the_stop_unknown(self) -> None:
+        second = {"id": "J-002", "type": "revolute", "parent": "TST-0302", "child": "TST-0303", "axis": [0, -1, 0],
+                  "origin": [84, 0, 0], "min": 0, "max": 10, "nominal": 0}
+        self.assertUnknownPivot("several", "several movable joints", variant="ring", pns=("TST-0301", "TST-0302", "TST-0303"),
+                                joints=[dict(JOINT), second], ends=("TST-0303", "TST-0301"))
+
+    def test_a_coupled_pivot_leaves_the_stop_unknown(self) -> None:
+        driver = {"id": "J-002", "type": "revolute", "parent": "TST-0301", "child": "TST-0303", "axis": [0, -1, 0],
+                  "origin": [84, 0, 0], "min": 0, "max": 10, "nominal": 0}
+        driven = {key: value for key, value in JOINT.items() if key != "nominal"}
+        driven["coupling"] = {"type": "linear", "driver": "J-002", "ratio": 1}
+        self.assertUnknownPivot("coupled", "driven through a coupling", variant="ring", pns=("TST-0301", "TST-0302", "TST-0303"),
+                                joints=[driver, driven])
+
+    def test_a_prismatic_pivot_leaves_the_stop_unknown(self) -> None:
+        slide = {"id": "J-001", "type": "prismatic", "parent": "TST-0301", "child": "TST-0302", "axis": [1, 0, 0],
+                 "origin": [0, 0, 0], "min": 0, "max": 5, "nominal": 0}
+        self.assertUnknownPivot("prismatic", "only a revolute stop is derived", joint=slide)
+
+    def test_a_round_stop_face_tangent_to_the_axis_line_is_unbounded(self) -> None:
+        # By hand: the disc (center (10, 2), radius 10, top at z -3) meets the lever's underside (z -3 at 0 deg,
+        # x from -2, |y| <= 4) in the part of the disc with |y| <= 4. The arm of a point is its x, and the rim reaches
+        # x = 0 at (0, 2), inside the lever's width. So the smallest arm is 0 at a point that is no vertex and that
+        # no 64-sample outline of the clipped rim hits: the sampled outline gave 5.6e-5 mm and a "bounded" reaction.
+        code, result = self.run_stop("disk", variant="disk")
+        latched = self.latched_end(result)
+        self.assertLess(abs(latched["patch"]["min_arm_mm"]), 1e-6)
+        self.assertEqual(latched["reaction"]["status"], "unbounded")
+        self.assertEqual((code, result["result"]), (1, "unknown"))
+
+    def test_a_round_stop_face_gives_the_reaction_from_its_exact_nearest_point(self) -> None:
+        # By hand: the disc (center (13, 2), radius 10) has its nearest rim point to the pivot at (3, 2), arm 3 mm,
+        # and its far rim point at (23, 2), arm 23 mm. M = 30 N * sqrt(80^2 + 3^2) mm = 2401.687 N*mm, so the design
+        # reaction is M / 3 = 800.562 N. A sampled rim gave a smallest arm above 3 and a reaction about 0.01 N short.
+        code, result = self.run_stop("disk3", variant="disk3")
+        latched = self.latched_end(result)
+        self.assertAlmostEqual(latched["patch"]["min_arm_mm"], 3.0, places=9)
+        self.assertAlmostEqual(latched["patch"]["max_arm_mm"], 23.0, places=9)
+        self.assertEqual(latched["reaction"]["status"], "bounded")
+        self.assertAlmostEqual(latched["reaction"]["design_reaction_n"], 2401.687 / 3.0, places=3)
+
+    def test_parts_that_overlap_at_a_limit_are_a_design_defect_with_their_depth(self) -> None:
+        # By hand, at 20 deg: the lever's underside is the plane z = x tan(20) - 3 / cos(20) in the posed frame, and
+        # it crosses the disc's top plane z = -3 at x = 3 (1 - cos 20) / sin 20 = 0.529 mm. For x between 0 and 0.529 the
+        # lever dips below z = -3 inside the disc, which starts at the rim point (0, 2). The deepest point is that rim
+        # point, 3 (1 - cos 20) = 0.181 mm from the underside plane (0.192 mm below z = -3). The lever tilts 20 deg to
+        # the disc top, so no parallel pair exists, but the cause is the overlap and the reason must say so.
+        code, result = self.run_stop("overlap", joint={**JOINT, "max": 20}, variant="disk")
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertRegex(row["uncertainty"], r"the parts overlap by 0\.[12]\d* mm at the max limit \(20 deg\)")
+        self.assertIn("a design defect, not a stop", row["uncertainty"])
+        self.assertNotIn("no parallel", row["uncertainty"])
+        end = result["detail"]["interfaces"]["IF-006"]["ends"]["max"]
+        self.assertGreater(end["overlap_volume_mm3"], 0.001)
+        self.assertTrue(0.17 <= end["overlap_depth_mm"] <= 0.20, end["overlap_depth_mm"])
+
+    def test_a_round_lever_end_gives_the_exact_reach(self) -> None:
+        # The farthest point, (80, +-4, 0), lies on the rim of the end cylinder, half a sample step from the nearest sample.
+        code, result = self.run_stop("round", joint={**JOINT, "max": 30}, variant="round")
+        reach = self.latched_end(result)["farthest_point_from_axis_mm"]
+        self.assertGreaterEqual(reach, 80.0 - 1e-9)
+        self.assertLessEqual(reach, 80.0 + 1e-6)
+        self.assertEqual(self.latched_end(result)["reaction"]["status"], "bounded")
+
+
+class VersionedPublicationTests(unittest.TestCase):
+    """stop_reaction.py on a sealed version: an unchanged rerun finds the published bundle and reuses it, and
+    replaced (with --replace) when the producer's code or a fit-table value does. Each case runs a copy of the skills
+    tree, so an edit never touches the repository."""
+
+    FIT = {"running_fit": {"fit": "20 H11/c11", "pair": ["TST-0302", "TST-0301"]}}  # clearance 0.370 mm
+    CODE = ("cad-analysis/scripts/stop_reaction.py", "cad-analysis/scripts/stop_statics.py",
+            "cad-motion/scripts/pose.py", "cad-record/scripts/check_packet.py", "cad-fits/scripts/fits.py")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.folder = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.folder.name).resolve()
+        build = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "stop_fixture.py"),
+                                str(cls.root / "geometry")], capture_output=True, text=True, timeout=900, check=False)
+        if build.returncode != 0:
+            raise RuntimeError(build.stdout + build.stderr)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.folder.cleanup()
+
+    def project(self, name: str, **options: Any) -> tuple[Path, Path]:
+        """(a copy of the skills tree, a project hw/ with version v1 sealed from the fixture parts)."""
+        skills = self.root / name / "skills"
+        shutil.copytree(SKILLS, skills, ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
+        hw = fx.write_record(self.root / name / "project" / "hw", documents(joint={**JOINT, "max": 30}, **options))
+        folder = hw / "versions" / "v1"
+        for path in sorted(hw.rglob("*")):
+            relative = path.relative_to(hw)
+            if path.is_file() and relative.parts[0] not in ("versions", "decisions") and relative.name not in ("bom.csv", "verification.csv"):
+                (folder / "record" / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, folder / "record" / relative)
+        shutil.copytree(self.root / "geometry" / "parts", folder / "parts")
+        files = {path.relative_to(folder).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                 for path in sorted(folder.rglob("*")) if path.is_file()}
+        (folder / "manifest.json").write_text(json.dumps({"schema_version": 2, "label": "v1", "files": files}), encoding="utf-8")
+        (hw / "versions" / "latest.json").write_text(json.dumps({"label": "v1"}), encoding="utf-8")
+        return skills, hw
+
+    def run_version(self, skills: Path, hw: Path, *extra: str) -> tuple[int, dict, str]:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(skills / "cad-analysis" / "scripts" / "stop_reaction.py"),
+                               "--hw", str(hw), "--version", "v1", *extra], capture_output=True, text=True, timeout=1800, check=False)
+        return proc.returncode, (json.loads(proc.stdout) if proc.stdout.strip() else {}), proc.stderr
+
+    def test_an_unchanged_rerun_reuses_the_published_bundle(self) -> None:
+        skills, hw = self.project("reuse")
+        code, first, _ = self.run_version(skills, hw)
+        self.assertEqual((code, first["result"], first["reused"]), (0, "pass", False))
+        code, second, _ = self.run_version(skills, hw)
+        self.assertEqual((code, second["reused"], second["bundle"]), (0, True, first["bundle"]))
+
+    def test_an_edit_to_any_module_the_producer_loads_replaces_the_bundle_only_with_replace(self) -> None:
+        for relative in self.CODE:
+            with self.subTest(module=relative):
+                skills, hw = self.project("code-" + relative.replace("/", "-"))
+                self.run_version(skills, hw)
+                with (skills / relative).open("a", encoding="utf-8") as module:
+                    module.write("\n# edited\n")
+                code, _, error = self.run_version(skills, hw)
+                self.assertEqual(code, 2, "the recipe changed, so the old bundle is a conflict and is not reused: " + error)
+                code, replaced, _ = self.run_version(skills, hw, "--replace")
+                self.assertEqual((code, replaced["reused"]), (0, False))
+
+    def test_a_change_of_the_tolerance_constant_replaces_the_bundle_with_the_new_evidence(self) -> None:
+        skills, hw = self.project("constant")
+        _, first, _ = self.run_version(skills, hw)
+        self.assertEqual(first["detail"]["interfaces"]["IF-006"]["contact_tolerance"]["mm"], 0.15)
+        script = skills / "cad-analysis" / "scripts" / "stop_reaction.py"
+        script.write_text(script.read_text(encoding="utf-8").replace("STOP_CONTACT_TOLERANCE_MM = 0.15", "STOP_CONTACT_TOLERANCE_MM = 0.05"),
+                          encoding="utf-8")
+        code, replaced, _ = self.run_version(skills, hw, "--replace")
+        self.assertEqual((code, replaced["reused"]), (0, False))
+        self.assertEqual(replaced["detail"]["interfaces"]["IF-006"]["contact_tolerance"]["mm"], 0.05)
+
+    def test_an_edit_to_a_fit_table_value_replaces_the_bundle(self) -> None:
+        skills, hw = self.project("table", limits=self.FIT)
+        _, first, _ = self.run_version(skills, hw)
+        self.assertAlmostEqual(first["detail"]["interfaces"]["IF-006"]["contact_tolerance"]["mm"], 0.37, places=6)
+        table = skills / "cad-fits" / "data" / "iso286.json"
+        data = json.loads(table.read_text(encoding="utf-8"))
+        data["shaft_es"]["c"][4] = -100  # the 18 to 30 mm band: c11 clearance falls from 0.370 to 0.360 mm
+        table.write_text(json.dumps(data), encoding="utf-8")
+        code, _, error = self.run_version(skills, hw)
+        self.assertEqual(code, 2, "the fit table changed, so the old bundle is a conflict and is not reused: " + error)
+        code, replaced, _ = self.run_version(skills, hw, "--replace")
+        self.assertEqual((code, replaced["reused"]), (0, False))
+        self.assertAlmostEqual(replaced["detail"]["interfaces"]["IF-006"]["contact_tolerance"]["mm"], 0.36, places=6)
 
 
 if __name__ == "__main__":
