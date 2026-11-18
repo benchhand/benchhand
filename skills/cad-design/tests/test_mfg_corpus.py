@@ -70,7 +70,7 @@ class RateTests(unittest.TestCase):
             raise corpus.Rejected("packet.invalid: it gives an obligation two outcomes")
 
         row = self.rows(corpus.Pair("a", "d", refused), pair("b", "fail"))
-        self.assertEqual((row["errors"], row["detected"], row["missed"]), (1, 1, 0))
+        self.assertEqual((row["errors"], row["ran"], row["detected"], row["missed"]), (1, 1, 1, 0))
         self.assertIn("two outcomes", row["results"][0]["error"])
 
     def test_a_known_gap_is_a_miss_whatever_the_mutant_returns_and_its_twin_still_counts(self) -> None:
@@ -525,7 +525,8 @@ class CaseErrorTests(unittest.TestCase):
 
     STDERR = "Traceback ...\nRecordError: v1 records are refused"
 
-    def rates(self, *pairs: corpus.Pair, check_baseline: bool = False, tolerance: bool = False) -> tuple[int, str]:
+    def rates(self, *pairs: corpus.Pair, check_baseline: bool = False, tolerance: bool = False,
+              matching: dict | None = None) -> tuple[int, str]:
         import contextlib
         import io
 
@@ -541,6 +542,8 @@ class CaseErrorTests(unittest.TestCase):
                 "FAMILY = Family('fam', 'chk', test_mfg_corpus_pairs.PAIRS)\n", encoding="utf-8")
             if tolerance:  # a baseline that tolerates anything
                 write_baseline(baseline, "fam", detection=0.0, false_positive=1.0, ran=0)
+            if matching is not None:  # a baseline equal to the rates of the pairs that ran cleanly
+                write_baseline(baseline, "fam", **matching)
             argv = ["--families-dir", str(families), "--baseline-dir", str(baseline), "--out", str(Path(tmp) / "o.json")]
             out = io.StringIO()
             with mock.patch.dict(sys.modules, {"test_mfg_corpus_pairs": mock.Mock(PAIRS=pairs)}), contextlib.redirect_stdout(out):
@@ -560,6 +563,22 @@ class CaseErrorTests(unittest.TestCase):
                 return _oracles.verdict({"id": ident, "mutant": is_mutant}, None)
 
         return corpus.Pair(ident, "d", run)
+
+    def test_an_error_beside_clean_pairs_fails_a_baseline_run_that_matches_the_clean_rates_exactly(self) -> None:
+        """The partial failure of issue #187: the surviving pairs meet their baseline, so only the error can fail the run."""
+        matching = {"detection": 1.0, "false_positive": 0.0, "ran": 1}
+        for label, broken in (("packet-level", corpus.Pair("broken", "d", crashing)),
+                              ("oracle", self.oracle_pair("broken", 2))):
+            with self.subTest(case=label):
+                code, text = self.rates(pair("fine", "fail"), broken, check_baseline=True, matching=matching)
+                self.assertEqual(code, 1, text)
+                self.assertIn("error: fam/broken:", text)
+                self.assertNotIn("baseline:", text)
+
+    def test_a_clean_family_that_matches_its_baseline_exactly_exits_zero(self) -> None:
+        code, text = self.rates(pair("fine", "fail"), check_baseline=True, matching={"detection": 1.0, "false_positive": 0.0, "ran": 1})
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("baseline:", text)
 
     def test_a_mutant_whose_run_errors_fails_rates_and_names_the_case(self) -> None:
         for check_baseline in (False, True):
@@ -601,14 +620,6 @@ class CaseErrorTests(unittest.TestCase):
         self.assertEqual(code, 1, text)
         self.assertIn("error: fam/setup: ValueError: the corpus record is invalid", text)
 
-    def test_a_refused_packet_is_an_error_with_its_reason(self) -> None:
-        def run(is_mutant: bool) -> str:
-            raise corpus.Rejected("schema: packet does not match")
-
-        row = corpus.evaluate([corpus.Family("f", "c", (corpus.Pair("a", "d", run), pair("b", "fail")))])[0]
-        self.assertEqual((row["errors"], row["ran"], row["detected"], row["missed"]), (1, 1, 1, 0))
-        self.assertIn("Rejected: schema: packet does not match", row["results"][0]["error"])
-
     def test_an_oracle_case_whose_driver_exits_non_zero_is_an_error_with_command_and_stderr(self) -> None:
         for check_baseline in (False, True):
             with self.subTest(check_baseline=check_baseline):
@@ -629,6 +640,7 @@ class CaseErrorTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertNotIn("error:", text)
 
+    @unittest.skipUnless(DEPS and shutil.which("uv"), "pyyaml, jsonschema and uv are required")
     def test_a_packet_level_command_failure_names_the_command_and_the_stderr_tail(self) -> None:
         import support
 
@@ -676,6 +688,14 @@ class NativeExitCodeTests(unittest.TestCase):
         row = self.verdict_row(0, -9, manifest=True)
         self.assertEqual((row["errors"], row["abstained"], row["missed"]), (1, 0, 0))
         self.assertIn("cad_model check exited -9", row["results"][0]["error"])
+
+    def test_a_check_that_leaves_no_packet_is_an_error_naming_the_command_and_the_file(self) -> None:
+        row = self.verdict_row(0, 0, manifest=True)
+        self.assertEqual((row["errors"], row["abstained"], row["missed"], row["ran"]), (1, 0, 0, 0))
+        error = row["results"][0]["error"]
+        self.assertIn("cad_model check exited 0", error)
+        self.assertIn("cad_model.py check v1 --hw", error)
+        self.assertIn("checks/v1/cad/result.json", error)
 
     def test_a_build_that_refuses_the_part_with_exit_1_and_no_version_is_unevidenced_not_an_error(self) -> None:
         row = self.verdict_row(1, 0, manifest=False)

@@ -304,6 +304,10 @@ def readback_verdict(model_source: str, *, refusal_is_a_verdict: bool) -> Outcom
         if check.returncode not in (0, 1):
             raise command_failed("cad_model check", check.args, check.returncode, check.stdout + check.stderr)
         sha = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        packet = hw / "checks" / "v1" / "cad" / "result.json"
+        if not packet.is_file():  # a version exists, so a check that left no packet is a failed run and not an unevidenced obligation
+            raise RuntimeError(f"cad_model check exited {check.returncode} (`{' '.join(check.args)}`) but left no packet at "
+                               f"hw/checks/v1/cad/result.json: {(check.stdout + check.stderr)[-1500:]}")
         found, findings = _evidence().collect_packets(hw, "v1", sha)
         if findings:
             raise Rejected("evidence: " + "; ".join(f.message for f in findings))
