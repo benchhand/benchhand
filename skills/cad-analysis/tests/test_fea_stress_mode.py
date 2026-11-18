@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -346,8 +347,11 @@ class UnreadableResults(StressCase):
     """Results the study cannot read give UNKNOWN with a named reason: never a crash and never a number."""
 
     def assert_unknown(self, plan: list[dict[str, Any]], reason: str, fragment: str) -> dict[str, Any]:
-        # --replace: a subtest repeats the case with other bytes, and a published bundle of the same recipe is reused.
-        status, report = self.run_stress(plan, replace=True)
+        # A subtest repeats the case with other bytes. The recipe does not change, so a published bundle would be
+        # reused and the solve skipped: remove what an earlier subtest published.
+        for published in ("analysis", "checks"):
+            shutil.rmtree(self.hw / published / "v1", ignore_errors=True)
+        status, report = self.run_stress(plan)
         self.assertEqual(status, 0, report)
         found = report["stress_study"]
         self.assertEqual((found["outcome"], found["reasons"]), ("unknown", [reason]))
