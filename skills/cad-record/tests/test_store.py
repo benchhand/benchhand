@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The content-addressed store under hw/.cad/cache/, and layout's input_key, code_shas and tool_versions."""
 
 from __future__ import annotations

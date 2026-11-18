@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The content-addressed store of cached outputs under hw/.cad/cache/, which holds each byte sequence once.
 
 Objects (cad-record layout `cache.part_objects`, `hw/.cad/cache/objects/<sha256>`) are the bytes of cached files,
