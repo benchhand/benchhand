@@ -217,5 +217,5 @@ def _box_corners(face: Any) -> list[Vec]:
 
     box = Bnd_Box()
     BRepBndLib.Add_s(face, box)
-    x0, y0, z0, x1, y1, z1 = box.Get()
-    return [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+    low, high = box.CornerMin(), box.CornerMax()
+    return [(x, y, z) for x in (low.X(), high.X()) for y in (low.Y(), high.Y()) for z in (low.Z(), high.Z())]

@@ -146,16 +146,6 @@ def plane_of(face: Any) -> tuple[Vec, Vec] | None:
     return xyz(plane.Location()), normal
 
 
-def separation(first: Any, second: Any) -> float:
-    """The minimum distance in mm between two shapes."""
-    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
-
-    extrema = BRepExtrema_DistShapeShape(first, second)
-    if not extrema.IsDone():
-        raise pose.MotionError("distance computation failed")
-    return float(extrema.Value())
-
-
 def overlap(fixed_face: Any, moving_face: Any) -> list[Any]:
     """The faces of the Boolean common of two coplanar faces."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
@@ -171,10 +161,9 @@ def overlap(fixed_face: Any, moving_face: Any) -> list[Any]:
     return [face for face in extrema.faces(common.Shape()) if face_area(face) > MIN_AREA_MM2]
 
 
-def overlap_of(moving: Any, fixed: Any) -> tuple[float, float]:
-    """(volume in mm3, depth in mm) of the volume the two parts share, or (0, 0) when they only touch. Overlap is a
-    shared volume above pose.INTERFERENCE_MM3, the rule cad-motion's sweep and cad-model check use. The depth is that
-    of the deepest connected piece (see `thinnest`)."""
+def overlap_depth(moving: Any, fixed: Any) -> float:
+    """The depth in mm of the volume the two parts share: that of the deepest connected piece (see `thinnest`). The
+    caller has found a shared volume above pose.INTERFERENCE_MM3, the rule cad-motion's sweep and cad-model check use."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
 
     common = BRepAlgoAPI_Common()
@@ -186,10 +175,7 @@ def overlap_of(moving: Any, fixed: Any) -> tuple[float, float]:
     if not common.IsDone():
         raise pose.MotionError("overlap computation failed")
     shared = common.Shape()
-    volume = float(pose.volume_properties(shared).Mass())
-    if volume <= pose.INTERFERENCE_MM3:
-        return 0.0, 0.0
-    return volume, max(thinnest(piece) for piece in extrema.solids(shared) or [shared])
+    return max(thinnest(piece) for piece in extrema.solids(shared) or [shared])
 
 
 def thinnest(piece: Any) -> float:
@@ -379,11 +365,13 @@ def assess_end(chain: Any, definitions: Mapping[str, Any], pivot: Pivot, label: 
     the reverse."""
     value = pivot.joint.min if label == "min" else pivot.joint.max
     geometry = end_geometry(chain, definitions, pivot, value)
-    gap = separation(geometry["moving"], geometry["fixed"])
+    # pose.interference is containment-aware: its distance is 0 for a part wholly inside one solid of a compound, and
+    # it takes the shared volume whenever the distance is within pose.OVERLAP_GATE_MM.
+    gap, shared = pose.interference(geometry["moving"], geometry["fixed"])
     contact = gap <= tolerance + STOP_CONTACT_EPSILON_MM
     patch, volume, depth = None, 0.0, 0.0
-    if gap <= CONTACT_MM:
-        volume, depth = overlap_of(geometry["moving"], geometry["fixed"])
+    if shared > pose.INTERFERENCE_MM3:
+        volume, depth = shared, overlap_depth(geometry["moving"], geometry["fixed"])
     if contact:
         faces_in_contact = contact_faces(geometry["fixed"], geometry["moving"], tolerance)
         patch = patch_of(faces_in_contact, geometry["origin"], geometry["axis"], 1.0 if label == "min" else -1.0)

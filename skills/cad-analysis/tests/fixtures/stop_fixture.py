@@ -27,6 +27,19 @@ VARIANT changes one thing:
   disk3  the same disc centered at x 13, so its rim is nearest the axis line at x 3, at the rim point (3, 2)
   round  the lever ends in a cylinder of radius 10 centered at x 70, so its farthest point from the axis, at x 80,
          is on an arc between sampled points
+  pieces two separate overlaps of the lever at 0 deg, of different depths. The latched block's top is at z -2.5, so
+         the lever's underside (z -3) enters it over x 7..13, y -4..4, z -3..-2.5: depth 0.5 mm, volume 24 mm3. A side
+         block at x 30..40, y 2.5..10 cuts the lever's side face over x 30..40, y 2.5..4, z -3..3: depth 1.5 mm
+         (its thinnest side), volume 90 mm3. The deepest piece (1.5 mm) differs from the shallowest (0.5 mm) and from
+         the pieces taken together: their thinnest planar width is the lever's thickness, 6 mm.
+  curved a sphere of radius 5 (the moving part, centered at (40, 0, 0)) pushed 3 mm into a cylinder of radius 10 (the
+         bracket, axis along Y through (40, y, -12), y -30..30): the sphere's lowest point is at z -5 and the cylinder's
+         top at z -2. The overlap is a sphere cap under the cylinder's surface, with spherical and cylindrical faces
+         and no planar face. Its thinnest width is the 3 mm along z.
+  contained a bracket that is a compound of two separate solids: a block x -20..120, y -20..20, z -20..110, which
+         holds the whole lever at 0 and at 75 deg, and a small block far away. The lever is wholly inside one solid
+         of the compound, 16 mm from its nearest face, so the boundary distance is large while the shared volume is
+         the lever's own 80 * 8 * 6 = 3840 mm3.
 
 The disc variants have no open stop and no post. They model a round latched stop on its own. At d7e4c0bf they still
 carried the open-stop block, and the lever's extension to x -2 ran into it at 20 deg: the probe reported an overlap
@@ -106,8 +119,35 @@ def fused(*shapes):
     return BRepBuilderAPI_Copy(result).Shape()
 
 
+def compound(*shapes):
+    """The shapes as one compound, unfused: separate solids that stay separate."""
+    from OCP.TopoDS import TopoDS_Builder, TopoDS_Compound
+
+    result, builder = TopoDS_Compound(), TopoDS_Builder()
+    builder.MakeCompound(result)
+    for shape in shapes:
+        builder.Add(result, shape)
+    return result
+
+
+def sphere_into_cylinder() -> dict[str, object]:
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+    cylinder_ = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(40, -30, -12), gp_Dir(0, 1, 0)), 10, 60).Shape()
+    return {"TST-0301": cylinder_, "TST-0302": BRepPrimAPI_MakeSphere(gp_Pnt(40, 0, 0), 5).Shape()}
+
+
 def shapes(latched_gap: float = 0.0, variant: str = "") -> dict[str, object]:
+    if variant == "curved":
+        return sphere_into_cylinder()
+    if variant == "contained":
+        return {"TST-0301": compound(box(-20, -20, -20, 120, 20, 110), box(200, 200, 200, 210, 210, 210)),
+                "TST-0302": box(0, -4, -3, 80, 4, 3)}
     base = box(-30, -14, -16, 30, 14, -8)
+    if variant == "pieces":
+        return {"TST-0301": fused(base, box(7, -4, -8, 13, 4, -2.5), box(30, 2.5, -8, 40, 10, 10)),
+                "TST-0302": box(0, -4, -3, 80, 4, 3)}
     discs = variant in ("disk", "disk3")
     if discs:
         latched_stop = cylinder(10 if variant == "disk" else 13, 2, -8, "z", 10, 5 - latched_gap)

@@ -390,6 +390,61 @@ class StopGeometryTests(unittest.TestCase):
         self.assertLessEqual(reach, 80.0 + 1e-6)
         self.assertEqual(self.latched_end(result)["reaction"]["status"], "bounded")
 
+    def test_two_separate_overlaps_report_the_deeper_one(self) -> None:
+        # By hand, at 0 deg, the lever is x 0..80, y -4..4, z -3..3. Piece 1: the latched block's top is z -2.5, so the
+        # lever's underside enters it over x 7..13, y -4..4, z -3..-2.5. Its sides are 6, 8 and 0.5 mm, so its thinnest
+        # width is 0.5 mm and its volume 6 * 8 * 0.5 = 24 mm3. Piece 2: a side block at x 30..40, y 2.5..10 cuts the
+        # lever's side face over x 30..40, y 2.5..4, z -3..3. Its sides are 10, 1.5 and 6 mm, so its thinnest width is
+        # 1.5 mm and its volume 10 * 1.5 * 6 = 90 mm3. The deepest piece is 1.5 mm. The shallowest would give 0.5 mm.
+        # Both pieces taken together span z -3..3 (6 mm), y -4..4 (8 mm) and x 7..40 (33 mm), so their thinnest
+        # planar width is 6 mm. The depth is the deepest piece's 1.5 mm, and the total volume 24 + 90 = 114 mm3.
+        code, result = self.run_stop("pieces", variant="pieces")
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertIn("overlap by 1.5 mm at the min limit (0 deg): a design defect", row["uncertainty"])
+        ends = result["detail"]["interfaces"]["IF-006"]["ends"]
+        self.assertAlmostEqual(ends["min"]["overlap_depth_mm"], 1.5, places=9)
+        self.assertAlmostEqual(ends["min"]["overlap_volume_mm3"], 114.0, places=6)
+        self.assertEqual(ends["max"]["overlap_volume_mm3"], 0.0)
+
+    def test_a_fully_curved_overlap_reports_its_thinnest_width(self) -> None:
+        # By hand: a sphere of radius 5 centered at (40, 0, 0) and a cylinder of radius 10 with its axis along Y
+        # through (40, y, -12). The sphere's lowest point is z = -5 and the cylinder's top is z = -12 + 10 = -2, so the
+        # sphere pushes 3 mm into the cylinder along z. The overlap is a sphere cap under the cylinder's surface, with
+        # spherical and cylindrical faces and no planar face. Its thinnest width is that 3 mm. Its other extents are
+        # about 9 mm (a chord of the sphere at 2 mm from its center is 2 * sqrt(25 - 4) = 9.2 mm). The volume is below
+        # that of the cap cut by the plane z = -2: pi * 3^2 * (3 * 5 - 3) / 3 = 113.1 mm3. The depth comes from the
+        # smallest side of an oriented box round the overlap. The box encloses it, so that side is at least 3 mm, and
+        # for a cap whose axes match the box it stays within 10% of the width, so the bound checked is 3.0 to 3.3 mm.
+        code, result = self.run_stop("curved", variant="curved")
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertIn("a design defect, not a stop", row["uncertainty"])
+        end = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]
+        self.assertGreaterEqual(end["overlap_depth_mm"], 3.0 - 1e-6)
+        self.assertLessEqual(end["overlap_depth_mm"], 3.3)
+        self.assertTrue(50.0 < end["overlap_volume_mm3"] < 113.2, end["overlap_volume_mm3"])
+        # The sphere moves, and a sphere is no plane, cylinder or cone, so the corners of its bounding box give its
+        # reach bound. Its true farthest point from the Y axis is 40 + 5 = 45 mm out. The box x 35..45, y -5..5, z -5..5
+        # has corners sqrt(45^2 + 5^2) = 45.277 mm from the axis. The bound is at least 45 and here at most 45.28.
+        self.assertGreaterEqual(end["farthest_point_from_axis_mm"], 45.0)
+        self.assertLessEqual(end["farthest_point_from_axis_mm"], 45.28)
+
+    def test_a_part_wholly_inside_one_solid_of_a_compound_is_an_overlap_defect(self) -> None:
+        # By hand: the bracket is a compound of a block x -20..120, y -20..20, z -20..110 and a small block far away.
+        # The lever (x 0..80, y -4..4, z -3..3 at 0 deg) sits inside the large block, 16 mm from its nearest face
+        # (y: 20 - 4), and at 75 deg its farthest corner is at x 23.6, z 78.1, still inside. A boundary distance
+        # of 16 mm is far above the tolerance, so a distance that ignores containment calls the limit clear. The shared
+        # volume is the lever's own 80 * 8 * 6 = 3840 mm3, and its thinnest planar width is its 6 mm thickness.
+        code, result = self.run_stop("contained", variant="contained")
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertIn("overlap by 6 mm at the min limit (0 deg) and at the max limit (75 deg): a design defect", row["uncertainty"])
+        ends = result["detail"]["interfaces"]["IF-006"]["ends"]
+        for label in ("min", "max"):
+            self.assertAlmostEqual(ends[label]["overlap_volume_mm3"], 3840.0, places=2)
+            self.assertAlmostEqual(ends[label]["overlap_depth_mm"], 6.0, places=6)
+
 
 class VersionedPublicationTests(unittest.TestCase):
     """stop_reaction.py on a sealed version: an unchanged rerun finds the published bundle and reuses it, and
