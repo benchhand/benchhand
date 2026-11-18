@@ -895,14 +895,15 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
     if part is not None and configuration.get("part_rev") not in (None, part.raw.get("rev")):
         return "stale", (f"{ident} is evidence of revision {configuration.get('part_rev')}, not {part.raw.get('rev')}",), findings
     recorded = _mapping(entry.get("fingerprints"))
+    current = impact.fingerprints(record, subject, geometry)
     domains = _REQUIRED_DOMAINS[_subject_kind(record, subject)]
     required = domains.get(level, frozenset()) if isinstance(level, str) else frozenset()
-    missing = sorted((required | {"appearance"} if impact.depends_on_appearance(entry) else required) - set(recorded))
+    missing = sorted((required | set(impact.unrecorded_domains(entry, current))) - set(recorded))
     if missing:
         findings.append(Finding("evidence.unqualified", path, f"{ident} ({level} {result}) records no fingerprint of "
-                                f"{', '.join(missing)}: the evidence is not tied to what it relied on"))
+                                f"{', '.join(missing)}: the evidence is not tied to what it relied on; recheck it"))
         return "unknown", (f"{ident} is unqualified",), findings
-    changed = impact.evidence_staleness(entry, impact.fingerprints(record, subject, geometry))
+    changed = impact.evidence_staleness(entry, current)
     if changed:
         return "stale", (f"{ident} relied on {', '.join(changed)} that changed",), findings
     claimed = {a.get("path"): a.get("sha256") for a in entry.get("artifacts") or () if isinstance(a, Mapping)}

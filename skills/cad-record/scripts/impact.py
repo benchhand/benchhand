@@ -416,22 +416,30 @@ def stale_obligations(obligations: Iterable[Any], changed: Mapping[str, Iterable
     return stale
 
 
-def depends_on_appearance(entry: Mapping[str, Any]) -> bool:
-    """Whether accepted evidence `entry` is of a check family that names the appearance domain in FAMILY_DOMAINS,
-    by the family of its obligation id. Evidence of any other family ignores a color change."""
+def declared_domains(entry: Mapping[str, Any]) -> frozenset[str]:
+    """The fingerprint domains the check family of the evidence `entry`'s obligation declares in FAMILY_DOMAINS;
+    none for an entry without an obligation."""
     obligation = entry.get("obligation")
-    return isinstance(obligation, str) and "appearance" in family_domains(obligation.split("@", 1)[0])
+    return family_domains(obligation.split("@", 1)[0]) if isinstance(obligation, str) else frozenset()
+
+
+def unrecorded_domains(entry: Mapping[str, Any], current: Mapping[str, str]) -> tuple[str, ...]:
+    """The domains the entry's family declares and the subject has (`current`) that the entry records no fingerprint of."""
+    recorded = entry.get("fingerprints")
+    declared = declared_domains(entry)
+    return tuple(d for d in DOMAINS if d in declared and d in current and not (isinstance(recorded, Mapping) and d in recorded))
 
 
 def evidence_staleness(entry: Mapping[str, Any], current: Mapping[str, str]) -> tuple[str, ...]:
     """The fingerprint domains in which accepted evidence `entry` no longer matches the current subject
-    `current`: each recorded domain that differs, or ("unrecorded",) when it records none. The appearance
-    domain counts only for evidence of a family that depends on it (depends_on_appearance)."""
+    `current`: each recorded domain that differs, each declared domain it records no fingerprint of, or
+    ("unrecorded",) when it records none. The appearance domain counts only for a family that declares it."""
     recorded = entry.get("fingerprints")
     if not isinstance(recorded, Mapping) or not recorded:
         return ("unrecorded",)
-    appearance = depends_on_appearance(entry)
-    return tuple(d for d in DOMAINS if (d != "appearance" or appearance) and d in recorded and recorded[d] != current.get(d))
+    declared, missing = declared_domains(entry), unrecorded_domains(entry, current)
+    return tuple(d for d in DOMAINS if d in missing or ((d != "appearance" or d in declared)
+                                                        and d in recorded and recorded[d] != current.get(d)))
 
 
 def _stage_min(stages: Iterable[str]) -> str | None:

@@ -245,6 +245,30 @@ class StaleEvidence(unittest.TestCase):
         self.assertEqual(assess(normalized(self.docs, [control])).statuses[STRENGTH].result, "pass",
                          "a family without appearance needs no appearance fingerprint")
 
+    def test_evidence_that_omits_a_domain_its_family_declares_is_not_accepted(self) -> None:
+        declared = impact.family_domains("engineering.strength")
+        omitted = tuple(d for d in impact.DOMAINS if d in declared and d not in ("orientation", "finish", "lot"))
+        entry = acceptance.entry(self.base, "EV-005", {"PN": "TST-0001"}, "simulation_supported", obligation=STRENGTH,
+                                 version="v1", manifest_sha256=V1, domains=omitted)
+        result = assess(normalized(self.docs, [entry]))
+        self.assertEqual(result.statuses[STRENGTH].result, "unknown")
+        found = [f for f in result.findings if f.code == "evidence.unqualified"]
+        self.assertEqual(len(found), 1)
+        self.assertIn("finish, orientation", found[0].message)
+        self.assertIn("recheck", found[0].message)
+
+    def test_evidence_that_records_every_domain_its_family_declares_is_accepted(self) -> None:
+        declared = impact.family_domains("engineering.strength")
+        entry = acceptance.entry(self.base, "EV-005", {"PN": "TST-0001"}, "simulation_supported", obligation=STRENGTH,
+                                 version="v1", manifest_sha256=V1, domains=tuple(d for d in impact.DOMAINS if d in declared))
+        self.assertEqual(assess(normalized(self.docs, [entry])).statuses[STRENGTH].result, "pass")
+
+    def test_evidence_without_an_obligation_needs_no_family_domains(self) -> None:
+        domains = tuple(d for d in impact.DOMAINS if d not in ("orientation", "finish", "appearance", "lot"))
+        entry = self.simulation(domains=domains)
+        self.assertNotIn("obligation", entry)
+        self.assertEqual(assess(normalized(self.docs, [entry])).statuses[SIMULATION].result, "pass")
+
     def test_evidence_that_records_no_fingerprint_of_its_dependencies_is_unqualified(self) -> None:
         result = assess(normalized(self.docs, [self.simulation(domains=("use_case",))]))
         self.assertEqual(result.statuses[SIMULATION].result, "unknown")
