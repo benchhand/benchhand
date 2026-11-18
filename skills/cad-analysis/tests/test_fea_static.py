@@ -951,10 +951,10 @@ if flag is not None:
         holds a design reaction of `design_n`. The $CCX stand-in records every call. The real FreeCAD does the rest."""
         reaction = load_reaction_project()
         scenario = reaction.Scenario(self)
-        step = self.make_cantilever_step(root)
+        step = self.make_cantilever_step(root, "TST-0101 Beam")
         shutil.copyfile(step, scenario.case_dir / "beam.step")
-        scenario.case.write_text("step: beam.step\n" + CANTILEVER_TAIL.replace("force: [0, 0, -50]}",
-                                                                            "force: [0, 0, -50], reaction: IF-006}"), encoding="utf-8")
+        scenario.case.write_text("step: beam.step\n" + CANTILEVER_VERSIONED_TAIL.replace("force: [0, 0, -50]}",
+                                                                                      "force: [0, 0, -50], reaction: IF-006}"), encoding="utf-8")
         scenario.publish({"IF-006": reaction.entry(ends={"min": reaction.end("bounded", design_n)})})
         ccx = self.stand_in(root, "ccx", "pass")
         with patch.dict(os.environ, {"CCX": str(ccx)}):

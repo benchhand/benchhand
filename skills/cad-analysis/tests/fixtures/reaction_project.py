@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -40,7 +41,9 @@ LAYOUT = load_by_path("cad_record_layout", SKILLS / "cad-record" / "scripts" / "
 CHECK_PACKET = load_by_path("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
 INTENT = load_by_path("cad_record_manufacturing_intent", SKILLS / "cad-record" / "scripts" / "manufacturing_intent.py")
 
-CASE_TAIL = """material: {name: Aluminium 6061, E: 69000, nu: 0.33, density: 2700, yield: 276}
+# A versioned case takes its material from the part's profile in the version's record snapshot (record version 2).
+CASE_TAIL = """part: TST-0101
+material: {conditions: {conditioning: dry, temperature: {value: 23, units: deg_C}}}
 fixed_faces: {plane: {axis: y, value: 50, tolerance: 0.000001}}
 loads:
   - selector: {plane: {axis: y, value: 150, tolerance: 0.000001}}
@@ -102,8 +105,14 @@ class Scenario:
         self.version = self.hw / "versions" / "v1"
         record = self.version / "record"
         record.mkdir(parents=True)
-        for name in ("product.yaml", "interfaces.yaml", "assembly.yaml"):
-            (record / name).write_text("{}\n", encoding="utf-8")
+        import test_fea_conditions as sourced  # the record version 2 fixture of the sourced-material tests
+
+        documents = sourced.documents()
+        sourced.fx.write_record(self.hw, documents)
+        for name in documents:
+            if not name.startswith("_") and (self.hw / name).is_file():
+                (record / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(self.hw / name, record / name)
         self.seal()
 
     def name_limit(self, limit: str) -> None:
