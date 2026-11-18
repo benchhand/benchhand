@@ -124,6 +124,12 @@ class Fingerprints(unittest.TestCase):
         stated = impact.plain(mi.Source.from_data(fx.source("datasheet", "TST guide", locator="table 2")))
         self.assertEqual(stated["locator"], "table 2")
 
+    def test_a_locator_with_a_value_changes_the_fingerprint(self) -> None:
+        plain = mi.Source.from_data(fx.source("datasheet", "TST guide"))
+        located = mi.Source.from_data(fx.source("datasheet", "TST guide", locator="table 2"))
+        moved = mi.Source.from_data(fx.source("datasheet", "TST guide", locator="table 3"))
+        self.assertEqual(len({impact.digest(plain), impact.digest(located), impact.digest(moved)}), 3)
+
 
 class PacketKeys(unittest.TestCase):
     def test_a_resolved_set_has_a_dependency_key_the_check_result_schema_accepts(self) -> None:

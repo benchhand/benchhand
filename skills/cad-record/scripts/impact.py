@@ -672,7 +672,7 @@ def read_inputs(directory: Path, ledgers_from: Path | None = None) -> tuple[dict
         current, _ = mi.read_documents(ledgers_from)
         documents = {rel: data for rel, data in documents.items() if rel not in LEDGERS}
         documents.update({rel: current[rel] for rel in LEDGERS if rel in current})
-    return documents, mi.normalize_record(documents)
+    return documents, mi.with_guidelines(mi.normalize_record(documents), directory, snapshot=ledgers_from is not None)
 
 
 def read_record(directory: Path, ledgers_from: Path | None = None) -> Any:

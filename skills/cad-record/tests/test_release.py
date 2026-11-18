@@ -234,6 +234,24 @@ class Release(ReleaseCase):
         hw = self.project()
         self.assertEqual(validate.blocking(validate.validate_project(hw)), [])
 
+    def test_a_shipped_guideline_copy_in_the_snapshot_is_not_a_removed_file(self) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415 - used by this test only
+
+        hw = self.project()
+        record = hw / "versions" / "v1" / "record"
+        manifest = json.loads((hw / "versions" / "v1" / "manifest.json").read_text(encoding="utf-8"))
+        copy = record / "manufacturing" / "guidelines" / "shipped--pa.yaml"
+        write(copy, "schema_version: 1\n")
+        manifest["files"]["record/manufacturing/guidelines/shipped--pa.yaml"] = release.sha256(copy)
+        refused: list[tuple[str, str, str]] = []
+        fake = SimpleNamespace(hw=hw, version="v1", checks={}, refuse=lambda path, kind, message: refused.append((path, kind, message)))
+        release.check_record(fake, record, manifest)
+        self.assertEqual(refused, [])
+        write(record / "manufacturing" / "other.yaml", "a: 1\n")
+        manifest["files"]["record/manufacturing/other.yaml"] = release.sha256(record / "manufacturing" / "other.yaml")
+        release.check_record(fake, record, manifest)
+        self.assertEqual([r[0] for r in refused], ["hw/manufacturing/other.yaml"], "any other removed file still refuses")
+
     def test_a_complete_frozen_record_releases_a_verified_package(self) -> None:
         hw = self.project()
         result = subprocess.run([sys.executable, str(RELEASE), str(hw), "--rev", "A", "--version", "v1",

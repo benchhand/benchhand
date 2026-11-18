@@ -249,6 +249,12 @@ class LayoutData(TempProject):
             layout.manufacture_policy({**printed, "process": "other"})
         self.assertTrue(issubclass(layout.UnsupportedProcess, layout.LayoutError), "existing callers still catch it")
 
+    def test_snapshot_names_include_the_project_guideline_sets(self) -> None:
+        for rel in ("product.yaml", "manufacturing/guidelines/generic.yaml", "manufacturing/guidelines/nested/pa.yaml"):
+            write(self.hw / rel)
+        self.assertEqual(layout.snapshot_names(self.hw, []), [
+            "manufacturing/guidelines/generic.yaml", "manufacturing/guidelines/nested/pa.yaml", "product.yaml"])
+
     def test_snapshot_names_follow_the_version_record_entry(self) -> None:
         for rel in ("product.yaml", "requirements.yaml", "interfaces.yaml", "assembly.yaml", "parts/LMP-0001/part.yaml",
                     "parts/LMP-0002/part.yaml", "manufacturing/capabilities.yaml", "manufacturing/materials.yaml",

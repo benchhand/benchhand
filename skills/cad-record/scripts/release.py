@@ -83,6 +83,7 @@ yaml_loader = validate.yaml_loader
 MANIFEST = layout.MANIFEST
 SCHEMA_VERSION = 3
 WORKFLOW_KEYS = {"product.yaml": ("flow",)}  # workflow state; advancing it is not a design change
+SHIPPED_COPIES = "manufacturing/guidelines/shipped--"  # guidelines.SHIPPED_COPY under PROJECT_RELATIVE
 EVIDENCE_PATH = re.compile(r"hw/[^\s,;()\"'<>]+")  # a project-relative path inside a verification evidence cell
 evidence = validate.evidence
 intent = validate.intent
@@ -186,6 +187,8 @@ def check_record(release: Release, record: Path, manifest: dict[str, Any]) -> No
     for name in sorted(current - set(snapshot)):
         release.refuse(f"hw/{name}", "changed", f"hw/{name} is new since {version} was frozen")
     for name in sorted(set(snapshot) - current):
+        if name.startswith(SHIPPED_COPIES):  # a shipped guideline set copied in when the version was built; hw/ holds no such file
+            continue
         release.refuse(f"hw/{name}", "changed", f"hw/{name} was removed after {version} was frozen")
     for name in sorted(current & set(snapshot)):
         if _structured(name):

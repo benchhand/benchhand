@@ -62,6 +62,7 @@ SCHEMAS = SKILL / "schemas"
 SCHEMA = "manufacturing-guideline.schema.json"
 SHIPPED = SKILL / "assets" / "manufacturing" / "guidelines"
 DEFAULT_SHIPPED = SHIPPED  # SHIPPED is the directory discover reads; tests point it elsewhere
+SHIPPED_COPY = "shipped--"  # file-name prefix of a shipped set copied into a version's record/
 PROJECT_RELATIVE = Path("manufacturing") / "guidelines"
 CALIBRATED_KINDS = frozenset(("calibration", "test", "supplier"))
 NUMERIC = frozenset((">=", "<=", "between"))
@@ -108,6 +109,7 @@ class Guideline:
     path: str  # as discovered: relative to hw/ for the project, relative to the skill for the shipped sets
     origin: str  # project or shipped
     sha256: str
+    file: Path | None = None  # where the file is on disk, so a build can copy its bytes
 
     @property
     def ref(self) -> str:
@@ -212,7 +214,7 @@ def _read(path: Path, shown: str, origin: str) -> tuple[Guideline | None, Refusa
         return None, Refusal(shown, ident, tuple(problems))
     return Guideline(data["id"], data["revision"], data["title"], tuple(data.get("extends", ())), bool(data.get("abstract", False)),
                      _freeze(data["scope"]), tuple(_freeze(limit) for limit in data["limits"]), shown, origin,
-                     hashlib.sha256(raw).hexdigest()), None
+                     hashlib.sha256(raw).hexdigest(), path), None
 
 
 def _freeze(value: Any) -> Any:
@@ -249,15 +251,17 @@ def _refuse_key_collisions(winners: dict[str, Guideline]) -> list[Refusal]:
     return refused
 
 
-def discover(hw: Path | None, *, shipped: Path | None = None) -> Catalog:
+def discover(hw: Path | None, *, shipped: Path | None = None, snapshot: bool = False) -> Catalog:
     """The catalog of the project's guideline sets (`hw`/manufacturing/guidelines/, when `hw` is given) over the
     shipped ones (`shipped`, default SHIPPED). No other directory is read. Every file is validated before it loads.
-    Two ids whose packet keys collide (fdm.a.b and fdm.a_b) refuse the later id."""
+    Two ids whose packet keys collide (fdm.a.b and fdm.a_b) refuse the later id. With `snapshot`, `hw` is a version's
+    record/ folder: only its own copies are read, shipped sets included, because a build copied them there."""
     shipped = SHIPPED if shipped is None else shipped
     layers: list[tuple[str, Path, Path]] = []
     if hw is not None:
         layers.append(("project", Path(hw) / PROJECT_RELATIVE, Path(hw)))
-    layers.append(("shipped", Path(shipped), SKILL.parent.parent if Path(shipped) == DEFAULT_SHIPPED else Path(shipped)))
+    if not snapshot:
+        layers.append(("shipped", Path(shipped), SKILL.parent.parent if Path(shipped) == DEFAULT_SHIPPED else Path(shipped)))
     winners: dict[str, Guideline] = {}
     hidden: dict[str, list[Guideline]] = {}
     refused: list[Refusal] = []
@@ -276,6 +280,14 @@ def discover(hw: Path | None, *, shipped: Path | None = None) -> Catalog:
     blocked.update(r.id for r in collisions if r.id is not None)
     shadows = tuple(Shadow(ident, winners[ident], tuple(items)) for ident, items in sorted(hidden.items()) if ident in winners)
     return Catalog(winners, shadows, tuple(refused), frozenset(blocked))
+
+
+def snapshot_files(hw: Path) -> dict[str, bytes]:
+    """The shipped sets a version build must copy beside the project's own (which the layout's `version.record` entry already
+    names): the winning shipped sets, byte for byte, as manufacturing/guidelines/shipped--<file name>. A shipped set that a
+    project set shadows is not copied. A snapshot read then needs no shipped directory."""
+    return {f"{PROJECT_RELATIVE.as_posix()}/{SHIPPED_COPY}{g.file.name}": g.file.read_bytes()
+            for g in sorted(discover(hw).guidelines.values(), key=lambda g: g.id) if g.origin == "shipped" and g.file is not None}
 
 
 def packet_key(ref: str) -> str:
