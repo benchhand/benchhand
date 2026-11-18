@@ -418,7 +418,7 @@ def stale_obligations(obligations: Iterable[Any], changed: Mapping[str, Iterable
 
 def depends_on_appearance(entry: Mapping[str, Any]) -> bool:
     """Whether accepted evidence `entry` is of a check family that names the appearance domain in FAMILY_DOMAINS,
-    by the family of its obligation id. Evidence of any other family ignores a colour change."""
+    by the family of its obligation id. Evidence of any other family ignores a color change."""
     obligation = entry.get("obligation")
     return isinstance(obligation, str) and "appearance" in family_domains(obligation.split("@", 1)[0])
 
