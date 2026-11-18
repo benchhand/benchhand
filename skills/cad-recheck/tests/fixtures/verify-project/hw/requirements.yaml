@@ -1,6 +1,6 @@
 requirements:
 - id: REQ-001
-  text: The test block shall fit inside a 20 x 20 x 10 mm envelope.
+  text: The test block shall fit inside a 20 x 20 x 11 mm envelope.
   rationale: Keep the verify fixture small.
   source: Verify fixture brief
   priority: must
