@@ -1,0 +1,16 @@
+{
+  "version": "ca-individual-nonexclusive-7b15a98-v1",
+  "document": "CLA.md",
+  "signatures_repo": "benchhand/cla-signers",
+  "signatures_branch": "main",
+  "signatures_path": "signatures/v1/cla.json",
+  "allowlist": [
+    "dependabot[bot]",
+    "renovate[bot]",
+    "github-actions[bot]",
+    "sjorsr-release-bot[bot]",
+    "sjorsr-cla-bot[bot]",
+    "srobroek"
+  ],
+  "app_id": 4293783
+}
