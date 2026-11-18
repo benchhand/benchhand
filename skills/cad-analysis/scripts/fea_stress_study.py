@@ -55,7 +55,7 @@ def fallback_level(quality: dict[str, Any]) -> int | None:
     return quality.get("high_order_optimize") if quality.get("rejected") is not None else None
 
 
-_NODE = re.compile(r"\d+")
+_NODE = re.compile(r"[0-9]+")  # ASCII digits: ccx writes no others
 
 
 def boundary_nodes(inp: str) -> tuple[frozenset[int], frozenset[int]]:
@@ -79,9 +79,12 @@ def boundary_nodes(inp: str) -> tuple[frozenset[int], frozenset[int]]:
         if target is None:
             continue
         field = line.split(",")[0].strip()
-        if _NODE.fullmatch(field) is None:
-            raise BoundaryNodesError(f"{line[:40]!r} is not a node record")
-        target.add(int(field))
+        try:
+            if _NODE.fullmatch(field) is None:
+                raise ValueError(field)
+            target.add(int(field))  # int() also refuses a string of more than 4300 digits
+        except ValueError:
+            raise BoundaryNodesError(f"{line[:40]!r} is not a node record") from None
     if not fixed or not load:
         raise BoundaryNodesError(f"the ccx input names {len(fixed)} fixed-face and {len(load)} load-face nodes")
     return frozenset(fixed), frozenset(load)
@@ -106,10 +109,22 @@ def _unknown(coarse: SolveRun, fine: SolveRun, reason: str, message: str) -> dic
 
 
 def _read_level(label: str, run: SolveRun) -> fs.Level:
-    """The comparison input of one solve. Raises FrdError, BoundaryNodesError or OSError, each naming the file."""
-    result = fs.read_frd((run.run_dir / FRD).read_text(encoding="utf-8"))
-    fixed, load = boundary_nodes((run.run_dir / INP).read_text(encoding="utf-8"))
+    """The comparison input of one solve.
+
+    Raises FrdError (also for a `.frd` that is not UTF-8 text), BoundaryNodesError (also for a ccx input that
+    is not UTF-8 text) or OSError, which covers a missing file, a directory and a file that cannot be read.
+    """
+    result = fs.read_frd(_text(run.run_dir / FRD, fs.FrdError))
+    fixed, load = boundary_nodes(_text(run.run_dir / INP, BoundaryNodesError))
     return fs.Level(run.h, result, fixed, load, run.high_order_fallback)
+
+
+def _text(path: Path, error: type[ValueError]) -> str:
+    """The UTF-8 text of `path`; a decoding failure raises `error`, which names the file."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise error(f"{path.name} is not UTF-8 text ({exc.reason} at byte {exc.start})") from None
 
 
 def run_study(coarse: SolveRun, fine: SolveRun) -> dict[str, Any]:
