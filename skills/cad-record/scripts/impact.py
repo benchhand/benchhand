@@ -417,8 +417,8 @@ def stale_obligations(obligations: Iterable[Any], changed: Mapping[str, Iterable
 
 
 def declared_domains(entry: Mapping[str, Any]) -> frozenset[str]:
-    """The fingerprint domains the check family of the evidence `entry`'s obligation declares in FAMILY_DOMAINS;
-    none for an entry without an obligation."""
+    """The fingerprint domains the check family of the evidence `entry`'s obligation declares in FAMILY_DOMAINS.
+    An entry without an obligation declares none."""
     obligation = entry.get("obligation")
     return family_domains(obligation.split("@", 1)[0]) if isinstance(obligation, str) else frozenset()
 
