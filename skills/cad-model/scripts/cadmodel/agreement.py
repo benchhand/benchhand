@@ -229,7 +229,11 @@ def _reference(shape: Any, linear_mm: float, measure: bool) -> tuple[Mesh, Devia
 
 def _face_error(face: Any, points: np.ndarray, triangles: np.ndarray) -> float | None:
     """The largest exact distance from `face` of the centers of its `CHECKED_TRIANGLES` largest triangles (the
-    triangles that stray furthest from a curved surface)."""
+    triangles that stray furthest from a curved surface in most meshes).
+
+    The result is a sample and gives no upper bound. A smaller triangle, or a point of a triangle away from its center,
+    can lie farther from the face. The check catches a mesher that misses its deflection across a face, as it does on
+    an uncontrolled torus. It can miss a local overshoot."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
     from OCP.BRepExtrema import BRepExtrema_DistShapeShape
     from OCP.gp import gp_Pnt
