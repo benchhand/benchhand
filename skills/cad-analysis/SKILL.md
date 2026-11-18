@@ -67,6 +67,25 @@ Completed results record reproducibility settings in `mesh_settings`: one Gmsh t
 
 `fea_static.py` publishes a v2 engineering packet at `hw/checks/<V>/fea-<case>/`; `stdout.check_bundle` names it. Only `engineering.strength`, `engineering.stiffness` and `engineering.anisotropy` are in static solver scope. Creep, fatigue, impact and life remain physical-validation obligations.
 
+## Stop reaction
+
+A hard stop's reaction comes from the modeled contact, never from a hand estimate. `stop_reaction.py` is a layout-stage producer. It covers `engineering.stop_reaction@IF-###`. The record requires that check of each critical structural interface that carries a load. Run it as follows:
+
+```sh
+uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-analysis/scripts/stop_reaction.py --hw hw --version vN [--replace]
+```
+
+It publishes `hw/checks/<V>/stop-reaction/` (`result.json` and `evidence/stop-reaction.json`). Exit `0` means every obligation passes or is not applicable, `1` a failure or an unknown, `2` no result.
+
+- The pivot is the single movable revolute joint between the interface's two parts, posed at `min` and `max`. A pair at zero distance there is a stop. An interface that names a part outside the assembly, or has no movable joint, is not a stop and is not applicable. A bare PN with two or more occurrences is ambiguous and unknown. Parts that overlap at a limit are a design defect and unknown, with the overlap depth. The same holds when the other part is farther than the contact tolerance at both limits. The tolerance is 0.15 mm, plus 1 nm (1e-6 mm) for rounding, or the largest clearance of a fit the interface declares as `<size> <HOLE/SHAFT>` when that is larger. The evidence records the tolerance, its source and the gap at each limit.
+- The contact patch is the overlap of the touching, opposite-facing planar faces. Each outline point has the arm ((p − o) × n) · a. Here o is a point on the axis, a is the axis direction and n is the outward normal of the fixed part's face.
+- The applied moment is the peak force of the interface's use-case loads times the moving part's farthest point from the axis. The record does not say where the force acts, so this arm is a conservative upper bound.
+- The design reaction is the moment over the smallest arm. The evidence also holds the lower bound (moment over the largest arm), the uniform-pressure and compliant-stop figures (information only) and the pivot load bound, the reaction plus the applied force.
+- `unbounded`: a smallest arm of zero or less leaves a rigid stop with no bounded reaction. The outcome is `unknown` with severity critical. Only an FEA contact case approved in a design record closes it.
+- `understated`: a `functional.contact.load` below the design reaction fails with severity major. Records cite the check's bundle. Prose is not parsed.
+
+Strength of the load path is a separate question for `fea_static.py`. This check covers planar contact only and no friction or dynamics.
+
 ## Exit codes
 
 - `0`: analysis completed and any requested safety-factor threshold passed.

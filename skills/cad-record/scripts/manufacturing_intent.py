@@ -2417,6 +2417,10 @@ def _interface_checks(if_id: str, interface: Interface, add: Any) -> None:
     if raw.get("contact"):
         add("contact.compatibility", base, "physically_validated", "analysis", f"{if_id}: contacting pair friction, wear and life")
     functions = set() if is_fact(functional.functions) else {entry.function for entry in functional.functions}
+    contact_load = (raw.get("contact") or {}).get("load")
+    if "structural" in functions and (raw.get("loads") or (isinstance(contact_load, Mapping) and contact_load.get("status") == "known")):
+        add("engineering.stop_reaction", base, "simulation_supported", "layout",
+            f"{if_id} is critical, structural and loaded: the reaction its contact carries, from the modelled contact")
     if raw.get("play") or functions & {"rotating", "sliding"}:
         add("motion.play", base, "simulation_supported", "analysis", f"{if_id}: function under play and tolerance extremes")
 
