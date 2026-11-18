@@ -172,6 +172,7 @@ class FastCase(conditions_tests.SourcedFEACase):
         for name, extra in (("required_safety_factor", {"required_safety_factor": 2}),
                             ("acceptance.strength", {"acceptance": {"strength": "REQ-001", "stiffness": "REQ-002"}})):
             with self.subTest(name):
+                self.jobs.clear()
                 status, report = self.call(self.case({"conditions": conditions_tests.DRY_23C}, mode="fast", **extra))
                 self.assertEqual(status, 2, report)
                 self.assertEqual(report["error"]["code"], "invalid_case")
