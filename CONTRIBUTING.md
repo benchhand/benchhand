@@ -35,3 +35,15 @@ These accounts do not sign:
 ### Unsigned pull requests
 
 The `CLA` check runs on each pull request and covers each author of each commit in it. The merge queue merges a pull request only after the check passes. A pull request with an unsigned author stays open until that author signs or a maintainer removes the commits.
+
+### Which check decides
+
+The merge queue runs the `CLA` check again on each merge group. That run reads the current signatures for every pull request in the group. A merge group passes only when every author in it has a current signature. This check decides whether a contribution merges.
+
+The `CLA` check on a pull request can show a stale result for a short time in these cases:
+
+- two comment events for the same signature arrive out of order
+- two pull requests share one head commit and change while the check runs
+- a contributor withdraws a signature while more than 2000 pull requests are open
+
+To get a fresh result on a pull request, push a new commit or post the signing comment again.
