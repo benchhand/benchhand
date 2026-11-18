@@ -67,7 +67,7 @@ real build passes.
 | --- | --- | --- |
 | `printed_verdict(shape, prefix)` | `form_check.probe` (with the bed build axis) -> `process_checks.assess(...).packet()` -> packet schema -> `evidence.assess` | `process.fdm.*@` |
 | `assembly_verdict(items, *prefixes)` | the `access.py` command's packet (order check over the chain's inventory, then path planning) -> schema -> `evidence.assess` | `assembly.order@`, `intent.assembly_operations@`, `assembly.access@` |
-| `readback_verdict(model_source)` | `cad_model run`, `cad_model check` -> the sealed `hw/checks/<V>/cad` bundle -> `evidence.collect_packets` -> `evidence.assess` | `cad.readback@` |
+| `readback_verdict(model_source, refusal_is_a_verdict=...)` | `cad_model run`, `cad_model check` -> the sealed `hw/checks/<V>/cad` bundle -> `evidence.collect_packets` -> `evidence.assess` | `cad.readback@` |
 | `purchase_verdict(record, *prefixes)` | `process_checks.assess(record, {})` (no geometry) -> packet -> schema -> `evidence.assess` | `purchase.`, `route.`, `process.*` |
 
 An evidence state maps to a verdict: `fail` is fail, `pass` and `not_applicable` are pass, anything else (unknown, stale,

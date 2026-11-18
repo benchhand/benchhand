@@ -636,7 +636,7 @@ class CaseErrorTests(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 3, "", self.STDERR)
 
         def run(is_mutant: bool) -> str:
-            return support.readback_verdict("KERNEL = 'cadquery'\nPARAMS = {}\n")
+            return support.readback_verdict("KERNEL = 'cadquery'\nPARAMS = {}\n", refusal_is_a_verdict=True)
 
         with mock.patch("subprocess.run", fake):
             code, text = self.rates(corpus.Pair("kernel", "d", run), tolerance=True)
@@ -662,7 +662,7 @@ class NativeExitCodeTests(unittest.TestCase):
             return subprocess.CompletedProcess(argv, check_code, "", "")
 
         def run(is_mutant: bool) -> str:
-            return support.readback_verdict("KERNEL = 'cadquery'\nPARAMS = {}\n")
+            return support.readback_verdict("KERNEL = 'cadquery'\nPARAMS = {}\n", refusal_is_a_verdict=True)
 
         with mock.patch("subprocess.run", fake):
             return corpus.evaluate([corpus.Family("f", "c", (corpus.Pair("p", "d", run),))])[0]
@@ -680,6 +680,17 @@ class NativeExitCodeTests(unittest.TestCase):
     def test_a_build_that_refuses_the_part_with_exit_1_and_no_version_is_unevidenced_not_an_error(self) -> None:
         row = self.verdict_row(1, 0, manifest=False)
         self.assertEqual((row["errors"], row["abstained"], row["results"][0]["mutant"]), (0, 1, "unknown"))
+
+    def test_every_caller_of_readback_verdict_states_whether_a_build_refusal_is_a_verdict(self) -> None:
+        import inspect
+
+        import support
+
+        param = inspect.signature(support.readback_verdict).parameters["refusal_is_a_verdict"]
+        self.assertIs(param.default, inspect.Parameter.empty)
+        self.assertIs(param.kind, inspect.Parameter.KEYWORD_ONLY)
+        with self.assertRaises(TypeError):
+            support.readback_verdict("KERNEL = 'cadquery'\n")  # type: ignore[call-arg]
 
     def test_a_twin_whose_build_refuses_the_part_is_an_error_not_a_clean_twin(self) -> None:
         def fake(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:

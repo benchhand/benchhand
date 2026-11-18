@@ -261,12 +261,12 @@ def access_packet_verdict(hw: Path, parts_dir: Path, attach: list[str], *prefixe
 
 # --- kernel validity (cad-model check: the cad.readback packet of a built version) ------------------------------
 
-def readback_verdict(model_source: str, *, refusal_is_a_verdict: bool = True) -> Outcome:
+def readback_verdict(model_source: str, *, refusal_is_a_verdict: bool) -> Outcome:
     """What a release concludes about the cad.readback obligation of a one-part project whose model.py is
     `model_source`: cad_model run builds the version, cad_model check publishes its packet to hw/checks/<V>/cad/, and
     evidence.collect_packets reads it back sealed, as the release gate does. A build that refuses the part leaves no version and so no
-    packet: evidence then has nothing for the obligation and calls it unknown. That refusal is the verdict of a defect model
-    the kernel rejects. For a twin pass `refusal_is_a_verdict=False`: a twin whose build refuses is an error of the case."""
+    packet: evidence then has nothing for the obligation and calls it unknown. The caller states what that refusal is.
+    True: the verdict of a defect model the kernel rejects. False: an error of the case, as for a twin."""
     import hashlib
     import shutil
     import subprocess
