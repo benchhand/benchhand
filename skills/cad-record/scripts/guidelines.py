@@ -61,6 +61,7 @@ SKILL = Path(__file__).resolve().parent.parent
 SCHEMAS = SKILL / "schemas"
 SCHEMA = "manufacturing-guideline.schema.json"
 SHIPPED = SKILL / "assets" / "manufacturing" / "guidelines"
+DEFAULT_SHIPPED = SHIPPED  # SHIPPED is the directory discover reads; tests point it elsewhere
 PROJECT_RELATIVE = Path("manufacturing") / "guidelines"
 CALIBRATED_KINDS = frozenset(("calibration", "test", "supplier"))
 NUMERIC = frozenset((">=", "<=", "between"))
@@ -201,13 +202,15 @@ def _freeze(value: Any) -> Any:
     return _intent().freeze(value)
 
 
-def discover(hw: Path | None, *, shipped: Path = SHIPPED) -> Catalog:
+def discover(hw: Path | None, *, shipped: Path | None = None) -> Catalog:
     """The catalog of the project's guideline sets (`hw`/manufacturing/guidelines/, when `hw` is given) over the
-    shipped ones (`shipped`). No other directory is read. Every file is validated before it loads."""
+    shipped ones (`shipped`, default SHIPPED). No other directory is read. Every file is validated before it loads.
+    Two ids whose packet keys collide (fdm.a.b and fdm.a_b) refuse the later id."""
+    shipped = SHIPPED if shipped is None else shipped
     layers: list[tuple[str, Path, Path]] = []
     if hw is not None:
         layers.append(("project", Path(hw) / PROJECT_RELATIVE, Path(hw)))
-    layers.append(("shipped", Path(shipped), SKILL.parent.parent if Path(shipped) == SHIPPED else Path(shipped)))
+    layers.append(("shipped", Path(shipped), SKILL.parent.parent if Path(shipped) == DEFAULT_SHIPPED else Path(shipped)))
     winners: dict[str, Guideline] = {}
     hidden: dict[str, list[Guideline]] = {}
     refused: list[Refusal] = []
@@ -231,8 +234,37 @@ def discover(hw: Path | None, *, shipped: Path = SHIPPED) -> Catalog:
                 hidden.setdefault(ident, []).append(guideline)
             elif ident not in blocked:
                 winners[ident] = guideline
+    seen: dict[str, str] = {}
+    for ident in sorted(winners):
+        stem = ident.replace(".", "_")
+        if stem in seen:
+            gone = winners.pop(ident)
+            refused.append(Refusal(gone.path, ident, (f"{packet_key(gone.ref)} is also the packet key of {seen[stem]}",)))
+            blocked.add(ident)
+        else:
+            seen[stem] = ident
     shadows = tuple(Shadow(ident, winners[ident], tuple(items)) for ident, items in sorted(hidden.items()) if ident in winners)
     return Catalog(winners, shadows, tuple(refused), frozenset(blocked))
+
+
+def packet_key(ref: str) -> str:
+    """The dependency key of a resolved set in a check-result packet: guideline_<id with . as _>_r<revision>. The check-result
+    schema accepts semantic ids as keys, and a dotted id or an `@` would fail it."""
+    ident, _, revision = ref.partition("@")
+    return f"guideline_{ident.replace('.', '_')}_r{revision}"
+
+
+def packet_dependencies(digests: Mapping[str, str]) -> dict[str, str]:
+    """packet key -> sha256 for id@revision -> sha256. GuidelineError when two refs give one key."""
+    found: dict[str, str] = {}
+    owner: dict[str, str] = {}
+    for ref in sorted(digests):
+        key = packet_key(ref)
+        if key in owner:
+            raise GuidelineError(f"{key} is the key of both {owner[key]} and {ref}")
+        owner[key] = ref
+        found[key] = digests[ref]
+    return found
 
 
 # --- the scope a limit is asked in -----------------------------------------------------------------------------
@@ -377,6 +409,20 @@ def applicable_digests(catalog: Catalog, context: Context) -> dict[str, str]:
             chain = [guideline]
         found.update({g.ref: g.sha256 for g in chain})
     return dict(sorted(found.items()))
+
+
+def record_digests(record: Any, catalog: Catalog) -> dict[str, dict[str, str]]:
+    """capability profile id -> applicable_digests, over the profile and each material profile of the record.
+    A profile that no set can resolve through is left out."""
+    found: dict[str, dict[str, str]] = {}
+    for ident, profile in sorted(record.capabilities.items()):
+        contexts = [context_for(profile, material) for material in record.materials.values()] or [context_for(profile, None)]
+        merged: dict[str, str] = {}
+        for context in contexts:
+            merged.update(applicable_digests(catalog, context))
+        if merged:
+            found[ident] = dict(sorted(merged.items()))
+    return found
 
 
 # --- values ----------------------------------------------------------------------------------------------------

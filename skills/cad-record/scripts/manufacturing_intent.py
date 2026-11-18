@@ -787,6 +787,7 @@ class Record:
     problems: tuple[Problem, ...]
     assembly_inventory: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # assembly.yaml occurrences, subassemblies
     assembly_document: Any = None  # assembly.yaml as written: the GLB-STEP agreement and declared dimensions depend on all of it
+    guideline_digests: Mapping[str, Mapping[str, str]] = field(default_factory=lambda: _EMPTY)  # profile id -> {id@revision: sha256}
 
 
 # --- record version --------------------------------------------------------------------------------------------
@@ -906,14 +907,34 @@ def load_record(hw: Path) -> Record:
     """The normalized record at `hw`, with the problems of reading and checking it (schema aside)."""
     documents, problems = read_documents(hw)
     record = normalize_record(documents, hw=hw)
-    return _with_problems(record, problems + list(record.problems))
+    return _with_guidelines(_with_problems(record, problems + list(record.problems)), hw)
 
 
 def check_record(hw: Path) -> tuple[Record, list[Problem]]:
     """load_record plus schema_problems: everything this contract reports about the record at `hw`."""
     documents, problems = read_documents(hw)
     record = normalize_record(documents, hw=hw)
+    record = _with_guidelines(_with_problems(record, list(record.problems)), hw)
     return record, problems + schema_problems(documents) + list(record.problems)
+
+
+def _with_guidelines(record: Record, hw: Path) -> Record:
+    """`record` with the digest of every guideline set its capability profiles can resolve through (impact.py folds
+    them into the `source` fingerprint), and a problem for each guideline file that discovery refused."""
+    guidelines = _sibling("cad_record_guidelines", "guidelines.py")
+    problems = list(record.problems)
+    try:
+        catalog = guidelines.discover(hw)
+    except ImportError as error:  # jsonschema missing: the files cannot be checked, so no digest is claimed
+        problems.append(Problem("intent.guideline", "hw/manufacturing/guidelines", "", f"guideline sets not read: {error}", "warning"))
+        return _with_problems(record, problems)
+    for refusal in catalog.refused:
+        shown = f"hw/{refusal.path}" if refusal.path.startswith(f"{guidelines.PROJECT_RELATIVE.as_posix()}/") else refusal.path
+        problems.append(Problem("intent.guideline", shown, "", "; ".join(refusal.problems)))
+    values = {name: getattr(record, name) for name in record.__dataclass_fields__}
+    values["problems"] = tuple(problems)
+    values["guideline_digests"] = freeze(guidelines.record_digests(record, catalog))
+    return Record(**values)
 
 
 def _with_problems(record: Record, problems: list[Problem]) -> Record:

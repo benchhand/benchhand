@@ -336,6 +336,11 @@ class _Record:
         }
         sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
+        digests = getattr(self.record, "guideline_digests", None) or {}
+        for op in self.route(pn):  # a guideline set the part's capability profile resolves through stales it like a source
+            profile = op.get("capability")
+            for ref, sha in sorted((digests.get(profile) or {}).items()) if isinstance(profile, str) else ():
+                values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:
             values["occurrences"] = mounting
