@@ -594,10 +594,19 @@ class CommittedFixtureTests(unittest.TestCase):
         env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
         subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, env=env)
 
-    def verify(self) -> subprocess.CompletedProcess[str]:
+    def verify(self, *options: str) -> subprocess.CompletedProcess[str]:
         env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
-        return subprocess.run([sys.executable, str(STAMP), "--verify", "--hw", self.HW], cwd=self.root, text=True,
+        return subprocess.run([sys.executable, str(STAMP), "--verify", *options, "--hw", self.HW], cwd=self.root, text=True,
                               capture_output=True, check=False, env=env)
+
+    def commit(self) -> None:
+        self.git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "fixture")
+
+    def edit_part(self) -> None:
+        part = self.root / self.HW / "parts" / "FXT-0001" / "part.yaml"
+        part.write_text(part.read_text(encoding="utf-8").replace("title: Test block", "title: Test block (edited)", 1),
+                        encoding="utf-8")
+        self.git("add", "-A")
 
     def test_the_committed_stamp_verifies(self) -> None:
         result = self.verify()
@@ -606,13 +615,40 @@ class CommittedFixtureTests(unittest.TestCase):
         self.assertNotIn("required", json.loads(result.stdout))  # a skipped verify would say required: false
 
     def test_a_staged_edit_of_a_record_input_makes_the_committed_stamp_stale(self) -> None:
-        part = self.root / self.HW / "parts" / "FXT-0001" / "part.yaml"
-        part.write_text(part.read_text(encoding="utf-8").replace("title: Test block", "title: Test block (edited)", 1),
-                        encoding="utf-8")
-        self.git("add", "-A")
+        self.edit_part()
         result = self.verify()
         self.assertEqual(result.returncode, 2)
         self.assertIn("stamp is stale", result.stderr)
+
+    def test_verify_committed_checks_a_fresh_stamp_with_nothing_staged(self) -> None:
+        self.commit()
+        result = self.verify("--committed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["passed"], True)
+        self.assertNotIn("required", json.loads(result.stdout))
+
+    def test_verify_committed_refuses_a_stale_edit_that_was_committed(self) -> None:
+        self.commit()
+        self.edit_part()
+        self.commit()
+        result = self.verify("--committed")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("stamp is stale", result.stderr)
+
+    def test_verify_without_committed_still_skips_when_nothing_is_staged(self) -> None:
+        self.commit()
+        self.edit_part()
+        self.commit()
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["required"], False)
+
+    def test_committed_needs_verify(self) -> None:
+        env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+        result = subprocess.run([sys.executable, str(STAMP), "--committed", "--hw", self.HW, "--stage", "layout",
+                                 "--checks", "x.json"], cwd=self.root, text=True, capture_output=True, check=False, env=env)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--committed needs --verify", result.stderr)
 
 
 if __name__ == "__main__":

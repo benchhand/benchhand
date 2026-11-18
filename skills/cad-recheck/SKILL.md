@@ -53,8 +53,16 @@ A relative path starts at the current directory. The project is the parent of th
 - `hw/.cad/recheck.json`
 - the staged `hw/` tree
 
+At commit time, `--verify` reads the index. It skips a commit that stages no `hw/` change.
+
 ```sh
 uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --hw examples/lamp-arm/hw
+```
+
+CI has nothing staged. Add `--committed` there. It checks the stamp against the `hw/` tree in HEAD and never skips.
+
+```sh
+uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify --committed --hw examples/lamp-arm/hw
 ```
 
 The installer refuses to replace a different repository-local `core.hooksPath` or ignore non-sample hooks in `.git/hooks/`. Integrate the CAD hook with existing hooks, or explicitly pass `--force` to replace or ignore them. Commit the generated `.githooks/` directory so the hook and its stamp verifier are available to other checkouts.
