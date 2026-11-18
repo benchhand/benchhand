@@ -20,7 +20,7 @@ SKILLS = HERE.parent.parent
 DEPS = importlib.util.find_spec("yaml") is not None and importlib.util.find_spec("jsonschema") is not None
 MISSING = "route.operation_plan_field_missing"
 OPEN = "route.plan_incomplete"
-POLYMER, ALUMINIUM = "tst_polymer", "tst_alu"
+POLYMER, ALUMINIUM, ACRYLIC = "tst_polymer", "tst_alu", "tst_acrylic"
 APPROVED = {"status": "approved", "rotation": {"quaternion": [1, 0, 0, 0]}, "decision": "DR-001"}
 
 FX: Any = None
@@ -37,8 +37,9 @@ if DEPS:
     _spec.loader.exec_module(FX)
 
 
-def made(pn: str, op: dict[str, Any], process: str, material: str) -> dict[str, Any]:
-    intent = FX.intent(functions=[{"function": "cosmetic"}], material_profile=material, route=[op],
+def made(pn: str, op: dict[str, Any] | list[dict[str, Any]], process: str, material: str) -> dict[str, Any]:
+    route = op if isinstance(op, list) else [op]
+    intent = FX.intent(functions=[{"function": "cosmetic"}], material_profile=material, route=route,
                        critical_surfaces=FX.not_applicable("none here"))
     part: dict[str, Any] = FX.part(pn, process=process, part_intent=intent)
     return part
@@ -58,11 +59,31 @@ def cnc(setup: dict[str, Any] | None = None) -> dict[str, Any]:
                 "cnc", ALUMINIUM)
 
 
+def milled(**plan: Any) -> dict[str, Any]:
+    """A complete first cnc operation: the valid predecessor of a secondary operation."""
+    setup = {"stock": {"material_profile": ALUMINIUM, "grade": FX.known("TST 6061-T6"), "dimensions": FX.known("45 x 35 x 30")},
+             "datums": ["datum_a"], "workholding": {"method": FX.known("vice on the datum faces")}, **plan}
+    return FX.operation("mill", "cnc", "tst_mill", setup=setup, output_state="milled")
+
+
+def secondary(kind: str, **plan: Any) -> dict[str, Any]:
+    """A part milled first, then one `kind` operation (its capability is `tst_<kind>`) taking the milled state."""
+    return made("TST-0003", [milled(), FX.operation("second", kind, f"tst_{kind}", input_state="milled", **plan)], "cnc", ALUMINIUM)
+
+
+def sheet(kind: str, stock: dict[str, Any]) -> dict[str, Any]:
+    """A sheet cut by `kind` (laser, waterjet or plasma) from `stock`."""
+    return made("TST-0004", FX.operation("cut", kind, f"tst_{kind}", setup={"stock": stock}), kind, ACRYLIC)
+
+
 def operation_plan(part: dict[str, Any]) -> Any:
     """The assessment of `part`. The tests look at its process-plan obligation."""
-    profiles = [FX.material_profile(POLYMER, form="printed"), FX.material_profile(ALUMINIUM, form="wrought", family="TST aluminium")]
+    profiles = [FX.material_profile(POLYMER, form="printed"), FX.material_profile(ALUMINIUM, form="wrought", family="TST aluminium"),
+                FX.material_profile(ACRYLIC, form="sheet", family="TST cast acrylic")]
     capabilities = [FX.capability_profile("tst_printer", "fdm"),
-                    FX.capability_profile("tst_mill", "cnc", parameters={"axes": FX.known(FX.quantity(3, units="count"))})]
+                    FX.capability_profile("tst_mill", "cnc", parameters={"axes": FX.known(FX.quantity(3, units="count"))}),
+                    *(FX.capability_profile(f"tst_{kind}", kind) for kind in
+                      ("drilling", "coating", "inspection", "laser", "waterjet", "plasma"))]
     with tempfile.TemporaryDirectory() as tmp:
         hw = FX.write_record(Path(tmp) / "project" / "hw", FX.record(parts=[part], capabilities=capabilities, materials=profiles))
         record, problems = pc.intent().check_record(hw)
@@ -74,15 +95,17 @@ def operation_plan(part: dict[str, Any]) -> Any:
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
 class OperationPlanTests(unittest.TestCase):
-    def judge(self, part: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    def judge(self, part: dict[str, Any], operation: str | None = None) -> tuple[str, list[dict[str, Any]]]:
+        """The outcome and findings of the plan obligation of `operation` (the only one when None)."""
         result = operation_plan(part)
-        obligation = next(o.id for o in result.expected if o.family == "route.operation_plan")
+        plans = [o.id for o in result.expected if o.family == "route.operation_plan"]
+        obligation = next(o for o in plans if operation is None or o.endswith(f"/{operation}"))
         found = result.outcome(obligation)
         findings = [f for f in result.findings if f.get("obligation") == obligation]
         return found["outcome"], findings
 
-    def assert_missing(self, part: dict[str, Any], *fields: str) -> None:
-        outcome, findings = self.judge(part)
+    def assert_missing(self, part: dict[str, Any], *fields: str, operation: str | None = None) -> None:
+        outcome, findings = self.judge(part, operation)
         self.assertEqual(outcome, "fail", findings)
         gaps = [f for f in findings if f["code"] == MISSING]
         self.assertEqual(len(gaps), len(fields), [f["measured"] for f in gaps])
@@ -109,6 +132,24 @@ class OperationPlanTests(unittest.TestCase):
 
     def test_a_milled_part_without_stock_fails_naming_it(self) -> None:
         self.assert_missing(cnc({"datums": ["datum_a"], "workholding": {"method": FX.known("vice")}}), "stock")
+
+    def test_a_drilling_without_datums_fails_naming_them(self) -> None:
+        self.assert_missing(secondary("drilling", targets=[{"feature": "hole_a"}]), "datums", operation="second")
+
+    def test_a_drilling_without_targets_fails_naming_them(self) -> None:
+        self.assert_missing(secondary("drilling", setup={"datums": ["datum_a"]}), "targets", operation="second")
+
+    def test_a_sheet_without_stock_thickness_fails_naming_it(self) -> None:
+        stock = {"material_profile": ACRYLIC, "dimensions": FX.known("600 x 400")}
+        for kind in ("laser", "waterjet", "plasma"):
+            with self.subTest(kind=kind):
+                self.assert_missing(sheet(kind, stock), "stock thickness")
+
+    def test_a_coating_and_an_inspection_need_no_targets(self) -> None:
+        for kind, plan, expected in (("coating", {}, "not_applicable"), ("inspection", {"setup": {"datums": ["datum_a"]}}, "pass")):
+            with self.subTest(kind=kind):
+                outcome, findings = self.judge(secondary(kind, **plan), "second")
+                self.assertEqual((outcome, findings), (expected, []))
 
     def test_an_orientation_marked_open_with_a_reason_stays_unknown(self) -> None:
         outcome, findings = self.judge(fdm(orientation=FX.unknown("print pose awaits the fixture design"),
