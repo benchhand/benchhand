@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Joint animation and section planes from cad-motion's kinematic chain; kernel-free.
 
 cad-motion owns the joint record and its limits: `pose.py` is loaded as a module and its

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """What a STEP file declares in its text: its schema and its length unit; and the read-back drift rule."""
 
 from __future__ import annotations

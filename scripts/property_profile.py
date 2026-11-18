@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The one Hypothesis profile of the property tests.
 
 Tests put this directory on sys.path (see modload.py) and import this module before they use @given.

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """How a manufactured part sits on the machine bed: the one owner of build orientation, for run and check.
 
 A placement is a proper rigid transform: rotation rows with determinant +1, then a translation. It is

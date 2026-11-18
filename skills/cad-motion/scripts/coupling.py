@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Coupled joint coordinates: typed laws, periodic profiles, slider-crank mechanisms and their DAG.
 
 Kernel-free and standard-library only: cad-record's validate.py and cad-motion's pose.py read the

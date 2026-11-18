@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Cylindrical bores of a part, measured on its read-back STEP solid so every kernel lists the same holes.
 
 A bore is made of concave cylindrical faces of one solid on one axis line and one radius. Along the

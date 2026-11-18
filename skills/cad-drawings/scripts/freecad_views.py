@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """View geometry across the FreeCAD boundary: TechDraw views as plain data for sheet composition.
 
 ``serialize_view`` and ``project_anchor`` run inside freecadcmd on a recomputed TechDraw view of a

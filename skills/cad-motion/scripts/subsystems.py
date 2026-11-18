@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Sweep subsystems: the record's subassemblies as owners of a sweep's pairs, and each one's period.
 
 Kernel-free and standard-library only; sweep.py and merge_sweeps.py use it.

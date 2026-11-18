@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The content-addressed store of a project's per-part outputs, so each byte sequence is kept once.
 
 Objects (cad-record layout `cache.part_objects`, `hw/.cad/parts/<sha256>`) are the bytes of generated

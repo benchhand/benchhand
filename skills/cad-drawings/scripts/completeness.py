@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The part drawing completeness gate (drawing architecture §8): coverage rows and failure findings.
 
 ``evaluate`` combines the evidence of one run into ``drawing_document.CoverageReport``:

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Secondary-operation handlers: drilling, reaming, tapping, finishing, coating, joining and inspection.
 
 A secondary operation acts on an earlier state: it needs a predecessor, the datums it transfers from,

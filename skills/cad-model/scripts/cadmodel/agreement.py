@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """GLB <-> STEP agreement: whether each occurrence's mesh in assembly.glb depicts the STEP shape placed where
 assembly.step places it. The two outputs come from one exporter run, so a stale, scaled, moved or
 re-shaped mesh passes every check that reads either file alone.

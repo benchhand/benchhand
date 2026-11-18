@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Click options from a JSON Schema config, with the config loader's source reporting.
 
 Load it by path, as `emit.py`. It imports Click only when it builds options. A field with `x-cli` becomes an

@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+# SPDX-FileCopyrightText: James Dillard
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Safe Boolean edits for part model scripts, in either kernel.
 
     from cadmodel.safe import safe_cut, safe_fuse, safe_intersect

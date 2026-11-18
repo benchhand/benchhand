@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Rigid statics of a hard stop, without a geometry kernel.
 
 A lever pushed against a stop turns about its pivot. The applied moment M is the peak force times the

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """OCP measurements and Booleans shared by the kernel runners, safe edits, check, and diff.
 
 Everything takes and returns raw `TopoDS_Shape` values; `to_topods` lowers a CadQuery or build123d
@@ -215,62 +219,8 @@ def _messages(operation: Any, method: str) -> list[str]:
 OPERATIONS = ("cut", "fuse", "common")
 
 
-def boolean(operation: str, argument: Any, tools: Iterable[Any], fuzzy: float = FUZZY_MM) -> Any:
-    """Non-destructive BOPAlgo Boolean of copies of the inputs; raises GeometryError on kernel errors."""
-    from OCP.BOPAlgo import BOPAlgo_BOP, BOPAlgo_COMMON, BOPAlgo_CUT, BOPAlgo_FUSE
-
-    kinds = {"cut": BOPAlgo_CUT, "fuse": BOPAlgo_FUSE, "common": BOPAlgo_COMMON}
-    op = BOPAlgo_BOP()
-    shape_list = load_pose().shape_list
-    op.SetArguments(shape_list([copy(argument)]))
-    op.SetTools(shape_list([copy(tool) for tool in tools]))
-    op.SetOperation(kinds[operation])
-    op.SetNonDestructive(True)
-    op.SetFuzzyValue(fuzzy)
-    try:
-        op.Perform()
-    except Exception as error:  # noqa: BLE001 - OCP raises Standard_Failure subclasses
-        raise GeometryError(f"{operation} failed in the kernel: {error}") from error
-    if op.HasErrors():
-        detail = "; ".join(_messages(op, "DumpErrors")) or "unknown kernel error"
-        raise GeometryError(f"{operation} failed in the kernel: {detail}")
-    result = op.Shape()
-    if result.IsNull():
-        raise GeometryError(f"{operation} returned a null shape")
-    return result
-
-
-def occupied(shape: Any, fuzzy: float = FUZZY_MM) -> tuple[Any, float]:
-    """(shape, volume) with overlapping solid members counted once.
-
-    A multi-solid shape is partitioned by one General Fuse into non-overlapping cells, so a
-    compound whose members overlap does not double-count the space they share.
-    """
-    from OCP.BOPAlgo import BOPAlgo_CellsBuilder
-
-    solids = subshapes(shape, "SOLID")
-    if len(solids) <= 1:
-        return shape, volume(shape)
-    cells = BOPAlgo_CellsBuilder()
-    cells.SetNonDestructive(True)
-    cells.SetFuzzyValue(fuzzy)
-    for solid in solids:
-        cells.AddArgument(copy(solid))
-    try:
-        cells.Perform()
-    except Exception as error:  # noqa: BLE001
-        raise GeometryError(f"occupied-volume partition failed: {error}") from error
-    if cells.HasErrors():
-        raise GeometryError("occupied-volume partition failed: " + ("; ".join(_messages(cells, "DumpErrors")) or "unknown"))
-    cells.RemoveAllFromResult()
-    cells.AddAllToResult()
-    result = cells.Shape()
-    if result.IsNull() or not is_valid(result):
-        raise GeometryError("occupied-volume partition is not a valid B-rep")
-    return result, volume(result)
-
-
-def volume_slack(*volumes: float) -> float:
-    """Kernel noise allowed in a volume bound: 1e-7 relative, at least 1e-6 mm^3."""
-    return max(1e-6, max((abs(v) for v in volumes), default=0.0) * 1e-7)
-
+# The AgentCAD-derived Booleans (Apache-2.0) live in occ_derived.py. They are re-exported so callers
+# and fault injection keep using `occ.boolean`, `occ.occupied` and `occ.volume_slack`.
+from cadmodel.occ_derived import boolean as boolean  # noqa: E402
+from cadmodel.occ_derived import occupied as occupied  # noqa: E402
+from cadmodel.occ_derived import volume_slack as volume_slack  # noqa: E402

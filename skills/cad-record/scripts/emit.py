@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Print a producer's result as full JSON or as a short summary for an agent.
 
 The one output emitter of the CAD skills. A producer loads it by path from cad-record's scripts directory

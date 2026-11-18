@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Split the skill test files into CI shards and run one shard's share of a file.
 
 The plan is the SHARDS text, one entry per line: ``<shard> <test file> [<selector> ...]``.

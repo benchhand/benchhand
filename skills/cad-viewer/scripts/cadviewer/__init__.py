@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """cad-viewer: drive OCP CAD Viewer and its side panel for a cad-model hardware record.
 
 `record` and `motion` are kernel-free (PyYAML only) so the command layer tests run on plain

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """`run`: build every part model into hw/versions/<label>/ and point hw/versions/latest.json at it.
 
 A version holds the installed definitions, the assembly, its record snapshot (record/: the records,

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Read one cad-model version of a hardware record into the viewer's scene and panel model.
 
 Kernel-free: JSON and PyYAML (`safe_load`) only. cad-record's layout API resolves, verifies and lists built

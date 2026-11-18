@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Every host script's PEP 723 requires-python floor is 3.12 or later, unless FreeCAD runs it on 3.11."""
 
 from __future__ import annotations

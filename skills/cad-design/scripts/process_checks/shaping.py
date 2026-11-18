@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Shaping handlers: casting and moulding (draft, walls, tooling against quantity, defects and secondary
 machining) and extrusion (constant profile and secondary operations).
 

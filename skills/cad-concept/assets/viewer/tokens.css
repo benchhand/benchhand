@@ -1,4 +1,10 @@
 /*
+ * SPDX-FileCopyrightText: 2026 Sjors Robroek
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
+/*
  * Viewer-local design tokens for the cad-concept viewer. Every colour, spacing,
  * radius, and type value in viewer.css and viewer.js resolves to one of these.
  * The model palette (--color-part-*) and scene chrome are read by viewer.js

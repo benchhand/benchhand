@@ -1,18 +1,34 @@
 Benchhand attribution
 =====================
 
-This repository is an independent fork of the CAD skills imported from
-srobroek/omp-plugins at commit ab1dac9e48. The standalone project is maintained
-as benchhand/benchhand (earlier as srobroek/cad-agent). The upstream repository's Apache-2.0 license is included
-in LICENSE; this notice records provenance and third-party attributions.
+Benchhand is licensed under the Mozilla Public License, Version 2.0 (LICENSE).
+Each file's SPDX header, or REUSE.toml for files that cannot carry one, names
+its copyright holder and licence; `reuse lint` checks them.
 
-The cad-model skill contains modified portions adapted from AgentCAD 0.7.0:
-https://github.com/jdilla1277/agentcad
+Two files stay under the Apache License, Version 2.0 (LICENSES/Apache-2.0.txt)
+because they are adapted from AgentCAD:
 
-Copyright James Dillard. Used under the Apache License, Version 2.0, the same
-license as this repository. AgentCAD 0.7.0 includes no NOTICE file of its own;
-its license is the unmodified Apache-2.0 text. See skills/cad-model/NOTICE for
-the source paths and a description of the modifications.
+  skills/cad-model/scripts/cadmodel/safe.py
+  skills/cad-model/scripts/cadmodel/occ_derived.py
+
+AgentCAD 0.7.0 (https://github.com/jdilla1277/agentcad), Copyright James
+Dillard, is used under the Apache License, Version 2.0. AgentCAD 0.7.0
+includes no NOTICE file of its own; its license is the unmodified Apache-2.0
+text. The diff and check code (skills/cad-model/scripts/cadmodel/diff.py and
+check.py, licensed MPL-2.0) take two ideas from AgentCAD: the exact shared and
+exclusive volume method, and the sliver-face threshold. See
+skills/cad-model/NOTICE for the source paths and a description of the changes.
+
+Test fixtures and vendored data keep their own licences:
+
+  skills/cad-model/tests/fixtures/3mf-schema/  3MF Consortium XML schemas,
+      BSD 2-Clause (LICENSE.spec_core, LICENSE.test_suites beside them).
+      xml.xsd there is the W3C XML namespace schema, (c) World Wide Web
+      Consortium, under the W3C Document License
+      (LICENSES/LicenseRef-W3C-Document-2023.txt). It is shipped unmodified,
+      as fetched from https://www.w3.org/2001/xml.xsd on 2026-11-18.
+  skills/cad-record/vendor/sarif-schema-2.1.0.json  OASIS SARIF 2.1.0 JSON
+      schema, under the OASIS terms in LICENSES/LicenseRef-OASIS-SARIF.txt.
 
 FreeCAD 1.1.4 bundles the Osifont font used by the CAD model and drawings
 workflows. Its file is distributed with FreeCAD, not copied into this

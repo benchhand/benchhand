@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Locate headless FreeCAD and run the FreeCAD-side job scripts of the drawing pipeline.
 
 A job script runs inside ``freecadcmd``. It reads the JSON job file that the CAD_DRAWING_JOB

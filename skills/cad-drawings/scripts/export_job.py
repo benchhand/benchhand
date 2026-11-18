@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FreeCAD-side sheet export for sheet_export.py; freecadcmd runs this file headless.
 
 CAD_DRAWING_JOB names JSON input and output paths; the job payload includes an SVG, vector text

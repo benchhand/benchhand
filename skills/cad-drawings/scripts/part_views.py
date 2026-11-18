@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """View planning for part drawings: directions, projection arrangement, sections and details.
 
 Pure Python over the datum frame and the bound features. ``plan_views`` turns ``part.drawing.views``

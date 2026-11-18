@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Whether a part sheet states every recognised manufacturing feature: located and sized, never overall only.
 
 ``feature_recognition`` finds the features on the STEP without the drawing intent; this module checks

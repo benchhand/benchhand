@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Guard for the docs-only rule (docs_only.py): no skill test may read a path the rule calls safe.
 
 The guard is a name check over the string literals of the skill tests (``skills/*/tests/*.py`` and

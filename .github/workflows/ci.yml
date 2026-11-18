@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 name: CI
 
 on:
@@ -60,6 +64,9 @@ jobs:
       # stands in until examples/lamp-arm can be stamped (issue #159).
       - name: Committed recheck stamp of the verify-project fixture
         run: uv run --no-project --python 3.12 --with-requirements harness/test-requirements.txt python -B skills/cad-recheck/scripts/stamp.py --verify --committed --hw skills/cad-recheck/tests/fixtures/verify-project/hw
+
+      - name: REUSE licence compliance
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
 
   changes:
     name: Skill shard gate

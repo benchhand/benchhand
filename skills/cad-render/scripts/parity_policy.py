@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Decision and image parity policy shared by render caching and comparison."""
 
 POLICY_VERSION = "render-pixel-parity-exact-v1"

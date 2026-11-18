@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Opt-in per-edge fillet fallback for authored CAD model scripts."""
 
 from __future__ import annotations

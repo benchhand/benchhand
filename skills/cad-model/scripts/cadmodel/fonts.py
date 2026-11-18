@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Resolve the TechDraw lettering font used for deterministic model text."""
 
 from __future__ import annotations

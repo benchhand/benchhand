@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Process-dispatched manufacturability checks for record version 2 parts (cad-design).
 
 Each made component of each part is judged per route operation by the handler of that operation's kind,

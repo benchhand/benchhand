@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Section view fills: one lining (or a solid fill) per part in each section view, and the ``section_hatch`` gate.
 
 ``techdraw_job.py`` reports every face the cutting plane leaves on the part as a ``CutRegion``: the

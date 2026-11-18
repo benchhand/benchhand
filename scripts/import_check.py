@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Import every module under skills, harness and scripts by path, the way the repo loads them.
 
 Run it on the CI Python (3.12), the minimum for host scripts, so import-time errors such as unhashable

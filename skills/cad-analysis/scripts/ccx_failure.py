@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Classify a CalculiX run that cannot give a valid result into an actionable no-result error: a failed ccx
 run, a load that the ccx input applies to no mesh node, or a zero result under a nonzero load (issue #143)."""
 

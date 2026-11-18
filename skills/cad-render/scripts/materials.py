@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Part appearance from assets/materials.json: part.yaml `material` and `finish` -> one PBR rule.
 
 Stdlib only, so every consumer can import it without cad-render's browser stack: render.py

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The viewer host: OCP CAD Viewer processes, the side panel, and one HTTP API.
 
 Every viewer state change goes through ocp_viewer's Python API (`show`, `set_viewer_config`,

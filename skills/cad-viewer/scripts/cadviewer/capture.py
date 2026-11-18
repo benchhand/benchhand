@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The presenter: one headless Chromium page that keeps the panel open, and the captures it takes.
 
 OCP CAD Viewer's own `save_screenshot` returns a black frame without a GPU, so every PNG is a

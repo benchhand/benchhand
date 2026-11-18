@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Extrema over the edges of an OCP shape. They bound a linear function (the arm of a contact patch) and the distance
 to a line (the reach of a moving part). Lines and circle arcs give exact values, any other edge a bound.
 

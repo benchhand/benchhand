@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Export tool-result findings as SARIF 2.1.0. The typed tool-result envelope stays the native format. The SARIF file is a
 one-way export for tools that read SARIF. The export uploads nothing and uses no network.
 

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The marker on each document build_guide.py generates, and the release fields release.py reads back.
 
 The first line of a generated document names build_guide.py and the sha256 of every line after it.

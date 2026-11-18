@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Semantic features bound to a part's final STEP, and the geometry a drawing measures from them.
 
 Both sides import this file, as they do ``freecad_views.py``: ``extract_faces`` and ``bind_patches``

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Part sheet composition: dimensions, callouts, datums and section marks on projected part views.
 
 ``drawing.py`` measures a part (``drawing_intent``), plans its views (``part_views``) and runs

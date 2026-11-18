@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Incremental selection for cad-model `check` and cad-motion `sweep`: what changed between two
 built versions, which occurrence pairs that touches, and the smoke samples of a chain.
 

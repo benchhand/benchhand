@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Shared test helpers: load a script by path, and read a producer's enveloped stdout.
 
 Tests put this directory on sys.path (see any skills/*/tests file)."""

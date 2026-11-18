@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """`yaml.safe_load` on libyaml's C parser: the one YAML reader of the CAD skills' scripts.
 
 PyYAML's pure-Python SafeLoader is several times slower than its libyaml binding, CSafeLoader. Both

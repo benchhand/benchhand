@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Declared pair relations between occurrences: fits, heat-set inserts and clearance requirements.
 
 The one reader of hw/interfaces.yaml pair declarations for cad-model `check` and cad-motion `sweep`.

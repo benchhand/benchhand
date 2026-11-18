@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """FreeCAD-independent validity and quality of a quadratic tetrahedral (C3D10) mesh.
 
 The FreeCAD job writes its Gmsh mesh as an Abaqus/CalculiX input file and reads it back here, in ccx's

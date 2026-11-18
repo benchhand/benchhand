@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Launch a PEP 723 script in the uv environment shared by every script with its dependency set.
 
 `uv run --script S` keys its environment by the script's path, so every copy of the plugin (a
