@@ -213,6 +213,16 @@ def placement(raw: Any, where: str, problems: list[str]) -> Placement:
     return Placement(translation, axis, angle)
 
 
+def _list_of(value: Any, where: str, problems: list[str]) -> list[Any]:
+    """`value` as a list, or an empty list when omitted. Any other container type is a problem and reads as empty."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        problems.append(f"{where} must be a list")
+        return []
+    return value
+
+
 def normalize(record: Mapping[str, Any], frames: Mapping[str, str] | None = None) -> Inventory:
     """The occurrence inventory of a parsed assembly.yaml; raises InventoryError listing every problem.
 
@@ -248,12 +258,16 @@ def normalize(record: Mapping[str, Any], frames: Mapping[str, str] | None = None
     groups: list[Group] = []
     membership: dict[str, str] = {}
     raw_groups = record.get("subassemblies") or []
-    for index, raw in enumerate(raw_groups if isinstance(raw_groups, list) else []):
+    if not isinstance(raw_groups, list):
+        problems.append("subassemblies must be a list")
+        raw_groups = []
+    for index, raw in enumerate(raw_groups):
         if not isinstance(raw, Mapping):
+            problems.append(f"subassemblies/{index} must be a mapping")
             continue
         group_id = str(raw.get("id", f"subassemblies/{index}"))
         members: list[str] = []
-        for pn in raw.get("parts") or []:
+        for pn in _list_of(raw.get("parts"), f"subassembly {group_id}: parts", problems):
             if not isinstance(pn, str) or not PN.fullmatch(pn):
                 problems.append(f"subassembly {group_id}: {pn!r} is not a part number")
                 continue
@@ -266,7 +280,7 @@ def normalize(record: Mapping[str, Any], frames: Mapping[str, str] | None = None
                 continue
             members.append(pn)
             order.setdefault(pn, Occurrence(pn, pn, IDENTITY, False))  # a PN in several groups stays one part
-        for ref in raw.get("occurrences") or []:
+        for ref in _list_of(raw.get("occurrences"), f"subassembly {group_id}: occurrences", problems):
             if not isinstance(ref, str) or not ref.startswith("@") or ref[1:] not in explicit:
                 problems.append(f"subassembly {group_id}: {ref!r} names no occurrence")
                 continue

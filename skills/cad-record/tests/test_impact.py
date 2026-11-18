@@ -327,6 +327,48 @@ OCCURRENCE_INTERFACE_DIGEST = "25016f8a4c143f1b7f00ff2ac329d64b72375dcf55b3c64f4
 # The fingerprint domains on origin/main bc8d3f94, sorted.
 MAIN_DOMAINS = ("capability", "condition", "criterion", "environment", "finish", "geometry", "interface", "load", "lot",
                 "material", "orientation", "process", "route", "setup", "source", "use_case")
+# Per case and family prefix, the digest of the fingerprints of every subject in the family's origin/main domains,
+# computed with impact.py of origin/main a69bbb46 (cad-record unchanged since 4a8916f8).
+MAIN_FAMILY_DIGESTS: dict[str, dict[str, str]] = {
+    "occurrence-placed": {
+        "cad.": "573156ddba3e6bd069d5e9b862fb776a3ff83d095b155568d72a16d723ca5b56",
+        "route.": "49248d3142a21391c8eae67178fbdc43dab9bc4c276cdebe72cf308bcf5c325c",
+        "process.": "9c67614853d423da5712d35a4784611f8b0558886efbc5881a0277811fa4f570",
+        "optical.": "ea9f72b837e030fd22c329918f3e5f7a03287ecadea8b277f337b90f92a3955c",
+        "engineering.": "7e777a8020773a3e550e4d90606496bcbec18b9557f103b05f04866a5cb1f1ba",
+        "feature.": "7302d9165857612dc7a10b888fea1b837dd86e8c8f23ff02724531429b79efa2",
+        "interface.": "b2a95ced884053db6226d05aba17af7aaf55f3ea3ba58cafa723171aa238301f",
+        "contact.": "6dc6bdafa3baa71b397dcb831f6715e48b4a054151ac34eceef36410e400f5a2",
+        "motion.": "767a132e7d21821407b618f88e29af54bf42f998f3f5fa874e17dd58d148892b",
+        "assembly.": "790afb7ac9ed872d78a1e355c7719e2f43c4530f102328ab5498dfb771eb64cb",
+        "export.3mf": "57b05be936547f3302bcb984594b44edeaa9412dd9a8c0f0bcb1957781ba6677",
+        "function.": "7575681d57fb9d88388d93c384af9436c452ce3cfd236687df30d7c05f2425f8",
+        "requirement.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
+        "policy.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
+    },
+    "broken inventory": {
+        "cad.": "573156ddba3e6bd069d5e9b862fb776a3ff83d095b155568d72a16d723ca5b56",
+        "route.": "49248d3142a21391c8eae67178fbdc43dab9bc4c276cdebe72cf308bcf5c325c",
+        "process.": "9c67614853d423da5712d35a4784611f8b0558886efbc5881a0277811fa4f570",
+        "optical.": "ea9f72b837e030fd22c329918f3e5f7a03287ecadea8b277f337b90f92a3955c",
+        "engineering.": "7e777a8020773a3e550e4d90606496bcbec18b9557f103b05f04866a5cb1f1ba",
+        "feature.": "7302d9165857612dc7a10b888fea1b837dd86e8c8f23ff02724531429b79efa2",
+        "interface.": "b2a95ced884053db6226d05aba17af7aaf55f3ea3ba58cafa723171aa238301f",
+        "contact.": "6dc6bdafa3baa71b397dcb831f6715e48b4a054151ac34eceef36410e400f5a2",
+        "motion.": "767a132e7d21821407b618f88e29af54bf42f998f3f5fa874e17dd58d148892b",
+        "assembly.": "790afb7ac9ed872d78a1e355c7719e2f43c4530f102328ab5498dfb771eb64cb",
+        "export.3mf": "57b05be936547f3302bcb984594b44edeaa9412dd9a8c0f0bcb1957781ba6677",
+        "function.": "7575681d57fb9d88388d93c384af9436c452ce3cfd236687df30d7c05f2425f8",
+        "requirement.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
+        "policy.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
+    },
+}
+
+
+def family_digest(prints: dict[str, dict[str, str]], domains: tuple[str, ...]) -> str:
+    """One digest over every subject's fingerprints restricted to `domains`."""
+    return impact.digest({subject: {d: values[d] for d in sorted(domains) if d in values}
+                          for subject, values in sorted(prints.items())})
 
 
 class PurchaseMountingStaleness(unittest.TestCase):
@@ -352,6 +394,7 @@ class PurchaseMountingStaleness(unittest.TestCase):
                      "source"),
         "motion.": ("criterion", "finish", "geometry", "interface", "load", "material", "process", "source"),
         "assembly.": ("criterion", "geometry", "interface", "source"),
+        "export.3mf": ("appearance", "geometry", "material"),
         "function.": ("condition", "criterion", "environment", "finish", "geometry", "interface", "load", "material",
                       "process", "source"),
         "requirement.": MAIN_DOMAINS,
@@ -438,6 +481,66 @@ class PurchaseMountingStaleness(unittest.TestCase):
             with self.subTest(subject=key):
                 self.assertNotIn("tst_opt_in", prints[key])
 
+    def accepted_result(self, docs: dict[str, Any], current: dict[str, Any]) -> Any:
+        """The assessment of `current` with an accepted purchase.mounting entry (level process_planned) recorded against
+        `docs` at every fingerprint domain the part has now, `occurrences` included."""
+        from datetime import date  # noqa: PLC0415 - used by these tests alone
+
+        entry = acceptance.entry(normalized(docs), "EV-010", {"PN": "TST-0103", "operation": "buy"}, "process_planned",
+                                 obligation=self.OBLIGATION, version="v1", manifest_sha256="a" * 64)
+        after = copy.deepcopy(current)
+        after["manufacturing/evidence.yaml"] = {"entries": [entry]}
+        return acceptance.evidence.assess(normalized(after), version="v1", manifest_sha256="a" * 64, packets=(),
+                                          approved=lambda decision: True, today=date(2026, 11, 18))
+
+    def test_an_accepted_entry_is_current_while_nothing_changed(self) -> None:
+        result = self.accepted_result(self.documents(), self.documents())
+        self.assertEqual(result.statuses[self.OBLIGATION].result, "pass", result.statuses[self.OBLIGATION])
+
+    def test_an_accepted_entry_goes_stale_when_only_an_occurrence_moves(self) -> None:
+        moved = self.documents(placements={"ring-a": {"translation_mm": [5, 0, 0]}})
+        result = self.accepted_result(self.documents(), moved)
+        self.assertEqual(result.statuses[self.OBLIGATION].result, "stale", result.statuses[self.OBLIGATION])
+        self.assertIn("occurrences", " ".join(result.statuses[self.OBLIGATION].reasons))
+
+    def test_an_accepted_entry_goes_stale_when_only_an_uninstalled_occurrence_is_added(self) -> None:
+        added = self.documents(rings=("ring-a", "ring-b", "ring-c"),
+                               operations=[self.install("mount-a", "@ring-a"), self.install("mount-b", "@ring-b")])
+        result = self.accepted_result(self.documents(), added)
+        self.assertEqual(result.statuses[self.OBLIGATION].result, "stale", result.statuses[self.OBLIGATION])
+        self.assertIn("occurrences", " ".join(result.statuses[self.OBLIGATION].reasons))
+
+    def wrong_shapes(self) -> list[tuple[str, Any]]:
+        """Inventories whose containers have the wrong type, each as a function that edits assembly.yaml."""
+        def edit(path: tuple[Any, ...], value: Any) -> Any:
+            def apply(assembly: dict[str, Any]) -> None:
+                target = assembly
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+            return apply
+        return [("subassembly occurrences is an integer", edit(("subassemblies", 0, "occurrences"), 1)),
+                ("subassembly occurrences is a mapping", edit(("subassemblies", 0, "occurrences"), {"@ring-a": 1})),
+                ("subassembly parts is an integer", edit(("subassemblies", 0, "parts"), 1)),
+                ("subassemblies is an integer", edit(("subassemblies",), 1)),
+                ("a subassembly is a string", edit(("subassemblies",), ["main"])),
+                ("occurrences is an integer", edit(("occurrences",), 1)),
+                ("an occurrence is a string", edit(("occurrences",), ["ring-a"])),
+                ("a placement is a string", edit(("occurrences", 2, "placement"), "left"))]
+
+    def test_a_wrong_container_shape_is_a_named_inventory_problem(self) -> None:
+        valid = impact.fingerprints(normalized(self.documents()), {"PN": "TST-0103"})["occurrences"]
+        for name, edit in self.wrong_shapes():
+            with self.subTest(shape=name):
+                docs = self.documents()
+                edit(docs["assembly.yaml"])
+                record = normalized(docs)
+                found = impact.part_occurrences(record, "TST-0103")
+                self.assertIsInstance(found, impact.InventoryProblem)
+                self.assertEqual(found.field, "assembly_inventory")
+                self.assertTrue(found.message)
+                self.assertNotEqual(impact.fingerprints(record, {"PN": "TST-0103"})["occurrences"], valid)
+
     def old_entry_result(self, docs: dict[str, Any], current: dict[str, Any]) -> Any:
         """The assessment of `current` with a purchase.mounting entry recorded against `docs` before the
         occurrences domain existed: it holds every domain fingerprint but that one, the appearance and the lot."""
@@ -470,6 +573,14 @@ class PurchaseMountingStaleness(unittest.TestCase):
         result = self.old_entry_result(docs, docs)
         self.assertEqual(result.statuses[self.OBLIGATION].result, "pass")
         self.assertNotIn("evidence.unqualified", {finding.code for finding in result.findings})
+
+    def test_every_family_but_purchase_fingerprints_byte_identically_to_main(self) -> None:
+        cases = (("occurrence-placed", self.documents()), ("broken inventory", self.documents(frame=None)))
+        for case, docs in cases:
+            prints = impact.subject_fingerprints(normalized(docs))
+            for prefix, domains in self.MAIN_FAMILIES.items():
+                with self.subTest(case=case, family=prefix):
+                    self.assertEqual(family_digest(prints, domains), MAIN_FAMILY_DIGESTS[case][prefix])
 
     def test_every_other_family_keeps_its_domains_and_purchase_depends_on_occurrences(self) -> None:
         for prefix, domains in self.MAIN_FAMILIES.items():
