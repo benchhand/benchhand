@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
+"""Two-mesh stress study: reading .frd results, the settle rules, and the campaign's real mesh pairs.
+
+The synthetic meshes are lines and clouds of nodes with a chosen stress, so each expected value is worked
+out from the rules, not from the code. The real pairs come from the fast-bias campaign
+(fb-2f0b457-r1 and fb-2f0b457-r2-finer on dev); `fixtures/trim_frd.py` documents how they were cut."""
+
+from __future__ import annotations
+
+import gzip
+import math
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+sys.path.insert(0, str(SCRIPTS))
+
+import fea_stress as fs
+
+LENGTH = 100.0  # the bar runs from the fixed node at x=0 to the load node at x=100
+H_COARSE, H_FINE = 1.0, 0.5  # exclusion cutoff = 3 x 1.0 = 3 mm, hot-spot tolerance 1 mm
+
+
+def level(h, *, kept=200, excluded=20, peak=100.0, peak_x=50.0, disp=1.0, fallback=None,
+          bad_stress=None, bad_disp=None):
+    """A mesh of `excluded` nodes near the fixed face, `kept` nodes between x=10 and x=90, and a node on each
+    face. The kept node nearest `peak_x` carries `peak`; every other node carries half of it."""
+    coords, stress, displacement = {1: (0.0, 0.0, 0.0), 2: (LENGTH, 0.0, 0.0)}, {}, {1: 0.0, 2: disp}
+    for i in range(excluded):  # inside the cutoff of the fixed node, with distinct positions
+        coords[10 + i] = (1.0, 0.001 * (i + 1), 0.0)
+    xs = [10.0 + 80.0 * i / max(kept - 1, 1) for i in range(kept)]
+    for i, x in enumerate(xs):
+        coords[100_000 + i] = (x, 0.0, 0.0)
+    peak_node = 100_000 + min(range(kept), key=lambda i: abs(xs[i] - peak_x)) if kept else None
+    for node in coords:
+        stress[node] = peak if node == peak_node else peak / 2
+        displacement.setdefault(node, disp / 2)
+    if bad_stress is not None:
+        stress[100_000] = bad_stress
+    if bad_disp is not None:
+        displacement[100_000] = bad_disp
+    return fs.Level(h, fs.FrdResult(coords, stress, displacement), frozenset({1}), frozenset({2}), fallback)
+
+
+def study(coarse_kw=None, fine_kw=None):
+    # The fine mesh is denser: 2000 kept nodes against 200, so both floors hold unless a test lowers them.
+    return fs.compare_levels(level(H_COARSE, **{"kept": 200, **(coarse_kw or {})}),
+                             level(H_FINE, **{"kept": 2000, **(fine_kw or {})}))
+
+
+def frd_text(nodes, disp, stress):
+    def row(i, values):
+        return " -1" + f"{i:10d}" + "".join(f"{v:12.5E}" for v in values)
+    lines = ["    1C", "    2C                           %d                                     1" % len(nodes)]
+    lines += [row(i, p) for i, p in nodes.items()] + [" -3", "  100CL  101 1.0", " -4  DISP        4    1"]
+    lines += [row(i, v + (0.0,)) for i, v in disp.items()] + [" -3", "  100CL  101 1.0", " -4  STRESS      6    1"]
+    lines += [row(i, v) for i, v in stress.items()] + [" -3", " 9999"]
+    return "\n".join(lines) + "\n"
+
+
+def real_level(name, h, load_x):
+    with gzip.open(FIXTURES / name, "rt") as handle:
+        result = fs.read_frd(handle.read())
+    return fs.Level(h, result, fs.plane_node_ids(result, "x", 0.0), fs.plane_node_ids(result, "x", load_x))
+
+
+class ReadFrdTests(unittest.TestCase):
+    def test_reads_coordinates_von_mises_and_displacement_magnitude(self) -> None:
+        text = frd_text({1: (0.0, 0.0, 0.0), 2: (5.0, -2.0, 1.5)},
+                        {1: (3.0, 4.0, 0.0), 2: (0.0, 0.0, 0.0)},
+                        {1: (100.0, 0.0, 0.0, 0.0, 0.0, 0.0), 2: (0.0, 0.0, 0.0, 10.0, 0.0, 0.0)})
+        result = fs.read_frd(text)
+        self.assertEqual(result.coordinates, {1: (0.0, 0.0, 0.0), 2: (5.0, -2.0, 1.5)})
+        self.assertAlmostEqual(result.displacement[1], 5.0)  # 3-4-5
+        self.assertAlmostEqual(result.von_mises[1], 100.0)  # uniaxial: von Mises is the stress
+        self.assertAlmostEqual(result.von_mises[2], 10.0 * math.sqrt(3.0))  # pure shear: sqrt(3) x tau
+
+    def test_a_file_without_results_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            fs.read_frd("    1C\n    2C  1\n -1         1 0.00000E+00 0.00000E+00 0.00000E+00\n -3\n")
+
+    def test_plane_node_ids_select_by_coordinate(self) -> None:
+        result = fs.FrdResult({1: (0.0, 1.0, 2.0), 2: (0.0000001, 5.0, 5.0), 3: (4.0, 0.0, 0.0)}, {}, {})
+        self.assertEqual(fs.plane_node_ids(result, "x", 0.0, 1e-6), frozenset({1, 2}))
+        self.assertEqual(fs.plane_node_ids(result, "x", 4.0), frozenset({3}))
+
+
+class SettleTests(unittest.TestCase):
+    def test_an_interior_peak_that_converges_is_strength_eligible_and_reports_the_larger_peak(self) -> None:
+        result = study({"peak": 99.0}, {"peak": 100.0})
+        self.assertEqual(result.status, fs.SETTLED)
+        self.assertEqual(result.sigma_mpa, 100.0)
+        self.assertTrue(result.strength_eligible)
+        self.assertIsNone(result.sigma_info_mpa)
+        self.assertEqual(result.reasons, ())
+
+    def test_the_larger_peak_is_reported_when_the_coarse_one_is_higher(self) -> None:
+        self.assertEqual(study({"peak": 101.0}, {"peak": 100.0}).sigma_mpa, 101.0)
+
+    def test_stress_change_of_exactly_two_percent_settles_and_just_above_does_not(self) -> None:
+        self.assertEqual(study({"peak": 98.0}, {"peak": 100.0}).status, fs.SETTLED)
+        over = study({"peak": 97.9}, {"peak": 100.0})  # 2.1%
+        self.assertEqual(over.status, fs.UNKNOWN)
+        self.assertEqual(over.reasons, ("stress_not_settled",))
+        self.assertIsNone(over.sigma_mpa)
+        self.assertIsNone(over.sigma_info_mpa)
+        self.assertFalse(over.strength_eligible)
+
+    def test_displacement_change_of_exactly_two_percent_settles_and_just_above_does_not(self) -> None:
+        self.assertEqual(study({"disp": 98.0}, {"disp": 100.0}).status, fs.SETTLED)
+        over = study({"disp": 97.9}, {"disp": 100.0})
+        self.assertEqual((over.status, over.reasons), (fs.UNKNOWN, ("displacement_not_settled",)))
+
+    def test_hot_spot_shift_of_exactly_h_coarse_settles_and_beyond_it_does_not(self) -> None:
+        self.assertEqual(study({"peak_x": 50.0}, {"peak_x": 51.0}).status, fs.SETTLED)  # ~1 mm, mesh spacing
+        moved = study({"peak_x": 50.0}, {"peak_x": 60.0})
+        self.assertEqual((moved.status, moved.reasons), (fs.UNKNOWN, ("hot_spot_moved",)))
+
+    def test_kept_share_of_ten_percent_on_the_coarse_mesh_passes_and_just_below_fails(self) -> None:
+        # 1000 nodes in all (two faces, the excluded nodes and the kept ones): 100 kept is exactly 10%.
+        self.assertEqual(study({"kept": 100, "excluded": 898}).status, fs.SETTLED)
+        low = study({"kept": 99, "excluded": 899})
+        self.assertEqual((low.status, low.reasons), (fs.UNKNOWN, ("kept_region_too_small",)))
+
+    def test_kept_share_below_ten_percent_on_the_fine_mesh_fails(self) -> None:
+        low = study(None, {"kept": 1000, "excluded": 9000})  # 1000 of 10002 nodes
+        self.assertEqual((low.status, low.reasons), (fs.UNKNOWN, ("kept_region_too_small",)))
+
+    def test_fine_mesh_with_1000_kept_nodes_passes_and_999_fails(self) -> None:
+        self.assertEqual(study(None, {"kept": 1000}).status, fs.SETTLED)
+        few = study(None, {"kept": 999})
+        self.assertEqual((few.status, few.reasons), (fs.UNKNOWN, ("kept_region_too_small",)))
+
+    def test_the_node_floor_does_not_apply_to_the_coarse_mesh(self) -> None:
+        coarse = level(H_COARSE, kept=150, excluded=20)  # 150 kept nodes, well under 1000
+        self.assertEqual(fs.compare_levels(coarse, level(H_FINE, kept=2000)).status, fs.SETTLED)
+
+    def test_an_empty_kept_region_is_unknown_with_no_number(self) -> None:
+        result = study({"kept": 0}, {"kept": 0})
+        self.assertEqual((result.status, result.reasons), (fs.UNKNOWN, ("kept_region_too_small",)))
+        self.assertIsNone(result.sigma_mpa)
+        self.assertIsNone(result.sigma_info_mpa)
+        self.assertIn("0 nodes (0.0%)", result.message)
+
+    def test_a_fallback_that_differs_between_levels_is_unknown(self) -> None:
+        mismatch = study({"fallback": None}, {"fallback": 2})
+        self.assertEqual((mismatch.status, mismatch.reasons), (fs.UNKNOWN, ("high_order_fallback_differs",)))
+        self.assertEqual(study({"fallback": 2}, {"fallback": 2}).status, fs.SETTLED)
+
+    def test_a_value_that_is_not_finite_is_unknown(self) -> None:
+        for name, coarse_kw in (("nan stress", {"bad_stress": math.nan}), ("inf stress", {"bad_stress": math.inf}),
+                                ("nan displacement", {"bad_disp": math.nan})):
+            with self.subTest(name):
+                result = study(coarse_kw)
+                self.assertEqual((result.status, result.reasons), (fs.UNKNOWN, ("non_finite_stress",)))
+                self.assertIsNone(result.sigma_mpa)
+
+    def test_a_coarse_mesh_that_is_not_coarser_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            fs.compare_levels(level(0.5), level(1.0))
+
+    def test_the_reason_names_both_sizes_peaks_change_hot_spot_face_and_kept_region(self) -> None:
+        message = study({"peak": 90.0, "peak_x": 50.0}, {"peak": 100.0, "peak_x": 50.0}).message
+        for expected in ("h_coarse=1 mm", "h_fine=0.5 mm", "coarse=90 MPa", "fine=100 MPa", "change=10.00%",
+                         "hot spot=(50.0", "nearest face (fine)=load face at", "kept region coarse=200 nodes (",
+                         "fine=2000 nodes (", "floor 10% on both, 1000 nodes on fine"):
+            with self.subTest(expected):
+                self.assertIn(expected, message)
+
+
+class BoundaryTests(unittest.TestCase):
+    """Peaks near a face, near the exclusion cutoff (3 mm), and beyond it."""
+
+    def test_a_peak_just_beyond_the_cutoff_band_is_interior_and_strength_eligible(self) -> None:
+        result = study({"peak_x": 4.25}, {"peak_x": 4.25})  # 4.25 > cutoff 3 + h_coarse 1
+        self.assertEqual(result.status, fs.SETTLED)
+        self.assertTrue(result.strength_eligible)
+
+    def test_a_peak_within_h_coarse_of_the_cutoff_is_settled_away_from_support_and_not_strength(self) -> None:
+        result = study({"peak": 99.0, "peak_x": 4.0}, {"peak": 100.0, "peak_x": 4.0})
+        self.assertEqual(result.status, fs.SETTLED_AWAY_FROM_SUPPORT)
+        self.assertEqual(result.sigma_info_mpa, 100.0)
+        self.assertIsNone(result.sigma_mpa)
+        self.assertFalse(result.strength_eligible)
+        self.assertIn("governed by the exclusion boundary, the support stress is higher; see #209",
+                      result.message)
+
+    def test_the_hot_spot_is_not_compared_when_a_peak_is_on_the_cutoff(self) -> None:
+        # The coarse peak is interior at x=50 and the fine one sits on the cutoff, 46 mm away.
+        result = study({"peak_x": 50.0}, {"peak_x": 4.0})
+        self.assertEqual(result.status, fs.SETTLED_AWAY_FROM_SUPPORT)
+
+    def test_a_peak_on_the_cutoff_still_needs_every_convergence_criterion(self) -> None:
+        stress = study({"peak": 97.0, "peak_x": 4.0}, {"peak": 100.0, "peak_x": 4.0})
+        self.assertEqual((stress.status, stress.reasons), (fs.UNKNOWN, ("stress_not_settled",)))
+        disp = study({"peak_x": 4.0, "disp": 97.0}, {"peak_x": 4.0, "disp": 100.0})
+        self.assertEqual((disp.status, disp.reasons), (fs.UNKNOWN, ("displacement_not_settled",)))
+
+    def test_a_peak_within_h_coarse_of_a_face_is_boundary_governed(self) -> None:
+        # With K >= 1 every kept node is at least h_coarse from a face, so the guard is reached by lowering K:
+        # a 0.5 mm cutoff keeps the nodes at 0.75 mm and 1.0 mm from the fixed node.
+        with patch.object(fs, "K_EXCLUSION", 0.5):
+            for x in (0.75, 1.0):
+                with self.subTest(x=x):
+                    result = study({"peak_x": x}, {"peak_x": x})
+                    self.assertEqual((result.status, result.reasons), (fs.UNKNOWN, ("boundary_governed",)))
+                    self.assertIsNone(result.sigma_mpa)
+            beyond = study({"peak_x": 1.25}, {"peak_x": 1.25})  # 1.25 > h_coarse: on the cutoff band, not at a face
+            self.assertEqual(beyond.status, fs.SETTLED_AWAY_FROM_SUPPORT)
+
+
+class CampaignPairTests(unittest.TestCase):
+    def test_cantilever_4_5_to_3_mm_settles_away_from_support(self) -> None:
+        # Campaign fb-2f0b457-r1 cantilever curved-4.5mm and curved-3mm: fixed plane x=0, load plane x=100.
+        result = fs.compare_levels(real_level("cantilever_r1_4.5mm.frd.gz", 4.5, 100.0),
+                                   real_level("cantilever_r1_3mm.frd.gz", 3.0, 100.0))
+        self.assertEqual(result.status, fs.SETTLED_AWAY_FROM_SUPPORT)
+        self.assertAlmostEqual(result.sigma_info_mpa, 103.9, places=1)
+        self.assertIsNone(result.sigma_mpa)
+        self.assertFalse(result.strength_eligible)
+        self.assertAlmostEqual(result.delta_sigma, 0.0114, places=4)
+
+    def test_truss_member_6_to_4_5_mm_is_unknown_at_13_93_percent(self) -> None:
+        # Campaign fb-2f0b457-r1 curved-6mm and fb-2f0b457-r2-finer curved-4.5mm: fixed x=0, load x=320.
+        result = fs.compare_levels(real_level("truss_r1_6mm.frd.gz", 6.0, 320.0),
+                                   real_level("truss_r2_4.5mm.frd.gz", 4.5, 320.0))
+        self.assertEqual((result.status, result.reasons), (fs.UNKNOWN, ("stress_not_settled",)))
+        self.assertAlmostEqual(result.delta_sigma, 0.1393, places=4)
+        self.assertIsNone(result.sigma_mpa)
+        self.assertIsNone(result.sigma_info_mpa)
+        for expected in ("h_coarse=6 mm", "h_fine=4.5 mm", "coarse=82.54 MPa", "fine=95.89 MPa", "change=13.93%",
+                         "hot spot=(257.077, 8.929, 84.0)", "nearest face (fine)=load face at"):
+            with self.subTest(expected):
+                self.assertIn(expected, result.message)
+
+
+if __name__ == "__main__":
+    unittest.main()
