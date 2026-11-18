@@ -748,15 +748,14 @@ def point_latest(hw: Path, label: str, manifest: Mapping[str, Any]) -> None:
 
 def reconcile_latest(hw: Path, label: str) -> tuple[int, dict[str, Any]]:
     """Point latest.json at the newest built version after a pointer write failed, without rebuilding:
-    the version must verify byte for byte against its manifest first."""
+    the version must not be stale first."""
     hw = hw.resolve()
     folder = version_dir(hw, label)
     newest = max(built_numbers(hw))
     if label_number(label) != newest:
         raise UsageError(f"{label} is not the newest built version v{newest}; latest.json names the newest version")
-    problems = record.load_layout().verify(folder)
-    if problems:
-        raise UsageError(f"{folder} does not verify against its manifest, so latest.json is unchanged: {problems}")
+    if reason := record.load_layout().stale(folder):
+        raise UsageError(f"{folder}: {reason}; latest.json is unchanged")
     manifest = read_json(folder / "manifest.json")
     point_latest(hw, label, manifest)
     return 0, {"status": "pass", "label": label, "latest": str(hw / "versions" / "latest.json"),

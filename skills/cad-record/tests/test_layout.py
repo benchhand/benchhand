@@ -286,12 +286,27 @@ class Publication(TempProject):
         staged = list((self.project / ".cad-work" / "publication").iterdir())
         self.assertEqual([sorted(p.name for p in s.iterdir()) for s in staged], [["iso.png"]])
 
-    def test_a_tampered_bundle_is_not_reused(self) -> None:
-        publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"})
+    def test_a_bundle_with_a_changed_member_is_stale_and_its_producer_reruns(self) -> None:
+        publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"}, recipe={"size": 800})
         write(self.target / "iso.png", "edited\n")
-        self.assertEqual(layout.verify(self.target), ["iso.png changed after it was sealed"])
-        with self.assertRaises(layout.PublishConflict):
-            publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"})
+        self.assertEqual(layout.stale(self.target), "stale: iso.png changed after it was sealed")
+        self.assertIsNone(layout.reusable(self.hw, "bundle.renders", self.params, {"size": 800}), "the producer runs")
+        rerun = publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"}, recipe={"size": 800})
+        self.assertFalse(rerun.reused)
+        self.assertEqual((self.target / "iso.png").read_text(encoding="utf-8"), "png\n")
+        self.assertIsNone(layout.stale(self.target))
+
+    def test_a_bundle_with_a_missing_member_is_stale(self) -> None:
+        publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"}, recipe={"size": 800})
+        (self.target / "iso.png").unlink()
+        self.assertEqual(layout.stale(self.target), "stale: iso.png is listed but missing")
+        self.assertIsNone(layout.reusable(self.hw, "bundle.renders", self.params, {"size": 800}))
+
+    def test_stale_names_the_first_reason_and_counts_the_rest(self) -> None:
+        publish(self.hw, "bundle.renders", self.params, {"iso.png": "png\n"}, recipe={"size": 800})
+        write(self.target / "iso.png", "edited\n")
+        write(self.target / "extra.png")
+        self.assertEqual(layout.stale(self.target), "stale: iso.png changed after it was sealed (+1 more)")
 
     def test_a_sealed_v2_release_verifies_and_a_tampered_copy_is_reported(self) -> None:
         release = self.hw / "releases" / "A"
@@ -357,9 +372,6 @@ class Publication(TempProject):
         with self.assertRaisesRegex(layout.PublishConflict, "--replace"):
             layout.reusable(self.hw, "bundle.renders", params, {"size": 1600})
         self.assertIsNone(layout.reusable(self.hw, "bundle.renders", params, {"size": 1600}, replace=True))
-        write(self.target / "iso.png", "edited\n")
-        with self.assertRaises(layout.PublishConflict):
-            layout.reusable(self.hw, "bundle.renders", params, {"size": 800})
 
     def test_built_version_needs_a_verified_manifest_and_a_record_snapshot(self) -> None:
         write(self.hw / "versions" / "v2" / "record" / "product.yaml")
@@ -372,7 +384,7 @@ class Publication(TempProject):
         with self.assertRaisesRegex(layout.LayoutError, "v3 is not a built version"):
             layout.built_version(self.hw, "v3")
         write(self.hw / "versions" / "v2" / "record" / "product.yaml", "edited\n")
-        with self.assertRaisesRegex(layout.LayoutError, "fails its manifest"):
+        with self.assertRaisesRegex(layout.LayoutError, "v2: stale: record/product.yaml changed"):
             layout.built_version(self.hw, "v2")
 
     def test_scratch_path_accepts_only_cad_work(self) -> None:

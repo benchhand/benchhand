@@ -155,9 +155,8 @@ def _renders(hw: Path, version: str) -> dict[str, Any]:
         data_path, manifest_path = folder / "render.json", folder / "manifest.json"
         if not manifest_path.is_file():
             continue
-        problems = api.verify(folder)
-        if problems:
-            notes.append(f"{folder} fails its bundle inventory: {'; '.join(problems)}")
+        if reason := api.stale(folder):
+            notes.append(f"{folder}: {reason}")
             continue
         metadata = _json(data_path) if data_path.is_file() else {}
         if not isinstance(metadata, dict):
@@ -212,9 +211,8 @@ def _captures(hw: Path, version: str) -> dict[str, Any]:
         metadata_path, manifest_path = folder / "capture.json", folder / "manifest.json"
         if not manifest_path.is_file():
             continue
-        problems = api.verify(folder)
-        if problems:
-            notes.append(f"{folder} fails its bundle inventory: {'; '.join(problems)}")
+        if reason := api.stale(folder):
+            notes.append(f"{folder}: {reason}")
             continue
         data = _json(metadata_path) if metadata_path.is_file() else None
         if not isinstance(data, dict):
@@ -241,9 +239,8 @@ def _drawings(hw: Path, version: str) -> dict[str, Any]:
         manifest = bundle / "manifest.json"
         if not manifest.is_file():
             continue
-        problems = api.verify(bundle)
-        if problems:
-            notes.append(f"{bundle} fails its bundle inventory: {'; '.join(problems)}")
+        if reason := api.stale(bundle):
+            notes.append(f"{bundle}: {reason}")
             continue
         package_path = bundle / "package.json"
         package = _json(package_path) if package_path.is_file() else None

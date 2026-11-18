@@ -77,9 +77,8 @@ class Input:
 
 
 def read_input(bundle: Path) -> Input:
-    problems = pose.LAYOUT.verify(bundle)
-    if problems:
-        raise MergeError(f"{bundle} does not verify: {problems[0]}")
+    if reason := pose.LAYOUT.stale(bundle):
+        raise MergeError(f"{bundle}: {reason}; run the sweep again")
     try:
         result = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
         statistics, provenance, audit = sweep.read_statistics(bundle / "evidence")

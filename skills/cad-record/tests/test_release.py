@@ -621,10 +621,15 @@ class Refusal(ReleaseCase):
         hw = self.project(failed={"LMP-0004": "bed_contact"})
         self.refused(hw, "hw/versions/v1/manufacturing/LMP-0004/manufacturing.json", "failed", "bed_contact failed")
 
-    def test_a_tampered_bundle_refuses(self) -> None:
+    def test_a_bundle_with_a_changed_member_is_stale_and_refuses(self) -> None:
         hw = self.project()
         write(hw / "drawings" / "v1" / "LMP-0002" / "sheet-1.svg", "edited\n")
-        self.refused(hw, "hw/drawings/v1/LMP-0002", "tampered", "sheet-1.svg changed after it was sealed")
+        self.refused(hw, "hw/drawings/v1/LMP-0002", "stale", "stale: sheet-1.svg changed after it was sealed")
+
+    def test_a_bundle_with_a_missing_member_is_stale_and_refuses(self) -> None:
+        hw = self.project()
+        (hw / "drawings" / "v1" / "LMP-0002" / "sheet-1.svg").unlink()
+        self.refused(hw, "hw/drawings/v1/LMP-0002", "stale", "stale: sheet-1.svg is listed but missing")
 
     def test_a_missing_drawing_refuses(self) -> None:
         hw = self.project(skip_bundles=("LMP-0006",))
@@ -806,6 +811,17 @@ class Acceptance(ReleaseCase):
         code, report = release.sealed(hw, "A", "v1", "DR-005")
         self.assertEqual(code, 1)
         self.assertIn("its manifest version 2 is not one this release.py reads", report["findings"][0]["message"])
+
+    def test_a_sealed_package_with_a_changed_member_is_stale_not_sealed(self) -> None:
+        hw = self.project()
+        self.assertEqual(self.release(hw)[0], 0)
+        member = next(p for p in sorted((hw / "releases" / "A").rglob("*")) if p.is_file() and p.name != "manifest.json")
+        member.write_text("edited\n", encoding="utf-8")
+        code, report = release.sealed(hw, "A", "v1", "DR-005")
+        finding = report["findings"][0]
+        self.assertEqual((code, report["status"], finding["code"]), (1, "refused", "release.stale"))
+        self.assertTrue(finding["message"].startswith("stale: "), finding["message"])
+        self.assertIn(f"{member.relative_to(hw / 'releases' / 'A').as_posix()} changed after it was sealed", finding["message"])
 
     def test_an_open_or_stale_selection_refuses_the_release(self) -> None:
         hw = self.project(before_build=open_selection)

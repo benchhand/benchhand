@@ -840,6 +840,21 @@ def verify(directory: Path) -> list[str]:
     return problems
 
 
+def stale(directory: Path) -> str | None:
+    """The status `stale: <reason>` when `directory` fails its seal in any way, else None. The reason is
+    the first problem of `verify`, with a count of the others. A stale bundle is never used: its producer
+    runs again."""
+    problems = verify(directory)
+    if not problems:
+        return None
+    return f"stale: {problems[0]}" + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "")
+
+
+def _stale_bundle(target: Path) -> bool:
+    """A sealed bundle that fails its seal. A directory with no manifest.json is another writer's claim."""
+    return (target / MANIFEST).is_file() and stale(target) is not None
+
+
 def _bundle_entry(entry_id: str) -> Entry:
     entry = load().entry(entry_id)
     if entry.manifest != "bundle":
@@ -884,7 +899,7 @@ def _sha_or_none(value: Any) -> str | None:
 
 def built_version(hw: Path, requested: str) -> tuple[str, Path, Path]:
     """(label, version folder, record snapshot folder) of a built version; `requested` is a label or
-    `latest`. LayoutError when it is not built, fails its manifest or has no record snapshot."""
+    `latest`. LayoutError when it is not built, is stale or has no record snapshot."""
     hw = Path(hw)
     label = latest(hw) if requested == "latest" else requested
     if label is None:
@@ -892,9 +907,8 @@ def built_version(hw: Path, requested: str) -> tuple[str, Path, Path]:
     folder = version_dir(hw, label)
     if not (folder / MANIFEST).is_file():
         raise LayoutError(f"{label} is not a built version: {folder / MANIFEST} is missing")
-    problems = verify(folder)
-    if problems:
-        raise LayoutError(f"{label} fails its manifest: {'; '.join(problems)}")
+    if reason := stale(folder):
+        raise LayoutError(f"{label}: {reason}; build a new version")
     record = resolve(hw, "version.record", V=label)
     if not record.is_dir():
         raise LayoutError(f"{label} has no record snapshot at {record}; build a new version")
@@ -933,15 +947,15 @@ def _version_sha(hw: Path, params: Mapping[str, str]) -> str | None:
 
 
 def _recipe_conflict(target_rel: str) -> PublishConflict:
-    return PublishConflict(f"{target_rel} exists with another recipe or does not verify; "
+    return PublishConflict(f"{target_rel} exists with another recipe; "
                            "a different recipe for the same version and subject needs --replace")
 
 
 def reusable(hw: Path, entry_id: str, params: Mapping[str, str], recipe: Mapping[str, Any], *,
              replace: bool = False) -> Path | None:
     """Before running a producer: the existing bundle `publish` would return unchanged for this
-    recipe, or None when there is none to reuse. An existing bundle with another recipe, or one that
-    fails verification, is a PublishConflict unless `replace` (then None: run and publish)."""
+    recipe, or None when there is none to reuse. A stale bundle (see `stale`) is not reused, so the
+    producer runs. A sound bundle with another recipe is a PublishConflict unless `replace` (then None)."""
     hw = Path(hw)
     _bundle_entry(entry_id)
     target_rel = load().path(entry_id, params)
@@ -951,7 +965,7 @@ def reusable(hw: Path, entry_id: str, params: Mapping[str, str], recipe: Mapping
     canonical = json.loads(canonical_json(recipe))
     if _reusable(target, recipe_sha256(canonical), _version_sha(hw, params)) is not None:
         return target
-    if not replace:
+    if not replace and not _stale_bundle(target):
         raise _recipe_conflict(target_rel)
     return None
 
@@ -964,7 +978,8 @@ def publish(hw: Path, entry_id: str, params: Mapping[str, str], staged: Path, *,
     The bundle path never holds anything but a complete bundle: `publish` writes manifest.json into
     the staging directory, claims the target with an exclusive mkdir and renames the staging
     directory onto it (POSIX rename onto the empty claim). An existing bundle with the same recipe
-    and version manifest that still verifies is returned unchanged. Any other existing bundle is a
+    and version manifest that still verifies is returned unchanged. A stale one (see `stale`) is
+    replaced. Any other existing bundle is a
     PublishConflict unless `replace`: then it moves to .cad-work/replaced/ and the new manifest's
     `replaces` records it. On failure `staged` stays as scratch.
     """
@@ -994,7 +1009,7 @@ def publish(hw: Path, entry_id: str, params: Mapping[str, str], staged: Path, *,
             existing = json.loads((target / MANIFEST).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             existing = None
-        if not replace:
+        if not replace and not _stale_bundle(target):
             raise _recipe_conflict(target_rel)
         stamp = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}"
         retained = hw.parent / SCRATCH / "replaced" / target_rel / stamp

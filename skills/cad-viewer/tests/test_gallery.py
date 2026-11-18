@@ -204,7 +204,7 @@ class Index(Fixture):
         broken = api.bundle_dir(self.hw, "drawings", "v2", "LMP-0001")
         shutil.rmtree(broken)
         api.publish(self.hw, "bundle.drawings", {"V": "v2", "S": "LMP-0001"}, stage,
-                    recipe={"part": "LMP-0001", "tampered": True}, producer="test_gallery", status="fail")
+                    recipe={"part": "LMP-0001", "variant": "failed"}, producer="test_gallery", status="fail")
         drawings = self.section(gallery.index(self.hw, "v2"), "drawings")
         self.assertNotIn(str(outside), [t["path"] for t in drawings["tiles"]])
 
