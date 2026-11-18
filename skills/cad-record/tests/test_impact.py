@@ -547,6 +547,8 @@ class PurchaseMountingStaleness(unittest.TestCase):
             ("a subassembly is a string", "legacy", top("subassemblies", ["main"]),
              "subassemblies/0 must be a mapping"),
             ("occurrences is an integer", "placed", top("occurrences", 1), "occurrences must be a list"),
+            ("an occurrence is a string", "legacy", top("occurrences", ["ring-a"]), "occurrences/0 must be a mapping"),
+            ("an occurrence is an integer", "legacy", top("occurrences", [1]), "occurrences/0 must be a mapping"),
             ("a placement is a string", "placed", lambda assembly: assembly["occurrences"][2].__setitem__(
                 "placement", "left"), "occurrences/2.placement must be a mapping of translation_mm and rotation")]
 
