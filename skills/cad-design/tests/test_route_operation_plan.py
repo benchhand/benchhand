@@ -1,5 +1,5 @@
-"""route.operation_plan: a plan field that is absent FAILs and names the field; a field recorded as open (an unknown
-fact with its reason) stays UNKNOWN; a complete plan PASSes.
+"""route.operation_plan: an absent plan field FAILs and names the field. A field recorded as open (an unknown
+fact with its reason) stays UNKNOWN. A complete plan PASSes.
 
 Run: python3 -m unittest discover -s skills/cad-design/tests -p test_route_operation_plan.py
 Needs PyYAML and jsonschema (the CI uv command supplies them). Every value is a synthetic TST value.
@@ -59,7 +59,7 @@ def cnc(setup: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def operation_plan(part: dict[str, Any]) -> Any:
-    """The assessment of `part`; the process-plan obligation is the only one these tests read."""
+    """The assessment of `part`. The tests look at its process-plan obligation."""
     profiles = [FX.material_profile(POLYMER, form="printed"), FX.material_profile(ALUMINIUM, form="wrought", family="TST aluminium")]
     capabilities = [FX.capability_profile("tst_printer", "fdm"),
                     FX.capability_profile("tst_mill", "cnc", parameters={"axes": FX.known(FX.quantity(3, units="count"))})]
