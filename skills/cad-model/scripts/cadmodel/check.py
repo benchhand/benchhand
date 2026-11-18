@@ -935,10 +935,9 @@ def readback_recipe(layout: Any, packet: Mapping[str, Any]) -> dict[str, Any]:
 # The data files that decide the static check's verdict, hashed with its code (readback_recipe, `code_sha256`):
 # the ISO 286 tables of locating fits (fits.py:39, read at fits.py:51 through pair_policy), the bundle layout
 # (layout.py:34, read at layout.py:325), the record and packet schemas (check_packet.py:26, manufacturing_intent.py:36,
-# schema_registry.py:28-29) and the record version 1 density table (build.py:45, read at build.py:154).
+# schema_registry.py:28-29).
 VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
-                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas",
-                SKILLS / "cad-model" / "assets" / "materials.yaml")
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas")
 
 
 def _code_shas() -> Any:
