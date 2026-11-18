@@ -188,7 +188,7 @@ class IsolatedCli(Built):
 
 class Infrastructure(Built):
     def missing_validator(self) -> Any:
-        registry = sys.modules["cad_record_schema_registry"]
+        registry = gl._sibling("cad_record_schema_registry", "schema_registry.py")
         return mock.patch.object(registry, "document_validator", side_effect=ImportError("No module named 'jsonschema'"))
 
     def test_a_missing_validator_is_an_error_and_never_a_refused_file(self) -> None:
