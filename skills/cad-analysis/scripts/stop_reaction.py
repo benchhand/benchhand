@@ -89,7 +89,8 @@ SUBJECT = "stop-reaction"
 # read at layout.py:325) and the schemas that validate the packet and the record (check_packet.py:26,
 # manufacturing_intent.py:36, schema_registry.py:28-29).
 VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
-                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas")
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas",
+                SKILLS / "cad-record" / "assets" / "manufacturing" / "guidelines")
 FAMILY = "engineering.stop_reaction"
 CONTACT_MM = 1e-4  # parts at or under this distance touch; planes this close are coincident
 # A joint limit whose parts are this close counts as the stop. A stop with a small gap in the model then gets a
