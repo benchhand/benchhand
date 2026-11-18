@@ -96,6 +96,7 @@ mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_in
 impact = _load_module("cad_record_impact", SCRIPTS / "impact.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
+cited_paths = _load_module("cad_record_evidence_paths", SCRIPTS / "evidence_paths.py")
 operations = _load_module("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
 SKILLS = SCRIPTS.parents[1]
 
@@ -680,7 +681,8 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
            stale_since_build: Mapping[str, Sequence[str]] | None = None,
            artifact_sha: Callable[[str], str | None] | None = None,
            selection_sha256: str | None = None,
-           part_of: Callable[[str], str | None] | None = None) -> Assessment:
+           part_of: Callable[[str], str | None] | None = None,
+           paths: Any | None = None) -> Assessment:
     """The evidence assessment of `record` (manufacturing_intent.Record, the current hw/ record) for the
     built `version` whose manifest has sha256 `manifest_sha256`. `geometry` maps PN to its current model
     source sha256 (impact.current_geometry); `packets` are the version's producer packets; `approved`
@@ -688,7 +690,8 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
     `stale_since_build` the obligations whose inputs changed since the version was built (impact);
     `selection_sha256` the selection input digest of the record's documents (selection.input_digest),
     without which a recorded selection assessment is never current; `part_of` maps an assembly part
-    reference (a PN or @occurrence) to its PN for the joint check (default: a bare PN is itself)."""
+    reference (a PN or @occurrence) to its PN for the joint check (default: a bare PN is itself). `paths`
+    (project_paths) refuses the ledger entries and dispositions that cite scratch or outside files."""
     today = today or date.today()
     stale_since_build = stale_since_build or {}
     expected = mi.required_checks(record)
@@ -753,10 +756,15 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
     # ledger entries
     entry_results: dict[str, str] = {}
     untargeted: dict[tuple[str, str], list[str]] = {}
+    judged = {str(e.get("id")): _entry(e, record, by_id, version, manifest_sha256, geometry or {}, approved, today,
+                                       artifact_sha, paths) for e in record.evidence}
+    reliant = _reliant(record, {i for i, (_, _, f) in judged.items() if any(x.code in _PATH_CODES for x in f)})
     for entry in record.evidence:
         ident = str(entry.get("id"))
-        result, reasons, entry_findings = _entry(entry, record, by_id, version, manifest_sha256, geometry or {},
-                                                 approved, today, artifact_sha)
+        result, reasons, entry_findings = judged[ident]
+        if ident in reliant:
+            result, reasons = "unknown", (f"{ident} rests on refused evidence {', '.join(reliant[ident])}",)
+            entry_findings = [*entry_findings, _reliant_finding(ident, reliant[ident])]
         findings.extend(entry_findings)
         entry_results[ident] = result
         targets = _entry_targets(entry, record, expected)
@@ -768,6 +776,11 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
             untargeted.setdefault((entry["requirement"], entry.get("level")), []).append(result)
 
     # dispositions of producer findings
+    if paths:
+        for disposition in record.dispositions:
+            findings.extend(_path_findings(cited_paths.disposition_problems(paths, disposition),
+                                           f"hw/manufacturing/findings.yaml#/dispositions/{disposition.get('finding')}",
+                                           f"finding {disposition.get('finding')}"))
     critical = []
     for packet in accepted_packets:
         for item in packet.data.get("findings") or ():
@@ -852,6 +865,29 @@ def _packet_problems(packet: ProducerPacket, expected: Mapping[str, Any]) -> lis
     return problems
 
 
+def project_paths(hw: Path) -> Any:
+    """The inside rule for the project that holds `hw`."""
+    return cited_paths.ProjectPaths.for_hw(hw, layout.bundle_kinds())
+
+
+def _path_findings(problems: Iterable[Any], where: str, ident: Any, obligation: str | None = None) -> list[Finding]:
+    return [Finding(problem.code, where, f"{ident}: {problem.message}", obligation=obligation) for problem in problems]
+
+
+_PATH_CODES = frozenset({"evidence.scratch_path", "evidence.uncited_artifact"})
+
+
+def _reliant(record: Any, refused: set[str]) -> dict[str, list[str]]:
+    """The ledger entries that name a refused entry, directly or through others, with the entries each names."""
+    return cited_paths.dependents(list(record.evidence), refused) if refused else {}
+
+
+def _reliant_finding(ident: str, names: Sequence[str]) -> Finding:
+    return Finding("evidence.refused_dependency", f"hw/manufacturing/evidence.yaml#/entries/{ident}",
+                   f"{ident} relies on {', '.join(names)}, which the record refuses. Its evidence earns no credit until "
+                   "the dependency is promoted into the record")
+
+
 def _entry_targets(entry: Mapping[str, Any], record: Any, expected: Sequence[Any]) -> list[str]:
     """The expected obligations a ledger entry speaks to: the one it names, else the requirement and
     evidence-policy obligations of its requirement at its level."""
@@ -863,14 +899,19 @@ def _entry_targets(entry: Mapping[str, Any], record: Any, expected: Sequence[Any
 
 def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], version: str | None,
            manifest_sha256: str | None, geometry: Mapping[str, str | None], approved: Callable[[str | None], bool],
-           today: date, artifact_sha: Callable[[str], str | None] | None = None) -> tuple[str, tuple[str, ...], list[Finding]]:
-    """(status, reasons, findings) of one accepted ledger entry for the assessed version."""
+           today: date, artifact_sha: Callable[[str], str | None] | None = None,
+           paths: Any | None = None) -> tuple[str, tuple[str, ...], list[Finding]]:
+    """(status, reasons, findings) of one accepted ledger entry for the assessed version. With `paths`
+    (project_paths) an entry that cites a file the record cannot hold gets status unknown and counts for nothing."""
     ident, level, result = entry.get("id"), entry.get("level"), entry.get("result")
     subject = entry.get("subject") or {}
     path = f"hw/manufacturing/evidence.yaml#/entries/{ident}"
     findings: list[Finding] = []
     named = entry.get("obligation")
     obligation = expected.get(named) if isinstance(named, str) and named else None
+    refused = _path_findings(cited_paths.entry_problems(paths, entry), path, ident, named if obligation else None) if paths else []
+    if refused:
+        return "unknown", (f"{ident} cites files the record cannot hold",), refused
     if entry.get("obligation") and obligation is not None and mi.obligation_anchor(subject) != _anchor(obligation.id):
         findings.append(Finding("evidence.subject", path, f"{ident} is about {mi.obligation_anchor(subject)}, but "
                                 f"{obligation.id} is about {_anchor(obligation.id)}: evidence covers its own subject only",
@@ -1020,10 +1061,14 @@ def _verification(record: Any, rows: Sequence[Mapping[str, str]], facets: Mappin
 
 # --- ledger findings validate.py reports -------------------------------------------------------------------------
 
-def ledger_findings(record: Any, *, approved: Callable[[str | None], bool], today: date | None = None) -> list[Finding]:
-    """The waivers of the evidence ledger and of finding dispositions that cannot stand, independent of
+def ledger_findings(record: Any, *, approved: Callable[[str | None], bool], today: date | None = None,
+                    paths: Any | None = None) -> list[Finding]:
+    """The waivers of the evidence ledger and of finding dispositions that cannot stand, and with `paths`
+    (project_paths) the entries and dispositions that cite files the record cannot hold, independent of
     any version: what validate.py reports about the record."""
     findings, today = [], today or date.today()
+    if paths:
+        findings += _ledger_path_findings(record, paths)
     expected = {o.id: o for o in mi.required_checks(record)} if record.version == mi.RECORD_VERSION else {}
     for index, entry in enumerate(record.evidence):
         if entry.get("result") != "waived":
@@ -1044,6 +1089,22 @@ def ledger_findings(record: Any, *, approved: Callable[[str | None], bool], toda
         if problem is not None:
             findings.append(Finding(problem[0], f"hw/manufacturing/findings.yaml#/dispositions/{index}/waiver",
                                     f"finding {disposition.get('finding')}: {problem[1]}"))
+    return findings
+
+
+def _ledger_path_findings(record: Any, paths: Any) -> list[Finding]:
+    findings = []
+    refused = set()
+    for entry in record.evidence:
+        problems = cited_paths.entry_problems(paths, entry)
+        if problems:
+            refused.add(str(entry.get("id")))
+        findings += _path_findings(problems, f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}", entry.get("id"))
+    findings += [_reliant_finding(ident, names) for ident, names in _reliant(record, refused).items()]
+    for disposition in record.dispositions:
+        findings += _path_findings(cited_paths.disposition_problems(paths, disposition),
+                                   f"hw/manufacturing/findings.yaml#/dispositions/{disposition.get('finding')}",
+                                   f"finding {disposition.get('finding')}")
     return findings
 
 
@@ -1176,8 +1237,12 @@ def acceptance_inventory(hw: Path, record: Any, packets: Iterable[ProducerPacket
     finding dispositions, every relied-on bundle manifest (cited evidence bundles, dispositioned producer
     bundles and the version's producer packets), every cited evidence artifact and every frozen source.
     Workflow state (flow), decision records, timestamps and the release itself are never part of it.
-    EvidenceError when a path is unnormalized, escapes hw/, is a link or is missing."""
+    EvidenceError when a path is unnormalized, escapes hw/, is a link or is missing, or when a ledger
+    entry or disposition cites scratch, outside or unlisted files (evidence_paths)."""
     hw = Path(hw)
+    refused = _ledger_path_findings(record, project_paths(hw))
+    if refused:
+        raise EvidenceError("; ".join(f"{item.path}: {item.message}" for item in refused))
     rels = {rel for rel in LEDGER_FILES if (hw / rel).is_file() or (hw / rel).is_symlink()}
     for entry in record.evidence:
         for artifact in entry.get("artifacts") or ():
@@ -1596,7 +1661,7 @@ def build_assessment(hw: Path, version: str, today: date | None = None) -> tuple
                         approved=lambda decision: validate.decision_approves(hw, decision), today=today,
                         verification=_rows(hw / "verification.csv"), stale_since_build=stale, artifact_sha=artifact_sha,
                         selection_sha256=selection.input_digest(documents),
-                        part_of=assembly_part_of(documents.get("assembly.yaml")))
+                        part_of=assembly_part_of(documents.get("assembly.yaml")), paths=project_paths(hw))
     if packet_findings:
         assessment = dataclasses.replace(assessment, findings=tuple(packet_findings) + assessment.findings, complete=False)
     return assessment, packets

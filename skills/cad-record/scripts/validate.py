@@ -785,7 +785,8 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     product = documents.get("product.yaml")
     flow = product.get("flow") if isinstance(product, dict) else None
     stage = flow.get("stage") if isinstance(flow, dict) else None
-    items = evidence.ledger_findings(record, approved=functools.partial(decision_approves, hw))
+    items = evidence.ledger_findings(record, approved=functools.partial(decision_approves, hw),
+                                     paths=evidence.project_paths(hw))
     items += evidence.csv_findings(record, verification, stage)
     findings.extend(_intent_finding(hw, item.as_dict()) for item in items)
     return record
