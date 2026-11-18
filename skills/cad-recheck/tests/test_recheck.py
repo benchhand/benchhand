@@ -635,6 +635,24 @@ class CommittedFixtureTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("stamp is stale", result.stderr)
 
+    def test_verify_committed_checks_head_not_the_index(self) -> None:
+        self.commit()
+        self.edit_part()  # staged, not committed: the index differs from HEAD
+        result = self.verify("--committed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["passed"], True)
+
+    def test_verify_committed_refuses_a_stamp_below_the_committed_threshold(self) -> None:
+        self.commit()
+        product = self.root / self.HW / "product.yaml"
+        product.write_text(product.read_text(encoding="utf-8").replace("stage: layout\n  recheck_from: layout",
+                                                                      "stage: parts\n  recheck_from: parts", 1), encoding="utf-8")
+        self.git("add", "-A")
+        self.commit()
+        result = self.verify("--committed")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("is below flow.recheck_from parts", result.stderr)
+
     def test_verify_without_committed_still_skips_when_nothing_is_staged(self) -> None:
         self.commit()
         self.edit_part()
