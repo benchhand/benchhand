@@ -171,7 +171,7 @@ def plan(report, cwd: Path, home: Path, environ: Mapping[str, str], harness: str
             command = f"python3 {installer} --harness {harness} --project ."
             items.append(PlanItem(f"harness-{harness}", f"Install CAD files for {harness.title()}", command))
         else:
-            command = (f"From the cad-agent checkout, run `python3 harness/install.py --harness {harness} "
+            command = (f"From the benchhand checkout, run `python3 harness/install.py --harness {harness} "
                        f"--project {cwd}`. Installed skills do not include the installer.")
             items.append(PlanItem("harness-unavailable", f"Install CAD files for {harness.title()}", command))
     return items + storage_plan(cwd)
@@ -296,7 +296,7 @@ def render_plan(items: Sequence[PlanItem], *, execute: bool) -> str:
 def _install_harness(harness: str, cwd: Path) -> None:
     installer = CAD_ROOT / "harness" / "install.py"
     if not installer.is_file():
-        raise RuntimeError("harness/install.py is not bundled with installed skills; run the printed command from your cad-agent checkout")
+        raise RuntimeError("harness/install.py is not bundled with installed skills; run the printed command from your benchhand checkout")
     _run(["python3", str(installer), "--harness", harness, "--project", "."], cwd=cwd)
 
 

@@ -1,12 +1,12 @@
 {
-  "name": "cad-agent",
-  "description": "The CAD Agent plugin marketplace.",
+  "name": "benchhand",
+  "description": "The Benchhand plugin marketplace.",
   "owner": {
     "name": "srobroek"
   },
   "plugins": [
     {
-      "name": "cad-agent",
+      "name": "benchhand",
       "source": "./",
       "description": "Agent-assisted mechanical CAD from rapid concept through verified STEP AP242 release."
     }

@@ -93,7 +93,7 @@ ACCESS_COVERAGE = ("the part's declared insertion path, else the default straigh
                    "posture, hands, forces and other poses are not covered")
 ROUTES = {"straight_default": "the default straight path along the direction", "declared_path": "the declared insertion path",
           "approach": "the declared tool approach"}
-RULE_SOURCE = {"kind": "policy", "reference": "cad-motion access path clearance rule", "origin": "cad-agent",
+RULE_SOURCE = {"kind": "policy", "reference": "cad-motion access path clearance rule", "origin": "benchhand",
                "document": "skills/cad-motion/scripts/access.py"}
 
 

@@ -78,7 +78,7 @@ JOINT_COVERAGE = ("the declared facts and material profiles only: no joint stren
                   "standard or calibration source")
 RULE_SOURCE = types.MappingProxyType({
     "kind": "policy", "reference": "cad-record assembly_operations order and closure rules",
-    "origin": "cad-agent", "document": "skills/cad-record/scripts/assembly_operations.py"})
+    "origin": "benchhand", "document": "skills/cad-record/scripts/assembly_operations.py"})
 ORDER_METHOD = "declared assembly sequence: predecessors, parts present, closure state (cad-record assembly_operations)"
 ORDER_COVERAGE = ("the declared sequence only: the receiving part present, the part not enclosed or installed twice, "
                   "predecessors earlier; part paths and tool reach are assembly.access, a geometric check, not covered")

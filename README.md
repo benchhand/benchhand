@@ -1,4 +1,4 @@
-# CAD Agent
+# Benchhand
 
 Agent-assisted mechanical CAD guides a product from concept through versioned CAD. It produces drawings, an engineering bill of materials (EBOM), scoped verification evidence and documentation. It assesses intended service, per-part routes, interfaces and evidenced capability. Missing evidence or coverage stays unknown. An FDM part also gets a 3MF with its geometry, bed orientation and material name. It does not slice, or generate slicer/CAM toolpaths, operate equipment or certify physical performance.
 
@@ -19,35 +19,35 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
 
 ## Install
 
-Run the installer from the project where you want to use CAD. Set `CAD_AGENT` to the repository checkout path:
+Run the installer from the project where you want to use CAD. Set `BENCHHAND` to the repository checkout path:
 
 ```sh
-CAD_AGENT=/path/to/cad-agent
-python3 "$CAD_AGENT/harness/install.py" --harness claude
+BENCHHAND=/path/to/benchhand
+python3 "$BENCHHAND/harness/install.py" --harness claude
 ```
 
 Choose `claude`, `codex`, `opencode`, `kiro`, or `all`. Add `--user` for a user-level install:
 
 ```sh
-python3 "$CAD_AGENT/harness/install.py" --harness all --user
+python3 "$BENCHHAND/harness/install.py" --harness all --user
 ```
 
-Use `--project DIR` to select a project directory. `--dry-run` previews changes, and `--uninstall` removes installed CAD files. `python3 "$CAD_AGENT/harness/install.py" --help` lists the options.
+Use `--project DIR` to select a project directory. `--dry-run` previews changes, and `--uninstall` removes installed CAD files. `python3 "$BENCHHAND/harness/install.py" --help` lists the options.
 
 Alternatively, install Claude Code as a plugin from this public GitHub repository; `gh auth` is not required for public access. Or use a local checkout:
 
 ```text
 /plugin marketplace add benchhand/benchhand
-/plugin install cad-agent@cad-agent
+/plugin install benchhand@benchhand
 ```
 
-For a local checkout, add `/plugin marketplace add /path/to/cad-agent`. Then install with `/plugin install cad-agent@cad-agent`. The plugin exposes `/cad-agent:cad-flow`. The installer route exposes `/cad-flow`.
+For a local checkout, add `/plugin marketplace add /path/to/benchhand`. Then install with `/plugin install benchhand@benchhand`. The plugin exposes `/benchhand:cad-flow`. The installer route exposes `/cad-flow`.
 
 ## Start and prepare a project
 
 In an interactive Claude Code or OpenCode chat, start with `/cad-flow`. For interactive Kiro, use `/cad-flow` in a V3 session (`kiro-cli chat --v3`). In Codex CLI, invoke the skill with `$cad-flow` or select it from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
 
-At the project root, set `$CAD_SKILLS` to the directory containing installed `cad-*` skill folders. For a project install, this is `.claude/skills`, `.agents/skills`, `.opencode/skills`, or `.kiro/skills` for the selected harness. If using a repository checkout directly, set it to `"$CAD_AGENT/skills"`.
+At the project root, set `$CAD_SKILLS` to the directory containing installed `cad-*` skill folders. For a project install, this is `.claude/skills`, `.agents/skills`, `.opencode/skills`, or `.kiro/skills` for the selected harness. If using a repository checkout directly, set it to `"$BENCHHAND/skills"`.
 
 ### Codex CLI sandbox requirements
 
@@ -206,7 +206,7 @@ An agent source may set `tier: cheap|standard|strong`. Only `cad-clerk` is on th
 The generated profiles name no model. Supply models at install time, repeating `--tier-model` as needed:
 
 ```sh
-python3 "$CAD_AGENT/harness/install.py" --harness all --project . \
+python3 "$BENCHHAND/harness/install.py" --harness all --project . \
   --tier-model claude:cheap=haiku --tier-model codex:cheap=<model> \
   --tier-model kiro:cheap=<model> --tier-model opencode:cheap=provider/model#variant
 ```

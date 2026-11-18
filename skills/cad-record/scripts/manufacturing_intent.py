@@ -44,7 +44,7 @@ INCOMPLETE = "record.incomplete"
 LOAD_DIRECTION_TOLERANCE = 1e-6
 COLOR_INVALID = "intent.color_invalid"
 CODES: Mapping[str, str] = types.MappingProxyType({
-    VERSION_UNSUPPORTED: "a record_version other than 2, or none: this cad-agent cannot read it",
+    VERSION_UNSUPPORTED: "a record_version other than 2, or none: this Benchhand cannot read it",
     INCOMPLETE: "a record version 2 record lacks a block or file version 2 requires",
     "intent.schema": "a document violates its JSON schema",
     "intent.reference": "a reference names no question, assumption, requirement, interface, part, load, profile, operation, inspection, evidence, case or decision",
@@ -213,7 +213,7 @@ class IntentError(ValueError):
 
 
 class UnsupportedRecordVersion(IntentError):
-    """product.yaml names a record_version this cad-agent cannot read."""
+    """product.yaml names a record_version this Benchhand cannot read."""
 
 
 @dataclass(frozen=True)
@@ -754,7 +754,7 @@ def record_version(product: Mapping[str, Any]) -> int:
     """2, the only record version; UnsupportedRecordVersion for any other or absent record_version."""
     version = product.get("record_version")
     if isinstance(version, bool) or version != RECORD_VERSION:
-        raise UnsupportedRecordVersion(f"product.yaml record_version {version!r} is not supported; this cad-agent reads "
+        raise UnsupportedRecordVersion(f"product.yaml record_version {version!r} is not supported; this Benchhand reads "
                                        f"record version {RECORD_VERSION} only")
     return RECORD_VERSION
 
@@ -767,7 +767,7 @@ def version_problem(product: Mapping[str, Any] | None, path: str = "hw/product.y
         record_version(product if isinstance(product, Mapping) else {})
     except UnsupportedRecordVersion as error:
         return Problem(VERSION_UNSUPPORTED, path, "record_version", str(error),
-                       action="Use the cad-agent release that wrote this record; nothing was changed.")
+                       action="Use the Benchhand release that wrote this record; nothing was changed.")
     return None
 
 

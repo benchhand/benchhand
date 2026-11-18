@@ -304,7 +304,7 @@ def _record_source(path: str, what: str) -> dict[str, Any]:
 
 
 def _policy_source(text: str) -> dict[str, Any]:
-    return {"kind": "user", "reference": text, "origin": "cad-agent manufacturing-intent policy (the user's specification)"}
+    return {"kind": "user", "reference": text, "origin": "benchhand manufacturing-intent policy (the user's specification)"}
 
 
 def _criterion_text(criterion: Mapping[str, Any]) -> str:
@@ -598,7 +598,7 @@ class _Assessor:
                 found.append(Evaluation(
                     "process_coverage", True, "unknown", subject, f"{where}: manufacturing_intent.KNOWN_ROUTE_KINDS",
                     (f"{step.kind} has no check contract: its manufacturability coverage is unknown, never a pass",),
-                    remedy=f"add a check profile for {step.kind}, or choose a route kind cad-agent checks"))
+                    remedy=f"add a check profile for {step.kind}, or choose a route kind Benchhand checks"))
                 continue
             found.extend(self.capability(cpart, step, where))
         return found

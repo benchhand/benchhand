@@ -440,7 +440,7 @@ def _vendor_check(environ: Mapping[str, str], fill: bool = False) -> Check:
     return _check("three-vendor-cache", "Pinned three.js vendor cache", "fail", detail,
                   "Run `preflight.py --warm` with network access to fill the pinned cache, then retry.")
 def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, str]) -> Check:
-    """Check exact installed paths and hashes from cad-agent's ownership receipt."""
+    """Check exact installed paths and hashes from benchhand's ownership receipt."""
     scopes = (cwd, home)
     prefixes = {
         "claude": ((".claude/skills/", ".claude/agents/"), (".claude/skills/", ".claude/agents/")),
@@ -452,7 +452,7 @@ def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, st
     installed_agents: set[str] = set()
     for scope, (skill_prefix, agent_prefix) in zip(scopes, prefixes[harness]):
         try:
-            receipt = json.loads((scope / ".cad-agent-install.json").read_text(encoding="utf-8"))
+            receipt = json.loads((scope / ".benchhand-install.json").read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             continue
         files = receipt.get("files") if isinstance(receipt, dict) and receipt.get("format") == 1 else None
@@ -480,7 +480,7 @@ def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, st
 
     present = bool(installed_skills and installed_agents)
     detail = f"Installer receipt has {len(installed_skills)} cad-* skill(s) and {len(installed_agents)} cad-* agent(s)."
-    fix = f"Run `python3 harness/install.py --harness {harness} --project .` from the cad-agent checkout."
+    fix = f"Run `python3 harness/install.py --harness {harness} --project .` from the benchhand checkout."
     return _check(f"harness-{harness}", f"{harness.title()} installation", "pass" if present else "warn",
                   detail, "" if present else fix, required=False)
 

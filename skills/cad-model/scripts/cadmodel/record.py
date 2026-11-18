@@ -98,7 +98,7 @@ class Snapshot:
 
 def read_snapshot(files: Mapping[str, bytes]) -> Snapshot:
     """The Snapshot of record files `files`; RecordError for YAML that does not parse or a record version
-    cad-agent cannot read."""
+    Benchhand cannot read."""
     import yaml
 
     intent = load_intent()
