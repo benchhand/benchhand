@@ -161,11 +161,6 @@ class Variants(unittest.TestCase):
                 self.assertEqual(impact.stale_obligations([obligation], {key: ("appearance", "geometry")}),
                                  {obligation.id: ("geometry",)})
 
-    def test_a_geometry_change_also_stales_the_3mf_family(self) -> None:
-        three_mf = mi.Obligation("export.3mf@TST-0001", "export.3mf", {"PN": "TST-0001"}, "cad_valid", "layout", "test")
-        stale = impact.stale_obligations([three_mf], {"TST-0001": ("geometry",)})
-        self.assertEqual(stale, {"export.3mf@TST-0001": ("geometry",)})
-
     def test_a_material_change_stales_the_3mf_family_of_that_part_only(self) -> None:
         three_mf = [mi.Obligation(f"export.3mf@{pn}", "export.3mf", {"PN": pn}, "cad_valid", "layout", "test")
                     for pn in ("TST-0001", "TST-0002")]

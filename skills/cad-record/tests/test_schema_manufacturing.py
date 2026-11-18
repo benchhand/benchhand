@@ -473,6 +473,7 @@ class RecordDocuments(SchemaCase):
                                                      d["entries"][0].pop("physical")), True),
             "waived needs its waiver": (lambda d: d["entries"][0].update(result="waived"), False),
             "fingerprint domain invented": (lambda d: d["entries"][0].update(fingerprints={"vibes": "c" * 64}), False),
+            "appearance fingerprint": (lambda d: d["entries"][0].update(fingerprints={"appearance": "c" * 64}), True),
             "neither requirement nor obligation": (lambda d: d["entries"][0].pop("requirement"), False),
             "level as a badge": (lambda d: d["entries"][0].update(level="certified"), False),
         })
