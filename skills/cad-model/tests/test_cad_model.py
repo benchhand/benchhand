@@ -2664,34 +2664,38 @@ class ManufacturingColorTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class ManufacturingStaleRecordTests(unittest.TestCase):
     """A manufacturing record the code cannot use is a cache miss: the outputs are made again, the run exits 0 and
-    the record that replaces it is reused. Two shapes: a record before `members` replaced `objects`, and one whose
-    members are fine but that lacks the `derived` and `row` facts."""
+    the record that replaces it is reused. Each case damages the one record of a real project from its sound
+    form: one from before `members` replaced `objects`, and the facts `make` reads (`derived`, `row`) removed
+    one at a time and together, so that losing either guard alone fails its own case."""
 
     SHAPES = {"old shape": lambda record: {"format": record["format"], "kind": "manufacturing",
                                            "objects": record["members"]},
-              "no facts": lambda record: {key: value for key, value in record.items() if key not in ("derived", "row")}}
+              "no derived": lambda record: {key: value for key, value in record.items() if key != "derived"},
+              "no row": lambda record: {key: value for key, value in record.items() if key != "row"},
+              "no derived and no row": lambda record: {key: value for key, value in record.items()
+                                                       if key not in ("derived", "row")}}
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.tmp = tempfile.TemporaryDirectory()
         cls.hw = hw = projects().loose_project(Path(cls.tmp.name) / "hw", "cadquery", [])
         cls.runs = {"v1": cli("run", str(hw), "--label", "v1")}
-        labels = iter(("v2", "v3", "v4", "v5"))
+        cls.path = cls.record_path(hw)
+        sound = json.loads(cls.path.read_text(encoding="utf-8"))
         cls.order = {}
-        for shape, damage in cls.SHAPES.items():
-            cls.damage(hw, damage)
-            made, reused = next(labels), next(labels)
+        for number, (shape, damage) in enumerate(cls.SHAPES.items()):
+            cls.path.write_text(json.dumps(damage(sound)), encoding="utf-8")
+            made, reused = f"v{2 * number + 2}", f"v{2 * number + 3}"
             cls.order[shape] = (made, reused)
             cls.runs[made] = cli("run", str(hw), "--label", made)
             cls.runs[reused] = cli("run", str(hw), "--label", reused)
 
     @classmethod
-    def damage(cls, hw: Path, shape) -> None:
+    def record_path(cls, hw: Path) -> Path:
         records = [path for path in (hw / ".cad" / "cache" / "records").glob("*.json")
                    if json.loads(path.read_text(encoding="utf-8")).get("kind") == "manufacturing"]
         assert len(records) == 1, records
-        record = json.loads(records[0].read_text(encoding="utf-8"))
-        records[0].write_text(json.dumps(shape(record)), encoding="utf-8")
+        return records[0]
 
     @classmethod
     def tearDownClass(cls) -> None:

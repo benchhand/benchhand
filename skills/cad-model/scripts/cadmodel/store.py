@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from cadmodel.record import RECORD_SCRIPTS, _load, load_layout
 
@@ -23,10 +23,13 @@ MANUFACTURING_INPUTS = ("format", "kind", "entry", "state", "features", "process
 
 
 class Lookup(Protocol):
-    """What `record` returns: the record, or None and why."""
+    """What `record` returns: the record, or None and why. Read-only, as cad-record's frozen dataclass is."""
 
-    record: dict[str, Any] | None
-    reason: str
+    @property
+    def record(self) -> dict[str, Any] | None: ...
+
+    @property
+    def reason(self) -> str: ...
 
 
 class PartStore(Protocol):
@@ -64,3 +67,12 @@ def file_sha(path: Path) -> str:
 
 def Store(hw: Path) -> PartStore:  # noqa: N802 - the cad-record class, constructed under its own name
     return load_store().Store(hw)  # type: ignore[no-any-return]  # loaded by path, so mypy sees Any
+
+
+if TYPE_CHECKING:
+    import store as _record_store  # skills/cad-record/scripts/store.py, which scripts/typecheck.py lists
+
+    def _conforms(hw: Path) -> PartStore:
+        """Never called. mypy checks here that the cad-record Store has every PartStore method, because `Store`
+        above crosses an Any boundary (the module is loaded by path) and so proves nothing."""
+        return _record_store.Store(hw)

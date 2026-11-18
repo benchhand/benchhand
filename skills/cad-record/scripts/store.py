@@ -134,7 +134,7 @@ class Store:
         self._held = threading.local()  # the keys whose lock this thread holds through this Store
 
     def _path(self, entry_id: str, digest: str) -> Path:
-        return layout.resolve(self.hw, entry_id, SHA=digest)
+        return Path(layout.resolve(self.hw, entry_id, SHA=digest))
 
     def _folder(self, entry_id: str) -> Path:
         """The folder of `entry_id`, created. hw/.cad/cache/ carries the .gitignore that keeps it out of git."""
