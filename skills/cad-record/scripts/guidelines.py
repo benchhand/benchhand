@@ -720,8 +720,10 @@ def _candidates_of(guideline: Guideline, defined: Guideline, distance: int, cont
     return found
 
 
-def _prepare(candidates: list[_Candidate], context: Context, characteristic: str) -> tuple[list[_Candidate], list[str]]:
-    """The candidates as bounds in one unit, and the reasons for those that cannot be one."""
+def _prepare(candidates: list[_Candidate], context: Context, characteristic: str) -> tuple[list[_Candidate], list[str], list[str]]:
+    """The candidates as bounds in one unit, the reasons for those that cannot be one, and the reasons that must stop
+    resolution: a candidate that cannot be a bound but is more specific than one that can would otherwise lose
+    silently to it. One of the same specificity does not (the plain floor of a set survives its unresolved limit)."""
     mi = _intent()
     units = None
     for candidate in candidates:
@@ -729,15 +731,16 @@ def _prepare(candidates: list[_Candidate], context: Context, characteristic: str
             units = mi.quantity(candidate.limit["quantity"] if "quantity" in candidate.limit else candidate.limit["relative"]["floor"]).units
             break
     ready: list[_Candidate] = []
-    reasons: list[str] = []
+    dropped: list[tuple[_Candidate, str]] = []
     for candidate in candidates:
         bound, why = _bound(candidate.limit, context, units)
         if bound is None:
-            reasons.append(f"{candidate.defined_in.ref} {characteristic}: {why}")
+            dropped.append((candidate, f"{candidate.defined_in.ref} {characteristic}: {why}"))
             continue
         ready.append(_Candidate(candidate.guideline, candidate.defined_in, candidate.limit, bound, candidate.key, _show(bound),
                                 candidate.layer))
-    return ready, reasons
+    blocking = [reason for candidate, reason in dropped if any(candidate.key > other.key for other in ready)]
+    return ready, [reason for _, reason in dropped], blocking
 
 
 def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, *, orientation: str | None = None,
@@ -757,7 +760,10 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
     if uncertain:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=tuple(f"{characteristic} is a requirement and a scope fact is unknown: {why}" for why in uncertain))
-    ready, reasons = _prepare(candidates, context, characteristic)
+    ready, reasons, blocking = _prepare(candidates, context, characteristic)
+    if blocking:
+        return Resolved(characteristic, "unknown", warnings=tuple(warnings + [f"{characteristic} not resolved: {why}" for why in blocking]),
+                        reasons=tuple(blocking))
     if not ready:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=tuple(reasons) or (f"no applicable guideline states {characteristic}",))
