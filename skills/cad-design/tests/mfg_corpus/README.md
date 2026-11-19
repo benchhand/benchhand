@@ -91,12 +91,15 @@ rate command prints `known gap: <family>/<pair>: <why>`. Remove the field when t
 
 ## Semantic output oracle families
 
-The five `semantic_*` families build the three-part project of `fixtures/oracles/build_case.py` with one exporter fault
-in its `assembly.glb`, or one model change, and take their verdict at the `cad.readback` packet through
-`support.oracle_case`: `cad.glb_step_agreement@<PN>` for the GLB<->STEP agreement of each made part, and
-`cad.declared_dimensions@<IF>#heat_set_<n>` for each declared heat-set hole. A changed-only check leaves the parts the
-version did not change unjudged, and their agreement reads unknown, so `semantic_changed_only_scope` takes the verdict
-of the changed plate's obligation alone.
+The five `semantic_*` families build the three-part project of `fixtures/oracles/build_case.py`. Each case carries one
+exporter fault in its `assembly.glb` or one model change. The families take their verdict at the `cad.readback` packet
+through `support.oracle_case`, from these obligations:
+
+- `cad.glb_step_agreement@<PN>`: the GLB<->STEP agreement of each made part.
+- `cad.declared_dimensions@<IF>#heat_set_<n>`: each declared heat-set hole.
+
+A changed-only check does not judge the parts that the version did not change, and their agreement reads unknown. So
+`semantic_changed_only_scope` takes the verdict of the changed plate's obligation alone.
 
 ## Baseline and ratchet
 
