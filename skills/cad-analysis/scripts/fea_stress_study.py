@@ -13,8 +13,8 @@ result carries:
   load-face nodes (every node in a `*CLOAD` block, a zero load included).
 * The solve's recorded mesh quality gives its high-order fallback level.
 
-`element_connectivity` reads the C3D4 and C3D10 elements of the same input, for the linearisation of #209. The
-study does not use them yet.
+`element_connectivity` reads the C3D4 and C3D10 elements of the same input and `load_blocks` the `*CLOAD` forces, for the
+linearisation of #209 (`fea_near_support`, which `fea_static` calls for a `settled_away_from_support` study).
 
 The outcome is `settled` (an interior peak: strength-eligible), `settled_away_from_support` (the peak sits on the
 exclusion boundary, where the stress near the support is higher: information only, see #209) or `unknown`. A
