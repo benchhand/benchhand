@@ -18,7 +18,8 @@ The frozen version (product.yaml flow.frozen) defines what a release holds; rele
 never builds. It refuses the release when any of these fails, and then writes nothing outside
 .cad-work/:
 
-- the frozen anchor, the approving decision, and a revision that is unused or already sealed from this same frozen manifest;
+- the frozen anchor, the approving decision, and a revision that is unused, already sealed from this
+  same frozen manifest, or stale but sealed from this version, approval and frozen manifest;
 - validate.py on the current record (a record of an unsupported version refuses), and the
   current record against the frozen snapshot: the snapshot set the version sealed, its structured
   documents by content and its frozen sources by their exact bytes;
@@ -31,10 +32,16 @@ never builds. It refuses the release when any of these fails, and then writes no
   its scope resolved, no unresolved critical finding, an unvalidated trial only where the class
   permits one and only by approved waivers, no waiver at all for safety-critical service.
 
-It stages the copies, including the acceptance inventory under acceptance/, in
-.cad-work/release-<REV>/, writes and checks the manifest, then claims hw/releases/<REV>/ and renames
-the stage onto it. A sealed package of another manifest version is refused.
+The revision's lock (layout.target_lock) is held for the whole run, so a second run of the same
+revision waits and then inspects what the first left. Under it, the run inspects an existing
+hw/releases/<REV>/, stages the copies, including the acceptance inventory under acceptance/, in
+.cad-work/release-<REV>/, writes and checks the manifest, inspects the revision once more, claims
+hw/releases/<REV>/ and renames the stage onto it. A sealed package of
+another manifest version is refused. A stale package (one that fails its seal) of this version,
+approval and frozen manifest is repaired: assembled again at its own release time, moved to
+.cad-work/replaced/ as the new one is claimed, and put back when the claim fails.
 
+--prune, under the same lock, never repairs: a stale package refuses and nothing is deleted.
 --prune, once the package is sealed, prints the plan of superseded versions to remove (prune.py) with
 its digest and changes nothing; when hw/releases/<REV>/ already verifies and holds this version and
 decision, it skips sealing. --prune --yes DIGEST applies that plan when a fresh plan has the same
@@ -57,7 +64,7 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +126,22 @@ class Release:
 
     def copy(self, package: str, original: str, sha256: str) -> None:
         self.copies[package] = Copy(package, original, sha256)
+
+
+@dataclass(frozen=True)
+class Existing:
+    """What hw/releases/<REV>/ holds, as `sealed` reports it: exit 0 for a sound package of this release,
+    else a refusal. `repairable_from` is the release time of a stale package of this version, approval
+    and frozen manifest, which a run seals again."""
+
+    code: int
+    report: dict[str, Any]
+    repairable_from: datetime | None = None
+
+
+# validate.py's findings on a sealed directory's own files: a listed file missing, an unlisted file, an empty
+# directory. A repair replaces the whole stale package, so it leaves out these findings inside that package.
+SEAL_FINDINGS = frozenset({"layout.missing", "layout.unlisted", "layout.empty_directory"})
 
 
 def sha256(path: Path) -> str:
@@ -427,10 +450,24 @@ def check_acceptance(release: Release, frozen: Any) -> None:
     release.checks["acceptance"] = "waived" if policy.trial else "pass"
 
 
+def project_findings(hw: Path, target_rel: str, repaired_on: date | None) -> list[dict[str, Any]]:
+    """validate.py's blocking findings on the project. `repaired_on` is the release date of the stale
+    package at `target_rel` when the run repairs it (inspection found it stale and of this release), else
+    None. A repair judges waivers on that date, and leaves out the SEAL_FINDINGS inside that package;
+    every other finding, including the same kinds anywhere else, stays."""
+    findings = list(validate.blocking(validate.validate_project(hw, today=repaired_on)))
+    if repaired_on is None:
+        return findings
+    package = layout.locate(hw, target_rel)
+    return [item for item in findings
+            if item.get("code") not in SEAL_FINDINGS or not Path(item["path"]).is_relative_to(package)]
+
+
 def assemble(hw: Path, rev: str, version: str, decision: str,
-             now: datetime | None = None) -> tuple[Release, dict[str, Any] | None]:
+             now: datetime | None = None, repairing: bool = False) -> tuple[Release, dict[str, Any] | None]:
     """Every check and the copy list, without writing anything, for a release at `now` (the current UTC
-    time when None). LayoutError for a malformed argument."""
+    time when None). `repairing` when the run replaces the stale package at the revision (see
+    project_findings). LayoutError for a malformed argument."""
     target_rel = layout.load().path("release.package", {"REV": rev})
     layout.version_dir(hw, version)
     moment = datetime.now(timezone.utc) if now is None else now.astimezone(timezone.utc)
@@ -451,7 +488,7 @@ def assemble(hw: Path, rev: str, version: str, decision: str,
         release.refuse("hw/product.yaml", "frozen", "product.yaml has no flow.frozen; freeze a version first")
     elif frozen.get("version") != version:
         release.refuse("hw/product.yaml", "frozen", f"flow.frozen names {frozen.get('version')}, not {version}")
-    release.findings.extend(validate.blocking(validate.validate_project(hw)))
+    release.findings.extend(project_findings(hw, target_rel, moment.date() if repairing else None))
     check_docs(release)
     try:
         _, folder, record = layout.built_version(hw, version)
@@ -561,11 +598,40 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
     return staged
 
 
+def package_rel(rev: str) -> str:
+    """The project-relative path of release `rev`'s package, hw/releases/<REV>; LayoutError for a bad REV."""
+    return str(layout.load().path("release.package", {"REV": rev}))
+
+
 def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = None) -> tuple[int, dict[str, Any]]:
+    """Release revision `rev` (release_locked), holding the revision's lock (layout.target_lock) for the
+    whole run, so a second run of the same revision waits for this one and then inspects what it left."""
     hw = hw.resolve()
-    if os.path.lexists(layout.locate(hw, layout.load().path("release.package", {"REV": rev}))):
-        return sealed(hw, rev, version, decision)  # the same frozen manifest releases again as a no-op
-    release, facts = assemble(hw, rev, version, decision, now)
+    with layout.target_lock(hw, package_rel(rev)):
+        return release_locked(hw, rev, version, decision, now)
+
+
+def prune_release(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
+    """--prune's release step, holding the revision's lock for the whole step: an existing package must
+    already be sealed (`sealed`; a stale one refuses, and --prune never repairs it), and an absent
+    revision is released (release_locked)."""
+    hw = hw.resolve()
+    with layout.target_lock(hw, package_rel(rev)):
+        if os.path.lexists(layout.locate(hw, package_rel(rev))):
+            return sealed(hw, rev, version, decision)
+        return release_locked(hw, rev, version, decision)
+
+
+def release_locked(hw: Path, rev: str, version: str, decision: str,
+                   now: datetime | None = None) -> tuple[int, dict[str, Any]]:
+    """The release run of revision `rev`; the caller holds the revision's lock (run, prune_release). It
+    inspects an existing package, assembles and stages, then publishes (publish_package)."""
+    target_rel = package_rel(rev)
+    found = existing(hw, rev, version, decision) if os.path.lexists(layout.locate(hw, target_rel)) else None
+    if found is not None and found.repairable_from is None:
+        return found.code, found.report  # the same frozen manifest releases again as a no-op, or a refusal
+    repairing = found is not None  # a stale package of this release: sealed again at its own release time
+    release, facts = assemble(hw, rev, version, decision, found.repairable_from if found else now, repairing)
     report: dict[str, Any] = {"rev": rev, "version": version, "package": release.target_rel}
     if release.findings or facts is None:
         return 1, {**report, "findings": release.findings, "status": "refused"}
@@ -573,14 +639,60 @@ def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = 
     report["stage"] = layout.relative(hw, staged)
     if release.findings:
         return 1, {**report, "findings": release.findings, "status": "refused"}
-    target = layout.locate(hw, release.target_rel)
+    return publish_package(release, staged, report, repairing)
+
+
+def publish_package(release: Release, staged: Path, report: dict[str, Any],
+                    repairing: bool) -> tuple[int, dict[str, Any]]:
+    """Seal `staged` at hw/releases/<REV>/; the caller holds the revision's lock (layout.target_lock), and
+    what is there is inspected again here. An absent path is claimed. A sound package of this release
+    stays and the run is a no-op. A stale package of this release is moved to .cad-work/replaced/ and the
+    stage claimed, only when this run staged its repair. Anything else refuses as `existing` reports it.
+    A run that claims nothing removes its stage."""
+    hw, target_rel = release.hw, release.target_rel
+    target = layout.locate(hw, target_rel)
+    if not os.path.lexists(target):
+        return claim_package(release, staged, report, None)
+    found = existing(hw, release.rev, release.version, release.decision)
+    if found.code == 0 or not repairing or found.repairable_from is None:
+        shutil.rmtree(staged)  # another writer's package stands: this stage has no use
+        return found.code, found.report
+    old = layout.replaced_path(hw, target_rel)
+    old.parent.mkdir(parents=True, exist_ok=True)
+    os.rename(target, old)
+    return claim_package(release, staged, report, old)
+
+
+def claim_package(release: Release, staged: Path, report: dict[str, Any],
+                  old: Path | None) -> tuple[int, dict[str, Any]]:
+    """layout.claim the stage onto hw/releases/<REV>/. When that fails, the stale package moved to `old`
+    goes back (put_back), and the failure stands: a PublishConflict refuses, any other is a LayoutError."""
+    hw, target_rel = release.hw, release.target_rel
+    target = layout.locate(hw, target_rel)
     try:
-        layout.claim(staged, target, release.target_rel)
-    except layout.PublishConflict as error:
-        release.refuse(release.target_rel, "exists", f"{error}; rerun to compare it with the frozen manifest")
-        return 1, {**report, "findings": release.findings, "status": "refused"}
+        layout.claim(staged, target, target_rel)
+    except BaseException as error:
+        kept = put_back(hw, old, target, target_rel) if old is not None else ""
+        if isinstance(error, layout.PublishConflict):
+            release.refuse(target_rel, "exists", f"{error}{kept}; rerun to compare it with the frozen manifest")
+            return 1, {**report, "findings": release.findings, "status": "refused"}
+        if isinstance(error, (layout.LayoutError, OSError)):
+            raise layout.LayoutError(f"{error}{kept}") from error
+        raise
     return 0, {**report, "stage": None, "manifest_sha256": sha256(target / MANIFEST), "files": len(release.copies),
-               "manufacturing": release.manufacturing, "bundles": release.bundles, "status": "released"}
+               "manufacturing": release.manufacturing, "bundles": release.bundles,
+               **({"replaced": layout.relative(hw, old)} if old is not None else {}), "status": "released"}
+
+
+def put_back(hw: Path, old: Path, target: Path, target_rel: str) -> str:
+    """Move the stale package at `old` back to `target` after a failed claim, by an exclusive claim of
+    its own, so a package another writer placed there meanwhile is never replaced. Says where it is."""
+    try:
+        layout.claim(old, target, target_rel)
+    except (layout.LayoutError, OSError) as error:
+        return (f"; the stale package it replaced is kept at {layout.relative(hw, old)}, since putting it back "
+                f"failed: {error}")
+    return "; the stale package it replaced is back in place"
 
 
 def acceptance_problems(manifest: dict[str, Any]) -> list[str]:
@@ -615,43 +727,70 @@ def frozen_problems(hw: Path, version: str, manifest: dict[str, Any]) -> list[st
     return []
 
 
-def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
-    """The existing hw/releases/<REV>/ when it verifies and holds `version` approved by `decision` from
-    the frozen manifest as it is now, so a rerun (and --prune) rewrites nothing. A package that fails its
-    seal, or holds another frozen manifest, is refused. A package must be manifest version 3, and also
-    verifies its sealed acceptance bytes and anchor. Any other manifest version is refused."""
-    hw = hw.resolve()
+def holds_problems(version: str, decision: str, manifest: Any) -> list[str]:
+    """Why a package manifest is not manifest version 3 of `version` approved by `decision`."""
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != SCHEMA_VERSION:
+        schema = manifest.get("schema_version") if isinstance(manifest, dict) else None
+        return [f"its manifest version {schema!r} is not one this release.py reads"]
+    frozen = _dict(manifest.get("frozen"))
+    if frozen.get("version") != version or manifest.get("approval") != decision:
+        return [f"it holds {frozen.get('version')} approved by {manifest.get('approval')}"]
+    return []
+
+
+def released_at(manifest: dict[str, Any]) -> datetime | None:
+    """The UTC release time a package manifest records, or None when it records none."""
+    try:
+        return datetime.strptime(str(manifest.get("released_at")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def stale_package(hw: Path, version: str, decision: str, package: Path, reason: str,
+                  report: dict[str, Any]) -> Existing:
+    """A package that fails its seal (`reason`), refused as release.stale. It is repairable from its own
+    release time when its manifest still holds `version` approved by `decision` from the frozen manifest
+    as it is now; otherwise the revision is used up."""
+    manifest = _json(package / MANIFEST)
+    problems = holds_problems(version, decision, manifest) or frozen_problems(hw, version, manifest)
+    moment = None if problems else released_at(manifest)
+    remedy = ("automatic repair is not supported; use a new revision" if moment is None
+              else "release.py without --prune repairs it from the same frozen manifest")
+    finding = validate.finding(report["package"], f"{reason}; {remedy}", code="release.stale")
+    return Existing(1, {**report, "findings": [finding], "status": "refused"}, moment)
+
+
+def existing(hw: Path, rev: str, version: str, decision: str) -> Existing:
+    """hw/releases/<REV>/ as it stands. Exit 0 when it verifies and holds `version` approved by `decision`
+    from the frozen manifest as it is now, so a rerun rewrites nothing. A package must be manifest version
+    3, and also verifies its sealed acceptance bytes and anchor. A package that fails its seal is a
+    stale_package. Anything else, such as another frozen manifest or manifest version, is refused."""
     target_rel = layout.load().path("release.package", {"REV": rev})
     package = layout.locate(hw, target_rel)
     report: dict[str, Any] = {"rev": rev, "version": version, "package": target_rel}
-    problems = ["it is not a directory"]
-    if package.is_dir() and not package.is_symlink():
-        if reason := layout.stale(package):
-            return 1, {**report, "findings": [validate.finding(
-                target_rel, f"{reason}; automatic repair is not supported; use a new revision", code="release.stale")],
-                       "status": "refused"}
-        problems = []
-    manifest = _json(package / MANIFEST) if not problems else None
-    frozen = manifest.get("frozen") if isinstance(manifest, dict) else None
-    schema = manifest.get("schema_version") if isinstance(manifest, dict) else None
-    if not problems and schema != SCHEMA_VERSION:
-        problems = [f"its manifest version {schema!r} is not one this release.py reads"]
-    if not problems and isinstance(manifest, dict):  # always an object here: schema is None otherwise
-        if not isinstance(frozen, dict) or frozen.get("version") != version or manifest.get("approval") != decision:
-            problems = [f"it holds {frozen.get('version') if isinstance(frozen, dict) else None} "
-                        f"approved by {manifest.get('approval')}"]
-        else:
-            problems = acceptance_problems(manifest)
-    if not problems and isinstance(manifest, dict):
-        problems = frozen_problems(hw, version, manifest)
+    if not package.is_dir() or package.is_symlink():
+        problems = ["it is not a directory"]
+    elif reason := layout.stale(package):
+        return stale_package(hw, version, decision, package, reason, report)
+    else:
+        manifest = _json(package / MANIFEST)
+        problems = (holds_problems(version, decision, manifest) or acceptance_problems(manifest)
+                    or frozen_problems(hw, version, manifest))
     if problems:
         finding = validate.finding(target_rel, f"{target_rel} exists but is not the sealed release of {version} approved "
                                                f"by {decision}: {'; '.join(problems)}; automatic repair is not supported; "
                                                "use a new revision",
                                    code="release.exists")
-        return 1, {**report, "findings": [finding], "status": "refused"}
-    return 0, {**report, "already_sealed": True, "manifest_version": schema, "manifest_sha256": sha256(package / MANIFEST),
-               "status": "released"}
+        return Existing(1, {**report, "findings": [finding], "status": "refused"})
+    return Existing(0, {**report, "already_sealed": True, "manifest_version": SCHEMA_VERSION,
+                        "manifest_sha256": sha256(package / MANIFEST), "status": "released"})
+
+
+def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
+    """The exit code and report of `existing` for hw/releases/<REV>/, which --prune needs sealed already: a
+    stale package refuses here, and a run without --prune repairs it when it is repairable."""
+    found = existing(hw.resolve(), rev, version, decision)
+    return found.code, found.report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -673,9 +812,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"message": f"{args.hw} is not a directory", "status": "error"}))
         return 2
     try:
-        target = layout.locate(args.hw.resolve(), layout.load().path("release.package", {"REV": args.rev}))
-        if args.prune and os.path.lexists(target):
-            code, report = sealed(args.hw, args.rev, args.version, args.decision)
+        if args.prune:
+            code, report = prune_release(args.hw, args.rev, args.version, args.decision)
         else:
             code, report = run(args.hw, args.rev, args.version, args.decision)
     except layout.LayoutError as error:

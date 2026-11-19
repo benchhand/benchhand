@@ -233,6 +233,7 @@ ALLOWED = [
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_unknown_front_matter_keys_of_mixed_types_are_refused_naming_the_file', 'DR-001-keys.md', TMP),
     Allow('skills/cad-record/tests/test_release.py', 'Documents.guide', 'docs', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Documents.test_the_package_okh_toml_describes_its_release', 'docs', HW),
+    Allow('skills/cad-record/tests/test_release.py', 'Documents.test_a_next_day_repair_keeps_the_release_date', 'docs', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Release.test_a_complete_frozen_record_releases_a_verified_package', 'docs/inspection.md', HW),
     Allow('skills/cad-record/tests/test_release.py', 'Release.test_a_released_original_may_go_but_its_package_copy_may_not', 'docs', HW, 3),
     Allow('skills/cad-record/tests/test_release.py', 'Release.test_a_released_original_may_go_but_its_package_copy_may_not', 'notes.md', HW, 3),
