@@ -32,7 +32,7 @@ Standard library only; it reads CalculiX `.frd` results and takes no FreeCAD or 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from itertools import product
 from typing import Any
@@ -177,6 +177,16 @@ def _records(lines: list[str], start: int, block: str, width: int) -> Iterable[t
     raise FrdError(f"{block} block is cut off by the end of the file")
 
 
+def _unique(records: Iterable[tuple[int, list[float]]], block: str) -> Iterator[tuple[int, list[float]]]:
+    """Pass the records through; a node id that repeats inside the block is a `FrdError`."""
+    seen: set[int] = set()
+    for node, values in records:
+        if node in seen:
+            raise FrdError(f"{block} block repeats node {node}")
+        seen.add(node)
+        yield node, values
+
+
 def _von_mises(s: list[float]) -> float:
     sxx, syy, szz, sxy, syz, szx = s[:6]
     return math.sqrt(0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2)
@@ -206,7 +216,8 @@ def read_frd(text: str) -> FrdResult:
 
     The last STRESS and DISP blocks are used (the final increment). Raises `FrdError` (a ValueError) when
     the file has no node, stress or displacement block, when a block lacks its ` -3` terminator, or when a record is malformed (no numeric node id,
-    a value that is not a number or is cut off, too few values).
+    a value that is not a number or is cut off, too few values),
+    or when a node id repeats inside one block.
     Whether every node has a result is checked by `compare_levels`.
     """
     lines = text.splitlines()
@@ -215,13 +226,13 @@ def read_frd(text: str) -> FrdResult:
     displacement: dict[int, float] = {}
     for index, line in enumerate(lines):
         if line.startswith("    2C"):
-            coordinates = {node: (v[0], v[1], v[2]) for node, v in _records(lines, index + 1, 'node', _NODE_VALUES)}
+            coordinates = {node: (v[0], v[1], v[2]) for node, v in _unique(_records(lines, index + 1, 'node', _NODE_VALUES), 'node')}
         elif line.startswith(" -4  STRESS"):
             stress = {node: _derive('STRESS', node, _von_mises, v)
-                      for node, v in _records(lines, index + 1, 'STRESS', _STRESS_VALUES)}
+                      for node, v in _unique(_records(lines, index + 1, 'STRESS', _STRESS_VALUES), 'STRESS')}
         elif line.startswith(" -4  DISP"):
             displacement = {node: _derive('DISP', node, _magnitude, v)
-                            for node, v in _records(lines, index + 1, 'DISP', _DISP_VALUES)}
+                            for node, v in _unique(_records(lines, index + 1, 'DISP', _DISP_VALUES), 'DISP')}
     if not coordinates or not stress or not displacement:
         raise FrdError("frd file lacks a node, STRESS or DISP block")
     return FrdResult(coordinates, stress, displacement)
