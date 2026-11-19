@@ -21,11 +21,18 @@ built in a variable or a splat would all escape that. It applies two coarse rule
 A real non-git use that rule 2 catches takes the same-line comment ``# no-verify-guard: not git``. Only
 rule 2 honours it. The guard writes every marker it finds to stderr, and ``EXPECTED_MARKERS`` pins how many
 the repo holds, so a new marker shows in review.
+
+Known limits. The guard reads string constants, so it cannot see:
+- a flag built at runtime, by f-string interpolation or by ``+``;
+- a short cluster passed into a helper defined in another function, such as the ``commit`` helper in
+  ``skills/cad-recheck/tests/test_recheck.py``, which holds ``commit`` while its callers hold the cluster.
+Both are tracked in a follow-up issue (number to be added).
 """
 
 import ast
 import io
 import re
+import shlex
 import subprocess
 import sys
 import tokenize
@@ -122,12 +129,22 @@ def logical_lines(text: str) -> list[tuple[int, str]]:
     return lines
 
 
+def shell_words(line: str) -> list[str]:
+    """Words of one joined command line. shlex drops a comment but keeps a # inside quotes; an unbalanced quote falls back to a plain split."""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    try:
+        return list(lexer)
+    except ValueError:
+        return line.split()
+
+
 def text_offences(text: str) -> list[int]:
     """Line numbers of the joined shell or YAML command lines that break rule 1 or rule 2."""
     found = []
     for number, line in logical_lines(text):
-        code = re.sub(r"(^|\s)#.*", "", line)
-        words = [word for word in re.split(r"[\s'\"`;&|()=]+", code) if word]
+        words = shell_words(line)
         bare_cluster = any(CLUSTER.match(word) for word in words) and SUBCOMMAND in words
         if LONG_FLAG in words or (bare_cluster and not MARKER.search(line)):
             found.append(number)
@@ -244,6 +261,17 @@ class CoarseRuleTests(unittest.TestCase):
             "marker": "grep -n commit f # no-verify-guard: not git",
         }.items():
             self.assertEqual(text_offences(text), [], name)
+
+    def test_a_hash_inside_quotes_is_not_a_comment(self) -> None:
+        for name, text in {
+            "long flag after a quoted hash": "git commit -m 'fix #263' --no-verify",
+            "short cluster after a quoted hash": "git commit -m 'fix #263' -n",
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(text_offences(text), [1])
+
+    def test_reports_the_first_physical_line_of_a_wrapped_command(self) -> None:
+        self.assertEqual(text_offences("echo ok\ngit commit \\\n  -qn \\\n  -m x\necho done\n"), [2])
 
 
 class NoVerifyGuardTests(unittest.TestCase):
