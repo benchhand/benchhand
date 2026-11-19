@@ -52,8 +52,10 @@ The case's forces are in the analysed part's model frame, so the checker first s
 If the checker cannot confirm a frame, the load stays uncovered and the gap names the reason. The reasons:
 
 - The record does not hold the part, or the occurrence does not exist or is ambiguous (a part placed twice needs an `occurrence`).
-- The named occurrence belongs to another part.
-- `application` is present but names no part, product, interface or assembly operation.
+- `application` is present but empty, not a mapping, or without a frame key.
+- A frame key of `application` is null, empty or malformed, or the record lacks the part, interface or assembly operation it names. The frame keys are `PN`, `product`, `interface` and `assembly_operation`.
+- A named occurrence belongs to another part, or does not exist, even when the part is `assembly_zero`.
+- An `occurrence` is not an `@id` reference beside a `PN`, or `application` has a key that no subject has.
 - `assembly.yaml` does not normalize.
 - A frame dependency does not load.
 - The case sets a `pose`, which moves the parts from their rest placements, and the direction names another frame.

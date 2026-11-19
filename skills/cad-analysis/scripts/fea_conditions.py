@@ -62,6 +62,7 @@ FORMING = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": 
 LEVEL = "simulation_supported"
 DECISION = re.compile(r"DR-[0-9]{3}")
 REQUIREMENT = re.compile(r"REQ-[0-9]{3}")
+OCCURRENCE_REF = re.compile(r"@[a-z][a-z0-9_-]*")  # the schema's occurrence_ref: "@" and an occurrence id
 # A decision (mesh convergence, effective isotropic model) counts only when its MADR status is this. It is
 # the old gate status APPROVED; PROVISIONAL is `proposed` and VOID is `rejected`, neither of them evidence.
 APPROVED_STATUS = "accepted"
@@ -624,12 +625,10 @@ def _unit(direction: Any) -> tuple[float, float, float] | None:
     return (direction[0] / length, direction[1] / length, direction[2] / length)
 
 
-def _names_a_frame(application: Any) -> bool:
-    """Whether a present `application` is a subject that says which frame it is: a part, the product, an interface
-    or an assembly operation (the anyOf of manufacturing.schema.json's subject)."""
-    return isinstance(application, Mapping) and (
-        isinstance(application.get("PN"), str) or application.get("product") is True
-        or "interface" in application or "assembly_operation" in application)
+# The keys of manufacturing.schema.json's subject. The first four say which frame a statement is in.
+SUBJECT_KEYS = frozenset({"product", "PN", "occurrence", "component", "operation", "feature", "region", "interface",
+                          "assembly_operation", "requirements"})
+FRAME_KEYS = ("PN", "product", "interface", "assembly_operation")
 
 
 class _Frames:
@@ -667,8 +666,9 @@ class _Frames:
         An omitted `application` is the assembly frame; a present one that names no frame is invalid and confirms
         nothing. A direction stated against the analysed part is already in its frame. Any other frame is reached
         through the assembly at the rest placements, which a posed case has left."""
-        if application is not None and not _names_a_frame(application):
-            return None, "the load's application is present but names no part, product, interface or assembly operation"
+        problem = self.application_problem(application) if application is not None else ""
+        if problem:
+            return None, problem
         if application is not None and self.same_part(application, analysed):
             return direction, ""
         if self.unavailable:
@@ -681,6 +681,29 @@ class _Frames:
             return None, why or why_target
         moved = target.inverse().apply(source.apply(direction))
         return (moved[0], moved[1], moved[2]), ""
+
+    def application_problem(self, application: Any) -> str:
+        """Why a present `application` names no frame, or "" when every reference in it holds: a part and an interface
+        the record has, an assembly operation it lists, `product: true`, and an occurrence beside a part. The keys
+        alone prove nothing, because the assessment does not validate the record against its schema."""
+        if not isinstance(application, Mapping) or not any(key in application for key in FRAME_KEYS):
+            return "the load's application is present but names no part, product, interface or assembly operation"
+        unknown = sorted(str(key) for key in application if key not in SUBJECT_KEYS)
+        if unknown:
+            return f"the load's application has the keys {unknown}, which a subject does not allow"
+        operations = self.record.assembly_operations
+        held = {"PN": self.record.parts, "interface": self.record.interfaces,
+                "assembly_operation": {op.get("id") for op in operations} if isinstance(operations, tuple) else set()}
+        for key, known in held.items():
+            if key in application and not (isinstance(application[key], str) and application[key] in known):
+                return f"the load's application names the {key} {application[key]!r}, which the record does not hold"
+        if "product" in application and application["product"] is not True:
+            return f"the load's application has product {application['product']!r}, not true"
+        if "occurrence" in application and not (
+                isinstance(application["occurrence"], str) and OCCURRENCE_REF.fullmatch(application["occurrence"])
+                and "PN" in application):
+            return "the load's application names an occurrence that is not an @id reference beside a part"
+        return ""
 
     def same_part(self, application: Mapping[str, Any], analysed: Mapping[str, Any]) -> bool:
         """Whether `application` names the analysed part's own model frame: its part, with no occurrence named, the
@@ -707,7 +730,8 @@ class _Frames:
         part = self.record.parts.get(pn)
         if part is None:
             return None, f"{pn} is not a part of the record"
-        if part.raw.get("model_frame", self.assembly.DEFAULT_FRAME) == self.assembly.DEFAULT_FRAME:
+        zero = part.raw.get("model_frame", self.assembly.DEFAULT_FRAME) == self.assembly.DEFAULT_FRAME
+        if zero and subject.get("occurrence") is None:
             return identity, ""
         if self.inventory is None:
             return None, f"assembly.yaml does not normalize ({self.broken})"
@@ -715,6 +739,8 @@ class _Frames:
             occurrence = self.inventory.endpoint(pn, subject.get("occurrence"))
         except self.assembly.UnresolvedReference as error:
             return None, str(error)
+        if zero:
+            return identity, ""
         placed = self.pose.Rigid.from_placement(occurrence.placement)
         return self.pose.Rigid(placed.rot, identity.trans), ""
 

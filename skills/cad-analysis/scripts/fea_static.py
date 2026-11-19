@@ -62,6 +62,7 @@ SOLVERS = _load_module("cad_flow_fea_solvers", SKILLS / "cad-flow" / "scripts" /
 RUNTIME = _load_module("freecad_runtime", SKILLS / "cad-drawings" / "scripts" / "freecad_runtime.py")
 
 POSE_TOL = 1e-6  # cad-motion's sweep reports pose values rounded to 6 decimals
+MISSING_INPUT = "missing"  # what the recipe seals for a producer input that is not on disk
 DEFAULT_TIMEOUT_SECONDS = 600.0  # a case's timeout_seconds overrides it
 # ccx 2.23 threads (manual section 2): FreeCAD's start_ccx sets OMP_NUM_THREADS to the CPU count, and these
 # take precedence over it for the equation solver, the stiffness assembly and the result calculation.
@@ -761,7 +762,16 @@ def _producer_code_hashes() -> dict[str, str]:
              Path(__file__).with_name("mesh_quality.py"), Path(__file__).with_name("fea_modes.py"),
              Path(__file__).with_name("fea_stress.py"), Path(__file__).with_name("fea_stress_study.py"),
              conditions.INTENT_PATH, *conditions.FRAME_CODE, Path(SOLVERS.__file__))
-    return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    return {path.name: _file_digest(path) for path in paths}
+
+
+def _file_digest(path: Path) -> str:
+    """The sha256 of a producer input, or "missing" for one that is not there. A frame module that is gone makes the
+    assessment abstain, so the recipe must still seal that fact instead of aborting the case."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return MISSING_INPUT
 
 
 def _input_hashes(case: dict[str, Any]) -> dict[str, str]:

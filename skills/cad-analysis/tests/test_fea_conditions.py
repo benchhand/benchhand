@@ -130,17 +130,19 @@ SLANT = (0, 0.6, -0.8)  # a direction with all its weight off the axes of both r
 
 
 def framed_documents(application: Any, occurrences: list[tuple[str, str, dict[str, Any] | None]],
-                     direction: Any = SLANT) -> dict[str, Any]:
-    """The load's direction written against `application` (None leaves it out), in a record whose parts are in their
-    own frame (`part_local`) and placed by `occurrences`: (id, PN, placement or None to omit)."""
+                     direction: Any = SLANT, other_frame: str = "part_local") -> dict[str, Any]:
+    """The load's direction written against `application` (None leaves it out), in a record whose bracket is in its
+    own frame (`part_local`), whose neighbour is in `other_frame`, and whose parts are placed by `occurrences`: (id, PN,
+    placement or None to omit). The record holds the interface IF-001 and the assembly operation mount-bracket."""
     docs = documents(direction=direction)
     docs["product.yaml"]["use_case"]["loads"][0].update({"application": application} if application is not None else {})
     docs[f"parts/{PN}/part.yaml"]["model_frame"] = "part_local"
-    docs[f"parts/{OTHER}/part.yaml"] = {**fx.part(OTHER, "Neighbour"), "model_frame": "part_local"}
+    docs[f"parts/{OTHER}/part.yaml"] = {**fx.part(OTHER, "Neighbour"), "model_frame": other_frame}
+    docs["interfaces.yaml"] = {"interfaces": [fx.interface("IF-001", PN, OTHER)]}
     placed = [{"id": oid, "PN": pn, **({"placement": placement} if placement else {})} for oid, pn, placement in occurrences]
     docs["assembly.yaml"] = {"occurrences": placed, "subassemblies": [{"id": "main", "title": "Main",
                                                                       "occurrences": [f"@{o['id']}" for o in placed]}],
-                             "joints": [], "operations": fx.unknown()}
+                             "joints": [], "operations": [{"id": "mount-bracket"}]}
     return docs
 
 
@@ -598,7 +600,7 @@ class QualificationBypasses(SourcedFEACase):
 
     def test_a_direction_stated_in_the_assembly_frame_is_rotated_into_the_analysed_part_frame(self) -> None:
         """R_BRACKET undone takes the assembly direction (0, .6, -.8) to (.6, 0, -.8)."""
-        for application in (None, {"product": True}, {"interface": "IF-001"}):
+        for application in (None, {"product": True}, {"interface": "IF-001"}, {"assembly_operation": "mount-bracket"}):
             with self.subTest(application=application):
                 self.assertEqual(self.framed_verdicts(application, [30, 0, -40]), ("pass", "pass"))
 
@@ -645,6 +647,68 @@ class QualificationBypasses(SourcedFEACase):
         for application in ({}, "bracket", [], {"component": "arm"}):
             with self.subTest(application=application):
                 self.assert_frame_unconfirmed(application, self.BOTH, [30, 0, -40], "application")
+
+    def test_an_application_whose_reference_is_null_empty_or_unresolved_leaves_the_load_unknown(self) -> None:
+        """Each of these carries a key a subject allows, so only the value says it names nothing. Read as the assembly
+        frame, the (30, 0, -40) N force would pass."""
+        for application in ({"interface": None}, {"assembly_operation": None}, {"product": None}, {"product": False},
+                            {"PN": None}, {"interface": ""}, {"assembly_operation": ""}, {"interface": 5},
+                            {"interface": "IF-999"}, {"assembly_operation": "no-such-operation"},
+                            {"PN": OTHER, "interface": None}, {"product": True, "assembly_operation": ""},
+                            {"product": True, "bogus": 1}, {"occurrence": "@other"}, {"PN": OTHER, "occurrence": 5}):
+            with self.subTest(application=application):
+                self.assert_frame_unconfirmed(application, self.BOTH, [30, 0, -40], "application")
+
+    def test_an_assembly_zero_part_with_an_occurrence_it_does_not_own_leaves_the_load_unknown(self) -> None:
+        """The neighbour's model frame is the assembly frame, so a bare reference to it confirms with no placement. An
+        occurrence named beside it must still exist and be the neighbour's: the identity is no reason to skip that."""
+        placed = [("bracket", PN, R_BRACKET), ("other", OTHER, None)]
+        for application, why in (({"PN": OTHER, "occurrence": "@bracket"}, "not " + OTHER),
+                                 ({"PN": OTHER, "occurrence": "@gone"}, "names no occurrence"),
+                                 ({"PN": OTHER, "occurrence": OTHER}, "not an @id reference")):
+            with self.subTest(application=application):
+                self.solved.clear()
+                self.build(framed_documents(application, placed, other_frame="assembly_zero"))
+                entries = [{"selector": {"indices": [2]}, "force": [30, 0, -40], "load": "head_load"}]
+                path = self.case({"conditions": SERVICE}, acceptance={"strength": "REQ-001", "stiffness": "REQ-002"},
+                                 mesh_convergence={"decision": "DR-002"}, loads=entries)
+                self.approve(self.study(path))
+                report = self.solve(path)
+                self.assert_unproven(report, loads=True)
+                gaps = [gap for gap in report["evidence"]["gaps"] if "head_load" in gap]
+                self.assertTrue(any("frame cannot be confirmed" in gap and why in gap for gap in gaps), gaps)
+
+    def test_an_assembly_zero_part_with_its_own_occurrence_confirms_the_frame(self) -> None:
+        placed = [("bracket", PN, R_BRACKET), ("other", OTHER, None)]
+        for application in ({"PN": OTHER}, {"PN": OTHER, "occurrence": "@other"}):
+            with self.subTest(application=application):
+                self.build(framed_documents(application, placed, other_frame="assembly_zero"))
+                self.assertEqual(self.verdicts(self.solve(self.loads_case(([2], [30, 0, -40])))), ("pass", "pass"))
+
+    def test_a_missing_frame_module_leaves_the_load_unknown_through_main_and_seals_the_absence(self) -> None:
+        """Each of the four files is really absent from a scratch copy of the modules, not read through a stand-in."""
+        sources = {"assembly_data.py": fea_conditions.ASSEMBLY_DATA_PATH, "layout.py": fea_conditions.ASSEMBLY_DATA_PATH.with_name("layout.py"),
+                   "pose.py": fea_conditions.POSE_PATH, "coupling.py": fea_conditions.POSE_PATH.with_name("coupling.py")}
+        for missing in sources:
+            with self.subTest(missing), tempfile.TemporaryDirectory() as scratch:
+                copy = {name: Path(scratch) / ("cad-record" if name in ("assembly_data.py", "layout.py") else "cad-motion")
+                        / "scripts" / name for name in sources}
+                for name, target in copy.items():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if name != missing:
+                        shutil.copyfile(sources[name], target)
+                with patch.dict(sys.modules), \
+                     patch.multiple(fea_conditions, ASSEMBLY_DATA_PATH=copy["assembly_data.py"], POSE_PATH=copy["pose.py"],
+                                    FRAME_CODE=tuple(copy.values())):
+                    for module in ("cad_motion_pose", "cad_record_assembly_data", "cad_record_layout", "cad_motion_coupling"):
+                        sys.modules.pop(module, None)
+                    report = self.frame_report({"PN": OTHER}, self.BOTH, [40, 0, 30])
+                self.assert_unproven(report, loads=True)
+                self.assertTrue(any("unavailable" in gap for gap in report["evidence"]["gaps"]), report["evidence"]["gaps"])
+                [manifest] = (self.hw / "analysis" / "v1").glob("*/manifest.json")
+                sealed = json.loads(manifest.read_text(encoding="utf-8"))["recipe"]["producer_code_sha256"]
+                self.assertEqual(sealed[missing], "missing")
+                self.assertEqual([name for name, digest in sealed.items() if len(digest) != 64], [missing])
 
     def test_malformed_placement_data_leaves_the_load_unknown_and_names_the_normalization_gap(self) -> None:
         bad = [("bracket", PN, R_BRACKET), ("other", OTHER, {"translation_mm": [1, 2]})]
