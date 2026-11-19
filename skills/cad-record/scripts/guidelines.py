@@ -662,13 +662,16 @@ def _lower_upper(first: _Bound, second: _Bound) -> tuple[float, bool]:
     return (a, first.upper_open) if a < b else (b, second.upper_open)
 
 
+Key = tuple[int, int, int, int]
+
+
 @dataclass(frozen=True)
 class _Candidate:
     guideline: Guideline  # the applicable set the limit is read through
     defined_in: Guideline  # the set that states it
     limit: Mapping[str, Any]
     bound: _Bound
-    key: tuple[int, int, int, int]  # pinned (machine), scope specificity, applies_to, then minus the distance from the applicable set
+    key: Key  # pinned (machine), scope specificity, applies_to, then minus the distance from the applicable set
     shown: str
     layer: str
 
@@ -770,8 +773,8 @@ def _candidates_of(guideline: Guideline, defined: Guideline, distance: int, cont
     return found
 
 
-def _prepare(candidates: list[_Candidate], context: Context, characteristic: str) -> tuple[list[_Candidate], list[str]]:
-    """The candidates as bounds in one unit, and the reasons for those that cannot be one."""
+def _prepare(candidates: list[_Candidate], context: Context, characteristic: str) -> tuple[list[_Candidate], list[tuple[Key, str]]]:
+    """The candidates as bounds in one unit, and the rank and reason of each that cannot be one."""
     mi = _intent()
     units = None
     for candidate in candidates:
@@ -779,15 +782,15 @@ def _prepare(candidates: list[_Candidate], context: Context, characteristic: str
             units = mi.quantity(candidate.limit["quantity"] if "quantity" in candidate.limit else candidate.limit["relative"]["floor"]).units
             break
     ready: list[_Candidate] = []
-    reasons: list[str] = []
+    unresolved: list[tuple[Key, str]] = []
     for candidate in candidates:
         bound, why = _bound(candidate.limit, context, units)
         if bound is None:
-            reasons.append(f"{candidate.defined_in.ref} {characteristic}: {why}")
+            unresolved.append((candidate.key, f"{candidate.defined_in.ref} {characteristic}: {why}"))
             continue
         ready.append(_Candidate(candidate.guideline, candidate.defined_in, candidate.limit, bound, candidate.key, _show(bound),
                                 candidate.layer))
-    return ready, reasons
+    return ready, unresolved
 
 
 def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, *, orientation: str | None = None,
@@ -807,11 +810,11 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
     if uncertain:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=tuple(f"{characteristic} is a requirement and a scope fact is unknown: {why}" for why in uncertain))
-    ready, reasons = _prepare(candidates, context, characteristic)
+    ready, unresolved = _prepare(candidates, context, characteristic)
     if not ready:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
-                        reasons=tuple(reasons) or (f"no applicable guideline states {characteristic}",))
-    return _fold(characteristic, ready, warnings, _intent())
+                        reasons=tuple(why for _, why in unresolved) or (f"no applicable guideline states {characteristic}",))
+    return _fold(characteristic, ready, unresolved, warnings, _intent())
 
 
 def _merge(group: list[_Candidate]) -> _Bound | None:
@@ -822,7 +825,10 @@ def _merge(group: list[_Candidate]) -> _Bound | None:
     return merged
 
 
-def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi: Any) -> Resolved:
+def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[Key, str]], warnings: list[str],
+          mi: Any) -> Resolved:
+    """Tightens group by group, most general first. A candidate that cannot be a bound and outranks the group the fold
+    keeps would lose silently to a looser limit, so it makes the result unknown; one that ties or trails it does not."""
     current: _Bound | None = None
     winners: list[_Candidate] = []
     shadowed: list[Shadowed] = []
@@ -853,6 +859,10 @@ def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi:
             hide(old, f"{'tightened' if current is None or merged.within(current) else 'relaxed'} by {strictest[0].defined_in.ref}")
         current, winners = merged, list(strictest)
     assert current is not None
+    blocking = [why for key, why in unresolved if key > winners[0].key]
+    if blocking:
+        return Resolved(characteristic, "unknown", warnings=tuple(warnings + [f"{characteristic} not resolved: {why}" for why in blocking]),
+                        reasons=tuple(blocking))
     if not current.statable():
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=(f"{characteristic}: the limit {_show(current)} cannot be stated with one operator "
