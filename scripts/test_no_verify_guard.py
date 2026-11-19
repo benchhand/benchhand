@@ -147,17 +147,20 @@ def scanned_words(line: str) -> list[str]:
     return [word for word in re.split(r"[\s'\"`;&|()=]+", code) if word]
 
 
+def breaks_rules(words: list[str], marked: bool) -> bool:
+    bare_cluster = any(CLUSTER.match(word) for word in words) and SUBCOMMAND in words
+    return LONG_FLAG in words or (bare_cluster and not marked)
+
+
+def line_offends(line: str) -> bool:
+    """True when either word reading of the line breaks rule 1 or rule 2."""
+    marked = bool(MARKER.search(line))
+    return any(breaks_rules(words, marked) for words in (shell_words(line), scanned_words(line)))
+
+
 def text_offences(text: str) -> list[int]:
-    """Line numbers of the joined shell or YAML command lines that break rule 1 or rule 2, by either word reading."""
-    found = []
-    for number, line in logical_lines(text):
-        marked = MARKER.search(line)
-        for words in (shell_words(line), scanned_words(line)):
-            bare_cluster = any(CLUSTER.match(word) for word in words) and SUBCOMMAND in words
-            if LONG_FLAG in words or (bare_cluster and not marked):
-                found.append(number)
-                break
-    return found
+    """Line numbers of the joined shell or YAML command lines that break rule 1 or rule 2."""
+    return [number for number, line in logical_lines(text) if line_offends(line)]
 
 
 def marker_lines(path: str, text: str) -> list[int]:
