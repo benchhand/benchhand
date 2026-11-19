@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
@@ -798,7 +797,7 @@ def make(work: Path, hw: Path, label: str, plans: Mapping[str, Plan], uncovered:
             row, files = cached["row"], dict(cached["members"])
             reused.add(pn)
         else:
-            shutil.rmtree(target, ignore_errors=True)  # a reuse that store gc cut short: export into an empty folder
+            parts_store.remove_tree(target)  # a reuse that store gc cut short: export into an empty folder
             try:
                 derived = export(target, part_plan, entry, (states[pn] if different else definitions[pn]).shape, located)
             except components.BindingError as error:

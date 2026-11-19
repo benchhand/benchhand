@@ -49,6 +49,8 @@ class PartStore(Protocol):
 
     def gc(self, dry_run: bool = False) -> dict[str, Any]: ...
 
+    def remove_tree(self, folder: Path) -> None: ...
+
 
 def load_store() -> Any:
     """cad-record `store.py` under the name `cad_record_store`."""

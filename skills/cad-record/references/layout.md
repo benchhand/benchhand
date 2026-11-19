@@ -77,6 +77,7 @@ listed files and nothing else.
 | `cache.part_records` | `hw/.cad/cache/records/{SHA}.json` | generated | (data) | cad-record store.py (cad-model cad_model.py run) | layout | scratch | what one cached computation produced, keyed by the sha256 of its allowlisted inputs: each member's relative path and object sha256, and the producer's facts. A reader reuses it only while every member still hashes to its name. The first writer of a key wins. It is git-ignored, and store gc drops it once no sealed manifest references its members |
 | `cache.locks` | `hw/.cad/cache/locks/{SHA}.lock` | generated | (control) | cad-record store.py | any | scratch | held by one producer of a key while it computes the output, so a second producer waits and then reuses it; disposable |
 | `cache.findings` | `hw/.cad/cache/findings.jsonl` | generated | (data) | cad-record store.py | any | scratch | one line for each second writer whose output for a key differs from the record kept: the key misses an input its producer reads; disposable |
+| `cache.recovery` | `hw/.cad/cache/recovery/{NAME}` | generated | (data) | cad-record store.py place_object | any | free | a file that place_object could not put back at its target, named in cache.findings |
 | `cache.former_part_objects` | `hw/.cad/parts/{SHA}` | generated | (data) | none: the part store before hw/.cad/cache/ | layout | scratch | an object of the former part store; nothing reads it, and cad_model.py store gc removes the whole folder |
 | `cache.former_part_records` | `hw/.cad/builds/{SHA}.json` | generated | (data) | none: the part store before hw/.cad/cache/ | layout | scratch | a record of the former part store; nothing reads it, and cad_model.py store gc removes the whole folder |
 | `control.run` | `hw/.cad/runs/{RUN}.json` | generated | (control) | cad-flow process_lifecycle.py claim_run (cad-motion sweep.py, cad-model check, cad-analysis fea_static.py) | any | scratch | the process groups of one running sweep, check or FEA run, removed when it ends; a live one refuses an overlapping run; git-ignored |
@@ -246,7 +247,17 @@ needs, and reports the bytes freed; it never removes an object a manifest names.
 `place()` in cad-record `store.py` lays a record's members down as one folder. It hashes each member
 before it renames the folder into place, and never after. A write through an object between that hash
 and the rename goes unseen. No production code calls `place()`. `place_object()`, which `cad-model run`
-uses, has the same window (#250).
+uses, hashes the object it linked after the rename instead, under a lock on the target's folder. When
+that hash fails or raises, it puts the old file back (#250).
+
+`place_object()` swaps the link in with renameat2 or renamex_np, so it keeps the old file. It puts the
+old file back only while the target is absent, so a file that another writer renames there stays. A
+file it cannot put back moves to `hw/.cad/cache/recovery/`, where `cache.findings` names it. On a
+filesystem without that swap, `place_object()` places nothing, and cad-model builds the part again.
+
+For a kept file on another filesystem, `place_object()` copies it to the recovery folder and syncs the
+copy. Then it removes the original. If the copy fails, the file stays, and the cleanup of the run keeps
+it.
 
 ## Git storage
 
