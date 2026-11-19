@@ -102,7 +102,8 @@ PRODUCER = "cad-motion play.py"
 # at layout.py:325) and the schemas that validate the packet and the record (check_packet.py:26,
 # manufacturing_intent.py:36, schema_registry.py:28-29).
 VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
-                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas")
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas",
+                SKILLS / "cad-record" / "assets" / "manufacturing" / "guidelines")
 SUBJECT = "motion-play"
 FAMILY = "motion.play"
 COMPONENTS = ("axial", "radial", "angular", "backlash")

@@ -732,7 +732,8 @@ _SKILLS = Path(__file__).resolve().parents[3]
 # trace of which of them reach the output bytes, all of them count: the ISO 286 tables (fits.py:39), the bundle
 # layout (layout.py:34) and the record and packet schemas (manufacturing_intent.py:36, schema_registry.py:28-29).
 OUTPUT_DATA = (_SKILLS / "cad-fits" / "data" / "iso286.json", _SKILLS / "cad-record" / "layout.json",
-               _SKILLS / "cad-record" / "schemas", _SKILLS / "cad-concept" / "assets" / "schemas")
+                _SKILLS / "cad-record" / "schemas", _SKILLS / "cad-concept" / "assets" / "schemas",
+                _SKILLS / "cad-record" / "assets" / "manufacturing" / "guidelines")
 
 
 def _code_shas() -> Any:
