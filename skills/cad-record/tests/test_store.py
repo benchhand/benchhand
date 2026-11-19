@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -509,10 +510,11 @@ def snapshot(folder: Path) -> dict[str, tuple[bytes, int]]:
 
 
 class PlaceObject(Fixture):
-    """`place_object` renames a link to the object onto the target, then hashes the inode it renamed through a
+    """`place_object` swaps a link to the object onto the target, then hashes the inode it renamed through a
     descriptor it opened before (#250). The link shares the object's inode, so a write through the object reaches
     the target, and only a hash after the rename sees one. A failed or interrupted hash puts the old target back
-    while a lock on the target's folder keeps every other `place_object` out."""
+    while a lock on the target's folder keeps every other `place_object` out. A file it cannot put back stays
+    beside the target, and cache.findings names it."""
 
     TARGETS = {"no target yet": None, "an old target": b"OLD"}
 
@@ -527,6 +529,37 @@ class PlaceObject(Fixture):
         if old is not None:
             target.write_bytes(old)
         return target
+
+    def kept(self, folder: Path) -> list[Path]:
+        """The files in `folder` that cache.findings names as kept by place_object."""
+        log = self.hw / ".cad" / "cache" / "findings.jsonl"
+        lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        found = [re.match(r"kept: (.+?) holds ", json.loads(line)["finding"]) for line in lines]
+        return sorted(Path(m.group(1)) for m in found if m and Path(m.group(1)).parent == folder)
+
+    def assert_left(self, target: Path, placed: bytes, kept: list[bytes]) -> None:
+        """`target` holds `placed`, and each other file beside it is one cache.findings names, holding `kept`."""
+        beside = sorted(path for path in target.parent.iterdir() if path != target)
+        self.assertEqual(target.read_bytes(), placed)
+        self.assertEqual(beside, self.kept(target.parent))
+        self.assertEqual(sorted(path.read_bytes() for path in beside), sorted(kept))
+
+    @staticmethod
+    def foreign(target: Path):
+        """A writer that takes no lock, such as an older store.py: each call renames a new file onto `target`,
+        holding FOREIGN, then FOREIGN2 and so on."""
+        made = []
+
+        def overwrite() -> None:
+            made.append(target.with_name(f"foreign{len(made)}.tmp"))
+            made[-1].write_bytes(b"FOREIGN" + (str(len(made)).encode() if len(made) > 1 else b""))
+            RENAME(made[-1], target)
+
+        return overwrite
+
+    def failing_hash(self, stored: Path):
+        """A `before` for at_the_rename: a write through the object `stored`, so that the hash fails."""
+        return lambda: rewrite(stored, b"x" * len(stored.read_bytes()))
 
     @contextlib.contextmanager
     def at_the_rename(self, before=lambda: None, after=lambda: None) -> Iterator[None]:
@@ -656,40 +689,73 @@ class PlaceObject(Fixture):
         self.assertEqual(results, {"mine": False, "theirs": True})
         self.assertEqual({name: data for name, (data, _) in snapshot(target.parent).items()}, {"one.unv": b"THEIRS"})
 
-    def test_a_file_another_writer_renamed_onto_the_target_after_this_one_is_never_undone(self) -> None:
-        digest, _ = self.stored(b"MINE")
-        target = self.target("run", b"OLD")
-        foreign = target.with_name("foreign.tmp")
+    def test_a_file_another_writer_renames_onto_the_target_after_this_one_or_during_its_hash_stands(self) -> None:
+        real = hashlib.file_digest
+        for moment in ("just after the rename", "when the hash starts"):
+            for case, old in self.TARGETS.items():
+                with self.subTest(case, moment=moment):
+                    digest, _ = self.stored(f"{case} {moment}".encode())
+                    target = self.target(f"{case} {moment}", old)
+                    overwrite = self.foreign(target)
 
-        def overwrite() -> None:  # a writer that takes no lock, such as an older store.py
-            foreign.write_bytes(b"FOREIGN")
-            os.rename(foreign, target)
+                    def hashing(stream, *args, overwrite=overwrite, **kwargs):
+                        if str(getattr(stream, "name", "")).endswith(".link"):
+                            overwrite()
+                        return real(stream, *args, **kwargs)
 
-        with self.at_the_rename(after=overwrite):
-            self.assertFalse(self.store.place_object(digest, target))
-        self.assertEqual({name: data for name, (data, _) in snapshot(target.parent).items()}, {"one.unv": b"FOREIGN"})
+                    seam = (self.at_the_rename(after=overwrite) if moment == "just after the rename" else
+                            mock.patch.object(store.hashlib, "file_digest", hashing))
+                    with seam:
+                        self.assertFalse(self.store.place_object(digest, target))
+                    self.assertEqual(target.read_bytes(), b"FOREIGN")
+                    self.assert_left(target, b"FOREIGN", [old] if old else [])
 
-    def test_a_file_another_writer_renames_onto_the_target_during_the_undo_stays(self) -> None:
+    def test_a_file_another_writer_renames_onto_the_target_during_the_undo_stands_and_nothing_is_lost(self) -> None:
         """A failed hash undoes the placement. A writer that takes no lock renames its file onto the target just
-        before the undo, or, where an old target comes back, between the undo's two steps. Its file stands."""
-        moments = {("no target yet", "just before the undo"): 1, ("an old target", "just before the undo"): 1,
-                   ("an old target", "between the undo's two steps"): 2}
-        for (case, moment), step in moments.items():
-            with self.subTest(case, moment=moment):
-                digest, stored = self.stored(f"{case} {moment}".encode())
-                target = self.target(f"{case} {moment}", self.TARGETS[case])
-                foreign = target.with_name("foreign.tmp")
+        before the undo, between the undo's two steps, or both. The newest file stands at the target. Each file
+        that cannot go back stays beside it, at a name that cache.findings reports."""
+        moments = {"just before the undo": ("F", {"no target yet": [], "an old target": [b"OLD"]}),
+                   "between the undo's two steps": ("-F", {"an old target": [b"OLD"]}),
+                   "before the undo and between its steps": ("FF", {"no target yet": [b"FOREIGN"],
+                                                                     "an old target": [b"FOREIGN", b"OLD"]})}
+        for moment, (steps, cases) in moments.items():
+            for case, kept in cases.items():
+                with self.subTest(case, moment=moment):
+                    digest, stored = self.stored(f"{case} {moment}".encode())
+                    target = self.target(f"{case} {moment}", self.TARGETS[case])
+                    overwrite = self.foreign(target)
+                    acts = [overwrite if step == "F" else (lambda: None) for step in steps]
+                    with self.at_the_rename(before=self.failing_hash(stored)), \
+                            self.at_the_undo(target, *acts) as ran:
+                        self.assertFalse(self.store.place_object(digest, target))
+                    self.assertEqual(len(ran), len(steps))  # the seam was reached
+                    self.assert_left(target, b"FOREIGN2" if steps == "FF" else b"FOREIGN", kept)
 
-                def overwrite(foreign=foreign, target=target) -> None:
-                    foreign.write_bytes(b"FOREIGN")
-                    RENAME(foreign, target)
+    def test_a_file_kept_by_an_earlier_failed_placement_survives_the_next_failed_one(self) -> None:
+        real = getattr(store, "_fresh", None)
+        for names in ("fresh names", "the next names taken by the kept file"):
+            with self.subTest(names):
+                first, stored = self.stored(f"first {names}".encode())
+                target = self.target(f"kept {names}", b"OLD")
+                with self.at_the_rename(before=self.failing_hash(stored)), \
+                        self.at_the_undo(target, lambda: None, self.foreign(target)):
+                    self.assertFalse(self.store.place_object(first, target))
+                [kept] = self.kept(target.parent)
+                taken: set[str] = set()
 
-                acts = [lambda: None] * (step - 1) + [overwrite]
-                with self.at_the_rename(before=lambda stored=stored: rewrite(stored, b"x" * len(stored.read_bytes()))), \
-                        self.at_the_undo(target, *acts) as ran:
-                    self.assertFalse(self.store.place_object(digest, target))
-                self.assertEqual(len(ran), step)  # the seam was reached
-                self.assertEqual(contents(target.parent), {"one.unv": b"FOREIGN"})
+                def colliding(near, kind):  # each kind of name once at the kept file's, then fresh
+                    if kind in taken:
+                        return real(near, kind)
+                    taken.add(kind)
+                    return kept
+
+                second, stored = self.stored(f"second {names}".encode())
+                seam = (mock.patch.object(store, "_fresh", colliding, create=True) if names != "fresh names" else
+                        contextlib.nullcontext())
+                with seam, self.at_the_rename(before=self.failing_hash(stored)):
+                    self.assertFalse(self.store.place_object(second, target))
+                self.assert_left(target, b"FOREIGN", [b"OLD"])
+                self.assertEqual(self.kept(target.parent), [kept])
 
     def test_a_close_that_fails_after_a_mismatch_still_leaves_the_target_as_it_was(self) -> None:
         real = Path.open
@@ -703,8 +769,24 @@ class PlaceObject(Fixture):
                 digest, stored = self.stored(f"{case} close".encode())
                 target = self.target(f"{case} close", old)
                 before = snapshot(target.parent)
-                with self.at_the_rename(before=lambda stored=stored: rewrite(stored, b"x" * len(stored.read_bytes()))), \
+                with self.at_the_rename(before=self.failing_hash(stored)), \
                         mock.patch.object(Path, "open", opening), self.assertRaises(OSError):
+                    self.store.place_object(digest, target)
+                self.assertEqual(snapshot(target.parent), before)
+
+    def test_a_close_that_fails_after_a_matching_hash_undoes_the_placement(self) -> None:
+        real = Path.open
+
+        def opening(path, *args, **kwargs):
+            stream = real(path, *args, **kwargs)
+            return FailingClose(stream) if path.name.endswith(".link") else stream
+
+        for case, old in self.TARGETS.items():
+            with self.subTest(case):
+                digest, _ = self.stored(f"{case} matching close".encode())
+                target = self.target(f"{case} matching close", old)
+                before = snapshot(target.parent)
+                with mock.patch.object(Path, "open", opening), self.assertRaises(OSError):
                     self.store.place_object(digest, target)
                 self.assertEqual(snapshot(target.parent), before)
 

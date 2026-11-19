@@ -19,7 +19,8 @@ every member on read and names why a record is stale. `place` lays a record's me
 fresh folder and renames that folder into place, so a reader sees the whole set or none of it. It hashes what it
 linked before the folder gets its name. `place_object` links one object, swaps the link onto its name and then
 hashes it, under a lock on the folder. When that hash fails, it puts the old file back, and never over a file
-another writer renamed there since. Only `holds` answers from
+another writer renamed there since: such a file stands, and the old one stays beside it, named in
+`cache.findings`. Only `holds` answers from
 the hashes this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
 name, and every store
 path is a plain file or folder. `gc` keeps what any sealed manifest under hw/ names and removes the rest, and the part store of
@@ -37,9 +38,11 @@ import errno
 import fcntl
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import sys
@@ -66,6 +69,7 @@ _RENAME_NOREPLACE, _RENAME_EXCHANGE = 1, 2  # renameat2 flags (Linux)
 _RENAME_SWAP, _RENAME_EXCL = 2, 4  # renamex_np flags (macOS)
 _AT_FDCWD = -100
 _UNSUPPORTED = frozenset({errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP})  # no such rename flag here
+_ATTEMPTS = itertools.count()  # numbers each name `_fresh` makes in this process
 # The coarsest timestamp step the store allows for: FAT stamps mtime in 2 s steps, HFS+ and ext3 in 1 s, and Linux
 # stamps from a clock that moves once per scheduler tick. A write within one step of the last keeps its timestamps.
 TICK_NS = 2_000_000_000
@@ -103,13 +107,30 @@ def _settled(found: os.stat_result, hashed_at: int, now: int) -> bool:
     return hashed_at <= now and max(found.st_mtime_ns, found.st_ctime_ns) <= hashed_at - TICK_NS
 
 
-def _link_or_copy(source: Path, target: Path) -> None:
-    """`target` as a read-only hard link to `source`, or a read-only copy where the filesystem allows no link."""
+def _link_or_copy(source: Path, target: Path, *, exclusive: bool = False) -> None:
+    """`target` as a read-only hard link to `source`, or a read-only copy where the filesystem allows no link.
+    With `exclusive`, FileExistsError while `target` exists, which stays as it was."""
     try:
         os.link(source, target)
-    except OSError:  # another filesystem, FAT, a link limit: the same bytes, copied
+    except FileExistsError:
+        if exclusive:
+            raise
         shutil.copyfile(source, target)
+    except OSError:  # another filesystem, FAT, a link limit: the same bytes, copied
+        if not exclusive:
+            shutil.copyfile(source, target)
+        else:
+            with open(source, "rb") as reading, open(target, "xb") as writing:
+                shutil.copyfileobj(reading, writing)
     os.chmod(target, READ_ONLY)
+
+
+def _fresh(near: Path, kind: str) -> Path:
+    """A name beside `near` for one step of one `place_object`, ending in `.<kind>`: this process, thread and a
+    count, then a random part, so that no other step, attempt or process picks it. A step that creates the name
+    still refuses one that exists."""
+    return near.with_name(f".{near.name}.{os.getpid()}.{threading.get_ident()}.{next(_ATTEMPTS)}."
+                          f"{secrets.token_hex(4)}.{kind}")
 
 
 def _inode(found: os.stat_result) -> tuple[int, int]:
@@ -178,43 +199,96 @@ def _put_in(staged: Path, target: Path) -> bool:
     raise StoreError(f"{target} kept appearing and disappearing while it was placed")
 
 
-def _take_back(staged: Path, target: Path, mine: tuple[int, int], had_old: bool) -> None:
-    """Undo `_put_in`, where `staged` names the old file if `had_old`, without destroying a file that another
-    writer renamed onto `target` since. One rename moves whatever `target` names aside. If that is not `mine`,
-    it is the other writer's, and it goes back. Otherwise the old file goes back. Each goes back only while
-    there is no `target`: a file renamed onto `target` in between is newer, and stands."""
-    aside = staged.with_suffix(".aside")
+def _names(path: Path, mine: tuple[int, int]) -> bool:
+    """Whether `path` names the inode `mine`."""
     try:
-        os.rename(target, aside)  # onto a name only this thread uses, so it replaces nothing
-    except FileNotFoundError:  # another writer removed it: that stands
-        return
-    back = staged if had_old else None
-    if _inode(os.stat(aside, follow_symlinks=False)) != mine:
-        back = aside
-    if back is not None:
-        with contextlib.suppress(FileExistsError):
-            _rename2(back, target, swap=False)
-    aside.unlink(missing_ok=True)  # `mine`, or the other writer's file that a newer one replaced
+        return _inode(os.stat(path, follow_symlinks=False)) == mine
+    except FileNotFoundError:
+        return False
 
 
-def _publish(staged: Path, target: Path, digest: str) -> bool:
+def _restore(path: Path, target: Path) -> bool:
+    """Rename `path` back onto `target` while there is no `target`. False, with `path` kept, when there is one."""
+    try:
+        _rename2(path, target, swap=False)
+    except FileExistsError:
+        return False
+    return True
+
+
+def _move_aside(target: Path) -> Path | None:
+    """Rename whatever `target` names to a fresh name beside it, never onto an existing file. The new name, or
+    None when there is no `target`."""
+    for _ in range(5):
+        aside = _fresh(target, "aside")
+        try:
+            _rename2(target, aside, swap=False)
+            return aside
+        except FileExistsError:  # a kept file has that name: it stays, and the next name is fresh
+            continue
+        except FileNotFoundError:
+            return None
+    raise StoreError(f"no free name beside {target} to move it aside")
+
+
+def _take_back(staged: Path, target: Path, mine: tuple[int, int]) -> list[tuple[Path, str]]:
+    """Undo `_put_in`, where `staged` names the old file if there was one, without destroying any file but the
+    link `mine`. The file at `target` moves aside. If it is `mine`, it goes. Otherwise it is another writer's,
+    and goes back. Then the old file goes back. Each goes back only while there is no `target`, so a file
+    renamed there in between stands. The files that could not go back stay where they are, and the list says
+    what each holds: `old` or `foreign`."""
+    kept = []
+    aside = _move_aside(target)
+    if aside is not None and _names(aside, mine):
+        aside.unlink()
+    elif aside is not None and not _restore(aside, target):
+        kept.append((aside, "foreign"))
+    if os.path.lexists(staged) and not _restore(staged, target):
+        kept.append((staged, "old"))
+    return kept
+
+
+def _settle(staged: Path, target: Path, mine: tuple[int, int] | None, renamed: bool, matched: bool,
+            kept: list[tuple[Path, str]]) -> bool:
+    """End `_publish`: whether `target` is verified. When nothing was `renamed`, `staged` is the link and goes.
+    With `matched` (a hash of `mine` to its name, and a clean close), `target` still naming `mine` is a success,
+    and the old file at `staged` goes, as a rename onto `target` would remove it. A `target` that names another
+    file is another writer's, and stands, with the old file kept. Without `matched`, `_take_back` undoes the
+    rename. Each file kept goes to `kept`, as `_take_back` lists it."""
+    if not renamed or mine is None:
+        staged.unlink(missing_ok=True)
+        return False
+    if not matched:
+        kept.extend(_take_back(staged, target, mine))
+        return False
+    if not _names(target, mine):  # another writer renamed its file onto `target` after the swap
+        if os.path.lexists(staged):
+            kept.append((staged, "old"))
+        return False
+    staged.unlink(missing_ok=True)  # the file `target` named before
+    return True
+
+
+def _publish(staged: Path, target: Path, digest: str, kept: list[tuple[Path, str]]) -> bool:
     """Rename `staged` onto `target` (`_put_in`), then hash the renamed inode through a descriptor opened before
     the rename. A hard link shares its object's inode, so a write through the object up to that hash shows in
-    it. True when `target` still names the inode and its bytes hash to `digest`. Otherwise `_take_back` undoes
-    the rename, also when an exception leaves the hash or the descriptor's close. Only under _folder_lock."""
-    mine, had_old, published, verified = (0, 0), False, False, False
+    it. Whether `target` is verified (`_settle`): only once the hash matched, the descriptor closed cleanly and
+    `target` still names the inode. An exception from the hash or the close undoes the rename, then
+    propagates. Each file kept beside `target` goes to `kept`. Only under _folder_lock."""
+    mine: tuple[int, int] | None = None
+    renamed = matched = False
     try:
         with staged.open("rb") as stream:
             mine = _inode(os.fstat(stream.fileno()))
-            had_old = _put_in(staged, target)
-            published = True
-            verified = (_inode(os.stat(target, follow_symlinks=False)) == mine
-                        and hashlib.file_digest(stream, "sha256").hexdigest() == digest)
-    finally:
-        if published and not verified:
-            _take_back(staged, target, mine, had_old)
-        staged.unlink(missing_ok=True)  # the link, the file it replaced, or the old file a newer one replaced
-    return verified
+            _put_in(staged, target)
+            renamed = True
+            matched = hashlib.file_digest(stream, "sha256").hexdigest() == digest
+    except BaseException:
+        # an interruption inside `_put_in` after its rename: `staged` then no longer names the link
+        renamed = renamed or (mine is not None and not _names(staged, mine))
+        _settle(staged, target, mine, renamed, False, kept)
+        raise
+    return _settle(staged, target, mine, renamed, matched, kept)
 
 
 def _members(record: Mapping[str, Any]) -> dict[str, str]:
@@ -322,30 +396,50 @@ class Store:
 
     def place_object(self, digest: str, target: Path) -> bool:
         """Make `target` the object `digest`: a hard link where possible, else a copy. It renames the link onto
-        `target`, then hashes the inode it renamed, under a lock on `target`'s folder (`_publish`). True once
-        `target` names that inode and its bytes hash to `digest`. False when the object is absent or its bytes
-        hash to another name, with the old `target` (or none) put back, or when another writer replaced `target`
-        meanwhile, which stays. False with `target` untouched where the filesystem has no atomic swap
-        (`_rename2`), so the caller builds instead. An exception during the hash puts the old `target` back, then
-        propagates."""
+        `target`, then hashes the inode it renamed, under a lock on `target`'s folder (`_publish`). True once its
+        bytes hash to `digest`, the descriptor closed cleanly and `target` still names that inode. False when the
+        object is absent or its bytes hash to another name, with the old `target` (or none) put back, or when
+        another writer replaced `target` meanwhile, which stays. A file that cannot go back without replacing a
+        newer one stays beside `target`, and cache.findings names it (`kept: <path> holds ...`). False with
+        `target` untouched where the filesystem has no atomic swap (`_rename2`), so the caller builds instead. An
+        exception from the hash or the close puts the old `target` back, then propagates."""
         if not self.holds(digest):
             return False
         target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        staged = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.link")
-        with _folder_lock(target.parent):
-            try:
-                _link_or_copy(self._path("cache.part_objects", digest), staged)
-            except FileNotFoundError:  # gc removed it meanwhile
-                self._checked.pop(digest, None)
-                return False
-            try:
-                placed = _publish(staged, target, digest)
-            except _NoAtomicRename:
-                placed = False
+        kept: list[tuple[Path, str]] = []
+        try:
+            with _folder_lock(target.parent):
+                try:
+                    staged = self._stage(digest, target)
+                except FileNotFoundError:  # gc removed it meanwhile
+                    self._checked.pop(digest, None)
+                    return False
+                try:
+                    placed = _publish(staged, target, digest, kept)
+                except _NoAtomicRename:
+                    placed = False
+        finally:  # also when an exception leaves _publish
+            for path, held in kept:
+                what = ("the file that the target named before" if held == "old" else
+                        "a file another writer renamed onto the target")
+                self._finding(digest, f"kept: {path} holds {what}. place_object of object {digest} onto {target} "
+                                      "failed, and could not put it back without replacing a newer file there")
         if not placed:
             self._checked.pop(digest, None)
         return placed
+
+    def _stage(self, digest: str, target: Path) -> Path:
+        """A new link to (or copy of) the object `digest` at a fresh name beside `target` (`_fresh`), never over
+        an existing file."""
+        for _ in range(5):
+            staged = _fresh(target, "link")
+            try:
+                _link_or_copy(self._path("cache.part_objects", digest), staged, exclusive=True)
+                return staged
+            except FileExistsError:  # a kept file has that name: it stays, and the next name is fresh
+                continue
+        raise StoreError(f"no free name beside {target} to stage object {digest}")
 
     # --- records ---------------------------------------------------------------------------------------------------
 
