@@ -92,11 +92,12 @@ def truss_plan() -> list[dict[str, Any]]:
             {"frd": fine, "inp": plane_inp(fine, TRUSS_PLANES), "displacement": [0.0, 0.41]}]
 
 
-def interior_plan(coarse_peak: float = 99.0, fine_peak: float = 100.0) -> list[dict[str, Any]]:
-    """Synthetic meshes whose peak sits at x=50, far from both faces: a strength-eligible settled study."""
+def interior_plan(coarse_peak: float = 99.0, fine_peak: float = 100.0, peak_x: float = 50.0) -> list[dict[str, Any]]:
+    """Synthetic meshes whose peak sits at x=`peak_x`. At x=50, far from both faces, the study is a strength-eligible
+    settled one. At x=4, within h_coarse of the 3 mm cutoff, it settles away from the support."""
     plan = []
-    for lvl, peak in ((stress_tests.level(1.0, kept=200, peak=coarse_peak), 0.19),
-                      (stress_tests.level(0.75, kept=2000, peak=fine_peak), 0.2)):
+    for lvl, peak in ((stress_tests.level(1.0, kept=200, peak=coarse_peak, peak_x=peak_x), 0.19),
+                      (stress_tests.level(0.75, kept=2000, peak=fine_peak, peak_x=peak_x), 0.2)):
         plan.append({"frd": stress_tests.level_as_frd(lvl), "inp": inp_text([1], [2]), "displacement": [0.0, peak]})
     return plan
 
@@ -228,8 +229,8 @@ class StrengthFromTheStudy(StressCase):
     profile's yield strength is 250 MPa, so a settled 100 MPa gives a factor of 2.5, 125 MPa exactly 2 and
     131 MPa 1.908. Every case covers head_load, so only the study and the material decide strength."""
 
-    def strength_case(self, mesh_size: float, **extra: Any) -> Path:
-        return self.case({"conditions": conditions_tests.SERVICE}, mode="stress", mesh_size=mesh_size,
+    def strength_case(self, mesh_size: float, *, conditions: dict[str, Any] | None = None, **extra: Any) -> Path:
+        return self.case({"conditions": conditions or conditions_tests.SERVICE}, mode="stress", mesh_size=mesh_size,
                          acceptance={"strength": "REQ-001", "stiffness": "REQ-002"}, **extra)
 
     def solve(self, plan: list[dict[str, Any]], mesh_size: float = 1.0, *, docs: dict[str, Any] | None = None,
@@ -335,6 +336,18 @@ class StrengthFromTheStudy(StressCase):
         assert finding is not None
         self.assertEqual(finding["measured"], {"value": 2.5, "units": "dimensionless"})
 
+    def test_an_open_basis_gap_keeps_a_factor_that_meets_the_criterion_unknown(self) -> None:
+        # Analysed at 23 deg_C against a 15 to 30 deg_C service range: a basis gap, with head_load fully covered.
+        report = self.solve(interior_plan(), conditions=conditions_tests.DRY_23C)  # 250 / 100 = 2.5
+        self.assertEqual(report["evidence"]["gaps"],
+                         ["the analysed temperature 23 deg_C does not cover the service temperature 15..30 deg_C"])
+        row, finding = self.strength(report)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("does not cover the service temperature", row["uncertainty"])
+        assert finding is not None
+        self.assertEqual((finding["code"], finding["measured"]),
+                         ("fea.strength.unverified", {"value": 2.5, "units": "dimensionless"}))
+
     def test_a_study_settled_away_from_support_leaves_strength_unknown_and_points_to_209(self) -> None:
         # Cantilever 4.5 mm to 3 mm: 103.9 MPa on the cutoff, for information only. 250 / 103.9 would pass.
         report = self.solve(cantilever_plan(), 4.5)
@@ -345,6 +358,23 @@ class StrengthFromTheStudy(StressCase):
         assert finding is not None
         self.assertEqual(finding["measured"]["status"], "unknown")
         self.assertEqual(self.outcomes(report)[STIFFNESS], "pass")  # stress and displacement both settled
+
+    def test_a_study_settled_away_from_support_whose_figure_would_miss_the_criterion_is_unknown_not_a_fail(self) -> None:
+        # Peaks of 130 and 131 MPa at x=4, on the 3 mm cutoff: 250 / 131 = 1.908 would miss 2, but the figure is
+        # information only, so the miss is no verdict either (O4).
+        report = self.solve(interior_plan(130.0, 131.0, peak_x=4.0))
+        found = report["stress_study"]
+        self.assertEqual((found["outcome"], found["sigma_mpa"], found["sigma_info_mpa"]),
+                         ("settled_away_from_support", None, 131.0))
+        self.assertEqual(report["mesh"]["convergence"]["status"], "demonstrated")
+        row, finding = self.strength(report)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("#209", row["uncertainty"])
+        assert finding is not None
+        self.assertEqual((finding["code"], finding["severity"]), ("fea.strength.unverified", "major"))
+        self.assertEqual(finding["measured"]["status"], "unknown")
+        self.assertIn("#209", finding["measured"]["reason"])
+        self.assertEqual(report["engineering"]["result"], "unknown")
 
     def test_an_unknown_study_leaves_strength_and_stiffness_unknown_and_the_run_passes(self) -> None:
         report = self.solve(truss_plan(), 6.0)  # Truss member 6 mm to 4.5 mm: 13.93% apart
