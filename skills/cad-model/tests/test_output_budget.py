@@ -60,6 +60,7 @@ BUDGETS = {"run": 400, "check": 400, "latest": 250, "form_check": 800, "validate
 
 
 ROOT_MARK = "<tmp>"
+SHORT_ROOT = "/tmp"  # the clip-position roots are built under a short base, whatever TMPDIR is
 
 
 def _forms(path: Path | str) -> set[str]:
@@ -130,29 +131,37 @@ class MeasuredTests(unittest.TestCase):
                       facts={"version": "v1", "packet": str(packet)}, stream=stream)
         return stream.getvalue()
 
+    def short_base(self) -> Path:
+        """A fresh directory on a short fixed root, so the clip-position roots fit whatever TMPDIR is."""
+        if not Path(SHORT_ROOT).is_dir():
+            self.skipTest(f"{SHORT_ROOT} does not exist: no short base for the clip-position roots")
+        base = Path(tempfile.mkdtemp(dir=SHORT_ROOT)).resolve()
+        self.addCleanup(shutil.rmtree, base, True)
+        self.assertLess(len(str(base)), emit.MAX_LINE - len("packet: ") - len("/.cad-work/p.json") - 40, base)
+        return base
+
     def test_the_emitters_clipped_packet_path_counts_equal_whatever_the_root_length(self) -> None:
         # the packet line is "packet: " + root + "/.cad-work/p.json", clipped to emit.MAX_LINE characters
         suffix = len("/.cad-work/p.json")
-        with tempfile.TemporaryDirectory() as raw:
-            base = Path(raw).resolve()
-            roots = {"short": len(str(base)) + 3,
-                     "just under the clip": emit.MAX_LINE - len("packet: ") - suffix - 5,
-                     "clip inside the suffix": emit.MAX_LINE - len("packet: ") - 4,
-                     "clip inside the root": emit.MAX_LINE + 40}
-            counts = {}
-            for label, length in roots.items():
-                root = base / ("d" * (length - len(str(base)) - 1))
-                self.assertEqual(len(str(root)), length)
-                packet = root / ".cad-work" / "p.json"
-                counts[label] = measured(self.emitted(packet, root / ".cad-work" / "o.json"), root, paths=(packet,))
-            deep = base / ("e" * (emit.MAX_LINE + 40 - len(str(base)) - 1))
-            deep.mkdir()
-            link = base / "l"
-            link.symlink_to(deep)
-            for label, shown in (("symlink, packet as given", link), ("symlink, packet resolved", deep)):
-                packet = shown / ".cad-work" / "p.json"
-                counts[label] = measured(self.emitted(packet, link / ".cad-work" / "o.json"), link,
-                                         paths=(link / ".cad-work" / "p.json",))
+        base = self.short_base()
+        roots = {"short": len(str(base)) + 3,
+                 "just under the clip": emit.MAX_LINE - len("packet: ") - suffix - 5,
+                 "clip inside the suffix": emit.MAX_LINE - len("packet: ") - 4,
+                 "clip inside the root": emit.MAX_LINE + 40}
+        counts = {}
+        for label, length in roots.items():
+            root = base / ("d" * (length - len(str(base)) - 1))
+            self.assertEqual(len(str(root)), length)
+            packet = root / ".cad-work" / "p.json"
+            counts[label] = measured(self.emitted(packet, root / ".cad-work" / "o.json"), root, paths=(packet,))
+        deep = base / ("e" * (emit.MAX_LINE + 40 - len(str(base)) - 1))
+        deep.mkdir()
+        link = base / "l"
+        link.symlink_to(deep)
+        for label, shown in (("symlink, packet as given", link), ("symlink, packet resolved", deep)):
+            packet = shown / ".cad-work" / "p.json"
+            counts[label] = measured(self.emitted(packet, link / ".cad-work" / "o.json"), link,
+                                     paths=(link / ".cad-work" / "p.json",))
         self.assertEqual(len(set(counts.values())), 1, counts)
 
     def test_the_budget_accepts_its_limit_and_rejects_one_byte_more(self) -> None:
