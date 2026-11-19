@@ -107,6 +107,16 @@
         "dependencies",
         "major"
       ]
+    },
+    {
+      "description": "Playwright ships a new Chromium that can change renders, and CI does not render: never automerge",
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchPackageNames": [
+        "playwright"
+      ],
+      "automerge": false
     }
   ]
 }
