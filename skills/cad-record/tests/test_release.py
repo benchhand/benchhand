@@ -114,8 +114,11 @@ def build_version(hw: Path, omit: tuple[tuple[str, str], ...] = (), failed: dict
         target = folder / "record" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((hw / name).read_bytes())
-    for name in ("assembly.step", "assembly.glb", "part-map.json", "metrics.json"):
-        write(folder / name, f"{name}\n")
+    for name, data in fx.intent_module()._sibling("cad_record_guidelines", "guidelines.py").snapshot_files(hw).items():
+        target = folder / "record" / name  # the winning shipped guideline sets, as cadmodel.record.snapshot copies them
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    for name in ("assembly.step", "assembly.glb", "part-map.json", "metrics.json"):        write(folder / name, f"{name}\n")
     parts, made = {}, {}
     for model in sorted((hw / "parts").glob("*/model.py")):
         pn = model.parent.name
@@ -1026,6 +1029,50 @@ class Acceptance(ReleaseCase):
         self.assertTrue(any((item.get("code") == code or code in item["message"]) and text in item["message"]
                             for item in report["findings"]), json.dumps(report["findings"], indent=1))
         self.assertEqual(tree(hw), before, "a refused release writes nothing in hw/")
+
+
+class GuidelineEditsAfterTheFreeze(ReleaseCase):
+    """A guideline set that applies to a part is part of what the freeze sealed: editing one makes `check_acceptance`
+    refuse the release, with stale evidence for that part (benchhand-tw6.7)."""
+
+    @staticmethod
+    def guideline(minimum: float) -> str:
+        return yaml.safe_dump({
+            "schema_version": 1, "id": "fdm.generic", "revision": 1, "title": "TST guideline", "scope": {"process": "fdm"},
+            "limits": [{"characteristic": "min_wall", "operator": ">=", "quantity": {"value": minimum, "units": "mm"},
+                        "citations": [fx.source("datasheet", "TST guide")]}]}, sort_keys=False)
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.shipped = self.root / "shipped"
+        guidelines = fx.intent_module()._sibling("cad_record_guidelines", "guidelines.py")
+        patch = mock.patch.object(guidelines, "SHIPPED", self.shipped)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def refused_as_stale(self, hw: Path) -> None:
+        result, report = self.release(hw)
+        self.assertEqual((result, report["status"]), (1, "refused"), json.dumps(report["findings"], indent=1))
+        messages = [item["message"] for item in report["findings"] if item.get("code") == "release.acceptance"]
+        self.assertTrue(any("stale" in message and "LMP-" in message for message in messages), messages)
+
+    def test_editing_a_project_guideline_after_the_freeze_refuses_the_release(self) -> None:
+        hw = self.project(before_build=lambda hw: write(hw / "manufacturing" / "guidelines" / "generic.yaml", self.guideline(0.8)))
+        write(hw / "manufacturing" / "guidelines" / "generic.yaml", self.guideline(0.9))
+        self.refused_as_stale(hw)
+
+    def test_editing_a_shipped_guideline_after_the_freeze_refuses_the_release(self) -> None:
+        write(self.shipped / "generic.yaml", self.guideline(0.8))
+        hw = self.project(before_build=lambda hw: None)  # options force a fresh build, with the shipped set present
+        write(self.shipped / "generic.yaml", self.guideline(0.9))
+        self.refused_as_stale(hw)
+
+    def test_the_same_flow_without_an_edit_releases(self) -> None:
+        write(self.shipped / "generic.yaml", self.guideline(0.8))
+        hw = self.project(before_build=lambda hw: write(hw / "manufacturing" / "guidelines" / "project.yaml",
+                                                         self.guideline(0.8).replace("fdm.generic", "fdm.project")))
+        result, report = self.release(hw)
+        self.assertEqual((result, report["status"]), (0, "released"), json.dumps(report.get("findings"), indent=1))
 
 
 if __name__ == "__main__":
