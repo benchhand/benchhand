@@ -46,6 +46,7 @@ TEXT_SUFFIXES = {".sh", ".bash", ".zsh", ".yml", ".yaml", ".mk", ""}
 LONG_FLAG = "--no-" + "verify"
 SUBCOMMAND = "commit"
 CLUSTER = re.compile(r"^-[A-Za-z]*n[A-Za-z]*$")
+QUOTES = re.compile(r"['\"`]")
 MARKER = re.compile(r"#\s*no-verify-guard: not git")
 EXPECTED_MARKERS = 0
 
@@ -130,25 +131,36 @@ def logical_lines(text: str) -> list[tuple[int, str]]:
 
 
 def shell_words(line: str) -> list[str]:
-    """Words of one joined command line. shlex drops a comment but keeps a # inside quotes; an unbalanced quote falls back to a plain split."""
+    """Words of one joined command line, as a shell reads quotes. shlex drops a comment but keeps a # inside quotes. An unbalanced quote falls back to whitespace words with the quote characters stripped."""
     lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     lexer.commenters = "#"
     try:
         return list(lexer)
     except ValueError:
-        return line.split()
+        return [QUOTES.sub("", word) for word in line.split()]
+
+
+def scanned_words(line: str) -> list[str]:
+    """Words of the line scanner: cut at a whitespace-led #, then split on quotes and operators. It sees an embedded # and a quoted command."""
+    code = re.sub(r"(^|\s)#.*", "", line)
+    return [word for word in re.split(r"[\s'\"`;&|()=]+", code) if word]
+
+
+def breaks_rules(words: list[str], marked: bool) -> bool:
+    bare_cluster = any(CLUSTER.match(word) for word in words) and SUBCOMMAND in words
+    return LONG_FLAG in words or (bare_cluster and not marked)
+
+
+def line_offends(line: str) -> bool:
+    """True when either word reading of the line breaks rule 1 or rule 2."""
+    marked = bool(MARKER.search(line))
+    return any(breaks_rules(words, marked) for words in (shell_words(line), scanned_words(line)))
 
 
 def text_offences(text: str) -> list[int]:
     """Line numbers of the joined shell or YAML command lines that break rule 1 or rule 2."""
-    found = []
-    for number, line in logical_lines(text):
-        words = shell_words(line)
-        bare_cluster = any(CLUSTER.match(word) for word in words) and SUBCOMMAND in words
-        if LONG_FLAG in words or (bare_cluster and not MARKER.search(line)):
-            found.append(number)
-    return found
+    return [number for number, line in logical_lines(text) if line_offends(line)]
 
 
 def marker_lines(path: str, text: str) -> list[int]:
@@ -266,6 +278,25 @@ class CoarseRuleTests(unittest.TestCase):
         for name, text in {
             "long flag after a quoted hash": "git commit -m 'fix #263' --no-verify",
             "short cluster after a quoted hash": "git commit -m 'fix #263' -n",
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(text_offences(text), [1])
+
+    def test_a_hash_inside_a_word_is_not_a_comment(self) -> None:
+        for name, text in {
+            "long flag after an embedded hash": "git commit -m fix#263 --no-verify",
+            "short cluster after an embedded hash": "git commit -m fix#263 -n",
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(text_offences(text), [1])
+
+    def test_a_quoted_flag_before_a_multiline_message_is_still_seen(self) -> None:
+        self.assertEqual(text_offences('git commit "--no-verify" -m "first\nsecond"\n'), [1])
+
+    def test_a_yaml_value_that_quotes_the_whole_command_is_read(self) -> None:
+        for name, text in {
+            "long flag": 'run: "git commit -m x --no-verify"',
+            "short cluster": 'run: "git commit -m x -n"',
         }.items():
             with self.subTest(name):
                 self.assertEqual(text_offences(text), [1])
