@@ -30,6 +30,7 @@ import unittest
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
@@ -213,13 +214,23 @@ class RealCantilever(unittest.TestCase):
     104.1667 = 103.8 MPa. Near the load, at x = 86.5, M = 675 and Mc/I = 16.2 MPa. The solve's nodal stresses are
     smoothed, so the allowed distance is 3.5% of the root figure."""
 
-    def test_the_root_and_load_sections_pass_the_cross_check_and_give_mc_over_i(self) -> None:
+    def assess(self) -> ns.NearSupport:
         with gzip.open(FIXTURES / "cantilever_r1_4.5mm.frd.gz", "rt") as handle:
             result = fs.read_frd(handle.read())
         elements = study.element_connectivity((FIXTURES / "cantilever_r1_4.5mm.elements.inp").read_text(encoding="utf-8"))
         faces = (FIXTURES / "cantilever_r1_4.5mm.faces.inp").read_text(encoding="utf-8")
         fixed, _ = study.boundary_nodes(faces)
-        found = ns.assess(result, elements, fixed=fixed, loads=study.load_blocks(faces), h_coarse=4.5, h_mesh=4.5)
+        return ns.assess(result, elements, fixed=fixed, loads=study.load_blocks(faces), h_coarse=4.5, h_mesh=4.5)
+
+    def test_the_provisional_five_percent_refuses_this_smoothed_mesh_on_its_force_residual(self) -> None:
+        # Measured: the root section's force residual is 5.2% and the load section's 6.1%, over the 5% limit.
+        found = self.assess()
+        self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("cross_check_failed",), None))
+        self.assertRegex(found.message, r"force residual 5\.\d%")
+
+    def test_with_the_limit_widened_the_sections_give_mc_over_i(self) -> None:
+        with patch.object(ns, "TOLERANCE", 0.10):
+            found = self.assess()
         self.assertEqual((found.status, found.reasons), ("linearised", ()))
         by_face = {s.face: s for s in found.sections}
         self.assertAlmostEqual(by_face["fixed"].section_mm, 13.5, places=6)
@@ -227,8 +238,7 @@ class RealCantilever(unittest.TestCase):
         self.assertAlmostEqual(by_face["fixed"].sigma_mpa, 103.8, delta=3.6)
         self.assertAlmostEqual(by_face["load"].sigma_mpa, 16.2, delta=1.0)
         for section in found.sections:
-            self.assertLess(section.force_residual, ns.FORCE_TOLERANCE)
-            self.assertLess(section.moment_residual, ns.MOMENT_TOLERANCE)
+            self.assertLess(section.moment_residual, 0.01)
 
 
 stress_mode_tests = _sibling("test_fea_stress_mode")

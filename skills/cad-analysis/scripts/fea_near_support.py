@@ -28,16 +28,16 @@ both sides, or more than one fixed face, abstain as `statically_indeterminate`: 
 give. The section force is the sum, over the lines, of the line's width times its thickness times the membrane
 traction on the section. The section moment about the section centroid adds each line's offset from it, and the
 axial bending couple, -sigma_b t^2 / 6 per unit width along t2 (Annex 5-A Eq 5-A.2 gives the bending). Both must
-balance the applied nodal force and moment on the free body, within `FORCE_TOLERANCE` of the sum of the nodal force
-magnitudes and `MOMENT_TOLERANCE` of the sum of the nodal moment magnitudes, or the study abstains
+balance the applied nodal force and moment on the free body, within `TOLERANCE` (5%) of the sum of the nodal force
+magnitudes for the force and of the sum of the nodal moment magnitudes for the moment, or the study abstains
 (`cross_check_failed`). Shear has no bending in Annex 5-A, so a section that carries a torque, whose moment the
 lines cannot see, fails the check and abstains.
 
-No code states these tolerances. They are provisional, set against the 4.5 mm cantilever fixture
-(test_fea_near_support). At its zone depth the sections show force residuals of 5.2% and 6.1% and moment residuals
-under 0.5%; at other coarse sizes (2 to 6 mm) the force residual reaches 18%, because ccx smooths nodal stress and
-the shear force suffers most. The force gate is therefore the one most likely to abstain. The moment gate is
-tighter, as the bending stress is what the verdict rests on.
+No code states this tolerance. The 5% is provisional (decision on #209); bead benchhand-2dq tracks sourcing it. It
+was set against the 4.5 mm cantilever fixture (test_fea_near_support), and that fixture does not clear it: at its
+zone depth the sections show force residuals of 5.2% and 6.1% and moment residuals under 0.5%, and at other coarse
+sizes (2 to 6 mm) the force residual reaches 18%. ccx smooths nodal stress, and the shear force suffers most. A real
+mesh therefore abstains on the force gate more often than on the moment gate, until the tolerance is sourced.
 
 The clause numbers of Annex 5-A come from secondary sources (Kezar Engineering's summary, Mackenzie PVP2017 and
 Kalnins PVP2008); see `fea_linearise`. Each still needs checking against the licensed text.
@@ -64,8 +64,8 @@ T_LOCAL_FACTOR = 1.0
 # Lines across a section's width, one per equal strip.
 STRIPS = 9
 # Largest section force and moment residual, as a share of the sum of the nodal force and moment magnitudes.
-FORCE_TOLERANCE = 0.10
-MOMENT_TOLERANCE = 0.05
+# Provisional (decision on #209): bead benchhand-2dq tracks sourcing it.
+TOLERANCE = 0.05
 # A coordinate is on a plane, or a face is flat, when it lies within this share of the part's largest extent.
 _FLAT = 1e-6
 
@@ -127,7 +127,7 @@ class NearSupport:
     def as_fields(self) -> dict[str, Any]:
         return {"outcome": self.status, "sigma_mpa": self.sigma_mpa, "reasons": list(self.reasons),
                 "message": self.message, "sections": [s.as_fields() for s in self.sections],
-                "tolerance": {"force": FORCE_TOLERANCE, "moment": MOMENT_TOLERANCE}}
+                "tolerance": TOLERANCE}
 
 
 def zone_depth(t_local: float, h_coarse: float) -> float:
@@ -375,10 +375,10 @@ def _section(case: _Case, face: _Face) -> Section:
     lines = _lines(case, face, plane, _unit(face.axis, -body), centre, box)
     f_res = _norm(_add(lines.force, applied.force)) / applied.force_scale
     m_res = _norm(_add(lines.moment, applied.moment)) / applied.moment_scale if applied.moment_scale > 0 else 0.0
-    if f_res > FORCE_TOLERANCE or m_res > MOMENT_TOLERANCE:
+    if max(f_res, m_res) > TOLERANCE:
         raise _Abstain(CROSS_CHECK_FAILED, f"{where}, section at {AXES[face.axis]} = {plane:.6g} mm: force residual "
-                                           f"{100 * f_res:.1f}% (limit {100 * FORCE_TOLERANCE:g}%), moment residual "
-                                           f"{100 * m_res:.1f}% (limit {100 * MOMENT_TOLERANCE:g}%): the integrated "
+                                           f"{100 * f_res:.1f}% (limit {100 * TOLERANCE:g}%), moment residual "
+                                           f"{100 * m_res:.1f}% (limit {100 * TOLERANCE:g}%): the integrated "
                                            "section force and moment do not match the applied loads")
     wall_extent = min(box[1][k] - box[0][k] for k in range(3) if k != face.axis)
     return Section(face.kind, AXES[face.axis], face.value, plane, wall_extent, lines.sigma, lines.peak, f_res, m_res)
