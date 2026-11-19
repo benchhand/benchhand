@@ -98,8 +98,8 @@ class ConnectivityError(ValueError):
 
 
 # Nodes per element of each solid type `element_connectivity` reads. The ccx 2.23 manual numbers them (sections
-# 6.2.6 and 6.2.7, Figures 62 and 63): the four corners, then for C3D10 the mid-edge nodes of edges 1-2, 2-3, 3-1,
-# 1-4, 2-4 and 3-4. ccx takes at most 16 entries on a line, so neither type needs a continuation line.
+# 6.2.6 and 6.2.7; Figure 63 for C3D10): the four corners, then for C3D10 the mid-edge nodes of edges 1-2, 2-3, 3-1,
+# 1-4, 2-4 and 3-4. *ELEMENT continues a record only past 16 entries, so neither type has a continuation line.
 ELEMENT_NODES = {"C3D4": 4, "C3D10": 10}
 
 
