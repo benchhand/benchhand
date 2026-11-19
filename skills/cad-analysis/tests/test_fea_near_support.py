@@ -231,5 +231,98 @@ class RealCantilever(unittest.TestCase):
             self.assertLess(section.moment_residual, ns.MOMENT_TOLERANCE)
 
 
+stress_mode_tests = _sibling("test_fea_stress_mode")
+stress_tests = _sibling("test_fea_stress")
+conditions_tests = _sibling("test_fea_conditions")
+STRENGTH = stress_mode_tests.STRENGTH
+
+
+def beam_plan(field: Callable[[Point], tuple[float, ...]], fixed_planes: tuple[float, ...], load_plane: float,
+              load: float, elements_only: Mapping[int, study.Element] | None = None,
+              cells_x: int = 30) -> list[dict[str, Any]]:
+    """Two stand-in solves that both return the beam bar's field: the coarse and the fine mesh are the one mesh, so
+    the study settles on its own, and `load` newtons act in -z over the nodes at x = `load_plane`."""
+    nodes, elements = bar(cells_x)
+    frd = stress_tests.frd_text(nodes, {n: (0.0, 0.0, 0.01) for n in nodes}, {n: field(p) for n, p in nodes.items()})
+    fixed = sorted(n for plane in fixed_planes for n in nodes_at(nodes, 0, plane))
+    carried = sorted(nodes_at(nodes, 0, load_plane))
+    inp = ("*NSET,NSET=FixedFaces\n" + "".join(f"{n},\n" for n in fixed) + "** FaceForce0\n*CLOAD\n"
+           + "".join(f"{n},3,{-load / len(carried)!r}\n" for n in carried)
+           + "*ELEMENT, TYPE=C3D10, ELSET=Evolumes\n"
+           + "".join(f"{i}, " + ", ".join(str(n) for n in e.nodes) + "\n"
+                     for i, e in (elements_only or elements).items()))
+    return [{"frd": frd, "inp": inp, "displacement": [0.0, 0.2]}, {"frd": frd, "inp": inp, "displacement": [0.0, 0.2]}]
+
+
+class ThroughTheStudy(stress_mode_tests.StressCase):
+    """A stress case on the bar, through fea_static. Yield is 250 MPa and REQ-001 asks for a factor of 2.
+
+    The study's own kept-region peak is the surface stress at the first node outside the 3 mm cutoff, the mid-edge
+    node at x = 3.5: 50 * 26.5 * 2.5 / I = 31.8 MPa at 50 N, a factor of 7.86, and 133.56 MPa at 210 N, 1.8718."""
+
+    def solve(self, plan: list[dict[str, Any]], docs: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.plan = plan
+        self.build(docs or conditions_tests.documents())
+        case = self.case({"conditions": conditions_tests.SERVICE}, mode="stress", mesh_size=1.0,
+                         acceptance={"strength": "REQ-001", "stiffness": "REQ-002"})
+        status, report = self.call(case)
+        self.assertEqual(status, 0, report)
+        found = report["stress_study"]
+        self.assertEqual(found["outcome"], "settled_away_from_support", found["message"])
+        return report
+
+    def row(self, report: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        row = next(r for r in report["engineering"]["outcomes"] if r["obligation"] == STRENGTH)
+        finding = next((f for f in report["engineering"]["findings"] if f["obligation"] == STRENGTH), None)
+        return row, finding
+
+    def test_a_cantilever_root_linearised_inside_the_cross_check_passes_strength(self) -> None:
+        report = self.solve(beam_plan(beam_field(), (0.0,), LENGTH, LOAD))
+        near = report["stress_study"]["near_support"]
+        self.assertEqual((near["outcome"], near["reasons"]), ("linearised", []))
+        self.assertEqual(self.row(report)[0]["outcome"], "pass")
+        found = report["stress_study"]
+        self.assertEqual((found["strength_eligible"], found["sigma_mpa"]), (False, None))  # the study itself is unchanged
+
+    def test_a_linearised_stress_over_the_criterion_fails_strength_at_the_hand_value(self) -> None:
+        report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0))
+        row, finding = self.row(report)
+        self.assertEqual(row["outcome"], "fail")
+        assert finding is not None
+        self.assertAlmostEqual(finding["measured"]["value"], 250.0 / 133.56, places=3)
+
+    def test_a_fixed_fixed_beam_abstains_and_never_fails(self) -> None:
+        report = self.solve(beam_plan(beam_field(210.0), (0.0, LENGTH), 15.0, 210.0, cells_x=60))
+        near = report["stress_study"]["near_support"]
+        self.assertEqual((near["outcome"], near["reasons"]), ("unknown", ["statically_indeterminate"]))
+        row, _ = self.row(report)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("statically_indeterminate", row["uncertainty"])
+
+    def test_a_failed_cross_check_abstains_even_when_the_figure_is_over_the_criterion(self) -> None:
+        report = self.solve(beam_plan(beam_field(210.0, bending=1.2), (0.0,), LENGTH, 210.0))
+        near = report["stress_study"]["near_support"]
+        self.assertEqual((near["outcome"], near["reasons"]), ("unknown", ["cross_check_failed"]))
+        self.assertEqual(self.row(report)[0]["outcome"], "unknown")
+
+    def test_a_linearisation_refusal_abstains_with_its_reason(self) -> None:
+        # No element between x = 4 and 6: the root SCL runs through a void.
+        coordinates, elements = bar()
+        kept = {i: e for i, e in elements.items() if not 4.0 < sum(coordinates[n][0] for n in e.nodes[:4]) / 4 < 6.0}
+        report = self.solve(beam_plan(beam_field(), (0.0,), LENGTH, LOAD, kept))
+        self.assertEqual(report["stress_study"]["near_support"]["reasons"], ["scl_outside_mesh"])
+        self.assertEqual(self.row(report)[0]["outcome"], "unknown")
+
+    def test_a_material_not_shown_ductile_stays_unknown_even_when_linearised(self) -> None:
+        profile = conditions_tests.alloy()
+        profile["form"] = "bulk"
+        report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0),
+                            conditions_tests.documents(profiles=[profile]))
+        self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
+        row, _ = self.row(report)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("ductile", row["uncertainty"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1111,7 +1111,7 @@ def _near_support_sigma(found: Mapping[str, Any], a: Assessment) -> tuple[float 
     """The linearised stress (MPa) of a study settled on the exclusion boundary, or None and why there is none."""
     near: Any = found.get("near_support")
     lead = ("the two-mesh stress study settled only on the exclusion boundary, where the stress rises toward the "
-            "support: its figure is information only")
+            "support: its figure is information only (see #209)")
     if not isinstance(near, Mapping):
         return None, f"{lead}, and no linearisation at the support was made (#209)"
     if near.get("outcome") != fea_near_support.LINEARISED:

@@ -34,9 +34,10 @@ magnitudes and `MOMENT_TOLERANCE` of the sum of the nodal moment magnitudes, or 
 lines cannot see, fails the check and abstains.
 
 No code states these tolerances. They are provisional, set against the 4.5 mm cantilever fixture
-(test_fea_near_support): its sections between 3 h and 20 h from a face show force residuals up to 5.4% and moment
-residuals under 1%, because ccx smooths nodal stress and a shear force suffers most. The moment gate is the tighter
-one, as the bending stress is what the verdict rests on.
+(test_fea_near_support). At its zone depth the sections show force residuals of 5.2% and 6.1% and moment residuals
+under 0.5%; at other coarse sizes (2 to 6 mm) the force residual reaches 18%, because ccx smooths nodal stress and
+the shear force suffers most. The force gate is therefore the one most likely to abstain. The moment gate is
+tighter, as the bending stress is what the verdict rests on.
 
 The clause numbers of Annex 5-A come from secondary sources (Kezar Engineering's summary, Mackenzie PVP2017 and
 Kalnins PVP2008); see `fea_linearise`. Each still needs checking against the licensed text.
