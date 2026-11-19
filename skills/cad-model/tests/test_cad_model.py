@@ -1287,8 +1287,9 @@ class OccurrenceBuildTests(unittest.TestCase):
 
     def test_an_added_or_moved_occurrence_makes_the_released_agreement_stale(self) -> None:
         """v1's packet passed the agreement of the six inserts. A seventh insert, or one of the six moved, in the current
-        assembly.yaml was never judged: evidence.build_assessment reads that agreement as stale, the base's agreement
-        and the insert's read-back as they were."""
+        assembly.yaml was never judged: evidence.build_assessment reads that agreement as stale, and the insert's
+        read-back as it was. Any assembly.yaml edit stales every made part's agreement (#174 option A), so the base's
+        agreement goes stale too: a deliberate, coarse dependency."""
         evidence = acceptance_fixtures().evidence
         agreement, readback, base = f"cad.glb_step_agreement@{INSERT}", f"cad.readback@{INSERT}", f"cad.glb_step_agreement@{BASE}"
 
@@ -1313,12 +1314,12 @@ class OccurrenceBuildTests(unittest.TestCase):
             data["occurrences"][5]["placement"]["translation_mm"] = [0, 23, 8]
 
         built = assessed(None)
-        self.assertEqual(built[agreement], "pass")
+        self.assertEqual((built[agreement], built[base]), ("pass", "pass"))
         for name, edit in (("added", add), ("moved", move)):
             with self.subTest(change=name):
                 results = assessed(edit)
-                self.assertEqual(results[agreement], "stale")
-                self.assertEqual((results[readback], results[base]), (built[readback], built[base]))
+                self.assertEqual((results[agreement], results[base]), ("stale", "stale"))
+                self.assertEqual(results[readback], built[readback])
 
     def test_check_measures_every_occurrence_pair_including_same_pn_pairs(self) -> None:
         rows = self.pair_rows()

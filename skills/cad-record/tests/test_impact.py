@@ -151,10 +151,11 @@ class Variants(unittest.TestCase):
         self.before = normalized(self.docs)
         self.assertEqual([p.code for p in self.before.problems if p.severity == "error"], [])
 
-    def test_an_added_moved_or_rejointed_occurrence_stales_only_the_glb_step_agreement_of_its_part(self) -> None:
+    def test_an_added_moved_or_rejointed_occurrence_stales_the_glb_step_agreement_of_its_part_not_its_readback(self) -> None:
         """The agreement judges each occurrence's GLB node at its nominal placement. An occurrence the version never
         built, or one the record now places elsewhere, was never judged. The part's model is unchanged, so its
-        read-back stays current."""
+        read-back stays current. The fixed joint's origin is a deliberate dependency, not an exact one: any
+        assembly.yaml edit stales the agreement (#174 option A), whether or not it moves this part."""
         self.placed_bracket()
 
         def add(docs: dict[str, Any]) -> None:
@@ -188,7 +189,32 @@ class Variants(unittest.TestCase):
             with self.subTest(host=host):
                 result = self.compare(lambda docs: None, geometry={**GEOMETRY, host: "9" * 64})
                 self.assertIn(owed, result.stale_obligations)
-                self.assertIn("geometry", result.stale_obligations[owed])
+                self.assertEqual(result.stale_obligations[owed], ("occurrences",))
+
+    def test_swapping_the_parts_of_two_heat_set_host_occurrences_stales_both_declared_dimensions(self) -> None:
+        """interfaces.yaml is unchanged: each entry still names its host occurrence. assembly.yaml now gives each of the
+        two host occurrences the other's part, so each entry's host has another model and both outcomes must go stale."""
+        self.placed_bracket()
+        assembly = self.docs["assembly.yaml"]
+        self.docs["parts/TST-0002/part.yaml"]["model_frame"] = "part_local"
+        assembly["subassemblies"][0]["parts"] = [pn for pn in assembly["subassemblies"][0]["parts"] if pn != "TST-0002"]
+        assembly["occurrences"].append({"id": "shaft-a", "PN": "TST-0002", "placement": {"translation_mm": [0, 0, 0]}})
+        assembly["subassemblies"][0]["occurrences"].append("@shaft-a")
+        assembly["joints"] = []
+        entry = {"hole_d": 4.0, "insert": "M3 x 5.7", "source": "https://example.com/insert"}
+        self.docs["interfaces.yaml"]["interfaces"].append(fx.interface("IF-002", "hosts", "insert", limits={"heat_set": [
+            {**entry, "pair": ["@bracket-a", "TST-0004"]}, {**entry, "pair": ["@shaft-a", "TST-0004"]}]}))
+        self.before = normalized(self.docs)
+        self.assertEqual([p.code for p in self.before.problems if p.severity == "error"], [])
+
+        def swap(docs: dict[str, Any]) -> None:
+            first, second = docs["assembly.yaml"]["occurrences"][0], docs["assembly.yaml"]["occurrences"][1]
+            first["PN"], second["PN"] = second["PN"], first["PN"]
+
+        result = self.compare(swap)
+        for owed in ("cad.declared_dimensions@IF-002#heat_set_1", "cad.declared_dimensions@IF-002#heat_set_2"):
+            with self.subTest(obligation=owed):
+                self.assertIn(owed, result.stale_obligations)
 
     def test_a_colour_change_stales_only_a_check_family_that_declares_appearance(self) -> None:
         """Of the obligations the record owes, only the FDM part's `export.3mf` declares the appearance domain."""
@@ -280,6 +306,45 @@ class Variants(unittest.TestCase):
         result = self.compare(lambda docs: None)
         self.assertFalse(result.any)
         self.assertEqual((result.changed, result.earliest_stage, result.proposed_flow), ({}, None, None))
+
+
+class CoupledMechanismStaleness(unittest.TestCase):
+    """cad-motion's V6 test engine as a record: the crank J-001 drives both cams through linear couplings, the pistons
+    and rods through slider-crank mechanisms and the valves through a lift profile. A placement of an occurrence follows
+    joints that are not on its own parent chain, so the GLB-STEP agreement depends on all of assembly.yaml."""
+
+    def setUp(self) -> None:
+        engine = load("cad_motion_v6_record", HERE.parents[1] / "cad-motion" / "tests" / "fixtures" / "v6_record.py")
+        parts = [fx.part(pn, title, process="cnc", model_frame=frame) for pn, (title, frame) in engine.PARTS.items()]
+        self.docs = {rel: data for rel, data in fx.record(parts=parts).items() if not rel.startswith("_")}
+        self.docs["assembly.yaml"] = {**engine.record(), "operations": fx.unknown()}
+        self.before = normalized(self.docs)
+        self.assertEqual([p.code for p in self.before.problems if p.severity == "error"], [])
+
+    def stale(self, change: Any) -> dict[str, tuple[str, ...]]:
+        after = copy.deepcopy(self.docs)
+        change(after["assembly.yaml"])
+        return impact.compare(self.before, normalized(after), before_geometry={}, after_geometry={}, since="v1",
+                              version="v2").stale_obligations
+
+    def test_a_crank_nominal_that_turns_the_coupled_cams_stales_the_camshaft_agreement(self) -> None:
+        def turn(assembly: dict[str, Any]) -> None:
+            next(j for j in assembly["joints"] if j["id"] == "J-001")["nominal"] = 90
+
+        stale = self.stale(turn)
+        self.assertIn("cad.glb_step_agreement@VSX-0301", stale)
+        self.assertNotIn("cad.readback@VSX-0301", stale)
+
+    def test_a_lift_profile_or_mechanism_edit_stales_the_agreement_of_the_parts_it_moves(self) -> None:
+        def profile(assembly: dict[str, Any]) -> None:
+            assembly["profiles"]["lift"]["samples"][1][1] += 0.5
+
+        def mechanism(assembly: dict[str, Any]) -> None:
+            assembly["mechanisms"][0]["rod_length_mm"] += 1.0
+
+        for name, change, moved in (("profile", profile, "VSX-0401"), ("mechanism", mechanism, "VSX-0201")):
+            with self.subTest(edit=name):
+                self.assertIn(f"cad.glb_step_agreement@{moved}", self.stale(change))
 
 
 class ProductOrderStaleness(unittest.TestCase):
@@ -521,11 +586,14 @@ class PurchaseMountingStaleness(unittest.TestCase):
         result = self.compare(self.documents(), self.documents(placements=moved))
         self.assertIn(self.OBLIGATION, result.stale_obligations)
 
-    def test_a_moved_occurrence_leaves_an_unrelated_part_alone(self) -> None:
+    def test_a_moved_occurrence_leaves_an_unrelated_part_alone_but_for_its_coarse_agreement(self) -> None:
+        """Moving the ring changes nothing the plate's checks read, except all of assembly.yaml, which its GLB-STEP
+        agreement depends on by design (#174 option A)."""
         moved = {"ring-a": {"translation_mm": [5, 0, 0]}}
         result = self.compare(self.documents(), self.documents(placements=moved))
-        self.assertNotIn("TST-0105", result.changed)
-        self.assertEqual([i for i in result.stale_obligations if "TST-0105" in i], [])
+        self.assertEqual(result.changed.get("TST-0105"), ("occurrences",))
+        self.assertEqual({i: d for i, d in result.stale_obligations.items() if "TST-0105" in i},
+                         {"cad.glb_step_agreement@TST-0105": ("occurrences",)})
 
     def test_a_part_with_no_explicit_occurrence_keeps_its_fingerprint(self) -> None:
         ring = fx.part("TST-0103", "Ring", process="purchased", make_buy="buy",

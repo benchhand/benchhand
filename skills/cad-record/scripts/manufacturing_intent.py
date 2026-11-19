@@ -785,7 +785,7 @@ class Record:
     artifacts: Mapping[str, str]  # source artifact path (relative to hw/) -> sha256 the record names
     problems: tuple[Problem, ...]
     assembly_inventory: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # assembly.yaml occurrences, subassemblies
-    assembly_joints: Any = ()  # assembly.yaml joints as written: with the inventory they decide each occurrence's nominal placement
+    assembly_document: Any = None  # assembly.yaml as written: the GLB-STEP agreement and declared dimensions depend on all of it
 
 
 # --- record version --------------------------------------------------------------------------------------------
@@ -1089,7 +1089,7 @@ class _Reader:
                       interfaces, operations, capabilities, materials, selection, evidence, dispositions,
                       types.MappingProxyType(dict(self.artifacts)), tuple(self.problems),
                       freeze({key: (self.doc("assembly.yaml") or {}).get(key) for key in ("occurrences", "subassemblies")}),
-                      freeze((self.doc("assembly.yaml") or {}).get("joints")))
+                      freeze(self.doc("assembly.yaml")))
 
     def unsupported(self, product: Mapping[str, Any]) -> Record:
         """A record of an unsupported version: every manufacturing-intent field unknown, never defaulted."""
