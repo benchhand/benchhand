@@ -1285,6 +1285,41 @@ class OccurrenceBuildTests(unittest.TestCase):
         self.assertEqual(readback["occurrences"]["ins-5"]["component"], f"{INSERT} Insert [@ins-5]")
         self.assertEqual(self.version_json("manifest.json")["parts"][INSERT]["occurrences"], list(INSERTS))
 
+    def test_an_added_or_moved_occurrence_makes_the_released_agreement_stale(self) -> None:
+        """v1's packet passed the agreement of the six inserts. A seventh insert, or one of the six moved, in the current
+        assembly.yaml was never judged: evidence.build_assessment reads that agreement as stale, the base's agreement
+        and the insert's read-back as they were."""
+        evidence = acceptance_fixtures().evidence
+        agreement, readback, base = f"cad.glb_step_agreement@{INSERT}", f"cad.readback@{INSERT}", f"cad.glb_step_agreement@{BASE}"
+
+        def assessed(edit) -> dict:  # edit: None, or a function that edits the parsed assembly.yaml in place
+            with tempfile.TemporaryDirectory() as tmp:
+                hw = Path(shutil.copytree(self.hw, Path(tmp) / "inserts" / "hw", symlinks=True))
+                if edit is not None:
+                    path = hw / "assembly.yaml"
+                    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                    edit(data)
+                    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+                assessment, _ = evidence.build_assessment(hw, "v1")
+                return assessment.results()
+
+        def add(data: dict) -> None:
+            data["occurrences"].append({"id": "ins-7", "PN": INSERT, "placement": {"translation_mm": [-10, 0, 20]}})
+            data["subassemblies"][0]["occurrences"].append("@ins-7")
+            data["joints"].append({"id": "J-007", "type": "fixed", "parent": BASE, "child": "@ins-7", "axis": [0, 0, 1],
+                                   "origin": [0, 0, 0], "min": 0, "max": 0, "nominal": 0})
+
+        def move(data: dict) -> None:
+            data["occurrences"][5]["placement"]["translation_mm"] = [0, 23, 8]
+
+        built = assessed(None)
+        self.assertEqual(built[agreement], "pass")
+        for name, edit in (("added", add), ("moved", move)):
+            with self.subTest(change=name):
+                results = assessed(edit)
+                self.assertEqual(results[agreement], "stale")
+                self.assertEqual((results[readback], results[base]), (built[readback], built[base]))
+
     def test_check_measures_every_occurrence_pair_including_same_pn_pairs(self) -> None:
         rows = self.pair_rows()
         self.assertEqual(set(rows), set(itertools.combinations(sorted([BASE, *INSERTS]), 2)))  # 21, 15 same-PN

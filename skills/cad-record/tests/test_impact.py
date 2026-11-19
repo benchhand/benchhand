@@ -55,8 +55,8 @@ class Fingerprints(unittest.TestCase):
     def test_each_record_domain_is_fingerprinted_and_stable(self) -> None:
         record = normalized(documents())
         prints = impact.fingerprints(record, {"PN": "TST-0001"}, GEOMETRY)
-        self.assertEqual(set(prints), set(impact.DOMAINS) - {"lot", "occurrences"},
-                         "the lot belongs to physical evidence, and occurrences only to a bought part placed as occurrences")
+        self.assertEqual(set(prints), set(impact.DOMAINS) - {"lot"},
+                         "the lot belongs to physical evidence; a made part's occurrences are its agreement's placements")
         self.assertEqual(prints, impact.fingerprints(normalized(documents()), {"PN": "TST-0001"}, GEOMETRY))
         self.assertEqual(impact.fingerprints(record, {"PN": "TST-0001", "operation": "print", "feature": "pivot_bore"},
                                              GEOMETRY), prints, "operations and features share their part's fingerprints")
@@ -138,6 +138,57 @@ class Variants(unittest.TestCase):
         result = self.compare(widen)
         self.assertStale(result, ("cad.declared_dimensions@IF-002#heat_set_1",),
                          ("cad.readback@TST-0001", "cad.glb_step_agreement@TST-0001"))
+
+    def placed_bracket(self) -> None:
+        """The bracket TST-0001 part-local and placed once, as occurrence bracket-a, held to the shaft by joint J-001."""
+        self.docs["parts/TST-0001/part.yaml"]["model_frame"] = "part_local"
+        assembly = self.docs["assembly.yaml"]
+        assembly["subassemblies"][0]["parts"] = [pn for pn in assembly["subassemblies"][0]["parts"] if pn != "TST-0001"]
+        assembly["subassemblies"][0]["occurrences"] = ["@bracket-a"]
+        assembly["occurrences"] = [{"id": "bracket-a", "PN": "TST-0001", "placement": {"translation_mm": [0, 0, 0]}}]
+        assembly["joints"] = [{"id": "J-001", "type": "fixed", "parent": "TST-0002", "child": "@bracket-a",
+                               "axis": [0, 0, 1], "origin": [0, 0, 0], "min": 0, "max": 0, "nominal": 0}]
+        self.before = normalized(self.docs)
+        self.assertEqual([p.code for p in self.before.problems if p.severity == "error"], [])
+
+    def test_an_added_moved_or_rejointed_occurrence_stales_only_the_glb_step_agreement_of_its_part(self) -> None:
+        """The agreement judges each occurrence's GLB node at its nominal placement. An occurrence the version never
+        built, or one the record now places elsewhere, was never judged. The part's model is unchanged, so its
+        read-back stays current."""
+        self.placed_bracket()
+
+        def add(docs: dict[str, Any]) -> None:
+            assembly = docs["assembly.yaml"]
+            assembly["occurrences"].append({"id": "bracket-b", "PN": "TST-0001", "placement": {"translation_mm": [40, 0, 0]}})
+            assembly["subassemblies"][0]["occurrences"].append("@bracket-b")
+
+        def move(docs: dict[str, Any]) -> None:
+            docs["assembly.yaml"]["occurrences"][0]["placement"] = {"translation_mm": [5, 0, 0]}
+
+        def rejoint(docs: dict[str, Any]) -> None:
+            docs["assembly.yaml"]["joints"][0]["origin"] = [0, 0, 5]
+
+        for name, change in (("added", add), ("moved", move), ("rejointed", rejoint)):
+            with self.subTest(change=name):
+                result = self.compare(change)
+                self.assertEqual(result.stale_obligations.get("cad.glb_step_agreement@TST-0001"), ("occurrences",))
+                self.assertNotIn("cad.readback@TST-0001", result.stale_obligations)
+                self.assertNotIn("export.3mf@TST-0001", result.stale_obligations)
+
+    def test_a_heat_set_host_named_apart_from_the_interface_endpoints_stales_its_declared_dimension_on_a_model_change(self) -> None:
+        """The interface's endpoints are descriptive words, so only the heat-set pair names the host: as a bare PN or as
+        an occurrence the inventory resolves. A new host model must make the declared dimension stale."""
+        self.placed_bracket()
+        entry = {"hole_d": 4.0, "insert": "M3 x 5.7", "source": "https://example.com/insert"}
+        self.docs["interfaces.yaml"]["interfaces"].append(fx.interface("IF-002", "bracket", "insert", limits={"heat_set": [
+            {**entry, "pair": ["@bracket-a", "TST-0004"]}, {**entry, "pair": ["TST-0002", "TST-0004"]}]}))
+        self.before = normalized(self.docs)
+        for host, owed in (("TST-0001", "cad.declared_dimensions@IF-002#heat_set_1"),
+                           ("TST-0002", "cad.declared_dimensions@IF-002#heat_set_2")):
+            with self.subTest(host=host):
+                result = self.compare(lambda docs: None, geometry={**GEOMETRY, host: "9" * 64})
+                self.assertIn(owed, result.stale_obligations)
+                self.assertIn("geometry", result.stale_obligations[owed])
 
     def test_a_colour_change_stales_only_a_check_family_that_declares_appearance(self) -> None:
         """Of the obligations the record owes, only the FDM part's `export.3mf` declares the appearance domain."""
@@ -496,9 +547,11 @@ class PurchaseMountingStaleness(unittest.TestCase):
                 self.assertEqual(prints["interface"], OCCURRENCE_INTERFACE_DIGEST)
                 self.assertIn("occurrences", prints)
 
-    def test_no_subject_but_an_occurrence_placed_bought_part_carries_the_occurrences_domain(self) -> None:
+    def test_only_an_occurrence_placed_bought_part_and_the_made_parts_carry_the_occurrences_domain(self) -> None:
         prints = impact.subject_fingerprints(normalized(self.documents()))
-        self.assertEqual(sorted(key for key, domains in prints.items() if "occurrences" in domains), ["TST-0103"])
+        self.assertEqual(sorted(key for key, domains in prints.items() if "occurrences" in domains),
+                         ["TST-0103", "TST-0104", "TST-0105"],
+                         "the bought ring placed as occurrences, and each made part: its agreement reads its placements")
 
     def test_a_non_part_subject_carries_no_opt_in_domain_whatever_its_name(self) -> None:
         """The synthetic domain stands for any later opt-in domain: only a part carries one."""
