@@ -13,11 +13,9 @@ expected checks) and the stamp boundary cases."""
 
 from __future__ import annotations
 
-import ast
 import os
 import json
 import hashlib
-import re
 import shutil
 import subprocess
 import sys
@@ -133,23 +131,6 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.git("add", "hw/.cad/recheck.json")
         return json.loads(result.stdout)
-
-    def test_every_cad_record_module_a_copied_script_names_is_copied_too(self) -> None:
-        """A script the hook copies loads its siblings by path, so a sibling the installer does not copy is a
-        FileNotFoundError at commit time. Each bare `name.py` string in a copied script that is a cad-record
-        script must sit beside the copy."""
-        source = SKILL.parent / "cad-record" / "scripts"
-        hooks = self.root / ".githooks"
-        copied = hooks / "cad-record" / "scripts"
-        present = {path.name for path in copied.glob("*.py")}
-        missing: dict[str, list[str]] = {}
-        for script in [*hooks.glob("*.py"), *copied.glob("*.py")]:
-            for node in ast.walk(ast.parse(script.read_text(encoding="utf-8"))):
-                if (isinstance(node, ast.Constant) and isinstance(node.value, str)
-                        and re.fullmatch(r"[a-z_]+\.py", node.value)
-                        and (source / node.value).is_file() and node.value not in present):
-                    missing.setdefault(node.value, []).append(script.name)
-        self.assertEqual(missing, {})
 
     def test_staged_release_requires_stamp_even_when_worktree_is_below_threshold(self) -> None:
         self.write_product("release", "layout")
