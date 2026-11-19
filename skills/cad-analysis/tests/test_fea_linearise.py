@@ -22,6 +22,7 @@ import unittest
 from collections.abc import Callable
 from itertools import permutations, product
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -96,6 +97,13 @@ ZERO = scl(0, 0, 0, 0, 0, 0)
 
 
 class Case(unittest.TestCase):
+    def assertRefused(self, reason: str, call: Callable[[], object]) -> None:
+        """`call` raises LinearisationError with `reason`, a Refusal or its value, so nothing comes back."""
+        with self.assertRaises(fl.LinearisationError) as caught:
+            call()
+        self.assertIsInstance(caught.exception.reason, fl.Refusal)
+        self.assertEqual(caught.exception.reason, reason)
+
     def assertTensor(self, actual: fl.SclStress, expected: fl.SclStress, places: int = 9) -> None:
         for name, a, e in zip(fl.SclStress._fields, actual, expected):
             self.assertAlmostEqual(a, e, places=places, msg=f"{name}: {actual} != {expected}")
@@ -214,19 +222,27 @@ class InterpolationTests(Case):
                     self.assertTensor(stress, scl(*field(position)))
 
     def test_a_c3d10_whose_mid_edge_node_is_off_centre_is_inverted_through_its_quadratic_map(self) -> None:
-        # One element, corners on the axes at 2, with the edge 1-2 node moved from x = 1 to x = 1.3. The edge is
-        # still straight, so the element fills the same tetrahedron, but its map from natural coordinates is no
-        # longer affine. A field equal to each node's x coordinate interpolates to the point's own x only when the
-        # point's natural coordinates come from that map.
-        corners = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 2.0)]
-        middles = [tuple((corners[a][k] + corners[b][k]) / 2 for k in range(3)) for a, b in C3D10_EDGES]
-        middles[0] = (1.3, 0.0, 0.0)
-        coordinates = dict(enumerate([*corners, *middles], start=1))
-        elements = {1: study.Element("C3D10", tuple(range(1, 11)))}
-        result = frd(coordinates, lambda p: (p[0], 0, 0, 0, 0, 0))  # type: ignore[arg-type]
-        r = fl.linearise(result, elements, (0.9, 0.3, 0.1), (0.9, 0.3, 0.7))
+        # A field equal to each node's x coordinate interpolates to the point's own x only when the point's natural
+        # coordinates come from the element's quadratic map.
+        result, elements = off_centre_c3d10()
+        r = fl.linearise(result, elements, *OFF_CENTRE_LINE)
         for position, stress in zip(r.positions, r.stresses):
             self.assertAlmostEqual(stress.t1, position[0], places=9)
+
+
+OFF_CENTRE_LINE = ((0.9, 0.3, 0.1), (0.9, 0.3, 0.7))
+
+
+def off_centre_c3d10() -> tuple[fs.FrdResult, dict[int, study.Element]]:
+    """One C3D10, corners on the axes at 2, with the edge 1-2 node moved from x = 1 to x = 1.3, and sigma_xx = x.
+
+    The edge is still straight, so the element fills the same tetrahedron, but its map from natural coordinates is
+    no longer affine: inverting it at a point of OFF_CENTRE_LINE takes several Newton steps."""
+    corners = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 2.0)]
+    middles = [tuple((corners[a][k] + corners[b][k]) / 2 for k in range(3)) for a, b in C3D10_EDGES]
+    middles[0] = (1.3, 0.0, 0.0)
+    coordinates = dict(enumerate([*corners, *middles], start=1))
+    return frd(coordinates, lambda p: (p[0], 0, 0, 0, 0, 0)), {1: study.Element("C3D10", tuple(range(1, 11)))}  # type: ignore[arg-type]
 
 
 def _rotation(axis: Point, angle: float) -> list[list[float]]:
@@ -291,11 +307,6 @@ class AxesTests(Case):
 
 
 class RefusalTests(Case):
-    def assertRefused(self, reason: fl.Refusal, call: Callable[[], object]) -> None:
-        with self.assertRaises(fl.LinearisationError) as caught:
-            call()
-        self.assertIs(caught.exception.reason, reason)
-
     def test_each_input_it_cannot_stand_behind_is_refused_with_its_reason(self) -> None:
         coordinates, elements = plate()
         good = frd(coordinates, general_quadratic)
@@ -308,6 +319,8 @@ class RefusalTests(Case):
             return with_stress({**good.stress, node: good.stress[node]._replace(syz=value)})
 
         hexahedron = {i + 1: p for i, p in enumerate(product((0.0, 1.0), repeat=3))}
+        far_hexahedron = {5_000_000 + i: (10.0 + p[0], p[1], p[2]) for i, p in hexahedron.items()}
+        with_hexahedron = frd({**coordinates, **far_hexahedron}, general_quadratic)
         cases = [
             ("no tensor at all", fl.Refusal.TENSOR_MISSING, with_stress({}), elements, START, END, {}),
             ("a node without its tensor", fl.Refusal.TENSOR_INCOMPLETE,
@@ -323,6 +336,10 @@ class RefusalTests(Case):
              {1: study.Element("C3D8", tuple(hexahedron))}, (0.5, 0.5, 0.0), (0.5, 0.5, 1.0), {}),
             ("a C3D10 of four nodes", fl.Refusal.UNSUPPORTED_ELEMENT, good,
              {k: study.Element(e.kind, e.nodes[:4]) for k, e in elements.items()}, START, END, {}),
+            ("an element without nodes", fl.Refusal.UNSUPPORTED_ELEMENT, good,
+             {**elements, 999: study.Element("C3D10", ())}, START, END, {}),
+            ("a C3D8 away from the line", fl.Refusal.UNSUPPORTED_ELEMENT, with_hexahedron,
+             {**elements, 999: study.Element("C3D8", tuple(far_hexahedron))}, START, END, {}),
             ("a line of zero length", fl.Refusal.ZERO_LENGTH, good, elements, START, START, {}),
             ("a line with a nan end", fl.Refusal.LINE_NOT_FINITE, good, elements, START, (1.3, math.nan, 2.0), {}),
             ("19 points", fl.Refusal.TOO_FEW_POINTS, good, elements, START, END, {"points": 19}),
@@ -340,6 +357,57 @@ class RefusalTests(Case):
         coordinates, elements = plate()
         with self.assertRaisesRegex(fl.LinearisationError, r"outside_mesh: point 18 of 21 at \(1\.3, 2\.1, 2\.125\)"):
             fl.linearise(frd(coordinates, general_quadratic), elements, START, (1.3, 2.1, 2.5))
+
+
+class InversionTests(Case):
+    """A point whose element map does not invert there is refused, never placed by the corners' affine map."""
+
+    def test_a_c3d10_whose_map_is_singular_at_the_point_is_refused(self) -> None:
+        # The unit tetrahedron with x = 2 xi^2 - xi along its first natural coordinate: the mid-edge nodes take the
+        # values of that map, so nodes 5 and 1, 6 and 7, and 8 and 9 coincide. The corners' affine map puts the
+        # point x = 1/4 at xi = 1/4, where dx/dxi = 4 xi - 1 = 0, so the Jacobian there is singular.
+        def mapped(xi: Point) -> Point:
+            return (2.0 * xi[0] ** 2 - xi[0], xi[1], xi[2])
+        corners = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
+        middles = [tuple((corners[a][k] + corners[b][k]) / 2 for k in range(3)) for a, b in C3D10_EDGES]
+        coordinates = dict(enumerate([mapped(p) for p in [*corners, *middles]], start=1))  # type: ignore[arg-type]
+        elements = {1: study.Element("C3D10", tuple(range(1, 11)))}
+        self.assertEqual([coordinates[n] for n in (5, 6, 8)], [coordinates[n] for n in (1, 7, 9)])
+        result = frd(coordinates, general_linear)
+        self.assertRefused("inversion_failed",
+                           lambda: fl.linearise(result, elements, (0.25, 0.1, 0.1), (0.25, 0.1, 0.5)))
+        with self.assertRaisesRegex(fl.LinearisationError, r"point 1 of 21 .*element 1.* singular"):
+            fl.linearise(result, elements, (0.25, 0.1, 0.1), (0.25, 0.1, 0.5))
+
+    def test_a_c3d10_whose_newton_inversion_does_not_converge_is_refused(self) -> None:
+        # The off-centre element inverts in several Newton steps, so a limit of one step leaves it unconverged.
+        result, elements = off_centre_c3d10()
+        with patch.object(fl, "_NEWTON_STEPS", 1):
+            self.assertRefused("inversion_failed", lambda: fl.linearise(result, elements, *OFF_CENTRE_LINE))
+            with self.assertRaisesRegex(fl.LinearisationError, r"point 1 of 21 .*element 1.* did not converge in 1"):
+                fl.linearise(result, elements, *OFF_CENTRE_LINE)
+
+
+class RangeTests(Case):
+    """Finite inputs whose arithmetic leaves the float range are refused, never raised as an arithmetic error."""
+
+    def test_a_line_whose_thickness_squared_or_cubed_leaves_the_float_range_is_refused(self) -> None:
+        # 1e-200 squared underflows to zero. 1e-110 squared is 1e-220, but cubed it underflows. 1e103 cubed
+        # overflows.
+        coordinates, elements = plate()
+        result = frd(coordinates, general_quadratic)
+        for length in (1e-200, 1e-110, 1e103):
+            with self.subTest(length=length):
+                end = (START[0], START[1], START[2] + length)
+                self.assertRefused("thickness_out_of_range", lambda: fl.linearise(result, elements, START, end))
+
+    def test_a_stress_whose_arithmetic_leaves_the_float_range_is_refused(self) -> None:
+        # Squaring a component of 1e155 overflows, which Python raises. A shear of 1e154 squares to 1e308, but
+        # three times that is beyond the largest float, about 1.8e308, so the von Mises stress is infinite.
+        for label, field in (("1e155 tension", lambda p: (1e155, 0, 0, 0, 0, 0)),
+                             ("1e154 shear", lambda p: (0, 0, 0, 1e154, 0, 0))):
+            with self.subTest(label):
+                self.assertRefused("value_out_of_range", lambda: self.linearise(field))  # type: ignore[arg-type]
 
 
 class CantileverSanityCheck(unittest.TestCase):
