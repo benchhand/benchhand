@@ -128,6 +128,7 @@ CHANGED_FILES = (
 )
 STRICT_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
+    "skills/cad-analysis/scripts/fea_linearise.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-analysis/scripts/fea_reaction.py",
     "skills/cad-analysis/scripts/fea_stress.py",
