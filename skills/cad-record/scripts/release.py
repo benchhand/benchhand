@@ -603,6 +603,18 @@ def acceptance_problems(manifest: dict[str, Any]) -> list[str]:
     return problems
 
 
+def frozen_problems(hw: Path, version: str, manifest: dict[str, Any]) -> list[str]:
+    """Why a sealed package's frozen manifest sha is not the built `version`'s manifest as it is now:
+    the version fails its own manifest, or the package was sealed from another one."""
+    try:
+        current = sha256(layout.built_version(hw, version)[1] / MANIFEST)
+    except layout.LayoutError as error:
+        return [str(error)]
+    if _dict(manifest.get("frozen")).get("manifest_sha256") != current:
+        return [f"it was sealed from another frozen {version} manifest"]
+    return []
+
+
 def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
     """The existing hw/releases/<REV>/ when it verifies and holds `version` approved by `decision` from
     the frozen manifest as it is now, so a rerun (and --prune) rewrites nothing. A package that fails its
@@ -631,13 +643,7 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
         else:
             problems = acceptance_problems(manifest)
     if not problems and isinstance(manifest, dict):
-        try:
-            current = sha256(layout.built_version(hw, version)[1] / MANIFEST)
-        except layout.LayoutError as error:
-            problems = [str(error)]
-        else:
-            if _dict(manifest.get("frozen")).get("manifest_sha256") != current:
-                problems = [f"it was sealed from another frozen {version} manifest"]
+        problems = frozen_problems(hw, version, manifest)
     if problems:
         finding = validate.finding(target_rel, f"{target_rel} exists but is not the sealed release of {version} approved "
                                                f"by {decision}: {'; '.join(problems)}; automatic repair is not supported; "
