@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import contextlib
+import errno
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -467,6 +469,150 @@ class Place(Fixture):
         self.assertRegex(reason, r"^stale: b ")
         self.assertFalse(destination.exists())
         self.assertEqual(list((self.root / "run").iterdir()), [])
+
+
+def rewrite(path: Path, data: bytes) -> None:
+    """An honest mistake: a tool makes the read-only file at `path` writable, writes through it and restores it."""
+    os.chmod(path, 0o644)
+    path.write_bytes(data)
+    os.chmod(path, 0o444)
+
+
+def snapshot(folder: Path) -> dict[str, tuple[bytes, int]]:
+    """Each file in `folder`: its bytes and its inode."""
+    return {path.name: (path.read_bytes(), path.stat().st_ino) for path in folder.iterdir()}
+
+
+class PlaceObject(Fixture):
+    """`place_object` renames a link to the object onto the target, then hashes the inode it renamed through a
+    descriptor it opened before (#250). The link shares the object's inode, so a write through the object reaches
+    the target, and only a hash after the rename sees one. A failed or interrupted hash puts the old target back
+    while a lock on the target's folder keeps every other `place_object` out."""
+
+    TARGETS = {"no target yet": None, "an old target": b"OLD"}
+
+    def stored(self, data: bytes) -> tuple[str, Path]:
+        digest = self.store.intern(self.file(sha(data), data))
+        return digest, self.hw / ".cad" / "cache" / "objects" / digest
+
+    def target(self, folder: str, old: bytes | None) -> Path:
+        """A target in a folder of its own, holding the bytes `old` unless they are None."""
+        target = self.root / folder.replace(" ", "-") / "one.unv"
+        target.parent.mkdir(parents=True)
+        if old is not None:
+            target.write_bytes(old)
+        return target
+
+    @contextlib.contextmanager
+    def at_the_rename(self, before=lambda: None, after=lambda: None) -> Iterator[None]:
+        """While the block runs, `before` runs once just before place_object renames its staged link onto the
+        target, and `after` just after."""
+        real, pending = os.replace, [True]
+
+        def replace(source, target, *args, **kwargs):
+            seam = pending[0] and Path(source).name.endswith(".link")
+            pending[0] = pending[0] and not seam
+            if seam:
+                before()
+            real(source, target, *args, **kwargs)
+            if seam:
+                after()
+
+        with mock.patch.object(store.os, "replace", side_effect=replace):
+            yield
+
+    def test_a_verified_placement_replaces_the_target_and_leaves_nothing_beside_it(self) -> None:
+        for links in ("hard links", "no hard links"):
+            for case, old in self.TARGETS.items():
+                with self.subTest(case, links=links):
+                    digest, stored = self.stored(f"{case} {links}".encode())
+                    target = self.target(f"{case} {links}", old)
+                    failing = mock.patch.object(store.os, "link", side_effect=OSError(1, "Operation not permitted"))
+                    with failing if links == "no hard links" else contextlib.nullcontext():
+                        self.assertTrue(self.store.place_object(digest, target))
+                    self.assertEqual(list(snapshot(target.parent)), ["one.unv"])
+                    self.assertEqual(target.read_bytes(), f"{case} {links}".encode())
+                    self.assertEqual(os.path.samefile(target, stored), links == "hard links")
+
+    def test_a_write_through_the_object_just_before_the_rename_is_refused_and_the_target_left_as_it_was(
+            self) -> None:
+        for case in self.TARGETS:
+            with self.subTest(case):
+                digest, stored = self.stored(case.encode())
+                target = self.target(case, self.TARGETS[case])
+                before = snapshot(target.parent)
+                with self.at_the_rename(before=lambda: rewrite(stored, b"x" * len(case))):
+                    self.assertFalse(self.store.place_object(digest, target))
+                self.assertEqual(snapshot(target.parent), before)
+
+    def test_an_error_while_the_target_is_hashed_leaves_the_target_as_it_was(self) -> None:
+        real = hashlib.file_digest
+        for error in (OSError(errno.EIO, "Input/output error"), KeyboardInterrupt()):
+            for case in self.TARGETS:
+                with self.subTest(case, error=type(error).__name__):
+                    digest, _ = self.stored(f"{case} {error!r}".encode())
+                    target = self.target(f"{case} {type(error).__name__}", self.TARGETS[case])
+                    before = snapshot(target.parent)
+
+                    def failing(stream, *args, error=error, **kwargs):
+                        if str(getattr(stream, "name", "")).endswith(".link"):  # the staged link, not the object
+                            raise error
+                        return real(stream, *args, **kwargs)
+
+                    with mock.patch.object(store.hashlib, "file_digest", side_effect=failing), \
+                            self.assertRaises(type(error)):
+                        self.store.place_object(digest, target)
+                    self.assertEqual(snapshot(target.parent), before)
+
+    def test_a_second_writer_waits_until_the_first_has_put_its_target_back(self) -> None:
+        mine, stored = self.stored(b"MINE")
+        theirs, _ = self.stored(b"THEIRS")
+        target = self.target("run", b"OLD")
+        results: dict[str, object] = {}
+        parked = threading.Event()  # the second writer waits on the lock, or (without one) has finished
+        real = fcntl.flock
+
+        def flock(fd, operation):
+            if threading.current_thread() is second and operation == fcntl.LOCK_EX:
+                try:
+                    return real(fd, operation | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    parked.set()
+            return real(fd, operation)
+
+        def place_theirs() -> None:
+            try:
+                results["theirs"] = store.Store(self.hw).place_object(theirs, target)  # another build, one store
+            except Exception as exc:  # noqa: BLE001 - the outcome under test
+                results["theirs"] = exc
+            finally:
+                parked.set()
+
+        second = threading.Thread(target=place_theirs)
+
+        def interleave() -> None:
+            rewrite(stored, b"XXXX")  # the first placement's hash will fail
+            second.start()
+            self.assertTrue(parked.wait(30))
+
+        with mock.patch.object(store.fcntl, "flock", side_effect=flock), self.at_the_rename(before=interleave):
+            results["mine"] = self.store.place_object(mine, target)
+        second.join(30)
+        self.assertEqual(results, {"mine": False, "theirs": True})
+        self.assertEqual({name: data for name, (data, _) in snapshot(target.parent).items()}, {"one.unv": b"THEIRS"})
+
+    def test_a_file_another_writer_renamed_onto_the_target_after_this_one_is_never_undone(self) -> None:
+        digest, _ = self.stored(b"MINE")
+        target = self.target("run", b"OLD")
+        foreign = target.with_name("foreign.tmp")
+
+        def overwrite() -> None:  # a writer that takes no lock, such as an older store.py
+            foreign.write_bytes(b"FOREIGN")
+            os.rename(foreign, target)
+
+        with self.at_the_rename(after=overwrite):
+            self.assertFalse(self.store.place_object(digest, target))
+        self.assertEqual({name: data for name, (data, _) in snapshot(target.parent).items()}, {"one.unv": b"FOREIGN"})
 
 
 class Locks(Fixture):

@@ -16,9 +16,10 @@ second writer whose members differ is a finding in `cache.findings`: the key mis
 record gives way to the next claim, and `retire` removes a record its producer judged unusable for a reason outside
 the key. `record` re-hashes
 every member on read and names why a record is stale. `place` lays a record's members down beside each other in a
-fresh folder and renames that folder into place, so a reader sees the whole set or none of it. `place_object`
-links one object. Both hash what they linked before it gets its name, and only `holds` answers from the hashes
-this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
+fresh folder and renames that folder into place, so a reader sees the whole set or none of it. It hashes what it
+linked before the folder gets its name. `place_object` links one object, renames the link onto its name and then
+hashes it, under a lock on the folder, and puts the old file back when that hash fails. Only `holds` answers from
+the hashes this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
 name, and every store
 path is a plain file or folder. `gc` keeps what any sealed manifest under hw/ names and removes the rest, and the part store of
 the former layout (hw/.cad/parts, hw/.cad/builds). Deleting the store by hand costs only recomputation, never a
@@ -105,6 +106,84 @@ def _link_or_copy(source: Path, target: Path) -> None:
     except OSError:  # another filesystem, FAT, a link limit: the same bytes, copied
         shutil.copyfile(source, target)
     os.chmod(target, READ_ONLY)
+
+
+def _inode(found: os.stat_result) -> tuple[int, int]:
+    return found.st_dev, found.st_ino
+
+
+@contextlib.contextmanager
+def _folder_lock(folder: Path) -> Iterator[None]:
+    """While the block runs, hold an exclusive flock on `folder` itself. Each `place_object` into it waits its
+    turn, from any process, thread or Store, so none renames onto a name there while another may still undo."""
+    handle = os.open(folder, os.O_RDONLY)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        os.close(handle)
+
+
+def _keep(target: Path, backup: Path) -> Path | None:
+    """`backup` as a second name of the file `target`, so that it outlives a rename onto `target`, or a copy
+    where links fail. None when there is no `target`."""
+    try:
+        os.link(target, backup, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError:  # FAT, a link limit: keep a copy instead
+        try:
+            shutil.copy2(target, backup, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+    return backup
+
+
+def _put_back(target: Path, kept: Path | None, mine: tuple[int, int]) -> None:
+    """Undo the rename of the inode `mine` onto `target`: `kept` takes the name back, or `target` goes when there
+    was none. A `target` that is no longer `mine` belongs to another writer and stays. Only under _folder_lock."""
+    try:
+        ours = _inode(os.stat(target, follow_symlinks=False)) == mine
+    except FileNotFoundError:
+        ours = False
+    if ours and kept is not None:
+        os.replace(kept, target)
+        return
+    if ours:
+        target.unlink()
+    if kept is not None:
+        kept.unlink()
+
+
+def _publish(staged: Path, target: Path, digest: str) -> bool:
+    """Rename `staged` onto `target`, then hash the renamed inode through a descriptor opened before the rename.
+    A hard link shares its object's inode, so a write through the object up to that hash shows in it. True when
+    `target` still names the inode and its bytes hash to `digest`. Otherwise, or on an exception during the hash,
+    `_put_back` undoes the rename. The old `target` stays beside it as `kept` until the undo or the hash
+    succeeds. Only under _folder_lock."""
+    with staged.open("rb") as stream:
+        mine = _inode(os.fstat(stream.fileno()))
+        kept = _keep(target, staged.with_suffix(".old"))
+        try:
+            os.replace(staged, target)
+        except BaseException:
+            if kept is not None:
+                kept.unlink()
+            raise
+        try:
+            verified = (_inode(os.stat(target, follow_symlinks=False)) == mine
+                        and hashlib.file_digest(stream, "sha256").hexdigest() == digest)
+        except BaseException:
+            _put_back(target, kept, mine)
+            raise
+    if not verified:
+        _put_back(target, kept, mine)
+    elif kept is not None:
+        kept.unlink()
+    return verified
 
 
 def _members(record: Mapping[str, Any]) -> dict[str, str]:
@@ -217,25 +296,29 @@ class Store:
         return digest
 
     def place_object(self, digest: str, target: Path) -> bool:
-        """Make `target` the object `digest`: a hard link where possible, else a copy, renamed onto `target` once
-        its bytes, read again, hash to `digest`. False, with `target` untouched, when the object is absent or its
-        bytes hash to another name."""
+        """Make `target` the object `digest`: a hard link where possible, else a copy. It renames the link onto
+        `target`, then hashes the inode it renamed, under a lock on `target`'s folder (`_publish`). True once
+        `target` names that inode and its bytes hash to `digest`. False when the object is absent or its bytes
+        hash to another name, with the old `target` (or none) put back, or when another writer replaced `target`
+        meanwhile, which stays. An exception during the hash puts the old `target` back, then propagates."""
         if not self.holds(digest):
             return False
         target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        staged = target.with_name(f".{target.name}.{os.getpid()}.link")
-        try:
-            _link_or_copy(self._path("cache.part_objects", digest), staged)
-        except FileNotFoundError:  # gc removed it meanwhile
+        staged = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.link")
+        with _folder_lock(target.parent):
+            try:
+                _link_or_copy(self._path("cache.part_objects", digest), staged)
+            except FileNotFoundError:  # gc removed it meanwhile
+                self._checked.pop(digest, None)
+                return False
+            try:
+                placed = _publish(staged, target, digest)
+            finally:
+                staged.unlink(missing_ok=True)  # gone once renamed
+        if not placed:
             self._checked.pop(digest, None)
-            return False
-        if file_sha(staged) != digest:  # changed since a hash `holds` trusted: never publish it
-            staged.unlink()
-            self._checked.pop(digest, None)
-            return False
-        os.replace(staged, target)
-        return True
+        return placed
 
     # --- records ---------------------------------------------------------------------------------------------------
 
@@ -345,7 +428,7 @@ class Store:
         back if that rename fails. Only there can a kill between the two renames leave `destination` absent,
         with the old folder beside it as `.<name>.<pid>.replaced`. It hashes each member it laid down before
         it renames the folder into place and never after, so a write through an object between the hash and the
-        rename goes unseen. No production code calls `place`, and `place_object` has the same window (#250)."""
+        rename goes unseen. No production code calls `place`. `place_object` hashes after its rename (#250)."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         members = _members(record)
