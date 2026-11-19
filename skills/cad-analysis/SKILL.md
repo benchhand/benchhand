@@ -49,13 +49,12 @@ A service load is covered only when the case's forces tagged with its `load` add
 
 The case's forces are in the analysed part's model frame, so the checker first states the direction in that frame. If `application` names the analysed part, or its one occurrence, it reads the direction as given, with or without a `pose`. If `application` names another part, or no part (the assembly frame), it rotates the direction by the rest placements in the version's `assembly.yaml`. A `part_local` part takes its occurrence's placement. An `assembly_zero` part takes none.
 
+The checker first runs cad-record's schema and reference checks on the documents it reads: `product.yaml`, `requirements.yaml`, `assembly.yaml`, `interfaces.yaml`, `manufacturing/materials.yaml` and the case part's own `part.yaml`. A problem in `materials.yaml` refuses the case before the solver runs. Any other problem makes every outcome `unknown`, a fail included. Each gap names its problem as `hw/<file>#<pointer>: <message>`. A problem in a document the checker does not read changes no outcome.
+
 If the checker cannot confirm a frame, the load stays uncovered and the gap names the reason. The reasons:
 
-- The record does not hold the part, or the occurrence does not exist or is ambiguous (a part placed twice needs an `occurrence`).
-- `application` is present but empty, not a mapping, or without a frame key.
-- A frame key of `application` is null, empty or malformed, or the record lacks the part, interface or assembly operation it names. The frame keys are `PN`, `product`, `interface` and `assembly_operation`.
-- A named occurrence belongs to another part, or does not exist, even when the part is `assembly_zero`.
-- An `occurrence` is not an `@id` reference beside a `PN`, or `application` has a key that no subject has.
+- The load's entry fails cad-record's checks. Examples: an `application` that is empty, null or malformed, or has a key that no subject has. An `application` can also name a reference that the record lacks, or another part's occurrence.
+- The record names a part with no occurrence, or one placed twice that `application` names without its `occurrence`.
 - `assembly.yaml` does not normalize.
 - A frame dependency does not load.
 - The case sets a `pose`, which moves the parts from their rest placements, and the direction names another frame.

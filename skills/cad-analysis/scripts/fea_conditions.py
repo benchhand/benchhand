@@ -47,6 +47,12 @@ POSE_PATH = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "po
 # The code behind a load direction's frame: pose.py and what it runs at import and for a rotation (coupling.py,
 # layout.py), and assembly_data.py. fea_static seals their bytes into the recipe.
 FRAME_CODE = (ASSEMBLY_DATA_PATH, POSE_PATH, POSE_PATH.with_name("coupling.py"), ASSEMBLY_DATA_PATH.with_name("layout.py"))
+# The code behind a record gap: cad-record's schema registry and its bundled schemas, which refer to each other.
+# fea_static seals their bytes into the recipe.
+SCHEMA_CODE = (INTENT_PATH.with_name("schema_registry.py"), *sorted((INTENT_PATH.parents[1] / "schemas").glob("*.json")))
+# The record documents the assessment reads besides the analysed part's part.yaml, checked by cad-record before use.
+RECORD_READS = ("product.yaml", "requirements.yaml", "assembly.yaml", "interfaces.yaml", "manufacturing/materials.yaml")
+MATERIALS_DOCUMENT = "hw/manufacturing/materials.yaml"
 PRODUCER = "cad-analysis fea_static.py"
 EXPLICIT_KEYS = ("E", "nu", "density", "yield")
 PROFILE_KEYS = ("profile", "conditions", "effective_isotropic")
@@ -66,7 +72,6 @@ FORMING = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": 
 LEVEL = "simulation_supported"
 DECISION = re.compile(r"DR-[0-9]{3}")
 REQUIREMENT = re.compile(r"REQ-[0-9]{3}")
-OCCURRENCE_REF = re.compile(r"@[a-z][a-z0-9_-]*")  # the schema's occurrence_ref: "@" and an occurrence id
 # A decision (mesh convergence, effective isotropic model) counts only when its MADR status is this. It is
 # the old gate status APPROVED; PROVISIONAL is `proposed` and VOID is `rejected`, neither of them evidence.
 APPROVED_STATUS = "accepted"
@@ -157,15 +162,17 @@ class Assessment:
     convergence: dict[str, Any] = field(default_factory=dict)
     effective_isotropic: dict[str, Any] | None = None
     dependencies: dict[str, str] = field(default_factory=dict)  # semantic name -> sha256
+    record_gaps: list[str] = field(default_factory=list)  # the problems cad-record finds in the documents read
 
     @property
     def sourced(self) -> bool:
         return self.material.get("source") == "profile"
 
     def all_gaps(self) -> list[str]:
-        """Every reason this solve is not service evidence: the basis gaps, the uncovered service loads and an
-        unproven mesh convergence. A sourced result carries all three; an exploratory one only its basis note."""
-        gaps = list(self.evidence_gaps)
+        """Every reason this solve is not service evidence: the record's problems, the basis gaps, the uncovered
+        service loads and an unproven mesh convergence. A sourced result carries all four; an exploratory one only
+        its basis note."""
+        gaps = list(self.record_gaps) + list(self.evidence_gaps)
         if self.sourced:
             gaps += self.load_gaps
             gaps += convergence_gaps(self.convergence)
@@ -223,6 +230,8 @@ class _Assessor:
         self.gaps: list[str] = []
         self.dependencies: dict[str, str] = {}
         self.analysed: Mapping[str, Any] = {}
+        self.checked: list[Any] = []  # cad-record's error problems in the documents read, materials.yaml aside
+        self.materials_gaps: list[str] = []
 
     def refuse(self, code: str, message: str) -> None:
         self.problems.append({"code": code, "message": message})
@@ -231,9 +240,18 @@ class _Assessor:
         if self.problems:
             raise Refused(self.problems)
 
+    def check_record(self, pn: str) -> None:
+        """cad-record's checks of the documents this case reads, and of no other: a problem in materials.yaml
+        refuses the profile before the solve, and any other leaves every outcome unknown."""
+        paths = [f"hw/{rel}" for rel in (*RECORD_READS, f"parts/{pn}/part.yaml")]
+        found = [p for p in self.mi.check_documents(self.documents, paths) if p.severity == "error"]
+        self.materials_gaps = [_record_gap(p) for p in found if p.path == MATERIALS_DOCUMENT]
+        self.checked = [p for p in found if p.path != MATERIALS_DOCUMENT]
+
     def run(self) -> Assessment:
         subject = self.subject()
         self.check()
+        self.check_record(subject["PN"])
         self.analysed = subject
         pn = subject["PN"]
         part = self.record.parts.get(pn)
@@ -279,7 +297,8 @@ class _Assessor:
         expected = [ob.as_dict() for ob in self.mi.required_checks(self.record)
                     if ob.family in ENGINEERING_FAMILIES and ob.subject.get("PN") == pn]
         return Assessment(material, self.gaps, self.version, subject, binding, expected, criteria, load_gaps, convergence,
-                          anisotropy if anisotropy["model"] != "isotropic" else None, self.dependencies)
+                          anisotropy if anisotropy["model"] != "isotropic" else None, self.dependencies,
+                          [_record_gap(p) for p in self.checked])
 
     # -- inputs ----------------------------------------------------------------------------------------------
 
@@ -349,10 +368,8 @@ class _Assessor:
         if profile.level != "grade":
             self.refuse("material.grade", f"{reference} is {profile.level} guidance, never a grade specification: "
                                           "name the grade profile the part is made of")
-        broken = [p.message for p in self.record.problems
-                  if p.path == "hw/manufacturing/materials.yaml" and p.message.startswith((f"{reference}:", f"{reference} "))]
-        for message in broken:
-            self.refuse("material.profile", message)
+        for gap in self.materials_gaps:
+            self.refuse("material.profile", gap)
         return profile
 
     def route(self, part: Any, profile: Any) -> dict[str, Any]:
@@ -562,6 +579,10 @@ class _Assessor:
                 gaps.append(f"the case's forces for service load {ref} add up to {_norm(applied):g} N, which reaches "
                             f"{peak:g} N")
             return gaps
+        broken = self.load_record_gaps(ref)
+        if broken:
+            return [f"service load {ref}'s direction frame cannot be confirmed: its record entry fails cad-record's "
+                    f"checks ({'; '.join(broken)}), so the case's forces cannot be checked against it"]
         direction, unconfirmed = _Frames(self.record, self.documents).into(
             direction, load.application, self.analysed, posed=bool(self.case.get("pose")))
         if direction is None:
@@ -576,6 +597,17 @@ class _Assessor:
             return [f"the case's forces for service load {ref} point {across:g} N across its direction "
                     f"{_text(direction)}; more than {LOAD_CROSS_TOLERANCE:.0%} of the {peak:g} N it reaches"]
         return []
+
+    def load_record_gaps(self, ref: str) -> list[str]:
+        """The record gaps on service load `ref`'s entries in product.yaml: those under an entry with its id, and
+        those on a node that holds them (a schema failure inside the loads array is reported at use_case/loads)."""
+        product = self.documents.get("product.yaml")
+        use_case = product.get("use_case") if isinstance(product, Mapping) else None
+        loads = use_case.get("loads") if isinstance(use_case, Mapping) else None
+        entries = [f"use_case/loads/{i}" for i, item in enumerate(loads if isinstance(loads, list) else ())
+                   if isinstance(item, Mapping) and item.get("id") == ref]
+        return [_record_gap(p) for p in self.checked if p.path == "hw/product.yaml"
+                and any(_on_path(p.pointer, entry) for entry in entries)]
 
     def convergence(self, profile: Any, profile_sha: str) -> dict[str, Any]:
         stated = self.case.get("mesh_convergence")
@@ -644,16 +676,16 @@ def _unit(direction: Any) -> tuple[float, float, float] | None:
     return (direction[0] / length, direction[1] / length, direction[2] / length)
 
 
-# The keys of manufacturing.schema.json's subject. The first four say which frame a statement is in.
-SUBJECT_KEYS = frozenset({"product", "PN", "occurrence", "component", "operation", "feature", "region", "interface",
-                          "assembly_operation", "requirements"})
-FRAME_KEYS = ("PN", "product", "interface", "assembly_operation")
+def _record_gap(problem: Any) -> str:
+    """A cad-record problem as `hw/<rel>#<pointer>: <message>`, or `hw/<rel>: <message>` for the whole document."""
+    if not problem.pointer:
+        return f"{problem.path}: {problem.message}"
+    return f"{problem.path}#{problem.pointer}: {problem.message.removeprefix(problem.pointer + ': ')}"
 
 
-def _valid_id(value: Any) -> bool:
-    """Whether `value` can name a record entry: a non-empty string. Declared ids and the references to them both go
-    through this, so an empty reference never matches an empty declared id, and a mapping never reaches a set."""
-    return isinstance(value, str) and bool(value)
+def _on_path(pointer: str, node: str) -> bool:
+    """Whether a problem at JSON pointer `pointer` lies at `node`, under it or on a node that holds it."""
+    return pointer in ("", node) or node.startswith(pointer + "/") or pointer.startswith(node + "/")
 
 
 class _Frames:
@@ -688,12 +720,10 @@ class _Frames:
              analysed: Mapping[str, Any], *, posed: bool) -> tuple[tuple[float, float, float] | None, str]:
         """`direction` in the analysed part's model frame, or None and why the frames are not confirmed.
 
-        An omitted `application` is the assembly frame; a present one that names no frame is invalid and confirms
-        nothing. A direction stated against the analysed part is already in its frame. Any other frame is reached
-        through the assembly at the rest placements, which a posed case has left."""
-        problem = self.application_problem(application) if application is not None else ""
-        if problem:
-            return None, problem
+        An omitted `application` is the assembly frame. A present one has passed cad-record's subject schema and
+        reference checks: a load whose entry fails them never reaches here. A direction stated against the analysed
+        part is already in its frame. Any other frame is reached through the assembly at the rest placements, which a
+        posed case has left."""
         if application is not None and self.same_part(application, analysed):
             return direction, ""
         if self.unavailable:
@@ -706,31 +736,6 @@ class _Frames:
             return None, why or why_target
         moved = target.inverse().apply(source.apply(direction))
         return (moved[0], moved[1], moved[2]), ""
-
-    def application_problem(self, application: Any) -> str:
-        """Why a present `application` names no frame, or "" when every reference in it holds: a part and an interface
-        the record has, an assembly operation it lists, `product: true`, and an occurrence beside a part. The keys
-        alone prove nothing, because the assessment does not validate the record against its schema."""
-        if not isinstance(application, Mapping) or not any(key in application for key in FRAME_KEYS):
-            return "the load's application is present but names no part, product, interface or assembly operation"
-        unknown = sorted(str(key) for key in application if key not in SUBJECT_KEYS)
-        if unknown:
-            return f"the load's application has the keys {unknown}, which a subject does not allow"
-        operations = self.record.assembly_operations
-        held = {"PN": {pn for pn in self.record.parts if _valid_id(pn)},
-                "interface": {ident for ident in self.record.interfaces if _valid_id(ident)},
-                "assembly_operation": {op["id"] for op in operations if isinstance(op, Mapping) and _valid_id(op.get("id"))}
-                if isinstance(operations, tuple) else set()}
-        for key, known in held.items():
-            if key in application and not (_valid_id(application[key]) and application[key] in known):
-                return f"the load's application names the {key} {application[key]!r}, which the record does not hold"
-        if "product" in application and application["product"] is not True:
-            return f"the load's application has product {application['product']!r}, not true"
-        if "occurrence" in application and not (
-                _valid_id(application["occurrence"]) and OCCURRENCE_REF.fullmatch(application["occurrence"])
-                and "PN" in application):
-            return "the load's application names an occurrence that is not an @id reference beside a part"
-        return ""
 
     def same_part(self, application: Mapping[str, Any], analysed: Mapping[str, Any]) -> bool:
         """Whether `application` names the analysed part's own model frame: its part, with no occurrence named, the
@@ -1008,6 +1013,8 @@ def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assess
              subject: Mapping[str, Any], mode: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
     family = obligation["family"]
     gaps = list(a.evidence_gaps) + convergence_gaps(a.convergence)
+    if a.record_gaps:
+        return _unchecked_record(obligation, a, subject, mode, gaps)
     if family == "engineering.anisotropy":
         model = a.effective_isotropic
         if model is None:
@@ -1041,6 +1048,19 @@ def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assess
     if check == "strength":
         gaps.append(FULL_STRENGTH)
     return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, measured, units, what, criterion)
+
+
+def _unchecked_record(obligation: Mapping[str, Any], a: Assessment, subject: Mapping[str, Any], mode: str,
+                      gaps: list[str]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Unknown whatever the solve shows, before any pass or fail: a document the case reads fails cad-record's
+    checks, so the inputs the solve stands on are not the record's."""
+    reasons = [*a.record_gaps, *gaps, *a.load_gaps]
+    if obligation["family"] not in _CHECKS:
+        return _row(obligation, "unknown", a, subject, reasons, None, None, "the orientation-dependent material model")
+    check, _key, units, what = _CHECKS[obligation["family"]]
+    if check == "strength" and mode == "stress":
+        what = STUDY_STRENGTH
+    return _row(obligation, "unknown", a, subject, reasons, None, units, what, a.criteria.get(check))
 
 
 def _stress_strength(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assessment,

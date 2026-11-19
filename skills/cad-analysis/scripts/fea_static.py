@@ -764,7 +764,7 @@ def _producer_code_hashes() -> dict[str, str]:
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
              Path(__file__).with_name("mesh_quality.py"), Path(__file__).with_name("fea_modes.py"),
              Path(__file__).with_name("fea_stress.py"), Path(__file__).with_name("fea_stress_study.py"),
-             conditions.INTENT_PATH, *conditions.FRAME_CODE, Path(SOLVERS.__file__))
+             conditions.INTENT_PATH, *conditions.FRAME_CODE, *conditions.SCHEMA_CODE, Path(SOLVERS.__file__))
     return {path.name: _file_digest(path) for path in paths}
 
 
