@@ -85,9 +85,9 @@ class MeasuredTests(unittest.TestCase):
 
     def test_a_symlinked_root_counts_like_its_resolved_form(self) -> None:
         with tempfile.TemporaryDirectory() as base:
-            real = Path(base) / "real"
+            real = Path(base).resolve() / "real"
             real.mkdir()
-            link = Path(base) / "link"
+            link = Path(base).resolve() / "link"
             link.symlink_to(real)
             self.assertEqual(measured(self.SAMPLE.format(root=real), link), measured(self.SAMPLE.format(root=link), link))
 
