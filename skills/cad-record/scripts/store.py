@@ -17,8 +17,9 @@ record gives way to the next claim, and `retire` removes a record its producer j
 the key. `record` re-hashes
 every member on read and names why a record is stale. `place` lays a record's members down beside each other in a
 fresh folder and renames that folder into place, so a reader sees the whole set or none of it. `place_object`
-links one object. Both hash what they linked before it gets its name, and only `holds` answers from the hashes
-this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
+links one object. Both hash what they linked before it gets its name, and `place` hashes it again after the
+rename and puts the former folder back when it changed. Only `holds` answers from the hashes this Store took
+before (`_settled`). Every write lands beside its name and the store renames it onto that
 name, and every store
 path is a plain file or folder. `gc` keeps what any sealed manifest under hw/ names and removes the rest, and the part store of
 the former layout (hw/.cad/parts, hw/.cad/builds). Deleting the store by hand costs only recomputation, never a
@@ -89,11 +90,13 @@ def _signature(found: os.stat_result) -> tuple[int, int, int, int, int]:
     return found.st_dev, found.st_ino, found.st_size, found.st_mtime_ns, found.st_ctime_ns
 
 
-def _settled(found: os.stat_result, hashed_at: int) -> bool:
-    """Whether a hash that started at `hashed_at` (ns) can stand for an object with the stat `found`: its last change
-    is at least TICK_NS older, so no later write can carry that change's timestamps. git's racy-git rule
-    (Documentation/technical/racy-git.txt), with the store's clock in place of the index file's mtime."""
-    return max(found.st_mtime_ns, found.st_ctime_ns) <= hashed_at - TICK_NS
+def _settled(found: os.stat_result, hashed_at: int, now: int) -> bool:
+    """Whether a hash that started at `hashed_at` (ns) can stand, at `now` (ns), for an object with the stat `found`:
+    its last change is at least TICK_NS older, so no later write can carry that change's timestamps. git's racy-git
+    rule (Documentation/technical/racy-git.txt), with the store's clock in place of the index file's mtime. A clock
+    that reads earlier than `hashed_at` stepped back, and could stamp a new write like the change the hash saw, so
+    the hash does not stand then. Nor does a hash older than the ctime: ctime <= hashed_at - TICK_NS < hashed_at."""
+    return hashed_at <= now and max(found.st_mtime_ns, found.st_ctime_ns) <= hashed_at - TICK_NS
 
 
 def _link_or_copy(source: Path, target: Path) -> None:
@@ -139,6 +142,37 @@ def _exchange(source: Path, target: Path) -> bool:
     return False
 
 
+def _rename_in(staged: Path, destination: Path) -> Path | None:
+    """Rename the folder `staged` onto `destination` and return where the folder it replaced went: None when there
+    was none, `staged` after a swap, else `.<name>.<pid>.replaced` beside it. A failed rename puts it back."""
+    if not destination.exists():
+        os.rename(staged, destination)
+        return None
+    if _exchange(staged, destination):
+        return staged
+    aside = destination.with_name(f".{destination.name}.{os.getpid()}.replaced")
+    os.rename(destination, aside)
+    try:
+        os.rename(staged, destination)
+    except OSError:  # put the old folder back before reporting the failure
+        os.rename(aside, destination)
+        raise
+    return aside
+
+
+def _put_back(staged: Path, destination: Path, replaced: Path | None) -> None:
+    """Undo `_rename_in`: `destination` as it was before, and the folder renamed onto it removed or at `staged`."""
+    if replaced is None:
+        os.rename(destination, staged)
+        return
+    if replaced == staged and _exchange(staged, destination):
+        return
+    placed = destination.with_name(f".{destination.name}.{os.getpid()}.stale")
+    os.rename(destination, placed)
+    os.rename(replaced, destination)
+    shutil.rmtree(placed)
+
+
 class Store:
     def __init__(self, hw: Path) -> None:
         self.hw = Path(hw)
@@ -166,7 +200,8 @@ class Store:
 
     def holds(self, digest: Any) -> bool:
         """Whether the object `digest` exists and its bytes still hash to its name. It answers from an earlier hash
-        while the object's stat is unchanged and its last change is at least TICK_NS older than that hash."""
+        while the object's stat is unchanged, its last change is at least TICK_NS older than that hash, and the
+        clock reads no earlier than that hash did."""
         if not isinstance(digest, str) or not SHA.fullmatch(digest):
             return False
         path = self._path("cache.part_objects", digest)
@@ -178,7 +213,7 @@ class Store:
         if not stat.S_ISREG(found.st_mode):
             return False
         signature, hashed_at, matched = self._checked.get(digest, (None, 0, False))
-        if signature == _signature(found) and _settled(found, hashed_at):
+        if signature == _signature(found) and _settled(found, hashed_at, time.time_ns()):
             return matched
         return self._hash(digest)
 
@@ -337,16 +372,20 @@ class Store:
 
     def place(self, record: Mapping[str, Any], destination: Path) -> str:
         """Lay `record`'s members down as the folder `destination`, whole or not at all: "" when placed, else why
-        (`stale: ...`) with `destination` untouched. Where the platform allows, it swaps an existing `destination`
-        out in one step. Elsewhere it moves the old folder aside, renames the new one in, and moves the old one
-        back if that rename fails. Only there can a kill between the two renames leave `destination` absent,
-        with the old folder beside it as `.<name>.<pid>.replaced`."""
+        (`stale: ...`) with `destination` as it was. It hashes each member it laid down before the rename and again
+        after it. A member written through its object between those hashes makes it put the former `destination`
+        back and report it stale, and until then a reader can see that member. A hard link shares its object's
+        bytes, so a write through the object after `place` returns changes the placed member too, as it changes
+        every version. Where the platform allows, it swaps an existing `destination` out in one step.
+        Elsewhere it moves the old folder aside, renames the new one in, and moves the old one back if that rename
+        fails. Only there can a kill between the two renames leave `destination` absent, with the old folder beside
+        it as `.<name>.<pid>.replaced`."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        members = _members(record)
+        members = sorted(_members(record).items())
         staged = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", suffix=".placing", dir=destination.parent))
         try:
-            for name, digest in sorted(members.items()):
+            for name, digest in members:
                 target = staged / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -358,20 +397,14 @@ class Store:
                 except FileNotFoundError:  # gc removed it, or its bytes changed, after holds() read it
                     self._checked.pop(digest, None)
                     return f"stale: {name} names object {digest}, which is missing or changed"
-            if not destination.exists():
-                os.rename(staged, destination)
-                return ""
-            if _exchange(staged, destination):
-                shutil.rmtree(staged)  # it now holds the replaced folder
-                return ""
-            aside = destination.with_name(f".{destination.name}.{os.getpid()}.replaced")
-            os.rename(destination, aside)
-            try:
-                os.rename(staged, destination)
-            except OSError:  # put the old folder back before reporting the failure
-                os.rename(aside, destination)
-                raise
-            shutil.rmtree(aside)
+            replaced = _rename_in(staged, destination)
+            for name, digest in members:
+                if file_sha(destination / name) != digest:  # written between the hash above and the rename
+                    self._checked.pop(digest, None)
+                    _put_back(staged, destination, replaced)
+                    return f"stale: {name} object {digest} changed while it was placed"
+            if replaced is not None:
+                shutil.rmtree(replaced)
             return ""
         finally:
             if staged.exists():

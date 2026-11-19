@@ -284,19 +284,25 @@ class Records(Fixture):
 
 class VerifiedCache(Fixture):
     """`holds` answers from the hashes this Store took before, each kept with the object's stat and the time of
-    the hash. It trusts one only while the stat is unchanged and the object's last change (the newer of mtime and
-    ctime) is at least one tick of the coarsest timestamp clock older than the hash: git's racy-git rule. `record`,
-    `place` and `place_object` hash the bytes again whatever the cache holds (#245)."""
+    the hash. It trusts one only while the stat is unchanged, the object's last change (the newer of mtime and
+    ctime) is at least one tick of the coarsest timestamp clock older than the hash (git's racy-git rule), and the
+    clock reads no earlier than the hash did (#248). `record`, `place` and `place_object` hash the bytes again
+    whatever the cache holds (#245)."""
 
     def object_path(self, digest: str) -> Path:
         return self.hw / ".cad" / "cache" / "objects" / digest
+
+    @staticmethod
+    def changed_at(path: Path) -> int:
+        """The time (ns) of the last change to the file at `path`: the newer of its mtime and ctime."""
+        found = os.stat(path)
+        return max(found.st_mtime_ns, found.st_ctime_ns)
 
     def hashed_at(self, digest: str, offset: int) -> Path:
         """The object `digest`, made writable, once this Store hashed it `offset` ns after its last change."""
         path = self.object_path(digest)
         os.chmod(path, 0o644)  # first, so that the hash below keeps the stat each test then starts from
-        found = os.stat(path)
-        with mock.patch.object(store.time, "time_ns", return_value=max(found.st_mtime_ns, found.st_ctime_ns) + offset):
+        with mock.patch.object(store.time, "time_ns", return_value=self.changed_at(path) + offset):
             self.assertTrue(self.store.holds(digest))
         return path
 
@@ -330,10 +336,32 @@ class VerifiedCache(Fixture):
         for offset in (TICK_NS, 3600 * 10**9):
             with self.subTest(offset=offset):
                 digest = self.store.intern(self.file(f"s{offset}", sha(b"s%d" % offset).encode()))
-                self.hashed_at(digest, offset)
-                with mock.patch.object(store, "file_sha", wraps=store.file_sha) as hashed:
+                path = self.hashed_at(digest, offset)
+                looked_up = self.changed_at(path) + offset  # the clock reads no earlier than when the hash started
+                with mock.patch.object(store, "file_sha", wraps=store.file_sha) as hashed, \
+                        mock.patch.object(store.time, "time_ns", return_value=looked_up):
                     self.assertTrue(self.store.holds(digest))
                 hashed.assert_not_called()
+
+    def test_a_clock_that_stepped_back_since_the_hash_makes_holds_hash_again(self) -> None:
+        digest = self.store.intern(self.file("back", sha(b"back").encode()))
+        path = self.hashed_at(digest, 10 * TICK_NS)  # settled, by the clock that the hash read
+        stepped_back = self.changed_at(path) + 10 * TICK_NS - 1  # such as after an NTP correction
+        with self.stat_unchanged(path), mock.patch.object(store.time, "time_ns", return_value=stepped_back):
+            path.write_bytes(b"x" * 64)  # a write the stepped-back clock may stamp like the change the hash saw
+            self.assertFalse(self.store.holds(digest))
+
+    def test_a_hash_that_started_before_the_objects_last_change_is_never_reused(self) -> None:
+        digest = self.store.intern(self.file("ctime", sha(b"ctime").encode()))
+        path = self.object_path(digest)
+        os.chmod(path, 0o644)
+        started = os.stat(path).st_ctime_ns - 1  # the ctime moved, by a link or chmod, after the hash began
+        with self.stat_unchanged(path, st_mtime_ns=started - 10 * TICK_NS):  # an mtime long settled
+            with mock.patch.object(store.time, "time_ns", return_value=started):
+                self.assertTrue(self.store.holds(digest))
+            path.write_bytes(b"x" * 64)
+            with mock.patch.object(store.time, "time_ns", return_value=started + 10 * TICK_NS):
+                self.assertFalse(self.store.holds(digest))
 
     def test_a_change_to_any_stat_field_the_cache_keys_on_makes_holds_hash_again(self) -> None:
         for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"):
@@ -365,8 +393,10 @@ class VerifiedCache(Fixture):
         record = self.claimed(key(name), {"mesh.unv": sha(name.encode()).encode()})
         digest = record["members"]["mesh.unv"]
         path = self.hashed_at(digest, 10 * TICK_NS)
-        with self.stat_unchanged(path):
+        hashed = self.changed_at(path) + 10 * TICK_NS
+        with self.stat_unchanged(path), mock.patch.object(store.time, "time_ns", return_value=hashed):
             path.write_bytes(b"x" * 64)
+            self.assertTrue(self.store.holds(digest))  # the cache vouches for them
             yield record, digest
 
     def test_record_hashes_every_member_whatever_the_cache_holds(self) -> None:
@@ -438,6 +468,39 @@ class Place(Fixture):
         self.assertFalse(destination.exists())
         self.assertEqual(list((self.root / "run").iterdir()), [])
 
+    def written_before_the_rename(self, digest: str, real, written: list[str]):
+        """`real` (os.rename or the store's swap), which first writes other bytes through the object `digest` when
+        it moves place's staged folder: once, between the hash of what place laid down and its rename."""
+        def renamed(source, target, *rest):
+            if Path(source).name.endswith(".placing") and not written:
+                written.append(str(source))
+                path = self.hw / ".cad" / "cache" / "objects" / digest
+                os.chmod(path, 0o644)
+                path.write_bytes(b"XXXX")  # an honest mistake: a tool writes through the object
+            return real(source, target, *rest)
+        return renamed
+
+    def test_a_write_between_the_hash_and_the_rename_is_seen_and_the_destination_is_left_as_it_was(self) -> None:
+        cases = {"no destination yet": (False, True), "a destination swapped out": (True, True),
+                 "a destination moved aside": (True, False)}
+        for number, (case, (existed, swaps)) in enumerate(cases.items()):
+            with self.subTest(case):
+                record = self.claimed(key(f"r{number}"), {"mesh.unv": b"NEW%d" % number})
+                destination = self.root / f"run{number}" / "mesh"
+                if existed:
+                    destination.mkdir(parents=True)
+                    (destination / "old.txt").write_text("old", encoding="utf-8")
+                written: list[str] = []
+                digest = record["members"]["mesh.unv"]
+                rename = self.written_before_the_rename(digest, os.rename, written)
+                exchange = self.written_before_the_rename(digest, store._exchange, written) if swaps else lambda *_: False
+                with mock.patch.object(store.os, "rename", rename), mock.patch.object(store, "_exchange", exchange):
+                    reason = self.store.place(record, destination)
+                self.assertEqual(len(written), 1)
+                self.assertRegex(reason, r"^stale: mesh\.unv ")
+                self.assertEqual(sorted(p.name for p in destination.iterdir()) if destination.exists() else None,
+                                 ["old.txt"] if existed else None)
+                self.assertEqual([p.name for p in destination.parent.iterdir()], ["mesh"] if existed else [])
 
 class Locks(Fixture):
     def test_threads_that_lock_an_empty_store_at_once_all_get_their_locks(self) -> None:
