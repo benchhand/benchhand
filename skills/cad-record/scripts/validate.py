@@ -22,6 +22,7 @@ import posixpath
 import re
 import sys
 from collections.abc import Iterable, Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -776,14 +777,16 @@ def _intent_finding(hw: Path, item: Mapping[str, Any]) -> dict[str, Any]:
 
 def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
                                part_records: Mapping[str, tuple[dict[str, Any], str]],
-                               verification: list[dict[str, str]], findings: list[dict[str, Any]]) -> Any:
+                               verification: list[dict[str, str]], findings: list[dict[str, Any]],
+                               today: date | None = None) -> Any:
     """The record version and its manufacturing intent, through manufacturing_intent.py, over the
     documents validate_project already read. A record of another version is reported with the blocking
     record.version_unsupported, so stage advance, freeze, release and record-writing builds refuse it.
     A version 2 record: its
     hw/manufacturing/ documents against their schemas, the normalization problems (references, units,
-    routes, profiles, completeness), the waivers of its ledgers, and verification rows that state a
-    result its ledger does not hold (an error from the design freeze on). Returns the normalized record."""
+    routes, profiles, completeness), the waivers of its ledgers as of `today` (the current date when None),
+    and verification rows that state a result its ledger does not hold (an error from the design freeze
+    on). Returns the normalized record."""
     parsed = {name: data for name, data in documents.items() if data is not None}
     parsed.update({f"parts/{pn}/part.yaml": part for pn, (part, _) in part_records.items()})
     manufacturing = {}
@@ -802,7 +805,7 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     product = documents.get("product.yaml")
     flow = product.get("flow") if isinstance(product, dict) else None
     stage = flow.get("stage") if isinstance(flow, dict) else None
-    items = evidence.ledger_findings(record, approved=functools.partial(decision_approves, hw),
+    items = evidence.ledger_findings(record, approved=functools.partial(decision_approves, hw), today=today,
                                      paths=evidence.project_paths(hw))
     items += evidence.csv_findings(record, verification, stage)
     findings.extend(_intent_finding(hw, item.as_dict()) for item in items)
@@ -894,7 +897,9 @@ def check_release_readiness(hw: Path, verification: list[dict[str, str]],
             findings.append(finding(part_path, f"release cannot include prototype revision {part['rev']} for {pn}"))
 
 
-def validate_project(project_dir: Path) -> list[dict[str, str]]:
+def validate_project(project_dir: Path, today: date | None = None) -> list[dict[str, str]]:
+    """Every finding on the record at `project_dir`, judging waivers as of `today` (the current date
+    when None)."""
     findings: list[dict[str, str]] = []
     hw = project_dir / "hw" if (project_dir / "hw").is_dir() else project_dir
     required_yaml = {
@@ -1095,7 +1100,7 @@ def validate_project(project_dir: Path) -> list[dict[str, str]]:
             check_release_readiness(hw, verification, part_records, str(path), findings)
     if valid.get("product.yaml"):
         check_flow(documents["product.yaml"], str(hw / "product.yaml"), hw, part_records, findings)
-    record = check_manufacturing_intent(hw, documents, part_records, verification, findings)
+    record = check_manufacturing_intent(hw, documents, part_records, verification, findings, today)
     check_acceptance_anchor(hw, record, findings)
     check_design_rules(hw, documents, valid, part_records, inventory, findings)
     check_layout(hw, documents.get("product.yaml"), part_records, findings)

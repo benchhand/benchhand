@@ -61,7 +61,7 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -447,12 +447,13 @@ def check_acceptance(release: Release, frozen: Any) -> None:
     release.checks["acceptance"] = "waived" if policy.trial else "pass"
 
 
-def project_findings(hw: Path, target_rel: str, repairing: bool) -> list[dict[str, Any]]:
-    """validate.py's blocking findings on the project. When the run repairs `target_rel` (inspection found
-    it stale and of this release), the SEAL_FINDINGS inside that package are left out; every other
-    finding, including the same kinds anywhere else, stays."""
-    findings = list(validate.blocking(validate.validate_project(hw)))
-    if not repairing:
+def project_findings(hw: Path, target_rel: str, repaired_on: date | None) -> list[dict[str, Any]]:
+    """validate.py's blocking findings on the project. `repaired_on` is the release date of the stale
+    package at `target_rel` when the run repairs it (inspection found it stale and of this release), else
+    None. A repair judges waivers on that date, and leaves out the SEAL_FINDINGS inside that package;
+    every other finding, including the same kinds anywhere else, stays."""
+    findings = list(validate.blocking(validate.validate_project(hw, today=repaired_on)))
+    if repaired_on is None:
         return findings
     package = layout.locate(hw, target_rel)
     return [item for item in findings
@@ -484,7 +485,7 @@ def assemble(hw: Path, rev: str, version: str, decision: str,
         release.refuse("hw/product.yaml", "frozen", "product.yaml has no flow.frozen; freeze a version first")
     elif frozen.get("version") != version:
         release.refuse("hw/product.yaml", "frozen", f"flow.frozen names {frozen.get('version')}, not {version}")
-    release.findings.extend(project_findings(hw, target_rel, repairing))
+    release.findings.extend(project_findings(hw, target_rel, moment.date() if repairing else None))
     check_docs(release)
     try:
         _, folder, record = layout.built_version(hw, version)
@@ -619,16 +620,14 @@ def publish_package(release: Release, staged: Path, report: dict[str, Any],
     what is there is inspected again here. An absent path is claimed. A sound package of this release,
     which another writer sealed meanwhile, stays and the run is a no-op. A stale package of this release
     is moved to .cad-work/replaced/ and the stage claimed, only when this run staged its repair. Anything
-    else refuses as `existing` reports it."""
+    else refuses as `existing` reports it. A run that claims nothing removes its stage."""
     hw, target_rel = release.hw, release.target_rel
     target = layout.locate(hw, target_rel)
     if not os.path.lexists(target):
         return claim_package(release, staged, report, None)
     found = existing(hw, release.rev, release.version, release.decision)
-    if found.code == 0:
-        shutil.rmtree(staged)
-        return found.code, found.report
-    if not repairing or found.repairable_from is None:
+    if found.code == 0 or not repairing or found.repairable_from is None:
+        shutil.rmtree(staged)  # another writer's package stands: this stage has no use
         return found.code, found.report
     old = layout.replaced_path(hw, target_rel)
     old.parent.mkdir(parents=True, exist_ok=True)
