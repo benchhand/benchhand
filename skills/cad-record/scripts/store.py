@@ -17,8 +17,9 @@ record gives way to the next claim, and `retire` removes a record its producer j
 the key. `record` re-hashes
 every member on read and names why a record is stale. `place` lays a record's members down beside each other in a
 fresh folder and renames that folder into place, so a reader sees the whole set or none of it. It hashes what it
-linked before the folder gets its name. `place_object` links one object, renames the link onto its name and then
-hashes it, under a lock on the folder, and puts the old file back when that hash fails. Only `holds` answers from
+linked before the folder gets its name. `place_object` links one object, swaps the link onto its name and then
+hashes it, under a lock on the folder. When that hash fails, it puts the old file back, and never over a file
+another writer renamed there since. Only `holds` answers from
 the hashes this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
 name, and every store
 path is a plain file or folder. `gc` keeps what any sealed manifest under hw/ names and removes the rest, and the part store of
@@ -32,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import fcntl
 import hashlib
 import importlib.util
@@ -60,8 +62,10 @@ FORMAT = 2  # the record format: `record` reuses a record of this format only
 SHA = re.compile(r"[0-9a-f]{64}")
 READ_ONLY = 0o444
 FORMER = (".cad/parts", ".cad/builds")  # the part store before hw/.cad/cache/, removed by gc
-_RENAME_EXCHANGE = 2  # renameat2 flag (Linux)
-_RENAME_SWAP = 2  # renamex_np flag (macOS)
+_RENAME_NOREPLACE, _RENAME_EXCHANGE = 1, 2  # renameat2 flags (Linux)
+_RENAME_SWAP, _RENAME_EXCL = 2, 4  # renamex_np flags (macOS)
+_AT_FDCWD = -100
+_UNSUPPORTED = frozenset({errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP})  # no such rename flag here
 # The coarsest timestamp step the store allows for: FAT stamps mtime in 2 s steps, HFS+ and ext3 in 1 s, and Linux
 # stamps from a clock that moves once per scheduler tick. A write within one step of the last keeps its timestamps.
 TICK_NS = 2_000_000_000
@@ -127,62 +131,89 @@ def _folder_lock(folder: Path) -> Iterator[None]:
         os.close(handle)
 
 
-def _keep(target: Path, backup: Path) -> Path | None:
-    """`backup` as a second name of the file `target`, so that it outlives a rename onto `target`, or a copy
-    where links fail. None when there is no `target`."""
+class _NoAtomicRename(Exception):
+    """The filesystem lacks the rename flags that `_put_in` needs."""
+
+
+def _rename2(source: Path, target: Path, *, swap: bool) -> None:
+    """Rename `source` onto `target` in one step, which fails (FileExistsError) while `target` exists, or with
+    `swap` exchange the two, which fails (FileNotFoundError) while either is absent. Linux renameat2 with
+    RENAME_NOREPLACE or RENAME_EXCHANGE, macOS renamex_np with RENAME_EXCL or RENAME_SWAP. An OSError with an
+    errno in _UNSUPPORTED where the platform, its C library or the filesystem lacks the call."""
     try:
-        os.link(target, backup, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    except OSError:  # FAT, a link limit: keep a copy instead
+        libc = ctypes.CDLL(None, use_errno=True)
+        if sys.platform.startswith("linux"):
+            done = libc.renameat2(_AT_FDCWD, os.fsencode(source), _AT_FDCWD, os.fsencode(target),
+                                  _RENAME_EXCHANGE if swap else _RENAME_NOREPLACE)
+        elif sys.platform == "darwin":
+            done = libc.renamex_np(os.fsencode(source), os.fsencode(target), _RENAME_SWAP if swap else _RENAME_EXCL)
+        else:
+            raise AttributeError(sys.platform)
+    except AttributeError as exc:  # another platform, or an older C library without the call
+        raise OSError(errno.ENOSYS, f"no atomic rename flags here ({exc})") from exc
+    if done != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(source), None, str(target))
+
+
+def _put_in(staged: Path, target: Path) -> bool:
+    """Rename `staged` onto `target` in one step that destroys nothing: it swaps the two, so that `staged` then
+    names the file `target` named, or, while there is no `target`, moves `staged` there. Whether `target` named
+    a file. _NoAtomicRename, with nothing changed, where the filesystem lacks the swap."""
+    for _ in range(3):  # each step fails, changing nothing, when another writer adds or removes `target` meanwhile
         try:
-            shutil.copy2(target, backup, follow_symlinks=False)
+            _rename2(staged, target, swap=True)
+            return True
         except FileNotFoundError:
-            return None
-    return backup
+            pass
+        except OSError as exc:
+            if exc.errno in _UNSUPPORTED:
+                raise _NoAtomicRename(str(exc)) from exc
+            raise
+        try:
+            _rename2(staged, target, swap=False)
+            return False
+        except FileExistsError:
+            pass
+    raise StoreError(f"{target} kept appearing and disappearing while it was placed")
 
 
-def _put_back(target: Path, kept: Path | None, mine: tuple[int, int]) -> None:
-    """Undo the rename of the inode `mine` onto `target`: `kept` takes the name back, or `target` goes when there
-    was none. A `target` that is no longer `mine` belongs to another writer and stays. Only under _folder_lock."""
+def _take_back(staged: Path, target: Path, mine: tuple[int, int], had_old: bool) -> None:
+    """Undo `_put_in`, where `staged` names the old file if `had_old`, without destroying a file that another
+    writer renamed onto `target` since. One rename moves whatever `target` names aside. If that is not `mine`,
+    it is the other writer's, and it goes back. Otherwise the old file goes back. Each goes back only while
+    there is no `target`: a file renamed onto `target` in between is newer, and stands."""
+    aside = staged.with_suffix(".aside")
     try:
-        ours = _inode(os.stat(target, follow_symlinks=False)) == mine
-    except FileNotFoundError:
-        ours = False
-    if ours and kept is not None:
-        os.replace(kept, target)
+        os.rename(target, aside)  # onto a name only this thread uses, so it replaces nothing
+    except FileNotFoundError:  # another writer removed it: that stands
         return
-    if ours:
-        target.unlink()
-    if kept is not None:
-        kept.unlink()
+    back = staged if had_old else None
+    if _inode(os.stat(aside, follow_symlinks=False)) != mine:
+        back = aside
+    if back is not None:
+        with contextlib.suppress(FileExistsError):
+            _rename2(back, target, swap=False)
+    aside.unlink(missing_ok=True)  # `mine`, or the other writer's file that a newer one replaced
 
 
 def _publish(staged: Path, target: Path, digest: str) -> bool:
-    """Rename `staged` onto `target`, then hash the renamed inode through a descriptor opened before the rename.
-    A hard link shares its object's inode, so a write through the object up to that hash shows in it. True when
-    `target` still names the inode and its bytes hash to `digest`. Otherwise, or on an exception during the hash,
-    `_put_back` undoes the rename. The old `target` stays beside it as `kept` until the undo or the hash
-    succeeds. Only under _folder_lock."""
-    with staged.open("rb") as stream:
-        mine = _inode(os.fstat(stream.fileno()))
-        kept = _keep(target, staged.with_suffix(".old"))
-        try:
-            os.replace(staged, target)
-        except BaseException:
-            if kept is not None:
-                kept.unlink()
-            raise
-        try:
+    """Rename `staged` onto `target` (`_put_in`), then hash the renamed inode through a descriptor opened before
+    the rename. A hard link shares its object's inode, so a write through the object up to that hash shows in
+    it. True when `target` still names the inode and its bytes hash to `digest`. Otherwise `_take_back` undoes
+    the rename, also when an exception leaves the hash or the descriptor's close. Only under _folder_lock."""
+    mine, had_old, published, verified = (0, 0), False, False, False
+    try:
+        with staged.open("rb") as stream:
+            mine = _inode(os.fstat(stream.fileno()))
+            had_old = _put_in(staged, target)
+            published = True
             verified = (_inode(os.stat(target, follow_symlinks=False)) == mine
                         and hashlib.file_digest(stream, "sha256").hexdigest() == digest)
-        except BaseException:
-            _put_back(target, kept, mine)
-            raise
-    if not verified:
-        _put_back(target, kept, mine)
-    elif kept is not None:
-        kept.unlink()
+    finally:
+        if published and not verified:
+            _take_back(staged, target, mine, had_old)
+        staged.unlink(missing_ok=True)  # the link, the file it replaced, or the old file a newer one replaced
     return verified
 
 
@@ -205,19 +236,13 @@ def _names_version(text: str, label: str) -> bool:
 
 
 def _exchange(source: Path, target: Path) -> bool:
-    """Swap two existing paths in one step where the platform can (Linux renameat2, macOS renamex_np). False
-    where it cannot, with both paths unchanged."""
+    """Swap two existing paths in one step where the platform can (`_rename2`). False where it cannot, with both
+    paths unchanged."""
     try:
-        libc = ctypes.CDLL(None, use_errno=True)
-        if sys.platform.startswith("linux"):
-            at_fdcwd = -100
-            return bool(libc.renameat2(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target),
-                                       _RENAME_EXCHANGE) == 0)
-        if sys.platform == "darwin":
-            return bool(libc.renamex_np(os.fsencode(source), os.fsencode(target), _RENAME_SWAP) == 0)
-    except (OSError, AttributeError):  # an older C library without the call
+        _rename2(source, target, swap=True)
+    except OSError:
         return False
-    return False
+    return True
 
 
 class Store:
@@ -300,7 +325,9 @@ class Store:
         `target`, then hashes the inode it renamed, under a lock on `target`'s folder (`_publish`). True once
         `target` names that inode and its bytes hash to `digest`. False when the object is absent or its bytes
         hash to another name, with the old `target` (or none) put back, or when another writer replaced `target`
-        meanwhile, which stays. An exception during the hash puts the old `target` back, then propagates."""
+        meanwhile, which stays. False with `target` untouched where the filesystem has no atomic swap
+        (`_rename2`), so the caller builds instead. An exception during the hash puts the old `target` back, then
+        propagates."""
         if not self.holds(digest):
             return False
         target = Path(target)
@@ -314,8 +341,8 @@ class Store:
                 return False
             try:
                 placed = _publish(staged, target, digest)
-            finally:
-                staged.unlink(missing_ok=True)  # gone once renamed
+            except _NoAtomicRename:
+                placed = False
         if not placed:
             self._checked.pop(digest, None)
         return placed

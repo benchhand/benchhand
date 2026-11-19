@@ -478,6 +478,31 @@ def rewrite(path: Path, data: bytes) -> None:
     os.chmod(path, 0o444)
 
 
+RENAME = os.rename  # a writer outside the store, unaffected by the patches below
+
+
+class FailingClose:
+    """A stream whose context exit closes it, then fails, like a close on a disk that went away."""
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+    def __enter__(self) -> "FailingClose":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stream.close()
+        raise OSError(errno.EIO, "Input/output error")
+
+
+def contents(folder: Path) -> dict[str, bytes]:
+    """Each file in `folder` and its bytes."""
+    return {name: data for name, (data, _) in snapshot(folder).items()}
+
+
 def snapshot(folder: Path) -> dict[str, tuple[bytes, int]]:
     """Each file in `folder`: its bytes and its inode."""
     return {path.name: (path.read_bytes(), path.stat().st_ino) for path in folder.iterdir()}
@@ -505,21 +530,51 @@ class PlaceObject(Fixture):
 
     @contextlib.contextmanager
     def at_the_rename(self, before=lambda: None, after=lambda: None) -> Iterator[None]:
-        """While the block runs, `before` runs once just before place_object renames its staged link onto the
-        target, and `after` just after."""
-        real, pending = os.replace, [True]
+        """While the block runs, `before` runs once just before place_object first renames its staged link onto
+        the target, and `after` once just after such a rename succeeds."""
+        pending = {"before": before, "after": after}
 
-        def replace(source, target, *args, **kwargs):
-            seam = pending[0] and Path(source).name.endswith(".link")
-            pending[0] = pending[0] and not seam
-            if seam:
-                before()
-            real(source, target, *args, **kwargs)
-            if seam:
-                after()
+        def wrapping(real):
+            def rename(source, target, *args, **kwargs):
+                staged = Path(source).name.endswith(".link")
+                if staged:
+                    pending.pop("before", lambda: None)()
+                result = real(source, target, *args, **kwargs)
+                if staged:
+                    pending.pop("after", lambda: None)()
+                return result
+            return rename
 
-        with mock.patch.object(store.os, "replace", side_effect=replace):
+        with mock.patch.object(store.os, "replace", wrapping(os.replace)), \
+                mock.patch.object(store, "_rename2", wrapping(getattr(store, "_rename2", None)), create=True):
             yield
+
+    @contextlib.contextmanager
+    def at_the_undo(self, target: Path, *acts) -> Iterator[list]:
+        """While the block runs, once place_object has hashed its staged link, each call that renames or removes
+        `target` first runs the next of `acts`. The yielded list collects the acts that ran."""
+        pending, ran, hashed = list(acts), [], []
+        real_digest = hashlib.file_digest
+
+        def digest(stream, *args, **kwargs):
+            found = real_digest(stream, *args, **kwargs)
+            hashed.append(str(getattr(stream, "name", "")).endswith(".link"))
+            return found
+
+        def touching(real):
+            def call(*args, **kwargs):
+                if any(hashed) and pending and target in [Path(a) for a in args[:2] if isinstance(a, (str, Path))]:
+                    ran.append(pending.pop(0))
+                    ran[-1]()
+                return real(*args, **kwargs)
+            return call
+
+        with mock.patch.object(store.hashlib, "file_digest", digest), \
+                mock.patch.object(store.os, "rename", touching(os.rename)), \
+                mock.patch.object(store.os, "replace", touching(os.replace)), \
+                mock.patch.object(Path, "unlink", touching(Path.unlink)), \
+                mock.patch.object(store, "_rename2", touching(getattr(store, "_rename2", None)), create=True):
+            yield ran
 
     def test_a_verified_placement_replaces_the_target_and_leaves_nothing_beside_it(self) -> None:
         for links in ("hard links", "no hard links"):
@@ -613,6 +668,56 @@ class PlaceObject(Fixture):
         with self.at_the_rename(after=overwrite):
             self.assertFalse(self.store.place_object(digest, target))
         self.assertEqual({name: data for name, (data, _) in snapshot(target.parent).items()}, {"one.unv": b"FOREIGN"})
+
+    def test_a_file_another_writer_renames_onto_the_target_during_the_undo_stays(self) -> None:
+        """A failed hash undoes the placement. A writer that takes no lock renames its file onto the target just
+        before the undo, or, where an old target comes back, between the undo's two steps. Its file stands."""
+        moments = {("no target yet", "just before the undo"): 1, ("an old target", "just before the undo"): 1,
+                   ("an old target", "between the undo's two steps"): 2}
+        for (case, moment), step in moments.items():
+            with self.subTest(case, moment=moment):
+                digest, stored = self.stored(f"{case} {moment}".encode())
+                target = self.target(f"{case} {moment}", self.TARGETS[case])
+                foreign = target.with_name("foreign.tmp")
+
+                def overwrite(foreign=foreign, target=target) -> None:
+                    foreign.write_bytes(b"FOREIGN")
+                    RENAME(foreign, target)
+
+                acts = [lambda: None] * (step - 1) + [overwrite]
+                with self.at_the_rename(before=lambda stored=stored: rewrite(stored, b"x" * len(stored.read_bytes()))), \
+                        self.at_the_undo(target, *acts) as ran:
+                    self.assertFalse(self.store.place_object(digest, target))
+                self.assertEqual(len(ran), step)  # the seam was reached
+                self.assertEqual(contents(target.parent), {"one.unv": b"FOREIGN"})
+
+    def test_a_close_that_fails_after_a_mismatch_still_leaves_the_target_as_it_was(self) -> None:
+        real = Path.open
+
+        def opening(path, *args, **kwargs):
+            stream = real(path, *args, **kwargs)
+            return FailingClose(stream) if path.name.endswith(".link") else stream
+
+        for case, old in self.TARGETS.items():
+            with self.subTest(case):
+                digest, stored = self.stored(f"{case} close".encode())
+                target = self.target(f"{case} close", old)
+                before = snapshot(target.parent)
+                with self.at_the_rename(before=lambda stored=stored: rewrite(stored, b"x" * len(stored.read_bytes()))), \
+                        mock.patch.object(Path, "open", opening), self.assertRaises(OSError):
+                    self.store.place_object(digest, target)
+                self.assertEqual(snapshot(target.parent), before)
+
+    def test_without_an_atomic_swap_the_object_is_not_placed_and_the_target_left_as_it_was(self) -> None:
+        unsupported = OSError(errno.EINVAL, "Invalid argument")  # renameat2 on a filesystem without the flags
+        for case, old in self.TARGETS.items():
+            with self.subTest(case):
+                digest, _ = self.stored(f"{case} unsupported".encode())
+                target = self.target(f"{case} unsupported", old)
+                before = snapshot(target.parent)
+                with mock.patch.object(store, "_rename2", side_effect=unsupported, create=True):
+                    self.assertFalse(self.store.place_object(digest, target))
+                self.assertEqual(snapshot(target.parent), before)
 
 
 class Locks(Fixture):
