@@ -46,7 +46,8 @@ run   executes every hw/parts/<PN>/model.py in its declared kernel's own uv envi
       manufacturing output fails a blocking check fails the run: no version, latest unchanged.
 check runs the geometry checks on a built version; diff compares two built versions. A check of a
       version built from a record version 2 snapshot also publishes its cad.readback required-check
-      packet to hw/checks/<V>/cad/ (stdout `packet`). A check is a
+      packet to hw/checks/<V>/cad/ (stdout `packet`), with the GLB<->STEP agreement and declared
+      dimensions among its outcomes. A check is a
       run recorded in hw/.cad/runs (cad-flow process_lifecycle.py): it refuses to start while
       another check runs or an earlier run left processes behind, and prints how to stop them.
       Its pair workers die with it. --changed-only measures only the occurrence pairs whose

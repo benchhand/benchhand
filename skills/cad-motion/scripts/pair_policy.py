@@ -216,9 +216,9 @@ def declared_running_fits(hw: Path, interfaces: list[Any], assembly: Any) -> lis
 
 def declared_heat_sets(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
     """Heat-set inserts, `limits.heat_set: [{pair: [host, insert], hole_d, hole_tol, insert, source}]`, as
-    {pair, host, insert, hole_d, hole_tol, interface, source[, engagement_length_mm]} with `pair` the sorted
-    occurrence ids, `host` the host's occurrence id and `hole_tol` the declared [low, high] deviation of
-    `hole_d` (None: undeclared)."""
+    {pair, host, insert, hole_d, hole_tol, interface, entry, source[, engagement_length_mm]} with `pair` the sorted
+    occurrence ids, `host` the host's occurrence id, `entry` the declaration's 0-based place in its interface's
+    `heat_set` list and `hole_tol` the declared [low, high] deviation of `hole_d` (None: undeclared)."""
     path = hw / "interfaces.yaml"
     declared = []
     for index, interface in enumerate(interfaces):
@@ -240,7 +240,7 @@ def declared_heat_sets(hw: Path, interfaces: list[Any], assembly: Any) -> list[d
             where = f"{path}:{source}"
             declared.append({"pair": list(_pair(pair, assembly, where)), "host": assembly.attachable(pair[0], f"{where}: "),
                              "insert": entry["insert"], "hole_d": hole_d, "hole_tol": entry.get("hole_tol"),
-                             "interface": interface.get("id"), "source": source,
+                             "interface": interface.get("id"), "entry": number, "source": source,
                              **({"engagement_length_mm": entry["engagement_length_mm"]}
                                 if entry.get("engagement_length_mm") is not None else {})})
     return declared

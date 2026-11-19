@@ -109,16 +109,11 @@ LAYOUT = (
     "compares references/layout.md with layout.py's output; docs_only keeps that one file out"
     " of the safe set"
 )
-CORPUS_README = (
-    "reads skills/cad-design/tests/mfg_corpus/README.md for the not-at-the-packet label; docs_only does not"
-    " treat that file as safe (it sits under tests/, deeper than references/), so an edit to it runs every shard"
-)
 
 ALLOWED = [
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'din-spec-3105-1-checklist.md', HW),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'index.md', HW),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests.documents.capture', 'docs', HW),
-    Allow('skills/cad-design/tests/test_mfg_corpus.py', 'NotAtThePacketTests.test_the_readme_marks_the_five_families_and_says_what_their_rates_measure', 'README.md', CORPUS_README),
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_an_effective_isotropic_decision_the_reader_refuses_or_in_the_old_form_is_no_evidence', 'DR-003.md', HW, 2),
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_an_effective_isotropic_decision_the_reader_refuses_or_in_the_old_form_is_no_evidence', 'DR-003-model.md', HW),
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualificationBypasses.test_only_a_valid_accepted_madr_record_counts', 'DR-002.md', HW),

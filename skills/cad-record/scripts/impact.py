@@ -16,7 +16,9 @@ Each subject (a part, an interface, an assembly operation, a requirement or the 
 sha256 fingerprint per dependency domain (`DOMAINS`, the evidence ledger's `fingerprints` keys):
 use case; loads and environment; material and its condition; process, route, capability and setup;
 orientation, supports and finish; geometry, manufacturing state and components; interfaces, datums
-and assembly order; the inventory inputs of a bought part placed as occurrences; criteria and sources. Comparing the record of vM with vN (or with the current
+and assembly order; the inventory inputs of a bought part placed as occurrences, all of assembly.yaml for a made part,
+and for an interface that declares a heat set all of interfaces.yaml, assembly.yaml and every part's geometry;
+criteria and sources. Comparing the record of vM with vN (or with the current
 hw/ record) lists the domains that changed per subject, the check obligations and accepted evidence
 they make stale, the decisions they reopen, the earliest stage that accepted a changed fact and the
 flow it proposes, and the evidence whose recorded fingerprints still match: carry-forward candidates
@@ -96,6 +98,13 @@ _JUDGED = frozenset({"criterion", "source"})  # every check is judged against cr
 # The domains each check family depends on, by family prefix (the longest matching prefix decides).
 FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("cad.", frozenset({"geometry"})),
+    # Coarse but complete (#174 option A): the agreement reads its part's geometry and its `occurrences` domain, which for
+    # a made part is all of assembly.yaml with the part's model_frame. Couplings, mechanisms and profiles move parts off
+    # their own joint chain, so any assembly.yaml edit makes it stale.
+    ("cad.glb_step_agreement", frozenset({"geometry", "occurrences"})),
+    # The `occurrences` domain of an interface that declares a heat set: all of interfaces.yaml, all of assembly.yaml and
+    # every part's geometry, since the host is a reference the inventory resolves.
+    ("cad.declared_dimensions", frozenset({"occurrences"})),
     ("route.", _JUDGED | {"process", "route", "capability", "setup", "orientation", "finish", "material", "condition"}),
     ("process.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                            "condition"}),
@@ -333,16 +342,34 @@ class _Record:
         return values
 
     def mounting_inputs(self, pn: str) -> Any:
-        """The `occurrences` domain of a part: its inventory-derived inputs (occurrences, their placements, the
-        operations resolved through them, and its model_frame). An inventory problem fingerprints as itself. Only a
-        bought part with an explicit occurrence or a broken inventory has any. Only purchase.* depends on the
-        domain. #154 may depend on it in place of widening `interface`."""
-        if not any(op.get("kind") == "purchased" for op in self.route(pn)):
+        """The `occurrences` domain of a part. A bought part has it only with an explicit occurrence or a broken
+        inventory: its occurrences, their placements, the operations resolved through them and its model_frame, which
+        purchase.* reads (an inventory problem fingerprints as itself). A made part always has it: all of assembly.yaml
+        with the part's model_frame, which cad.glb_step_agreement reads. A coupling, mechanism or profile can move an
+        occurrence off its own joint chain, so the agreement takes the whole file: coarse, never incomplete. Only
+        purchase.* and cad.glb_step_agreement depend on a part's domain. #154 may depend on it in place of widening
+        `interface`."""
+        if any(op.get("kind") == "purchased" for op in self.route(pn)):
+            found = part_occurrences(self.record, pn)
+            if isinstance(found, InventoryProblem) or any(o.ref.startswith("@") for o in found.occurrences):
+                return plain(found)
             return None
-        found = part_occurrences(self.record, pn)
-        if isinstance(found, InventoryProblem) or any(o.ref.startswith("@") for o in found.occurrences):
-            return plain(found)
-        return None
+        part = self.record.parts.get(pn)
+        if part is None or not part.made:
+            return None
+        return {"assembly": plain(self.record.assembly_document),
+                "model_frame": (self.parts.get(pn) or {}).get("model_frame", assembly_data.DEFAULT_FRAME)}
+
+    def heat_set_inputs(self, if_id: str) -> Any:
+        """The `occurrences` domain of an interface that declares a heat set, which cad.declared_dimensions reads: all
+        of interfaces.yaml, all of assembly.yaml and every part's geometry. The host is a reference the inventory
+        resolves, so any of them can change which bore the check measures: coarse, never incomplete. None for an
+        interface without a heat set."""
+        if not _get(self.interfaces.get(if_id), "limits", "heat_set"):
+            return None
+        return {"interfaces": [self.interfaces[i] for i in sorted(self.interfaces)],
+                "assembly": plain(self.record.assembly_document),
+                "geometry": {pn: self.part_values(pn).get("geometry") for pn in sorted(self.parts)}}
 
     def interfaces_of(self, pn: str) -> set[str]:
         found = set()
@@ -412,8 +439,11 @@ class _Record:
         if key == "product":  # the whole sequence, occurrence references included, which the per-part view misses
             combined["interface"] = {"parts": combined["interface"], "assembly_sequence": self.operations,
                                      "assembly_inventory": plain(self.record.assembly_inventory)}
-        for domain in opt_in_domains():  # only a part carries an opt-in domain (a color, its occurrences)
-            combined.pop(domain, None)
+        for domain in opt_in_domains():  # a part carries an opt-in domain (a color, its occurrences), and so does an
+            combined.pop(domain, None)  # interface that declares a heat set (its occurrences, below)
+        heat_sets = self.heat_set_inputs(key) if key in self.interfaces else None
+        if heat_sets is not None:
+            combined["occurrences"] = heat_sets
         return combined
 
 

@@ -103,7 +103,8 @@ def _rigid(rows: Sequence[Sequence[float]]) -> Any:
 
 
 def _policy_entry(kind: str, item: Mapping[str, Any]) -> str:
-    return json.dumps({"kind": kind, **{k: v for k, v in item.items() if k not in ("pair", "source")}},
+    """One declaration as canonical text, without its pair, its record path and its place in its list (`entry`)."""
+    return json.dumps({"kind": kind, **{k: v for k, v in item.items() if k not in ("pair", "source", "entry")}},
                       sort_keys=True)
 
 
