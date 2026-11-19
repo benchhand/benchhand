@@ -22,7 +22,7 @@ import tempfile
 import threading
 import tomllib
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from unittest import mock
@@ -932,9 +932,11 @@ class Repair(ReleaseCase):
                                     for item in report["findings"]), json.dumps(report["findings"], indent=1))
                 self.assertEqual(tree(hw), before)
 
-    def two_writers(self, hw: Path) -> tuple[dict[str, tuple[int, dict[str, Any]]], dict[str, str], list[bool]]:
-        """Writer B inspects hw/releases/A, stages and waits; writer A then releases; then B goes on. The
-        outcome of each, the package tree as A left it, and whether each claim ran under the lock."""
+    def two_writers(self, hw: Path, a_decision: str = "DR-005"
+                    ) -> tuple[dict[str, tuple[int, dict[str, Any]]], dict[str, str], list[bool]]:
+        """Writer B inspects hw/releases/A, stages and waits; writer A then releases, approved by
+        `a_decision`; then B goes on. The outcome of each, the package tree as A left it, and whether each
+        claim ran under the lock."""
         b_staged, a_done = threading.Event(), threading.Event()
         guard = 30  # seconds: only a hang guard, never part of the logic
         outcome: dict[str, tuple[int, dict[str, Any]]] = {}
@@ -961,7 +963,7 @@ class Repair(ReleaseCase):
             b.start()
             try:
                 self.assertTrue(b_staged.wait(guard), "writer B never staged")
-                outcome["a"] = self.release(hw)
+                outcome["a"] = self.release(hw, decision=a_decision)
                 after_a = tree(hw / "releases" / "A")
             finally:
                 a_done.set()
@@ -981,17 +983,36 @@ class Repair(ReleaseCase):
         self.assertTrue(all(layout.verify(path) for path in moved), "no sound package was moved aside")
         self.assertTrue(held and all(held), "every claim ran under the revision's lock")
 
-    def test_a_writer_that_finds_the_package_sealed_under_the_lock_leaves_no_stage(self) -> None:
-        for case in ("a repair", "a fresh release"):
+    def test_a_repair_judges_a_waiver_on_the_release_date(self) -> None:
+        sealing, later = (datetime(2026, 2, 27, 12, tzinfo=timezone.utc), datetime(2026, 4, 1, 12, tzinfo=timezone.utc))
+        with fixed_today(sealing.date()):  # the waivers hold until 2026-03-01
+            hw = self.project(service_class="fit_assembly", ledger=waive_fdm_trials_until("2026-03-01"))
+            code, report = self.release(hw, now=sealing)
+        self.assertEqual(code, 0, report.get("findings"))
+        sealed = tree(hw / "releases" / "A")
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        with fixed_today(later.date()):
+            self.assertIn("waiver.expired", json.dumps(validate.validate_project(hw)), "the waivers expired by today")
+            code, report = self.release(hw, now=later)
+        self.assertEqual(code, 0, report.get("findings"))
+        self.assertEqual(tree(hw / "releases" / "A"), sealed, "the repair seals the package of the release date again")
+
+    def test_a_writer_that_finds_another_package_under_the_lock_leaves_no_stage(self) -> None:
+        cases = {  # B's stage, A's approval, and B's outcome once A has sealed the revision
+            "a repair, then A's repair": ("repair", "DR-005", (0, "released")),
+            "a fresh release, then A's release": ("fresh", "DR-005", (0, "released")),
+            "a fresh release, then A's release of another approval": ("fresh", "DR-004", (1, "refused")),
+        }
+        for case, (staged, a_decision, expected) in cases.items():
             with self.subTest(case):
-                if case == "a repair":  # B stages a repair of the stale package, and A repairs it first
+                if staged == "repair":  # B stages a repair of the stale package
                     hw, _ = self.released()
                     DAMAGE["a changed file"](hw / "releases" / "A")
-                else:  # the revision is absent when B starts, and A seals it first
+                else:  # the revision is absent when B starts
                     hw = self.project()
-                outcome, _, _ = self.two_writers(hw)
+                outcome, _, _ = self.two_writers(hw, a_decision)
                 code, report = outcome["b"]
-                self.assertEqual((code, report.get("already_sealed"), report.get("stage")), (0, True, None), report)
+                self.assertEqual(((code, report["status"]), report.get("stage")), (expected, None), report)
                 stages = sorted((hw.parent / ".cad-work" / "release-A").glob("stage-*"))
                 self.assertEqual(stages, [], "the losing writer removed its stage")
 
@@ -1060,6 +1081,26 @@ def waive_fdm_trials(hw: Path, record: Any, entries: list[dict[str, Any]]) -> li
                                             manifest_sha256=configuration["manifest_sha256"],
                                             geometry=impact.current_geometry(hw), artifacts=["hw/docs/inspection.md"], hw=hw))
     return entries
+
+
+def waive_fdm_trials_until(expires: str) -> Callable[[Path, Any, list[dict[str, Any]]], list[dict[str, Any]]]:
+    """waive_fdm_trials, each waiver expiring on `expires` (YYYY-MM-DD)."""
+    def ledger(hw: Path, record: Any, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        entries = waive_fdm_trials(hw, record, entries)
+        for entry in entries:
+            if entry.get("result") == "waived":
+                entry["waiver"]["expires"] = expires
+        return entries
+    return ledger
+
+
+def fixed_today(day: date) -> Any:
+    """A patch of evidence.py's clock: date.today() is `day` while it is active."""
+    class Fixed(date):
+        @classmethod
+        def today(cls) -> Fixed:
+            return cls(day.year, day.month, day.day)
+    return mock.patch.object(release.evidence, "date", Fixed)
 
 
 def open_selection(hw: Path) -> None:
