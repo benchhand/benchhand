@@ -184,6 +184,13 @@ class Cantilever(unittest.TestCase):
         self.assertEqual((found.status, found.sigma_mpa), ("unknown", None))
         self.assertEqual(found.reasons, ("load_not_finite",))
 
+    def test_a_nan_moment_residual_beside_a_clean_force_residual_abstains(self) -> None:
+        # hypot keeps a 3e153 N load finite, so no honest field reaches nan; the comparison is pinned by giving it
+        # one. max(0.0, nan) is 0.0, which would pass.
+        with patch.object(ns, "_residuals", return_value=(0.0, math.nan)):
+            found = self.assess()
+        self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("cross_check_failed",), None))
+
     def test_a_node_or_mesh_size_that_is_not_finite_abstains(self) -> None:
         # min() and max() over a nan depend on the order of their arguments, so the inputs are screened first.
         self.coordinates[next(iter(self.coordinates))] = (math.nan, 0.0, 0.0)
