@@ -26,7 +26,7 @@ Known limits. The guard reads string constants, so it cannot see:
 - a flag built at runtime, by f-string interpolation or by ``+``;
 - a short cluster passed into a helper defined in another function, such as the ``commit`` helper in
   ``skills/cad-recheck/tests/test_recheck.py``, which holds ``commit`` while its callers hold the cluster.
-Both are tracked in a follow-up issue (number to be added).
+Both are tracked in follow-up issue #269.
 """
 
 import ast
