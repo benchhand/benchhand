@@ -613,7 +613,8 @@ def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = 
         return publish_package(release, staged, report, repairing)
 
 
-def publish_package(release: Release, staged: Path, report: dict[str, Any], repairing: bool) -> tuple[int, dict[str, Any]]:
+def publish_package(release: Release, staged: Path, report: dict[str, Any],
+                    repairing: bool) -> tuple[int, dict[str, Any]]:
     """Seal `staged` at hw/releases/<REV>/; the caller holds the revision's lock (layout.target_lock), so
     what is there is inspected again here. An absent path is claimed. A sound package of this release,
     which another writer sealed meanwhile, stays and the run is a no-op. A stale package of this release
@@ -635,7 +636,8 @@ def publish_package(release: Release, staged: Path, report: dict[str, Any], repa
     return claim_package(release, staged, report, old)
 
 
-def claim_package(release: Release, staged: Path, report: dict[str, Any], old: Path | None) -> tuple[int, dict[str, Any]]:
+def claim_package(release: Release, staged: Path, report: dict[str, Any],
+                  old: Path | None) -> tuple[int, dict[str, Any]]:
     """layout.claim the stage onto hw/releases/<REV>/. When that fails, the stale package moved to `old`
     goes back (put_back), and the failure stands: a PublishConflict refuses, any other is a LayoutError."""
     hw, target_rel = release.hw, release.target_rel
@@ -661,7 +663,8 @@ def put_back(hw: Path, old: Path, target: Path, target_rel: str) -> str:
     try:
         layout.claim(old, target, target_rel)
     except (layout.LayoutError, OSError) as error:
-        return f"; the stale package it replaced is kept at {layout.relative(hw, old)}, since putting it back failed: {error}"
+        return (f"; the stale package it replaced is kept at {layout.relative(hw, old)}, since putting it back "
+                f"failed: {error}")
     return "; the stale package it replaced is back in place"
 
 
@@ -711,8 +714,8 @@ def holds_problems(version: str, decision: str, manifest: Any) -> list[str]:
 def released_at(manifest: dict[str, Any]) -> datetime | None:
     """The UTC release time a package manifest records, or None when it records none."""
     try:
-        return datetime.strptime(manifest.get("released_at"), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
+        return datetime.strptime(str(manifest.get("released_at")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
         return None
 
 
