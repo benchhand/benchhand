@@ -66,6 +66,8 @@ def _load_module(name: str, path: Path) -> Any:
 mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
 # The one definition of the selection inputs and their digest (selection.input_digest over DIGEST_SCOPE).
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
+# The guideline sets: which of a profile's digests belong to a part's materials (guidelines.digests_for).
+guidelines = _load_module("cad_record_guidelines", SCRIPTS / "guidelines.py")
 # The occurrence inventory (assembly.yaml occurrences and subassemblies) and its reference resolution.
 assembly_data = _load_module("cad_record_assembly_data", SCRIPTS / "assembly_data.py")
 
@@ -339,9 +341,9 @@ class _Record:
         sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
         digests = getattr(self.record, "guideline_digests", None) or {}
-        for op in self.route(pn):  # a guideline set the part's capability profile resolves through stales it like a source
+        for op in self.route(pn):  # a guideline set the part's capability profile resolves through, for its own materials
             profile = op.get("capability")
-            for ref, sha in sorted((digests.get(profile) or {}).items()) if isinstance(profile, str) else ():
+            for ref, sha in guidelines.digests_for(digests.get(profile), self.profiles(pn)).items() if isinstance(profile, str) else ():
                 values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:
