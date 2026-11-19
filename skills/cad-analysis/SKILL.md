@@ -101,7 +101,7 @@ The result reports:
 
 - `stress_study.outcome` is `settled`, `settled_away_from_support` or `unknown`.
 - `settled`: an interior peak that converged within 2%. `sigma_mpa` holds the larger kept peak, and `strength_eligible` is true.
-- `settled_away_from_support`: the peak sits on the exclusion boundary. The stress near the support is higher. `sigma_info_mpa` holds the figure for information only. `sigma_mpa` is null. `strength_eligible` is false. The route to a value there is linearisation at the support (#209).
+- `settled_away_from_support`: the peak sits on the exclusion boundary. The stress near the support is higher. `sigma_info_mpa` holds the figure for information only. `sigma_mpa` is null. `strength_eligible` is false. A value there comes only from `near_support`, below (#209).
 - `unknown` carries no number. `reasons` and `message` give the cause and the figures.
 - `max_displacement_mm` comes from the fine solve.
 - `status: pass` with `status_scope: run`, as in fast mode. The status belongs to the solver runs, also when the study is `unknown`.
@@ -115,7 +115,15 @@ The checker reads `engineering.strength` from the study only:
 - A `settled` study with `strength_eligible: true`, a positive finite `sigma_mpa` and no `sigma_info_mpa` gives the yield safety factor. The factor is the profile's yield strength over `sigma_mpa`. An interval yield counts at its lower bound.
 - A factor at or above the `acceptance.strength` criterion passes. Open load or basis gaps leave it `unknown`.
 - A factor below the criterion fails, with finding `fea.strength.margin`.
-- `settled_away_from_support` leaves strength `unknown`, and the reason names #209. So does `unknown`, and so does a study that breaks any rule above.
+- `settled_away_from_support` gives a strength value only through `stress_study.near_support`. The study adds `near_support` for that outcome and leaves `sigma_mpa` (null) and `strength_eligible` (false) as they were. `near_support.outcome` is `linearised` or `unknown`, and `reasons` names why. The method is `fea_near_support`:
+  - Each fixed face and each load face has a section one zone depth inside the part, `max(1 × t_local, 3 × h_coarse)`. Nine stress classification lines cross it (ASME VIII-2 Annex 5-A through `fea_linearise`, clause numbers from Kezar, Mackenzie PVP2017 and Kalnins PVP2008).
+  - The strength stress is the larger of the linearised membrane or membrane-plus-bending von Mises stress and the study's kept-region peak. There is no 1.5 shape-factor credit on bending. The peak at the section ends is reported and never gives a pass.
+  - The integrated section force and moment must match the applied loads within 5% of the force and moment scales. The moment scale is never below F × L, so a load with no moment about the section still has its residual measured. The 5% is provisional (benchhand-2dq tracks sourcing it), and a real smoothed mesh can miss it on the force. A miss gives `cross_check_failed`.
+  - A torque about the section normal above 0.1% of F × L gives `torsion_on_section`, whatever the residual. The floor applies to the applied torque and to the torque of the section's own stresses, the shear first moments included. A real smoothed mesh can trip it: the 4.5 mm cantilever fixture shows 0.21% and 0.10% of F × L.
+  - A node, mesh size or load that is not finite gives `mesh_not_finite` or `load_not_finite`.
+  - A part held on more than one face is `statically_indeterminate`. A refusal of the linearisation gives `scl_<reason>`. Both stay `unknown`.
+  - The material must be an isotropic wrought, sheet or rod form, or have a sourced yield allowable. PETG, printed, cast and moulded material stay `unknown`.
+- A linearised, cross-checked, eligible `settled_away_from_support` study gives the factor as for `settled`. Any other `settled_away_from_support` study leaves strength `unknown`, and the reason names #209. So does `unknown`, and so does a study that breaks any rule above. Away and unknown never fail.
 - The factor appears only in the packet's finding as `measured`. The run's `status` stays the solver runs', also when strength fails.
 
 A failed solve is a no-result error. `error.details.stress_study_solve` names the coarse or fine solve. A failed coarse solve stops the study.
