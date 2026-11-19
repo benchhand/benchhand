@@ -92,14 +92,17 @@ def tree_paths(root: Path, committed: bool) -> list[str]:
 
 def require_gate_decision(root: Path, committed: bool, gate: str, stamp_time: Any) -> None:
     """Refuse an advance of flow.stage past the stamped stage unless a decision record of hw/decisions records it:
-    status proposed (provisional) or accepted, not superseded, dated on or after the stamp's day. Reads the index,
+    status proposed (provisional) or accepted, not superseded, dated on or after the stamp's UTC day. Reads the index,
     or HEAD when `committed`; a record cad-record decision_records refuses is a refusal too."""
     decision_records = validate.decision_records
     problem = f"flow.stage advanced past the stamped stage (gate {gate}) without a decision record of the gate"
     try:
-        stamped_on = datetime.fromisoformat(stamp_time.replace("Z", "+00:00")).date()
-    except (AttributeError, ValueError) as error:
+        stamped = datetime.fromisoformat(stamp_time)
+    except (TypeError, ValueError) as error:
         raise RuntimeError(f"{problem}: the recheck stamp has no readable timestamp") from error
+    if stamped.utcoffset() is None:
+        raise RuntimeError(f"{problem}: the recheck stamp timestamp {stamp_time!r} has no time zone offset")
+    stamped_on = stamped.astimezone(timezone.utc).date()
     with tempfile.TemporaryDirectory() as scratch:
         for path in tree_paths(root, committed):
             name = path.removeprefix("hw/decisions/")
@@ -111,7 +114,7 @@ def require_gate_decision(root: Path, committed: bool, gate: str, stamp_time: An
             raise RuntimeError(f"cannot read the decision records of hw/decisions: {str(error).replace(scratch + '/', '')}") from error
     if not any(r.status in ("proposed", "accepted") and not r.superseded_by and r.date >= stamped_on for r in records):
         raise RuntimeError(f"{problem}. Record the decision in hw/decisions as a proposed (provisional) or accepted "
-                           f"record, not superseded, dated {stamped_on} or later.")
+                           f"record, not superseded, dated {stamped_on} (UTC) or later.")
 
 
 def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:
