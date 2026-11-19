@@ -932,9 +932,9 @@ class Repair(ReleaseCase):
                                     for item in report["findings"]), json.dumps(report["findings"], indent=1))
                 self.assertEqual(tree(hw), before)
 
-    def test_a_slower_writer_never_moves_a_repaired_package_aside(self) -> None:
-        hw, _ = self.released()
-        DAMAGE["a changed file"](hw / "releases" / "A")
+    def two_writers(self, hw: Path) -> tuple[dict[str, tuple[int, dict[str, Any]]], dict[str, str], list[bool]]:
+        """Writer B inspects hw/releases/A, stages and waits; writer A then releases; then B goes on. The
+        outcome of each, the package tree as A left it, and whether each claim ran under the lock."""
         b_staged, a_done = threading.Event(), threading.Event()
         guard = 30  # seconds: only a hang guard, never part of the logic
         outcome: dict[str, tuple[int, dict[str, Any]]] = {}
@@ -943,7 +943,7 @@ class Repair(ReleaseCase):
 
         def stage_then_wait(*arguments: Any) -> Path:
             staged = real_stage(*arguments)
-            if threading.current_thread().name == "writer-b":  # B has seen the stale package and staged a repair
+            if threading.current_thread().name == "writer-b":  # B has inspected the revision and staged
                 b_staged.set()
                 a_done.wait(guard)
             return staged
@@ -960,20 +960,40 @@ class Repair(ReleaseCase):
             b = threading.Thread(target=writer_b, name="writer-b", daemon=True)
             b.start()
             try:
-                self.assertTrue(b_staged.wait(guard), "writer B never staged its repair")
+                self.assertTrue(b_staged.wait(guard), "writer B never staged")
                 outcome["a"] = self.release(hw)
-                repaired = tree(hw / "releases" / "A")
+                after_a = tree(hw / "releases" / "A")
             finally:
                 a_done.set()
                 b.join(guard)
         self.assertFalse(b.is_alive(), "writer B hung")
         self.assertEqual(outcome["a"][0], 0, outcome["a"][1].get("findings"))
+        return outcome, after_a, held
+
+    def test_a_slower_writer_never_moves_a_repaired_package_aside(self) -> None:
+        hw, _ = self.released()
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        outcome, repaired, held = self.two_writers(hw)
         self.assertEqual((outcome["b"][0], outcome["b"][1].get("already_sealed")), (0, True), outcome["b"][1])
         self.assertEqual(tree(hw / "releases" / "A"), repaired, "B left A's repair in place")
         moved = self.replaced(hw)
         self.assertEqual(len(moved), 1, "only A moved a package aside")
         self.assertTrue(all(layout.verify(path) for path in moved), "no sound package was moved aside")
         self.assertTrue(held and all(held), "every claim ran under the revision's lock")
+
+    def test_a_writer_that_finds_the_package_sealed_under_the_lock_leaves_no_stage(self) -> None:
+        for case in ("a repair", "a fresh release"):
+            with self.subTest(case):
+                if case == "a repair":  # B stages a repair of the stale package, and A repairs it first
+                    hw, _ = self.released()
+                    DAMAGE["a changed file"](hw / "releases" / "A")
+                else:  # the revision is absent when B starts, and A seals it first
+                    hw = self.project()
+                outcome, _, _ = self.two_writers(hw)
+                code, report = outcome["b"]
+                self.assertEqual((code, report.get("already_sealed"), report.get("stage")), (0, True, None), report)
+                stages = sorted((hw.parent / ".cad-work" / "release-A").glob("stage-*"))
+                self.assertEqual(stages, [], "the losing writer removed its stage")
 
     def test_a_failed_repair_puts_the_stale_package_back(self) -> None:
         failures = {  # the os call that fails inside the claim, and how it fails
