@@ -9,3 +9,9 @@
 /concept/screenshots/
 /releases/
 # <<< cad storage
+# The v1 manifest EV-001 cites (manufacturing/evidence.yaml) is committed; the rest of versions/ stays ignored.
+!/versions/
+/versions/*
+!/versions/v1/
+/versions/v1/*
+!/versions/v1/manifest.json
