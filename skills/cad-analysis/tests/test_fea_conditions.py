@@ -20,7 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import patch
 
 import yaml
@@ -130,10 +130,12 @@ SLANT = (0, 0.6, -0.8)  # a direction with all its weight off the axes of both r
 
 
 def framed_documents(application: Any, occurrences: list[tuple[str, str, dict[str, Any] | None]],
-                     direction: Any = SLANT, other_frame: str = "part_local") -> dict[str, Any]:
+                     direction: Any = SLANT, other_frame: str = "part_local",
+                     tweak: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """The load's direction written against `application` (None leaves it out), in a record whose bracket is in its
     own frame (`part_local`), whose neighbour is in `other_frame`, and whose parts are placed by `occurrences`: (id, PN,
-    placement or None to omit). The record holds the interface IF-001 and the assembly operation mount-bracket."""
+    placement or None to omit). The record holds the interface IF-001 and the assembly operation mount-bracket;
+    `tweak` may change the documents last."""
     docs = documents(direction=direction)
     docs["product.yaml"]["use_case"]["loads"][0].update({"application": application} if application is not None else {})
     docs[f"parts/{PN}/part.yaml"]["model_frame"] = "part_local"
@@ -143,6 +145,8 @@ def framed_documents(application: Any, occurrences: list[tuple[str, str, dict[st
     docs["assembly.yaml"] = {"occurrences": placed, "subassemblies": [{"id": "main", "title": "Main",
                                                                       "occurrences": [f"@{o['id']}" for o in placed]}],
                              "joints": [], "operations": [{"id": "mount-bracket"}]}
+    if tweak is not None:
+        tweak(docs)
     return docs
 
 
@@ -618,19 +622,20 @@ class QualificationBypasses(SourcedFEACase):
             with self.subTest(name):
                 self.assert_frame_unconfirmed(application, occurrences, [40, 0, 30], why, **extra)
 
-    def frame_report(self, application: Any, occurrences: Any, force: list[float], **extra: Any) -> dict[str, Any]:
+    def frame_report(self, application: Any, occurrences: Any, force: list[float], *,
+                     tweak: Callable[[dict[str, Any]], None] | None = None, **extra: Any) -> dict[str, Any]:
         self.solved.clear()
-        self.build(framed_documents(application, occurrences))
+        self.build(framed_documents(application, occurrences, tweak=tweak))
         entries = [{"selector": {"indices": [2]}, "force": force, "load": "head_load"}]
         path = self.case({"conditions": SERVICE}, acceptance={"strength": "REQ-001", "stiffness": "REQ-002"},
                          mesh_convergence={"decision": "DR-002"}, loads=entries, **extra)
         self.approve(self.study(path))
         return self.solve(path)
 
-    def assert_frame_unconfirmed(self, application: Any, occurrences: Any, force: list[float], why: str,
-                                 **extra: Any) -> None:
+    def assert_frame_unconfirmed(self, application: Any, occurrences: Any, force: list[float], why: str, *,
+                                 tweak: Callable[[dict[str, Any]], None] | None = None, **extra: Any) -> None:
         """The load stays unknown and a gap on it names the frame and `why`."""
-        report = self.frame_report(application, occurrences, force, **extra)
+        report = self.frame_report(application, occurrences, force, tweak=tweak, **extra)
         self.assert_unproven(report, loads=True)
         gaps = [gap for gap in report["evidence"]["gaps"] if "head_load" in gap]
         self.assertTrue(any("frame cannot be confirmed" in gap and why in gap for gap in gaps), gaps)
@@ -658,6 +663,32 @@ class QualificationBypasses(SourcedFEACase):
                             {"product": True, "bogus": 1}, {"occurrence": "@other"}, {"PN": OTHER, "occurrence": 5}):
             with self.subTest(application=application):
                 self.assert_frame_unconfirmed(application, self.BOTH, [30, 0, -40], "application")
+
+    def test_an_empty_reference_does_not_match_an_empty_declared_id(self) -> None:
+        """The record declares an interface, an assembly operation and a part whose id is "". An application that
+        names "" would find it there and, read as the assembly frame, wrongly cover the (30, 0, -40) N force."""
+        def interface(docs: dict[str, Any]) -> None:
+            docs["interfaces.yaml"]["interfaces"].append(fx.interface("", PN, OTHER))
+
+        def operation(docs: dict[str, Any]) -> None:
+            docs["assembly.yaml"]["operations"].append({"id": ""})
+
+        def part(docs: dict[str, Any]) -> None:
+            docs["parts/EMPTY/part.yaml"] = {**fx.part("TST-0103", "Nameless"), "PN": ""}
+
+        for application, tweak in (({"interface": ""}, interface), ({"assembly_operation": ""}, operation),
+                                   ({"PN": ""}, part)):
+            with self.subTest(application=application):
+                self.assert_frame_unconfirmed(application, self.BOTH, [30, 0, -40], "application", tweak=tweak)
+
+    def test_an_assembly_operation_whose_id_is_a_mapping_does_not_stop_a_same_part_load_from_reporting(self) -> None:
+        def operation(docs: dict[str, Any]) -> None:
+            docs["assembly.yaml"]["operations"].append({"id": {"not": "a name"}})
+
+        report = self.frame_report({"PN": PN}, self.BOTH, [0, 30, -40], tweak=operation)
+        self.assertEqual(self.verdicts(report), ("pass", "pass"), report["evidence"]["gaps"])
+        report = self.frame_report({"assembly_operation": "mount-bracket"}, self.BOTH, [30, 0, -40], tweak=operation)
+        self.assertEqual(self.verdicts(report), ("pass", "pass"), report["evidence"]["gaps"])
 
     def test_an_assembly_zero_part_with_an_occurrence_it_does_not_own_leaves_the_load_unknown(self) -> None:
         """The neighbour's model frame is the assembly frame, so a bare reference to it confirms with no placement. An

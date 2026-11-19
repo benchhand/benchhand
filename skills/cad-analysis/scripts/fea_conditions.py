@@ -631,6 +631,12 @@ SUBJECT_KEYS = frozenset({"product", "PN", "occurrence", "component", "operation
 FRAME_KEYS = ("PN", "product", "interface", "assembly_operation")
 
 
+def _valid_id(value: Any) -> bool:
+    """Whether `value` can name a record entry: a non-empty string. Declared ids and the references to them both go
+    through this, so an empty reference never matches an empty declared id, and a mapping never reaches a set."""
+    return isinstance(value, str) and bool(value)
+
+
 class _Frames:
     """Model frames of the record's parts, to state a load's direction in the analysed part's model frame.
 
@@ -692,15 +698,17 @@ class _Frames:
         if unknown:
             return f"the load's application has the keys {unknown}, which a subject does not allow"
         operations = self.record.assembly_operations
-        held = {"PN": self.record.parts, "interface": self.record.interfaces,
-                "assembly_operation": {op.get("id") for op in operations} if isinstance(operations, tuple) else set()}
+        held = {"PN": {pn for pn in self.record.parts if _valid_id(pn)},
+                "interface": {ident for ident in self.record.interfaces if _valid_id(ident)},
+                "assembly_operation": {op["id"] for op in operations if isinstance(op, Mapping) and _valid_id(op.get("id"))}
+                if isinstance(operations, tuple) else set()}
         for key, known in held.items():
-            if key in application and not (isinstance(application[key], str) and application[key] in known):
+            if key in application and not (_valid_id(application[key]) and application[key] in known):
                 return f"the load's application names the {key} {application[key]!r}, which the record does not hold"
         if "product" in application and application["product"] is not True:
             return f"the load's application has product {application['product']!r}, not true"
         if "occurrence" in application and not (
-                isinstance(application["occurrence"], str) and OCCURRENCE_REF.fullmatch(application["occurrence"])
+                _valid_id(application["occurrence"]) and OCCURRENCE_REF.fullmatch(application["occurrence"])
                 and "PN" in application):
             return "the load's application names an occurrence that is not an @id reference beside a part"
         return ""
