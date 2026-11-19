@@ -240,10 +240,10 @@ def _tab_slot_fits(ctx: Context, cal: Calibrated, findings: list[Draft]) -> list
         surfaces = list(raw.get("surfaces") or ())
         mine = [s for s in surfaces if s.get("PN") == ctx.pn and (s.get("component") in (None, ctx.component))]
         others = [s for s in surfaces if s.get("PN") != ctx.pn]
-        criterion = next((a["criterion"] for a in raw.get("acceptance") or ()
-                          if a.get("criterion", {}).get("property") == "clearance"), None)
-        if not mine or not others or criterion is None:
+        clearances = [a["criterion"] for a in raw.get("acceptance") or () if a.get("criterion", {}).get("property") == "clearance"]
+        if not mine or not others or not clearances:
             continue
+        criterion = clearances[0]
         slot, tab = mine[0], others[0]
         if g is None:
             parts.append((UNKNOWN, f"{if_id} slot width not measured"))
@@ -279,21 +279,19 @@ def _tab_slot_fits(ctx: Context, cal: Calibrated, findings: list[Draft]) -> list
         low = (width + dev_low - 2 * coat_slot[1]) - (t_high + 2 * coat_tab[1])
         high = (width + dev_high - 2 * coat_slot[0]) - (t_low + 2 * coat_tab[0])
         nominal = width - (t_low + t_high) / 2.0
-        c_units = criterion.get("units", "mm")
-        convert = ctx.mi.convert
-        if criterion.get("operator") == "between":
-            need_low, need_high = (convert(v, c_units, "mm") for v in criterion["value"])
-        elif criterion.get("operator") == ">=":
-            need_low, need_high = convert(criterion["value"], c_units, "mm"), math.inf
-        else:
-            parts.append((UNKNOWN, f"{if_id} clearance criterion operator {criterion.get('operator')} is not one this "
+        needs, unsupported = _clearance_needs(ctx, clearances)
+        if not needs:
+            parts.append((UNKNOWN, f"{if_id} clearance criterion operator {', '.join(unsupported)} is not one this "
                                    "check evaluates (>= or between)"))
             continue
         measured = {"lower": round(low, 6) + 0.0, "upper": round(high, 6) + 0.0, "units": "mm"}
         why = (f"nominal clearance {nominal:+.3f} mm; slot {width:g} mm with kerf {dev_low:+g}..{dev_high:+g} mm, "
                f"tab sheet {t_low:g}..{t_high:g} mm, coating {coat_slot[0]:g}..{coat_slot[1]:g} mm per slot face and "
                f"{coat_tab[0]:g}..{coat_tab[1]:g} mm per tab face")
-        if low < need_low - 1e-9 or high > need_high + 1e-9:
+        broken = next(((c, need_low, need_high) for c, need_low, need_high in needs
+                       if low < need_low - 1e-9 or high > need_high + 1e-9), None)
+        if broken is not None:
+            criterion, need_low, need_high = broken
             findings.append(Draft(f"process.{kind}.tab_slot_fit", "major", FAIL, measured, {**criterion},
                                   "worst-case interval of slot width, calibrated kerf, sheet thickness and coating", why,
                                   f"the nominal {if_id} tab-and-slot fit {'binds or does not assemble' if low < need_low else 'is loose'} "
@@ -307,9 +305,27 @@ def _tab_slot_fits(ctx: Context, cal: Calibrated, findings: list[Draft]) -> list
                                   requirements=list(interface.functional.requirements),
                                   recheck=[f"process.{kind}.kerf", "interface.fit", "interface.stack"], feature=slot["feature"]))
             parts.append((FAIL, f"{if_id} worst-case clearance {low:+.3f}..{high:+.3f} mm"))
+        elif unsupported:  # no miss on the criteria judged, but another cannot be: open, never a pass
+            parts.append((UNKNOWN, f"{if_id} clearance criterion operator {', '.join(unsupported)} is not one this "
+                                   "check evaluates (>= or between)"))
         else:
             parts.append((PASS, f"{if_id} worst-case clearance {low:+.3f}..{high:+.3f} mm"))
     return parts
+
+
+def _clearance_needs(ctx: Context, clearances: list[Mapping[str, Any]]) -> tuple[list[tuple[Mapping[str, Any], float, float]], list[str]]:
+    """Each `>=` or `between` clearance criterion with its (minimum, maximum) in mm, and the operators of the others."""
+    needs = []
+    for criterion in clearances:
+        units = criterion.get("units", "mm")
+        if criterion.get("operator") == "between":
+            low, high = (ctx.mi.convert(v, units, "mm") for v in criterion["value"])
+        elif criterion.get("operator") == ">=":
+            low, high = ctx.mi.convert(criterion["value"], units, "mm"), math.inf
+        else:
+            continue
+        needs.append((criterion, low, high))
+    return needs, sorted({str(c.get("operator")) for c in clearances if c.get("operator") not in ("between", ">=")})
 
 
 def _mating_thickness(ctx: Context, pn: str) -> tuple[Any, Any]:
@@ -453,9 +469,9 @@ def thermal(ctx: Context) -> Result:
 def _within(ctx: Context, surface: Any, cal: Calibrated, prop: str, units: str, code: str, remedy: str, recheck: str,
             findings: list[Draft]) -> tuple[str, str]:
     """The calibrated upper bound of `cal` against every `prop <=` or `prop <` criterion of `surface`: FAIL when the
-    calibration can exceed one; a surface stating no such limit has nothing stricter for the calibration to meet."""
-    limits = [item for item in ctx.surface_raw(surface).get("criteria") or ()
-              if item.get("property") == prop and item.get("operator") in ctx.mi.UPPER_BOUND_OPERATORS]
+    calibration can exceed one, UNKNOWN when another criterion of `prop` has an operator this cannot judge; a surface
+    stating no criterion of `prop` has nothing stricter for the calibration to meet."""
+    limits, unsupported = ctx.split_criteria(surface, prop, ctx.mi.UPPER_BOUND_OPERATORS)
     for item in limits:
         limit_units = item.get("units") or units
         worst = cal.bounds(limit_units)[1]
@@ -466,6 +482,8 @@ def _within(ctx: Context, surface: Any, cal: Calibrated, prop: str, units: str, 
                                   f"the as-cut {surface.feature} can exceed its {prop.replace('_', ' ')} limit",
                                   remedy=remedy, recheck=[recheck], feature=surface.feature))
             return FAIL, f"{surface.feature} {prop}"
+    if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
+        return UNKNOWN, f"{surface.feature} {prop} criterion with operator {', '.join(unsupported)} is not judged against a calibrated upper bound"
     if not limits:
         return PASS, f"{cal.characteristic} calibrated ({cal.calibration.id}); {surface.feature} states no {prop} limit"
     return PASS, f"{surface.feature} {prop} within calibration {cal.calibration.id}"

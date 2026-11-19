@@ -23,7 +23,7 @@ Calibration characteristics read (scope: material, and orientation where given):
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .core import (FAIL, NOT_APPLICABLE, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Result, angle, combine, gated,
@@ -603,7 +603,7 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
             parts.append((FAIL, f"{feature} has no finishing operation"))
             continue
         cal = ctx.calibrated(characteristic, orientation=orientation if oriented else None)
-        band = _diameter_band(ctx, surface)
+        limits, unsupported = _diameter_limits(ctx, surface)
         if not cal.known:
             findings.append(Draft(f"process.{kind}.hole_uncalibrated", "major", UNKNOWN, length(hole["diameter_mm"]),
                                   cal.criterion(characteristic), g.method("bore recognition"),
@@ -615,7 +615,7 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   recheck=[f"process.{kind}.geometry"], feature=feature))
             parts.append((UNKNOWN, f"{feature} deviation not calibrated"))
             continue
-        if band is None:
+        if not limits and not unsupported:
             findings.append(Draft(f"process.{kind}.hole_criterion_missing", "minor", UNKNOWN, length(hole["diameter_mm"]),
                                   unknown("no diameter criterion on the critical surface"), g.method("bore recognition"),
                                   "the fit's diameter limits are not recorded", f"whether {feature} holds its fit is unknown",
@@ -625,30 +625,45 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
             continue
         low, high = cal.bounds("mm")
         made = (hole["diameter_mm"] + low, hole["diameter_mm"] + high)
-        if made[0] < band[0] - 1e-9 or made[1] > band[1] + 1e-9:
+        broken = next((c for c in limits if _DIAMETER_BREAKS[c["operator"]](made, c["value"])), None)
+        if broken is not None:
             findings.append(Draft(f"process.{kind}.hole_fit", "major", FAIL,
                                   {"lower": round(made[0], 6), "upper": round(made[1], 6), "units": "mm"},
-                                  {"property": "diameter", "operator": "between", "value": list(band), "units": "mm",
-                                   "source": band[2]}, g.method("bore recognition plus calibrated deviation"),
+                                  broken, g.method("bore recognition plus calibrated deviation"),
                                   f"calibration {cal.calibration.id} scatter{'; ' + HOLE_CLASSES[orientation] if oriented else ''}",
                                   f"the as-made {surface.role} {feature} cannot hold its stated diameter limits",
                                   remedy=f"ream or machine {feature} to size, or compensate the model and re-calibrate",
                                   alternatives=[{"text": "a purchased bushing", "tradeoffs": "adds a part and a press fit"}],
                                   recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature))
             parts.append((FAIL, f"{feature} outside its limits as made"))
+        elif unsupported:  # no miss on the criteria judged, but another cannot be: open, never a pass
+            parts.append((UNKNOWN, f"{feature} diameter criterion with operator {', '.join(unsupported)} is not judged"))
         else:
             parts.append((PASS, f"{feature} within its limits with the calibrated {characteristic}"))
     return parts
 
 
-def _diameter_band(ctx: Context, surface: Any) -> tuple[float, float, dict[str, Any]] | None:
-    for item in ctx.surface_raw(surface).get("criteria") or ():
-        if item.get("property") == "diameter" and item.get("operator") == "between":
-            lower, upper = item["value"]
-            units = item.get("units", "mm")
-            convert = ctx.mi.convert
-            return (convert(lower, units, "mm"), convert(upper, units, "mm"), item.get("source"))
-    return None
+# Whether the as-made diameter interval (low, high) breaks a bound; `>` and `<` are strict, so the limit itself breaks them.
+_DIAMETER_BREAKS: dict[str, Callable[[tuple[float, float], Any], bool]] = {
+    "between": lambda made, value: made[0] < value[0] - 1e-9 or made[1] > value[1] + 1e-9,
+    ">=": lambda made, value: made[0] < value - 1e-9,
+    ">": lambda made, value: made[0] <= value + 1e-9,
+    "<=": lambda made, value: made[1] > value + 1e-9,
+    "<": lambda made, value: made[1] >= value - 1e-9,
+}
+
+
+def _diameter_limits(ctx: Context, surface: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """The diameter criteria of `surface` in mm, and the operators of those a bore cannot be judged against."""
+    items, unsupported = ctx.split_criteria(surface, "diameter", _DIAMETER_BREAKS)
+    convert = ctx.mi.convert
+    limits = []
+    for item in items:
+        units = item.get("units", "mm")
+        value = item["value"]
+        value = [convert(v, units, "mm") for v in value] if item["operator"] == "between" else convert(value, units, "mm")
+        limits.append({"property": "diameter", "operator": item["operator"], "value": value, "units": "mm", "source": item.get("source")})
+    return limits, unsupported
 
 
 def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[str, str]]:
@@ -759,19 +774,24 @@ def thermal_distortion(ctx: Context) -> Result:
 
 def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[str, str]:
     worst = warp.bounds("mm")[1]
+    unsupported: list[str] = []
     for feature, surface in ctx.critical_features().items():
-        for item in ctx.surface_raw(surface).get("criteria") or ():
-            if item.get("property") == "flatness" and item.get("operator") in ctx.mi.UPPER_BOUND_OPERATORS \
-                    and surface.dimension_state == "as_manufactured":
-                limit = ctx.mi.convert(item["value"], item.get("units", "mm"), "mm")
-                if ctx.mi.exceeds_upper_bound(worst, item["operator"], limit, 1e-9):
-                    findings.append(Draft(f"process.{_k(ctx)}.warp", "major", FAIL, length(worst),
-                                          {**item, "units": item.get("units", "mm")}, "calibrated warp against the criterion",
-                                          f"calibration {warp.calibration.id}",
-                                          f"the as-printed {feature} can exceed its flatness limit",
-                                          remedy=f"finish {feature} after printing or reorient", feature=feature,
-                                          recheck=[f"process.{_k(ctx)}.thermal_distortion"]))
-                    return FAIL, f"{feature} flatness"
+        if surface.dimension_state != "as_manufactured":
+            continue
+        limits, other = ctx.split_criteria(surface, "flatness", ctx.mi.UPPER_BOUND_OPERATORS)
+        unsupported += other
+        for item in limits:
+            limit = ctx.mi.convert(item["value"], item.get("units", "mm"), "mm")
+            if ctx.mi.exceeds_upper_bound(worst, item["operator"], limit, 1e-9):
+                findings.append(Draft(f"process.{_k(ctx)}.warp", "major", FAIL, length(worst),
+                                      {**item, "units": item.get("units", "mm")}, "calibrated warp against the criterion",
+                                      f"calibration {warp.calibration.id}",
+                                      f"the as-printed {feature} can exceed its flatness limit",
+                                      remedy=f"finish {feature} after printing or reorient", feature=feature,
+                                      recheck=[f"process.{_k(ctx)}.thermal_distortion"]))
+                return FAIL, f"{feature} flatness"
+    if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
+        return UNKNOWN, f"flatness criterion with operator {', '.join(sorted(set(unsupported)))} is not judged against calibrated warp"
     return PASS, "warp calibrated for this footprint"
 
 

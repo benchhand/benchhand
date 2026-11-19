@@ -402,6 +402,13 @@ class Context:
                 return item
         return {}
 
+    def split_criteria(self, surface: Any, prop: str, operators: Iterable[str]) -> tuple[list[Mapping[str, Any]], list[str]]:
+        """The criteria of `prop` on `surface` whose operator is in `operators`, and the operators of its other criteria.
+        A check evaluates the first and turns a non-empty second into UNKNOWN: a criterion is never dropped silently."""
+        items = [c for c in self.surface_raw(surface).get("criteria") or () if c.get("property") == prop]
+        return ([c for c in items if c.get("operator") in operators],
+                sorted({str(c.get("operator")) for c in items if c.get("operator") not in operators}))
+
     def critical_features(self) -> dict[str, Any]:
         return {s.feature: s for s in self.surfaces()}
 
