@@ -938,6 +938,21 @@ def with_guidelines(record: Record, hw: Path, *, snapshot: bool = False) -> Reco
     return Record(**values)
 
 
+def with_guideline_files(record: Record, files: Mapping[str, bytes], *, snapshot: bool = False) -> Record:
+    """`with_guidelines` for record files held as bytes (a git index, a version's record snapshot): the project guideline
+    sets among `files` are written to a scratch folder and read from there, so discovery sees the same layout as on disk."""
+    import tempfile  # noqa: PLC0415 - needed only to read guideline sets
+
+    prefix = "manufacturing/guidelines/"
+    with tempfile.TemporaryDirectory(prefix="cad-guidelines-") as scratch:
+        for name, data in files.items():
+            if name.startswith(prefix) and name.endswith(".yaml") and "/" not in name[len(prefix):]:
+                target = Path(scratch) / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+        return with_guidelines(record, Path(scratch), snapshot=snapshot)
+
+
 def _with_problems(record: Record, problems: list[Problem]) -> Record:
     values = {name: getattr(record, name) for name in record.__dataclass_fields__}
     values["problems"] = tuple(problems)

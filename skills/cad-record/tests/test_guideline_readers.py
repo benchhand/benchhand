@@ -146,6 +146,19 @@ class VersionSnapshots(Base):
         changed = impact.changed_domains(impact.subject_fingerprints(built), impact.subject_fingerprints(current))
         self.assertIn("source", changed.get("TST-0001", ()))
 
+    def test_the_cad_model_snapshot_reader_carries_the_digests_of_the_copies(self) -> None:
+        self.write(0.8)
+        self.ship(1.5)
+        pns = sorted(path.parent.name for path in (self.hw / "parts").glob("*/part.yaml"))
+        snapshot = build.read_snapshot(build.snapshot(self.hw, pns))
+        self.assertEqual(sorted(snapshot.intent.guideline_digests["tst_printer"]), ["fdm.generic@1", "fdm.material.pa@1"])
+
+    def test_the_cad_model_snapshot_reader_reads_only_its_own_copies(self) -> None:
+        pns = sorted(path.parent.name for path in (self.hw / "parts").glob("*/part.yaml"))
+        files = build.snapshot(self.hw, pns)
+        self.ship(1.5)
+        self.assertEqual(dict(build.read_snapshot(files).intent.guideline_digests), {}, "a set shipped after the build is not in it")
+
     def test_a_snapshot_is_read_only_from_its_own_copies(self) -> None:
         folder = self.version()
         self.ship(1.5)

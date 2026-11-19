@@ -129,4 +129,4 @@ def read_snapshot(files: Mapping[str, bytes]) -> Snapshot:
         intent.record_version(product if isinstance(product, Mapping) else {})
     except intent.UnsupportedRecordVersion as error:
         raise RecordError(f"hw/product.yaml: {error}") from error
-    return Snapshot(files, parsed, intent.normalize_record(parsed))
+    return Snapshot(files, parsed, intent.with_guideline_files(intent.normalize_record(parsed), files, snapshot=True))

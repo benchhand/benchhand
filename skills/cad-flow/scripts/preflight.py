@@ -103,7 +103,7 @@ class Runtime:
 RUNTIMES = (
     Runtime("cadquery", MODEL_SCRIPTS / "run_cadquery.py", ("cadquery",), "cadquery"),
     Runtime("build123d", MODEL_SCRIPTS / "run_build123d.py", ("build123d",), "build123d"),
-    Runtime("cad-model", MODEL_SCRIPTS / "cad_model.py", ("OCP", "trimesh", "yaml"), "cadquery-ocp-novtk"),
+    Runtime("cad-model", MODEL_SCRIPTS / "cad_model.py", ("OCP", "trimesh", "yaml", "jsonschema"), "cadquery-ocp-novtk"),
     Runtime("ocp-viewer", SKILLS / "cad-viewer" / "scripts" / "viewer.py", ("ocp_viewer",), "ocp_viewer"),
 )
 CHROMIUM = Runtime("playwright-chromium", SKILLS / "cad-render" / "scripts" / "render.py", ("playwright",),
