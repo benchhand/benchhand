@@ -10,6 +10,7 @@
 /releases/
 # <<< cad storage
 # The v1 manifest EV-001 cites (manufacturing/evidence.yaml) is committed; the rest of versions/ stays ignored.
+# versions/v1 holds only that manifest and is not a built version: anything that loads v1 must rebuild it first.
 !/versions/
 /versions/*
 !/versions/v1/
