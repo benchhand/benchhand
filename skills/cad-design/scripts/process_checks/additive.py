@@ -2,16 +2,19 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Additive handlers: FDM and resin. Criteria come only from the operation's capability-profile
-calibrations for the component's material; the plugin's old universal FDM numbers stay form_check
-diagnostics. Geometry is the exported component in its approved pose (bed frame, build direction +Z).
+"""Additive handlers: FDM and resin. Criteria come from the operation's capability-profile calibrations for the
+component's material; where none holds, overhang, bridge, wall, small-feature and small-hole limits come from the
+guideline sets of the profile and material (core.Context.limit), graded by service class (core.Context.grade).
+Geometry is the exported component in its approved pose (bed frame, build direction +Z).
 
-Calibration characteristics read (scope: material, and orientation where given):
+Calibration (or guideline) characteristics read (scope: material, and orientation where given):
   overhang_angle            deg from vertical, the unsupported range demonstrated: criterion angle <= lower
   bridge_span               mm, the unsupported bridge demonstrated: criterion span <= lower
   min_wall                  mm, the thinnest reliable wall: criterion wall >= upper; scope.feature names a
-                            feature class (tooth_tip, chamfer, decorative, ...) assessed apart from structure
+                            feature class (tooth_tip, chamfer, decorative, ...) assessed apart from structure,
+                            against its own calibration only
   min_feature               mm, the smallest reliable pin or boss diameter: criterion diameter >= upper
+  min_hole                  mm, the smallest reliable hole diameter: criterion diameter >= upper
   hole_diameter_deviation   mm, as-made minus nominal; scope.orientation Z (axis along the build) or XY
   dimensional_deviation     mm, as-made minus nominal of a planar or profile critical feature
   profile_deviation         mm, gear flank or cam profile deviation (scope.feature flank or cam)
@@ -26,8 +29,8 @@ import math
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .core import (FAIL, NOT_APPLICABLE, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Result, angle, combine, gated,
-                   length, policy, source_dict, text, unknown)
+from .core import (FAIL, MAXIMUM, MINIMUM, NOT_APPLICABLE, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Limit, Result,
+                   angle, combine, gated, length, policy, source_dict, text, unknown)
 
 FINISHING_KINDS = frozenset({"reaming", "finishing", "cnc", "drilling"})  # operations that can restore a surface
 EXEMPT_CLASSES = frozenset({"tooth_tip", "flank", "chamfer", "fillet", "decorative", "text", "emboss", "tip", "knurl"})
@@ -239,8 +242,8 @@ def support(ctx: Context) -> Result:
     contacts = {t.get("feature") for t in supports.get("contact_regions") or ()}
     starts = {t.get("feature") for t in supports.get("start_regions") or ()}
     critical = ctx.critical_features()
-    overhang = ctx.calibrated("overhang_angle")
-    bridge = ctx.calibrated("bridge_span")
+    overhang = ctx.limit("overhang_angle", MAXIMUM)
+    bridge = ctx.limit("bridge_span", MAXIMUM)
     findings: list[Draft] = []
     parts: list[tuple[str, str]] = []
     material = str(supports.get("material") or "")
@@ -256,11 +259,13 @@ def support(ctx: Context) -> Result:
     needing: list[tuple[Mapping[str, Any], str]] = []
     undecided: list[tuple[Mapping[str, Any], str]] = []
     planned: list[tuple[Mapping[str, Any], str]] = []
+    judged: dict[str, tuple[Limit, dict[str, Any]]] = {}  # the limit each down-facing face was judged by, at its worst value
     for face in g.faces():
         down = face.get("down") or {}
         area = float(down.get("area_mm2") or 0.0)
         if area <= EPS:
             continue
+        _judge(down, overhang, bridge, judged)
         reason = _needs_support(down, overhang, bridge)
         if reason is None:
             continue
@@ -350,11 +355,35 @@ def support(ctx: Context) -> Result:
                               "supports are planned on reachable non-critical surfaces",
                               recheck=[f"process.{kind}.support"], earliest_stage="detail"))
         findings.append(_trial(ctx, f"support removal at {', '.join(names)} and the supported surface finish"))
-        parts.append((PASS, f"supports planned on {', '.join(names)}"))
+        parts.append(_graded(ctx, g, judged, f"supports planned on {', '.join(names)}", findings))
     if not needing and not undecided:
-        parts.append((PASS, "no down-facing surface beyond the calibrated unsupported limits"))
+        parts.append(_graded(ctx, g, judged, "no down-facing surface beyond the unsupported limits", findings))
     return combine(method, parts, findings,
                    uncertainty="sampled normals and rays; support toolpaths and removal are not simulated")
+
+
+def _judge(down: Any, overhang: Limit, bridge: Limit, judged: dict[str, tuple[Limit, dict[str, Any]]]) -> None:
+    """Record which limit judges this down-facing face (an island needs support whatever the limits say) and keep the
+    worst value each limit saw, which a guideline-only finding reports."""
+    if down.get("kind") == "island":
+        return
+    if _is_spanned(down):
+        name, limit, value = "bridge_span", bridge, length(down["span_mm"])
+    else:
+        name, limit, value = "overhang_angle", overhang, angle(down.get("max_angle_deg") or 0.0)
+    if name not in judged or value["value"] > judged[name][1]["value"]:
+        judged[name] = (limit, value)
+
+
+def _graded(ctx: Context, g: Geometry, judged: Mapping[str, tuple[Limit, dict[str, Any]]], coverage: str,
+            findings: list[Draft]) -> tuple[str, str]:
+    """A support pass graded by every limit a face was judged against (Context.grade)."""
+    outcome = PASS
+    for name, (limit, value) in sorted(judged.items()):
+        verdict, coverage = ctx.grade(limit, coverage, findings, check="support", measured=value, prop=name,
+                                      units=value["units"], method=g.method("sampled down-facing normals"))
+        outcome = UNKNOWN if verdict == UNKNOWN else outcome
+    return outcome, coverage
 
 
 def _one(feats: set[str]) -> str | None:
@@ -367,8 +396,8 @@ def _is_spanned(down: Any) -> bool:
     return down.get("kind") == "bridge" and down.get("span_mm") is not None
 
 
-def _needs_support(down: Any, overhang: Calibrated, bridge: Calibrated) -> str | None:
-    """island, bridge or overhang when the face needs support; undecided when no calibration says; None otherwise.
+def _needs_support(down: Any, overhang: Limit, bridge: Limit) -> str | None:
+    """island, bridge or overhang when the face needs support; undecided when no limit says; None otherwise.
     A bridge with a measured span is judged by its span alone, any other face by the area beyond the unsupported angle."""
     kind = down.get("kind")
     if kind == "island":
@@ -376,29 +405,28 @@ def _needs_support(down: Any, overhang: Calibrated, bridge: Calibrated) -> str |
     if _is_spanned(down):
         if not bridge.known:
             return "undecided"
-        return "bridge" if down["span_mm"] > bridge.bounds("mm")[0] + 1e-9 else None
+        return "bridge" if bridge.breaks(down["span_mm"], "mm") else None
     if not overhang.known:
         return "undecided" if (down.get("max_angle_deg") or 0.0) > 1e-6 else None
-    limit = overhang.bounds("deg")[0]
-    over = sum(area for deg, area in down.get("angles") or () if deg > limit + 1e-9)
+    over = sum(area for deg, area in down.get("angles") or () if overhang.breaks(deg, "deg"))
     return "overhang" if over > EPS else None
 
 
-def _limit_criterion(reason: str, overhang: Calibrated, bridge: Calibrated) -> dict[str, Any]:
+def _limit_criterion(reason: str, overhang: Limit, bridge: Limit) -> dict[str, Any]:
     if reason == "bridge":
-        return bridge.criterion("bridge_span", "<=")
+        return bridge.criterion("bridge_span", "mm")
     if reason == "island":
         return policy("island", "equals", "supported", note="a region that starts in mid-air always needs support")
-    return overhang.criterion("overhang_angle", "<=")
+    return overhang.criterion("overhang_angle", "deg")
 
 
-def _unsupported(ctx: Context, g: Geometry, face: Any, reason: str, overhang: Calibrated, bridge: Calibrated) -> Draft:
+def _unsupported(ctx: Context, g: Geometry, face: Any, reason: str, overhang: Limit, bridge: Limit) -> Draft:
     kind, down = _k(ctx), face["down"]
     measured = length(down["span_mm"]) if reason == "bridge" and down.get("span_mm") is not None \
         else angle(down.get("max_angle_deg") or 0.0)
     return Draft(f"process.{kind}.overhang", "major", FAIL, measured, _limit_criterion(reason, overhang, bridge),
                  g.method("sampled down-facing normals"), "sampled normals; edge anchoring approximates bridges",
-                 f"a {reason} beyond the calibrated unsupported limit with support strategy none sags or fails to print",
+                 f"a {reason} beyond the unsupported limit with support strategy none sags or fails to print",
                  remedy="plan supports on reachable non-critical surfaces, or reorient (preferred over splitting)",
                  alternatives=[{"text": "local relief: a chamfer or teardrop under the overhang",
                                 "tradeoffs": "changes the geometry; needs the design owner's approval"},
@@ -485,7 +513,7 @@ def geometry(ctx: Context) -> Result:
     if isinstance(g, Result):
         return g
     findings: list[Draft] = []
-    parts = [wall_check(ctx, g, findings), small_feature_check(ctx, g, findings)]
+    parts = [wall_check(ctx, g, findings), small_feature_check(ctx, g, findings), hole_size_check(ctx, g, findings)]
     parts += hole_fits(ctx, g, findings)
     parts += _critical(ctx, g, findings)
     parts += _receiving(ctx, g, findings)
@@ -493,31 +521,36 @@ def geometry(ctx: Context) -> Result:
 
 
 def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, str]:
-    """The thinnest wall against the calibrated min_wall of the operation's material; feature classes such as
-    tooth tips, chamfers and decorations are judged against their own calibration, never exempted silently."""
+    """The thinnest wall against the min_wall of the operation's material: its calibration, else the guideline value of
+    its profile (graded by service class: Context.grade). Feature classes such as tooth tips, chamfers and decorations
+    are judged against their own calibration only, never exempted silently and never against a structural guideline."""
     kind = _k(ctx)
     walls = g.facts.get("walls") or {}
-    cal = ctx.calibrated("min_wall")
+    cal = ctx.limit("min_wall", MINIMUM)
     if not cal.known:
         findings.append(Draft(f"process.{kind}.wall_uncalibrated", "minor", UNKNOWN,
                               length(walls["thickness_mm"]) if walls.get("thickness_mm") is not None else unknown("not measured"),
-                              cal.criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
+                              cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
                               "; ".join(cal.reasons), "the structural wall criterion is unknown",
-                              remedy="calibrate the minimum reliable wall for this material, process and orientation; "
-                                     "no universal value applies (form_check's 1.2 mm is a diagnostic)",
+                              remedy="calibrate the minimum reliable wall for this material, process and orientation, "
+                                     "or record the nozzle diameter or line width a guideline needs",
                               recheck=[f"process.{kind}.geometry"],
                               earliest_stage="parts"))
         return UNKNOWN, "wall criterion not calibrated"
-    need = cal.bounds("mm")[1]
+    need = cal.threshold("mm")
+    floor_only = "; the profile states no nozzle or line width, so min_wall is the plain floor" \
+        if cal.status == "guideline" and cal.base_mm is None else ""
     thickness = walls.get("thickness_mm")
     if thickness is None:
         findings.append(Draft(f"process.{kind}.wall_unmeasured", "minor", UNKNOWN, unknown("no wall measured"),
-                              cal.criterion("wall_thickness", ">=", need), g.method("minimum-wall scan"),
+                              cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
                               f"{walls.get('measured', 0)} samples reached an opposing face", "walls are unassessed",
                               remedy="inspect the walls with a section or another probe", recheck=[f"process.{kind}.geometry"]))
         return UNKNOWN, "walls not measured"
-    if thickness >= need - 1e-9:
-        return PASS, f"thinnest wall {thickness:.3f} mm >= calibrated {need:g} mm"
+    if not cal.breaks(thickness, "mm"):
+        return ctx.grade(cal, f"thinnest wall {thickness:.3f} mm >= {cal.status} {need:g} mm{floor_only}", findings,
+                         check="wall", measured=length(thickness), prop="wall_thickness", units="mm",
+                         method=g.method("minimum-wall scan"))
     feats = set(walls.get("features") or ())
     classes = {(g.facts.get("features") or {}).get(f, {}).get("kind") for f in feats} | \
         {s.role for f, s in ctx.critical_features().items() if f in feats}
@@ -541,36 +574,52 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
         return UNKNOWN, f"{exempt[0]} wall not calibrated"
     location = walls.get("location_mm")
     findings.append(Draft(f"process.{kind}.wall", "major", FAIL, length(thickness),
-                          cal.criterion("wall_thickness", ">=", need), g.method("minimum-wall scan"),
+                          cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
                           "sampled scan: the true minimum can be up to the sample spacing thinner",
-                          f"a structural wall {thickness:.3f} mm thick at {location} is below the calibrated minimum",
+                          f"a structural wall {thickness:.3f} mm thick at {location} is below the {cal.status} minimum",
                           remedy="thicken the wall, or reorient if the calibration is orientation-specific",
                           recheck=[f"process.{kind}.geometry"], feature=sorted(feats)[0] if len(feats) == 1 else None))
-    return FAIL, "structural wall below the calibrated minimum"
+    return FAIL, f"structural wall below the {cal.status} minimum{floor_only}"
 
 
 def small_feature_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, str]:
-    kind = _k(ctx)
-    pins = g.pins()
-    if not pins:
+    """The smallest pin or boss (a convex full cylinder) against min_feature."""
+    return _smallest(ctx, g, findings, g.pins(), "min_feature", "small_feature", "feature_diameter",
+                     ("pin", "small pins and bosses", "convex full cylinders", "the smallest reliable pin or boss",
+                      "enlarge it or replace it with a purchased pin"))
+
+
+def hole_size_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, str]:
+    """The smallest bore, critical or not, against min_hole: a hole below it closes up or prints out of round."""
+    return _smallest(ctx, g, findings, g.holes(), "min_hole", "small_hole", "hole_diameter",
+                     ("hole", "small holes", "bore recognition", "the smallest reliable hole",
+                      "enlarge it, or drill or ream it after printing"))
+
+
+def _smallest(ctx: Context, g: Geometry, findings: list[Draft], items: list[Mapping[str, Any]], characteristic: str,
+              check: str, prop: str, words: tuple[str, str, str, str, str]) -> tuple[str, str]:
+    """The smallest diameter of `items` against the `characteristic` limit (Context.limit, graded by Context.grade)."""
+    noun, plural, method, reliable, remedy = words
+    if not items:
         return NOT_APPLICABLE, ""
-    cal = ctx.calibrated("min_feature")
-    smallest = min(pins, key=lambda p: p["diameter_mm"])
-    if not cal.known:
-        findings.append(Draft(f"process.{kind}.small_feature_uncalibrated", "minor", UNKNOWN, length(smallest["diameter_mm"]),
-                              cal.criterion("feature_diameter", ">="), g.method("convex full cylinders"),
-                              "; ".join(cal.reasons), "small pins and bosses are unassessed",
-                              remedy="calibrate the smallest reliable pin or boss", recheck=[f"process.{kind}.geometry"]))
-        return UNKNOWN, "small features not calibrated"
-    need = cal.bounds("mm")[1]
-    if smallest["diameter_mm"] >= need - 1e-9:
-        return PASS, f"smallest pin {smallest['diameter_mm']:g} mm >= {need:g} mm"
-    findings.append(Draft(f"process.{kind}.small_feature", "major", FAIL, length(smallest["diameter_mm"]),
-                          cal.criterion("feature_diameter", ">=", need), g.method("convex full cylinders"),
-                          "cylinder radius is exact", "the feature is below the calibrated smallest reliable size",
-                          remedy="enlarge it or replace it with a purchased pin", recheck=[f"process.{kind}.geometry"],
-                          feature=_one(set(smallest.get("features") or ()))))
-    return FAIL, "small feature below the calibrated minimum"
+    kind = _k(ctx)
+    limit = ctx.limit(characteristic, MINIMUM)
+    smallest = min(items, key=lambda p: p["diameter_mm"])
+    diameter, feature = smallest["diameter_mm"], _one(set(smallest.get("features") or ()))
+    if not limit.known:
+        findings.append(Draft(f"process.{kind}.{check}_uncalibrated", "minor", UNKNOWN, length(diameter),
+                              limit.criterion(prop, "mm"), g.method(method), "; ".join(limit.reasons),
+                              f"{plural} are unassessed", remedy=f"calibrate {reliable}", recheck=[f"process.{kind}.geometry"]))
+        return UNKNOWN, f"{plural} not calibrated"
+    need = limit.threshold("mm")
+    if not limit.breaks(diameter, "mm"):
+        return ctx.grade(limit, f"smallest {noun} {diameter:g} mm >= {limit.status} {need:g} mm", findings, check=check,
+                         measured=length(diameter), prop=prop, units="mm", method=g.method(method), feature=feature)
+    findings.append(Draft(f"process.{kind}.{check}", "major", FAIL, length(diameter), limit.criterion(prop, "mm"),
+                          g.method(method), "cylinder radius is exact",
+                          f"the {noun} is below the {limit.status} {reliable.removeprefix('the ')}",
+                          remedy=remedy, recheck=[f"process.{kind}.geometry"], feature=feature))
+    return FAIL, f"{plural} below the {limit.status} minimum"
 
 
 def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: str = "hole_diameter_deviation",

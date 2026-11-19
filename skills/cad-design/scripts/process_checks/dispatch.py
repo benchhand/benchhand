@@ -15,6 +15,7 @@ never a pass and never another process's checks.
 from __future__ import annotations
 
 import hashlib
+import types
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -22,8 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from . import additive, machining, purchased, route, secondary, shaping, sheet
-from .core import (FAIL, IMPLICIT, PASS, UNKNOWN, Context, Draft, Geometry, Handler, Result, access_directions,
-                   direction_key, intent, policy, stable_id, text)
+from .core import (FAIL, IMPLICIT, MINIMUM, PASS, UNKNOWN, Context, Draft, Geometry, Handler, Result, access_directions,
+                   direction_key, guidelines, intent, policy, stable_id, text)
 
 PRODUCER = "cad-design form_check.py process_checks 1"
 OWNED_PREFIXES = ("process.", "purchase.", "route.")
@@ -101,6 +102,7 @@ class Assessment:
     expected: tuple[Any, ...]
     outcomes: tuple[dict[str, Any], ...]
     findings: tuple[dict[str, Any], ...]
+    guideline_digests: Mapping[str, str] = types.MappingProxyType({})  # id@revision -> sha256 the limits can come from
 
     @property
     def complete(self) -> bool:
@@ -122,7 +124,9 @@ class Assessment:
         return [f for f in self.findings if f["code"] == code]
 
     def packet(self, dependencies: Mapping[str, str], *, scope: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        """The manufacturing-check-result.schema.json packet of this assessment."""
+        """The manufacturing-check-result.schema.json packet of this assessment. Its dependencies are `dependencies`
+        and every guideline set the operations' limits can resolve through (guidelines.packet_dependencies)."""
+        dependencies = {**dependencies, **guidelines().packet_dependencies(self.guideline_digests)}
         pns = sorted({o.subject["PN"] for o in self.expected if o.subject.get("PN")})
         return {"schema_version": 1, "record_version": intent().RECORD_VERSION, "producer": PRODUCER,
                 "scope": scope or ([{"PN": pn} for pn in pns] or [{"product": True}]),
@@ -138,20 +142,27 @@ def _operation(record: Any, pn: str, ident: str | None) -> Any | None:
     return None if intent().is_fact(route_) else next((op for op in route_ if op.id == ident), None)
 
 
-def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = None, *, today: date | None = None) -> Assessment:
+def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = None, *, today: date | None = None,
+           catalog: Any = None) -> Assessment:
     """One outcome per expected obligation, from the record and the measured component geometry
-    (keyed (PN, component); the sole solid is `main`). Without geometry every geometric check is UNKNOWN."""
+    (keyed (PN, component); the sole solid is `main`). Without geometry every geometric check is UNKNOWN. `catalog`
+    (cad-record guidelines.discover) gives the guideline limits where no calibration holds; without it only
+    calibrations count."""
     mi = intent()
     obligations = expected(record)
     geometry = dict(geometry or {})
     today = today or date.today()
     outcomes, findings = [], []
+    digests: dict[str, str] = {}
     for obligation in obligations:
         subject = obligation.subject
         pn = subject["PN"]
         component = subject.get("component") or IMPLICIT
         op = _operation(record, pn, subject.get("operation"))
-        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry)
+        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry, catalog)
+        scope = ctx.guideline_context()
+        if scope is not None:
+            digests.update(guidelines().applicable_digests(catalog, scope))
         if obligation.family.endswith(".coverage") and obligation.family.startswith("process."):
             result = coverage_gap(ctx, obligation)
         else:
@@ -172,7 +183,7 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
         if linked:
             row["findings"] = linked
         outcomes.append(mi.thaw(row))
-    return Assessment(obligations, tuple(outcomes), tuple(findings))
+    return Assessment(obligations, tuple(outcomes), tuple(findings), types.MappingProxyType(dict(sorted(digests.items()))))
 
 
 def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry | None) -> list[dict[str, Any]]:
@@ -214,10 +225,11 @@ def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry 
     return out
 
 
-def probe_plan(record: Any, pn: str, component: str, *, today: date | None = None) -> dict[str, Any]:
+def probe_plan(record: Any, pn: str, component: str, *, today: date | None = None, catalog: Any = None) -> dict[str, Any]:
     """What form_check must measure on one component before the handlers run: the ray directions
     (access sides and pull senses, keyed as the handlers read them) and the wall threshold that the
-    calibrations of its operations name (None: no calibrated wall, so no scan)."""
+    limits of its operations name: a calibration, else a guideline value from `catalog` (None: no wall
+    limit, so no scan)."""
     today = today or date.today()
     part = record.parts[pn]
     route_ = part.intent.route
@@ -226,7 +238,7 @@ def probe_plan(record: Any, pn: str, component: str, *, today: date | None = Non
     for op in () if intent().is_fact(route_) else route_:
         if op.components and component not in op.components:
             continue
-        ctx = Context(record, pn, component, op, None, today)
+        ctx = Context(record, pn, component, op, None, today, catalog=catalog)
         parsed, _ = access_directions(((op.setup or {}).get("access") or {}).get("sides") or ())
         for _, vector in parsed:
             key = direction_key(vector)  # a parsed side is an axis direction, so it always has a key
@@ -239,9 +251,9 @@ def probe_plan(record: Any, pn: str, component: str, *, today: date | None = Non
                 directions["-pull"] = [-c for c in pull]
         if ctx.profile is not None and op.kind != "purchased":
             for name in ("min_wall", "min_web"):
-                cal = ctx.calibrated(name)
-                if cal.known:
-                    walls.append(cal.bounds("mm")[1])
+                limit = ctx.limit(name, MINIMUM)
+                if limit.known:
+                    walls.append(limit.threshold("mm"))
     return {"directions": directions, "wall_mm": max(walls) if walls else None}
 
 
