@@ -18,7 +18,7 @@ The frozen version (product.yaml flow.frozen) defines what a release holds; rele
 never builds. It refuses the release when any of these fails, and then writes nothing outside
 .cad-work/:
 
-- the frozen anchor, the approving decision, and a revision that is not yet used;
+- the frozen anchor, the approving decision, and a revision that is unused or already sealed from this same frozen manifest;
 - validate.py on the current record (a record of an unsupported version refuses), and the
   current record against the frozen snapshot: the snapshot set the version sealed, its structured
   documents by content and its frozen sources by their exact bytes;
@@ -435,8 +435,6 @@ def assemble(hw: Path, rev: str, version: str, decision: str,
     layout.version_dir(hw, version)
     moment = datetime.now(timezone.utc) if now is None else now.astimezone(timezone.utc)
     release = Release(hw, rev, version, decision, target_rel, released_at=moment.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    if os.path.lexists(layout.locate(hw, target_rel)):
-        release.refuse(target_rel, "exists", f"{target_rel} exists; a used revision is never overwritten")
     decision_path = layout.decision_file(hw, decision)
     decision_rel = layout.relative(hw, decision_path or layout.locate(hw, "hw/decisions"))
     record, missing = validate.load_decision(hw, decision)
@@ -565,6 +563,8 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
 
 def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = None) -> tuple[int, dict[str, Any]]:
     hw = hw.resolve()
+    if os.path.lexists(layout.locate(hw, layout.load().path("release.package", {"REV": rev}))):
+        return sealed(hw, rev, version, decision)  # the same frozen manifest releases again as a no-op
     release, facts = assemble(hw, rev, version, decision, now)
     report: dict[str, Any] = {"rev": rev, "version": version, "package": release.target_rel}
     if release.findings or facts is None:
@@ -577,7 +577,7 @@ def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = 
     try:
         layout.claim(staged, target, release.target_rel)
     except layout.PublishConflict as error:
-        release.refuse(release.target_rel, "exists", f"{error}; a used revision is never overwritten")
+        release.refuse(release.target_rel, "exists", f"{error}; rerun to compare it with the frozen manifest")
         return 1, {**report, "findings": release.findings, "status": "refused"}
     return 0, {**report, "stage": None, "manifest_sha256": sha256(target / MANIFEST), "files": len(release.copies),
                "manufacturing": release.manufacturing, "bundles": release.bundles, "status": "released"}
@@ -603,11 +603,23 @@ def acceptance_problems(manifest: dict[str, Any]) -> list[str]:
     return problems
 
 
+def frozen_problems(hw: Path, version: str, manifest: dict[str, Any]) -> list[str]:
+    """Why a sealed package's frozen manifest sha is not the built `version`'s manifest as it is now:
+    the version fails its own manifest, or the package was sealed from another one."""
+    try:
+        current = sha256(layout.built_version(hw, version)[1] / MANIFEST)
+    except layout.LayoutError as error:
+        return [str(error)]
+    if _dict(manifest.get("frozen")).get("manifest_sha256") != current:
+        return [f"it was sealed from another frozen {version} manifest"]
+    return []
+
+
 def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
-    """The existing hw/releases/<REV>/ when it verifies and holds `version` approved by `decision`, so a
-    --prune rerun skips sealing; refused otherwise, since a used revision is never overwritten. A package
-    must be manifest version 3, and also verifies its sealed acceptance bytes and anchor. Any other
-    manifest version is refused."""
+    """The existing hw/releases/<REV>/ when it verifies and holds `version` approved by `decision` from
+    the frozen manifest as it is now, so a rerun (and --prune) rewrites nothing. A package that fails its
+    seal, or holds another frozen manifest, is refused. A package must be manifest version 3, and also
+    verifies its sealed acceptance bytes and anchor. Any other manifest version is refused."""
     hw = hw.resolve()
     target_rel = layout.load().path("release.package", {"REV": rev})
     package = layout.locate(hw, target_rel)
@@ -615,7 +627,8 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
     problems = ["it is not a directory"]
     if package.is_dir() and not package.is_symlink():
         if reason := layout.stale(package):
-            return 1, {**report, "findings": [validate.finding(target_rel, reason, code="release.stale")],
+            return 1, {**report, "findings": [validate.finding(
+                target_rel, f"{reason}; automatic repair is not supported; use a new revision", code="release.stale")],
                        "status": "refused"}
         problems = []
     manifest = _json(package / MANIFEST) if not problems else None
@@ -629,9 +642,12 @@ def sealed(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[s
                         f"approved by {manifest.get('approval')}"]
         else:
             problems = acceptance_problems(manifest)
+    if not problems and isinstance(manifest, dict):
+        problems = frozen_problems(hw, version, manifest)
     if problems:
         finding = validate.finding(target_rel, f"{target_rel} exists but is not the sealed release of {version} approved "
-                                               f"by {decision}: {'; '.join(problems)}; a used revision is never overwritten",
+                                               f"by {decision}: {'; '.join(problems)}; automatic repair is not supported; "
+                                               "use a new revision",
                                    code="release.exists")
         return 1, {**report, "findings": [finding], "status": "refused"}
     return 0, {**report, "already_sealed": True, "manifest_version": schema, "manifest_sha256": sha256(package / MANIFEST),
