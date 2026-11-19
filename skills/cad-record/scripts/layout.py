@@ -1252,9 +1252,9 @@ def markdown() -> str:
               "uses, hashes the object it linked after the rename instead, under a lock on the target's folder. When",
               "that hash fails or raises, it puts the old file back (#250).", "",
               "`place_object()` swaps the link in with renameat2 or renamex_np, so it keeps the old file. It puts the",
-              "old file back only while the target is absent, so a file that another writer renames there stays.",
-              "Then `cache.findings` names the old file, which stays beside the target. On a filesystem without that swap,",
-              "`place_object()` places nothing, and cad-model builds the part again.", ""]
+              "old file back only while the target is absent, so a file that another writer renames there stays. A",
+              "file it cannot put back moves to `hw/.cad/cache/recovery/`, where `cache.findings` names it. On a",
+              "filesystem without that swap, `place_object()` places nothing, and cad-model builds the part again.", ""]
     storage = lay.storage
     approved, ignored = git_storage(True)[".gitattributes"], git_storage(None)[".gitignore"]
     lfs = ", ".join(f"`*{suffix}`" for suffix in storage["lfs_suffixes"])

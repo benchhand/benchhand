@@ -19,7 +19,7 @@ every member on read and names why a record is stale. `place` lays a record's me
 fresh folder and renames that folder into place, so a reader sees the whole set or none of it. It hashes what it
 linked before the folder gets its name. `place_object` links one object, swaps the link onto its name and then
 hashes it, under a lock on the folder. When that hash fails, it puts the old file back, and never over a file
-another writer renamed there since: such a file stands, and the old one stays beside it, named in
+another writer renamed there since: such a file stands, and the old one moves to `cache.recovery`, named in
 `cache.findings`. Only `holds` answers from
 the hashes this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
 name, and every store
@@ -332,7 +332,8 @@ class Store:
 
     def _folder(self, entry_id: str) -> Path:
         """The folder of `entry_id`, created. hw/.cad/cache/ carries the .gitignore that keeps it out of git."""
-        folder = self._path(entry_id, "0" * 64).parent
+        folder = (Path(layout.resolve(self.hw, entry_id, NAME="x")).parent if entry_id == "cache.recovery" else
+                  self._path(entry_id, "0" * 64).parent)
         if not folder.is_dir():
             folder.mkdir(parents=True, exist_ok=True)
         ignore = folder.parent / ".gitignore"
@@ -400,9 +401,9 @@ class Store:
         bytes hash to `digest`, the descriptor closed cleanly and `target` still names that inode. False when the
         object is absent or its bytes hash to another name, with the old `target` (or none) put back, or when
         another writer replaced `target` meanwhile, which stays. A file that cannot go back without replacing a
-        newer one stays beside `target`, and cache.findings names it (`kept: <path> holds ...`). False with
-        `target` untouched where the filesystem has no atomic swap (`_rename2`), so the caller builds instead. An
-        exception from the hash or the close puts the old `target` back, then propagates."""
+        newer one moves to the recovery folder (`_keep`), and cache.findings names it (`kept: <path> holds ...`).
+        False with `target` untouched where the filesystem has no atomic swap (`_rename2`), so the caller builds
+        instead. An exception from the hash or the close puts the old `target` back, then propagates."""
         if not self.holds(digest):
             return False
         target = Path(target)
@@ -421,10 +422,7 @@ class Store:
                     placed = False
         finally:  # also when an exception leaves _publish
             for path, held in kept:
-                what = ("the file that the target named before" if held == "old" else
-                        "a file another writer renamed onto the target")
-                self._finding(digest, f"kept: {path} holds {what}. place_object of object {digest} onto {target} "
-                                      "failed, and could not put it back without replacing a newer file there")
+                self._keep(path, held, digest, target)
         if not placed:
             self._checked.pop(digest, None)
         return placed
@@ -440,6 +438,34 @@ class Store:
             except FileExistsError:  # a kept file has that name: it stays, and the next name is fresh
                 continue
         raise StoreError(f"no free name beside {target} to stage object {digest}")
+
+    def _keep(self, path: Path, held: str, digest: str, target: Path) -> None:
+        """Move the file `path` that a failed `place_object` of `digest` onto `target` kept to the recovery folder
+        (cache.recovery), out of reach of whatever removes the target's folder, then name it in cache.findings.
+        The move is a no-replace rename onto a fresh name. Where it fails, such as on another filesystem, the
+        file stays where it is. The finding is best effort: an error writing it never changes what
+        `place_object` returns or raises."""
+        try:
+            folder = self._folder("cache.recovery")
+            if os.stat(folder).st_dev == os.stat(path, follow_symlinks=False).st_dev:
+                for _ in range(5):
+                    durable = _fresh(folder / target.name, held)
+                    durable = durable.with_name(durable.name.lstrip("."))
+                    try:
+                        _rename2(path, durable, swap=False)
+                        path = durable
+                        break
+                    except FileExistsError:  # a kept file has that name: it stays, and the next name is fresh
+                        continue
+        except OSError:  # the file stays where it is
+            pass
+        what = ("the file that the target named before" if held == "old" else
+                "a file another writer renamed onto the target")
+        try:
+            self._finding(digest, f"kept: {path} holds {what}. place_object of object {digest} onto {target} "
+                                  "failed, and could not put it back without replacing a newer file there")
+        except Exception:  # noqa: BLE001 - best effort: findings.jsonl may be unwritable, and the file is kept
+            pass
 
     # --- records ---------------------------------------------------------------------------------------------------
 

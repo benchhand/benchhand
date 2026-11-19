@@ -513,8 +513,8 @@ class PlaceObject(Fixture):
     """`place_object` swaps a link to the object onto the target, then hashes the inode it renamed through a
     descriptor it opened before (#250). The link shares the object's inode, so a write through the object reaches
     the target, and only a hash after the rename sees one. A failed or interrupted hash puts the old target back
-    while a lock on the target's folder keeps every other `place_object` out. A file it cannot put back stays
-    beside the target, and cache.findings names it."""
+    while a lock on the target's folder keeps every other `place_object` out. A file it cannot put back moves to
+    the store's recovery folder, and cache.findings names it there."""
 
     TARGETS = {"no target yet": None, "an old target": b"OLD"}
 
@@ -530,19 +530,26 @@ class PlaceObject(Fixture):
             target.write_bytes(old)
         return target
 
-    def kept(self, folder: Path) -> list[Path]:
-        """The files in `folder` that cache.findings names as kept by place_object."""
+    @property
+    def recovery(self) -> Path:
+        return self.hw / ".cad" / "cache" / "recovery"
+
+    def kept(self, target: Path) -> list[Path]:
+        """The files that cache.findings names as kept by a place_object onto `target`."""
         log = self.hw / ".cad" / "cache" / "findings.jsonl"
         lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
-        found = [re.match(r"kept: (.+?) holds ", json.loads(line)["finding"]) for line in lines]
-        return sorted(Path(m.group(1)) for m in found if m and Path(m.group(1)).parent == folder)
+        found = [re.match(r"kept: (.+?) holds .* onto (.+?) failed", json.loads(line)["finding"]) for line in lines]
+        return sorted(Path(m.group(1)) for m in found if m and Path(m.group(2)) == target)
 
-    def assert_left(self, target: Path, placed: bytes, kept: list[bytes]) -> None:
-        """`target` holds `placed`, and each other file beside it is one cache.findings names, holding `kept`."""
-        beside = sorted(path for path in target.parent.iterdir() if path != target)
+    def assert_left(self, target: Path, placed: bytes, kept: list[bytes], where: Path | None = None) -> None:
+        """`target` holds `placed` with nothing beside it. The files cache.findings names for it hold `kept`, in
+        the store's recovery folder, or in `where`."""
+        paths = self.kept(target)
         self.assertEqual(target.read_bytes(), placed)
-        self.assertEqual(beside, self.kept(target.parent))
-        self.assertEqual(sorted(path.read_bytes() for path in beside), sorted(kept))
+        self.assertEqual(sorted(path for path in target.parent.iterdir() if path != target),
+                         [path for path in paths if path.parent == target.parent])
+        self.assertEqual({path.parent for path in paths}, {where or self.recovery} if kept else set())
+        self.assertEqual(sorted(path.read_bytes() for path in paths), sorted(kept))
 
     @staticmethod
     def foreign(target: Path):
@@ -740,7 +747,7 @@ class PlaceObject(Fixture):
                 with self.at_the_rename(before=self.failing_hash(stored)), \
                         self.at_the_undo(target, lambda: None, self.foreign(target)):
                     self.assertFalse(self.store.place_object(first, target))
-                [kept] = self.kept(target.parent)
+                [kept] = self.kept(target)
                 taken: set[str] = set()
 
                 def colliding(near, kind):  # each kind of name once at the kept file's, then fresh
@@ -755,7 +762,50 @@ class PlaceObject(Fixture):
                 with seam, self.at_the_rename(before=self.failing_hash(stored)):
                     self.assertFalse(self.store.place_object(second, target))
                 self.assert_left(target, b"FOREIGN", [b"OLD"])
-                self.assertEqual(self.kept(target.parent), [kept])
+                self.assertEqual(self.kept(target), [kept])
+
+    def test_a_kept_file_on_another_filesystem_than_the_store_stays_beside_its_target(self) -> None:
+        digest, stored = self.stored(b"cross-device")
+        target = self.target("cross-device", b"OLD")
+        real = store._rename2
+
+        def rename2(source, onto, *args, **kwargs):
+            if Path(onto).parent == self.recovery:
+                raise OSError(errno.EXDEV, "Cross-device link")
+            return real(source, onto, *args, **kwargs)
+
+        with mock.patch.object(store, "_rename2", rename2), self.at_the_rename(before=self.failing_hash(stored)), \
+                self.at_the_undo(target, lambda: None, self.foreign(target)):
+            self.assertFalse(self.store.place_object(digest, target))
+        self.assert_left(target, b"FOREIGN", [b"OLD"], where=target.parent)
+
+    def test_a_recovery_log_that_cannot_be_written_changes_no_outcome_and_loses_no_file(self) -> None:
+        """findings.jsonl is a folder, so the `kept:` line cannot be written. place_object still returns False,
+        or raises the error that was in flight, and the old file is still in the recovery folder."""
+        real = Path.open
+
+        def opening(path, *args, **kwargs):
+            stream = real(path, *args, **kwargs)
+            return FailingClose(stream) if path.name.endswith(".link") else stream
+
+        (self.hw / ".cad" / "cache" / "findings.jsonl").mkdir(parents=True)
+        for outcome in ("a refusal", "a failed close"):
+            with self.subTest(outcome):
+                digest, stored = self.stored(f"log {outcome}".encode())
+                old = f"OLD {outcome}".encode()
+                target = self.target(f"log {outcome}", old)
+                closing = (mock.patch.object(Path, "open", opening) if outcome == "a failed close" else
+                           contextlib.nullcontext())
+                with self.at_the_rename(before=self.failing_hash(stored)), closing, \
+                        self.at_the_undo(target, lambda: None, self.foreign(target)):
+                    if outcome == "a refusal":
+                        self.assertFalse(self.store.place_object(digest, target))
+                    else:
+                        with self.assertRaises(OSError) as raised:
+                            self.store.place_object(digest, target)
+                        self.assertEqual(raised.exception.errno, errno.EIO)  # the close's error, not the log's
+                self.assertEqual(target.read_bytes(), b"FOREIGN")
+                self.assertEqual([path.read_bytes() for path in self.recovery.iterdir()].count(old), 1)
 
     def test_a_close_that_fails_after_a_mismatch_still_leaves_the_target_as_it_was(self) -> None:
         real = Path.open

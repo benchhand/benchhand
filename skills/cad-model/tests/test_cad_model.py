@@ -3280,5 +3280,52 @@ class CrossFilesystemTests(unittest.TestCase):
                 self.assertEqual(build.record.load_layout().verify(hw / "versions" / label), [], label)
 
 
+class KeptFileRecoveryTests(unittest.TestCase):
+    """A reuse whose place_object cannot put a file back (#250): the store keeps that file in its recovery
+    folder, so neither the run's fallback for a failed reuse nor the cleanup of the staged version removes it.
+    fixtures/store_seam/sitecustomize.py interleaves a writer that takes no lock into the first placement of a
+    part (build) and of a manufacturing file (manufacture)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.hw = hw = flat_project(Path(cls.tmp.name), "cadquery")
+        seam = {"PYTHONPATH": os.pathsep.join(filter(None, (str(FIXTURES / "store_seam"),
+                                                            os.environ.get("PYTHONPATH")))),
+                "CAD_TEST_STORE_SEAM": json.dumps(["parts", "manufacturing"])}
+        cls.runs = {}
+        for label, env in (("v1", {}), ("v2", seam)):
+            proc = subprocess.run(["uv", "run", "--quiet", "--script", str(CLI), "run", str(hw), "--label", label],
+                                  capture_output=True, text=True, check=False, env={**os.environ, **env})
+            cls.runs[label] = proc, (result_payload(proc.stdout) if proc.stdout.strip() else {})
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def kept(self) -> dict[str, Path]:
+        """Each `kept:` line of cache.findings: the folder of its target (parts or manufacturing), and its path."""
+        log = self.hw / ".cad" / "cache" / "findings.jsonl"
+        lines = [json.loads(line)["finding"] for line in log.read_text(encoding="utf-8").splitlines()]
+        found = [re.match(r"kept: (.+?) holds .* onto (.+?) failed", line) for line in lines]
+        return {("manufacturing" if "manufacturing" in Path(m.group(2)).parts else "parts"): Path(m.group(1))
+                for m in found if m}
+
+    def test_a_file_kept_by_a_failed_reuse_survives_the_fallback_and_the_cleanup_at_its_reported_path(self) -> None:
+        kept = self.kept()
+        self.assertEqual(sorted(kept), ["manufacturing", "parts"])
+        for folder, path in kept.items():
+            with self.subTest(folder):
+                self.assertTrue(path.is_file(), path)  # after the run's fallback and its cleanup of the staged version
+                self.assertEqual(path.read_bytes(), f"FOREIGN1 {folder}".encode())
+                self.assertEqual(path.parent, self.hw.resolve() / ".cad" / "cache" / "recovery")
+        for label, (proc, _) in self.runs.items():
+            self.assertEqual(proc.returncode, 0, f"{label}: " + proc.stdout[-2000:] + proc.stderr[-3000:])
+        self.assertEqual(self.runs["v2"][1]["cache"]["parts"]["built"], 1)  # the first part, whose reuse failed, built again
+        self.assertEqual(self.runs["v2"][1]["cache"]["manufacturing"]["built"], 1)
+        self.assertEqual(sorted(p.name for p in (self.hw / "versions").iterdir()), ["latest.json", "v1", "v2"])
+        self.assertEqual(build.record.load_layout().verify(self.hw / "versions" / "v2"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
