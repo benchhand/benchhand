@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ ACCEPTANCE = SKILL.parent / "cad-record" / "tests" / "fixtures" / "acceptance.py
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import load_module as load  # noqa: E402
-from decision_fixture import write_test_decision  # noqa: E402
+from decision_fixture import decision_path, write_test_decision  # noqa: E402
 
 
 stamp_module = load("cad_recheck_stamp", STAMP)
@@ -179,11 +180,14 @@ class RecheckHookTests(unittest.TestCase):
         checks.write_text(json.dumps(packet), encoding="utf-8")
         return checks
 
-    def provisional_gate(self, flow_stage: str, recheck_from: str = "ground") -> None:
-        """The state after a provisional gate: a proposed (provisional) decision and flow.stage advanced to `flow_stage`."""
+    def provisional_gate(self, flow_stage: str, recheck_from: str = "ground", *, decision: str | None = "proposed",
+                         decided: date | None = None) -> None:
+        """The state after a provisional gate: flow.stage advanced to `flow_stage`, with a decision of status
+        `decision` (none when None) dated `decided` (today, UTC, by default)."""
         self.stage_product(flow_stage, recheck_from)
-        write_test_decision(self.root / "hw", "DR-001", status="proposed",
-                            context="Temporary until the full check: v1 passed fast checks 1-4.")
+        if decision is not None:
+            write_test_decision(self.root / "hw", "DR-001", status=decision, date=decided or datetime.now(timezone.utc).date(),
+                                context="Temporary until the full check: v1 passed fast checks 1-4.")
         self.git("add", "hw")
 
     def stamp_gate(self, stage: str, *, outcome: str = "pass", passed: bool = True) -> subprocess.CompletedProcess[str]:
@@ -197,6 +201,60 @@ class RecheckHookTests(unittest.TestCase):
         self.provisional_gate("parts")
         result = self.stamp_gate("layout")
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.verify().returncode, 0)
+
+    def test_an_advance_without_a_decision_record_is_refused(self) -> None:
+        self.provisional_gate("parts", decision=None)
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("gate layout → parts", result.stderr)
+        self.assertIn("hw/decisions", result.stderr)
+
+    def test_an_accepted_decision_dated_on_the_stamp_day_passes_the_advance(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0)
+
+    def test_a_decision_of_another_status_does_not_pass_the_advance(self) -> None:
+        for status in ("rejected", "deprecated"):
+            with self.subTest(status=status):
+                self.provisional_gate("parts", decision=status)
+                self.assertEqual(self.stamp_gate("layout").returncode, 0)
+                result = self.verify()
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("gate layout → parts", result.stderr)
+
+    def test_a_superseded_decision_does_not_pass_the_advance(self) -> None:
+        self.provisional_gate("parts", decision="proposed")
+        write_test_decision(self.root / "hw", "DR-002", status="rejected", date=datetime.now(timezone.utc).date())
+        write_test_decision(self.root / "hw", "DR-001", status="proposed", date=datetime.now(timezone.utc).date(),
+                            superseded_by=("DR-002",))
+        self.git("add", "hw")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("gate layout → parts", result.stderr)
+
+    def test_a_decision_dated_before_the_stamp_does_not_pass_the_advance(self) -> None:
+        self.provisional_gate("parts", decided=datetime.now(timezone.utc).date() - timedelta(days=1))
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("gate layout → parts", result.stderr)
+
+    def test_a_malformed_decision_record_is_a_refusal(self) -> None:
+        self.provisional_gate("parts")
+        decision_path(self.root / "hw", "DR-001").write_text("not a record\n", encoding="utf-8")
+        self.git("add", "hw")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("DR-001-", result.stderr)
+
+    def test_a_stamp_at_the_current_stage_needs_no_decision_record(self) -> None:
+        self.provisional_gate("layout", decision=None)
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
 
     def test_a_stamp_two_stages_behind_flow_stage_is_refused(self) -> None:
