@@ -201,8 +201,8 @@ class _Case:
 
 
 def _extent(points: Sequence[Vec]) -> tuple[Vec, Vec]:
-    return (tuple(min(p[k] for p in points) for k in range(3)),  # type: ignore[return-value]
-            tuple(max(p[k] for p in points) for k in range(3)))  # type: ignore[return-value]
+    return ((min(p[0] for p in points), min(p[1] for p in points), min(p[2] for p in points)),
+            (max(p[0] for p in points), max(p[1] for p in points), max(p[2] for p in points)))
 
 
 def _merged_forces(loads: Sequence[Mapping[int, Vec]]) -> dict[int, Vec]:

@@ -1119,7 +1119,8 @@ def _near_support_sigma(found: Mapping[str, Any], a: Assessment) -> tuple[float 
     barrier = _near_support_barrier(a)
     if barrier is not None:
         return None, f"{lead}; {barrier}"
-    sigma, info = near.get("sigma_mpa"), found.get("sigma_info_mpa")
+    sigma: Any = near.get("sigma_mpa")
+    info: Any = found.get("sigma_info_mpa")
     if not _positive(sigma) or not _positive(info):
         return None, f"{lead}; the linearisation states no positive finite stress"
     # The linearised stress does not replace the kept-region peak: the larger of the two governs.
