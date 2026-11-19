@@ -341,9 +341,13 @@ class _Record:
         sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
         digests = getattr(self.record, "guideline_digests", None) or {}
+        declared = [intent.get("material_profile"), *(c.get("material_profile") for c in intent.get("components") or ()
+                                                     if isinstance(c, Mapping) and c.get("material_profile") is not None)]
+        undecided = any(not isinstance(m, str) and not (isinstance(m, Mapping) and m.get("status") == "not_applicable")
+                        for m in declared)  # a main or component material that is unknown could be any of them
         for op in self.route(pn):  # a guideline set the part's capability profile resolves through, for its own materials
             profile = op.get("capability")
-            for ref, sha in guidelines.digests_for(digests.get(profile), self.profiles(pn)).items() if isinstance(profile, str) else ():
+            for ref, sha in guidelines.digests_for(digests.get(profile), [] if undecided else self.profiles(pn)).items() if isinstance(profile, str) else ():
                 values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:

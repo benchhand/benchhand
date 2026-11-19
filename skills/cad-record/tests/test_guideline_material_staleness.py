@@ -53,7 +53,10 @@ class MaterialStaleness(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         parts = [made("PA", "mat_a"), made("PB", "mat_b"), made("PN", fx.unknown()), made("PU", "mat_ghost"),
-                 made("PBA", "mat_b", components=[{"material_profile": "mat_a"}]), made("PO", "mat_a", "tst_other")]
+                 made("PBA", "mat_b", components=[{"material_profile": "mat_a"}]), made("PO", "mat_a", "tst_other"),
+                 made("PG", "mat_b", components=[{"material_profile": "mat_ghost"}]),
+                 made("PX", "mat_b", components=[{"material_profile": fx.unknown()}]),
+                 made("PI", "mat_b", components=[{}])]
         materials = [fx.material_profile("mat_a", level="family", form="printed", material_family=fx.known("pa")),
                      fx.material_profile("mat_b", level="family", form="printed", material_family=fx.known("pc"))]
         printers = [fx.capability_profile(name, "fdm", parameters={"nozzle_diameter": fx.known(fx.quantity(nozzle))})
@@ -68,7 +71,7 @@ class MaterialStaleness(unittest.TestCase):
 
     def sources(self) -> dict[str, str]:
         found = impact.subject_fingerprints(mi.load_record(self.hw))
-        return {pn: str(found[pn]["source"]) for pn in ("PA", "PB", "PN", "PU", "PBA", "PO")}
+        return {pn: str(found[pn]["source"]) for pn in ("PA", "PB", "PN", "PU", "PBA", "PO", "PG", "PX", "PI")}
 
     def edit(self, name: str, ident: str, **scope: Any) -> tuple[dict[str, str], dict[str, str]]:
         self.put(name, guideline(ident, 0.8, **scope))
@@ -91,6 +94,18 @@ class MaterialStaleness(unittest.TestCase):
     def test_a_part_with_a_material_missing_from_the_record_goes_stale(self) -> None:
         self.assertIn("PU", self.stale("pa", "fdm.material.pa", material_family=["pa"]))
 
+    def test_a_part_naming_one_unknown_material_among_known_ones_takes_every_set_of_its_profile(self) -> None:
+        # PG is of B plus a material the record lacks, so the set for A counts too
+        self.assertIn("PG", self.stale("pa", "fdm.material.pa", material_family=["pa"]))
+
+    def test_a_part_of_b_with_a_component_of_unknown_material_goes_stale(self) -> None:
+        self.assertIn("PX", self.stale("pa", "fdm.material.pa", material_family=["pa"]))  # the unknown component could be A
+
+    def test_a_component_that_omits_its_material_inherits_the_part_s_and_stays_narrowed(self) -> None:
+        stale = self.stale("pa", "fdm.material.pa", material_family=["pa"])
+        self.assertNotIn("PI", stale)  # PI is of B alone: its component inherits B
+        self.assertIn("PBA", stale)
+
     def test_a_part_of_b_with_a_component_of_a_goes_stale(self) -> None:
         self.assertIn("PBA", self.stale("pa", "fdm.material.pa", material_family=["pa"]))
 
@@ -98,7 +113,7 @@ class MaterialStaleness(unittest.TestCase):
         self.assertLessEqual({"PA", "PB"}, self.stale("both", "fdm.material.both", material_family=["pa", "pc"]))
 
     def test_a_set_with_no_material_scope_stales_every_part_on_the_profile(self) -> None:
-        self.assertEqual(self.stale("generic", "fdm.generic"), {"PA", "PB", "PN", "PU", "PBA", "PO"})
+        self.assertEqual(self.stale("generic", "fdm.generic"), {"PA", "PB", "PN", "PU", "PBA", "PO", "PG", "PX", "PI"})
 
     def test_an_edit_under_one_capability_profile_leaves_a_part_on_another_fresh(self) -> None:
         stale = self.stale("narrow", "fdm.nozzle.d0_4", nozzle_diameter=fx.quantity(lower=0.35, upper=0.45))
