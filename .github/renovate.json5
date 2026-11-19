@@ -35,7 +35,37 @@
       "security"
     ]
   },
+  "pep723": {
+    "enabled": true,
+    "managerFilePatterns": [
+      "/^skills/[^/]+/scripts/[^/]+\\.py$/"
+    ]
+  },
+  "customManagers": [
+    {
+      "description": "Playwright and other pins in `uv run --with <pkg>==<version>` commands in docs",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/\\.md$/"
+      ],
+      "matchStrings": [
+        "uv run --with (?<depName>[A-Za-z0-9_.\\-]+)==(?<currentValue>[0-9][A-Za-z0-9_.+!\\-]*)"
+      ],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    }
+  ],
   "packageRules": [
+    {
+      "description": "Playwright pins in PEP 723 headers and docs move together in one PR",
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchPackageNames": [
+        "playwright"
+      ],
+      "groupName": "playwright"
+    },
     {
       "description": "Automerge minor and patch updates (not 0.x) once CI passes",
       "matchUpdateTypes": [

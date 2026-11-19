@@ -26,7 +26,7 @@ TRIGGER
 Run viewer commands through cad-flow's shared environment:
 `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py <command> [args...]`.
 Once per machine, install the headless browser captures use:
-`uv run --with playwright==1.64.1 playwright install chromium`.
+`uv run --with playwright==1.65.2 playwright install chromium`.
 
 Session identity:
 - A session is scoped to the project. For separate hosts in one project, pass `--session NAME` or

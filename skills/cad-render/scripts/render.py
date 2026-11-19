@@ -7,7 +7,7 @@
 # /// script
 # requires-python = ">=3.12,<3.15"
 # dependencies = [
-#     "playwright==1.64.1",
+#     "playwright==1.65.2",
 #     "pyyaml>=6.0",
 # ]
 # ///

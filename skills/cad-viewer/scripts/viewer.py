@@ -7,7 +7,7 @@
 # dependencies = [
 #     "cadquery-ocp-novtk==8.0.1.1.0",
 #     "ocp_viewer==1.2.0",
-#     "playwright==1.64.1",
+#     "playwright==1.65.2",
 #     "pyyaml>=6.0",
 # ]
 # ///
