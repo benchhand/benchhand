@@ -1874,11 +1874,20 @@ class _Reader:
                     self.problem("intent.profile", path, f"intent/route/{index}/capability",
                                  f"{pn} {op.id}: {profile.id} is a {profile.process} capability, the operation is {op.kind}")
 
+    def _decision_problem(self, ident: str) -> str | None:
+        """Why decision `ident` names no record under hw/decisions/, or None when it names one."""
+        layout = _sibling("cad_record_layout", "layout.py")
+        try:
+            found = layout.decision_file(self.hw, ident)
+        except layout.LayoutError as error:
+            return f"cannot be resolved: {error}"
+        return None if found is not None else f"has no hw/decisions/{ident}-<slug>.md"
+
     def resolve(self) -> None:
         for kind, ident, path, pointer in self.refs:
             if kind == "decision":
-                if self.hw is not None and not (self.hw / "decisions" / f"{ident}.md").is_file():
-                    self.problem("intent.reference", path, pointer, f"{pointer}: decision {ident} has no hw/decisions/{ident}.md")
+                if self.hw is not None and (why := self._decision_problem(ident)) is not None:
+                    self.problem("intent.reference", path, pointer, f"{pointer}: decision {ident} {why}")
                 continue
             if kind in ("case", "motion_case"):
                 folder = "analysis" if kind == "case" else "motion"

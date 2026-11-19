@@ -18,7 +18,7 @@ listed files and nothing else.
 | `{S}` | `[A-Z]{2,5}-[0-9]{3,4}\|[a-z][a-z0-9_-]*` | `assembly` | bundle subject: a PN, a record id such as a stack-up (STK-101), a subassembly, check or case id, or assembly for the whole product |
 | `{ID}` | `[a-z][a-z0-9_-]*` | `arm-load` | analysis case id |
 | `{REV}` | `[A-HJ-NPRTUVWY]` | `A` | released revision letter |
-| `{DR}` | `DR-[0-9]{3}` | `DR-001` | decision record id |
+| `{DR}` | `DR-[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*` | `DR-001-three-link-layout` | decision record file name without .md: DR-###-slug, a MADR 4.0.0 record |
 | `{N}` | `[1-9][0-9]*` | `1` | sheet number |
 | `{VIEW}` | `[a-z][A-Za-z0-9_-]*` | `part-LMP-0001` | render or capture view name; per-part views carry the PN |
 | `{PRODUCT}` | `[a-z0-9][a-z0-9-]*` | `lamp-arm` | product id from product.yaml |
@@ -42,6 +42,7 @@ listed files and nothing else.
 | `record.bom` | `hw/bom.csv` | generated | (data) | cad-bom bom.py, reconciled by the lead | layout | regenerated | hierarchical EBOM; the part records stay the authority |
 | `record.verification` | `hw/verification.csv` | record | (source) | lead | specify | controlled | verification status and evidence links per requirement |
 | `record.decision` | `hw/decisions/{DR}.md` | record | (source) | lead | ground | append_only | dated decision rationale and approvals |
+| `record.decision_index` | `hw/decisions/index.md` | record | (source) | decision_records.py | ground | regenerated | index of the MADR decision records, which decision_records.py regenerates on every write |
 | `record.docs` | `hw/docs/` | record | `**` (document; never geometry or script) | user or lead | ground | free | human notes, guides and reference material |
 | `record.part` | `hw/parts/{PN}/` | record | `part.yaml` (source), `model.py` (source, optional) | lead; a worker through cad-flow scratch.py deliver | layout | controlled | one part record and its parametric model |
 | `record.part_sources` | `hw/parts/{PN}/sources/` | record | `**` (evidence) | lead, accepting sourcing evidence | parts | controlled | frozen procurement copies (datasheets, certificates, vendor models) that part.yaml procurement names with their sha256 |

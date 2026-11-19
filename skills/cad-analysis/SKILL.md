@@ -47,7 +47,7 @@ Optional case keys: `acceptance: {strength: REQ-###, stiffness: REQ-###}`, `mesh
 
 A service load is covered only when the case's forces tagged with its `load` add up, as vectors, to at least its magnitude along its direction (at most 1% of the magnitude across it). The use case states the direction as the load's required `[x, y, z]` unit vector (norm 1 within 1e-6); no text form is read. The checker compares it with the case's forces as given, so it must be in the analysed part's model frame; it applies no frame transform, and a direction stated in the assembly frame (an `application` that names no part) is not converted. A reversed, rotated or cancelling force, or a direction that is not a unit vector, leaves the load uncovered.
 
-Mesh convergence counts only as an approved, bound, converged study. The decision file `hw/decisions/DR-###.md` must have the exact first line `Status: APPROVED` and a fenced `mesh-convergence` YAML block:
+Mesh convergence counts only as an approved, bound, converged study. The decision file `hw/decisions/DR-###-slug.md` must be a MADR 4.0.0 record with `status: accepted` and a fenced `mesh-convergence` YAML block:
 
 ```yaml
 geometry_sha256: <sha256 of the case's STEP file>

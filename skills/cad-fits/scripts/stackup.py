@@ -988,7 +988,7 @@ def _scratch_hw(path: Path) -> Path:
 
 def recorded_decisions(hw: Path) -> frozenset[str]:
     """The DR ids with a decision record under hw/decisions/."""
-    return frozenset(path.stem for path in (Path(hw) / "decisions").glob("DR-[0-9][0-9][0-9].md") if path.is_file())
+    return frozenset(path.stem[:6] for path in LAYOUT.decision_files(Path(hw)))
 
 
 def status_of(result: Mapping[str, Any]) -> str:
@@ -1043,8 +1043,8 @@ def packet_dependencies(hw: Path, stack_path: Path, stack: Mapping[str, Any]) ->
     statistics = stack.get("statistics")
     decision = statistics.get("decision") if isinstance(statistics, Mapping) else None
     if isinstance(decision, str) and DECISION.match(decision):
-        path = Path(hw) / "decisions" / f"{decision}.md"
-        if path.is_file():
+        path = LAYOUT.decision_file(Path(hw), decision)
+        if path is not None:
             found[f"decision_{decision.lower().replace('-', '_')}"] = hashlib.sha256(path.read_bytes()).hexdigest()
     return found
 

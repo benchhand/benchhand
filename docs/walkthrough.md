@@ -13,7 +13,7 @@ Codex's `workspace-write` sandbox can block loopback listeners, Chromium, or Fre
 
 The generated Kiro agent profiles use V3 configuration. Run the flow with a working V3 engine, such as `kiro-cli chat --v3`. Do not use the legacy V1 engine with these profiles. See the [Kiro V3 agent configuration docs](https://kiro.dev/docs/cli/v3/agent-config/).
 
-The Claude plugin entry point is `/benchhand:cad-flow`. To complete a gate, give explicit approval. The lead records the approval and rationale in a new `hw/decisions/DR-###.md`. A preview, successful check, or agent recommendation is not approval.
+The Claude plugin entry point is `/benchhand:cad-flow`. To complete a gate, give explicit approval. The lead records the approval and rationale in a new `hw/decisions/DR-###-slug.md`. A preview, successful check, or agent recommendation is not approval.
 
 LAYOUT freeze, PARTS, DETAIL and ANALYSIS each come as two gates. Once the built version passes the fast checks, the lead records a decision marked PROVISIONAL, without asking you, and the next stage may start. The human gate follows the full check, which checks every pair and runs the full motion sweep; only your approval closes it. A failed full check, a MAJOR finding of the L2 light review, or a change you name at the human gate voids the provisional decision. The lead then reopens that stage and every later stage built on that version, and `hw/product.yaml` `flow.stage` returns to the reopened stage.
 
@@ -44,7 +44,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Approve:** confirm the use case, unknowns and scope before a consequential selection. Only the explicit owner changes shared design records. A preview is not CAD, process or verification evidence.
 
-**Files:** `hw/product.yaml`, `hw/requirements.yaml`, and `hw/decisions/DR-###.md`.
+**Files:** `hw/product.yaml`, `hw/requirements.yaml`, and `hw/decisions/DR-###-slug.md`.
 
 ## INTENT
 
@@ -54,7 +54,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Approve:** approve, revise or decline consequential choices explicitly. An optical/transparency requirement eliminates opaque routes; consider only identified transparent purchased parts or identified stock on an appropriate sourced/capable route. No see-through FDM or unidentified clear plastic.
 
-**Files:** `hw/product.yaml`, `hw/requirements.yaml`, `hw/manufacturing/selection.yaml`, affected per-part intent, source/profile evidence, and `hw/decisions/DR-###.md`.
+**Files:** `hw/product.yaml`, `hw/requirements.yaml`, `hw/manufacturing/selection.yaml`, affected per-part intent, source/profile evidence, and `hw/decisions/DR-###-slug.md`.
 
 ## SPECIFY
 
@@ -74,7 +74,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Approve:** at the VARIANT gate, select a concept, request a refinement round, or decline all variants. Record the selection and rationale before layout.
 
-**Files:** `hw/concept/<product>.scene.json`, generated `hw/concept/handoff.json`, preview bundles under `hw/concept/screenshots/`, and `hw/decisions/DR-###.md`.
+**Files:** `hw/concept/<product>.scene.json`, generated `hw/concept/handoff.json`, preview bundles under `hw/concept/screenshots/`, and `hw/decisions/DR-###-slug.md`.
 
 ## L1 LAYOUT and LAYOUT freeze
 
@@ -84,7 +84,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Approve:** at LAYOUT freeze, approve the exact layout, interfaces, and envelope, or request revisions. The freeze decision records the approved state and version.
 
-**Files:** `hw/assembly.yaml`, `hw/interfaces.yaml`, part records under `hw/parts/<PN>/`, `hw/versions/vN/`, `hw/versions/latest.json`, `hw/checks/vN/`, `hw/renders/vN/`, optional `hw/motion/vN/`, and `hw/decisions/DR-###.md`.
+**Files:** `hw/assembly.yaml`, `hw/interfaces.yaml`, part records under `hw/parts/<PN>/`, `hw/versions/vN/`, `hw/versions/latest.json`, `hw/checks/vN/`, `hw/renders/vN/`, optional `hw/motion/vN/`, and `hw/decisions/DR-###-slug.md`.
 
 ## L2 PARTS and PARTS gate
 
@@ -124,7 +124,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Approve:** approve the evidence and disposition of findings, or require corrective design work. Tie each verified requirement to passing evidence for the correct version and configuration.
 
-**Files:** analysis cases under `hw/analysis/cases/`, accepted motion plans under `hw/motion/cases/`, version-bound bundles under `hw/motion/vN/`, `hw/analysis/vN/`, and `hw/checks/vN/`, plus `hw/verification.csv` and `hw/decisions/DR-###.md`.
+**Files:** analysis cases under `hw/analysis/cases/`, accepted motion plans under `hw/motion/cases/`, version-bound bundles under `hw/motion/vN/`, `hw/analysis/vN/`, and `hw/checks/vN/`, plus `hw/verification.csv` and `hw/decisions/DR-###-slug.md`.
 
 ## CRITIQUE and RECONCILE
 
@@ -144,7 +144,7 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Approve:** approve the exact design anchor for release preparation, or return affected stages for correction. Record the version and manifest in the decision.
 
-**Files:** frozen state and version/hash in `hw/product.yaml`, complete `hw/versions/vN/`, linked check, render, drawing, motion and analysis bundles, `hw/bom.csv`, `hw/verification.csv`, and `hw/decisions/DR-###.md`.
+**Files:** frozen state and version/hash in `hw/product.yaml`, complete `hw/versions/vN/`, linked check, render, drawing, motion and analysis bundles, `hw/bom.csv`, `hw/verification.csv`, and `hw/decisions/DR-###-slug.md`.
 
 ## RELEASE gate and RELEASE
 
@@ -154,6 +154,6 @@ FreeCAD 1.1.4 and its TechDraw templates are required. If a check fails, resolve
 
 **Approve:** explicitly approve the proposed revision at the RELEASE gate. The lead records release approval as a dated decision before running `release.py`. After approval, prompt: `Seal revision <A> from the approved version <vN> using release decision <DR-###>, then show the package manifest and validation result.` Stop publication if a prerequisite is missing, stale, or failing. Assign each release revision once.
 
-**Files:** release package `hw/releases/<REV>/` with its manifest, definition and manufacturing outputs, selected drawings and evidence, BOM, verification snapshot, and docs. `hw/decisions/DR-###.md` records gate approval.
+**Files:** release package `hw/releases/<REV>/` with its manifest, definition and manufacturing outputs, selected drawings and evidence, BOM, verification snapshot, and docs. `hw/decisions/DR-###-slug.md` records gate approval.
 
 The deliverable is a verified CAD release: STEP AP242, engineering drawings, EBOM, verification evidence, and documentation. An FDM part also gets a 3MF that carries geometry, orientation and material name only. The release excludes slicer, CAM, and machine-tool output.

@@ -395,8 +395,8 @@ def din_document(hw: Path, out: Path, version: str, release: ReleaseRef | None, 
                  verification: Sequence[Mapping[str, str]], decisions: Sequence[Path],
                  requirements: Mapping[str, Any], product: Mapping[str, Any]) -> str:
     template = (SKILL / "assets" / "docs-templates" / "din-spec-3105-1-checklist.md").read_text(encoding="utf-8")
-    decision_links = ", ".join(markdown_link(path.stem, path, out) for path in decisions) or \
-                     "MISSING: hw/decisions/DR-###.md"
+    decision_links = ", ".join(markdown_link(path.stem[:6], path, out) for path in decisions) or \
+                     "MISSING: hw/decisions/DR-###-slug.md"
     verification_evidence = record_link("hw/verification.csv", hw / "verification.csv", hw, out) + "; " + "; ".join(
          f"{row.get('requirement_id')}: {row.get('result') or 'not recorded'} — " +
          evidence_links(row.get("evidence", ""), hw, out)
@@ -449,7 +449,7 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
     interfaces = read_yaml(hw / "interfaces.yaml", optional=True).get("interfaces", [])
     bom_rows = read_csv(hw / "bom.csv", optional=True)
     verification = read_csv(hw / "verification.csv", optional=True)
-    decision_paths = sorted((hw / "decisions").glob("DR-[0-9][0-9][0-9].md"))
+    decision_paths = LAYOUT.decision_files(hw)
     declared = section if isinstance(section := product.get("manufacturing"), Mapping) else {}
     processes = declared.get("processes", [])
     processes = processes if isinstance(processes, list) else []
@@ -560,8 +560,8 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
             [(row.get("requirement_id"), row.get("method"), row.get("criteria"), row.get("result"),
               evidence_links(row.get("evidence", ""), hw, out)) for row in verification] or
              [("MISSING: hw/verification.csv rows", None, None, None, None)]),
-        "## Design decisions\n\n" + (", ".join(markdown_link(path.stem, path, out) for path in decision_paths)
-                                          if decision_paths else "MISSING: hw/decisions/DR-###.md"),
+        "## Design decisions\n\n" + (", ".join(markdown_link(path.stem[:6], path, out) for path in decision_paths)
+                                          if decision_paths else "MISSING: hw/decisions/DR-###-slug.md"),
         "## Manufacturing processes\n\n" + (", ".join(map(text, processes)) if processes else
                                                  "MISSING: product.yaml manufacturing.processes"),
         "## Reuse terms\n\n" + table(("Field", "Value"), [

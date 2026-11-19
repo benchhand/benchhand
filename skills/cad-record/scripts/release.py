@@ -433,18 +433,19 @@ def assemble(hw: Path, rev: str, version: str, decision: str,
     time when None). LayoutError for a malformed argument."""
     target_rel = layout.load().path("release.package", {"REV": rev})
     layout.version_dir(hw, version)
-    decision_path = layout.resolve(hw, "record.decision", DR=decision)
     moment = datetime.now(timezone.utc) if now is None else now.astimezone(timezone.utc)
     release = Release(hw, rev, version, decision, target_rel, released_at=moment.strftime("%Y-%m-%dT%H:%M:%SZ"))
     if os.path.lexists(layout.locate(hw, target_rel)):
         release.refuse(target_rel, "exists", f"{target_rel} exists; a used revision is never overwritten")
-    if not decision_path.is_file():
-        release.refuse(layout.relative(hw, decision_path), "decision",
-                       f"{decision} does not exist at {layout.relative(hw, decision_path)}; record the release approval")
-    elif (problem := validate.not_an_approval(decision_path)) is not None:
-        release.refuse(layout.relative(hw, decision_path), "decision",
-                       f"{decision} {problem}; record the user's release approval as a decision whose first line "
-                       "is `Status: APPROVED`")
+    decision_path = layout.decision_file(hw, decision)
+    decision_rel = layout.relative(hw, decision_path or layout.locate(hw, "hw/decisions"))
+    record, missing = validate.load_decision(hw, decision)
+    if missing is not None:
+        release.refuse(decision_rel, "decision", f"{decision} {missing}; record the release approval")
+    elif (problem := validate.not_an_approval(record)) is not None:
+        release.refuse(decision_rel, "decision",
+                       f"{decision} {problem}; record the user's release approval as a decision with "
+                       "`status: accepted`")
     product = _yaml(hw / "product.yaml")
     flow = value if isinstance(product, dict) and isinstance(value := product.get("flow"), dict) else {}
     frozen = flow.get("frozen")
