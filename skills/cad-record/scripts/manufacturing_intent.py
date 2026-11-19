@@ -523,7 +523,7 @@ class Load:
     magnitude: Fact
     direction: tuple[float, float, float] | None  # a unit vector; None only when invalid, which validation reports
     requirements: tuple[str, ...]
-    application: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # what `direction` is stated against; empty names no part
+    application: Mapping[str, Any] = field(default_factory=lambda: _EMPTY, hash=False)  # what `direction` is stated against; empty names no part; a mapping is unhashable, equality still compares it
 
 
 @dataclass(frozen=True)
