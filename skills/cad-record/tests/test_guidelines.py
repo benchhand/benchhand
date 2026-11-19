@@ -686,7 +686,36 @@ class DiscreteNozzleDiameters(Directories):
     def test_equally_specific_set_and_interval_keep_the_sizes_inside_the_interval(self) -> None:
         put(self.shipped, "pa", guideline("fdm.material.pa", [discrete(0.2, 0.4, 0.6)], material_family=["pa"]))
         put(self.shipped, "pb", guideline("fdm.material.pb", [limit("nozzle_diameter", ">=", quantity=fx.quantity(0.4))], material_family=["pa"]))
-        self.assertEqual(resolve(record(), self.catalog(), "nozzle_diameter").value, microns(400, 600))
+        found = resolve(record(), self.catalog(), "nozzle_diameter")
+        self.assertEqual(found.value, microns(400, 600))
+        shown = {p.guideline: (p.value, p.units) for p in found.provenance}
+        sizes = [{"value": float(size), "units": "um"} for size in (200, 400, 600)]
+        self.assertEqual(shown, {"fdm.material.pa@1": (sizes, "um"), "fdm.material.pb@1": ({"value": 0.4, "units": "mm"}, "mm")})
+
+    def test_a_strict_parent_bound_rejects_a_child_set_that_contains_its_boundary_size(self) -> None:
+        for operator, sizes in (("<", (0.4, 0.8)), (">", (0.2, 0.4))):
+            with self.subTest(operator):
+                boundary = 0.8 if operator == "<" else 0.2
+                put(self.shipped, "generic", guideline("fdm.generic", [limit("nozzle_diameter", operator, quantity=fx.quantity(boundary))]))
+                self.child([discrete(*sizes)])
+                found = resolve(record(), self.catalog(), "nozzle_diameter")
+                self.assertEqual((found.operator, found.value), (operator, mi.Quantity("mm", value=boundary)))
+                self.assertTrue(any("without `relaxes`" in w and "fdm.material.pa@1" in w for w in found.warnings), found.warnings)
+
+    def test_a_strict_parent_bound_accepts_a_child_set_clear_of_its_boundary_size(self) -> None:
+        put(self.shipped, "generic", guideline("fdm.generic", [limit("nozzle_diameter", "<", quantity=fx.quantity(0.8))]))
+        self.child([discrete(0.4, 0.6)])
+        found = resolve(record(), self.catalog(), "nozzle_diameter")
+        self.assertEqual((found.value, found.warnings), (microns(400, 600), ()))
+
+    def test_an_equally_specific_strict_interval_excludes_its_boundary_size(self) -> None:
+        for operator, sizes in (("<", (0.4, 0.6, 0.8)), (">", (0.2, 0.4, 0.6))):
+            with self.subTest(operator):
+                boundary = 0.8 if operator == "<" else 0.2
+                put(self.shipped, "pa", guideline("fdm.material.pa", [discrete(*sizes)], material_family=["pa"]))
+                put(self.shipped, "pb", guideline("fdm.material.pb", [limit("nozzle_diameter", operator, quantity=fx.quantity(boundary))],
+                                                  material_family=["pa"]))
+                self.assertEqual(resolve(record(), self.catalog(), "nozzle_diameter").value, microns(400, 600))
 
     def test_a_set_under_an_unknown_scope_fact_stays_unknown_and_does_not_fall_through(self) -> None:
         self.child([discrete(0.4)])

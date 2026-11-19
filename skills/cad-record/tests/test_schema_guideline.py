@@ -136,6 +136,8 @@ class GuidelineFile(unittest.TestCase):
 
         discrete = {"characteristic": "nozzle_diameter", "operator": "one_of", "quantities": sizes(0.2, 0.4, 0.6, 0.8),
                     "citations": [datasheet()]}
+        enclosure = {"characteristic": "enclosure", "operator": "equals", "value": True, "citations": [datasheet()]}
+        material = {"characteristic": "nozzle_material", "operator": "one_of", "value": ["hardened_steel"], "citations": [datasheet()]}
         self.assert_cases({
             "one_of with quantities": (guideline(limits=[discrete]), True),
             "quantities in micrometres": (guideline(limits=[{**discrete, "quantities": sizes(200, 400, units="um")}]), True),
@@ -154,6 +156,15 @@ class GuidelineFile(unittest.TestCase):
             "an item beyond the nozzle bound": (guideline(limits=[{**discrete, "quantities": sizes(50)}]), False),
             "an item in degrees": (guideline(limits=[{**discrete, "quantities": [fx.quantity(0.4, "deg")]}]), False),
             "an item that is a number": (guideline(limits=[{**discrete, "quantities": [0.4]}]), False),
+            "valid enclosure limit plus quantities": (guideline(limits=[{**enclosure, "quantities": sizes(0.4)}]), False),
+            "valid nozzle_material limit plus quantities": (guideline(limits=[{**material, "quantities": sizes(0.4)}]), False),
+            "valid min_wall limit plus quantities": (guideline(limits=[{**limit(), "quantities": sizes(0.4)}]), False),
+            "valid between limit plus quantities": (guideline(limits=[{**limit(characteristic="nozzle_diameter", operator="between",
+                                                                           quantity=fx.quantity(lower=0.2, upper=0.8)),
+                                                                     "quantities": sizes(0.4)}]), False),
+            "valid nozzle_diameter >= limit plus quantities": (guideline(limits=[{**limit(characteristic="nozzle_diameter",
+                                                                                          quantity=fx.quantity(0.2)),
+                                                                                "quantities": sizes(0.4)}]), False),
         })
 
     def test_a_relative_limit_names_its_base_factor_and_floor(self) -> None:

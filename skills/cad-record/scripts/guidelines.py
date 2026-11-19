@@ -863,7 +863,7 @@ def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi:
 def _resolved(characteristic: str, current: _Bound, winners: list[_Candidate], shadowed: list[Shadowed], warnings: list[str],
               mi: Any) -> Resolved:
     operator, value = _statement(current, mi)
-    provenance = tuple(Provenance(_present(candidate.bound, mi), current.units, candidate.layer, candidate.defined_in.ref,
+    provenance = tuple(Provenance(_present(candidate.bound, mi), candidate.bound.units, candidate.layer, candidate.defined_in.ref,
                                   candidate.defined_in.path, tuple(_plain(c) for c in candidate.limit["citations"]),
                                   "guideline", tuple(shadowed)) for candidate in winners)
     source = {"kind": "guideline", "reference": winners[0].defined_in.id, "revision": str(winners[0].defined_in.revision),
