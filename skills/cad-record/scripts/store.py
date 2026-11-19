@@ -17,7 +17,9 @@ record gives way to the next claim, and `retire` removes a record its producer j
 the key. `record` re-hashes
 every member on read and names why a record is stale. `place` lays a record's members down beside each other in a
 fresh folder and renames that folder into place, so a reader sees the whole set or none of it. `place_object`
-links one object. Every write lands beside its name and the store renames it onto that name, and every store
+links one object. Both hash what they linked before it gets its name, and only `holds` answers from the hashes
+this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
+name, and every store
 path is a plain file or folder. `gc` keeps what any sealed manifest under hw/ names and removes the rest, and the part store of
 the former layout (hw/.cad/parts, hw/.cad/builds). Deleting the store by hand costs only recomputation, never a
 version, because every version file is a link or copy of its own.
@@ -59,6 +61,9 @@ READ_ONLY = 0o444
 FORMER = (".cad/parts", ".cad/builds")  # the part store before hw/.cad/cache/, removed by gc
 _RENAME_EXCHANGE = 2  # renameat2 flag (Linux)
 _RENAME_SWAP = 2  # renamex_np flag (macOS)
+# The coarsest timestamp step the store allows for: FAT stamps mtime in 2 s steps, HFS+ and ext3 in 1 s, and Linux
+# stamps from a clock that moves once per scheduler tick. A write within one step of the last keeps its timestamps.
+TICK_NS = 2_000_000_000
 
 
 class StoreError(RuntimeError):
@@ -78,9 +83,17 @@ def file_sha(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _signature(found: os.stat_result) -> tuple[int, int, int]:
-    """An object's inode, size and mtime. Every write to its bytes changes the mtime, and a hard link changes none."""
-    return found.st_ino, found.st_size, found.st_mtime_ns
+def _signature(found: os.stat_result) -> tuple[int, int, int, int, int]:
+    """An object's device, inode, size, mtime and ctime. A write changes mtime and ctime unless it lands within the
+    clock tick of the last change, a utime that puts the mtime back still changes the ctime, and so does a link."""
+    return found.st_dev, found.st_ino, found.st_size, found.st_mtime_ns, found.st_ctime_ns
+
+
+def _settled(found: os.stat_result, hashed_at: int) -> bool:
+    """Whether a hash that started at `hashed_at` (ns) can stand for an object with the stat `found`: its last change
+    is at least TICK_NS older, so no later write can carry that change's timestamps. git's racy-git rule
+    (Documentation/technical/racy-git.txt), with the store's clock in place of the index file's mtime."""
+    return max(found.st_mtime_ns, found.st_ctime_ns) <= hashed_at - TICK_NS
 
 
 def _link_or_copy(source: Path, target: Path) -> None:
@@ -129,8 +142,9 @@ def _exchange(source: Path, target: Path) -> bool:
 class Store:
     def __init__(self, hw: Path) -> None:
         self.hw = Path(hw)
-        # each object this Store hashed, with its inode, size and mtime at that hash: an edit in place changes the mtime
-        self._checked: dict[str, tuple[tuple[int, int, int], bool]] = {}
+        # each object this Store hashed: its stat and the time (ns) when that hash started, and whether it matched.
+        # `holds` reuses one only while it is settled (`_settled`); `record`, `place` and `place_object` never do.
+        self._checked: dict[str, tuple[tuple[int, int, int, int, int], int, bool]] = {}
         self._held = threading.local()  # the keys whose lock this thread holds through this Store
 
     def _path(self, entry_id: str, digest: str) -> Path:
@@ -151,7 +165,8 @@ class Store:
     # --- objects ---------------------------------------------------------------------------------------------------
 
     def holds(self, digest: Any) -> bool:
-        """Whether the object `digest` exists and its bytes still hash to its name."""
+        """Whether the object `digest` exists and its bytes still hash to its name. It answers from an earlier hash
+        while the object's stat is unchanged and its last change is at least TICK_NS older than that hash."""
         if not isinstance(digest, str) or not SHA.fullmatch(digest):
             return False
         path = self._path("cache.part_objects", digest)
@@ -162,10 +177,24 @@ class Store:
             return False
         if not stat.S_ISREG(found.st_mode):
             return False
-        signature = _signature(found)
-        if self._checked.get(digest, (None, False))[0] != signature:
-            self._checked[digest] = (signature, file_sha(path) == digest)
-        return self._checked[digest][1]
+        signature, hashed_at, matched = self._checked.get(digest, (None, 0, False))
+        if signature == _signature(found) and _settled(found, hashed_at):
+            return matched
+        return self._hash(digest)
+
+    def _hash(self, digest: str) -> bool:
+        """Whether the object `digest` is a plain file whose bytes, read now, hash to its name. The result, the stat
+        and the time before the read go to the cache that `holds` reads."""
+        path = self._path("cache.part_objects", digest)
+        started = time.time_ns()  # before the stat and the read, so that a write during either is never settled
+        try:
+            found = os.stat(path, follow_symlinks=False)
+            matched = stat.S_ISREG(found.st_mode) and file_sha(path) == digest
+        except FileNotFoundError:  # gc removed it
+            self._checked.pop(digest, None)
+            return False
+        self._checked[digest] = (_signature(found), started, matched)
+        return matched
 
     def intern(self, path: Path) -> str:
         """Store the file at `path` as an object and return its sha256. The store holds equal bytes once: when it
@@ -176,16 +205,18 @@ class Store:
         target = self._path("cache.part_objects", digest)
         staged = self._folder("cache.part_objects") / f".{digest}.{os.getpid()}.{threading.get_ident()}.tmp"
         _link_or_copy(Path(path), staged)
+        started = time.time_ns()
         if file_sha(staged) != digest:  # the source changed during the link or copy
             staged.unlink()
             raise StoreError(f"{path} changed while it was stored")
         os.replace(staged, target)
-        self._checked[digest] = (_signature(os.stat(target)), True)
+        self._checked[digest] = (_signature(os.stat(target)), started, True)
         return digest
 
     def place_object(self, digest: str, target: Path) -> bool:
-        """Make `target` the object `digest`: a hard link where possible, else a copy, renamed onto `target`.
-        False, with `target` untouched, when the object is absent or its bytes hash to another name."""
+        """Make `target` the object `digest`: a hard link where possible, else a copy, renamed onto `target` once
+        its bytes, read again, hash to `digest`. False, with `target` untouched, when the object is absent or its
+        bytes hash to another name."""
         if not self.holds(digest):
             return False
         target = Path(target)
@@ -194,6 +225,10 @@ class Store:
         try:
             _link_or_copy(self._path("cache.part_objects", digest), staged)
         except FileNotFoundError:  # gc removed it meanwhile
+            self._checked.pop(digest, None)
+            return False
+        if file_sha(staged) != digest:  # changed since a hash `holds` trusted: never publish it
+            staged.unlink()
             self._checked.pop(digest, None)
             return False
         os.replace(staged, target)
@@ -221,7 +256,7 @@ class Store:
             object_path = self._path("cache.part_objects", digest)
             if not object_path.is_file():
                 return Lookup(None, f"stale: {name} names object {digest}, which is missing")
-            if not self.holds(digest):
+            if not self._hash(digest):  # never `holds`: a reused record never rests on the cache
                 return Lookup(None, f"stale: {name} object {digest} does not hash to its name")
         return Lookup(data, "")
 
@@ -318,6 +353,8 @@ class Store:
                     if not self.holds(digest):
                         raise FileNotFoundError(digest)
                     _link_or_copy(self._path("cache.part_objects", digest), target)
+                    if file_sha(target) != digest:  # changed since a hash `holds` trusted: never publish it
+                        raise FileNotFoundError(digest)
                 except FileNotFoundError:  # gc removed it, or its bytes changed, after holds() read it
                     self._checked.pop(digest, None)
                     return f"stale: {name} names object {digest}, which is missing or changed"
