@@ -26,7 +26,7 @@ limits:
     accessed: '2026-11-18'
     locator: 'FAQ on overhangs: try not to design parts with angles over 45 degrees'
 - characteristic: bridge_span
-  operator: <=
+  operator: "<"
   quantity:
     value: 5
     units: mm

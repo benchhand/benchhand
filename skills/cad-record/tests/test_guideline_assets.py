@@ -100,7 +100,7 @@ class ShippedValues(unittest.TestCase):
         got = {item["characteristic"]: bare(item) for item in limits_of("fdm.generic")}
         self.assertEqual(got, {
             "overhang_angle": ("<=", (45, "deg")),
-            "bridge_span": ("<=", (5, "mm")),
+            "bridge_span": ("<", (5, "mm")),
             "min_wall": (">=", (0.8, "mm")),
             "min_feature": (">=", (2.0, "mm")),
             "min_hole": (">=", (2.0, "mm")),
@@ -179,6 +179,15 @@ class ShippedResolution(unittest.TestCase):
                 self.assertEqual(stated(resolved("nozzle_diameter", **facts)), ("guideline", ">=", 0.4, "mm", ()))
                 self.assertEqual(stated(resolved("nozzle_material", **facts)),
                                  ("guideline", "equals", "hardened_steel", None, ()))
+
+
+class BridgeBoundary(unittest.TestCase):
+    def test_a_bridge_must_be_strictly_under_5_mm(self) -> None:
+        found = resolved("bridge_span")
+        self.assertEqual(stated(found), ("guideline", "<", 5, "mm", ()))
+        allows = {"<": lambda span, limit: span < limit}[found.operator]
+        self.assertFalse(allows(5.0, found.value.value))
+        self.assertTrue(allows(4.99, found.value.value))
 
 
 class H2DSample(unittest.TestCase):
