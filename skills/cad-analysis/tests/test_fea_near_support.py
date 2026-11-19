@@ -421,6 +421,18 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         assert finding is not None
         self.assertAlmostEqual(finding["measured"]["value"], 250.0 / 133.56, places=3)
 
+    def test_a_record_gap_turns_a_linearised_strength_fail_into_unknown(self) -> None:
+        # The same 210 N case fails strength at 1.8718 against 2 (test above). A record that fails its schema is a gap
+        # (#262): it leaves the verdict unknown on the near-support path as on every other.
+        docs = conditions_tests.documents()
+        docs["requirements.yaml"]["bogus"] = 1
+        report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0), docs)
+        self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
+        row, finding = self.row(report)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("hw/requirements.yaml: Additional properties", row["uncertainty"])
+        self.assertEqual([f["code"] for f in report["engineering"]["findings"] if f["outcome"] == "fail"], [])
+
     def test_a_fixed_fixed_beam_abstains_and_never_fails(self) -> None:
         report = self.solve(beam_plan(beam_field(210.0), (0.0, LENGTH), 15.0, 210.0, cells_x=60))
         near = report["stress_study"]["near_support"]
