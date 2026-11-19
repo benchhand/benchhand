@@ -722,8 +722,8 @@ def _candidates_of(guideline: Guideline, defined: Guideline, distance: int, cont
 
 def _prepare(candidates: list[_Candidate], context: Context, characteristic: str) -> tuple[list[_Candidate], list[str], list[str]]:
     """The candidates as bounds in one unit, the reasons for those that cannot be one, and the reasons that must stop
-    resolution: a candidate that cannot be a bound but is more specific than one that can would otherwise lose
-    silently to it. One of the same specificity does not (the plain floor of a set survives its unresolved limit)."""
+    resolution: a candidate that cannot be a bound but outranks every one that can would otherwise lose silently to a
+    looser one. One that ties or trails the best survivor does not (the plain floor of a set survives its unresolved limit)."""
     mi = _intent()
     units = None
     for candidate in candidates:
@@ -739,7 +739,8 @@ def _prepare(candidates: list[_Candidate], context: Context, characteristic: str
             continue
         ready.append(_Candidate(candidate.guideline, candidate.defined_in, candidate.limit, bound, candidate.key, _show(bound),
                                 candidate.layer))
-    blocking = [reason for candidate, reason in dropped if any(candidate.key > other.key for other in ready)]
+    top = max((other.key for other in ready), default=None)
+    blocking = [reason for candidate, reason in dropped if top is not None and candidate.key > top]
     return ready, [reason for _, reason in dropped], blocking
 
 

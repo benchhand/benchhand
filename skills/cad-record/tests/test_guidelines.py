@@ -436,6 +436,20 @@ class LineWidth(Directories):
         found = resolve(record(nozzle=None), self.catalog(), "min_wall")
         self.assertEqual((found.status, found.value), ("guideline", mi.Quantity("mm", value=0.8)))
 
+    def test_an_unresolved_limit_keeps_the_equally_specific_plain_floor_above_a_generic_one(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [limit("min_wall", ">=", 1.2), per_line("min_wall", 3, 0.8)],
+                                          material_family=["pa"]))
+        found = resolve(record(nozzle=None), self.catalog(), "min_wall")
+        self.assertEqual((found.status, found.value), ("guideline", mi.Quantity("mm", value=1.2)))
+
+    def test_an_unresolved_limit_below_a_higher_ranked_survivor_does_not_block_it(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [per_line("min_wall", 3, 0.8)], material_family=["pa"]))
+        put(self.shipped, "cf", guideline("fdm.material.pa_cf", [limit("min_wall", ">=", 2.0)], material_family=["pa"], filler=["cf"]))
+        found = resolve(record(nozzle=None, filler="cf"), self.catalog(), "min_wall")
+        self.assertEqual((found.status, found.value), ("guideline", mi.Quantity("mm", value=2.0)))
+
     def test_a_relative_limit_on_an_angle_is_refused_by_name(self) -> None:
         bad = guideline("fdm.generic", [])
         bad["limits"] = [limit("overhang_angle", "<=", relative={"relative_to": "line_width", "factor": 1, "floor": fx.quantity(40, "deg")})]
