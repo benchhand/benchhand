@@ -50,7 +50,7 @@ import importlib.util
 import json
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -353,6 +353,32 @@ def _same_criterion(required: Any, stated: Any) -> bool:
     return all(abs(a - b) <= 1e-9 * max(1.0, abs(a)) for a, b in zip(first, converted, strict=True))
 
 
+def _verdict(passes: bool, fails: bool) -> str:
+    return "pass" if passes else "fail" if fails else "unknown"
+
+
+def _between(lower: float, upper: float, limits: list[float], tolerance: float) -> str:
+    low, high = limits
+    return _verdict(lower >= low - tolerance and upper <= high + tolerance, upper < low - tolerance or lower > high + tolerance)
+
+
+def _one_of(lower: float, upper: float, limits: list[float], tolerance: float) -> str:
+    exact = upper - lower <= tolerance and any(abs(lower - limit) <= tolerance for limit in limits)
+    return _verdict(exact, not any(lower - tolerance <= limit <= upper + tolerance for limit in limits))
+
+
+# The interval (lower, upper) of a value against a criterion's limits; `>` and `<` are strict, so the limit itself fails.
+_VERDICTS: dict[str, Callable[[float, float, list[float], float], str]] = {
+    ">=": lambda lo, up, lim, tol: _verdict(lo >= lim[0] - tol, up < lim[0] - tol),
+    "<=": lambda lo, up, lim, tol: _verdict(up <= lim[0] + tol, lo > lim[0] + tol),
+    ">": lambda lo, up, lim, tol: _verdict(lo > lim[0] + tol, up <= lim[0] + tol),
+    "<": lambda lo, up, lim, tol: _verdict(up < lim[0] - tol, lo >= lim[0] - tol),
+    "between": _between,
+    "equals": _one_of,
+    "one_of": _one_of,
+}
+
+
 def _compare(value: Any, criterion: Any) -> tuple[str, str]:
     """pass, fail or unknown of a value or interval against a numeric criterion, and why. An interval that
     straddles the limit is unknown, never a pass."""
@@ -368,21 +394,10 @@ def _compare(value: Any, criterion: Any) -> tuple[str, str]:
     if limits is None:
         return "unknown", f"{shown}: the criterion is not numeric"
     operator = criterion.operator
-    if operator == ">=":
-        verdict = "pass" if lower >= limits[0] - tolerance else "fail" if upper < limits[0] - tolerance else "unknown"
-    elif operator == "<=":
-        verdict = "pass" if upper <= limits[0] + tolerance else "fail" if lower > limits[0] + tolerance else "unknown"
-    elif operator == "between":
-        low, high = limits
-        inside = lower >= low - tolerance and upper <= high + tolerance
-        outside = upper < low - tolerance or lower > high + tolerance
-        verdict = "pass" if inside else "fail" if outside else "unknown"
-    elif operator in ("equals", "one_of"):
-        exact = upper - lower <= tolerance and any(abs(lower - limit) <= tolerance for limit in limits)
-        possible = any(lower - tolerance <= limit <= upper + tolerance for limit in limits)
-        verdict = "pass" if exact else "fail" if not possible else "unknown"
-    else:
+    compare = _VERDICTS.get(operator)
+    if compare is None:
         return "unknown", f"{shown}: operator {operator} is not comparable"
+    verdict = compare(lower, upper, limits, tolerance)
     if verdict == "unknown":
         return verdict, f"{shown}: the interval straddles the limit"
     return verdict, shown

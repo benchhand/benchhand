@@ -11,6 +11,7 @@ as-made variation the allowance must clean up is the predecessor's calibration, 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from .core import (FAIL, NOT_APPLICABLE, PASS, UNKNOWN, Context, Draft, Result, access_directions, combine, direction_key, dot,
@@ -197,14 +198,23 @@ def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any,
     return PASS, f"{feature} allowance {amount} covers {source_op.id}'s deviation"
 
 
+# Whether a bore of `depth` mm breaks a thread-engagement minimum; `>` is strict, so a bore exactly as deep breaks it.
+_ENGAGEMENT_BREAKS: dict[str, Callable[[float, float], bool]] = {
+    ">=": lambda depth, need: depth < need - 1e-9,
+    ">": lambda depth, need: depth <= need + 1e-9,
+}
+
+
 def engagement(ctx: Context) -> Result:
     method = "tapping: thread engagement depth against the operation's criterion"
     findings: list[Draft] = []
     targets = _target_ids(ctx, findings)
     if targets is None:
         return combine(method, [(UNKNOWN, "no targets")], findings)
-    criteria = [c for c in ctx.operation.raw.get("criteria") or () if c.get("property") == "thread_engagement"]
-    if not criteria:
+    every = [c for c in ctx.operation.raw.get("criteria") or () if c.get("property") == "thread_engagement"]
+    criteria = [c for c in every if c.get("operator") in _ENGAGEMENT_BREAKS]
+    unsupported = sorted({str(c.get("operator")) for c in every if c.get("operator") not in _ENGAGEMENT_BREAKS})
+    if not every:
         findings.append(Draft("process.tapping.engagement_unknown", "major", UNKNOWN, unknown("no engagement criterion"),
                               unknown("the thread and its required engagement"), "part.yaml route criteria", "not recorded",
                               "whether the thread holds its load is unknown",
@@ -215,19 +225,22 @@ def engagement(ctx: Context) -> Result:
     if isinstance(g, Result):
         return g
     parts: list[tuple[str, str]] = []
-    need = ctx.mi.convert(criteria[0]["value"], criteria[0].get("units", "mm"), "mm")
     for feature in sorted(targets):
         hole = next((h for h in g.holes() if feature in (h.get("features") or ())), None)
         if hole is None:
             parts.append((UNKNOWN, f"{feature} not a recognised bore"))
             continue
-        if hole["depth_mm"] < need - 1e-9:
-            findings.append(Draft("process.tapping.engagement", "major", FAIL, length(hole["depth_mm"]), {**criteria[0]},
+        broken = next((c for c in criteria if _ENGAGEMENT_BREAKS[c["operator"]](
+            hole["depth_mm"], ctx.mi.convert(c["value"], c.get("units", "mm"), "mm"))), None)
+        if broken is not None:
+            findings.append(Draft("process.tapping.engagement", "major", FAIL, length(hole["depth_mm"]), {**broken},
                                   g.method("bore depth"), "full-depth thread assumed; tap lead-in not deducted",
                                   f"{feature} is too shallow for the required thread engagement",
                                   remedy="deepen the hole, use a thread insert or a through bolt", feature=feature,
                                   recheck=["process.tapping.engagement"]))
             parts.append((FAIL, f"{feature} engagement"))
+        elif unsupported:  # an engagement is a minimum: another operator cannot be judged, so the result stays open
+            parts.append((UNKNOWN, f"{feature} engagement criterion with operator {', '.join(unsupported)} is not judged"))
         else:
             parts.append((PASS, f"{feature} depth {hole['depth_mm']:g} mm"))
     return combine(method, parts, findings)
