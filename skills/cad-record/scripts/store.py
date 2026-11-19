@@ -127,22 +127,25 @@ def _link_or_copy(source: Path, target: Path, *, exclusive: bool = False) -> Non
 
 def _copy_in(source: Path, durable: Path) -> None:
     """Copy `source` to the new file `durable` (O_EXCL: FileExistsError while it exists), with its mode, then
-    fsync the copy and its folder. On any error the partial copy goes, and `source` stays as it was."""
+    fsync the copy and its folder. On any error the partial copy goes, and `source` stays as it was. Only a file
+    this call created goes: an existing `durable` is never touched."""
+    created = False
     try:
-        with open(source, "rb") as reading, open(durable, "xb") as writing:
-            shutil.copyfileobj(reading, writing)
+        with open(durable, "xb") as writing:
+            created = True
+            with open(source, "rb") as reading:
+                shutil.copyfileobj(reading, writing)
+                os.fchmod(writing.fileno(), stat.S_IMODE(os.fstat(reading.fileno()).st_mode))
             writing.flush()
-            os.fchmod(writing.fileno(), stat.S_IMODE(os.fstat(reading.fileno()).st_mode))
             os.fsync(writing.fileno())
         handle = os.open(durable.parent, os.O_RDONLY)
         try:
             os.fsync(handle)
         finally:
             os.close(handle)
-    except FileExistsError:
-        raise
     except BaseException:
-        durable.unlink(missing_ok=True)  # only the copy this call made
+        if created:
+            durable.unlink(missing_ok=True)  # the partial copy this call created
         raise
 
 

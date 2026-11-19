@@ -785,6 +785,36 @@ class PlaceObject(Fixture):
             self.assertFalse(self.store.place_object(digest, target))
         self.assert_left(target, b"FOREIGN", [b"OLD"])
 
+    def test_a_copy_whose_source_cannot_be_read_never_removes_a_kept_file_at_the_chosen_name(self) -> None:
+        """Across filesystems the recovery copy picks a name that an earlier kept file holds, and the old target
+        cannot be opened. The earlier kept file keeps its bytes, and the new one stays in place, reported."""
+        first, stored = self.stored(b"earlier")
+        target = self.target("collision", b"EARLIER")
+        with self.at_the_rename(before=self.failing_hash(stored)), \
+                self.at_the_undo(target, lambda: None, self.foreign(target)):
+            self.assertFalse(self.store.place_object(first, target))
+        [earlier] = self.kept(target)
+        real_fresh, real_open = store._fresh, open
+        rewrite(target, b"OLD")  # the target the second placement swaps out
+
+        def colliding(near, kind):  # the recovery name of the copy is the earlier kept file's
+            return earlier if kind == "old" else real_fresh(near, kind)
+
+        def opening(path, mode="r", *args, **kwargs):
+            if "r" in mode and Path(path).parent == target.parent:
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            return real_open(path, mode, *args, **kwargs)
+
+        second, stored = self.stored(b"later")
+        with self.across_filesystems(), mock.patch.object(store, "_fresh", colliding), \
+                mock.patch.object(store, "open", opening, create=True), \
+                self.at_the_rename(before=self.failing_hash(stored)), \
+                self.at_the_undo(target, lambda: None, self.foreign(target)):
+            self.assertFalse(self.store.place_object(second, target))
+        self.assertEqual(earlier.read_bytes(), b"EARLIER")
+        [later] = [path for path in self.kept(target) if path != earlier]
+        self.assertEqual((later.parent, later.read_bytes()), (target.parent, b"OLD"))
+
     def test_a_kept_file_whose_copy_fails_stays_in_place_and_the_stores_cleanup_spares_it(self) -> None:
         """The copy into the recovery folder cannot be synced, so the kept file stays beside its target, named
         there in cache.findings. Store.remove_tree, the cleanup that cad-model runs, removes everything else."""
