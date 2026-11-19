@@ -182,7 +182,7 @@ class Cantilever(unittest.TestCase):
         node = next(iter(self.loads[0]))
         found = self.assess(loads=[{**self.loads[0], node: (0.0, 0.0, math.nan)}])
         self.assertEqual((found.status, found.sigma_mpa), ("unknown", None))
-        self.assertEqual(len(found.reasons), 1)
+        self.assertEqual(found.reasons, ("load_not_finite",))
 
     def test_a_node_or_mesh_size_that_is_not_finite_abstains(self) -> None:
         # min() and max() over a nan depend on the order of their arguments, so the inputs are screened first.
@@ -255,6 +255,18 @@ class Cantilever(unittest.TestCase):
         self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("torsion_on_section",), None))
         self.assertRegex(found.message, r"section stresses.*torque 4\.9\d* N mm")
 
+    def test_the_first_moment_of_a_shear_across_the_thickness_is_a_torque_the_annex_split_discards(self) -> None:
+        # tau_xy = 0.01 (z - 2.5) has no mean, so the membrane shear and the force are zero. Its torque about x is
+        # -0.01 * 10 * the integral of (z - 2.5)^2 over 0..5 = 0.01 * 10 * 10.417 = 1.04 N mm, over the 0.5 floor.
+        base = beam_field()
+
+        def field(p: Point) -> tuple[float, ...]:
+            sxx, syy, szz, sxy, syz, szx = base(p)
+            return (sxx, syy, szz, sxy + 0.01 * (p[2] - DEPTH / 2), syz, szx)
+        found = self.assess(field)
+        self.assertEqual((found.status, found.reasons), ("unknown", ("torsion_on_section",)))
+        self.assertRegex(found.message, r"section stresses.*torque 1\.0\d* N mm")
+
     def test_a_stress_side_torque_under_the_floor_does_not_abstain(self) -> None:
         # 0.0005 gives 0.0005 * 5 * 83.33 = 0.21 N mm, under the 0.5 N mm floor.
         self.assertEqual(self.assess(self.twisting(0.0005)).status, "linearised")
@@ -270,7 +282,8 @@ class Cantilever(unittest.TestCase):
         exact, doubled = beam_field(load), beam_field(load, bending=2.0)
         found = self.assess(lambda p: doubled(p) if p[0] < 10.0 else exact(p))
         self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("cross_check_failed",), None))
-        self.assertRegex(found.message, r"fixed face.*moment residual")
+        # Root section: lines -1.5e155 + 7.5e154 applied = 7.5e154 over the scale 7.5e154, whole; a naive norm gives nan.
+        self.assertRegex(found.message, r"fixed face.*moment residual 100\.0%")
 
     def test_a_torque_under_the_floor_does_not_abstain(self) -> None:
         # 0.005 mm of eccentricity is 0.25 N mm, under the 0.5 N mm floor.
