@@ -121,6 +121,29 @@ def documents(*, profiles: list[dict[str, Any]] | None = None, part: dict[str, A
                      decisions=("DR-001", "DR-002", "DR-003"))
 
 
+OTHER = "TST-0102"
+# Rest placements x -> R x + t. R_BRACKET turns +x to +y; R_OTHER turns +y to +z. Neither is its own inverse and they
+# do not commute, so skipping a transform, taking the wrong part's, or inverting one each gives a different vector.
+R_BRACKET = {"translation_mm": [10, 0, 0], "rotation": {"axis": [0, 0, 1], "angle_deg": 90}}
+R_OTHER = {"translation_mm": [0, 5, 0], "rotation": {"axis": [1, 0, 0], "angle_deg": 90}}
+SLANT = (0, 0.6, -0.8)  # a direction with all its weight off the axes of both rotations
+
+
+def framed_documents(application: Any, occurrences: list[tuple[str, str, dict[str, Any] | None]],
+                     direction: Any = SLANT) -> dict[str, Any]:
+    """The load's direction written against `application` (None leaves it out), in a record whose parts are in their
+    own frame (`part_local`) and placed by `occurrences`: (id, PN, placement or None to omit)."""
+    docs = documents(direction=direction)
+    docs["product.yaml"]["use_case"]["loads"][0].update({"application": application} if application is not None else {})
+    docs[f"parts/{PN}/part.yaml"]["model_frame"] = "part_local"
+    docs[f"parts/{OTHER}/part.yaml"] = {**fx.part(OTHER, "Neighbour"), "model_frame": "part_local"}
+    placed = [{"id": oid, "PN": pn, **({"placement": placement} if placement else {})} for oid, pn, placement in occurrences]
+    docs["assembly.yaml"] = {"occurrences": placed, "subassemblies": [{"id": "main", "title": "Main",
+                                                                      "occurrences": [f"@{o['id']}" for o in placed]}],
+                             "joints": [], "operations": fx.unknown()}
+    return docs
+
+
 class SourcedFEACase(unittest.TestCase):
     """A versioned case in a record version 2 project, solved by a stand-in FreeCAD job."""
 
@@ -554,6 +577,53 @@ class QualificationBypasses(SourcedFEACase):
                 force = [50 * c for c in direction]
                 report = self.solve(self.loads_case(([2], force)))
                 self.assertEqual(self.verdicts(report), ("pass", "pass"), report["evidence"]["gaps"])
+
+    # -- the direction's frame is the one its `application` names ---------------------------------------------------
+
+    def framed_verdicts(self, application: Any, force: list[float], occurrences: Any = None) -> tuple[str, str]:
+        placed = occurrences or [("bracket", PN, R_BRACKET), ("other", OTHER, R_OTHER)]
+        self.build(framed_documents(application, placed))
+        return self.verdicts(self.solve(self.loads_case(([2], force))))
+
+    def test_a_direction_stated_against_the_analysed_part_is_read_as_given(self) -> None:
+        for application in ({"PN": PN}, {"PN": PN, "occurrence": "@bracket"}):
+            with self.subTest(application=application):
+                self.assertEqual(self.framed_verdicts(application, [0, 30, -40]), ("pass", "pass"))
+
+    def test_a_direction_stated_against_another_part_is_rotated_into_the_analysed_part_frame(self) -> None:
+        """R_OTHER takes (0, .6, -.8) to (0, .8, .6) in the assembly; R_BRACKET undone takes that to (.8, 0, .6)."""
+        for application in ({"PN": OTHER}, {"PN": OTHER, "occurrence": "@other"}):
+            with self.subTest(application=application):
+                self.assertEqual(self.framed_verdicts(application, [40, 0, 30]), ("pass", "pass"))
+
+    def test_a_direction_stated_in_the_assembly_frame_is_rotated_into_the_analysed_part_frame(self) -> None:
+        """R_BRACKET undone takes the assembly direction (0, .6, -.8) to (.6, 0, -.8)."""
+        for application in (None, {"product": True}, {"interface": "IF-001"}):
+            with self.subTest(application=application):
+                self.assertEqual(self.framed_verdicts(application, [30, 0, -40]), ("pass", "pass"))
+
+    def test_a_frame_that_cannot_be_confirmed_leaves_the_load_unknown_and_names_the_gap(self) -> None:
+        both = [("bracket", PN, R_BRACKET), ("other-a", OTHER, R_OTHER), ("other-b", OTHER, R_OTHER)]
+        cases = (("a neighbour placed twice", {"PN": OTHER}, both, "ambiguous", {}),
+                 ("a neighbour with no occurrence", {"PN": OTHER}, [("bracket", PN, R_BRACKET)], "names no occurrence", {}),
+                 ("an occurrence that does not exist", {"PN": OTHER, "occurrence": "@gone"},
+                  [("bracket", PN, R_BRACKET), ("other", OTHER, R_OTHER)], "names no occurrence", {}),
+                 ("a part the record does not hold", {"PN": "TST-0999"}, [("bracket", PN, R_BRACKET)], "TST-0999", {}),
+                 ("an analysed part with no occurrence", {"PN": OTHER}, [("other", OTHER, R_OTHER)], "names no occurrence", {}),
+                 ("a pose that moves the frames", {"PN": OTHER}, [("bracket", PN, R_BRACKET), ("other", OTHER, R_OTHER)],
+                  "pose", {"pose": {"J1": 30.0}}))
+        for name, application, occurrences, why, extra in cases:
+            with self.subTest(name):
+                self.solved.clear()
+                self.build(framed_documents(application, occurrences))
+                entries = [{"selector": {"indices": [2]}, "force": [40, 0, 30], "load": "head_load"}]
+                path = self.case({"conditions": SERVICE}, acceptance={"strength": "REQ-001", "stiffness": "REQ-002"},
+                                 mesh_convergence={"decision": "DR-002"}, loads=entries, **extra)
+                self.approve(self.study(path))
+                report = self.solve(path)
+                self.assert_unproven(report, loads=True)
+                gaps = [gap for gap in report["evidence"]["gaps"] if "head_load" in gap]
+                self.assertTrue(any("frame cannot be confirmed" in gap and why in gap for gap in gaps), gaps)
 
     # -- a convergence decision counts only as an approved, bound, converged study ---------------------------------
 

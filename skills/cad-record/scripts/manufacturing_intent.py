@@ -523,6 +523,7 @@ class Load:
     magnitude: Fact
     direction: tuple[float, float, float] | None  # a unit vector; None only when invalid, which validation reports
     requirements: tuple[str, ...]
+    application: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # what `direction` is stated against; empty names no part
 
 
 @dataclass(frozen=True)
@@ -1146,14 +1147,13 @@ class _Reader:
                     if key in item:
                         self.fact(item[key], path, f"{pointer}/{key}", dimensions)
                 direction = self.check_load_direction(item, path, pointer)
-                if "application" in item:
-                    self.subject(item["application"], path, f"{pointer}/application")
+                application = self.subject(item["application"], path, f"{pointer}/application") if "application" in item else _EMPTY
                 for requirement in item.get("requirements") or ():
                     self.ref("requirement", requirement, path, pointer)
                 entries.append(Load(item.get("id"), item.get("kind"),
                                     self.fact(item.get("magnitude"), path, f"{pointer}/magnitude", ("force", "torque")),
                                     direction,
-                                    tuple(item.get("requirements") or ())))
+                                    tuple(item.get("requirements") or ()), application))
             loads = tuple(entries)
         else:
             loads = self.fact(loads_data, path, "use_case/loads")
