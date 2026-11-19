@@ -1245,7 +1245,11 @@ def markdown() -> str:
               "itself in git. After deleting versions, `cad_model.py store gc <hw> [--dry-run]` removes every",
               "object no sealed manifest references, and the build records no referenced output",
               "needs, and reports the bytes freed; it never removes an object a manifest names.", "",
-              "`store gc` also removes the former part store, `hw/.cad/parts/` and `hw/.cad/builds/`.", ""]
+              "`store gc` also removes the former part store, `hw/.cad/parts/` and `hw/.cad/builds/`.", "",
+              "`place()` in cad-record `store.py` lays a record's members down as one folder. It hashes each member",
+              "before it renames the folder into place, and never after. A write through an object between that hash",
+              "and the rename goes unseen. No production code calls `place()`. `place_object()`, which `cad-model run`",
+              "uses, has the same window (#250).", ""]
     storage = lay.storage
     approved, ignored = git_storage(True)[".gitattributes"], git_storage(None)[".gitignore"]
     lfs = ", ".join(f"`*{suffix}`" for suffix in storage["lfs_suffixes"])

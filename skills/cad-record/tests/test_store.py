@@ -468,39 +468,6 @@ class Place(Fixture):
         self.assertFalse(destination.exists())
         self.assertEqual(list((self.root / "run").iterdir()), [])
 
-    def written_before_the_rename(self, digest: str, real, written: list[str]):
-        """`real` (os.rename or the store's swap), which first writes other bytes through the object `digest` when
-        it moves place's staged folder: once, between the hash of what place laid down and its rename."""
-        def renamed(source, target, *rest):
-            if Path(source).name.endswith(".placing") and not written:
-                written.append(str(source))
-                path = self.hw / ".cad" / "cache" / "objects" / digest
-                os.chmod(path, 0o644)
-                path.write_bytes(b"XXXX")  # an honest mistake: a tool writes through the object
-            return real(source, target, *rest)
-        return renamed
-
-    def test_a_write_between_the_hash_and_the_rename_is_seen_and_the_destination_is_left_as_it_was(self) -> None:
-        cases = {"no destination yet": (False, True), "a destination swapped out": (True, True),
-                 "a destination moved aside": (True, False)}
-        for number, (case, (existed, swaps)) in enumerate(cases.items()):
-            with self.subTest(case):
-                record = self.claimed(key(f"r{number}"), {"mesh.unv": b"NEW%d" % number})
-                destination = self.root / f"run{number}" / "mesh"
-                if existed:
-                    destination.mkdir(parents=True)
-                    (destination / "old.txt").write_text("old", encoding="utf-8")
-                written: list[str] = []
-                digest = record["members"]["mesh.unv"]
-                rename = self.written_before_the_rename(digest, os.rename, written)
-                exchange = self.written_before_the_rename(digest, store._exchange, written) if swaps else lambda *_: False
-                with mock.patch.object(store.os, "rename", rename), mock.patch.object(store, "_exchange", exchange):
-                    reason = self.store.place(record, destination)
-                self.assertEqual(len(written), 1)
-                self.assertRegex(reason, r"^stale: mesh\.unv ")
-                self.assertEqual(sorted(p.name for p in destination.iterdir()) if destination.exists() else None,
-                                 ["old.txt"] if existed else None)
-                self.assertEqual([p.name for p in destination.parent.iterdir()], ["mesh"] if existed else [])
 
 class Locks(Fixture):
     def test_threads_that_lock_an_empty_store_at_once_all_get_their_locks(self) -> None:

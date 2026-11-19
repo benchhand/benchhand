@@ -17,9 +17,8 @@ record gives way to the next claim, and `retire` removes a record its producer j
 the key. `record` re-hashes
 every member on read and names why a record is stale. `place` lays a record's members down beside each other in a
 fresh folder and renames that folder into place, so a reader sees the whole set or none of it. `place_object`
-links one object. Both hash what they linked before it gets its name, and `place` hashes it again after the
-rename and puts the former folder back when it changed. Only `holds` answers from the hashes this Store took
-before (`_settled`). Every write lands beside its name and the store renames it onto that
+links one object. Both hash what they linked before it gets its name, and only `holds` answers from the hashes
+this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
 name, and every store
 path is a plain file or folder. `gc` keeps what any sealed manifest under hw/ names and removes the rest, and the part store of
 the former layout (hw/.cad/parts, hw/.cad/builds). Deleting the store by hand costs only recomputation, never a
@@ -140,37 +139,6 @@ def _exchange(source: Path, target: Path) -> bool:
     except (OSError, AttributeError):  # an older C library without the call
         return False
     return False
-
-
-def _rename_in(staged: Path, destination: Path) -> Path | None:
-    """Rename the folder `staged` onto `destination` and return where the folder it replaced went: None when there
-    was none, `staged` after a swap, else `.<name>.<pid>.replaced` beside it. A failed rename puts it back."""
-    if not destination.exists():
-        os.rename(staged, destination)
-        return None
-    if _exchange(staged, destination):
-        return staged
-    aside = destination.with_name(f".{destination.name}.{os.getpid()}.replaced")
-    os.rename(destination, aside)
-    try:
-        os.rename(staged, destination)
-    except OSError:  # put the old folder back before reporting the failure
-        os.rename(aside, destination)
-        raise
-    return aside
-
-
-def _put_back(staged: Path, destination: Path, replaced: Path | None) -> None:
-    """Undo `_rename_in`: `destination` as it was before, and the folder renamed onto it removed or at `staged`."""
-    if replaced is None:
-        os.rename(destination, staged)
-        return
-    if replaced == staged and _exchange(staged, destination):
-        return
-    placed = destination.with_name(f".{destination.name}.{os.getpid()}.stale")
-    os.rename(destination, placed)
-    os.rename(replaced, destination)
-    shutil.rmtree(placed)
 
 
 class Store:
@@ -372,20 +340,18 @@ class Store:
 
     def place(self, record: Mapping[str, Any], destination: Path) -> str:
         """Lay `record`'s members down as the folder `destination`, whole or not at all: "" when placed, else why
-        (`stale: ...`) with `destination` as it was. It hashes each member it laid down before the rename and again
-        after it. A member written through its object between those hashes makes it put the former `destination`
-        back and report it stale, and until then a reader can see that member. A hard link shares its object's
-        bytes, so a write through the object after `place` returns changes the placed member too, as it changes
-        every version. Where the platform allows, it swaps an existing `destination` out in one step.
-        Elsewhere it moves the old folder aside, renames the new one in, and moves the old one back if that rename
-        fails. Only there can a kill between the two renames leave `destination` absent, with the old folder beside
-        it as `.<name>.<pid>.replaced`."""
+        (`stale: ...`) with `destination` untouched. Where the platform allows, it swaps an existing `destination`
+        out in one step. Elsewhere it moves the old folder aside, renames the new one in, and moves the old one
+        back if that rename fails. Only there can a kill between the two renames leave `destination` absent,
+        with the old folder beside it as `.<name>.<pid>.replaced`. It hashes each member it laid down before
+        it renames the folder into place and never after, so a write through an object between the hash and the
+        rename goes unseen. No production code calls `place`, and `place_object` has the same window (#250)."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        members = sorted(_members(record).items())
+        members = _members(record)
         staged = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", suffix=".placing", dir=destination.parent))
         try:
-            for name, digest in members:
+            for name, digest in sorted(members.items()):
                 target = staged / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -397,14 +363,20 @@ class Store:
                 except FileNotFoundError:  # gc removed it, or its bytes changed, after holds() read it
                     self._checked.pop(digest, None)
                     return f"stale: {name} names object {digest}, which is missing or changed"
-            replaced = _rename_in(staged, destination)
-            for name, digest in members:
-                if file_sha(destination / name) != digest:  # written between the hash above and the rename
-                    self._checked.pop(digest, None)
-                    _put_back(staged, destination, replaced)
-                    return f"stale: {name} object {digest} changed while it was placed"
-            if replaced is not None:
-                shutil.rmtree(replaced)
+            if not destination.exists():
+                os.rename(staged, destination)
+                return ""
+            if _exchange(staged, destination):
+                shutil.rmtree(staged)  # it now holds the replaced folder
+                return ""
+            aside = destination.with_name(f".{destination.name}.{os.getpid()}.replaced")
+            os.rename(destination, aside)
+            try:
+                os.rename(staged, destination)
+            except OSError:  # put the old folder back before reporting the failure
+                os.rename(aside, destination)
+                raise
+            shutil.rmtree(aside)
             return ""
         finally:
             if staged.exists():
