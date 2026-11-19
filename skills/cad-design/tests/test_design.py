@@ -407,16 +407,17 @@ class WallOverrideTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec("yaml"), "pyyaml is required to read product.yaml")
 class WallThresholdTests(unittest.TestCase):
-    """Valid min_wall_mm overrides apply; anything else the product schema rejects is a RecordError."""
+    """Only written min_wall_mm overrides apply (the schema's default is never one); anything else the product schema
+    rejects is a RecordError."""
 
     def thresholds(self, product: str) -> dict[str, float]:
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "product.yaml").write_text(product, encoding="utf-8")
-            return FORM_CHECK.minimum_wall_thresholds(Path(tmp))
+            return FORM_CHECK.minimum_wall_overrides(Path(tmp))
 
-    def test_defaults_and_valid_overrides(self) -> None:
-        self.assertEqual(self.thresholds("id: fixture\n"), {"fdm": 1.2})
-        self.assertEqual(self.thresholds("id: fixture\nmanufacturing:\n  processes: [fdm]\n"), {"fdm": 1.2})
+    def test_only_written_overrides_apply(self) -> None:
+        self.assertEqual(self.thresholds("id: fixture\n"), {})
+        self.assertEqual(self.thresholds("id: fixture\nmanufacturing:\n  processes: [fdm]\n"), {})
         self.assertEqual(self.thresholds("id: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1, cnc: 0.8}\n"),
                          {"fdm": 1.0, "cnc": 0.8})
 
