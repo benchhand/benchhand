@@ -96,6 +96,8 @@ _JUDGED = frozenset({"criterion", "source"})  # every check is judged against cr
 # The domains each check family depends on, by family prefix (the longest matching prefix decides).
 FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     ("cad.", frozenset({"geometry"})),
+    # A declared dimension is judged on the sealed model against the hole_d the interface states.
+    ("cad.declared_dimensions", frozenset({"geometry", "interface"})),
     ("route.", _JUDGED | {"process", "route", "capability", "setup", "orientation", "finish", "material", "condition"}),
     ("process.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                            "condition"}),

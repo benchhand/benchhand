@@ -125,6 +125,20 @@ class Variants(unittest.TestCase):
         self.assertStale(result, ("cad.readback@TST-0001", "interface.fit@IF-001"), ("cad.readback@TST-0002",))
         self.assertEqual(result.earliest_stage, "layout")
 
+    def test_a_declared_heat_set_hole_change_stales_its_declared_dimensions_check_and_not_the_readback(self) -> None:
+        """The declared hole_d is an input of cad.declared_dimensions: changing it in interfaces.yaml, with the
+        geometry unchanged, makes that obligation stale. The part read-back does not read it."""
+        entry = {"pair": ["TST-0001", "TST-0004"], "hole_d": 4.0, "insert": "M3 x 5.7", "source": "https://example.com/insert"}
+        self.docs["interfaces.yaml"]["interfaces"].append(
+            fx.interface("IF-002", "TST-0001", "TST-0004", limits={"heat_set": [entry]}))
+        self.before = normalized(self.docs)
+
+        def widen(docs: dict[str, Any]) -> None:
+            docs["interfaces.yaml"]["interfaces"][-1]["limits"]["heat_set"][0]["hole_d"] = 4.2
+        result = self.compare(widen)
+        self.assertStale(result, ("cad.declared_dimensions@IF-002#heat_set_1",),
+                         ("cad.readback@TST-0001", "cad.glb_step_agreement@TST-0001"))
+
     def test_a_colour_change_stales_only_a_check_family_that_declares_appearance(self) -> None:
         """Of the obligations the record owes, only the FDM part's `export.3mf` declares the appearance domain."""
         def colour(docs: dict[str, Any]) -> None:

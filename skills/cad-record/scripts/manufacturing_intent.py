@@ -2274,6 +2274,7 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
     for pn, part in sorted(record.parts.items()):
         _part_checks(record, pn, part, add)
     for if_id, interface in sorted(record.interfaces.items()):
+        _heat_set_checks(if_id, interface, add)
         _interface_checks(if_id, interface, add)
     operations = record.assembly_operations
     if is_fact(operations):
@@ -2328,6 +2329,8 @@ def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
                 f"{pn}: B-rep validity, readback, manufacturing state and component identity")
             add("route.consistency", {**base, "component": component}, "process_planned", "parts",
                 f"{pn}: route, profile, material and capability consistency")
+        add("cad.glb_step_agreement", base, "cad_valid", "layout",
+            f"{pn}: each occurrence's assembly.glb node shows its assembly.step shape and placement")
         if part.process == "fdm":
             add("export.3mf", base, "cad_valid", "layout", f"{pn}: part.3mf, the FDM part's 3MF export of geometry, material and colour")
     if not is_fact(route):
@@ -2403,6 +2406,24 @@ def _part_loads(record: Record, part: Part) -> tuple[Load, ...] | None:
     if not wanted:
         return None
     return tuple(load for load in loads if load.id in wanted)
+
+
+def heat_set_feature(entry: int) -> str:
+    """The feature that names the `entry`-th (0-based) `limits.heat_set` declaration of an interface in its
+    cad.declared_dimensions obligation id: `heat_set_1` for the first. cad-model check names its rows the same way."""
+    return f"heat_set_{entry + 1}"
+
+
+def _heat_set_checks(if_id: str, interface: Interface, add: Any) -> None:
+    """One cad.declared_dimensions obligation per heat-set declaration, whatever the interface's criticality: the
+    record states a hole diameter, and the sealed model must have a bore of that size in the host."""
+    limits = interface.raw.get("limits")
+    entries = limits.get("heat_set") if isinstance(limits, Mapping) else None
+    if not isinstance(entries, (list, tuple)):
+        return
+    for entry in range(len(entries)):
+        add("cad.declared_dimensions", {"interface": if_id, "feature": heat_set_feature(entry)}, "cad_valid", "layout",
+            f"{if_id} heat_set {entry + 1}: the declared hole_d is a bore of its host in the sealed model")
 
 
 def _interface_checks(if_id: str, interface: Interface, add: Any) -> None:

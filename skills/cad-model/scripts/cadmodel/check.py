@@ -19,8 +19,11 @@ non-blocking diagnostic, fits each additive part in the state and pose it is mad
 machine envelope: an envelope fit is never process feasibility.
 Declarations (fits, inserts, clearance requirements and their margins) come from the version's record snapshot.
 A version built from a record version 2 snapshot also gets its cad.readback required-check packet
-(B-rep validity, read-back, manufacturing state and component identity per made part and component)
-published to hw/checks/<V>/cad/, where cad-record evidence.py reads it (`publish_readback`).
+(B-rep validity, read-back, manufacturing state and component identity per made part and component, the GLB<->STEP
+agreement per made part and each declared heat-set dimension) published to hw/checks/<V>/cad/, where cad-record
+evidence.py reads it (`publish_readback`). An oracle row that abstains is an `unknown` outcome there, never a pass,
+and so is an occurrence a changed-only check leaves out: the scoped run did not judge it, and its gate stays
+unresolved until a full check runs. An unknown outcome never changes the check's exit status.
 
 Pairs are measured by cad-motion's pair measurer under the sweep's rule, cache, mesh bounds and
 suspect checks, on the per-part STEP definitions (their DATA geometry ids) placed as the sweep
@@ -777,7 +780,8 @@ def declared_dimensions(heat_sets: Iterable[Mapping[str, Any]], host_pns: Mappin
         tolerance = item.get("hole_tol")
         if tolerance is None:
             tolerance = (-HOLE_D_DEFAULT_MM, HOLE_D_DEFAULT_MM)
-        row: dict[str, Any] = {"source": item["source"], "host": item["host"], "PN": pn, "hole_d_mm": item["hole_d"]}
+        row: dict[str, Any] = {"source": item["source"], "interface": item.get("interface"), "entry": item.get("entry"),
+                               "host": item["host"], "PN": pn, "hole_d_mm": item["hole_d"]}
         if not isinstance(tolerance, (list, tuple)) or len(tolerance) != 2 \
                 or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in tolerance):
             rows.append({**row, "status": "unknown", "reason": f"hole_tol {tolerance!r} is not [low, high] in mm"})
@@ -832,7 +836,9 @@ def nominal_placements(manifest: Mapping[str, Any], record: Path | None,
 
 READBACK_FAMILY = "cad.readback"
 EXPORT_FAMILY = "export.3mf"  # judged by the same sealed-version check, so published in the same packet
-READBACK_FAMILIES = (READBACK_FAMILY, EXPORT_FAMILY)
+AGREEMENT_FAMILY = "cad.glb_step_agreement"  # glb_step_agreement, per made part over its occurrences
+DIMENSION_FAMILY = "cad.declared_dimensions"  # declared_dimensions, per heat-set declaration of an interface
+READBACK_FAMILIES = (READBACK_FAMILY, EXPORT_FAMILY, AGREEMENT_FAMILY, DIMENSION_FAMILY)
 READBACK_SUBJECT = "cad"  # hw/checks/<V>/cad/: this check's required-check packet
 READBACK_PRODUCER = "cad-model check"
 READBACK_METHOD = ("cad-model check of the sealed version: kernel and STEP read-back B-rep validity, the STEP read-back's "
@@ -844,6 +850,63 @@ EXPORT_METHOD = ("cad-model check of the sealed part.3mf: a 3MF Core 1.4.0 packa
                  "millimetre object, its volume and box against the STEP read-back, the material name and the colour")
 EXPORT_COVERAGE = ("the sealed part.3mf against its STEP read-back and the record's material and colour only: a "
                    "slicer's reading of it and the printed part are not checked")
+AGREEMENT_METHOD = ("cad-model check of the sealed assembly.glb: each occurrence's GLB node, read without the manifest, "
+                    "against the shape and placement of its component in the sealed assembly.step (cadmodel.agreement)")
+AGREEMENT_COVERAGE = ("the part's occurrences in the sealed assembly.glb and assembly.step only; an occurrence a "
+                      "changed-only check leaves out is unknown until a full check judges it")
+DIMENSION_METHOD = ("cad-model check of the sealed version: the hole_d a heat-set declaration states, within its hole_tol, "
+                    "against the bore diameters the version's metrics.json records for the host")
+DIMENSION_COVERAGE = "the declared hole diameter against the host's recorded bores only: depth and position are not checked"
+SEALED_FILES_CHANGED = "the version's sealed files no longer match its manifest (artifact_integrity)"
+
+
+def _oracle_outcome(obligation: Any, failed: list[str], unknown: list[str], method: str, coverage: str) -> dict[str, Any]:
+    """One outcome from the reasons an oracle check's rows fail or abstain: fail on any failure, unknown on any
+    abstention, else pass."""
+    outcome: dict[str, Any] = {"obligation": obligation.id, "outcome": "fail" if failed else "unknown" if unknown else "pass",
+                               "level": obligation.level, "method": method, "coverage": coverage}
+    if failed or unknown:
+        outcome["uncertainty"] = "; ".join(failed + unknown)
+    return outcome
+
+
+def _agreement_outcome(obligation: Any, checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> dict[str, Any]:
+    """The cad.glb_step_agreement outcome of one part: the worst of its occurrences' glb_step_agreement rows. An
+    occurrence that a changed-only check skipped or that has no row is unknown, as is a part with no occurrence."""
+    pn = obligation.subject["PN"]
+    section = checks["glb_step_agreement"]
+    rows, skipped = section["occurrences"], set(section["skipped"])
+    failed = [SEALED_FILES_CHANGED] if checks["artifact_integrity"]["status"] == "fail" else []
+    unknown: list[str] = []
+    ids = sorted(oid for oid, owner in occurrences.items() if owner == pn)
+    if not ids:
+        unknown.append(f"the version has no occurrence of {pn}")
+    for oid in ids:
+        row = rows.get(oid)
+        if oid in skipped:
+            unknown.append(f"{oid}: not judged, a changed-only check leaves it out; run a full check")
+        elif row is None:
+            unknown.append(f"{oid}: the agreement check has no row for it")
+        elif row["status"] == "fail":
+            failed.append(f"{oid}: {row.get('reason') or 'its GLB node does not depict its assembly.step component'}")
+        elif row["status"] != "pass":
+            unknown.append(f"{oid}: {row.get('reason') or row['status']}")
+    return _oracle_outcome(obligation, failed, unknown, AGREEMENT_METHOD, AGREEMENT_COVERAGE)
+
+
+def _dimension_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any]:
+    """The cad.declared_dimensions outcome of one heat-set declaration: its declared_dimensions row decides, and a
+    declaration with no row is unknown."""
+    feature = load_intent().heat_set_feature
+    subject = obligation.subject
+    rows = [row for row in checks["declared_dimensions"]["heat_sets"] if row.get("interface") == subject["interface"]
+            and isinstance(row.get("entry"), int) and feature(row["entry"]) == subject.get("feature")]
+    failed = [SEALED_FILES_CHANGED] if checks["artifact_integrity"]["status"] == "fail" else []
+    failed += [row.get("reason") or f"{row['PN']} has no bore of the declared size" for row in rows if row["status"] == "fail"]
+    unknown = [row.get("reason") or row["status"] for row in rows if row["status"] not in ("pass", "fail")]
+    if not rows:
+        unknown.append(f"the declared_dimensions check has no row for {subject['interface']} {subject.get('feature')}")
+    return _oracle_outcome(obligation, failed, unknown, DIMENSION_METHOD, DIMENSION_COVERAGE)
 
 
 def _export_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any]:
@@ -863,17 +926,25 @@ def _export_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any
     return outcome
 
 
-def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any]) -> list[dict[str, Any]]:
+def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> list[dict[str, Any]]:
     """One cad.readback outcome per expected obligation (manufacturing_intent Obligations, PN[.COMP]) from
     this check's rows: fail when the B-rep is invalid, the STEP read-back differs, the sealed files changed
     or a manufacturing state, identity, STEP or binding check fails; unknown while one of them is missing
-    or not passed (a part with no manufacturing output, a legacy unbound identity); else pass."""
+    or not passed (a part with no manufacturing output, a legacy unbound identity); else pass. The export.3mf,
+    cad.glb_step_agreement and cad.declared_dimensions obligations take their own rows. `occurrences` maps each
+    occurrence id of the version to its PN."""
     brep, readback = checks["brep_validity"]["parts"], checks["step_readback"]["parts"]
     made = checks["manufacturing"]["parts"]
     rows = []
     for obligation in expected:
         if obligation.family == EXPORT_FAMILY:
             rows.append(_export_outcome(obligation, checks))
+            continue
+        if obligation.family == AGREEMENT_FAMILY:
+            rows.append(_agreement_outcome(obligation, checks, occurrences))
+            continue
+        if obligation.family == DIMENSION_FAMILY:
+            rows.append(_dimension_outcome(obligation, checks))
             continue
         pn, component = obligation.subject["PN"], obligation.subject.get("component")
         failed: list[str] = []
@@ -922,8 +993,10 @@ def export_artifacts(hw: Path, folder: Path, expected: Iterable[Any]) -> list[di
     layout = load_layout()
     pairs = []
     for obligation in expected:
+        if obligation.family != EXPORT_FAMILY:
+            continue
         path = folder / "manufacturing" / obligation.subject["PN"] / "part.3mf"
-        if obligation.family == EXPORT_FAMILY and path.is_file():
+        if path.is_file():
             pairs.append({"path": layout.relative(hw, path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
     return pairs
 
@@ -949,12 +1022,13 @@ def _code_shas() -> Any:
 
 
 def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
-                     checks: Mapping[str, Any]) -> dict[str, Any] | None:
+                     checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> dict[str, Any] | None:
     """Publish the cad.readback packet of a record version 2 version to hw/checks/<V>/cad/ (bundle.checks,
     the one place cad-record evidence.py reads producer packets) and return {bundle, reused, result,
-    complete}; None for a version without a snapshot. The packet is
+    complete}; None for a version without a snapshot. `occurrences` maps each occurrence id to its PN. The packet is
     recomputed by every check and replaces the one an earlier check sealed when it differs, so a changed
-    verdict is never hidden behind a reused bundle."""
+    verdict is never hidden behind a reused bundle. A changed-only check's packet therefore reads unknown for the
+    agreement of each occurrence it left out, until a full check publishes again."""
     if snapshot is None:
         return None
     found, _ = build.read_snapshot(read_folder(snapshot))
@@ -967,13 +1041,19 @@ def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
     artifacts = export_artifacts(hw, folder, expected)
     for artifact in artifacts:  # a part.3mf the packet judged: its bytes are an input of the verdict
         dependencies["export_3mf_" + artifact["path"].split("/")[-2].lower().replace("-", "_")] = artifact["sha256"]
-    packet = packets.build(record, expected, READBACK_PRODUCER, readback_outcomes(expected, checks), [], dependencies)
+    packet = packets.build(record, expected, READBACK_PRODUCER, readback_outcomes(expected, checks, occurrences), [],
+                           dependencies)
     recipe = readback_recipe(layout, packet)
     detail = {"artifact_integrity": checks["artifact_integrity"]["status"],
               "brep_validity": checks["brep_validity"]["parts"], "step_readback": checks["step_readback"]["parts"],
               "manufacturing": {pn: {name: (row["checks"].get(name) or {}).get("status")
                                      for name in ("native", "identity", "step", "components")}
                                 for pn, row in checks["manufacturing"]["parts"].items()},
+              "glb_step_agreement": {"occurrences": {oid: row["status"]
+                                                     for oid, row in checks["glb_step_agreement"]["occurrences"].items()},
+                                     "skipped": checks["glb_step_agreement"]["skipped"]},
+              "declared_dimensions": [{key: row.get(key) for key in ("interface", "entry", "host", "PN", "status")}
+                                      for row in checks["declared_dimensions"]["heat_sets"]],
               "artifacts": artifacts}
     output, status = packets.emit(layout, hw, label, READBACK_SUBJECT, READBACK_PRODUCER, packet, detail, "check.json",
                                   recipe, out=None, replace=True, record_version=intent.RECORD_VERSION)
@@ -1083,6 +1163,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
     blocking = sorted(name for name, c in checks.items() if c["blocking"] and c["status"] == "fail")
     warnings = sorted(name for name, c in checks.items() if c["status"] == "warn")
     abstained = sorted(name for name, c in checks.items() if c["status"] == "unknown")
+    occurrence_pns = {oid: o.pn for oid, o in occurrences.items()}
     counters = measurer.counters
     result = {"status": "fail" if blocking else "pass", "label": label, "pose": "nominal",
               "baseline": previous, "scope": scope, "blocking_failures": blocking, "warnings": warnings,
@@ -1090,12 +1171,12 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
               "evaluation": {"mode": "exact" if exact else "fast", "mesh": description, "band_mm": measurer.rule.band_mm,
                              "rule_sha256": measurer.rule.digest.hex(),
                              "code_sha256": _code_shas().digest(Path(__file__), VERDICT_DATA)},
-              "occurrences": {oid: o.pn for oid, o in occurrences.items()}, "checks": checks, "suspects": suspects,
+              "occurrences": occurrence_pns, "checks": checks, "suspects": suspects,
               "timings_s": {"total_s": round(time.perf_counter() - started, 3),
                             "kernel_evaluations": counters.kernel_evaluations, "exact_hits": counters.exact_hits,
                             "decision_hits": counters.decision_hits, "bucket_hits": counters.bucket_hits,
                             "cleared": dict(counters.cleared), "reevaluations": counters.reevaluations}}
-    packet = publish_readback(hw, label, folder, snapshot, checks)
+    packet = publish_readback(hw, label, folder, snapshot, checks, occurrence_pns)
     if packet is not None:
         result["packet"] = packet  # the cad.readback required-check packet (record version 2)
     return (1 if blocking else 0), result
