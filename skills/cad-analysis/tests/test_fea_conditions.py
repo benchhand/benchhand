@@ -614,16 +614,58 @@ class QualificationBypasses(SourcedFEACase):
                   "pose", {"pose": {"J1": 30.0}}))
         for name, application, occurrences, why, extra in cases:
             with self.subTest(name):
-                self.solved.clear()
-                self.build(framed_documents(application, occurrences))
-                entries = [{"selector": {"indices": [2]}, "force": [40, 0, 30], "load": "head_load"}]
-                path = self.case({"conditions": SERVICE}, acceptance={"strength": "REQ-001", "stiffness": "REQ-002"},
-                                 mesh_convergence={"decision": "DR-002"}, loads=entries, **extra)
-                self.approve(self.study(path))
-                report = self.solve(path)
-                self.assert_unproven(report, loads=True)
-                gaps = [gap for gap in report["evidence"]["gaps"] if "head_load" in gap]
-                self.assertTrue(any("frame cannot be confirmed" in gap and why in gap for gap in gaps), gaps)
+                self.assert_frame_unconfirmed(application, occurrences, [40, 0, 30], why, **extra)
+
+    def frame_report(self, application: Any, occurrences: Any, force: list[float], **extra: Any) -> dict[str, Any]:
+        self.solved.clear()
+        self.build(framed_documents(application, occurrences))
+        entries = [{"selector": {"indices": [2]}, "force": force, "load": "head_load"}]
+        path = self.case({"conditions": SERVICE}, acceptance={"strength": "REQ-001", "stiffness": "REQ-002"},
+                         mesh_convergence={"decision": "DR-002"}, loads=entries, **extra)
+        self.approve(self.study(path))
+        return self.solve(path)
+
+    def assert_frame_unconfirmed(self, application: Any, occurrences: Any, force: list[float], why: str,
+                                 **extra: Any) -> None:
+        """The load stays unknown and a gap on it names the frame and `why`."""
+        report = self.frame_report(application, occurrences, force, **extra)
+        self.assert_unproven(report, loads=True)
+        gaps = [gap for gap in report["evidence"]["gaps"] if "head_load" in gap]
+        self.assertTrue(any("frame cannot be confirmed" in gap and why in gap for gap in gaps), gaps)
+
+    BOTH = [("bracket", PN, R_BRACKET), ("other", OTHER, R_OTHER)]
+
+    def test_an_application_occurrence_that_belongs_to_another_part_leaves_the_load_unknown(self) -> None:
+        """@bracket exists, but it is not an occurrence of TST-0102. Taking it as one rotates by the bracket's own
+        placement, which turns the direction back into (0, .6, -.8) and wrongly covers a (0, 30, -40) N force."""
+        self.assert_frame_unconfirmed({"PN": OTHER, "occurrence": "@bracket"}, self.BOTH, [0, 30, -40], "not " + OTHER)
+
+    def test_an_application_that_is_present_but_not_a_subject_leaves_the_load_unknown(self) -> None:
+        """Read as an omitted application these would mean the assembly frame, and the (30, 0, -40) N force would pass."""
+        for application in ({}, "bracket", [], {"component": "arm"}):
+            with self.subTest(application=application):
+                self.assert_frame_unconfirmed(application, self.BOTH, [30, 0, -40], "application")
+
+    def test_malformed_placement_data_leaves_the_load_unknown_and_names_the_normalization_gap(self) -> None:
+        bad = [("bracket", PN, R_BRACKET), ("other", OTHER, {"translation_mm": [1, 2]})]
+        self.assert_frame_unconfirmed({"PN": OTHER}, bad, [40, 0, 30], "assembly.yaml does not normalize")
+
+    def test_a_frame_dependency_that_cannot_load_leaves_the_load_unknown_and_registers_nothing(self) -> None:
+        broken = Path(tempfile.mkdtemp()) / "broken.py"
+        self.addCleanup(shutil.rmtree, broken.parent)
+        broken.write_text("raise RuntimeError('cannot import this')\n", encoding="utf-8")
+        for attribute, module in (("POSE_PATH", "cad_motion_pose"), ("ASSEMBLY_DATA_PATH", "cad_record_assembly_data")):
+            with self.subTest(attribute), patch.dict(sys.modules), patch.object(fea_conditions, attribute, broken):
+                sys.modules.pop(module, None)
+                self.assert_frame_unconfirmed({"PN": OTHER}, self.BOTH, [40, 0, 30], "unavailable")
+                self.assertNotIn(module, sys.modules)
+
+    def test_a_pose_does_not_unsettle_a_direction_stated_against_the_analysed_part(self) -> None:
+        """The part's unique occurrence is the part: naming it leaves the frame the case's own."""
+        for application in ({"PN": PN}, {"PN": PN, "occurrence": "@bracket"}):
+            with self.subTest(application=application):
+                report = self.frame_report(application, self.BOTH, [0, 30, -40], pose={"J1": 30.0})
+                self.assertEqual(self.verdicts(report), ("pass", "pass"), report["evidence"]["gaps"])
 
     # -- a convergence decision counts only as an approved, bound, converged study ---------------------------------
 

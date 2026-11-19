@@ -40,6 +40,9 @@ INTENT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "
 DECISIONS_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "decision_records.py"
 ASSEMBLY_DATA_PATH = INTENT_PATH.with_name("assembly_data.py")
 POSE_PATH = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "pose.py"
+# The code behind a load direction's frame: pose.py and what it runs at import and for a rotation (coupling.py,
+# layout.py), and assembly_data.py. fea_static seals their bytes into the recipe.
+FRAME_CODE = (ASSEMBLY_DATA_PATH, POSE_PATH, POSE_PATH.with_name("coupling.py"), ASSEMBLY_DATA_PATH.with_name("layout.py"))
 PRODUCER = "cad-analysis fea_static.py"
 EXPLICIT_KEYS = ("E", "nu", "density", "yield")
 PROFILE_KEYS = ("profile", "conditions", "effective_isotropic")
@@ -85,15 +88,7 @@ LIMITS = (
 
 def decision_records() -> Any:
     """cad-record decision_records.py under the name every CAD skill shares."""
-    name = "cad_record_decision_records"
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, DECISIONS_PATH)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"{DECISIONS_PATH} not found")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-    return sys.modules[name]
+    return _shared("cad_record_decision_records", DECISIONS_PATH)
 
 
 class Refused(ValueError):
@@ -117,7 +112,11 @@ def _shared(name: str, path: Path) -> Any:
             raise ImportError(f"{path} not found")
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[name]   # a half-run module must not stand for the real one
+            raise
     return sys.modules[name]
 
 
@@ -625,43 +624,79 @@ def _unit(direction: Any) -> tuple[float, float, float] | None:
     return (direction[0] / length, direction[1] / length, direction[2] / length)
 
 
+def _names_a_frame(application: Any) -> bool:
+    """Whether a present `application` is a subject that says which frame it is: a part, the product, an interface
+    or an assembly operation (the anyOf of manufacturing.schema.json's subject)."""
+    return isinstance(application, Mapping) and (
+        isinstance(application.get("PN"), str) or application.get("product") is True
+        or "interface" in application or "assembly_operation" in application)
+
+
 class _Frames:
     """Model frames of the record's parts, to state a load's direction in the analysed part's model frame.
 
     `direction` is in the model frame of the part its `application` names, or in the assembly frame when that names
-    no part (manufacturing.schema.json). A `part_local` part is placed by its occurrence's rest placement; an
-    `assembly_zero` part's model frame is the assembly frame at the zero pose. Rotations are cad-motion's
+    no part or is omitted (manufacturing.schema.json). A `part_local` part is placed by its occurrence's rest
+    placement; an `assembly_zero` part's model frame is the assembly frame at the zero pose. Rotations are cad-motion's
     `Rigid.from_placement` over cad-record's `assembly_data` inventory, with the translation dropped for a vector."""
 
     def __init__(self, record: Any, documents: Mapping[str, Any]) -> None:
         self.record = record
-        self.assembly = _shared("cad_record_assembly_data", ASSEMBLY_DATA_PATH)
-        self.pose = _shared("cad_motion_pose", POSE_PATH)
-        assembly = documents.get("assembly.yaml")
-        frames = {pn: part.raw.get("model_frame", self.assembly.DEFAULT_FRAME) for pn, part in record.parts.items()}
+        self.assembly: Any = None
+        self.pose: Any = None
         self.inventory: Any = None
         self.broken = ""
+        self.unavailable = ""
+        try:
+            self.assembly = _shared("cad_record_assembly_data", ASSEMBLY_DATA_PATH)
+            self.pose = _shared("cad_motion_pose", POSE_PATH)
+        except Exception as error:   # any failure to load sibling code leaves the frames unknown, never the assessment aborted
+            self.unavailable = f"a frame dependency is unavailable ({type(error).__name__}: {error})"
+            return
+        assembly = documents.get("assembly.yaml")
+        frames = {pn: part.raw.get("model_frame", self.assembly.DEFAULT_FRAME) for pn, part in record.parts.items()}
         try:
             self.inventory = self.assembly.normalize(assembly if isinstance(assembly, Mapping) else {}, frames)
         except self.assembly.InventoryError as error:
             self.broken = str(error)
 
-    def into(self, direction: tuple[float, float, float], application: Mapping[str, Any], analysed: Mapping[str, Any],
-             *, posed: bool) -> tuple[tuple[float, float, float] | None, str]:
+    def into(self, direction: tuple[float, float, float], application: Mapping[str, Any] | None,
+             analysed: Mapping[str, Any], *, posed: bool) -> tuple[tuple[float, float, float] | None, str]:
         """`direction` in the analysed part's model frame, or None and why the frames are not confirmed.
 
-        A direction stated against the analysed part is already in its frame. Any other frame is reached through
-        the assembly at the rest placements, which a posed case has left."""
-        if application.get("PN") == analysed.get("PN") and application.get("occurrence") in (None, analysed.get("occurrence")):
+        An omitted `application` is the assembly frame; a present one that names no frame is invalid and confirms
+        nothing. A direction stated against the analysed part is already in its frame. Any other frame is reached
+        through the assembly at the rest placements, which a posed case has left."""
+        if application is not None and not _names_a_frame(application):
+            return None, "the load's application is present but names no part, product, interface or assembly operation"
+        if application is not None and self.same_part(application, analysed):
             return direction, ""
+        if self.unavailable:
+            return None, self.unavailable
         if posed:
             return None, "the case's pose moves the parts from their rest placements"
-        source, why = self.to_assembly(application)
+        source, why = self.to_assembly(application or {})
         target, why_target = self.to_assembly(analysed)
         if source is None or target is None:
             return None, why or why_target
         moved = target.inverse().apply(source.apply(direction))
         return (moved[0], moved[1], moved[2]), ""
+
+    def same_part(self, application: Mapping[str, Any], analysed: Mapping[str, Any]) -> bool:
+        """Whether `application` names the analysed part's own model frame: its part, with no occurrence named, the
+        analysed occurrence, or (for a case that names the part) the one occurrence the part has."""
+        pn = application.get("PN")
+        if pn is None or pn != analysed.get("PN"):
+            return False
+        named = application.get("occurrence")
+        if named is None or named == analysed.get("occurrence"):
+            return True
+        if analysed.get("occurrence") is not None or self.inventory is None:
+            return False
+        try:
+            return bool(self.inventory.resolve(pn).ref == named)
+        except self.assembly.UnresolvedReference:
+            return False
 
     def to_assembly(self, subject: Mapping[str, Any]) -> tuple[Any, str]:
         """The rotation from the model frame `subject` names into the assembly frame, or None and why not."""
@@ -677,7 +712,7 @@ class _Frames:
         if self.inventory is None:
             return None, f"assembly.yaml does not normalize ({self.broken})"
         try:
-            occurrence = self.inventory.resolve(subject.get("occurrence") or pn)
+            occurrence = self.inventory.endpoint(pn, subject.get("occurrence"))
         except self.assembly.UnresolvedReference as error:
             return None, str(error)
         placed = self.pose.Rigid.from_placement(occurrence.placement)
