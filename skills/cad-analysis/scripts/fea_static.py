@@ -196,6 +196,9 @@ def load_case(path: Path) -> dict[str, Any]:
     if raw["_mode"] == "stress" and required_safety_factor is not None:
         raise CaseError("a stress case reports no yield safety factor, so required_safety_factor cannot apply: "
                         "remove it, or set mode: full for a yield safety factor")
+    if raw["_mode"] == "stress" and convergence is not None:
+        raise CaseError("a stress case's mesh convergence is its own two-mesh study, so mesh_convergence cannot apply: "
+                        "remove it")
     if raw["_mode"] == "fast" and acceptance is not None and "strength" in acceptance:
         raise CaseError("a fast case reports no stress, so acceptance.strength cannot apply: remove it, or "
                         "set mode: full for a strength check")

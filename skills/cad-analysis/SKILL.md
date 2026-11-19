@@ -75,11 +75,13 @@ refinements:                          # at least three, coarse to fine, one at t
   - {size_mm: 1, max_von_mises_mpa: 83.3, max_displacement_mm: 0.199}
 ```
 
-Both monitored quantities must move no more than `relative_change_max` between the two finest meshes and between the case's mesh and the finest. A missing, provisional, void or unbound study leaves convergence not demonstrated: strength and stiffness stay `unknown` and the result is not service evidence.
+Both monitored quantities must move no more than `relative_change_max` between the two finest meshes and between the case's mesh and the finest. A missing, provisional, void or unbound study leaves convergence not demonstrated: strength and stiffness stay `unknown` and the result is not service evidence. A stress case refuses `mesh_convergence`, because its own two-mesh study is its convergence evidence.
 
 Completed results record reproducibility settings in `mesh_settings`: one Gmsh thread, random seed 1, zero 3D random factor, standard and Netgen mesh optimizers disabled, fixed elastic-plus-optimization high-order pass, and CalculiX SPOOLES solver. The `calculix_environment` setting gives ccx one thread in each of its three parallel stages. Each FreeCAD job uses a private FreeCAD profile, so user FEM and import preferences do not apply. `mesh_input_hashes` name the normalized `.geo` and BRep inputs. `mesh_quality` records the solved mesh's element count, its invalid-element count (0 in a solved result) and its smallest scaled Jacobian. The check samples each element at its nodes and integration points. High-order Gmsh optimization can perturb nodes across identical runs; repeat safety factors within 0.5% are this mesh noise, not evidence of a design difference.
 
 `fea_static.py` publishes a v2 engineering packet at `hw/checks/<V>/fea-<case>/`; `stdout.check_bundle` names it. Only `engineering.strength`, `engineering.stiffness` and `engineering.anisotropy` are in static solver scope. Creep, fatigue, impact and life remain physical-validation obligations.
+
+Only a stress case can pass `engineering.strength`. A full case reports its yield safety factor. A factor below the criterion fails strength. A factor that meets the criterion leaves strength `unknown`, and the reason names `mode: stress`. One mesh's peak stress does not settle at a support or a load.
 
 ## Fast mode
 
@@ -90,7 +92,7 @@ A case with `mode: fast` checks displacement and stiffness only. It meshes with 
 - `stress_study`, which names the separate stress study as the only source of a stress figure.
 - `status: pass` with `status_scope: run`: the solver run completed. It is no strength verdict.
 
-A fast result states no stress figure, no yield safety factor and no stress verdict. Its `engineering.strength` outcome stays `unknown`. A fast case refuses `required_safety_factor` and `acceptance.strength`. In the fast-bias campaign, displacement and p95 settled between meshes. The peak stress and the stress away from supports did not.
+A fast result states no stress figure, no yield safety factor and no stress verdict. Its `engineering.strength` outcome stays `unknown`, and the reason points to the stress study. A fast case refuses `required_safety_factor` and `acceptance.strength`. In the fast-bias campaign, displacement and p95 settled between meshes. The peak stress and the stress away from supports did not.
 
 ## Stress mode
 
@@ -105,7 +107,17 @@ The result reports:
 - `max_displacement_mm` comes from the fine solve.
 - `status: pass` with `status_scope: run`, as in fast mode. The status belongs to the solver runs, also when the study is `unknown`.
 
-A stress result states no `max_von_mises_mpa` and no `safety_factor_yield`. Its `engineering.strength` outcome stays `unknown` until the record maps the study onto that obligation. A stress case refuses `required_safety_factor`.
+A stress result states no `max_von_mises_mpa` and no `safety_factor_yield`. A stress case refuses `required_safety_factor` and `mesh_convergence`.
+
+The study is the result's mesh convergence: `mesh.convergence.method` is `two_mesh_stress_study`. Either settled outcome shows convergence. An `unknown` study does not, so stiffness stays `unknown` too.
+
+The checker reads `engineering.strength` from the study only:
+
+- A `settled` study with `strength_eligible: true`, a positive finite `sigma_mpa` and no `sigma_info_mpa` gives the yield safety factor. The factor is the profile's yield strength over `sigma_mpa`. An interval yield counts at its lower bound.
+- A factor at or above the `acceptance.strength` criterion passes. Open load or basis gaps leave it `unknown`.
+- A factor below the criterion fails, with finding `fea.strength.margin`.
+- `settled_away_from_support` leaves strength `unknown`, and the reason names #209. So does `unknown`, and so does a study that breaks any rule above.
+- The factor appears only in the packet's finding as `measured`. The run's `status` stays the solver runs', also when strength fails.
 
 A failed solve is a no-result error. `error.details.stress_study_solve` names the coarse or fine solve. A failed coarse solve stops the study.
 
