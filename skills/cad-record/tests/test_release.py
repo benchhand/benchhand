@@ -1052,8 +1052,9 @@ class GuidelineEditsAfterTheFreeze(ReleaseCase):
 
     def refused_as_stale(self, hw: Path) -> None:
         result, report = self.release(hw)
-        self.assertEqual((result, report["status"]), (1, "refused"), json.dumps(report["findings"], indent=1))
-        messages = [item["message"] for item in report["findings"] if item.get("code") == "release.acceptance"]
+        findings = report.get("findings", [])
+        self.assertEqual((result, report["status"]), (1, "refused"), json.dumps(findings, indent=1))
+        messages = [item["message"] for item in findings if item.get("code") == "release.acceptance"]
         self.assertTrue(any("stale" in message and "LMP-" in message for message in messages), messages)
 
     def test_editing_a_project_guideline_after_the_freeze_refuses_the_release(self) -> None:

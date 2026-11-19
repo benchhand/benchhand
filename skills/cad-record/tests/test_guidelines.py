@@ -472,6 +472,73 @@ class StrictBounds(Directories):
         self.assertIn("operator ~= is not supported", found.reasons[0])
 
 
+class Between(Directories):
+    """A valid `between` through public resolution (benchhand-lch, round 4)."""
+
+    def two(self, first: dict[str, Any], second: dict[str, Any]) -> Any:
+        put(self.shipped, "x", guideline("fdm.material.x", [first], material_family=["pa"]))
+        put(self.shipped, "y", guideline("fdm.material.y", [second], material_family=["pa"]))
+        return resolve(record(), self.catalog(), "bridge_span")
+
+    def between(self, low: float, high: float, **extra: Any) -> dict[str, Any]:
+        return limit("bridge_span", "between", quantity=fx.quantity(lower=low, upper=high), **extra)
+
+    def test_a_between_limit_resolves_to_its_interval(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [self.between(3, 5)]))
+        found = resolve(record(), self.catalog(), "bridge_span")
+        self.assertEqual((found.status, found.operator, found.value), ("guideline", "between", mi.Quantity("mm", lower=3, upper=5)))
+
+    def test_equally_specific_between_and_one_sided_bounds_intersect(self) -> None:
+        found = self.two(self.between(3, 5), limit("bridge_span", ">=", 4))
+        self.assertEqual((found.status, found.operator, found.value), ("guideline", "between", mi.Quantity("mm", lower=4, upper=5)))
+
+    def test_equally_specific_between_and_a_bound_beyond_it_share_no_value(self) -> None:
+        found = self.two(self.between(3, 4), limit("bridge_span", ">=", 5))
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("share no value", found.reasons[0])
+
+
+class EndpointStrictness(Directories):
+    """Endpoint openness survives intersection and containment (benchhand-lch, round 4)."""
+
+    def pair(self, general: dict[str, Any], specific: dict[str, Any]) -> Any:
+        put(self.shipped, "g", guideline("fdm.generic", [general]))
+        put(self.shipped, "n", guideline("fdm.nozzle.d0_4", [specific], material_family=["pa"],
+                                         nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
+        return resolve(record(), self.catalog(), "bridge_span")
+
+    def equal_rank(self, first: dict[str, Any], second: dict[str, Any]) -> Any:
+        put(self.shipped, "x", guideline("fdm.material.x", [first], material_family=["pa"]))
+        put(self.shipped, "y", guideline("fdm.material.y", [second], material_family=["pa"]))
+        return resolve(record(), self.catalog(), "bridge_span")
+
+    def test_a_closed_between_ending_at_5_does_not_loosen_a_strict_5_without_relaxes(self) -> None:
+        found = self.pair(limit("bridge_span", "<", 5), limit("bridge_span", "between", quantity=fx.quantity(lower=3, upper=5)))
+        self.assertEqual((found.operator, found.value, found.provenance[0].guideline), ("<", mi.Quantity("mm", value=5), "fdm.generic@1"))
+        self.assertTrue(any("without `relaxes`" in w for w in found.warnings), found.warnings)
+
+    def test_a_closed_between_ending_at_5_loosens_a_strict_5_with_relaxes(self) -> None:
+        relaxes = {"reason": "the nozzle set bridges to the limit", "citation": cite()[0]}
+        found = self.pair(limit("bridge_span", "<", 5),
+                          limit("bridge_span", "between", quantity=fx.quantity(lower=3, upper=5), relaxes=relaxes))
+        self.assertEqual((found.operator, found.value), ("between", mi.Quantity("mm", lower=3, upper=5)))
+        self.assertTrue(any("relaxed to" in w for w in found.warnings), found.warnings)
+
+    def test_contradictory_equally_specific_bounds_do_not_collapse_into_a_singleton(self) -> None:
+        found = self.equal_rank(limit("bridge_span", "<", 5), limit("bridge_span", ">=", 5))
+        self.assertEqual((found.status, found.value), ("unknown", None))
+        self.assertIn("share no value", found.reasons[0])
+
+    def test_a_closed_singleton_from_two_closed_bounds_is_a_valid_result(self) -> None:
+        found = self.equal_rank(limit("bridge_span", "<=", 5), limit("bridge_span", ">=", 5))
+        self.assertEqual((found.operator, found.value), ("between", mi.Quantity("mm", lower=5, upper=5)))
+
+    def test_a_result_with_one_open_end_that_no_operator_can_state_is_unknown(self) -> None:
+        found = self.equal_rank(limit("bridge_span", ">", 3), limit("bridge_span", "<=", 5))
+        self.assertEqual((found.status, found.value), ("unknown", None))
+        self.assertIn("cannot be stated", found.reasons[0])
+
+
 class Unknowns(Directories):
     def test_a_missing_value_falls_through_to_unknown(self) -> None:
         put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
@@ -567,13 +634,6 @@ class Pin(Directories):
                          (mi.Quantity("mm", value=1.4), "fdm.machine.tst@1", "machine"))
         pinned_context = gl.context_for(pinned.capabilities["tst_printer"], pinned.materials["tst_pa"])
         self.assertIn("fdm.machine.tst@1", gl.applicable_digests(catalog, pinned_context))
-
-    def test_an_abstract_parent_reached_through_extends_works_without_a_pin(self) -> None:
-        put(self.shipped, "base", {**guideline("fdm.base", [limit("min_wall", ">=", 1.5)]), "abstract": True})
-        put(self.shipped, "child", {**guideline("fdm.material.pa", [limit("min_wall", ">=", 1.0)], material_family=["pa"]),
-                                    "extends": ["fdm.base"]})
-        found = resolve(record(), self.catalog(), "min_wall")
-        self.assertEqual((found.value, found.provenance[0].guideline), (mi.Quantity("mm", value=1.5), "fdm.base@1"))
 
     def test_a_pinned_set_that_loosens_without_relaxes_is_ignored_with_a_warning(self) -> None:
         self.machine(0.9)

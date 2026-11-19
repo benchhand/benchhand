@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 import yaml
 
@@ -485,6 +486,19 @@ class StackPacketTests(unittest.TestCase):
                                      packets=packets)
         self.assertNotIn("packet.invalid", [f.code for f in assessment.findings])
         return assessment.statuses[self.OBLIGATION]
+
+    def test_the_stack_up_reads_the_version_record_in_snapshot_mode(self) -> None:
+        self.build(closing_gap_documents(), fixture("closing_gap.yaml"))
+        seen: dict = {}
+        real = intent.load_record
+
+        def spy(hw, **kwargs):
+            seen.update(kwargs)
+            return real(hw, **kwargs)
+
+        with unittest.mock.patch.object(intent, "load_record", spy):
+            self.run_stack()
+        self.assertTrue(seen.get("snapshot"), "stackup.py reads hw/versions/v1/record without snapshot mode")
 
     def test_a_failed_worst_case_is_the_stack_outcome_evidence_reads_and_a_rerun_reuses_it(self) -> None:
         self.build(closing_gap_documents(), fixture("closing_gap.yaml"))

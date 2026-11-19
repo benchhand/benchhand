@@ -904,18 +904,19 @@ def check_documents(documents: Mapping[str, Any], paths: Iterable[str]) -> list[
     return [problem for problem in problems if problem.path in wanted]
 
 
-def load_record(hw: Path) -> Record:
-    """The normalized record at `hw`, with the problems of reading and checking it (schema aside)."""
+def load_record(hw: Path, *, snapshot: bool = False) -> Record:
+    """The normalized record at `hw`, with the problems of reading and checking it (schema aside). With `snapshot`, `hw`
+    is a version's record/ folder: the guideline sets are read from its own copies only (see `with_guidelines`)."""
     documents, problems = read_documents(hw)
     record = normalize_record(documents, hw=hw)
-    return with_guidelines(_with_problems(record, problems + list(record.problems)), hw)
+    return with_guidelines(_with_problems(record, problems + list(record.problems)), hw, snapshot=snapshot)
 
 
-def check_record(hw: Path) -> tuple[Record, list[Problem]]:
+def check_record(hw: Path, *, snapshot: bool = False) -> tuple[Record, list[Problem]]:
     """load_record plus schema_problems: everything this contract reports about the record at `hw`."""
     documents, problems = read_documents(hw)
     record = normalize_record(documents, hw=hw)
-    record = with_guidelines(_with_problems(record, list(record.problems)), hw)
+    record = with_guidelines(_with_problems(record, list(record.problems)), hw, snapshot=snapshot)
     return record, problems + schema_problems(documents) + list(record.problems)
 
 

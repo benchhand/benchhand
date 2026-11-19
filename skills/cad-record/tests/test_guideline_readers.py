@@ -146,6 +146,22 @@ class VersionSnapshots(Base):
         changed = impact.changed_domains(impact.subject_fingerprints(built), impact.subject_fingerprints(current))
         self.assertIn("source", changed.get("TST-0001", ()))
 
+    def test_load_record_in_snapshot_mode_reads_the_copies_and_accepts_the_shipped_ones(self) -> None:
+        self.ship(1.5)
+        folder = self.version()
+        digests = dict(mi.load_record(folder, snapshot=True).guideline_digests["tst_printer"])
+        self.assertEqual(sorted(digests), ["fdm.material.pa@1"])
+        self.ship(1.6)  # the live install changes after the build
+        again = mi.load_record(folder, snapshot=True)
+        self.assertEqual(dict(again.guideline_digests["tst_printer"]), digests, "the digests come from the snapshot")
+        self.assertEqual([p for p in again.problems if p.code == "intent.guideline"], [], "a shipped copy is accepted")
+
+    def test_check_record_in_snapshot_mode_accepts_the_shipped_copies(self) -> None:
+        self.ship(1.5)
+        record, problems = mi.check_record(self.version(), snapshot=True)
+        self.assertEqual([p for p in problems if p.code == "intent.guideline"], [])
+        self.assertEqual(sorted(record.guideline_digests["tst_printer"]), ["fdm.material.pa@1"])
+
     def test_the_cad_model_snapshot_reader_carries_the_digests_of_the_copies(self) -> None:
         self.write(0.8)
         self.ship(1.5)

@@ -528,19 +528,39 @@ class Resolved:
 
 @dataclass(frozen=True)
 class _Bound:
-    """A limit as a constraint: a closed numeric interval in `units`, or a set of allowed categorical values. A one-sided
-    limit also keeps its operator (>=, >, <=, <), so that main's `tightens` can order a strict bound against a non-strict one."""
+    """A limit as a constraint: a numeric interval in `units` whose ends are each open or closed, or a set of allowed
+    categorical values. The ends are infinite for a one-sided limit (>=, >, <=, <) and finite for `between`. Openness is
+    kept through intersection and containment, so `< 5` is tighter than `<= 5` and a closed `between 3..5` never loosens
+    `< 5` unnoticed."""
 
     interval: tuple[float, float] | None
     units: str | None
     options: frozenset[Any] | None
-    operator: str | None = None
+    lower_open: bool = False
+    upper_open: bool = False
+
+    @property
+    def operator(self) -> str | None:
+        """The operator that states a one-sided bound (>=, >, <=, <), else None."""
+        if self.interval is None:
+            return None
+        lower, upper = self.interval
+        if upper == float("inf") and lower != -float("inf"):
+            return ">" if self.lower_open else ">="
+        if lower == -float("inf") and upper != float("inf"):
+            return "<" if self.upper_open else "<="
+        return None
+
+    def statable(self) -> bool:
+        """Whether `_statement` can state this bound: a categorical set, a one-sided bound or a closed interval."""
+        return self.interval is None or self.operator is not None or not (self.lower_open or self.upper_open)
 
     def one_sided(self) -> tuple[str, float] | None:
         """The (operator, value) pair of a one-sided numeric bound, else None."""
-        if self.operator is None or self.interval is None:
+        operator = self.operator
+        if operator is None or self.interval is None:
             return None
-        return self.operator, self.interval[0] if self.operator in LOWER_OPERATORS else self.interval[1]
+        return operator, self.interval[0] if operator in LOWER_OPERATORS else self.interval[1]
 
     def same_side(self, other: _Bound) -> tuple[tuple[str, float], tuple[str, float]] | None:
         """Both one-sided bounds as (operator, value) pairs when they bound the same side, else None."""
@@ -550,12 +570,16 @@ class _Bound:
         return mine, theirs
 
     def intersect(self, other: _Bound) -> _Bound | None:
+        """The values both bounds allow, or None when there are none (a closed end meeting an open one is empty)."""
         pair = self.same_side(other)
         if pair is not None:
             return self if _intent().tightens(pair[1], pair[0]) else other
         if self.interval is not None and other.interval is not None:
-            lower, upper = max(self.interval[0], other.interval[0]), min(self.interval[1], other.interval[1])
-            return _Bound((lower, upper), self.units, None) if lower <= upper + 1e-12 else None
+            lower, lower_open = _higher_lower(self, other)
+            upper, upper_open = _lower_upper(self, other)
+            if lower > upper or (lower == upper and (lower_open or upper_open)):
+                return None
+            return _Bound((lower, upper), self.units, None, lower_open, upper_open)
         if self.options is not None and other.options is not None:
             both = self.options & other.options
             return _Bound(None, None, both) if both else None
@@ -563,16 +587,35 @@ class _Bound:
 
     def within(self, other: _Bound) -> bool:
         """Whether this bound is as strict as `other` or stricter: everything it allows, `other` allows too. Two one-sided
-        bounds on the same side are ordered by manufacturing_intent.tightens."""
+        bounds on the same side are ordered by manufacturing_intent.tightens; otherwise each end must be at least as tight."""
         pair = self.same_side(other)
         if pair is not None:
             return bool(_intent().tightens(pair[1], pair[0]))
-        both = self.intersect(other)
-        if both is None:
-            return False
-        if self.interval is not None and both.interval is not None:
-            return all(abs(a - b) <= 1e-12 or a == b for a, b in zip(both.interval, self.interval))
-        return both.options == self.options
+        if self.interval is not None and other.interval is not None:
+            lower, upper = self.interval
+            other_lower, other_upper = other.interval
+            lower_ok = lower > other_lower or (lower == other_lower and (self.lower_open or not other.lower_open))
+            upper_ok = upper < other_upper or (upper == other_upper and (self.upper_open or not other.upper_open))
+            return lower_ok and upper_ok
+        return self.options is not None and other.options is not None and self.options <= other.options
+
+
+def _higher_lower(first: _Bound, second: _Bound) -> tuple[float, bool]:
+    """The tighter lower end of two intervals, and whether it is open."""
+    assert first.interval is not None and second.interval is not None
+    a, b = first.interval[0], second.interval[0]
+    if a == b:
+        return a, first.lower_open or second.lower_open
+    return (a, first.lower_open) if a > b else (b, second.lower_open)
+
+
+def _lower_upper(first: _Bound, second: _Bound) -> tuple[float, bool]:
+    """The tighter upper end of two intervals, and whether it is open."""
+    assert first.interval is not None and second.interval is not None
+    a, b = first.interval[1], second.interval[1]
+    if a == b:
+        return a, first.upper_open or second.upper_open
+    return (a, first.upper_open) if a < b else (b, second.upper_open)
 
 
 @dataclass(frozen=True)
@@ -613,9 +656,9 @@ def _bound(limit: Mapping[str, Any], context: Context, units: str | None) -> tup
     except mi.IntentError as error:
         return None, str(error)
     if operator in LOWER_OPERATORS:
-        return _Bound((lower, infinity), unit, None, operator), None
+        return _Bound((lower, infinity), unit, None, operator == ">"), None
     if operator in UPPER_OPERATORS:
-        return _Bound((-infinity, upper), unit, None, operator), None
+        return _Bound((-infinity, upper), unit, None, False, operator == "<"), None
     if operator == "between":
         return _Bound((lower, upper), unit, None), None
     return None, f"operator {operator} is not supported"
@@ -628,26 +671,20 @@ def _show(bound: _Bound) -> str:
     lower, upper = bound.interval
     if bound.operator is not None:
         return f"{bound.operator} {lower if bound.operator in LOWER_OPERATORS else upper:g} {bound.units}"
-    if upper == float("inf"):
-        return f">= {lower:g} {bound.units}"
-    if lower == -float("inf"):
-        return f"<= {upper:g} {bound.units}"
-    return f"{lower:g}..{upper:g} {bound.units}"
+    opening, closing = ("(" if bound.lower_open else "["), (")" if bound.upper_open else "]")
+    return f"{opening}{lower:g}..{upper:g}{closing} {bound.units}"
 
 
 def _statement(bound: _Bound, mi: Any) -> tuple[str, Any]:
-    """The operator and value that state a bound."""
+    """The operator and value that state a bound; `statable` says whether it has one."""
     if bound.options is not None:
         values = sorted(bound.options, key=str)
         return ("equals", values[0]) if len(values) == 1 else ("one_of", values)
     assert bound.interval is not None
     lower, upper = bound.interval
-    if bound.operator is not None:
-        return bound.operator, mi.Quantity(bound.units, value=lower if bound.operator in LOWER_OPERATORS else upper)
-    if upper == float("inf"):
-        return ">=", mi.Quantity(bound.units, value=lower)
-    if lower == -float("inf"):
-        return "<=", mi.Quantity(bound.units, value=upper)
+    operator = bound.operator
+    if operator is not None:
+        return operator, mi.Quantity(bound.units, value=lower if operator in LOWER_OPERATORS else upper)
     return "between", mi.Quantity(bound.units, lower=lower, upper=upper)
 
 
@@ -766,6 +803,10 @@ def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi:
             hide(old, f"{'tightened' if current is None or merged.within(current) else 'relaxed'} by {strictest[0].defined_in.ref}")
         current, winners = merged, list(strictest)
     assert current is not None
+    if not current.statable():
+        return Resolved(characteristic, "unknown", warnings=tuple(warnings),
+                        reasons=(f"{characteristic}: the limit {_show(current)} cannot be stated with one operator "
+                                 "(an interval with an open end); restate the sets so that one bound applies",))
     return _resolved(characteristic, current, winners, shadowed, warnings, mi)
 
 

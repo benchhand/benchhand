@@ -544,7 +544,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         raise AccessError(f"cannot read {assembly_path}: {error}") from error
     except operations_module.OperationsError as error:
         raise AccessError(f"{assembly_path}: {error} ({error.code})") from error
-    record = intent_module.load_record(record_hw)
+    record = intent_module.load_record(record_hw, snapshot=version is not None)
     assembly, chain, definitions = pose.load_inputs(args)
     order = operations_module.check_order(operations, chain.inventory)
     outcomes, findings = list(order.outcomes), list(order.findings)

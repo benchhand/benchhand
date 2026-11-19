@@ -88,13 +88,15 @@
         {"if": {"properties": {"characteristic": {"const": "min_wall"}}, "required": ["characteristic"]},
          "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_wall"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_wall"}}}}}},
         {"if": {"properties": {"characteristic": {"const": "nozzle_diameter"}}, "required": ["characteristic"]},
-         "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter"}}}},
+         "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter"}}}}}},
         {"if": {"properties": {"characteristic": {"const": "min_feature"}}, "required": ["characteristic"]},
          "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_feature"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_feature"}}}}}},
         {"if": {"properties": {"characteristic": {"const": "min_hole"}}, "required": ["characteristic"]},
          "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_hole"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_hole"}}}}}},
         {"if": {"properties": {"characteristic": {"enum": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"]}}, "required": ["characteristic"]},
-         "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}
+         "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_deviation"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}},
+        {"if": {"properties": {"characteristic": {"enum": ["enclosure", "nozzle_material"]}}, "required": ["characteristic"]},
+         "then": {"properties": {"operator": {"enum": ["equals", "one_of"]}}}}
       ]
     }
   }

@@ -92,6 +92,39 @@ class GuidelineFile(unittest.TestCase):
             "no value at all": (guideline(limits=[{k: v for k, v in limit().items() if k != "quantity"}]), False),
         })
 
+    def test_a_relative_floor_is_bounded_by_its_characteristic_like_a_quantity(self) -> None:
+        base = {k: v for k, v in limit().items() if k != "quantity"}
+        relative = {"relative_to": "nozzle_diameter", "factor": 2}
+        cases: dict[str, tuple[dict[str, Any], bool]] = {}
+        for characteristic, good, bad in (("nozzle_diameter", 0.4, 50), ("hole_diameter_deviation", 0.1, 5),
+                                          ("dimensional_deviation", 0.1, 5), ("profile_deviation", 0.1, 5)):
+            for label, floor, valid in (("good", good, True), ("out of bound", bad, False)):
+                limit_ = {**base, "characteristic": characteristic, "relative": {**relative, "floor": fx.quantity(floor)}}
+                cases[f"{characteristic} {label} floor"] = (guideline(limits=[limit_]), valid)
+        self.assert_cases(cases)
+
+    def test_enclosure_and_nozzle_material_take_only_the_categorical_operators(self) -> None:
+        enclosure = {"characteristic": "enclosure", "operator": "equals", "value": True, "citations": [datasheet()]}
+        nozzle = {"characteristic": "nozzle_material", "operator": "one_of", "value": ["hardened_steel"], "citations": [datasheet()]}
+        self.assert_cases({
+            "enclosure equals": (guideline(limits=[enclosure]), True),
+            "enclosure one_of": (guideline(limits=[{**enclosure, "operator": "one_of", "value": ["true"]}]), True),
+            "enclosure in mm": (guideline(limits=[limit(characteristic="enclosure", quantity=fx.quantity(5))]), False),
+            "enclosure >=": (guideline(limits=[limit(characteristic="enclosure", operator=">=")]), False),
+            "enclosure between": (guideline(limits=[limit(characteristic="enclosure", operator="between",
+                                                          quantity=fx.quantity(lower=1, upper=2))]), False),
+            "nozzle_material <=": (guideline(limits=[limit(characteristic="nozzle_material", operator="<=")]), False),
+            "nozzle_material one_of": (guideline(limits=[nozzle]), True),
+        })
+
+    def test_a_numeric_characteristic_takes_no_categorical_operator(self) -> None:
+        self.assert_cases({
+            "min_wall equals": (guideline(limits=[{"characteristic": "min_wall", "operator": "equals", "value": True,
+                                                   "citations": [datasheet()]}]), False),
+            "bridge_span one_of": (guideline(limits=[{"characteristic": "bridge_span", "operator": "one_of", "value": ["a"],
+                                                      "citations": [datasheet()]}]), False),
+        })
+
     def test_requires_is_equals_or_one_of_on_enclosure_and_nozzle_material(self) -> None:
         enclosure = {"characteristic": "enclosure", "operator": "equals", "value": True, "citations": [datasheet()]}
         nozzle = {"characteristic": "nozzle_material", "operator": "one_of", "value": ["hardened_steel"], "citations": [datasheet()]}

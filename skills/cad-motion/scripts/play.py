@@ -576,7 +576,7 @@ def part_interfaces(pn: str, record: Any, chain: Any) -> list[str]:
 
 def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the packet, the evidence detail) of one run."""
-    record = intent_module.load_record(record_hw)
+    record = intent_module.load_record(record_hw, snapshot=version is not None)
     expected = [o for o in intent_module.required_checks(record) if o.family == FAMILY]
     dependencies: dict[str, str] = {}
     for name in ("assembly.yaml", "interfaces.yaml"):
