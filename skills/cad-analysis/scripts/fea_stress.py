@@ -35,7 +35,7 @@ import math
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Any
+from typing import Any, NamedTuple
 
 # Exclusion distance in units of the coarse mesh size. Provisional: chosen against the fast-bias campaign
 # (fb-2f0b457-r1 away.json), where 3 x h cleared the fixed-face singularity on the cantilever pair.
@@ -65,13 +65,33 @@ UNKNOWN = "unknown"
 Point = tuple[float, float, float]
 
 
+class StressTensor(NamedTuple):
+    """The six components of a node's symmetric stress tensor, in MPa, in the order ccx writes them.
+
+    A ccx 2.23 STRESS block names them SXX, SYY, SZZ, SXY, SYZ and SZX, with the tensor indices 11, 22, 33, 12,
+    23 and 31: the shear `szx` is component (3, 1). That order is not Abaqus's S11, S22, S33, S12, S13, S23.
+    """
+
+    sxx: float
+    syy: float
+    szz: float
+    sxy: float
+    syz: float
+    szx: float
+
+
 @dataclass(frozen=True)
 class FrdResult:
-    """Nodal coordinates, von Mises stress and displacement magnitude of one solve, keyed by node id."""
+    """Nodal coordinates, von Mises stress and displacement magnitude of one solve, keyed by node id.
+
+    `stress` holds each node's full stress tensor, from the same STRESS records as `von_mises`. A result built by
+    hand may leave it empty: the comparison reads only `von_mises`.
+    """
 
     coordinates: dict[int, Point]
     von_mises: dict[int, float]
     displacement: dict[int, float]
+    stress: dict[int, StressTensor] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -211,31 +231,68 @@ def _derive(block: str, node: int, compute: Callable[[list[float]], float], valu
         raise FrdError(f"{block} record of node {node} has a value too large to square") from None
 
 
+def _tensor(node: int, values: list[float]) -> StressTensor:
+    """The tensor of a STRESS record; a record of more than six values does not say which six they are."""
+    if len(values) != _STRESS_VALUES:
+        raise FrdError(f"STRESS record of node {node} has {len(values)} values, not {_STRESS_VALUES}")
+    return StressTensor(*values)
+
+
+# The names a STRESS block's ` -5` lines give its components, in order; the name fills columns 6 to 13.
+_STRESS_COMPONENTS = tuple(StressTensor._fields)
+
+
+def _check_components(lines: list[str], start: int) -> None:
+    """Refuse a STRESS block whose ` -5` lines name other components, or the same in another order.
+
+    A block without ` -5` lines is read in the ccx order.
+    """
+    names = []
+    for line in lines[start:]:
+        if not line.startswith(" -5"):
+            break
+        names.append(line[5:13].strip().lower())
+    if names and tuple(names) != _STRESS_COMPONENTS:
+        raise FrdError(f"STRESS block names its components {', '.join(names).upper() or 'blank'}, "
+                       f"not {', '.join(_STRESS_COMPONENTS).upper()}")
+
+
+def _stress_block(lines: list[str], start: int) -> tuple[dict[int, float], dict[int, StressTensor]]:
+    """The von Mises stress and the tensor of each node of the STRESS block opened just before `start`."""
+    _check_components(lines, start)
+    von_mises: dict[int, float] = {}
+    tensors: dict[int, StressTensor] = {}
+    for node, values in _unique(_records(lines, start, 'STRESS', _STRESS_VALUES), 'STRESS'):
+        tensors[node] = _tensor(node, values)
+        von_mises[node] = _derive('STRESS', node, _von_mises, values)
+    return von_mises, tensors
+
+
 def read_frd(text: str) -> FrdResult:
-    """Parse node coordinates, von Mises stress and displacement magnitude from ccx `.frd` text.
+    """Parse node coordinates, the stress tensor, von Mises stress and displacement magnitude from ccx `.frd` text.
 
     The last STRESS and DISP blocks are used (the final increment). Raises `FrdError` (a ValueError) when
     the file has no node, stress or displacement block, when a block lacks its ` -3` terminator, or when a record is malformed (no numeric node id,
-    a value that is not a number or is cut off, too few values),
-    or when a node id repeats inside one block.
+    a value that is not a number or is cut off, too few values, a STRESS record of more than six),
+    when a node id repeats inside one block, or when a STRESS block names its components in another order than ccx's.
     Whether every node has a result is checked by `compare_levels`.
     """
     lines = text.splitlines()
     coordinates: dict[int, Point] = {}
-    stress: dict[int, float] = {}
+    von_mises: dict[int, float] = {}
+    tensors: dict[int, StressTensor] = {}
     displacement: dict[int, float] = {}
     for index, line in enumerate(lines):
         if line.startswith("    2C"):
             coordinates = {node: (v[0], v[1], v[2]) for node, v in _unique(_records(lines, index + 1, 'node', _NODE_VALUES), 'node')}
         elif line.startswith(" -4  STRESS"):
-            stress = {node: _derive('STRESS', node, _von_mises, v)
-                      for node, v in _unique(_records(lines, index + 1, 'STRESS', _STRESS_VALUES), 'STRESS')}
+            von_mises, tensors = _stress_block(lines, index + 1)
         elif line.startswith(" -4  DISP"):
             displacement = {node: _derive('DISP', node, _magnitude, v)
                             for node, v in _unique(_records(lines, index + 1, 'DISP', _DISP_VALUES), 'DISP')}
-    if not coordinates or not stress or not displacement:
+    if not coordinates or not von_mises or not displacement:
         raise FrdError("frd file lacks a node, STRESS or DISP block")
-    return FrdResult(coordinates, stress, displacement)
+    return FrdResult(coordinates, von_mises, displacement, tensors)
 
 
 def plane_node_ids(result: FrdResult, axis: str, value: float, tolerance: float = 1e-6) -> frozenset[int]:
