@@ -504,18 +504,27 @@ def applicable_digests(catalog: Catalog, context: Context) -> dict[str, str]:
     return dict(sorted(found.items()))
 
 
-def record_digests(record: Any, catalog: Catalog) -> dict[str, dict[str, str]]:
-    """capability profile id -> applicable_digests, over the profile and each material profile of the record.
-    A profile that no set can resolve through is left out."""
-    found: dict[str, dict[str, str]] = {}
+def record_digests(record: Any, catalog: Catalog) -> dict[str, dict[str, dict[str, str]]]:
+    """capability profile id -> material profile name -> applicable_digests of that profile with that material. A record
+    without materials has the one name "" (the profile alone). A profile that no set can resolve through is left out; one
+    that some material resolves sets for lists every material, so that a material with none is not read as unknown."""
+    found: dict[str, dict[str, dict[str, str]]] = {}
     for ident, profile in sorted(record.capabilities.items()):
-        contexts = [context_for(profile, material) for material in record.materials.values()] or [context_for(profile, None)]
-        merged: dict[str, str] = {}
-        for context in contexts:
-            merged.update(applicable_digests(catalog, context))
-        if merged:
-            found[ident] = dict(sorted(merged.items()))
+        materials: dict[str, Any] = dict(record.materials) or {"": None}
+        by_material = {name: applicable_digests(catalog, context_for(profile, material))
+                       for name, material in sorted(materials.items())}
+        if any(by_material.values()):
+            found[ident] = by_material
     return found
+
+
+def digests_for(by_material: Mapping[str, Mapping[str, str]] | None, names: Sequence[str]) -> dict[str, str]:
+    """id@revision -> sha256 of the sets that apply to a part made of the material profiles `names`: the union of their
+    entries in `by_material` (one capability profile's record_digests). A part that names no material, or one the record
+    does not hold, may be made of any of them, so it takes every entry: it goes stale more often, never less."""
+    pool = by_material or {}
+    chosen = list(names) if names and all(name in pool for name in names) else list(pool)
+    return dict(sorted({ref: sha for name in chosen for ref, sha in pool[name].items()}.items()))
 
 
 # --- values ----------------------------------------------------------------------------------------------------

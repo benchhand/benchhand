@@ -788,7 +788,7 @@ class Record:
     problems: tuple[Problem, ...]
     assembly_inventory: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # assembly.yaml occurrences, subassemblies
     assembly_document: Any = None  # assembly.yaml as written: the GLB-STEP agreement and declared dimensions depend on all of it
-    guideline_digests: Mapping[str, Mapping[str, str]] = field(default_factory=lambda: _EMPTY)  # profile id -> {id@revision: sha256}
+    guideline_digests: Mapping[str, Mapping[str, Mapping[str, str]]] = field(default_factory=lambda: _EMPTY)  # profile id -> material profile name ("" without materials) -> {id@revision: sha256}
 
 
 # --- record version --------------------------------------------------------------------------------------------
