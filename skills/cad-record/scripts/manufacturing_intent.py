@@ -889,6 +889,17 @@ def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     return problems
 
 
+def check_documents(documents: Mapping[str, Any], paths: Iterable[str]) -> list[Problem]:
+    """schema_problems plus the normalized record's problems of `documents`, only those whose `Problem.path` is in `paths`.
+
+    `paths` takes the `hw/`-prefixed form Problem.path uses (`hw/requirements.yaml`), not bare rels.
+    The record is normalized without an `hw` directory, so file-backed references (decisions, cases,
+    source artifacts) are not checked; `check_record` checks them."""
+    wanted = frozenset(paths)
+    problems = schema_problems(documents) + list(normalize_record(documents).problems)
+    return [problem for problem in problems if problem.path in wanted]
+
+
 def load_record(hw: Path) -> Record:
     """The normalized record at `hw`, with the problems of reading and checking it (schema aside)."""
     documents, problems = read_documents(hw)
@@ -927,6 +938,7 @@ class _Reader:
         self.defined: dict[str, set[str]] = {}
         self.refs: list[tuple[str, str, str, str]] = []  # (kind, id, path, pointer)
         self.artifacts: dict[str, str] = {}
+        self._inventory: Any = None  # the assembly occurrence inventory, built on first use; False when assembly.yaml has none
 
     # -- reporting --
     def problem(self, code: str, path: str, pointer: str, message: str, severity: str = "error") -> None:
@@ -1022,7 +1034,31 @@ class _Reader:
                 self.ref(f"component:{pn}", data["component"], path, pointer)
             if data.get("operation"):
                 self.ref(f"operation:{pn}", data["operation"], path, pointer)
+            if isinstance(data.get("occurrence"), str):
+                self.subject_occurrence(pn, data["occurrence"], path, pointer)
         return freeze_mapping(data)
+
+    def assembly_inventory(self) -> Any:
+        """assembly_data's Inventory of assembly.yaml, or None when it cannot be normalized (validate.py reports why)."""
+        if self._inventory is None:
+            assembly_data = _sibling("cad_record_assembly_data", "assembly_data.py")
+            frames = {pn: part.get("model_frame", assembly_data.DEFAULT_FRAME) for rel, part in self.documents.items()
+                      if re.fullmatch(r"parts/([^/]+)/part\.yaml", rel) and isinstance(part, Mapping)
+                      and isinstance(pn := part.get("PN"), str)}
+            try:
+                self._inventory = assembly_data.normalize(self.doc("assembly.yaml") or {}, frames)
+            except assembly_data.InventoryError:
+                self._inventory = False
+        return self._inventory or None
+
+    def subject_occurrence(self, pn: str, occurrence: str, path: str, pointer: str) -> None:
+        inventory = self.assembly_inventory()
+        if inventory is None:
+            return
+        try:
+            inventory.endpoint(pn, occurrence)
+        except _sibling("cad_record_assembly_data", "assembly_data.py").UnresolvedReference as error:
+            self.problem("intent.reference", path, pointer, f"{pointer}: {error}")
 
     def criterion(self, data: Any, path: str, pointer: str) -> Criterion | None:
         if not isinstance(data, Mapping) or not {"property", "operator", "value", "source"} <= set(data):
