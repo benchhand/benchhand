@@ -55,6 +55,49 @@ AGENT_ENV = {**os.environ, "CAD_OUTPUT": "compact"}
 BUDGETS = {"run": 400, "check": 400, "latest": 250, "form_check": 800, "validate": 700}
 
 
+ROOT_MARK = "<tmp>"
+
+
+def measured(stdout: str, *roots: Path | str) -> int:
+    """Bytes of `stdout` with each temp root (as given and resolved) replaced by a fixed mark.
+
+    The tools print absolute paths under the test's temp dir, whose length depends on the machine's TMPDIR
+    and on symlinks such as macOS /var -> /private/var. The budget counts the tool's own output, not that prefix.
+    """
+    forms = {str(r) for root in roots for r in (root, Path(root).resolve())}
+    for form in sorted(forms, key=len, reverse=True):
+        stdout = stdout.replace(form, ROOT_MARK)
+    return len(stdout.encode())
+
+
+class MeasuredTests(unittest.TestCase):
+    """`measured` counts the tool's own bytes whatever the temp root's length."""
+
+    SAMPLE = "packet: {root}/.cad-work/p.json\nfull JSON: {root}/.cad-work/agent-output/x-1234.json\n3 findings\n"
+
+    def test_the_same_output_counts_equal_under_temp_roots_of_different_length(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            short, long = Path(base) / "a", Path(base) / ("d" * 60)
+            short.mkdir()
+            long.mkdir()
+            counts = {measured(self.SAMPLE.format(root=r), r) for r in (short, long)}
+        self.assertEqual(len(counts), 1)
+
+    def test_a_symlinked_root_counts_like_its_resolved_form(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            real = Path(base) / "real"
+            real.mkdir()
+            link = Path(base) / "link"
+            link.symlink_to(real)
+            self.assertEqual(measured(self.SAMPLE.format(root=real), link), measured(self.SAMPLE.format(root=link), link))
+
+    def test_growth_in_the_tools_own_lines_still_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as base:
+            text = self.SAMPLE.format(root=base)
+            extra = "finding: x\n"
+            self.assertEqual(measured(text + extra, base) - measured(text, base), len(extra))
+
+
 def without_timings(value: object) -> object:
     """`value` without the wall-clock fields, which differ between two runs of one command."""
     if isinstance(value, dict):
@@ -107,7 +150,7 @@ class LampArmTests(unittest.TestCase):
                 full = (Path(last.removeprefix("full JSON: ")).read_text(encoding="utf-8")
                         if last.startswith("full JSON: ") else agent.stdout)
                 self.assertEqual(without_timings(json.loads(full)), without_timings(json.loads(plain.stdout)))
-                self.assertLessEqual(len(agent.stdout.encode()), BUDGETS[name], agent.stdout)
+                self.assertLessEqual(measured(agent.stdout, self.tmp.name), BUDGETS[name], agent.stdout)
                 self.assertLessEqual(len(agent.stdout), len(plain.stdout) + 1)
 
     def test_the_json_flag_prints_full_json_though_the_environment_says_compact(self) -> None:
@@ -134,7 +177,7 @@ class LampArmTests(unittest.TestCase):
         shutil.copytree(LAMP_HW, other / "hw")
         agent = self.tool(CAD_MODEL, "run", str(other / "hw"), "--label", "v1", env=AGENT_ENV)
         self.assertEqual(agent.returncode, 0, agent.stderr[-2000:])
-        self.assertLessEqual(len(agent.stdout.encode()), BUDGETS["run"], agent.stdout)
+        self.assertLessEqual(measured(agent.stdout, self.tmp.name), BUDGETS["run"], agent.stdout)
         path = Path(agent.stdout.rstrip("\n").splitlines()[-1].removeprefix("full JSON: "))
         self.assertEqual(result_payload(path.read_text(encoding="utf-8"))["label"], "v1")
         sealed = self.sealed(self.hw)
