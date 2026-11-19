@@ -39,35 +39,51 @@ def selected(path: str) -> bool:
     return not path.endswith(".md") and bool(SCANNED.search(path))
 
 
-def bypasses(words: Sequence[str | None]) -> bool:
-    """True when the words after ``git`` are a commit or push that skips hooks."""
+def subcommand_index(words: Sequence[str | None]) -> int | None:
+    """Index of the git subcommand, after the global options, or None when there is none."""
     index = 0
     while index < len(words):
         word = words[index]
         if word is None or not word.startswith("-"):
-            break
+            return index
         index += 2 if word in GLOBAL_OPTIONS_WITH_VALUE else 1
-    if index >= len(words) or words[index] not in ("commit", "push"):
+    return None
+
+
+def cluster_skips_hooks(word: str) -> bool:
+    """True for a short commit cluster that holds n before any letter that takes a value, such as -qn or -nm."""
+    for letter in word[1:]:
+        if letter == "n":
+            return True
+        if letter in COMMIT_ARG_LETTERS:
+            return False
+    return False
+
+
+def takes_next_word(word: str, commit: bool) -> bool:
+    """True when the option consumes the following word as its value."""
+    if word in COMMIT_OPTIONS_WITH_VALUE:
+        return True
+    if not commit or word.startswith("--"):
+        return False
+    taker = next((letter for letter in word[1:] if letter in COMMIT_ARG_LETTERS), None)
+    return taker is not None and taker == word[-1]
+
+
+def bypasses(words: Sequence[str | None]) -> bool:
+    """True when the words after ``git`` are a commit or push that skips hooks."""
+    index = subcommand_index(words)
+    if index is None or words[index] not in ("commit", "push"):
         return False
     commit = words[index] == "commit"
     skip_value = False
     for word in words[index + 1 :]:
         if skip_value:
             skip_value = False
-            continue
-        if word is None or not word.startswith("-"):
-            continue
-        if word == "--no-verify":
-            return True
-        if word in COMMIT_OPTIONS_WITH_VALUE:
-            skip_value = True
-        elif commit and not word.startswith("--"):
-            for letter in word[1:]:
-                if letter == "n":
-                    return True
-                if letter in COMMIT_ARG_LETTERS:
-                    skip_value = letter == word[-1]
-                    break
+        elif word is not None and word.startswith("-"):
+            if word == "--no-verify" or (commit and not word.startswith("--") and cluster_skips_hooks(word)):
+                return True
+            skip_value = takes_next_word(word, commit)
     return False
 
 
