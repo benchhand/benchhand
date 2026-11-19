@@ -45,6 +45,9 @@ Resolution, per characteristic:
   5. A scope selector whose profile or material fact is unknown makes a numeric limit not apply (a
      warning). It makes a categorical limit (equals, one_of: enclosure, nozzle_material) unknown: such
      a requirement never falls through to a lower layer.
+  6. A one_of limit on nozzle_diameter lists discrete sizes (`quantities`), compared as whole micrometres, never
+     as floats. A subset of the parent set, or a set wholly inside a parent interval, tightens it; any other
+     set needs `relaxes`. Its scope facts follow rule 5 as for any requirement.
 """
 
 from __future__ import annotations
@@ -70,6 +73,7 @@ NUMERIC = frozenset((">=", "<=", "between"))
 SCOPE_FACTS = ("material_family", "filler", "shore", "nozzle_material")
 LOWER_OPERATORS = (">=", ">")  # one-sided limits, read as manufacturing_intent.LOWER_BOUND_OPERATORS and UPPER_BOUND_OPERATORS
 UPPER_OPERATORS = ("<=", "<")
+MICROMETRE_TOLERANCE = 1e-6  # a conversion such as 0.563 mm -> 562.9999999999999 um is the whole size 563 um
 
 
 class GuidelineError(ValueError):
@@ -188,6 +192,8 @@ def _limit_problems(mi: Any, index: int, limit: Mapping[str, Any]) -> list[str]:
     problems: list[str] = []
     if "quantity" in limit:
         problems.extend(_quantity_problems(mi, f"limits/{index}/quantity", limit["quantity"]))
+    if "quantities" in limit:
+        problems.extend(_sizes_problems(mi, f"limits/{index}/quantities", limit["quantities"]))
     relative = limit.get("relative")
     if relative is None:
         return problems
@@ -197,6 +203,26 @@ def _limit_problems(mi: Any, index: int, limit: Mapping[str, Any]) -> list[str]:
     problems.extend(floor_problems)
     if not floor_problems and mi.quantity(relative["floor"]).dimension != "length":
         problems.append(f"limits/{index}/relative: the floor of a line-width limit is a length")
+    return problems
+
+
+def _sizes_problems(mi: Any, where: str, items: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Why a discrete size set is invalid: an item the resolver cannot read, one that is not a whole number of micrometres,
+    or two that are the same size after conversion (0.4 mm and 400 um)."""
+    problems: list[str] = []
+    seen: dict[int, int] = {}
+    for position, item in enumerate(items):
+        problem = _quantity_problems(mi, f"{where}/{position}", item)
+        if problem:
+            problems.extend(problem)
+            continue
+        exact = mi.quantity(item).to("um").value
+        if abs(exact - round(exact)) > MICROMETRE_TOLERANCE:
+            problems.append(f"{where}/{position}: {exact:g} um is not a whole number of micrometres")
+        elif round(exact) in seen:
+            problems.append(f"{where}/{position}: duplicate of {where}/{seen[round(exact)]} ({round(exact)} um)")
+        else:
+            seen[round(exact)] = position
     return problems
 
 
@@ -535,7 +561,7 @@ class _Bound:
 
     interval: tuple[float, float] | None
     units: str | None
-    options: frozenset[Any] | None
+    options: frozenset[Any] | None  # categorical values, or whole micrometres when `units` is "um"
     lower_open: bool = False
     upper_open: bool = False
 
@@ -582,8 +608,24 @@ class _Bound:
             return _Bound((lower, upper), self.units, None, lower_open, upper_open)
         if self.options is not None and other.options is not None:
             both = self.options & other.options
-            return _Bound(None, None, both) if both else None
+            return _Bound(None, self.units, both) if both else None
+        for sizes, interval in ((self, other), (other, self)):
+            if sizes.sizes_set() and interval.interval is not None:
+                inside = frozenset(size for size in sizes.options or () if interval.admits(size))
+                return _Bound(None, sizes.units, inside) if inside else None
         return None
+
+    def sizes_set(self) -> bool:
+        """Whether this bound is a discrete set of sizes in whole micrometres, not a categorical set."""
+        return self.options is not None and self.units == "um"
+
+    def admits(self, micrometres: int) -> bool:
+        """Whether a whole number of micrometres lies in this numeric interval, its open ends excluded."""
+        assert self.interval is not None and self.units is not None
+        mi = _intent()
+        lower, upper = (round(mi.convert(end, self.units, "um"), 6) for end in self.interval)
+        return (lower < micrometres or (lower == micrometres and not self.lower_open)) and \
+            (micrometres < upper or (micrometres == upper and not self.upper_open))
 
     def within(self, other: _Bound) -> bool:
         """Whether this bound is as strict as `other` or stricter: everything it allows, `other` allows too. Two one-sided
@@ -597,6 +639,8 @@ class _Bound:
             lower_ok = lower > other_lower or (lower == other_lower and (self.lower_open or not other.lower_open))
             upper_ok = upper < other_upper or (upper == other_upper and (self.upper_open or not other.upper_open))
             return lower_ok and upper_ok
+        if self.sizes_set() and other.interval is not None:
+            return all(other.admits(size) for size in self.options or ())
         return self.options is not None and other.options is not None and self.options <= other.options
 
 
@@ -633,6 +677,8 @@ def _bound(limit: Mapping[str, Any], context: Context, units: str | None) -> tup
     """The limit as a bound, or why it cannot be one. `units` is the unit to state numbers in (None: its own)."""
     mi = _intent()
     operator = limit["operator"]
+    if "quantities" in limit:
+        return _Bound(None, "um", frozenset(round(mi.quantity(item).to("um").value) for item in limit["quantities"])), None
     if operator in ("equals", "one_of"):
         value = limit["value"]
         return _Bound(None, None, frozenset(value if isinstance(value, (list, tuple)) else [value])), None
@@ -665,6 +711,8 @@ def _bound(limit: Mapping[str, Any], context: Context, units: str | None) -> tup
 
 
 def _show(bound: _Bound) -> str:
+    if bound.sizes_set():
+        return ", ".join(f"{size} um" for size in sorted(bound.options or ()))
     if bound.options is not None:
         return ", ".join(sorted(str(o) for o in bound.options))
     assert bound.interval is not None
@@ -677,6 +725,8 @@ def _show(bound: _Bound) -> str:
 
 def _statement(bound: _Bound, mi: Any) -> tuple[str, Any]:
     """The operator and value that state a bound; `statable` says whether it has one."""
+    if bound.sizes_set():
+        return "one_of", [mi.Quantity("um", value=float(size)) for size in sorted(bound.options or ())]
     if bound.options is not None:
         values = sorted(bound.options, key=str)
         return ("equals", values[0]) if len(values) == 1 else ("one_of", values)
@@ -813,7 +863,7 @@ def _fold(characteristic: str, ready: list[_Candidate], warnings: list[str], mi:
 def _resolved(characteristic: str, current: _Bound, winners: list[_Candidate], shadowed: list[Shadowed], warnings: list[str],
               mi: Any) -> Resolved:
     operator, value = _statement(current, mi)
-    provenance = tuple(Provenance(_present(candidate.bound, mi), current.units, candidate.layer, candidate.defined_in.ref,
+    provenance = tuple(Provenance(_present(candidate.bound, mi), candidate.bound.units, candidate.layer, candidate.defined_in.ref,
                                   candidate.defined_in.path, tuple(_plain(c) for c in candidate.limit["citations"]),
                                   "guideline", tuple(shadowed)) for candidate in winners)
     source = {"kind": "guideline", "reference": winners[0].defined_in.id, "revision": str(winners[0].defined_in.revision),
@@ -823,6 +873,13 @@ def _resolved(characteristic: str, current: _Bound, winners: list[_Candidate], s
 
 def _present(bound: _Bound, mi: Any) -> Any:
     operator, value = _statement(bound, mi)
+    return _dict(value)
+
+
+def _dict(value: Any) -> Any:
+    """A resolved value as plain data: a Quantity, or a list of them, as dictionaries."""
+    if isinstance(value, list):
+        return [_dict(item) for item in value]
     return value.as_dict() if hasattr(value, "as_dict") else value
 
 
@@ -867,7 +924,7 @@ def trace_document(resolutions: Iterable[Resolved]) -> dict[str, Any]:
     rows = []
     for item in sorted(resolutions, key=lambda r: r.characteristic):
         rows.append({"characteristic": item.characteristic, "status": item.status, "operator": item.operator,
-                     "value": item.value.as_dict() if hasattr(item.value, "as_dict") else item.value,
+                     "value": _dict(item.value),
                      "source": dict(item.source) if item.source else None, "warnings": list(item.warnings),
                      "reasons": list(item.reasons),
                      "provenance": [{"value": p.value, "units": p.units, "layer": p.layer, "guideline": p.guideline, "path": p.path,
