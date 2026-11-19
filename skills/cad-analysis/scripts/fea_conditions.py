@@ -18,8 +18,9 @@ Explicit numbers stay readable in a standalone case: they are labelled
 unsourced and the result is exploratory, never service evidence. A completed sourced solve is
 simulation-supported evidence at most, never physical validation; `engineering.*` outcomes pass only with a
 sourced acceptance criterion, service-grade properties, service loads covered as vectors and a mesh convergence
-study that is approved, bound to this geometry, material, supports, forces and mesh, and converged. Anything
-unproven is unknown, never pass, and never service evidence.
+study that is approved, bound to this geometry, material, supports, forces and mesh, and converged. A stress case's
+convergence is its own two-mesh study instead, and only that study's settled stress away from supports and loads can
+pass strength. Anything unproven is unknown, never pass, and never service evidence.
 """
 
 from __future__ import annotations
@@ -30,11 +31,14 @@ import json
 import math
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
+
+import fea_modes
+import fea_stress
 
 INTENT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "manufacturing_intent.py"
 DECISIONS_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "decision_records.py"
@@ -82,9 +86,21 @@ LIMITS = (
     "static, linear elastic, small displacement and isotropic: no contact, plasticity, buckling, dynamics or thermal load",
     "face loads only: no self-weight or inertia load",
     "peak von Mises stress at load faces, constraints and sharp re-entrant corners depends on the mesh",
+    f"a stress case reads no stress within {fea_stress.K_EXCLUSION} x h_coarse of a fixed or load face: a peak on "
+    "that cutoff gives no strength value, and the route to one at a support is linearisation (#209)",
     "a yield safety factor is not a fatigue, creep, wear, impact, buckling or service-life margin",
     "simulation-supported evidence at most, never physical validation",
 )
+# A stress case's mesh convergence is its own two-mesh study (fea_stress), never a decision record.
+STUDY_METHOD = "two_mesh_stress_study"
+STUDY_PENDING = "the case's own two-mesh stress study decides it after the solve"
+# Why a strength obligation stays unknown in the modes whose solve gives no strength value.
+FAST_STRENGTH = ("fast mode reports no stress figure: a strength outcome comes only from the separate two-mesh stress "
+                 "study, a case with mode: stress")
+FULL_STRENGTH = ("a full-mode yield safety factor rests on one mesh's peak von Mises stress, which does not settle at "
+                 "supports, loads and edges: a strength pass comes only from the two-mesh stress study, a case with "
+                 "mode: stress")
+STUDY_STRENGTH = "the yield safety factor at the two-mesh stress study's settled stress away from supports and loads"
 
 
 def decision_records() -> Any:
@@ -563,6 +579,9 @@ class _Assessor:
 
     def convergence(self, profile: Any, profile_sha: str) -> dict[str, Any]:
         stated = self.case.get("mesh_convergence")
+        if self.case.get("_mode") == "stress":  # fea_static refuses mesh_convergence on a stress case
+            return {"status": "not_demonstrated", "method": STUDY_METHOD, "reason": STUDY_PENDING,
+                    "problems": [STUDY_PENDING]}
         if stated is None:
             reason = ("one mesh: refine mesh_size until peak stress and displacement settle, then record the study "
                       "in an approved decision named by mesh_convergence.decision")
@@ -904,6 +923,21 @@ def convergence_gaps(convergence: Mapping[str, Any]) -> list[str]:
     return ["mesh convergence is not demonstrated: " + "; ".join(str(problem) for problem in problems)]
 
 
+def study_convergence(found: Any) -> dict[str, Any]:
+    """A stress result's mesh convergence, from its own two-mesh study (`stress_study`).
+
+    Both settled outcomes meet every convergence criterion of fea_stress, the displacement's included, so either
+    demonstrates it. An `unknown` study, or a result without a study mapping, does not."""
+    if isinstance(found, Mapping) and found.get("outcome") in (fea_stress.SETTLED, fea_stress.SETTLED_AWAY_FROM_SUPPORT):
+        return {"status": "demonstrated", "method": STUDY_METHOD,
+                "study": {key: found.get(key) for key in ("outcome", "mesh_sizes_mm", "step_ratio", "delta_sigma",
+                                                          "delta_displacement")},
+                "relative_change_max": fea_stress.SETTLE_TOLERANCE}
+    reason = (f"the two-mesh stress study is {found.get('outcome')}: {found.get('message')}" if isinstance(found, Mapping)
+              else "the stress result carries no two-mesh stress study")
+    return {"status": "not_demonstrated", "method": STUDY_METHOD, "reason": reason, "problems": [reason]}
+
+
 _PROFILE_NAMES = frozenset(name for name, _units in PROPERTIES.values())
 
 
@@ -918,7 +952,12 @@ def _digest(value: Any) -> str:
 # --- after the solve -------------------------------------------------------------------------------------------
 
 def report(result: dict[str, Any], assessment: Assessment, case: Mapping[str, Any]) -> dict[str, Any]:
-    """Add the material, evidence, mesh and (record version 2) engineering packet to a completed result."""
+    """Add the material, evidence, mesh and (record version 2) engineering packet to a completed result.
+
+    A stress result's mesh convergence is its own two-mesh study, which only the solve can show."""
+    mode = case.get("_mode", fea_modes.DEFAULT)
+    if mode == "stress":
+        assessment = replace(assessment, convergence=study_convergence(result.get("stress_study")))
     convergence = assessment.convergence or {"status": "not_demonstrated", "reason": "one mesh; no convergence study"}
     result["material"] = assessment.material
     result["mesh"] = {"size_mm": case["mesh_size"], "element_order": "second", "nodes": result.get("node_count"),
@@ -935,18 +974,18 @@ def report(result: dict[str, Any], assessment: Assessment, case: Mapping[str, An
     if assessment.binding is not None:
         result["binding"] = assessment.binding
     if assessment.sourced:
-        result["engineering"] = packet(result, assessment)
+        result["engineering"] = packet(result, assessment, mode=mode)
     return result
 
 
-def packet(result: Mapping[str, Any], a: Assessment) -> dict[str, Any]:
-    """The engineering.* check-result packet (manufacturing-check-result.schema.json) of one solve."""
+def packet(result: Mapping[str, Any], a: Assessment, *, mode: str) -> dict[str, Any]:
+    """The engineering.* check-result packet (manufacturing-check-result.schema.json) of one solve in `mode`."""
     if a.subject is None:
         raise ValueError("only a record version 2 case, which names its analysed part, has an engineering packet")
     subject = a.subject
     outcomes, findings = [], []
     for obligation in a.expected:
-        outcome, finding = _outcome(obligation, result, a, subject)
+        outcome, finding = _outcome(obligation, result, a, subject, mode)
         outcomes.append(outcome)
         if finding is not None:
             findings.append(finding)
@@ -966,7 +1005,7 @@ _CHECKS = {
 
 
 def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assessment,
-             subject: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+             subject: Mapping[str, Any], mode: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
     family = obligation["family"]
     gaps = list(a.evidence_gaps) + convergence_gaps(a.convergence)
     if family == "engineering.anisotropy":
@@ -985,18 +1024,80 @@ def _outcome(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assess
                     f"{model['decision']}; interlayer failure is outside a von Mises check")
     check, key, units, what = _CHECKS[family]
     criterion = a.criteria.get(check)
-    measured = result.get(key)
     gaps += a.load_gaps
+    if check == "strength" and mode == "stress":
+        return _stress_strength(obligation, result, a, subject, criterion, gaps)
+    measured = result.get(key)
     if criterion is None:
-        return _row(obligation, "unknown", a, subject, [f"no sourced acceptance criterion: name the requirement under "
-                                                        f"acceptance.{check}"], measured, units, what)
+        why = (FAST_STRENGTH if check == "strength" and mode == "fast" else
+               f"no sourced acceptance criterion: name the requirement under acceptance.{check}")
+        return _row(obligation, "unknown", a, subject, [why], measured, units, what)
     if not isinstance(measured, (int, float)) or isinstance(measured, bool) or not math.isfinite(measured):
         return _row(obligation, "unknown", a, subject, [f"the solve reported no {what}"], None, units, what, criterion)
     meets = measured >= criterion["value"] if criterion["operator"] == ">=" else measured <= criterion["value"]
     if not meets:
         # A coarser mesh under-reports peak stress, so a miss stands without a convergence study; its basis gaps stay visible.
         return _row(obligation, "fail", a, subject, gaps, measured, units, what, criterion)
+    if check == "strength":
+        gaps.append(FULL_STRENGTH)
     return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, measured, units, what, criterion)
+
+
+def _stress_strength(obligation: Mapping[str, Any], result: Mapping[str, Any], a: Assessment,
+                     subject: Mapping[str, Any], criterion: Mapping[str, Any] | None,
+                     gaps: list[str]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """A stress case's strength: yield used / the study's settled stress, against the sourced criterion.
+
+    Only a settled, strength-eligible study gives a figure. Any other study, or a yield the case does not resolve,
+    leaves strength unknown and never fails it."""
+    units = "dimensionless"
+    if criterion is None:
+        return _row(obligation, "unknown", a, subject, ["no sourced acceptance criterion: name the requirement under "
+                                                        "acceptance.strength"], None, units, STUDY_STRENGTH)
+    sigma, why = _study_sigma(result.get("stress_study"))
+    used = _yield_used(a)
+    factor = used / sigma if sigma is not None and used is not None else None
+    if factor is None or not math.isfinite(factor):
+        reason = why or ("the case's material resolves no positive finite yield strength" if used is None else
+                         f"the yield safety factor {used:g} / {sigma:g} MPa is not a finite number")
+        return _row(obligation, "unknown", a, subject, [reason, *gaps], None, units, STUDY_STRENGTH, criterion)
+    if factor < criterion["value"]:
+        return _row(obligation, "fail", a, subject, gaps, factor, units, STUDY_STRENGTH, criterion)
+    return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, factor, units, STUDY_STRENGTH, criterion)
+
+
+def _study_sigma(found: Any) -> tuple[float | None, str | None]:
+    """The stress (MPa) a two-mesh study stands behind as a strength value, or None and why it stands behind none.
+
+    That is a `settled`, strength-eligible study's `sigma_mpa`, the larger kept peak of its two meshes. Its
+    information-only figure never counts, and neither does anything outside the study."""
+    if not isinstance(found, Mapping):
+        return None, "the stress result carries no two-mesh stress study"
+    outcome = found.get("outcome")
+    if outcome == fea_stress.SETTLED_AWAY_FROM_SUPPORT:
+        return None, ("the two-mesh stress study settled only on the exclusion boundary, where the stress rises toward "
+                      "the support: its figure is information only, and linearisation at the support (#209) is the "
+                      "route to a strength value")
+    if outcome != fea_stress.SETTLED:
+        return None, f"the two-mesh stress study is {outcome}: {found.get('message')}"
+    sigma: Any = found.get("sigma_mpa")
+    if found.get("strength_eligible") is not True or found.get("sigma_info_mpa") is not None or not _positive(sigma):
+        return None, ("the two-mesh stress study states settled without a strength-eligible positive finite sigma_mpa "
+                      "and no information-only figure")
+    return float(sigma), None
+
+
+def _yield_used(a: Assessment) -> float | None:
+    """The yield strength (MPa) the solve used: an interval's lower bound. None when the case resolved none."""
+    for row in a.material.get("properties") or ():
+        if row.get("input") == "yield" and row.get("status") == "resolved":
+            used = row.get("used")
+            return float(used) if _positive(used) else None
+    return None
+
+
+def _positive(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
 def _row(obligation: Mapping[str, Any], outcome: str, a: Assessment, subject: Mapping[str, Any], reasons: list[str],
