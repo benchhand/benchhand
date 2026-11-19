@@ -97,19 +97,21 @@ class ShippedValues(unittest.TestCase):
     """Expected values are the survey's figures, written out here apart from the files."""
 
     def test_the_generic_set_carries_the_surveyed_limits(self) -> None:
-        got = {item["characteristic"]: bare(item) for item in limits_of("fdm.generic")}
-        self.assertEqual(got, {
-            "overhang_angle": ("<=", (45, "deg")),
-            "bridge_span": ("<", (5, "mm")),
-            "min_wall": (">=", (0.8, "mm")),
-            "min_feature": (">=", (2.0, "mm")),
-            "min_hole": (">=", (2.0, "mm")),
-        })
+        plain = [(item["characteristic"], *bare(item)) for item in limits_of("fdm.generic") if "quantity" in item]
+        self.assertEqual(plain, [
+            ("overhang_angle", "<=", (45, "deg")),
+            ("bridge_span", "<", (5, "mm")),
+            ("min_wall", ">=", (0.8, "mm")),
+            ("min_feature", ">=", (2.0, "mm")),
+            ("min_hole", ">=", (2.0, "mm")),
+        ])
+        relative = [(item["characteristic"], item["relative"]) for item in limits_of("fdm.generic") if "relative" in item]
+        self.assertEqual(relative, [("min_wall", {"relative_to": "line_width", "factor": 3, "floor": {"value": 0.8, "units": "mm"}})])
 
     def test_single_source_limits_have_one_citation_and_two_source_limits_two(self) -> None:
-        counts = {item["characteristic"]: len(item["citations"]) for item in limits_of("fdm.generic")}
-        self.assertEqual(counts, {"overhang_angle": 2, "bridge_span": 1, "min_wall": 2, "min_feature": 1,
-                                  "min_hole": 1})
+        counts = [(item["characteristic"], "relative" in item, len(item["citations"])) for item in limits_of("fdm.generic")]
+        self.assertEqual(counts, [("overhang_angle", False, 2), ("bridge_span", False, 1), ("min_wall", False, 2),
+                                  ("min_wall", True, 2), ("min_feature", False, 1), ("min_hole", False, 1)])
 
     def test_each_nozzle_set_is_three_line_widths_with_a_floor_of_0_8_mm(self) -> None:
         for diameter in ("0_2", "0_4", "0_6", "0_8"):
@@ -143,9 +145,11 @@ class ShippedValues(unittest.TestCase):
 CATALOG = gl.discover(None)  # the shipped sets only, as the program reads them
 
 
-def resolved(characteristic: str, pin: tuple[str, ...] | None = None, **facts: str) -> Any:
-    """What a profile with these scope facts (and, with `pin`, this guidelines pin) resolves `characteristic` to."""
-    return gl.resolve_guidelines(CATALOG, gl.Context("fdm", facts, pin=pin), characteristic)
+def resolved(characteristic: str, pin: tuple[str, ...] | None = None, nozzle: float | None = None,
+             line_width: float | None = None, **facts: str) -> Any:
+    """What a profile with these scope facts, nozzle diameter and line width (mm) and, with `pin`, this guidelines pin
+    resolves `characteristic` to."""
+    return gl.resolve_guidelines(CATALOG, gl.Context("fdm", facts, nozzle, line_width, pin), characteristic)
 
 
 def stated(found: Any) -> tuple[Any, ...]:
@@ -158,6 +162,22 @@ def stated(found: Any) -> tuple[Any, ...]:
 class ShippedResolution(unittest.TestCase):
     """The shipped catalog resolved through the program, with no set patched in: each case fails when its limit is
     deleted or changed, or when another shipped set overrides it. Expected values are the surveyed figures."""
+
+    def test_a_wall_is_three_line_widths_for_a_nozzle_no_nozzle_set_names(self) -> None:
+        """0.5 mm is no nozzle set's diameter, so only the generic set can give 3 x 0.5 = 1.5 mm."""
+        self.assertEqual(stated(resolved("min_wall", nozzle=0.5, line_width=0.5)), ("guideline", ">=", 1.5, "mm", ()))
+
+    def test_a_wall_is_three_line_widths_when_the_profile_knows_only_its_line_width(self) -> None:
+        self.assertEqual(stated(resolved("min_wall", line_width=0.45)), ("guideline", ">=", 1.35, "mm", ()))
+
+    def test_a_wall_keeps_the_0_8_mm_floor_when_the_profile_states_no_width_or_nozzle(self) -> None:
+        """The generic set also states the plain 0.8 mm floor, and the resolver leaves out a relative limit whose base is
+        unknown, so the floor is what remains; without that plain limit the result would be UNKNOWN."""
+        self.assertEqual(stated(resolved("min_wall")), ("guideline", ">=", 0.8, "mm", ()))
+
+    def test_a_wall_is_the_nozzle_rule_when_a_nozzle_set_matches(self) -> None:
+        self.assertEqual(stated(resolved("min_wall", nozzle=0.4)), ("guideline", ">=", 1.2, "mm", ()))
+        self.assertEqual(stated(resolved("min_wall", nozzle=0.4, line_width=0.45)), ("guideline", ">=", 1.35, "mm", ()))
 
     def test_pc_needs_a_nozzle_of_at_least_0_4_mm(self) -> None:
         self.assertEqual(stated(resolved("nozzle_diameter", material_family="pc")), ("guideline", ">=", 0.4, "mm", ()))

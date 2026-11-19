@@ -52,6 +52,25 @@ limits:
     url: https://www.protolabs.com/services/3d-printing/fused-deposition-modeling/
     accessed: '2026-11-18'
     locator: 'FDM specifications table, Unsupported/Supported Walls: minimum 0.8 mm'
+- characteristic: min_wall
+  operator: '>='
+  relative:
+    relative_to: line_width
+    factor: 3
+    floor:
+      value: 0.8
+      units: mm
+  citations:
+  - kind: supplier
+    reference: Prusa Knowledge Base, Modeling with 3D printing in mind
+    url: https://help.prusa3d.com/article/modeling-with-3d-printing-in-mind_164135
+    accessed: '2026-11-18'
+    locator: 'Fine details and wall thickness table, 0.4 mm nozzle: 1, 2, 3 and 4 perimeters are about 0.45, 0.9, 1.35 and 1.8 mm'
+  - kind: supplier
+    reference: Protolabs, Fused deposition modeling (FDM)
+    url: https://www.protolabs.com/services/3d-printing/fused-deposition-modeling/
+    accessed: '2026-11-18'
+    locator: 'FDM specifications table, Unsupported/Supported Walls: minimum 0.8 mm (the floor)'
 - characteristic: min_feature
   operator: '>='
   quantity:
