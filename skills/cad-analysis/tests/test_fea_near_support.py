@@ -397,6 +397,22 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         self.assertEqual(row["outcome"], "unknown")
         self.assertIn("not shown ductile and isotropic", row["uncertainty"])
 
+    def test_a_rod_with_orientation_dependent_properties_stays_unknown_under_an_effective_isotropic_model(self) -> None:
+        # The form says rod, which alone would pass the ductility stand-in, but the properties differ by orientation
+        # (Z yield 20 MPa against 133.56 MPa): the isotropy, not the form, must hold the strength back.
+        tests = conditions_tests
+        profile = tests.printed()
+        profile["form"] = "rod"
+        profile["process_state"] = {"process": tests.fx.unknown(), "conditioning": "dry"}
+        model = {"decision": "DR-003", "justification": "TST: Z-direction values bound the layer-normal load path"}
+        report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0),
+                            tests.documents(profiles=[profile], part=tests.bracket("tst_polymer_fdm")),
+                            {"conditions": {**tests.DRY_23C, "orientation": "Z"}, "effective_isotropic": model})
+        self.assertEqual(report["material"]["isotropy"]["model"], "effective_isotropic")
+        row, _ = self.row(report)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("not shown ductile and isotropic", row["uncertainty"])
+
     def allowable_profile(self, *, allowable: bool = True) -> dict[str, Any]:
         """A bulk (not wrought, sheet or rod) alloy with a 250 MPa typical yield and, when asked, a 200 MPa allowable."""
         tests = conditions_tests
