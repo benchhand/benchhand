@@ -32,14 +32,16 @@ never builds. It refuses the release when any of these fails, and then writes no
   its scope resolved, no unresolved critical finding, an unvalidated trial only where the class
   permits one and only by approved waivers, no waiver at all for safety-critical service.
 
-It inspects an existing hw/releases/<REV>/ under the revision's lock (layout.target_lock), stages the
-copies, including the acceptance inventory under acceptance/, in .cad-work/release-<REV>/, writes and
-checks the manifest, then, under the lock again, inspects the revision once more, claims
+The revision's lock (layout.target_lock) is held for the whole run, so a second run of the same
+revision waits and then inspects what the first left. Under it, the run inspects an existing
+hw/releases/<REV>/, stages the copies, including the acceptance inventory under acceptance/, in
+.cad-work/release-<REV>/, writes and checks the manifest, inspects the revision once more, claims
 hw/releases/<REV>/ and renames the stage onto it. A sealed package of
 another manifest version is refused. A stale package (one that fails its seal) of this version,
 approval and frozen manifest is repaired: assembled again at its own release time, moved to
-.cad-work/replaced/ under the lock as the new one is claimed, and put back when the claim fails.
+.cad-work/replaced/ as the new one is claimed, and put back when the claim fails.
 
+--prune, under the same lock, never repairs: a stale package refuses and nothing is deleted.
 --prune, once the package is sealed, prints the plan of superseded versions to remove (prune.py) with
 its digest and changes nothing; when hw/releases/<REV>/ already verifies and holds this version and
 decision, it skips sealing. --prune --yes DIGEST applies that plan when a fresh plan has the same
@@ -596,11 +598,36 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
     return staged
 
 
+def package_rel(rev: str) -> str:
+    """The project-relative path of release `rev`'s package, hw/releases/<REV>; LayoutError for a bad REV."""
+    return str(layout.load().path("release.package", {"REV": rev}))
+
+
 def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = None) -> tuple[int, dict[str, Any]]:
+    """Release revision `rev` (release_locked), holding the revision's lock (layout.target_lock) for the
+    whole run, so a second run of the same revision waits for this one and then inspects what it left."""
     hw = hw.resolve()
-    target_rel = layout.load().path("release.package", {"REV": rev})
-    with layout.target_lock(hw, target_rel):  # a repair holds it from the move-aside to the claim
-        found = existing(hw, rev, version, decision) if os.path.lexists(layout.locate(hw, target_rel)) else None
+    with layout.target_lock(hw, package_rel(rev)):
+        return release_locked(hw, rev, version, decision, now)
+
+
+def prune_release(hw: Path, rev: str, version: str, decision: str) -> tuple[int, dict[str, Any]]:
+    """--prune's release step, holding the revision's lock for the whole step: an existing package must
+    already be sealed (`sealed`; a stale one refuses, and --prune never repairs it), and an absent
+    revision is released (release_locked)."""
+    hw = hw.resolve()
+    with layout.target_lock(hw, package_rel(rev)):
+        if os.path.lexists(layout.locate(hw, package_rel(rev))):
+            return sealed(hw, rev, version, decision)
+        return release_locked(hw, rev, version, decision)
+
+
+def release_locked(hw: Path, rev: str, version: str, decision: str,
+                   now: datetime | None = None) -> tuple[int, dict[str, Any]]:
+    """The release run of revision `rev`; the caller holds the revision's lock (run, prune_release). It
+    inspects an existing package, assembles and stages, then publishes (publish_package)."""
+    target_rel = package_rel(rev)
+    found = existing(hw, rev, version, decision) if os.path.lexists(layout.locate(hw, target_rel)) else None
     if found is not None and found.repairable_from is None:
         return found.code, found.report  # the same frozen manifest releases again as a no-op, or a refusal
     repairing = found is not None  # a stale package of this release: sealed again at its own release time
@@ -612,17 +639,16 @@ def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = 
     report["stage"] = layout.relative(hw, staged)
     if release.findings:
         return 1, {**report, "findings": release.findings, "status": "refused"}
-    with layout.target_lock(hw, release.target_rel):
-        return publish_package(release, staged, report, repairing)
+    return publish_package(release, staged, report, repairing)
 
 
 def publish_package(release: Release, staged: Path, report: dict[str, Any],
                     repairing: bool) -> tuple[int, dict[str, Any]]:
-    """Seal `staged` at hw/releases/<REV>/; the caller holds the revision's lock (layout.target_lock), so
-    what is there is inspected again here. An absent path is claimed. A sound package of this release,
-    which another writer sealed meanwhile, stays and the run is a no-op. A stale package of this release
-    is moved to .cad-work/replaced/ and the stage claimed, only when this run staged its repair. Anything
-    else refuses as `existing` reports it. A run that claims nothing removes its stage."""
+    """Seal `staged` at hw/releases/<REV>/; the caller holds the revision's lock (layout.target_lock), and
+    what is there is inspected again here. An absent path is claimed. A sound package of this release
+    stays and the run is a no-op. A stale package of this release is moved to .cad-work/replaced/ and the
+    stage claimed, only when this run staged its repair. Anything else refuses as `existing` reports it.
+    A run that claims nothing removes its stage."""
     hw, target_rel = release.hw, release.target_rel
     target = layout.locate(hw, target_rel)
     if not os.path.lexists(target):
@@ -786,9 +812,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"message": f"{args.hw} is not a directory", "status": "error"}))
         return 2
     try:
-        target = layout.locate(args.hw.resolve(), layout.load().path("release.package", {"REV": args.rev}))
-        if args.prune and os.path.lexists(target):
-            code, report = sealed(args.hw, args.rev, args.version, args.decision)
+        if args.prune:
+            code, report = prune_release(args.hw, args.rev, args.version, args.decision)
         else:
             code, report = run(args.hw, args.rev, args.version, args.decision)
     except layout.LayoutError as error:
