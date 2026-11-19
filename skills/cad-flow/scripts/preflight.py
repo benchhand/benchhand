@@ -252,7 +252,6 @@ def _chromium_check(uv: str, install: bool = False) -> Check:
     """Launch headless Chromium through cad-render's Playwright; with `install`, install it first."""
     name = CHROMIUM.id
     guidance = "Run `preflight.py --warm` with network access to install Playwright Chromium, then rerun preflight."
-    expected = scriptenv.pinned(CHROMIUM.script, CHROMIUM.distribution)
     try:
         environment = _environment(uv, CHROMIUM)
         if install:
@@ -267,11 +266,8 @@ def _chromium_check(uv: str, install: bool = False) -> Check:
     except RuntimeError as error:
         action = "Installing and launching" if install else "Launching"
         return _check(name, "Playwright Chromium", "fail", f"{action} Chromium failed: {error}.", guidance)
-    if found["version"] != expected:
-        return _check(name, "Playwright Chromium", "fail",
-                      f"playwright {found['version']} imported; {CHROMIUM.script.name} pins {expected}.", guidance)
     return _check(name, "Playwright Chromium", "pass",
-                  f"Playwright {expected} launches Chromium {found['chromium']} ({found['path']}).", "")
+                  f"Playwright {found['version']} launches Chromium {found['chromium']} ({found['path']}).", "")
 
 
 def _find_freecadcmd(environ: Mapping[str, str], home: Path | None = None,

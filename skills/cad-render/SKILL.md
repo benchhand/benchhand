@@ -118,7 +118,7 @@ quality and adds `reused` (`version`, `bundle`, `rendered_in`, `sha256`); the su
 MUST Treat exit 1 as a failed render for the batch; report unusable findings and metrics verbatim.
 MUST Report a failed visibility check as a failed requirement: requirement, target, `visible_fraction` and `min_visible_fraction`.
 MUST Keep warning-only renders; report warning, retry strategy, and each requested view's absolute PNG path.
-MUST Install the headless browser once per machine: `uv run --with playwright==1.64.1 playwright install chromium`. The manifest's `renderer.playwright` is the installed version.
+MUST Install the headless browser once per machine: `uv run --with playwright==1.65.2 playwright install chromium`. The manifest's `renderer.playwright` is the installed version.
 DEFAULT Default views are iso, front, side, and exploded at 1600x1200; `--size WxH` overrides.
 NOT Render L0 concept variants here; `cad-concept` owns them.
 NOT Hand-edit `hw/renders/`; it is derived and replaced whole on every miss.
