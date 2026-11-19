@@ -45,7 +45,20 @@ For v2, use `material: {profile?, conditions: {conditioning, temperature, orient
 
 Optional case keys: `acceptance: {strength: REQ-###, stiffness: REQ-###}`, `mesh_convergence: {decision: DR-###}`, and `loads[].load`. The referenced requirement needs a structured criterion. Result blocks include material, evidence, mesh, binding and engineering packet.
 
-A service load is covered only when the case's forces tagged with its `load` add up, as vectors, to at least its magnitude along its direction (at most 1% of the magnitude across it). The use case states the direction as the load's required `[x, y, z]` unit vector (norm 1 within 1e-6); no text form is read. The checker compares it with the case's forces as given, so it must be in the analysed part's model frame; it applies no frame transform, and a direction stated in the assembly frame (an `application` that names no part) is not converted. A reversed, rotated or cancelling force, or a direction that is not a unit vector, leaves the load uncovered.
+A service load is covered only when the case's forces tagged with its `load` add up, as vectors, to at least its magnitude along its direction (at most 1% of the magnitude across it). The use case states the direction as the load's required `[x, y, z]` unit vector (norm 1 within 1e-6); no text form is read. A reversed, rotated or cancelling force, or a direction that is not a unit vector, leaves the load uncovered.
+
+The case's forces are in the analysed part's model frame, so the checker first states the direction in that frame. If `application` names the analysed part, or its one occurrence, it reads the direction as given, with or without a `pose`. If `application` names another part, or no part (the assembly frame), it rotates the direction by the rest placements in the version's `assembly.yaml`. A `part_local` part takes its occurrence's placement. An `assembly_zero` part takes none.
+
+If the checker cannot confirm a frame, the load stays uncovered and the gap names the reason. The reasons:
+
+- The record does not hold the part, or the occurrence does not exist or is ambiguous (a part placed twice needs an `occurrence`).
+- `application` is present but empty, not a mapping, or without a frame key.
+- A frame key of `application` is null, empty or malformed, or the record lacks the part, interface or assembly operation it names. The frame keys are `PN`, `product`, `interface` and `assembly_operation`.
+- A named occurrence belongs to another part, or does not exist, even when the part is `assembly_zero`.
+- An `occurrence` is not an `@id` reference beside a `PN`, or `application` has a key that no subject has.
+- `assembly.yaml` does not normalize.
+- A frame dependency does not load.
+- The case sets a `pose`, which moves the parts from their rest placements, and the direction names another frame.
 
 Mesh convergence counts only as an approved, bound, converged study. The decision file `hw/decisions/DR-###-slug.md` must be a MADR 4.0.0 record with `status: accepted` and a fenced `mesh-convergence` YAML block:
 
