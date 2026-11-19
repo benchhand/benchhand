@@ -305,6 +305,16 @@ class AxesTests(Case):
         self.assertEqual((default.t1, default.t2, default.normal), ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
         self.assertEqual(default, explicit)
 
+    def test_a_tangent_of_any_finite_size_gives_the_axes_of_its_direction(self) -> None:
+        # Each tangent points along x, with a part along the line for the first. Squaring 1e300 overflows and
+        # squaring 5e-324, the smallest float, underflows to zero, but neither changes the direction.
+        coordinates, elements = plate()
+        result = frd(coordinates, general_quadratic)
+        default = fl.linearise(result, elements, START, END)
+        for tangent in ((1e300, 0.0, 1e299), (5e-324, 0.0, 0.0)):
+            with self.subTest(tangent=tangent):
+                self.assertEqual(fl.linearise(result, elements, START, END, tangent=tangent), default)
+
 
 class RefusalTests(Case):
     def test_each_input_it_cannot_stand_behind_is_refused_with_its_reason(self) -> None:
@@ -347,6 +357,10 @@ class RefusalTests(Case):
             ("a tangent along the line", fl.Refusal.TANGENT_ALONG_LINE, good, elements, START, END,
              {"tangent": (0.0, 0.0, -2.0)}),
             ("a zero tangent", fl.Refusal.TANGENT_ALONG_LINE, good, elements, START, END, {"tangent": (0.0, 0.0, 0.0)}),
+            ("a nan tangent", "tangent_not_finite", good, elements, START, END,
+             {"tangent": (math.nan, 1.0, 0.0)}),
+            ("an infinite tangent", "tangent_not_finite", good, elements, START, END,
+             {"tangent": (math.inf, 0.0, 0.0)}),
         ]
         for label, reason, result, mesh, start, end, kwargs in cases:
             with self.subTest(label):
@@ -408,6 +422,32 @@ class RangeTests(Case):
                              ("1e154 shear", lambda p: (0, 0, 0, 1e154, 0, 0))):
             with self.subTest(label):
                 self.assertRefused("value_out_of_range", lambda: self.linearise(field))  # type: ignore[arg-type]
+
+    def test_an_element_whose_geometry_leaves_the_float_range_refuses_the_whole_call(self) -> None:
+        # Each extra C3D4 has finite coordinates and a finite stress, and its box holds a point of the line, but its
+        # geometry leaves the float range:
+        # - corners at x = -1e308 and x = 1e308 span 2e308, beyond the largest float, about 1.8e308;
+        # - corners 1.2e308 along each axis give a finite box (1.5e308 with its pad), but the affine map's norm is
+        #   1.2e308 sqrt(3), about 2.1e308;
+        # - corners 1e-110 along each axis, at the start of a line up the plate's edge, give a determinant of
+        #   1e-330, below the smallest float, 4.9e-324.
+        # A plate element holds every point, so a discarded failure returns a result.
+        coordinates, elements = plate()
+        good = frd(coordinates, general_quadratic)
+        cases = (("box span", [(-1e308, 0.0, 0.0), (1e308, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)], START, END),
+                 ("affine norm", [(0.0, 0.0, 0.0), (1.2e308, 0.0, 0.0), (0.0, 1.2e308, 0.0), (0.0, 0.0, 1.2e308)],
+                  START, END),
+                 ("affine underflow", [(0.0, 0.0, 0.0), (1e-110, 0.0, 0.0), (0.0, 1e-110, 0.0), (0.0, 0.0, 1e-110)],
+                  (0.0, 0.0, 0.0), (0.0, 0.0, THICKNESS)))
+        for label, corners, start, end in cases:
+            with self.subTest(label):
+                extra = {9_000_000 + i: p for i, p in enumerate(corners)}
+                result = fs.FrdResult({**coordinates, **extra}, {}, {}, {
+                    **good.stress, **{n: fs.StressTensor(1.0, 2.0, 3.0, 4.0, 5.0, 6.0) for n in extra}})
+                mesh = {**elements, 999_999: study.Element("C3D4", tuple(extra))}  # type: ignore[arg-type]
+                self.assertRefused("value_out_of_range", lambda: fl.linearise(result, mesh, start, end))
+                with self.assertRaisesRegex(fl.LinearisationError, r"element 999999"):
+                    fl.linearise(result, mesh, start, end)
 
 
 class CantileverSanityCheck(unittest.TestCase):
