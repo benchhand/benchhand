@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import fcntl
 import hashlib
@@ -932,55 +933,37 @@ class Repair(ReleaseCase):
                                     for item in report["findings"]), json.dumps(report["findings"], indent=1))
                 self.assertEqual(tree(hw), before)
 
-    def two_writers(self, hw: Path, a_decision: str = "DR-005"
-                    ) -> tuple[dict[str, tuple[int, dict[str, Any]]], dict[str, str], list[bool]]:
-        """Writer B inspects hw/releases/A, stages and waits; writer A then releases, approved by
-        `a_decision`; then B goes on. The outcome of each, the package tree as A left it, and whether each
-        claim ran under the lock."""
-        b_staged, a_done = threading.Event(), threading.Event()
-        guard = 30  # seconds: only a hang guard, never part of the logic
-        outcome: dict[str, tuple[int, dict[str, Any]]] = {}
-        held: list[bool] = []
-        real_stage, real_claim = release.stage, release.layout.claim
+    def overlap(self, hw: Path, at: tuple[Any, str], b_work: Callable[[], Any] | None = None,
+                then: Callable[[], Any] = lambda: None, a_decision: str = "DR-005") -> Overlap:
+        """Overlap.run on hw/releases/A: writer A releases, approved by `a_decision`, and writer B runs
+        `b_work` (a release by default). B's first lock attempt finds the revision's lock taken, and B
+        inspects, validates and stages nothing before it."""
+        race = Overlap(self, hw, at, then)
+        race.run(lambda: self.release(hw, decision=a_decision), b_work or (lambda: self.release(hw)))
+        self.assertTrue(race.blocked, "B's first lock attempt finds the revision's lock taken")
+        self.assertEqual(race.before_lock, [], "B inspects, validates and stages nothing before it holds the lock")
+        return race
 
-        def stage_then_wait(*arguments: Any) -> Path:
-            staged = real_stage(*arguments)
-            if threading.current_thread().name == "writer-b":  # B has inspected the revision and staged
-                b_staged.set()
-                a_done.wait(guard)
-            return staged
-
-        def probed_claim(staged: Path, target: Path, target_rel: str) -> None:
-            held.append(self.lock_held(hw))
-            real_claim(staged, target, target_rel)
-
-        def writer_b() -> None:
-            outcome["b"] = self.release(hw)
-
-        with mock.patch.object(release, "stage", stage_then_wait), \
-                mock.patch.object(release.layout, "claim", probed_claim):
-            b = threading.Thread(target=writer_b, name="writer-b", daemon=True)
-            b.start()
-            try:
-                self.assertTrue(b_staged.wait(guard), "writer B never staged")
-                outcome["a"] = self.release(hw, decision=a_decision)
-                after_a = tree(hw / "releases" / "A")
-            finally:
-                a_done.set()
-                b.join(guard)
-        self.assertFalse(b.is_alive(), "writer B hung")
-        self.assertEqual(outcome["a"][0], 0, outcome["a"][1].get("findings"))
-        return outcome, after_a, held
-
-    def test_a_slower_writer_never_moves_a_repaired_package_aside(self) -> None:
-        hw, _ = self.released()
-        DAMAGE["a changed file"](hw / "releases" / "A")
-        outcome, repaired, held = self.two_writers(hw)
-        self.assertEqual((outcome["b"][0], outcome["b"][1].get("already_sealed")), (0, True), outcome["b"][1])
-        self.assertEqual(tree(hw / "releases" / "A"), repaired, "B left A's repair in place")
+    def assert_repaired_once(self, hw: Path, sealed: dict[str, str], race: Overlap) -> None:
+        """A repaired the stale package; B then found it sealed and was a no-op that left nothing behind."""
+        a, b = race.outcome["a"], race.outcome["b"]
+        self.assertEqual(a[0], 0, a)
+        self.assertEqual((b[0], b[1].get("already_sealed")), (0, True), b)
+        self.assertNotIn("stage", race.calls, "B found the package sealed and staged nothing")
+        self.assertEqual(tree(hw / "releases" / "A"), sealed, "A's repair is in place")
         moved = self.replaced(hw)
         self.assertEqual(len(moved), 1, "only A moved a package aside")
         self.assertTrue(all(layout.verify(path) for path in moved), "no sound package was moved aside")
+        self.assertEqual(sorted((hw.parent / ".cad-work" / "release-A").glob("stage-*")), [], "no stage is left")
+
+    def test_a_slower_writer_never_moves_a_repaired_package_aside(self) -> None:
+        hw, sealed = self.released()
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        held: list[bool] = []
+        probe = on_thread("writer-a", release.layout.claim, lambda: held.append(self.lock_held(hw)))
+        with mock.patch.object(release.layout, "claim", probe):
+            race = self.overlap(hw, (release, "stage"))  # A pauses once it has staged its repair
+        self.assert_repaired_once(hw, sealed, race)
         self.assertTrue(held and all(held), "every claim ran under the revision's lock")
 
     def test_a_repair_judges_a_waiver_on_the_release_date(self) -> None:
@@ -998,70 +981,65 @@ class Repair(ReleaseCase):
         self.assertEqual(tree(hw / "releases" / "A"), sealed, "the repair seals the package of the release date again")
 
     def test_a_writer_that_finds_another_package_under_the_lock_leaves_no_stage(self) -> None:
-        cases = {  # B's stage, A's approval, and B's outcome once A has sealed the revision
-            "a repair, then A's repair": ("repair", "DR-005", (0, "released")),
-            "a fresh release, then A's release": ("fresh", "DR-005", (0, "released")),
-            "a fresh release, then A's release of another approval": ("fresh", "DR-004", (1, "refused")),
+        cases = {  # the revision when B starts, A's approval, and B's outcome once A has sealed the revision
+            "a repair, then A's repair": ("stale", "DR-005", (0, "released")),
+            "a fresh release, then A's release": ("absent", "DR-005", (0, "released")),
+            "a fresh release, then A's release of another approval": ("absent", "DR-004", (1, "refused")),
         }
-        for case, (staged, a_decision, expected) in cases.items():
+        for case, (revision, a_decision, expected) in cases.items():
             with self.subTest(case):
-                if staged == "repair":  # B stages a repair of the stale package
+                if revision == "stale":
                     hw, _ = self.released()
                     DAMAGE["a changed file"](hw / "releases" / "A")
-                else:  # the revision is absent when B starts
+                else:
                     hw = self.project()
-                outcome, _, _ = self.two_writers(hw, a_decision)
-                code, report = outcome["b"]
+                race = self.overlap(hw, (release, "stage"), a_decision=a_decision)
+                code, report = race.outcome["b"]
                 self.assertEqual(((code, report["status"]), report.get("stage")), (expected, None), report)
                 stages = sorted((hw.parent / ".cad-work" / "release-A").glob("stage-*"))
-                self.assertEqual(stages, [], "the losing writer removed its stage")
+                self.assertEqual(stages, [], "the losing writer left no stage")
 
     def test_a_writer_that_starts_during_a_repair_waits_for_it_and_finds_it_sealed(self) -> None:
+        hw, sealed = self.released()
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        race = self.overlap(hw, (release.layout, "claim"))  # A has moved the stale package aside, not claimed yet
+        self.assert_repaired_once(hw, sealed, race)
+
+    def test_a_writer_that_starts_during_a_repairs_validation_waits_for_it(self) -> None:
+        hw, sealed = self.released()
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        race = self.overlap(hw, (release.validate, "validate_project"))  # A is in assemble's project validation
+        self.assert_repaired_once(hw, sealed, race)
+
+    def test_prune_during_a_repair_whose_claim_fails_refuses_and_repairs_nothing(self) -> None:
         hw, _ = self.released()
         DAMAGE["a changed file"](hw / "releases" / "A")
-        a_moved, release_a, b_at_lock = threading.Event(), threading.Event(), threading.Event()
-        guard = 30  # seconds: only a hang guard, never part of the logic
-        outcome: dict[str, tuple[int, dict[str, Any]]] = {}
-        calls: list[str] = []  # B's calls of the lock, its inspections and its stages, in order
+        before = tree(hw)
 
-        def a_pauses() -> None:  # A has moved the stale package aside and not claimed its repair yet
-            a_moved.set()
-            release_a.wait(guard)
+        def claim_fails() -> None:
+            raise PermissionError(13, "Permission denied")
 
-        def b_at(name: str) -> Callable[[], None]:
-            return lambda: calls.append(name)
+        race = self.overlap(hw, (release.layout, "claim"), b_work=lambda: cli(hw, "--prune"), then=claim_fails)
+        self.assertIsInstance(race.outcome["a"], layout.LayoutError, "A's claim failed and A put the package back")
+        code, report = race.outcome["b"]
+        self.assertEqual((code, report["status"]), (1, "refused"), report)
+        self.assertEqual(report["findings"][0]["code"], "release.stale")
+        self.assertEqual(tree(hw), before, "prune repaired nothing and deleted nothing")
 
-        def writer(name: str) -> threading.Thread:
-            def run() -> None:
-                outcome[name] = self.release(hw)
-            return threading.Thread(target=run, name=f"writer-{name}", daemon=True)
-
-        a, b = writer("a"), writer("b")
-        lock_hook = on_thread("writer-b", release.layout.target_lock, lambda: (calls.append("lock"), b_at_lock.set()))
-        with mock.patch.object(release.layout, "claim", on_thread("writer-a", release.layout.claim, a_pauses)), \
-                mock.patch.object(release.layout, "target_lock", lock_hook), \
-                mock.patch.object(release, "existing", on_thread("writer-b", release.existing, b_at("existing"))), \
-                mock.patch.object(release, "stage", on_thread("writer-b", release.stage, b_at("stage"))):
-            a.start()
-            try:
-                self.assertTrue(a_moved.wait(guard), "writer A never reached its claim")
-                b.start()
-                self.assertTrue(b_at_lock.wait(guard), "writer B never reached the lock")
-                self.assertTrue(self.lock_held(hw), "A holds the lock from the move-aside to the claim")
-                self.assertEqual(calls, ["lock"], "B inspects nothing before it holds the lock")
-            finally:
-                release_a.set()
-                a.join(guard)
-            b.join(guard)
-        self.assertFalse(a.is_alive() or b.is_alive(), "a writer hung")
-        self.assertEqual(outcome["a"][0], 0, outcome["a"][1].get("findings"))
-        self.assertEqual((outcome["b"][0], outcome["b"][1].get("already_sealed")), (0, True), outcome["b"][1])
-        self.assertNotIn("stage", calls, "B found the repaired package and staged nothing")
-        self.assertEqual(layout.verify(hw / "releases" / "A"), [], "A's repair is in place")
-        moved = self.replaced(hw)
-        self.assertEqual(len(moved), 1, "only A moved a package aside")
-        self.assertTrue(all(layout.verify(path) for path in moved), "no sound package was moved aside")
-        self.assertEqual(sorted((hw.parent / ".cad-work" / "release-A").glob("stage-*")), [], "no stage is left")
+    def test_a_run_takes_the_revisions_lock_once(self) -> None:
+        for case in ("a fresh release", "a repair", "--prune on a stale package"):
+            with self.subTest(case):
+                if case == "a fresh release":
+                    hw = self.project()
+                else:
+                    hw, _ = self.released()
+                    DAMAGE["a changed file"](hw / "releases" / "A")
+                taken: list[str] = []
+                counted = on_thread(threading.current_thread().name, release.layout.target_lock,
+                                    lambda: taken.append("lock"))
+                with mock.patch.object(release.layout, "target_lock", counted):
+                    cli(hw, "--prune") if case.startswith("--prune") else self.release(hw)
+                self.assertEqual(taken, ["lock"], "one run takes the revision's lock exactly once")
 
     def test_a_failed_repair_puts_the_stale_package_back(self) -> None:
         failures = {  # the os call that fails inside the claim, and how it fails
@@ -1132,11 +1110,79 @@ def waive_fdm_trials(hw: Path, record: Any, entries: list[dict[str, Any]]) -> li
 
 def on_thread(name: str, real: Callable[..., Any], before: Callable[[], Any]) -> Callable[..., Any]:
     """`real`, calling `before` first when the thread named `name` calls it."""
-    def call(*arguments: Any) -> Any:
+    def call(*arguments: Any, **options: Any) -> Any:
         if threading.current_thread().name == name:
             before()
-        return real(*arguments)
+        return real(*arguments, **options)
     return call
+
+
+def cli(hw: Path, *extra: str) -> tuple[int, dict[str, Any]]:
+    """release.py's main for revision A of v1, approved by DR-005, in this process: its exit code and report."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = release.main([str(hw), "--rev", "A", "--version", "v1", "--decision", "DR-005", *extra])
+    return code, json.loads(out.getvalue())
+
+
+class Overlap:
+    """Two writers of one revision in threads, steered by events and never by timing. Writer A runs first
+    and pauses at its first call of `at` (an object and an attribute name), then calls `then` (which may
+    raise) before the real call. Writer B starts while A is paused. At B's first lock attempt, `blocked`
+    records whether the revision's lock was taken, and `before_lock` the watched calls B had made by then.
+    A goes on from there. `outcome` holds each writer's result or exception, `calls` all of B's watched calls."""
+
+    GUARD = 30  # seconds: only a hang guard, never part of the logic
+    WATCHED = ((release, "existing"), (release, "stage"), (release.validate, "validate_project"))
+
+    def __init__(self, case: Any, hw: Path, at: tuple[Any, str], then: Callable[[], Any]) -> None:
+        self.case, self.hw, self.at, self.then = case, hw, at, then
+        self.paused, self.go, self.settled = threading.Event(), threading.Event(), threading.Event()
+        self.outcome: dict[str, Any] = {}
+        self.calls: list[str] = []
+        self.blocked: bool | None = None
+        self.before_lock: list[str] | None = None
+
+    def pause(self) -> None:
+        if not self.paused.is_set():
+            self.paused.set()
+            self.go.wait(self.GUARD)
+            self.then()
+
+    def b_locks(self) -> None:
+        if self.blocked is None:
+            self.blocked, self.before_lock = self.case.lock_held(self.hw), list(self.calls)
+            self.settled.set()
+
+    def writer(self, name: str, work: Callable[[], Any]) -> threading.Thread:
+        def body() -> None:
+            try:
+                self.outcome[name] = work()
+            except BaseException as error:  # the test reads it
+                self.outcome[name] = error
+            self.settled.set()  # a writer that ends without a lock attempt settles the wait too
+        return threading.Thread(target=body, name=f"writer-{name}", daemon=True)
+
+    def run(self, a_work: Callable[[], Any], b_work: Callable[[], Any]) -> None:
+        target, name = self.at
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(target, name, on_thread("writer-a", getattr(target, name), self.pause)))
+            stack.enter_context(mock.patch.object(release.layout, "target_lock",
+                                                  on_thread("writer-b", release.layout.target_lock, self.b_locks)))
+            for owner, attribute in self.WATCHED:
+                stack.enter_context(mock.patch.object(owner, attribute, on_thread(
+                    "writer-b", getattr(owner, attribute), lambda attribute=attribute: self.calls.append(attribute))))
+            a, b = self.writer("a", a_work), self.writer("b", b_work)
+            a.start()
+            try:
+                self.case.assertTrue(self.paused.wait(self.GUARD), f"writer A never reached its pause: {self.outcome}")
+                b.start()
+                self.case.assertTrue(self.settled.wait(self.GUARD), "writer B never reached the lock")
+            finally:
+                self.go.set()
+                a.join(self.GUARD)
+            b.join(self.GUARD)
+        self.case.assertFalse(a.is_alive() or b.is_alive(), "a writer hung")
 
 
 def waive_fdm_trials_until(expires: str) -> Callable[[Path, Any, list[dict[str, Any]]], list[dict[str, Any]]]:
