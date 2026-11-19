@@ -37,6 +37,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,6 +88,33 @@ def tree_paths(root: Path, committed: bool) -> list[str]:
     else:
         raw = git("ls-files", "-z", "--", "hw/", cwd=root)
     return [name.decode("utf-8", errors="surrogateescape") for name in raw.split(b"\0") if name]
+
+
+def require_gate_decision(root: Path, committed: bool, gate: str, stamp_time: Any) -> None:
+    """Refuse an advance of flow.stage past the stamped stage unless a decision record of hw/decisions records it:
+    status proposed (provisional) or accepted, not superseded, dated on or after the stamp's UTC day. Reads the index,
+    or HEAD when `committed`; a record cad-record decision_records refuses is a refusal too."""
+    decision_records = validate.decision_records
+    problem = f"flow.stage advanced past the stamped stage (gate {gate}) without a decision record of the gate"
+    try:
+        stamped = datetime.fromisoformat(stamp_time)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"{problem}: the recheck stamp has no readable timestamp") from error
+    if stamped.utcoffset() is None:
+        raise RuntimeError(f"{problem}: the recheck stamp timestamp {stamp_time!r} has no time zone offset")
+    stamped_on = stamped.astimezone(timezone.utc).date()
+    with tempfile.TemporaryDirectory() as scratch:
+        for path in tree_paths(root, committed):
+            name = path.removeprefix("hw/decisions/")
+            if path.startswith("hw/decisions/") and "/" not in name and name.startswith("DR-") and name.endswith(".md"):
+                (Path(scratch) / name).write_bytes(tree_blob(root, path, committed))
+        try:
+            records = decision_records.read_decisions(Path(scratch))
+        except decision_records.DecisionRecordError as error:
+            raise RuntimeError(f"cannot read the decision records of hw/decisions: {str(error).replace(scratch + '/', '')}") from error
+    if not any(r.status in ("proposed", "accepted") and not r.superseded_by and r.date >= stamped_on for r in records):
+        raise RuntimeError(f"{problem}. Record the decision in hw/decisions as a proposed (provisional) or accepted "
+                           f"record, not superseded, dated {stamped_on} (UTC) or later.")
 
 
 def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:
@@ -398,6 +426,8 @@ def main() -> int:
                 raise RuntimeError(f"the recheck stamp stage {stamped_stage} is below flow.recheck_from {threshold}")
             if record_data.get("passed") is not True:
                 raise RuntimeError("the recheck stamp does not say passed: true")
+            if stamped_stage != current_stage:
+                require_gate_decision(root, committed, f"{stamped_stage} → {current_stage}", record_data.get("timestamp"))
             if record_data.get("tree_hash") != actual_hash:
                 raise RuntimeError("the recheck stamp is stale for the staged hw/ tree")
             checks = record_data.get("checks")

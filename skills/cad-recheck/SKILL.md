@@ -23,7 +23,7 @@ TRIGGER
    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --stage <stage> --checks .cad-work/recheck/evidence.json [--passed]
    ```
 
-   Stamp at the stage of the gate just passed. After a provisional gate writes its decision and advances `flow.stage`, rerun `evidence.py check --stage <gate stage>`. `product.yaml` is a record input, so the check refuses an earlier packet. `--verify` accepts a stamp at `flow.stage` or the stage just before it, never below `flow.recheck_from`.
+   Stamp at the stage of the gate just passed. After a provisional gate writes its decision and advances `flow.stage`, rerun `evidence.py check --stage <gate stage>`. `product.yaml` is a record input, so the check refuses an earlier packet. `--verify` accepts a stamp at `flow.stage` or the stage just before it, never below `flow.recheck_from`. A stamp one stage behind also needs a `proposed` or `accepted` decision record in `hw/decisions` for that gate, with no `superseded-by`. Its date must be on or after the stamp's UTC day, so date every gate decision with the UTC calendar date.
 
    The evidence input MUST be the JSON packet that `evidence.py check` writes, or an `evidence.py run` report. A run report stamps with its `packet`. A run that stopped holds no packet, so it cannot stamp. A `cad_model.py check` result is never evidence. Include `--passed` only when every blocking obligation passes, and omit it for a failed gate. A record that is not version 2 cannot be stamped.
 4. Stage the design changes and `hw/.cad/recheck.json`.
