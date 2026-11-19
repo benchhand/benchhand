@@ -13,6 +13,9 @@ result carries:
   load-face nodes (every node in a `*CLOAD` block, a zero load included).
 * The solve's recorded mesh quality gives its high-order fallback level.
 
+`element_connectivity` reads the C3D4 and C3D10 elements of the same input, for the linearisation of #209. The
+study does not use them yet.
+
 The outcome is `settled` (an interior peak: strength-eligible), `settled_away_from_support` (the peak sits on the
 exclusion boundary, where the stress near the support is higher: information only, see #209) or `unknown`. A
 result the study cannot read gives `unknown` with a named reason. It never raises and never reports a number it
@@ -88,6 +91,79 @@ def boundary_nodes(inp: str) -> tuple[frozenset[int], frozenset[int]]:
     if not fixed or not load:
         raise BoundaryNodesError(f"the ccx input names {len(fixed)} fixed-face and {len(load)} load-face nodes")
     return frozenset(fixed), frozenset(load)
+
+
+class ConnectivityError(ValueError):
+    """The ccx input holds no usable C3D4 or C3D10 element connectivity."""
+
+
+# Nodes per element of each solid type `element_connectivity` reads. The ccx 2.23 manual numbers them (sections
+# 6.2.6 and 6.2.7; Figure 63 for C3D10): the four corners, then for C3D10 the mid-edge nodes of edges 1-2, 2-3, 3-1,
+# 1-4, 2-4 and 3-4. *ELEMENT continues a record only past 16 entries, so neither type has a continuation line.
+ELEMENT_NODES = {"C3D4": 4, "C3D10": 10}
+
+
+@dataclass(frozen=True)
+class Element:
+    """One solid element of a ccx input: its type `kind` (C3D4 or C3D10) and its node ids in the ccx manual's order."""
+
+    kind: str
+    nodes: tuple[int, ...]
+
+
+def _element_type(keyword: str) -> str | None:
+    """The TYPE of an `*ELEMENT` keyword line (blanks removed, upper case), or None for another keyword."""
+    name, *parameters = keyword.split(",")
+    if name != "*ELEMENT":
+        return None
+    types = [value for key, _, value in (p.partition("=") for p in parameters) if key == "TYPE"]
+    if not types:
+        raise ConnectivityError(f"the *ELEMENT block has no TYPE: {keyword[:40]!r}")
+    if types[0] not in ELEMENT_NODES:
+        raise ConnectivityError(f"element type {types[0][:20]} is not C3D4 or C3D10")
+    return types[0]
+
+
+def _element(line: str, kind: str) -> tuple[int, tuple[int, ...]]:
+    """The id and the node ids of one element record of type `kind`."""
+    fields = [f.strip() for f in line.split(",")]
+    try:
+        if not all(_NODE.fullmatch(f) for f in fields):
+            raise ValueError(line)
+        element, *nodes = (int(f) for f in fields)  # int() also refuses a string of more than 4300 digits
+    except ValueError:
+        raise ConnectivityError(f"{line[:40]!r} is not a {kind} element record") from None
+    if len(nodes) != ELEMENT_NODES[kind]:
+        raise ConnectivityError(f"element {element} has {len(nodes)} of {ELEMENT_NODES[kind]} nodes")
+    return element, tuple(nodes)
+
+
+def element_connectivity(inp: str) -> dict[int, Element]:
+    """The C3D4 and C3D10 elements of a ccx input, keyed by element id.
+
+    An element block is an `*ELEMENT,TYPE=...` keyword line, case and blanks aside, then one `id, node, ...` line per
+    element; `**` lines are comments. Raises `ConnectivityError` when the input has no such element, when a block
+    has no TYPE or another one, when a record is not that form or has the wrong number of nodes, or when an element
+    id repeats.
+    """
+    elements: dict[int, Element] = {}
+    kind: str | None = None
+    for raw in inp.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            kind = _element_type(line.upper().replace(" ", ""))
+            continue
+        if kind is None:
+            continue
+        element, nodes = _element(line, kind)
+        if element in elements:
+            raise ConnectivityError(f"element {element} is defined twice")
+        elements[element] = Element(kind, nodes)
+    if not elements:
+        raise ConnectivityError("the ccx input defines no C3D4 or C3D10 elements")
+    return elements
 
 
 def _number(value: float | None) -> float | None:
