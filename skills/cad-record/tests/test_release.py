@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import csv
 import fcntl
 import hashlib
@@ -25,7 +24,7 @@ import tomllib
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
 from unittest import mock
 
 import yaml
@@ -1023,30 +1022,14 @@ class Repair(ReleaseCase):
         a_moved, release_a, b_at_lock = threading.Event(), threading.Event(), threading.Event()
         guard = 30  # seconds: only a hang guard, never part of the logic
         outcome: dict[str, tuple[int, dict[str, Any]]] = {}
-        calls: list[tuple[str, str]] = []  # (writer, call) for B's inspections and stages, in order
-        real_claim, real_lock, real_existing, real_stage = (release.layout.claim, release.layout.target_lock,
-                                                            release.existing, release.stage)
+        calls: list[str] = []  # B's calls of the lock, its inspections and its stages, in order
 
-        def claim_after_a_pause(staged: Path, target: Path, target_rel: str) -> None:
-            if threading.current_thread().name == "writer-a" and not a_moved.is_set():
-                a_moved.set()  # A has moved the stale package aside and not claimed its repair yet
-                release_a.wait(guard)
-            real_claim(staged, target, target_rel)
+        def a_pauses() -> None:  # A has moved the stale package aside and not claimed its repair yet
+            a_moved.set()
+            release_a.wait(guard)
 
-        @contextlib.contextmanager
-        def watched_lock(*arguments: Any) -> Iterator[None]:
-            if threading.current_thread().name == "writer-b":
-                calls.append(("b", "lock"))
-                b_at_lock.set()
-            with real_lock(*arguments):
-                yield
-
-        def watched(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
-            def call(*arguments: Any) -> Any:
-                if threading.current_thread().name == "writer-b":
-                    calls.append(("b", name))
-                return real(*arguments)
-            return call
+        def b_at(name: str) -> Callable[[], None]:
+            return lambda: calls.append(name)
 
         def writer(name: str) -> threading.Thread:
             def run() -> None:
@@ -1054,26 +1037,26 @@ class Repair(ReleaseCase):
             return threading.Thread(target=run, name=f"writer-{name}", daemon=True)
 
         a, b = writer("a"), writer("b")
-        with mock.patch.object(release.layout, "claim", claim_after_a_pause), \
-                mock.patch.object(release.layout, "target_lock", watched_lock), \
-                mock.patch.object(release, "existing", watched("existing", real_existing)), \
-                mock.patch.object(release, "stage", watched("stage", real_stage)):
+        lock_hook = on_thread("writer-b", release.layout.target_lock, lambda: (calls.append("lock"), b_at_lock.set()))
+        with mock.patch.object(release.layout, "claim", on_thread("writer-a", release.layout.claim, a_pauses)), \
+                mock.patch.object(release.layout, "target_lock", lock_hook), \
+                mock.patch.object(release, "existing", on_thread("writer-b", release.existing, b_at("existing"))), \
+                mock.patch.object(release, "stage", on_thread("writer-b", release.stage, b_at("stage"))):
             a.start()
             try:
                 self.assertTrue(a_moved.wait(guard), "writer A never reached its claim")
                 b.start()
                 self.assertTrue(b_at_lock.wait(guard), "writer B never reached the lock")
                 self.assertTrue(self.lock_held(hw), "A holds the lock from the move-aside to the claim")
-                self.assertEqual(calls, [("b", "lock")], "B inspects nothing before it holds the lock")
+                self.assertEqual(calls, ["lock"], "B inspects nothing before it holds the lock")
             finally:
                 release_a.set()
                 a.join(guard)
-                if b.ident is not None:
-                    b.join(guard)
+            b.join(guard)
         self.assertFalse(a.is_alive() or b.is_alive(), "a writer hung")
         self.assertEqual(outcome["a"][0], 0, outcome["a"][1].get("findings"))
         self.assertEqual((outcome["b"][0], outcome["b"][1].get("already_sealed")), (0, True), outcome["b"][1])
-        self.assertNotIn(("b", "stage"), calls, "B found the repaired package and staged nothing")
+        self.assertNotIn("stage", calls, "B found the repaired package and staged nothing")
         self.assertEqual(layout.verify(hw / "releases" / "A"), [], "A's repair is in place")
         moved = self.replaced(hw)
         self.assertEqual(len(moved), 1, "only A moved a package aside")
@@ -1145,6 +1128,15 @@ def waive_fdm_trials(hw: Path, record: Any, entries: list[dict[str, Any]]) -> li
                                             manifest_sha256=configuration["manifest_sha256"],
                                             geometry=impact.current_geometry(hw), artifacts=["hw/docs/inspection.md"], hw=hw))
     return entries
+
+
+def on_thread(name: str, real: Callable[..., Any], before: Callable[[], Any]) -> Callable[..., Any]:
+    """`real`, calling `before` first when the thread named `name` calls it."""
+    def call(*arguments: Any) -> Any:
+        if threading.current_thread().name == name:
+            before()
+        return real(*arguments)
+    return call
 
 
 def waive_fdm_trials_until(expires: str) -> Callable[[Path, Any, list[dict[str, Any]]], list[dict[str, Any]]]:
