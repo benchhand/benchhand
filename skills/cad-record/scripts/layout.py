@@ -882,14 +882,19 @@ def _lock_path(hw: Path, target_rel: str) -> Path:
 
 
 @contextlib.contextmanager
-def _target_lock(hw: Path, target_rel: str) -> Iterator[None]:
-    """Hold an exclusive lock on one bundle path, so inspecting an existing bundle and replacing it are
-    one step per writer. The OS drops the lock when its holder ends."""
+def target_lock(hw: Path, target_rel: str) -> Iterator[None]:
+    """Hold an exclusive lock on one sealed path (a bundle or a release package), so inspecting what is
+    there and replacing it are one step per writer. The OS drops the lock when its holder ends."""
     lock = _lock_path(hw, target_rel)
     lock.parent.mkdir(parents=True, exist_ok=True)
     with lock.open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         yield
+
+
+def replaced_path(hw: Path, target_rel: str) -> Path:
+    """A new path under .cad-work/replaced/<target_rel>/ to move a replaced sealed directory to."""
+    return Path(hw).parent / SCRATCH / "replaced" / target_rel / f"{time.time_ns()}-{uuid.uuid4().hex[:8]}"
 
 
 def _bundle_entry(entry_id: str) -> Entry:
@@ -1018,7 +1023,7 @@ def publish(hw: Path, entry_id: str, params: Mapping[str, str], staged: Path, *,
     and version manifest that still verifies is returned unchanged. A stale one (see `stale`) is
     replaced. Any other existing bundle is a
     PublishConflict unless `replace`: then it moves to .cad-work/replaced/ and the new manifest's
-    `replaces` records it. A lock on the bundle path (`_target_lock`) makes inspecting the existing
+    `replaces` records it. A lock on the bundle path (`target_lock`) makes inspecting the existing
     bundle and replacing it one step per writer. On failure `staged` stays as scratch.
     """
     hw, staged = Path(hw), Path(staged)
@@ -1036,7 +1041,7 @@ def publish(hw: Path, entry_id: str, params: Mapping[str, str], staged: Path, *,
     recipe = json.loads(canonical_json(recipe))
     recipe_sha = recipe_sha256(recipe)
 
-    with _target_lock(hw, target_rel):
+    with target_lock(hw, target_rel):
         replaces = None
         retained = None
         if os.path.lexists(target):
@@ -1050,12 +1055,11 @@ def publish(hw: Path, entry_id: str, params: Mapping[str, str], staged: Path, *,
                 existing = None
             if not replace and not _stale_bundle(target):
                 raise _recipe_conflict(target_rel)
-            stamp = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}"
-            retained = hw.parent / SCRATCH / "replaced" / target_rel / stamp
+            retained = replaced_path(hw, target_rel)
             old_manifest = target / MANIFEST
             replaces = {"manifest_sha256": _sha256(old_manifest) if old_manifest.is_file() else None,
                         "recipe_sha256": _sha_or_none(existing.get("recipe_sha256")) if isinstance(existing, dict) else None,
-                        "moved_to": f"{SCRATCH}/replaced/{target_rel}/{stamp}"}
+                        "moved_to": relative(hw, retained)}
             retained.parent.mkdir(parents=True, exist_ok=True)
             try:
                 os.rename(target, retained)

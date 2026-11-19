@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import csv
+import fcntl
 import hashlib
 import importlib.util
 import io
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -432,6 +434,16 @@ class Pruning(ReleaseCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("64-character digest", result.stderr)
 
+    def test_prune_on_a_stale_package_refuses_and_deletes_nothing(self) -> None:
+        hw = self.released()
+        write(hw / "releases" / "A" / "bom.csv", "edited\n")
+        before = tree(hw)
+        code, report = self.cli(hw)
+        self.assertEqual((code, report["status"], report["findings"][0]["code"]), (1, "refused", "release.stale"))
+        self.assertIn("release.py without --prune repairs it", report["findings"][0]["message"])
+        self.assertNotIn("pruning", report)
+        self.assertEqual(tree(hw), before)
+
     def test_an_existing_package_of_another_approval_is_refused_not_pruned_against(self) -> None:
         hw = self.released()
         before = tree(hw)
@@ -624,6 +636,19 @@ class Documents(ReleaseCase):
         self.assertEqual({key: okh[key] for key in ("version", "release", "release_date")},
                          {"version": "v1", "release": "A", "release_date": "2026-11-02"})
 
+    def test_a_next_day_repair_keeps_the_release_date(self) -> None:
+        sealing = datetime(2026, 11, 2, 23, 59, 59, tzinfo=timezone.utc)
+        hw = self.project()
+        self.guide(hw, "--rev", "A", "--date", "2026-11-02")
+        self.assertEqual(self.release(hw, now=sealing)[0], 0)
+        write(hw / "releases" / "A" / "bom.csv", "edited\n")
+        code, report = self.release(hw, now=sealing + timedelta(days=1))
+        self.assertEqual(code, 0, report.get("findings"))
+        okh = tomllib.loads((hw / "releases" / "A" / "docs" / "okh.toml").read_text(encoding="utf-8"))["okhv"]
+        manifest = json.loads((hw / "releases" / "A" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual((manifest["released_at"], okh["release_date"]), ("2026-11-02T23:59:59Z", "2026-11-02"))
+        self.guide(hw, "--rev", "A", "--date", "2026-11-02")  # build_guide.py refuses any date but the sealed one
+
 
 class Refusal(ReleaseCase):
     """Each gap refuses with a finding that names it, and hw/ is byte-identical afterwards."""
@@ -736,12 +761,12 @@ class Refusal(ReleaseCase):
         self.assertEqual((code, report["status"], report["manifest_sha256"]), (0, "released", first["manifest_sha256"]))
         self.assertEqual(tree(hw), before, "the rerun leaves the package byte-identical")
 
-    def test_a_stale_package_of_the_same_frozen_manifest_is_refused_and_left_alone(self) -> None:
+    def test_a_stale_package_of_another_approval_needs_a_new_revision(self) -> None:
         hw = self.project()
         self.assertEqual(self.release(hw)[0], 0)
         write(hw / "releases" / "A" / "bom.csv", "edited\n")
-        self.refused(hw, "hw/releases/A", "stale", "stale: bom.csv changed after it was sealed")
-        self.refused(hw, "hw/releases/A", "stale", "automatic repair is not supported; use a new revision")
+        self.refused(hw, "hw/releases/A", "stale", "automatic repair is not supported; use a new revision",
+                     decision="DR-004")
 
     def test_a_stale_package_of_another_frozen_manifest_needs_a_new_revision(self) -> None:
         hw = self.project()
@@ -845,6 +870,156 @@ class Refusal(ReleaseCase):
                                  "--decision", "DR-005"], capture_output=True, text=True, timeout=120, check=False)
         self.assertEqual(result.returncode, 2)
         self.assertIn("REV 'I' does not match", json.loads(result.stdout)["message"])
+
+
+DAMAGE: dict[str, Callable[[Path], Any]] = {  # ways a sealed package fails its seal, each applied to hw/releases/A
+    "a changed file": lambda package: write(package / "bom.csv", "edited\n"),
+    "a missing file": lambda package: (package / "verification.csv").unlink(),
+    "an extra file": lambda package: write(package / "stray.txt"),
+}
+
+
+class Repair(ReleaseCase):
+    """A stale hw/releases/<REV>/ of the same version, approval and frozen manifest is sealed again from that
+    frozen manifest, under the revision's lock, and a failed attempt leaves the stale package where it was."""
+
+    def released(self) -> tuple[Path, dict[str, str]]:
+        hw = self.project()
+        code, report = self.release(hw)
+        self.assertEqual(code, 0, report.get("findings"))
+        return hw, tree(hw / "releases" / "A")
+
+    def lock_held(self, hw: Path) -> bool:
+        """Whether a writer holds the lock of hw/releases/A: a second open file cannot take it."""
+        lock = layout._lock_path(hw, "hw/releases/A")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with lock.open("a") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(probe, fcntl.LOCK_UN)
+            return False
+
+    def replaced(self, hw: Path) -> list[Path]:
+        """The packages a run moved aside, under .cad-work/replaced/."""
+        root = hw.parent / ".cad-work" / "replaced" / "hw" / "releases" / "A"
+        return sorted(root.iterdir()) if root.is_dir() else []
+
+    def test_a_stale_package_of_the_same_frozen_manifest_is_sealed_again_byte_identically(self) -> None:
+        for damage, spoil in DAMAGE.items():
+            with self.subTest(damage):
+                hw, sealed = self.released()
+                spoil(hw / "releases" / "A")
+                stale = tree(hw / "releases" / "A")
+                code, report = self.release(hw)
+                self.assertEqual((code, report["status"]), (0, "released"), report.get("findings"))
+                self.assertEqual(tree(hw / "releases" / "A"), sealed, "the repair seals the same package again")
+                self.assertEqual([tree(path) for path in self.replaced(hw)], [stale], "the stale package is kept aside")
+
+    def test_seal_findings_outside_the_repaired_package_still_refuse(self) -> None:
+        for damage, code in (("a missing file", "layout.missing"), ("an extra file", "layout.unlisted")):
+            with self.subTest(damage):
+                hw, _ = self.released()
+                shutil.copytree(hw / "releases" / "A", hw / "releases" / "B")  # another sealed package
+                DAMAGE[damage](hw / "releases" / "B")
+                DAMAGE["a changed file"](hw / "releases" / "A")
+                before = tree(hw)
+                result, report = self.release(hw)
+                self.assertEqual((result, report["status"]), (1, "refused"))
+                other = hw.resolve() / "releases" / "B"
+                self.assertTrue(any(item.get("code") == code and Path(item["path"]).is_relative_to(other)
+                                    for item in report["findings"]), json.dumps(report["findings"], indent=1))
+                self.assertEqual(tree(hw), before)
+
+    def test_a_slower_writer_never_moves_a_repaired_package_aside(self) -> None:
+        hw, _ = self.released()
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        b_staged, a_done = threading.Event(), threading.Event()
+        guard = 30  # seconds: only a hang guard, never part of the logic
+        outcome: dict[str, tuple[int, dict[str, Any]]] = {}
+        held: list[bool] = []
+        real_stage, real_claim = release.stage, release.layout.claim
+
+        def stage_then_wait(*arguments: Any) -> Path:
+            staged = real_stage(*arguments)
+            if threading.current_thread().name == "writer-b":  # B has seen the stale package and staged a repair
+                b_staged.set()
+                a_done.wait(guard)
+            return staged
+
+        def probed_claim(staged: Path, target: Path, target_rel: str) -> None:
+            held.append(self.lock_held(hw))
+            real_claim(staged, target, target_rel)
+
+        def writer_b() -> None:
+            outcome["b"] = self.release(hw)
+
+        with mock.patch.object(release, "stage", stage_then_wait), \
+                mock.patch.object(release.layout, "claim", probed_claim):
+            b = threading.Thread(target=writer_b, name="writer-b", daemon=True)
+            b.start()
+            try:
+                self.assertTrue(b_staged.wait(guard), "writer B never staged its repair")
+                outcome["a"] = self.release(hw)
+                repaired = tree(hw / "releases" / "A")
+            finally:
+                a_done.set()
+                b.join(guard)
+        self.assertFalse(b.is_alive(), "writer B hung")
+        self.assertEqual(outcome["a"][0], 0, outcome["a"][1].get("findings"))
+        self.assertEqual((outcome["b"][0], outcome["b"][1].get("already_sealed")), (0, True), outcome["b"][1])
+        self.assertEqual(tree(hw / "releases" / "A"), repaired, "B left A's repair in place")
+        moved = self.replaced(hw)
+        self.assertEqual(len(moved), 1, "only A moved a package aside")
+        self.assertTrue(all(layout.verify(path) for path in moved), "no sound package was moved aside")
+        self.assertTrue(held and all(held), "every claim ran under the revision's lock")
+
+    def test_a_failed_repair_puts_the_stale_package_back(self) -> None:
+        failures = {  # the os call that fails inside the claim, and how it fails
+            "an OSError from the claim's mkdir": ("mkdir", PermissionError(13, "Permission denied")),
+            "a failed rename onto the claim": ("rename", OSError(18, "Cross-device link")),
+        }
+        for name, (call, failure) in failures.items():
+            with self.subTest(name):
+                hw, _ = self.released()
+                DAMAGE["a changed file"](hw / "releases" / "A")
+                before = tree(hw)
+                real_claim, claims = release.layout.claim, []
+
+                def failing_claim(staged: Path, target: Path, target_rel: str) -> None:
+                    claims.append(staged)
+                    if len(claims) > 1:  # putting the stale package back
+                        return real_claim(staged, target, target_rel)
+                    with mock.patch.object(layout.os, call, side_effect=failure):
+                        return real_claim(staged, target, target_rel)
+
+                with mock.patch.object(release.layout, "claim", failing_claim):
+                    with self.assertRaises(layout.LayoutError) as caught:  # an infrastructure error: exit 2
+                        self.release(hw)
+                self.assertIn(failure.strerror, str(caught.exception))
+                self.assertIn("the stale package it replaced is back in place", str(caught.exception))
+                self.assertEqual(tree(hw), before, "the stale package is back where it was")
+
+    def test_a_failed_repair_never_replaces_another_writers_package(self) -> None:
+        hw, _ = self.released()
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        real_claim = release.layout.claim
+        package = hw / "releases" / "A"
+
+        def rival_first(staged: Path, target: Path, target_rel: str) -> None:
+            if not (target / "rival.txt").exists():  # another writer lands at the revision before this claim
+                write(target / "rival.txt", "another writer\n")
+            real_claim(staged, target, target_rel)
+
+        with mock.patch.object(release.layout, "claim", rival_first):
+            code, report = self.release(hw)
+        self.assertEqual((code, report["status"]), (1, "refused"))
+        self.assertEqual(sorted(path.name for path in package.iterdir()), ["rival.txt"], "the other writer's package stays")
+        moved = self.replaced(hw)
+        self.assertEqual(len(moved), 1)
+        self.assertEqual((moved[0] / "bom.csv").read_text(encoding="utf-8"), "edited\n", "the stale package is kept")
+        self.assertIn(layout.relative(hw, moved[0]), json.dumps(report["findings"]))
 
 
 def waive_fdm_trials(hw: Path, record: Any, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
