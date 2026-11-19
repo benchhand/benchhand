@@ -13,7 +13,7 @@ uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-record/scripts/validat
 uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-record/scripts/release.py hw --rev A --version vN --decision DR-###
 ```
 
-`validate.py`: exit 0 has no error findings, exit 1 has blocking findings, exit 2 is invalid input or infrastructure failure. `release.py`: exit 0 sealed the release or found it already sealed, exit 1 refused it with findings and wrote nothing outside `.cad-work/`, exit 2 is invalid input or infrastructure failure. A used `hw/releases/<rev>/` holds one release, and an identical rerun is a no-op. There is no `--preview` flag, and a refused run is not a successful dry run.
+`validate.py`: exit 0 has no error findings, exit 1 has blocking findings, exit 2 is invalid input or infrastructure failure. `release.py`: exit 0 sealed the release or found it already sealed, exit 1 refused it with findings and wrote nothing outside `.cad-work/`, exit 2 is invalid input or infrastructure failure. The run rewrites a used `hw/releases/<rev>/` only to repair a stale package of the same frozen manifest, and an identical rerun is a no-op. There is no `--preview` flag, and a refused run is not a successful dry run.
 
 Releasing the same revision again is idempotent. When the package verifies and its frozen manifest sha equals the current one, the run exits 0 and changes nothing. A different frozen manifest under that revision needs a new revision, and the run refuses it.
 

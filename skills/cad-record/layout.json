@@ -203,7 +203,7 @@
                {"name": "manifest.json", "role": "manifest"}]},
     {"id": "release.package", "path": "hw/releases/{REV}", "kind": "generated",
      "writer": "cad-record release.py (lead)", "stage": "release", "mutability": "immutable", "manifest": "release",
-     "meaning": "a sealed release package; a used revision is never overwritten",
+     "meaning": "a sealed release package; a used revision is rewritten only to repair a stale package of the same frozen manifest",
      "files": [{"name": "manifest.json", "role": "manifest"},
                {"name": "definition/**", "role": "definition", "optional": true},
                {"name": "manufacturing/**", "role": "manufacture", "optional": true},
