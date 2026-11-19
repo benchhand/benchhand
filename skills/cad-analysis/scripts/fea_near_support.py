@@ -29,9 +29,13 @@ give. The section force is the sum, over the lines, of the line's width times it
 traction on the section. The section moment about the section centroid adds each line's offset from it, and the
 axial bending couple, -sigma_b t^2 / 6 per unit width along t2 (Annex 5-A Eq 5-A.2 gives the bending). Both must
 balance the applied nodal force and moment on the free body, within `TOLERANCE` (5%) of the sum of the nodal force
-magnitudes for the force and of the sum of the nodal moment magnitudes for the moment, or the study abstains
-(`cross_check_failed`). Shear has no bending in Annex 5-A, so a section that carries a torque, whose moment the
-lines cannot see, fails the check and abstains.
+magnitudes for the force, and for the moment of the larger of the sum of the nodal moment magnitudes and a reference
+F x L (the force scale times the section's longest in-plane extent), or the study abstains (`cross_check_failed`).
+The reference keeps the moment check alive for a load with no moment about the section, such as an axial load at the
+centre, whose nodal moment scale is zero; a residual is never taken as zero for want of a scale, and one that is not
+a number fails. A free body with no force abstains first (`no_applied_load`), so the force scale is never zero.
+Annex 5-A has no torsion, and a small torque hides in the aggregate residual, so a torque about the section normal
+above `TORSION_FLOOR` of F x L abstains on its own (`torsion_on_section`), whatever the residual.
 
 No code states this tolerance. The 5% is provisional (decision on #209); bead benchhand-2dq tracks sourcing it. It
 was set against the 4.5 mm cantilever fixture (test_fea_near_support), and that fixture does not clear it: at its
@@ -66,11 +70,16 @@ STRIPS = 9
 # Largest section force and moment residual, as a share of the sum of the nodal force and moment magnitudes.
 # Provisional (decision on #209): bead benchhand-2dq tracks sourcing it.
 TOLERANCE = 0.05
+# A torque about the section normal above this share of F x L abstains. F is the sum of the nodal force magnitudes on
+# the free body and L the section's longest in-plane extent. Provisional, like TOLERANCE: 0.1% of F x L is 0.5 N mm
+# for a 50 N load on a 10 mm section, a 0.01 mm offset of the load from the section centre.
+TORSION_FLOOR = 1e-3
 # A coordinate is on a plane, or a face is flat, when it lies within this share of the part's largest extent.
 _FLAT = 1e-6
 
 STATICALLY_INDETERMINATE = "statically_indeterminate"
 CROSS_CHECK_FAILED = "cross_check_failed"
+TORSION_ON_SECTION = "torsion_on_section"
 SUPPORT_NOT_AXIS_PLANAR = "support_not_axis_planar"
 FACE_NOT_ON_BOUNDARY = "face_not_on_boundary"
 LOAD_NODES_OVERLAP = "load_nodes_overlap"
@@ -353,6 +362,29 @@ def _lines(case: _Case, face: _Face, plane: float, normal: Vec, centre: Vec, box
     return _Lines(force, moment, sigma, peak)
 
 
+def _check_torsion(face: _Face, plane: float, applied: _Applied, reference: float) -> None:
+    """Abstain when the free body carries a torque about the section normal above the floor.
+
+    The lines integrate the membrane traction of the section, so they see a torque only through the shear they
+    carry, and a torque small against the bending moments hides in the aggregate residual. The torque is judged on
+    its own, against TORSION_FLOOR of `reference`, the force scale times the section's longest in-plane extent."""
+    torque = abs(applied.moment[face.axis])
+    if not torque <= TORSION_FLOOR * reference:
+        raise _Abstain(TORSION_ON_SECTION, f"the free body beyond the section at {AXES[face.axis]} = {plane:.6g} mm "
+                                           f"carries a torque {torque:.3g} N mm about the section normal, over the floor "
+                                           f"{TORSION_FLOOR * reference:.3g} N mm ({TORSION_FLOOR:g} of F x L = "
+                                           f"{reference:.3g} N mm): Annex 5-A linearisation has no torsion")
+
+
+def _residuals(lines: _Lines, applied: _Applied, reference: float) -> tuple[float, float]:
+    """The force and moment residuals as shares of their scales. The force scale is positive here, as a free body
+    with none abstains first. The moment scale is the larger of the nodal moment magnitudes and `reference`, so a
+    load with no moment about the section centre (a zero nodal scale) still has its residual measured."""
+    force = _norm(_add(lines.force, applied.force)) / applied.force_scale
+    moment = _norm(_add(lines.moment, applied.moment)) / max(applied.moment_scale, reference)
+    return force, moment
+
+
 def _section(case: _Case, face: _Face) -> Section:
     sign = _inward(face, case)
     low, high = _extent([case.result.coordinates[n] for n in face.nodes])
@@ -372,10 +404,11 @@ def _section(case: _Case, face: _Face) -> Section:
     applied = _applied(case, face.axis, plane, body, centre)
     if applied.force_scale <= 0:
         raise _Abstain(NO_APPLIED_LOAD, f"no force acts on the free body beyond the section for {where}")
+    reference = applied.force_scale * max(box[1][k] - box[0][k] for k in range(3) if k != face.axis)
+    _check_torsion(face, plane, applied, reference)
     lines = _lines(case, face, plane, _unit(face.axis, -body), centre, box)
-    f_res = _norm(_add(lines.force, applied.force)) / applied.force_scale
-    m_res = _norm(_add(lines.moment, applied.moment)) / applied.moment_scale if applied.moment_scale > 0 else 0.0
-    if max(f_res, m_res) > TOLERANCE:
+    f_res, m_res = _residuals(lines, applied, reference)
+    if not max(f_res, m_res) <= TOLERANCE:  # also true for a residual that is nan
         raise _Abstain(CROSS_CHECK_FAILED, f"{where}, section at {AXES[face.axis]} = {plane:.6g} mm: force residual "
                                            f"{100 * f_res:.1f}% (limit {100 * TOLERANCE:g}%), moment residual "
                                            f"{100 * m_res:.1f}% (limit {100 * TOLERANCE:g}%): the integrated "

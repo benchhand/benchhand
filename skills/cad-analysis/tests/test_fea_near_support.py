@@ -25,6 +25,7 @@ from __future__ import annotations
 import gzip
 import importlib.util
 import math
+import shutil
 import sys
 import unittest
 from collections.abc import Callable, Mapping
@@ -176,6 +177,13 @@ class Cantilever(unittest.TestCase):
         self.loads = [*self.loads, {node: (0.0, 0.0, -1.0)}]
         self.assertEqual(self.assess().reasons, ("load_nodes_overlap",))
 
+    def test_a_non_finite_applied_force_never_linearises(self) -> None:
+        # A nan has no residual to compare: it must abstain, not slip through a comparison that is false for nan.
+        node = next(iter(self.loads[0]))
+        found = self.assess(loads=[{**self.loads[0], node: (0.0, 0.0, math.nan)}])
+        self.assertEqual((found.status, found.sigma_mpa), ("unknown", None))
+        self.assertEqual(len(found.reasons), 1)
+
     def test_a_case_without_an_applied_force_abstains(self) -> None:
         self.loads = [{n: (0.0, 0.0, 0.0) for n in self.loads[0]}]
         self.assertEqual(self.assess().reasons, ("no_applied_load",))
@@ -187,6 +195,45 @@ class Cantilever(unittest.TestCase):
 
     def test_a_part_shorter_than_the_zone_finds_no_section(self) -> None:
         self.assertEqual(self.assess(h_coarse=20.0).reasons, ("section_outside_part",))
+
+    def axial_tip_load(self) -> list[dict[int, tuple[float, float, float]]]:
+        """50 N along x on the tip centre, with a zero entry on every other tip node, as FreeCAD writes a face. The
+        load has no moment about any point of the line of action, so the nodal moment scale is exactly zero."""
+        tip = nodes_at(self.coordinates, 0, LENGTH)
+        centre = next(n for n in tip if self.coordinates[n][1:] == (WIDTH / 2, DEPTH / 2))
+        return [{n: (LOAD if n == centre else 0.0, 0.0, 0.0) for n in tip}]
+
+    def test_zero_moment_scale_rejects_unbalanced_bending(self) -> None:
+        # 1 MPa over the 50 mm^2 section balances the 50 N exactly. The bending 2 MPa/mm * (z - 2.5) adds a couple
+        # sigma_b t^2 / 6 per unit width, 5 * 25 / 6 * 10 = 208.3 N mm, to a load that has no moment: 208.3 against
+        # the floor F * L = 50 * 10 = 500 N mm is 41.7%, over the 5% limit.
+        found = self.assess(lambda p: (1.0 + 2.0 * (p[2] - DEPTH / 2), 0, 0, 0, 0, 0), loads=self.axial_tip_load())
+        self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("cross_check_failed",), None))
+        self.assertRegex(found.message, r"moment residual 4[01]\.\d%")
+
+    def test_zero_moment_scale_still_accepts_a_balanced_membrane(self) -> None:
+        found = self.assess(lambda p: (1.0, 0, 0, 0, 0, 0), loads=self.axial_tip_load())
+        self.assertEqual((found.status, found.reasons), ("linearised", ()))
+
+    def eccentric_tip_load(self, shift: float) -> list[dict[int, tuple[float, float, float]]]:
+        """The tip load of the cantilever, 50 N in -z, with its resultant `shift` mm off the tip centre along y: the
+        nodal weights 1 + a (y - 5) with a = shift / mean((y - 5)^2) move the centroid by exactly `shift`."""
+        tip = sorted(nodes_at(self.coordinates, 0, LENGTH))
+        offsets = [self.coordinates[n][1] - WIDTH / 2 for n in tip]
+        slope = shift / (sum(o * o for o in offsets) / len(tip))
+        return [{n: (0.0, 0.0, -LOAD * (1 + slope * o) / len(tip)) for n, o in zip(tip, offsets)}]
+
+    def test_small_torsion_abstains_below_aggregate_tolerance(self) -> None:
+        # 0.1 mm of eccentricity is 5 N mm of torque about the section normal, 0.4% of the 1250 N mm root moment, so
+        # the aggregate residual passes. The torque floor is 1e-3 * F * L = 0.5 N mm.
+        found = self.assess(loads=self.eccentric_tip_load(0.1))
+        self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("torsion_on_section",), None))
+        self.assertRegex(found.message, r"torque 5 N mm about the section normal")
+
+    def test_a_torque_under_the_floor_does_not_abstain(self) -> None:
+        # 0.005 mm of eccentricity is 0.25 N mm, under the 0.5 N mm floor.
+        found = self.assess(loads=self.eccentric_tip_load(0.005))
+        self.assertEqual((found.status, found.reasons), ("linearised", ()))
 
 
 class ZoneDepth(unittest.TestCase):
@@ -270,10 +317,13 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
     The study's own kept-region peak is the surface stress at the first node outside the 3 mm cutoff, the mid-edge
     node at x = 3.5: 50 * 26.5 * 2.5 / I = 31.8 MPa at 50 N, a factor of 7.86, and 133.56 MPa at 210 N, 1.8718."""
 
-    def solve(self, plan: list[dict[str, Any]], docs: dict[str, Any] | None = None) -> dict[str, Any]:
+    def solve(self, plan: list[dict[str, Any]], docs: dict[str, Any] | None = None,
+              material: dict[str, Any] | None = None) -> dict[str, Any]:
         self.plan = plan
         self.build(docs or conditions_tests.documents())
-        case = self.case({"conditions": conditions_tests.SERVICE}, mode="stress", mesh_size=1.0,
+        if material and "effective_isotropic" in material:
+            conditions_tests.write_test_decision(self.hw, "DR-003", title="DR-003: effective isotropic model")
+        case = self.case(material or {"conditions": conditions_tests.SERVICE}, mode="stress", mesh_size=1.0,
                          acceptance={"strength": "REQ-001", "stiffness": "REQ-002"})
         status, report = self.call(case)
         self.assertEqual(status, 0, report)
@@ -332,6 +382,56 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         row, _ = self.row(report)
         self.assertEqual(row["outcome"], "unknown")
         self.assertIn("ductile", row["uncertainty"])
+
+    def test_an_effective_isotropic_material_stays_unknown_even_when_linearised(self) -> None:
+        # The printed Z yield is 20 MPa against a 133.56 MPa stress: were the material eligible this would fail.
+        fx, tests = conditions_tests.fx, conditions_tests
+        part = tests.bracket("tst_polymer_fdm", [fx.operation("print", "fdm", fx.unknown("no capability in this fixture"))])
+        model = {"decision": "DR-003", "justification": "TST: Z-direction values bound the layer-normal load path"}
+        report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0),
+                            tests.documents(profiles=[tests.printed()], part=part),
+                            {"conditions": {**tests.DRY_23C, "orientation": "Z"}, "effective_isotropic": model})
+        self.assertEqual(report["material"]["isotropy"]["model"], "effective_isotropic")
+        self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
+        row, _ = self.row(report)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("not shown ductile and isotropic", row["uncertainty"])
+
+    def allowable_profile(self, *, allowable: bool = True) -> dict[str, Any]:
+        """A bulk (not wrought, sheet or rod) alloy with a 250 MPa typical yield and, when asked, a 200 MPa allowable."""
+        tests = conditions_tests
+        tested = tests.fx.quantity(lower=10, upper=40, units="deg_C")
+        profile = tests.alloy(
+            tests.prop("youngs_modulus", 70000, "MPa", temperature=tested),
+            tests.prop("poisson_ratio", 0.33, "dimensionless", temperature=tested),
+            tests.prop("density", 2700, "kg_m3", temperature=tested),
+            tests.prop("yield_strength", 250, "MPa", temperature=tested),
+            *([tests.prop("yield_strength", 200, "MPa", basis="allowable", temperature=tested)] if allowable else []),
+            typical_not_allowable=False)
+        profile["form"] = "bulk"
+        return profile
+
+    def test_a_sourced_yield_allowable_makes_a_bulk_material_eligible(self) -> None:
+        # Production service asks for the allowable: 200 / 31.8 passes where the typical yield of the same
+        # material, under prototype service, stays unknown.
+        plan = beam_plan(beam_field(), (0.0,), LENGTH, LOAD)
+        production = self.solve(plan, conditions_tests.documents(profiles=[self.allowable_profile()],
+                                                                 service_class="production"),
+                                {"conditions": conditions_tests.SERVICE})
+        rows = {row["input"]: row for row in production["material"]["properties"]}
+        self.assertEqual(rows["yield"]["basis"], "allowable")
+        self.assertEqual(production["stress_study"]["near_support"]["outcome"], "linearised")
+        self.assertEqual(self.row(production)[0]["outcome"], "pass", self.row(production))
+        for published in ("analysis", "checks"):  # the recipe differs only in the profile: never reuse the bundle
+            shutil.rmtree(self.hw / published / "v1", ignore_errors=True)
+        self.jobs.clear()
+        prototype = self.solve(plan, conditions_tests.documents(profiles=[self.allowable_profile(allowable=False)]),
+                               {"conditions": conditions_tests.SERVICE})
+        self.assertNotEqual({row["input"]: row for row in prototype["material"]["properties"]}["yield"]["basis"],
+                            "allowable")
+        row, _ = self.row(prototype)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIn("not shown ductile and isotropic", row["uncertainty"])
 
 
 if __name__ == "__main__":
