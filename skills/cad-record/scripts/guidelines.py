@@ -68,6 +68,8 @@ PROJECT_RELATIVE = Path("manufacturing") / "guidelines"
 CALIBRATED_KINDS = frozenset(("calibration", "test", "supplier"))
 NUMERIC = frozenset((">=", "<=", "between"))
 SCOPE_FACTS = ("material_family", "filler", "shore", "nozzle_material")
+LOWER_OPERATORS = (">=", ">")  # one-sided limits, read as manufacturing_intent.LOWER_BOUND_OPERATORS and UPPER_BOUND_OPERATORS
+UPPER_OPERATORS = ("<=", "<")
 
 
 class GuidelineError(ValueError):
@@ -526,13 +528,31 @@ class Resolved:
 
 @dataclass(frozen=True)
 class _Bound:
-    """A limit as a constraint: a closed numeric interval in `units`, or a set of allowed categorical values."""
+    """A limit as a constraint: a closed numeric interval in `units`, or a set of allowed categorical values. A one-sided
+    limit also keeps its operator (>=, >, <=, <), so that main's `tightens` can order a strict bound against a non-strict one."""
 
     interval: tuple[float, float] | None
     units: str | None
     options: frozenset[Any] | None
+    operator: str | None = None
+
+    def one_sided(self) -> tuple[str, float] | None:
+        """The (operator, value) pair of a one-sided numeric bound, else None."""
+        if self.operator is None or self.interval is None:
+            return None
+        return self.operator, self.interval[0] if self.operator in LOWER_OPERATORS else self.interval[1]
+
+    def same_side(self, other: _Bound) -> tuple[tuple[str, float], tuple[str, float]] | None:
+        """Both one-sided bounds as (operator, value) pairs when they bound the same side, else None."""
+        mine, theirs = self.one_sided(), other.one_sided()
+        if mine is None or theirs is None or (mine[0] in LOWER_OPERATORS) != (theirs[0] in LOWER_OPERATORS):
+            return None
+        return mine, theirs
 
     def intersect(self, other: _Bound) -> _Bound | None:
+        pair = self.same_side(other)
+        if pair is not None:
+            return self if _intent().tightens(pair[1], pair[0]) else other
         if self.interval is not None and other.interval is not None:
             lower, upper = max(self.interval[0], other.interval[0]), min(self.interval[1], other.interval[1])
             return _Bound((lower, upper), self.units, None) if lower <= upper + 1e-12 else None
@@ -542,7 +562,11 @@ class _Bound:
         return None
 
     def within(self, other: _Bound) -> bool:
-        """Whether this bound is as strict as `other` or stricter: everything it allows, `other` allows too."""
+        """Whether this bound is as strict as `other` or stricter: everything it allows, `other` allows too. Two one-sided
+        bounds on the same side are ordered by manufacturing_intent.tightens."""
+        pair = self.same_side(other)
+        if pair is not None:
+            return bool(_intent().tightens(pair[1], pair[0]))
         both = self.intersect(other)
         if both is None:
             return False
@@ -588,11 +612,13 @@ def _bound(limit: Mapping[str, Any], context: Context, units: str | None) -> tup
         lower, upper = quantity.to(unit).bounds
     except mi.IntentError as error:
         return None, str(error)
-    if operator == ">=":
-        return _Bound((lower, infinity), unit, None), None
-    if operator == "<=":
-        return _Bound((-infinity, upper), unit, None), None
-    return _Bound((lower, upper), unit, None), None
+    if operator in LOWER_OPERATORS:
+        return _Bound((lower, infinity), unit, None, operator), None
+    if operator in UPPER_OPERATORS:
+        return _Bound((-infinity, upper), unit, None, operator), None
+    if operator == "between":
+        return _Bound((lower, upper), unit, None), None
+    return None, f"operator {operator} is not supported"
 
 
 def _show(bound: _Bound) -> str:
@@ -600,6 +626,8 @@ def _show(bound: _Bound) -> str:
         return ", ".join(sorted(str(o) for o in bound.options))
     assert bound.interval is not None
     lower, upper = bound.interval
+    if bound.operator is not None:
+        return f"{bound.operator} {lower if bound.operator in LOWER_OPERATORS else upper:g} {bound.units}"
     if upper == float("inf"):
         return f">= {lower:g} {bound.units}"
     if lower == -float("inf"):
@@ -614,6 +642,8 @@ def _statement(bound: _Bound, mi: Any) -> tuple[str, Any]:
         return ("equals", values[0]) if len(values) == 1 else ("one_of", values)
     assert bound.interval is not None
     lower, upper = bound.interval
+    if bound.operator is not None:
+        return bound.operator, mi.Quantity(bound.units, value=lower if bound.operator in LOWER_OPERATORS else upper)
     if upper == float("inf"):
         return ">=", mi.Quantity(bound.units, value=lower)
     if lower == -float("inf"):

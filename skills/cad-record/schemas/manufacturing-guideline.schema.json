@@ -11,7 +11,7 @@
     "revision": {"type": "integer", "minimum": 1},
     "title": {"$ref": "manufacturing.schema.json#/$defs/text"},
     "extends": {"description": "parent guideline ids, in order; a later parent is read after an earlier one", "type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "manufacturing.schema.json#/$defs/guideline_id"}},
-    "abstract": {"description": "an abstract set is only extended, never matched on its own", "type": "boolean"},
+    "abstract": {"description": "an abstract set is reached through extends; it is matched on its own only when the capability profile's pin names it", "type": "boolean"},
     "scope": {"$ref": "#/$defs/scope"},
     "limits": {"type": "array", "items": {"$ref": "#/$defs/limit"}}
   },
@@ -60,7 +60,7 @@
       "type": "object", "additionalProperties": false, "required": ["characteristic", "operator", "citations"],
       "properties": {
         "characteristic": {"description": "only a characteristic whose quantity the capability schema bounds, so no limit holds an unbounded value", "enum": ["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "enclosure", "nozzle_material"]},
-        "operator": {"enum": [">=", "<=", "between", "equals", "one_of"]},
+        "operator": {"enum": [">=", "<=", ">", "<", "between", "equals", "one_of"]},
         "quantity": {"description": "the limit as a value (>=, <=) or an interval (between), in one unit", "$ref": "manufacturing.schema.json#/$defs/quantity"},
         "relative": {"$ref": "#/$defs/relative"},
         "value": {"description": "the categorical requirement of equals and one_of, such as enclosure true or nozzle_material hardened_steel; no default", "type": ["string", "boolean", "array"], "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
@@ -70,7 +70,7 @@
         "citations": {"$ref": "manufacturing.schema.json#/$defs/sources"}
       },
       "allOf": [
-        {"if": {"properties": {"operator": {"enum": [">=", "<="]}}},
+        {"if": {"properties": {"operator": {"enum": [">=", "<=", ">", "<"]}}},
          "then": {"oneOf": [{"required": ["quantity"], "properties": {"quantity": {"required": ["value"]}}, "not": {"required": ["relative"]}},
                             {"required": ["relative"], "not": {"required": ["quantity"]}}],
                   "not": {"required": ["value"]}}},

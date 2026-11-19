@@ -80,6 +80,9 @@ class GuidelineFile(unittest.TestCase):
     def test_the_operator_is_the_criterion_enum_and_shapes_the_value(self) -> None:
         self.assert_cases({
             ">= with a value": (guideline(limits=[limit(operator=">=")]), True),
+            "> with a value": (guideline(limits=[limit(operator=">")]), True),
+            "< with a value": (guideline(limits=[limit(operator="<")]), True),
+            "< with an interval": (guideline(limits=[limit(operator="<", quantity=fx.quantity(lower=0.8, upper=1.2))]), False),
             "<= with a value": (guideline(limits=[limit(operator="<=")]), True),
             "between with an interval": (guideline(limits=[limit(operator="between", quantity=fx.quantity(lower=0.8, upper=1.2))]), True),
             "between with a single value": (guideline(limits=[limit(operator="between")]), False),

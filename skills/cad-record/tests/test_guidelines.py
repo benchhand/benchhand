@@ -415,6 +415,63 @@ class LineWidth(Directories):
         self.assertEqual([r.path for r in self.catalog().refused], ["g.yaml"])
 
 
+class StrictBounds(Directories):
+    """The strict operators `<` and `>` (#244) and main's `tightens` as the one tighten-or-relax order."""
+
+    def shipped_pair(self, general: str, specific: str, **extra: Any) -> Any:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("bridge_span", general, 5)]))
+        put(self.shipped, "n", guideline("fdm.nozzle.d0_4", [limit("bridge_span", specific, 5, **extra)], material_family=["pa"],
+                                         nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
+        return resolve(record(), self.catalog(), "bridge_span")
+
+    def test_a_strict_bound_resolves_with_its_operator_and_value(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("bridge_span", "<", 5), limit("min_wall", ">", 0.8)]))
+        catalog = self.catalog()
+        found = resolve(record(), catalog, "bridge_span")
+        self.assertEqual((found.status, found.operator, found.value), ("guideline", "<", mi.Quantity("mm", value=5)))
+        self.assertEqual((resolve(record(), catalog, "min_wall").operator, resolve(record(), catalog, "min_wall").value),
+                         (">", mi.Quantity("mm", value=0.8)))
+
+    def test_at_the_5_mm_boundary_a_strict_bound_tightens_a_non_strict_one(self) -> None:
+        found = self.shipped_pair("<=", "<")
+        self.assertEqual((found.operator, found.value, found.warnings), ("<", mi.Quantity("mm", value=5), ()))
+        self.assertEqual(found.provenance[0].guideline, "fdm.nozzle.d0_4@1")
+
+    def test_at_the_5_mm_boundary_a_non_strict_bound_does_not_relax_a_strict_one_without_relaxes(self) -> None:
+        found = self.shipped_pair("<", "<=")
+        self.assertEqual((found.operator, found.value, found.provenance[0].guideline), ("<", mi.Quantity("mm", value=5), "fdm.generic@1"))
+        self.assertTrue(any("without `relaxes`" in w for w in found.warnings), found.warnings)
+
+    def test_at_the_5_mm_boundary_a_non_strict_bound_relaxes_a_strict_one_with_relaxes(self) -> None:
+        found = self.shipped_pair("<", "<=", relaxes={"reason": "the nozzle set bridges to the limit", "citation": cite()[0]})
+        self.assertEqual((found.operator, found.value), ("<=", mi.Quantity("mm", value=5)))
+        self.assertTrue(any("relaxed to" in w for w in found.warnings), found.warnings)
+
+    def test_a_strict_lower_bound_tightens_its_non_strict_one_at_an_equal_limit(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 1.0)]))
+        put(self.shipped, "n", guideline("fdm.nozzle.d0_4", [limit("min_wall", ">", 1.0)], material_family=["pa"],
+                                         nozzle_diameter=fx.quantity(lower=0.35, upper=0.45)))
+        found = resolve(record(), self.catalog(), "min_wall")
+        self.assertEqual((found.operator, found.value, found.warnings), (">", mi.Quantity("mm", value=1.0), ()))
+
+    def test_equally_specific_sets_keep_the_strict_bound(self) -> None:
+        put(self.shipped, "x", guideline("fdm.material.x", [limit("bridge_span", "<=", 5)], material_family=["pa"]))
+        put(self.shipped, "y", guideline("fdm.material.y", [limit("bridge_span", "<", 5)], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "bridge_span")
+        self.assertEqual((found.operator, found.provenance[0].guideline), ("<", "fdm.material.y@1"))
+
+    def test_the_one_sided_operators_are_those_of_manufacturing_intent(self) -> None:
+        self.assertEqual((gl.LOWER_OPERATORS, gl.UPPER_OPERATORS), (mi.LOWER_BOUND_OPERATORS, mi.UPPER_BOUND_OPERATORS))
+
+    def test_an_operator_the_resolver_does_not_support_is_unknown(self) -> None:
+        odd = gl.Guideline("fdm.odd", 1, "TST", (), False, {"process": "fdm"},
+                           ({"characteristic": "bridge_span", "operator": "~=", "quantity": fx.quantity(5), "citations": cite()},),
+                           "odd.yaml", "shipped", "0" * 64)
+        found = gl.resolve_guidelines(gl.Catalog({"fdm.odd": odd}), gl.Context("fdm", {}, 0.4), "bridge_span")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("operator ~= is not supported", found.reasons[0])
+
+
 class Unknowns(Directories):
     def test_a_missing_value_falls_through_to_unknown(self) -> None:
         put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
