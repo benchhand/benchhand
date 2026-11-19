@@ -32,9 +32,10 @@ never builds. It refuses the release when any of these fails, and then writes no
   its scope resolved, no unresolved critical finding, an unvalidated trial only where the class
   permits one and only by approved waivers, no waiver at all for safety-critical service.
 
-It stages the copies, including the acceptance inventory under acceptance/, in
-.cad-work/release-<REV>/, writes and checks the manifest, then, under the revision's lock
-(layout.target_lock), claims hw/releases/<REV>/ and renames the stage onto it. A sealed package of
+It inspects an existing hw/releases/<REV>/ under the revision's lock (layout.target_lock), stages the
+copies, including the acceptance inventory under acceptance/, in .cad-work/release-<REV>/, writes and
+checks the manifest, then, under the lock again, inspects the revision once more, claims
+hw/releases/<REV>/ and renames the stage onto it. A sealed package of
 another manifest version is refused. A stale package (one that fails its seal) of this version,
 approval and frozen manifest is repaired: assembled again at its own release time, moved to
 .cad-work/replaced/ under the lock as the new one is claimed, and put back when the claim fails.
@@ -598,7 +599,8 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
 def run(hw: Path, rev: str, version: str, decision: str, now: datetime | None = None) -> tuple[int, dict[str, Any]]:
     hw = hw.resolve()
     target_rel = layout.load().path("release.package", {"REV": rev})
-    found = existing(hw, rev, version, decision) if os.path.lexists(layout.locate(hw, target_rel)) else None
+    with layout.target_lock(hw, target_rel):  # a repair holds it from the move-aside to the claim
+        found = existing(hw, rev, version, decision) if os.path.lexists(layout.locate(hw, target_rel)) else None
     if found is not None and found.repairable_from is None:
         return found.code, found.report  # the same frozen manifest releases again as a no-op, or a refusal
     repairing = found is not None  # a stale package of this release: sealed again at its own release time
