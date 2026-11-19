@@ -89,11 +89,13 @@ def _signature(found: os.stat_result) -> tuple[int, int, int, int, int]:
     return found.st_dev, found.st_ino, found.st_size, found.st_mtime_ns, found.st_ctime_ns
 
 
-def _settled(found: os.stat_result, hashed_at: int) -> bool:
-    """Whether a hash that started at `hashed_at` (ns) can stand for an object with the stat `found`: its last change
-    is at least TICK_NS older, so no later write can carry that change's timestamps. git's racy-git rule
-    (Documentation/technical/racy-git.txt), with the store's clock in place of the index file's mtime."""
-    return max(found.st_mtime_ns, found.st_ctime_ns) <= hashed_at - TICK_NS
+def _settled(found: os.stat_result, hashed_at: int, now: int) -> bool:
+    """Whether a hash that started at `hashed_at` (ns) can stand, at `now` (ns), for an object with the stat `found`:
+    its last change is at least TICK_NS older, so no later write can carry that change's timestamps. git's racy-git
+    rule (Documentation/technical/racy-git.txt), with the store's clock in place of the index file's mtime. A clock
+    that reads earlier than `hashed_at` stepped back, and could stamp a new write like the change the hash saw, so
+    the hash does not stand then. Nor does a hash older than the ctime: ctime <= hashed_at - TICK_NS < hashed_at."""
+    return hashed_at <= now and max(found.st_mtime_ns, found.st_ctime_ns) <= hashed_at - TICK_NS
 
 
 def _link_or_copy(source: Path, target: Path) -> None:
@@ -166,7 +168,8 @@ class Store:
 
     def holds(self, digest: Any) -> bool:
         """Whether the object `digest` exists and its bytes still hash to its name. It answers from an earlier hash
-        while the object's stat is unchanged and its last change is at least TICK_NS older than that hash."""
+        while the object's stat is unchanged, its last change is at least TICK_NS older than that hash, and the
+        clock reads no earlier than that hash did."""
         if not isinstance(digest, str) or not SHA.fullmatch(digest):
             return False
         path = self._path("cache.part_objects", digest)
@@ -178,7 +181,7 @@ class Store:
         if not stat.S_ISREG(found.st_mode):
             return False
         signature, hashed_at, matched = self._checked.get(digest, (None, 0, False))
-        if signature == _signature(found) and _settled(found, hashed_at):
+        if signature == _signature(found) and _settled(found, hashed_at, time.time_ns()):
             return matched
         return self._hash(digest)
 
@@ -340,7 +343,9 @@ class Store:
         (`stale: ...`) with `destination` untouched. Where the platform allows, it swaps an existing `destination`
         out in one step. Elsewhere it moves the old folder aside, renames the new one in, and moves the old one
         back if that rename fails. Only there can a kill between the two renames leave `destination` absent,
-        with the old folder beside it as `.<name>.<pid>.replaced`."""
+        with the old folder beside it as `.<name>.<pid>.replaced`. It hashes each member it laid down before
+        it renames the folder into place and never after, so a write through an object between the hash and the
+        rename goes unseen. No production code calls `place`, and `place_object` has the same window (#250)."""
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         members = _members(record)
