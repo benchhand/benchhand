@@ -1451,9 +1451,10 @@ class ReadbackPacketGateTests(unittest.TestCase):
     DIMENSION = "cad.declared_dimensions@IF-002#heat_set_1"
     MANIFEST = "a" * 64
 
-    def gate(self, *, agreement: str = "pass", dimension: str = "pass") -> tuple[dict, list]:
+    def gate(self, *, agreement: str = "pass", dimension: str = "pass", integrity: str = "pass") -> tuple[dict, list]:
         """(the evidence results by obligation id, the layout gate findings) for one packet built by check from rows
-        where TST-0001's occurrence has the `agreement` status and the heat set the `dimension` status."""
+        where TST-0001's occurrence has the `agreement` status, the heat set the `dimension` status and the version's
+        artifact_integrity the `integrity` status."""
         acceptance = acceptance_fixtures()
         fx, mi, evidence = acceptance.fx, acceptance.mi, acceptance.evidence
         documents = {rel: data for rel, data in fx.tst_record().items() if not rel.startswith("_")}
@@ -1462,7 +1463,7 @@ class ReadbackPacketGateTests(unittest.TestCase):
         record = mi.normalize_record(documents)
         expected = [o for o in mi.required_checks(record) if o.family in check.READBACK_FAMILIES]
         self.assertTrue({self.AGREEMENT, self.DIMENSION} <= {o.id for o in expected})
-        checks = CheckRuleTests.readback_checks()
+        checks = CheckRuleTests.readback_checks(integrity=integrity)
         checks["glb_step_agreement"] = check.agreement_result(
             {"TST-0001": {"status": agreement, "reason": f"the GLB node is {agreement}"},
              "TST-0002": {"status": "pass"}, "TST-0004": {"status": "pass"}}, [], 0.05)
@@ -1497,6 +1498,12 @@ class ReadbackPacketGateTests(unittest.TestCase):
         results, gate = self.gate()
         self.assertEqual((results[self.AGREEMENT], results[self.DIMENSION]), ("pass", "pass"))
         self.assertEqual(self.blocking(gate, self.AGREEMENT) + self.blocking(gate, self.DIMENSION), [])
+
+    def test_a_passing_declared_dimension_on_changed_sealed_files_fails_and_blocks_the_gate(self) -> None:
+        """The bore rows passed, but they were read from files that no longer match the sealed manifest: no pass."""
+        results, gate = self.gate(integrity="fail")
+        self.assertEqual(results[self.DIMENSION], "fail")
+        self.assertEqual(self.blocking(gate, self.DIMENSION), [("gate.fail", "error")])
 
     def test_an_abstaining_agreement_is_unknown_and_leaves_the_gate_unresolved(self) -> None:
         results, gate = self.gate(agreement="unknown")
