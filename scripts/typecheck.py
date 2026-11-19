@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "mypy.ini"
 CHANGED_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
+    "skills/cad-analysis/scripts/fea_near_support.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-analysis/scripts/fea_reaction.py",
     "skills/cad-analysis/scripts/fea_static.py",
@@ -129,6 +130,7 @@ CHANGED_FILES = (
 STRICT_FILES = (
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_linearise.py",
+    "skills/cad-analysis/scripts/fea_near_support.py",
     "skills/cad-analysis/scripts/fea_part_selection.py",
     "skills/cad-analysis/scripts/fea_reaction.py",
     "skills/cad-analysis/scripts/fea_stress.py",

@@ -28,6 +28,8 @@ import yaml
 import fea_conditions as conditions
 import fea_modes as modes
 import fea_reaction as reactions
+import fea_near_support as near_support
+import fea_stress as fea_stress_rules
 import fea_stress_study as stress_study
 from fea_part_selection import OCCURRENCE_REF, selected_face_indices as _selected_face_indices
 from freecad_lookup import find_freecad
@@ -390,6 +392,9 @@ def _combined_stress_result(solves: dict[str, dict[str, Any]], sizes: dict[str, 
                                          stress_study.fallback_level(solves[label].get("mesh_quality") or {}))
             for label in solves}
     found = stress_study.run_study(runs["coarse"], runs["fine"])
+    if found.get("outcome") == fea_stress_rules.SETTLED_AWAY_FROM_SUPPORT:
+        # The peak sits on the exclusion boundary: linearise on the fine solve, gated by the cross-check (#209).
+        found["near_support"] = near_support.near_support_fields(dirs["fine"], sizes["coarse"], sizes["fine"])
     found["runs"] = {label: {"evidence": dirs[label].name, "mesh_size_mm": sizes[label]} for label in solves}
     return {
         "run_id": fine["run_id"], "part": coarse.get("part"), "occurrence": coarse.get("occurrence"),
@@ -764,6 +769,7 @@ def _producer_code_hashes() -> dict[str, str]:
              Path(__file__).with_name("ccx_failure.py"), Path(__file__).with_name("fea_conditions.py"),
              Path(__file__).with_name("mesh_quality.py"), Path(__file__).with_name("fea_modes.py"),
              Path(__file__).with_name("fea_stress.py"), Path(__file__).with_name("fea_stress_study.py"),
+             Path(__file__).with_name("fea_near_support.py"), Path(__file__).with_name("fea_linearise.py"),
              conditions.INTENT_PATH, *conditions.FRAME_CODE, *conditions.SCHEMA_CODE, Path(SOLVERS.__file__))
     return {path.name: _file_digest(path) for path in paths}
 

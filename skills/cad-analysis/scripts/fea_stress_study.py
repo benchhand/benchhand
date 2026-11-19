@@ -97,6 +97,50 @@ class ConnectivityError(ValueError):
     """The ccx input holds no usable C3D4 or C3D10 element connectivity."""
 
 
+def _force_entry(line: str) -> tuple[int, int, float]:
+    """The node, the degree of freedom (0 to 2) and the force of one `*CLOAD` line."""
+    fields = [f.strip() for f in line.split(",")]
+    try:
+        if len(fields) != 3 or _NODE.fullmatch(fields[0]) is None or fields[1] not in ("1", "2", "3"):
+            raise ValueError(line)
+        force = float(fields[2])
+        if not math.isfinite(force):
+            raise ValueError(line)
+        return int(fields[0]), int(fields[1]) - 1, force
+    except ValueError:
+        raise BoundaryNodesError(f"{line[:40]!r} is not a node force record") from None
+
+
+def load_blocks(inp: str) -> list[dict[int, tuple[float, float, float]]]:
+    """The nodal forces of each `*CLOAD` block of a FreeCAD-written ccx input: one dict per block, node to (fx, fy, fz).
+
+    FreeCAD writes one block per force constraint, so a block is one load face. A node's zero load is kept, as
+    `boundary_nodes` counts it a load node. Raises `BoundaryNodesError` when a line is not a `node, 1 to 3, force`
+    record or a node and degree of freedom repeats in one block.
+    """
+    blocks: list[dict[int, list[float]]] = []
+    entered: set[tuple[int, int]] = set()
+    inside = False
+    for raw in inp.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            inside = line.upper().startswith("*CLOAD")
+            if inside:
+                blocks.append({})
+                entered = set()
+            continue
+        if not inside:
+            continue
+        node, dof, force = _force_entry(line)
+        if (node, dof) in entered:
+            raise BoundaryNodesError(f"node {node} has two forces on degree of freedom {dof + 1}")
+        entered.add((node, dof))
+        blocks[-1].setdefault(node, [0.0, 0.0, 0.0])[dof] = force
+    return [{n: (c[0], c[1], c[2]) for n, c in block.items()} for block in blocks if block]
+
+
 # Nodes per element of each solid type `element_connectivity` reads. The ccx 2.23 manual numbers them (sections
 # 6.2.6 and 6.2.7; Figure 63 for C3D10): the four corners, then for C3D10 the mid-edge nodes of edges 1-2, 2-3, 3-1,
 # 1-4, 2-4 and 3-4. *ELEMENT continues a record only past 16 entries, so neither type has a continuation line.

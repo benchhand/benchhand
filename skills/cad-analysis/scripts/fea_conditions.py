@@ -38,6 +38,7 @@ from typing import Any, Mapping
 import yaml
 
 import fea_modes
+import fea_near_support
 import fea_stress
 
 INTENT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "manufacturing_intent.py"
@@ -92,7 +93,7 @@ LIMITS = (
     "face loads only: no self-weight or inertia load",
     "peak von Mises stress at load faces, constraints and sharp re-entrant corners depends on the mesh",
     f"a stress case reads no stress within {fea_stress.K_EXCLUSION} x h_coarse of a fixed or load face: a peak on "
-    "that cutoff gives no strength value, and the route to one at a support is linearisation (#209)",
+    "that cutoff gives a strength value only through a cross-checked linearisation at the support (#209)",
     "a yield safety factor is not a fatigue, creep, wear, impact, buckling or service-life margin",
     "simulation-supported evidence at most, never physical validation",
 )
@@ -1074,7 +1075,7 @@ def _stress_strength(obligation: Mapping[str, Any], result: Mapping[str, Any], a
     if criterion is None:
         return _row(obligation, "unknown", a, subject, ["no sourced acceptance criterion: name the requirement under "
                                                         "acceptance.strength"], None, units, STUDY_STRENGTH)
-    sigma, why = _study_sigma(result.get("stress_study"))
+    sigma, why = _study_sigma(result.get("stress_study"), a)
     used = _yield_used(a)
     factor = used / sigma if sigma is not None and used is not None else None
     if factor is None or not math.isfinite(factor):
@@ -1086,18 +1087,56 @@ def _stress_strength(obligation: Mapping[str, Any], result: Mapping[str, Any], a
     return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, factor, units, STUDY_STRENGTH, criterion)
 
 
-def _study_sigma(found: Any) -> tuple[float | None, str | None]:
+DUCTILE_FORMS = frozenset({"wrought", "sheet", "rod"})
+
+
+def _near_support_barrier(a: Assessment) -> str | None:
+    """Why the case's material cannot take a linearised strength check at first yield, or None when it can.
+
+    Linearisation at first yield assumes isotropic ductile material. The profile schema holds no ductility field, so
+    an isotropic wrought, sheet or rod form stands in for it, and so does a yield that is a sourced allowable. PETG
+    and every other printed, cast or moulded material, and any effective isotropic model, stay unknown until a
+    sourced allowable exists."""
+    profile = a.material.get("profile") or {}
+    isotropic = (a.material.get("isotropy") or {}).get("model") == "isotropic"
+    allowable = any(row.get("input") == "yield" and row.get("basis") == "allowable"
+                    for row in a.material.get("properties") or ())
+    if isotropic and (profile.get("form") in DUCTILE_FORMS or allowable):
+        return None
+    return (f"the material ({profile.get('id')}, form {profile.get('form')}) is not shown ductile and isotropic: "
+            "a linearised first-yield check needs an isotropic wrought, sheet or rod form or a sourced yield allowable")
+
+
+def _near_support_sigma(found: Mapping[str, Any], a: Assessment) -> tuple[float | None, str | None]:
+    """The linearised stress (MPa) of a study settled on the exclusion boundary, or None and why there is none."""
+    near: Any = found.get("near_support")
+    lead = ("the two-mesh stress study settled only on the exclusion boundary, where the stress rises toward the "
+            "support: its figure is information only")
+    if not isinstance(near, Mapping):
+        return None, f"{lead}, and no linearisation at the support was made (#209)"
+    if near.get("outcome") != fea_near_support.LINEARISED:
+        return None, f"{lead}; linearisation at the support is unknown ({near.get('reasons')}): {near.get('message')}"
+    barrier = _near_support_barrier(a)
+    if barrier is not None:
+        return None, f"{lead}; {barrier}"
+    sigma, info = near.get("sigma_mpa"), found.get("sigma_info_mpa")
+    if not _positive(sigma) or not _positive(info):
+        return None, f"{lead}; the linearisation states no positive finite stress"
+    # The linearised stress does not replace the kept-region peak: the larger of the two governs.
+    return max(float(sigma), float(info)), None
+
+
+def _study_sigma(found: Any, a: Assessment) -> tuple[float | None, str | None]:
     """The stress (MPa) a two-mesh study stands behind as a strength value, or None and why it stands behind none.
 
-    That is a `settled`, strength-eligible study's `sigma_mpa`, the larger kept peak of its two meshes. Its
-    information-only figure never counts, and neither does anything outside the study."""
+    That is a `settled`, strength-eligible study's `sigma_mpa`, the larger kept peak of its two meshes. A study
+    settled on the exclusion boundary gives one only through a linearisation that passed its cross-check, on a
+    material that takes it (`_near_support_sigma`). Anything else gives none."""
     if not isinstance(found, Mapping):
         return None, "the stress result carries no two-mesh stress study"
     outcome = found.get("outcome")
     if outcome == fea_stress.SETTLED_AWAY_FROM_SUPPORT:
-        return None, ("the two-mesh stress study settled only on the exclusion boundary, where the stress rises toward "
-                      "the support: its figure is information only, and linearisation at the support (#209) is the "
-                      "route to a strength value")
+        return _near_support_sigma(found, a)
     if outcome != fea_stress.SETTLED:
         return None, f"the two-mesh stress study is {outcome}: {found.get('message')}"
     sigma: Any = found.get("sigma_mpa")
