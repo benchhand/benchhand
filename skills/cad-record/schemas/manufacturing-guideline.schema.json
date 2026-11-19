@@ -63,7 +63,7 @@
         "operator": {"enum": [">=", "<=", ">", "<", "between", "equals", "one_of"]},
         "quantity": {"description": "the limit as a value (>=, <=) or an interval (between), in one unit", "$ref": "manufacturing.schema.json#/$defs/quantity"},
         "relative": {"$ref": "#/$defs/relative"},
-        "value": {"description": "the categorical requirement of equals and one_of, such as enclosure true or nozzle_material hardened_steel; no default", "type": ["string", "boolean", "array"], "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "value": {"description": "the categorical requirement of equals and one_of, such as enclosure true or nozzle_material hardened_steel; no default", "type": ["string", "boolean", "array"], "minItems": 1, "uniqueItems": true, "items": {"type": ["string", "boolean"], "minLength": 1}},
         "applies_to": {"$ref": "#/$defs/applies_to"},
         "disputed": {"description": "true when the cited sources disagree; the stricter value applies", "type": "boolean"},
         "relaxes": {"$ref": "#/$defs/relaxes"},
@@ -96,7 +96,11 @@
         {"if": {"properties": {"characteristic": {"enum": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"]}}, "required": ["characteristic"]},
          "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_deviation"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}},
         {"if": {"properties": {"characteristic": {"enum": ["enclosure", "nozzle_material"]}}, "required": ["characteristic"]},
-         "then": {"properties": {"operator": {"enum": ["equals", "one_of"]}}}}
+         "then": {"properties": {"operator": {"enum": ["equals", "one_of"]}}}},
+        {"if": {"properties": {"characteristic": {"const": "enclosure"}}, "required": ["characteristic"]},
+         "then": {"properties": {"value": {"description": "a boolean fact: the requirement is true or false", "anyOf": [{"type": "boolean"}, {"type": "array", "items": {"type": "boolean"}}]}}}},
+        {"if": {"properties": {"characteristic": {"const": "nozzle_material"}}, "required": ["characteristic"]},
+         "then": {"properties": {"value": {"description": "lowercase, like the scope names and the material facts", "anyOf": [{"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"}, {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"}}]}}}}
       ]
     }
   }
