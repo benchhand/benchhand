@@ -450,6 +450,14 @@ class LineWidth(Directories):
         found = resolve(record(nozzle=None, filler="cf"), self.catalog(), "min_wall")
         self.assertEqual((found.status, found.value), ("guideline", mi.Quantity("mm", value=2.0)))
 
+    def test_an_unresolved_limit_is_not_hidden_by_a_higher_candidate_that_is_rejected_as_a_relaxation(self) -> None:
+        put(self.shipped, "g", guideline("fdm.generic", [limit("min_wall", ">=", 0.8)]))
+        put(self.shipped, "pa", guideline("fdm.material.pa", [per_line("min_wall", 3, 0.8)], material_family=["pa"]))
+        put(self.shipped, "cf", guideline("fdm.material.pa_cf", [limit("min_wall", ">=", 0.5)], material_family=["pa"], filler=["cf"]))
+        found = resolve(record(nozzle=None, filler="cf"), self.catalog(), "min_wall")
+        self.assertEqual(found.status, "unknown")
+        self.assertIn("fdm.material.pa@1 min_wall: the profile states neither a line width nor a nozzle diameter", found.reasons[0])
+
     def test_a_relative_limit_on_an_angle_is_refused_by_name(self) -> None:
         bad = guideline("fdm.generic", [])
         bad["limits"] = [limit("overhang_angle", "<=", relative={"relative_to": "line_width", "factor": 1, "floor": fx.quantity(40, "deg")})]
