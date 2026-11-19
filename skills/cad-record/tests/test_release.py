@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import fcntl
 import hashlib
@@ -24,7 +25,7 @@ import tomllib
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from unittest import mock
 
 import yaml
@@ -1015,6 +1016,69 @@ class Repair(ReleaseCase):
                 self.assertEqual(((code, report["status"]), report.get("stage")), (expected, None), report)
                 stages = sorted((hw.parent / ".cad-work" / "release-A").glob("stage-*"))
                 self.assertEqual(stages, [], "the losing writer removed its stage")
+
+    def test_a_writer_that_starts_during_a_repair_waits_for_it_and_finds_it_sealed(self) -> None:
+        hw, _ = self.released()
+        DAMAGE["a changed file"](hw / "releases" / "A")
+        a_moved, release_a, b_at_lock = threading.Event(), threading.Event(), threading.Event()
+        guard = 30  # seconds: only a hang guard, never part of the logic
+        outcome: dict[str, tuple[int, dict[str, Any]]] = {}
+        calls: list[tuple[str, str]] = []  # (writer, call) for B's inspections and stages, in order
+        real_claim, real_lock, real_existing, real_stage = (release.layout.claim, release.layout.target_lock,
+                                                            release.existing, release.stage)
+
+        def claim_after_a_pause(staged: Path, target: Path, target_rel: str) -> None:
+            if threading.current_thread().name == "writer-a" and not a_moved.is_set():
+                a_moved.set()  # A has moved the stale package aside and not claimed its repair yet
+                release_a.wait(guard)
+            real_claim(staged, target, target_rel)
+
+        @contextlib.contextmanager
+        def watched_lock(*arguments: Any) -> Iterator[None]:
+            if threading.current_thread().name == "writer-b":
+                calls.append(("b", "lock"))
+                b_at_lock.set()
+            with real_lock(*arguments):
+                yield
+
+        def watched(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+            def call(*arguments: Any) -> Any:
+                if threading.current_thread().name == "writer-b":
+                    calls.append(("b", name))
+                return real(*arguments)
+            return call
+
+        def writer(name: str) -> threading.Thread:
+            def run() -> None:
+                outcome[name] = self.release(hw)
+            return threading.Thread(target=run, name=f"writer-{name}", daemon=True)
+
+        a, b = writer("a"), writer("b")
+        with mock.patch.object(release.layout, "claim", claim_after_a_pause), \
+                mock.patch.object(release.layout, "target_lock", watched_lock), \
+                mock.patch.object(release, "existing", watched("existing", real_existing)), \
+                mock.patch.object(release, "stage", watched("stage", real_stage)):
+            a.start()
+            try:
+                self.assertTrue(a_moved.wait(guard), "writer A never reached its claim")
+                b.start()
+                self.assertTrue(b_at_lock.wait(guard), "writer B never reached the lock")
+                self.assertTrue(self.lock_held(hw), "A holds the lock from the move-aside to the claim")
+                self.assertEqual(calls, [("b", "lock")], "B inspects nothing before it holds the lock")
+            finally:
+                release_a.set()
+                a.join(guard)
+                if b.ident is not None:
+                    b.join(guard)
+        self.assertFalse(a.is_alive() or b.is_alive(), "a writer hung")
+        self.assertEqual(outcome["a"][0], 0, outcome["a"][1].get("findings"))
+        self.assertEqual((outcome["b"][0], outcome["b"][1].get("already_sealed")), (0, True), outcome["b"][1])
+        self.assertNotIn(("b", "stage"), calls, "B found the repaired package and staged nothing")
+        self.assertEqual(layout.verify(hw / "releases" / "A"), [], "A's repair is in place")
+        moved = self.replaced(hw)
+        self.assertEqual(len(moved), 1, "only A moved a package aside")
+        self.assertTrue(all(layout.verify(path) for path in moved), "no sound package was moved aside")
+        self.assertEqual(sorted((hw.parent / ".cad-work" / "release-A").glob("stage-*")), [], "no stage is left")
 
     def test_a_failed_repair_puts_the_stale_package_back(self) -> None:
         failures = {  # the os call that fails inside the claim, and how it fails
