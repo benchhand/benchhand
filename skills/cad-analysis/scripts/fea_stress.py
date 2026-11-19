@@ -186,12 +186,19 @@ def _record(line: str, block: str, width: int) -> tuple[int, list[float]]:
 
 
 def _records(lines: list[str], start: int, block: str, width: int) -> Iterable[tuple[int, list[float]]]:
-    """Yield the ` -1` records of the block opened just before `start`; the block must end with ` -3`."""
+    """Yield the ` -1` records of the block opened just before `start`; the block must end with ` -3`.
+
+    ` -5` lines describe the block's components, so they come before its first record; one after it is a `FrdError`.
+    """
+    started = False
     for line in lines[start:]:
         if line.startswith(" -3"):
             return
         if line.startswith(" -1"):
+            started = True
             yield _record(line, block, width)
+        elif line.startswith(" -5") and started:
+            raise FrdError(f"{block} block has a component line after its first record: {line.strip()[:40]!r}")
         elif not line.startswith((" -2", " -5")):
             raise FrdError(f"{block} block is cut off by {line.strip()[:20] or 'a blank line'!r}")
     raise FrdError(f"{block} block is cut off by the end of the file")
@@ -274,7 +281,8 @@ def read_frd(text: str) -> FrdResult:
     The last STRESS and DISP blocks are used (the final increment). Raises `FrdError` (a ValueError) when
     the file has no node, stress or displacement block, when a block lacks its ` -3` terminator, or when a record is malformed (no numeric node id,
     a value that is not a number or is cut off, too few values, a STRESS record of more than six),
-    when a node id repeats inside one block, or when a STRESS block names its components in another order than ccx's.
+    when a node id repeats inside one block, when a STRESS block names its components in another order than ccx's,
+    or when a ` -5` component line follows a block's first record.
     Whether every node has a result is checked by `compare_levels`.
     """
     lines = text.splitlines()
