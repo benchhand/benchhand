@@ -1,7 +1,7 @@
 {
  "counts": {
-  "C901": 169,
-  "PLR0912": 86,
+  "C901": 168,
+  "PLR0912": 85,
   "PLR0915": 50
  },
  "offenders": [
@@ -20,7 +20,6 @@
   "C901 skills/cad-design/scripts/form_check.py::probe_solid",
   "C901 skills/cad-design/scripts/process_checks/additive.py::support",
   "C901 skills/cad-design/scripts/process_checks/dispatch.py::_findings",
-  "C901 skills/cad-design/scripts/process_checks/route.py::operation_plan",
   "C901 skills/cad-design/scripts/process_checks/secondary.py::access",
   "C901 skills/cad-design/scripts/process_checks/shaping.py::draft",
   "C901 skills/cad-design/scripts/process_checks/sheet.py::_tab_slot_fits",
@@ -181,7 +180,6 @@
   "PLR0912 skills/cad-design/scripts/form_check.py::check",
   "PLR0912 skills/cad-design/scripts/form_check.py::probe_solid",
   "PLR0912 skills/cad-design/scripts/process_checks/additive.py::support",
-  "PLR0912 skills/cad-design/scripts/process_checks/route.py::operation_plan",
   "PLR0912 skills/cad-design/scripts/process_checks/shaping.py::draft",
   "PLR0912 skills/cad-drawings/scripts/assembly_check.py::_check_parts_list",
   "PLR0912 skills/cad-drawings/scripts/assembly_check.py::read_intent",

@@ -1144,6 +1144,28 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def _bundle_problems(directory: Path, version: str, version_manifest_sha256: str) -> tuple[Any, list[str]]:
+    """The parsed result.json of a check bundle (None when unreadable) and why it is no valid packet."""
+    problems: list[str] = []
+    data: Any = None
+    try:
+        data = json.loads((directory / "result.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        problems.append(f"cannot read result.json: {error}")
+    else:
+        if not (isinstance(data, dict) and "expected" in data and "outcomes" in data):
+            problems.append("result.json is not a required-check packet: it has no expected and outcomes")
+    if not (directory / layout.MANIFEST).is_file():
+        problems.append(f"it has no {layout.MANIFEST}")
+    elif not problems:
+        if reason := layout.stale(directory):  # a sealed bundle's manifest parses
+            problems = [reason]
+        elif json.loads((directory / layout.MANIFEST).read_text(encoding="utf-8")).get(
+                "version_manifest_sha256") != version_manifest_sha256:
+            problems = [f"stale: it is bound to another build of {version}"]
+    return data, problems
+
+
 def collect_packets(hw: Path, version: str, version_manifest_sha256: str) -> tuple[list[ProducerPacket], list[Finding]]:
     """The producer check packets sealed for `version` (hw/checks/<V>/<S>/result.json, each a
     manufacturing check result), and a packet.invalid finding for each bundle whose result.json cannot be
@@ -1157,23 +1179,7 @@ def collect_packets(hw: Path, version: str, version_manifest_sha256: str) -> tup
         if not result.is_file():
             continue  # validate.py reports a bundle folder without its result
         rel = layout.relative(hw, directory)
-        problems: list[str] = []
-        data: Any = None
-        try:
-            data = json.loads(result.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            problems.append(f"cannot read result.json: {error}")
-        else:
-            if not (isinstance(data, dict) and "expected" in data and "outcomes" in data):
-                problems.append("result.json is not a required-check packet: it has no expected and outcomes")
-        if not (directory / layout.MANIFEST).is_file():
-            problems.append(f"it has no {layout.MANIFEST}")
-        elif not problems:
-            if reason := layout.stale(directory):  # a sealed bundle's manifest parses
-                problems = [reason]
-            elif json.loads((directory / layout.MANIFEST).read_text(encoding="utf-8")).get(
-                    "version_manifest_sha256") != version_manifest_sha256:
-                problems = [f"stale: it is bound to another build of {version}"]
+        data, problems = _bundle_problems(directory, version, version_manifest_sha256)
         if problems:
             findings.append(Finding("packet.invalid", rel, f"{rel}: " + "; ".join(problems)))
             continue
