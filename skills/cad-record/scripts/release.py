@@ -232,7 +232,7 @@ def _check_names(release: Release, record: Path, current: set[str], snapshot: di
     for name in sorted(set(snapshot) - current):
         if name.startswith(SHIPPED_COPIES):  # a shipped guideline set copied in when the version was built; hw/ holds no such file
             if not (record / name).is_file() or sha256(record / name) != snapshot[name]:
-                release.refuse(f"hw/{name}", "tampered", f"{version}/record/{name} differs from the sha256 the version sealed for it")
+                release.refuse(f"hw/{name}", "stale", f"{version}/record/{name} differs from the sha256 the version sealed for it; produce it again")
             continue
         release.refuse(f"hw/{name}", "changed", f"hw/{name} was removed after {version} was frozen")
 
