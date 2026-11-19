@@ -38,7 +38,12 @@ sources: Kezar Engineering's summary of Annex 5-A, Mackenzie (PVP2017) and Kalni
 Annex C (C.4.4) states the same split. Kalnins shows that an SCL through a singularity still converges under
 refinement. Each clause still needs checking against the licensed text.
 
-Anything the module cannot stand behind raises `LinearisationError` with a named `Refusal`, never a guess.
+Anything the module cannot stand behind raises `LinearisationError` with a named `Refusal`, never a guess. That
+covers an element map that does not invert at a point, and finite input whose arithmetic leaves the float range.
+
+Each call screens every element and node of the mesh and builds a box for each element, so it costs time in
+proportion to the mesh. A few SCLs per solve make that acceptable. A caller with many lines (#209 PR-c) may add
+a spatial index.
 
 Standard library only, with `fea_stress`, `fea_stress_study` and `mesh_quality`, which are too.
 """
@@ -46,8 +51,9 @@ Standard library only, with `fea_stress`, `fea_stress_study` and `mesh_quality`,
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -72,6 +78,9 @@ _NEWTON_STEP = 1e-13
 _BOX_PAD = 0.25
 # A tangent whose part normal to the line is below this share of its length is along the line.
 _TANGENT_FLOOR = 1e-9
+# A 3 x 3 matrix is singular when its determinant is at most this share of its Frobenius norm cubed, the
+# determinant's scale. Rounding leaves a determinant near 1e-16 of that scale where the exact one is zero.
+_SINGULAR = 1e-12
 
 
 class Refusal(StrEnum):
@@ -82,9 +91,12 @@ class Refusal(StrEnum):
     TENSOR_NOT_FINITE = "tensor_not_finite"  # a tensor component is nan or infinite
     NODE_MISSING = "node_missing"  # a node of the mesh has no finite coordinates
     OUTSIDE_MESH = "outside_mesh"  # a point lies in no element
-    UNSUPPORTED_ELEMENT = "unsupported_element"  # a point lies only near an element that is not C3D4 or C3D10
+    INVERSION_FAILED = "inversion_failed"  # no element holds a point, and an element map did not invert there
+    UNSUPPORTED_ELEMENT = "unsupported_element"  # an element is not a C3D4 or C3D10 of its node count
     ZERO_LENGTH = "zero_length"
     LINE_NOT_FINITE = "line_not_finite"
+    THICKNESS_OUT_OF_RANGE = "thickness_out_of_range"  # the line's length cubed is not a normal float
+    VALUE_OUT_OF_RANGE = "value_out_of_range"  # an intermediate or output value overflows or is not finite
     TOO_FEW_POINTS = "too_few_points"
     EVEN_POINTS = "even_points"  # Simpson's rule needs an odd number of points
     TANGENT_ALONG_LINE = "tangent_along_line"  # the tangent hint has no part normal to the line
@@ -168,12 +180,13 @@ def _fmt(p: Sequence[float]) -> str:
 
 
 def _solve(m: Sequence[Sequence[float]], b: Point) -> Point | None:
-    """The solution of the 3 x 3 system m x = b by Cramer's rule, or None when m is singular."""
+    """The solution of the 3 x 3 system m x = b by Cramer's rule, or None when m is singular (see _SINGULAR)."""
     def det(a: Sequence[Sequence[float]]) -> float:
         return (a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
                 + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]))
     d = det(m)
-    if not math.isfinite(d) or d == 0.0:
+    norm = math.hypot(*(v for row in m for v in row))
+    if not math.isfinite(d) or not abs(d) > _SINGULAR * norm * norm * norm:
         return None
     columns = [[[b[r] if c == k else m[r][c] for c in range(3)] for r in range(3)] for k in range(3)]
     return (det(columns[0]) / d, det(columns[1]) / d, det(columns[2]) / d)
@@ -182,7 +195,11 @@ def _solve(m: Sequence[Sequence[float]], b: Point) -> Point | None:
 # --- the line --------------------------------------------------------------------------------------------------
 
 def _line(start: Point, end: Point, points: int) -> tuple[float, Point]:
-    """The length and unit direction of the line, after the checks on the line and the point count."""
+    """The length and unit direction of the line, after the checks on the line and the point count.
+
+    Eq 5-A.2 divides by the thickness squared, so the thickness cubed must be a normal float: that keeps the
+    square and the cube clear of underflow and overflow.
+    """
     if points < MIN_POINTS:
         raise LinearisationError(Refusal.TOO_FEW_POINTS, f"{points} points, fewer than {MIN_POINTS}")
     if points % 2 == 0:
@@ -192,6 +209,10 @@ def _line(start: Point, end: Point, points: int) -> tuple[float, Point]:
     length = math.dist(start, end)
     if not length > 0.0:
         raise LinearisationError(Refusal.ZERO_LENGTH, f"the line starts and ends at {_fmt(start)}")
+    cube = length * length * length  # inf on overflow, where ** would raise
+    if not sys.float_info.min <= cube <= sys.float_info.max:
+        raise LinearisationError(Refusal.THICKNESS_OUT_OF_RANGE, f"the line is {length:.6g} long, so its cube "
+                                                                f"leaves the range of a normal float")
     return length, _scale(_sub(end, start), 1.0 / length)
 
 
@@ -212,11 +233,17 @@ def _axes(normal: Point, tangent: Point | None) -> tuple[Point, Point]:
 # --- the mesh --------------------------------------------------------------------------------------------------
 
 def _check_mesh(result: fs.FrdResult, elements: Mapping[int, study.Element]) -> None:
-    """Refuse a mesh node without finite coordinates, or without a complete, finite tensor."""
+    """Refuse an element that is not a C3D4 or C3D10 of its node count, wherever it lies, and a mesh node without
+    finite coordinates or without a complete, finite tensor. Every element passes before any box is built."""
     if not result.stress:
         raise LinearisationError(Refusal.TENSOR_MISSING, "the result holds no stress tensor")
     for element_id in sorted(elements):
-        for node in elements[element_id].nodes:
+        element = elements[element_id]
+        if study.ELEMENT_NODES.get(element.kind) != len(element.nodes):
+            raise LinearisationError(Refusal.UNSUPPORTED_ELEMENT, f"element {element_id} is a {element.kind[:20]} "
+                                                                 f"of {len(element.nodes)} nodes, not a C3D4 of 4 "
+                                                                 f"or a C3D10 of 10")
+        for node in element.nodes:
             where = f"node {node} of element {element_id}"
             point = result.coordinates.get(node)
             if point is None or not all(math.isfinite(c) for c in point):
@@ -237,10 +264,6 @@ class _Cell:
     xyz: tuple[Point, ...]
     low: Point
     high: Point
-
-    @property
-    def supported(self) -> bool:
-        return study.ELEMENT_NODES.get(self.element.kind) == len(self.element.nodes)
 
     def boxes(self, p: Point) -> bool:
         return all(self.low[k] <= p[k] <= self.high[k] for k in range(3))
@@ -296,61 +319,68 @@ def _shape_gradients(kind: str, xi: Point) -> list[Point]:
     return corners + middles
 
 
-def _natural(cell: _Cell, p: Point) -> Point | None:
-    """The natural coordinates of `p` in `cell`, or None when its map does not invert there.
+class _NoInverse(Exception):
+    """An element map that does not invert at a point. The message says how, after the element's id."""
+
+
+def _natural(cell: _Cell, p: Point) -> Point:
+    """The natural coordinates of `p` in `cell`. Raises `_NoInverse` when the element's map does not invert there.
 
     The corners' affine map gives the start, which is exact for a C3D4 and for a straight-sided C3D10. Newton
-    steps on the quadratic map then correct it for a curved or unevenly noded C3D10.
+    steps on the quadratic map then correct it for a curved or unevenly noded C3D10. A singular Jacobian, or
+    no convergence within _NEWTON_STEPS, is a failure: the affine start never stands in for the inverse.
     """
     corner = cell.xyz[:4]
     affine = [[corner[j + 1][i] - corner[0][i] for j in range(3)] for i in range(3)]
-    xi = _solve(affine, _sub(p, corner[0]))
-    if xi is None or cell.element.kind == "C3D4":
-        return xi
+    start = _solve(affine, _sub(p, corner[0]))
+    if start is None:
+        raise _NoInverse("has corners that span no volume")
+    if cell.element.kind == "C3D4":
+        return start
+    xi = start
     for _ in range(_NEWTON_STEPS):
         weights, gradients = _shape("C3D10", xi), _shape_gradients("C3D10", xi)
         mapped = [sum(w * x[i] for w, x in zip(weights, cell.xyz)) for i in range(3)]
         jacobian = [[sum(g[j] * x[i] for g, x in zip(gradients, cell.xyz)) for j in range(3)] for i in range(3)]
         step = _solve(jacobian, _sub(p, mapped))
         if step is None:
-            return None
+            raise _NoInverse(f"has a singular Jacobian at the natural coordinates {_fmt(xi)}")
         xi = (xi[0] + step[0], xi[1] + step[1], xi[2] + step[2])
         if max(abs(s) for s in step) <= _NEWTON_STEP:
             return xi
-    return None
+    raise _NoInverse(f"did not converge in {_NEWTON_STEPS} Newton steps")
 
 
-def _locate(cells: Sequence[_Cell], p: Point) -> tuple[_Cell, list[float]] | None:
-    """The supported element that holds `p` most deeply, with its shape functions there, or None."""
+def _locate(cells: Sequence[_Cell], p: Point, where: str) -> tuple[_Cell, list[float]]:
+    """The element that holds `p` most deeply, with its shape functions there.
+
+    Raises INVERSION_FAILED when no element holds `p` and an element whose box does failed to invert there, and
+    OUTSIDE_MESH when no element holds `p` and none failed.
+    """
     best: tuple[float, _Cell, Point] | None = None
+    failure: str | None = None
     for cell in cells:
-        if not cell.supported or not cell.boxes(p):
+        if not cell.boxes(p):
             continue
-        xi = _natural(cell, p)
-        if xi is None:
+        try:
+            xi = _natural(cell, p)
+        except _NoInverse as exc:
+            failure = failure or f"element {cell.element_id} {exc}"
             continue
         depth = min(_volume_coordinates(xi))
         if depth >= -_INSIDE and (best is None or depth > best[0]):
             best = (depth, cell, xi)
-    if best is None:
-        return None
-    return best[1], _shape(best[1].element.kind, best[2])
+    if best is not None:
+        return best[1], _shape(best[1].element.kind, best[2])
+    if failure is not None:
+        raise LinearisationError(Refusal.INVERSION_FAILED, f"{where} lies in no element that inverts there: {failure}")
+    raise LinearisationError(Refusal.OUTSIDE_MESH, f"{where} lies in no element of the mesh")
 
 
 def _sample(result: fs.FrdResult, cells: Sequence[_Cell], positions: Sequence[Point]) -> Iterator[fs.StressTensor]:
-    """The interpolated global tensor at each position, refusing a point no supported element holds."""
+    """The interpolated global tensor at each position."""
     for index, p in enumerate(positions):
-        found = _locate(cells, p)
-        if found is None:
-            where = f"point {index + 1} of {len(positions)} at {_fmt(p)}"
-            others = [c for c in cells if not c.supported and c.boxes(p)]
-            if others:
-                raise LinearisationError(Refusal.UNSUPPORTED_ELEMENT,
-                                         f"{where} lies only near element {others[0].element_id}, a "
-                                         f"{others[0].element.kind} of {len(others[0].element.nodes)} nodes, "
-                                         f"not a C3D4 or C3D10")
-            raise LinearisationError(Refusal.OUTSIDE_MESH, f"{where} lies in no element of the mesh")
-        cell, weights = found
+        cell, weights = _locate(cells, p, f"point {index + 1} of {len(positions)} at {_fmt(p)}")
         tensors = [result.stress[node] for node in cell.element.nodes]
         yield fs.StressTensor(*(sum(w * t[c] for w, t in zip(weights, tensors)) for c in range(6)))
 
@@ -392,25 +422,17 @@ def _split(stresses: Sequence[SclStress], thickness: float) -> tuple[SclStress, 
     return membrane, SclStress(bent[0], bent[1], 0.0, 0.0, 0.0, 0.0)
 
 
-def linearise(result: fs.FrdResult, elements: Mapping[int, study.Element], start: Point, end: Point, *,
-              points: int = DEFAULT_POINTS, tangent: Point | None = None) -> Linearisation:
-    """Linearise the stress of `result` along the SCL from `start` to `end`.
-
-    `elements` is the mesh, as `fea_stress_study.element_connectivity` reads it. `points` is the odd number of
-    points, at least MIN_POINTS. `tangent` sets the t1 axis (see the module docstring). Raises
-    `LinearisationError` when the line, the point count, the tangent, the mesh or the tensor is unusable, or
-    when a point lies outside every C3D4 and C3D10 element.
-    """
-    thickness, normal = _line(start, end, points)
-    t1, t2 = _axes(normal, tangent)
-    _check_mesh(result, elements)
+def _assemble(result: fs.FrdResult, elements: Mapping[int, study.Element], start: Point, end: Point,
+              points: int, thickness: float, axes: tuple[Point, Point, Point]) -> Linearisation:
+    """The linearisation of a checked line and mesh. `linearise` refuses an OverflowError or ZeroDivisionError."""
     along = _sub(end, start)
     inner = (_add_points(start, _scale(along, i / (points - 1))) for i in range(1, points - 1))
     positions = (start, *inner, end)
     cells = _cells(result, elements, start, end)
-    stresses = tuple(_rotate(s, (t1, t2, normal)) for s in _sample(result, cells, positions))
+    stresses = tuple(_rotate(s, axes) for s in _sample(result, cells, positions))
     membrane, bending = _split(stresses, thickness)
     at_start, at_end = _add(membrane, bending), _add(membrane, bending, -1.0)
+    t1, t2, normal = axes
     return Linearisation(
         start=start, end=end, thickness=thickness, t1=t1, t2=t2, normal=normal,
         positions=positions, stresses=stresses,
@@ -419,3 +441,40 @@ def linearise(result: fs.FrdResult, elements: Mapping[int, study.Element], start
         von_mises_membrane=_von_mises(membrane),
         von_mises_membrane_bending_start=_von_mises(at_start), von_mises_membrane_bending_end=_von_mises(at_end),
         von_mises_total_start=_von_mises(stresses[0]), von_mises_total_end=_von_mises(stresses[-1]))
+
+
+def _floats(value: object) -> Iterator[float]:
+    """Every float in a field of `Linearisation`: a float, a point, a tensor or a tuple of them."""
+    if isinstance(value, tuple):
+        for item in value:
+            yield from _floats(item)
+    elif isinstance(value, float | int):
+        yield float(value)
+
+
+def _check_finite(linearisation: Linearisation) -> None:
+    """Refuse a linearisation that holds a value that is not finite: one beyond the float range, or its nan."""
+    for item in fields(linearisation):
+        if not all(math.isfinite(v) for v in _floats(getattr(linearisation, item.name))):
+            raise LinearisationError(Refusal.VALUE_OUT_OF_RANGE, f"{item.name} holds a value beyond the float range")
+
+
+def linearise(result: fs.FrdResult, elements: Mapping[int, study.Element], start: Point, end: Point, *,
+              points: int = DEFAULT_POINTS, tangent: Point | None = None) -> Linearisation:
+    """Linearise the stress of `result` along the SCL from `start` to `end`.
+
+    `elements` is the mesh, as `fea_stress_study.element_connectivity` reads it. `points` is the odd number of
+    points, at least MIN_POINTS. `tangent` sets the t1 axis (see the module docstring). Raises
+    `LinearisationError` when the line, the point count, the tangent, the mesh or the tensor is unusable, when a
+    point lies outside every C3D4 and C3D10 element or where its element's map does not invert, and when the
+    arithmetic leaves the float range: an OverflowError or ZeroDivisionError, or a value that is not finite.
+    """
+    thickness, normal = _line(start, end, points)
+    t1, t2 = _axes(normal, tangent)
+    _check_mesh(result, elements)
+    try:
+        linearisation = _assemble(result, elements, start, end, points, thickness, (t1, t2, normal))
+    except (OverflowError, ZeroDivisionError) as exc:
+        raise LinearisationError(Refusal.VALUE_OUT_OF_RANGE, f"the arithmetic left the float range ({exc})") from None
+    _check_finite(linearisation)
+    return linearisation
