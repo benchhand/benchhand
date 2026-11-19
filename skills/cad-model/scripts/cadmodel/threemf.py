@@ -210,6 +210,14 @@ def _check_envelope(archive: zipfile.ZipFile) -> None:
         raise ThreeMFError(f"{RELS_PART} relates the model to {targets}, not ['/{MODEL_PART}']")
 
 
+def _resource_id(element: ET.Element, what: str) -> int:
+    """The id of a resource element, within the ST_ResourceID range."""
+    ident = _int(element.get("id"), f"{what} id")
+    if not 0 < ident < RESOURCE_ID_LIMIT:
+        raise ThreeMFError(f"{what} id {ident} is outside 1..{RESOURCE_ID_LIMIT - 1}")
+    return ident
+
+
 def _color(element: ET.Element, groups: dict[int, list[str]]) -> str | None:
     """The display color of the basematerials entry `element` points at by pid and pindex, if any."""
     if element.get("pid") is None:
@@ -221,9 +229,7 @@ def _color(element: ET.Element, groups: dict[int, list[str]]) -> str | None:
 
 
 def _object(element: ET.Element, prefixes: set[str], groups: dict[int, list[str]]) -> Object:
-    ident = _int(element.get("id"), "object id")
-    if not 0 < ident < RESOURCE_ID_LIMIT:
-        raise ThreeMFError(f"object id {ident} is outside 1..{RESOURCE_ID_LIMIT - 1}")
+    ident = _resource_id(element, "object")
     metadata: dict[str, str] = {}
     mesh = None
     for child in element:
@@ -249,7 +255,8 @@ def _object(element: ET.Element, prefixes: set[str], groups: dict[int, list[str]
 
 def read(source: Path | bytes) -> Model:
     """The model of a package, after checking its entries, content types, relationship, unit and that every
-    object id is unique, every triangle index and every build item's object resolves."""
+    resource id (basematerials group or object) is unique, every triangle index and every build item's object
+    resolves."""
     try:
         with zipfile.ZipFile(io.BytesIO(source) if isinstance(source, bytes) else source) as archive:
             _check_envelope(archive)
@@ -262,12 +269,15 @@ def read(source: Path | bytes) -> Model:
         raise ThreeMFError(f"the model requires extensions {root.get('requiredextensions')!r}; this reader has none")
     if root.get("unit") != UNIT:
         raise ThreeMFError(f"the unit is {root.get('unit')!r}, not {UNIT!r}")
-    groups = {_int(g.get("id"), "basematerials id"): [b.get("displaycolor") or "" for b in g]
-              for g in root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}basematerials")}
+    elements = list(root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}basematerials"))
+    group_ids = [_resource_id(g, "basematerials") for g in elements]
+    object_ids = [_resource_id(e, "object") for e in root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}object")]
+    shared = group_ids + object_ids
+    if len(set(shared)) != len(shared):
+        raise ThreeMFError(f"resource ids repeat among basematerials groups {group_ids} and objects {object_ids}")
+    groups = {ident: [b.get("displaycolor") or "" for b in g] for ident, g in zip(group_ids, elements)}
     objects = [_object(e, prefixes, groups) for e in root.iterfind(f"{{{CORE_NS}}}resources/{{{CORE_NS}}}object")]
-    ids = [obj.id for obj in objects]
-    if len(set(ids)) != len(ids):
-        raise ThreeMFError(f"object ids repeat: {ids}")
+    ids = object_ids
     build = []
     for item in root.iterfind(f"{{{CORE_NS}}}build/{{{CORE_NS}}}item"):
         objectid = _int(item.get("objectid"), "build item objectid")
