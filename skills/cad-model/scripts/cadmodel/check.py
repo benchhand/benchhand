@@ -746,9 +746,11 @@ def agreement_result(rows: Mapping[str, Mapping[str, Any]], skipped: Iterable[st
 def glb_step_agreement(folder: Path, manifest: Mapping[str, Any], part_map: Mapping[str, Any], step: Any,
                        examined: Iterable[str], skipped: Iterable[str] = ()) -> dict[str, Any]:
     """Per examined occurrence: whether its GLB node depicts the shape and placement in the assembly STEP
-    (cadmodel.agreement). The check reads the GLB without the help of the manifest. A mesh of another model,
-    scale or place fails here though it is a closed solid and the STEP matches the kernel. `unknown` where the
-    data cannot judge."""
+    (cadmodel.agreement). The check reads the GLB without the help of the manifest. A scaled, moved or reshaped
+    mesh fails here though it is a closed solid and the STEP matches the kernel. `unknown` where the
+    data cannot judge. The GLB is built from the STEP read back. So this check guards the STEP-to-glTF conversion
+    layer, mainly across library upgrades: units, Y-up, node placement and naming, and merged faces. step_readback
+    and brep_validity cover the defects on the STEP side."""
     wanted = set(examined)
     if not agreement.AVAILABLE:
         reason = {"status": "unknown", "reason": "numpy is not installed: the GLB and STEP meshes cannot be compared"}
