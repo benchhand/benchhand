@@ -40,10 +40,13 @@ refinement. Each clause still needs checking against the licensed text.
 
 Anything the module cannot stand behind raises `LinearisationError` with a named `Refusal`, never a guess. That
 covers an element map that does not invert at a point, and finite input whose arithmetic leaves the float range.
+The two stay apart. An element map that fails to invert at a point is geometry, and another element may still
+hold the point. A box span, determinant, Jacobian, mapped position or natural coordinate that is not finite is
+arithmetic. That refuses the whole call as `value_out_of_range`, in any element the scan reaches.
 
 Each call screens every element and node of the mesh and builds a box for each element, so it costs time in
-proportion to the mesh. A few SCLs per solve make that acceptable. A caller with many lines (#209 PR-c) may add
-a spatial index.
+proportion to the mesh. Sampling then tries, at each point, every element whose box holds that point. A few SCLs
+per solve make that acceptable. A caller with many lines (#209 PR-c) may add a spatial index.
 
 Standard library only, with `fea_stress`, `fea_stress_study` and `mesh_quality`, which are too.
 """
@@ -100,6 +103,7 @@ class Refusal(StrEnum):
     TOO_FEW_POINTS = "too_few_points"
     EVEN_POINTS = "even_points"  # Simpson's rule needs an odd number of points
     TANGENT_ALONG_LINE = "tangent_along_line"  # the tangent hint has no part normal to the line
+    TANGENT_NOT_FINITE = "tangent_not_finite"  # the tangent hint has a nan or infinite component
 
 
 class LinearisationError(ValueError):
@@ -179,17 +183,39 @@ def _fmt(p: Sequence[float]) -> str:
     return "(" + ", ".join(f"{c:.6g}" for c in p) + ")"
 
 
-def _solve(m: Sequence[Sequence[float]], b: Point) -> Point | None:
-    """The solution of the 3 x 3 system m x = b by Cramer's rule, or None when m is singular (see _SINGULAR)."""
+class _OutOfRange(Exception):
+    """Arithmetic on finite input left the float range. The message names the value."""
+
+
+def _finite(values: Sequence[float], what: str) -> None:
+    """Raise `_OutOfRange` naming `what` when one of `values` is not finite."""
+    if not all(math.isfinite(v) for v in values):
+        raise _OutOfRange(f"{what} {_fmt(values)} is not finite")
+
+
+def _solve(m: Sequence[Sequence[float]], b: Point, what: str) -> Point | None:
+    """The solution of the 3 x 3 system m x = b by Cramer's rule, or None when m is singular (see _SINGULAR).
+
+    `what` names the matrix. Raises `_OutOfRange` when m, b, the determinant, its scale or the solution is not
+    finite: that is arithmetic, not a singular matrix.
+    """
     def det(a: Sequence[Sequence[float]]) -> float:
         return (a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
                 + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]))
+    entries = [v for row in m for v in row]
+    _finite(entries, what)
+    _finite(b, f"the right-hand side of {what}")
     d = det(m)
-    norm = math.hypot(*(v for row in m for v in row))
-    if not math.isfinite(d) or not abs(d) > _SINGULAR * norm * norm * norm:
+    norm = math.hypot(*entries)
+    cube = norm * norm * norm
+    if not math.isfinite(d) or not cube <= sys.float_info.max or (norm > 0.0 and cube < sys.float_info.min):
+        raise _OutOfRange(f"the determinant {d:.6g} or the norm cubed {cube:.6g} of {what} leaves the float range")
+    if not abs(d) > _SINGULAR * cube:
         return None
     columns = [[[b[r] if c == k else m[r][c] for c in range(3)] for r in range(3)] for k in range(3)]
-    return (det(columns[0]) / d, det(columns[1]) / d, det(columns[2]) / d)
+    x = (det(columns[0]) / d, det(columns[1]) / d, det(columns[2]) / d)
+    _finite(x, f"the solution of {what}")
+    return x
 
 
 # --- the line --------------------------------------------------------------------------------------------------
@@ -221,9 +247,13 @@ def _axes(normal: Point, tangent: Point | None) -> tuple[Point, Point]:
     if tangent is None:
         least = min(range(3), key=lambda k: abs(normal[k]))
         tangent = (1.0 if least == 0 else 0.0, 1.0 if least == 1 else 0.0, 1.0 if least == 2 else 0.0)
-    across = _sub(tangent, _scale(normal, _dot(tangent, normal)))
+    if not all(math.isfinite(c) for c in tangent):
+        raise LinearisationError(Refusal.TANGENT_NOT_FINITE, f"the tangent {_fmt(tangent)} is not finite")
+    largest = max(abs(c) for c in tangent)
+    hint = (tangent[0] / largest, tangent[1] / largest, tangent[2] / largest) if largest > 0.0 else tangent
+    across = _sub(hint, _scale(normal, _dot(hint, normal)))
     size = math.sqrt(_dot(across, across))
-    if not size > _TANGENT_FLOOR * math.sqrt(_dot(tangent, tangent)):
+    if not size > _TANGENT_FLOOR * math.sqrt(_dot(hint, hint)):
         raise LinearisationError(Refusal.TANGENT_ALONG_LINE, f"the tangent {_fmt(tangent)} has no part normal to "
                                                             f"the line {_fmt(normal)}")
     t1 = _scale(across, 1.0 / size)
@@ -269,19 +299,28 @@ class _Cell:
         return all(self.low[k] <= p[k] <= self.high[k] for k in range(3))
 
 
+def _box(element_id: int, xyz: Sequence[Point]) -> tuple[Point, Point]:
+    """The box of an element's nodes, grown by _BOX_PAD. Refuses a box whose span or growth is not finite."""
+    low = [min(p[k] for p in xyz) for k in range(3)]
+    high = [max(p[k] for p in xyz) for k in range(3)]
+    pad = _BOX_PAD * max(h - lo for h, lo in zip(high, low))
+    low_p = (low[0] - pad, low[1] - pad, low[2] - pad)
+    high_p = (high[0] + pad, high[1] + pad, high[2] + pad)
+    if not all(math.isfinite(v) for v in (pad, *low_p, *high_p)):
+        raise LinearisationError(Refusal.VALUE_OUT_OF_RANGE, f"element {element_id} has nodes from {_fmt(low)} to "
+                                                            f"{_fmt(high)}, a box span beyond the float range")
+    return low_p, high_p
+
+
 def _cells(result: fs.FrdResult, elements: Mapping[int, study.Element], start: Point, end: Point) -> list[_Cell]:
-    """The elements whose grown box meets the box of the line, in id order."""
+    """The elements whose grown box meets the box of the line, in id order. Every element's box must be finite."""
     line_low = tuple(min(a, b) for a, b in zip(start, end))
     line_high = tuple(max(a, b) for a, b in zip(start, end))
     cells = []
     for element_id in sorted(elements):
         element = elements[element_id]
         xyz = tuple(result.coordinates[node] for node in element.nodes)
-        low = [min(p[k] for p in xyz) for k in range(3)]
-        high = [max(p[k] for p in xyz) for k in range(3)]
-        pad = _BOX_PAD * max(h - lo for h, lo in zip(high, low))
-        low_p = (low[0] - pad, low[1] - pad, low[2] - pad)
-        high_p = (high[0] + pad, high[1] + pad, high[2] + pad)
+        low_p, high_p = _box(element_id, xyz)
         if all(low_p[k] <= line_high[k] and line_low[k] <= high_p[k] for k in range(3)):
             cells.append(_Cell(element_id, element, xyz, low_p, high_p))
     return cells
@@ -329,10 +368,11 @@ def _natural(cell: _Cell, p: Point) -> Point:
     The corners' affine map gives the start, which is exact for a C3D4 and for a straight-sided C3D10. Newton
     steps on the quadratic map then correct it for a curved or unevenly noded C3D10. A singular Jacobian, or
     no convergence within _NEWTON_STEPS, is a failure: the affine start never stands in for the inverse.
+    Raises `_OutOfRange` when a determinant, a Jacobian, a mapped position or a natural coordinate is not finite.
     """
     corner = cell.xyz[:4]
     affine = [[corner[j + 1][i] - corner[0][i] for j in range(3)] for i in range(3)]
-    start = _solve(affine, _sub(p, corner[0]))
+    start = _solve(affine, _sub(p, corner[0]), "the affine map")
     if start is None:
         raise _NoInverse("has corners that span no volume")
     if cell.element.kind == "C3D4":
@@ -340,12 +380,15 @@ def _natural(cell: _Cell, p: Point) -> Point:
     xi = start
     for _ in range(_NEWTON_STEPS):
         weights, gradients = _shape("C3D10", xi), _shape_gradients("C3D10", xi)
-        mapped = [sum(w * x[i] for w, x in zip(weights, cell.xyz)) for i in range(3)]
+        mapped = (sum(w * x[0] for w, x in zip(weights, cell.xyz)), sum(w * x[1] for w, x in zip(weights, cell.xyz)),
+                  sum(w * x[2] for w, x in zip(weights, cell.xyz)))
+        _finite(mapped, f"the position mapped from {_fmt(xi)}")
         jacobian = [[sum(g[j] * x[i] for g, x in zip(gradients, cell.xyz)) for j in range(3)] for i in range(3)]
-        step = _solve(jacobian, _sub(p, mapped))
+        step = _solve(jacobian, _sub(p, mapped), f"the Jacobian at {_fmt(xi)}")
         if step is None:
             raise _NoInverse(f"has a singular Jacobian at the natural coordinates {_fmt(xi)}")
         xi = (xi[0] + step[0], xi[1] + step[1], xi[2] + step[2])
+        _finite(xi, "the natural coordinates")
         if max(abs(s) for s in step) <= _NEWTON_STEP:
             return xi
     raise _NoInverse(f"did not converge in {_NEWTON_STEPS} Newton steps")
@@ -354,8 +397,9 @@ def _natural(cell: _Cell, p: Point) -> Point:
 def _locate(cells: Sequence[_Cell], p: Point, where: str) -> tuple[_Cell, list[float]]:
     """The element that holds `p` most deeply, with its shape functions there.
 
-    Raises INVERSION_FAILED when no element holds `p` and an element whose box does failed to invert there, and
-    OUTSIDE_MESH when no element holds `p` and none failed.
+    Raises VALUE_OUT_OF_RANGE as soon as any element whose box holds `p` leaves the float range, even when
+    another element holds `p`. Raises INVERSION_FAILED when no element holds `p` and an element whose box does
+    failed to invert there, and OUTSIDE_MESH when no element holds `p` and none failed.
     """
     best: tuple[float, _Cell, Point] | None = None
     failure: str | None = None
@@ -364,6 +408,8 @@ def _locate(cells: Sequence[_Cell], p: Point, where: str) -> tuple[_Cell, list[f
             continue
         try:
             xi = _natural(cell, p)
+        except _OutOfRange as exc:
+            raise LinearisationError(Refusal.VALUE_OUT_OF_RANGE, f"{where}: in element {cell.element_id}, {exc}") from None
         except _NoInverse as exc:
             failure = failure or f"element {cell.element_id} {exc}"
             continue
