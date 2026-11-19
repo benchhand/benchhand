@@ -35,7 +35,14 @@ The reference keeps the moment check alive for a load with no moment about the s
 centre, whose nodal moment scale is zero; a residual is never taken as zero for want of a scale, and one that is not
 a number fails. A free body with no force abstains first (`no_applied_load`), so the force scale is never zero.
 Annex 5-A has no torsion, and a small torque hides in the aggregate residual, so a torque about the section normal
-above `TORSION_FLOOR` of F x L abstains on its own (`torsion_on_section`), whatever the residual.
+above `TORSION_FLOOR` of F x L abstains on its own (`torsion_on_section`), whatever the residual. The same floor
+screens the torque the section's own stresses produce about the normal: the moment of the full traction along the
+lines, which holds the first moment of the shear across the thickness that the Annex split discards, as well as the
+membrane shear's arm. A shear gradient can twist a section while the force balances and the bending moments pass
+the aggregate residual. The other resultants are all in the check: the three force components, the moment about the
+two in-plane axes (the membrane arms and the bending couple) and, here, the torque. Each residual is compared on
+its own, so a nan fails; the norms use math.hypot so a 3e153 N load does not overflow; a node, mesh size or load that
+is not finite abstains first (`mesh_not_finite`, `load_not_finite`).
 
 No code states this tolerance. The 5% is provisional (decision on #209); bead benchhand-2dq tracks sourcing it. It
 was set against the 4.5 mm cantilever fixture (test_fea_near_support), and that fixture does not clear it: at its
@@ -83,6 +90,8 @@ TORSION_ON_SECTION = "torsion_on_section"
 SUPPORT_NOT_AXIS_PLANAR = "support_not_axis_planar"
 FACE_NOT_ON_BOUNDARY = "face_not_on_boundary"
 LOAD_NODES_OVERLAP = "load_nodes_overlap"
+LOAD_NOT_FINITE = "load_not_finite"
+MESH_NOT_FINITE = "mesh_not_finite"
 NO_APPLIED_LOAD = "no_applied_load"
 SECTION_OUTSIDE_PART = "section_outside_part"
 SECTION_ON_SUPPORT = "section_on_support"
@@ -163,7 +172,8 @@ def _cross(a: Vec, b: Vec) -> Vec:
 
 
 def _norm(a: Vec) -> float:
-    return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+    """The length of `a`; math.hypot does not overflow in the squares, so 3e153 N stays finite."""
+    return math.hypot(a[0], a[1], a[2])
 
 
 ZERO: Vec = (0.0, 0.0, 0.0)
@@ -221,6 +231,8 @@ def _merged_forces(loads: Sequence[Mapping[int, Vec]]) -> dict[int, Vec]:
         for node, force in block.items():
             if node in forces:
                 raise _Abstain(LOAD_NODES_OVERLAP, f"node {node} carries a load in more than one *CLOAD face")
+            if not all(math.isfinite(c) for c in force):
+                raise _Abstain(LOAD_NOT_FINITE, f"node {node} carries a force that is not finite")
             forces[node] = force
     return forces
 
@@ -330,8 +342,27 @@ class _Lines:
 
     force: Vec
     moment: Vec
+    torque: float  # about the section normal, from the full stress of the lines
     sigma: float
     peak: float
+
+
+def _simpson(values: Sequence[float], step: float) -> float:
+    """The composite Simpson integral of equally spaced `values` (an odd count, as fea_linearise needs)."""
+    odd, even = sum(values[1:-1:2]), sum(values[2:-1:2])
+    return step / 3.0 * (values[0] + values[-1] + 4.0 * odd + 2.0 * even)
+
+
+def _line_torque(lin: fl.Linearisation, axis: int, centre: Vec) -> float:
+    """The torque about the section normal (global `axis`) of the full stress along one line, per unit width.
+
+    This is the moment of the total traction, so it holds what the Annex 5-A split discards: the first moment of
+    the shear across the thickness, as well as the membrane shear's arm about `centre`."""
+    density = []
+    for position, stress in zip(lin.positions, lin.stresses):
+        traction = _add(_add(_scale(lin.t1, stress.t1), _scale(lin.t2, stress.t1t2)), _scale(lin.normal, stress.nt1))
+        density.append(_cross(_sub(position, centre), traction)[axis])
+    return _simpson(density, lin.thickness / (len(density) - 1))
 
 
 def _lines(case: _Case, face: _Face, plane: float, normal: Vec, centre: Vec, box: tuple[Vec, Vec]) -> _Lines:
@@ -340,7 +371,7 @@ def _lines(case: _Case, face: _Face, plane: float, normal: Vec, centre: Vec, box
     plane_axes = [k for k in range(3) if k != face.axis]
     wall, across = sorted(plane_axes, key=lambda k: (high[k] - low[k], k))
     thickness, width = high[wall] - low[wall], high[across] - low[across]
-    force, moment, sigma, peak = ZERO, ZERO, 0.0, 0.0
+    force, moment, torque, sigma, peak = ZERO, ZERO, 0.0, 0.0, 0.0
     for strip in range(STRIPS):
         offset = low[across] + (strip + 0.5) * width / STRIPS
         start = _at(face.axis, plane, {wall: low[wall], across: offset})
@@ -356,10 +387,11 @@ def _lines(case: _Case, face: _Face, plane: float, normal: Vec, centre: Vec, box
         mid = _scale(_add(start, end), 0.5)
         couple = _scale(lin.t2, -lin.bending.t1 * thickness ** 2 / 6.0 * width / STRIPS)
         force, moment = _add(force, piece), _add(moment, _add(_cross(_sub(mid, centre), piece), couple))
+        torque += _line_torque(lin, face.axis, centre) * width / STRIPS
         sigma = max(sigma, lin.von_mises_membrane, lin.von_mises_membrane_bending_start,
                     lin.von_mises_membrane_bending_end)
         peak = max(peak, lin.von_mises_total_start, lin.von_mises_total_end)
-    return _Lines(force, moment, sigma, peak)
+    return _Lines(force, moment, torque, sigma, peak)
 
 
 def _check_torsion(face: _Face, plane: float, applied: _Applied, reference: float) -> None:
@@ -372,6 +404,18 @@ def _check_torsion(face: _Face, plane: float, applied: _Applied, reference: floa
     if not torque <= TORSION_FLOOR * reference:
         raise _Abstain(TORSION_ON_SECTION, f"the free body beyond the section at {AXES[face.axis]} = {plane:.6g} mm "
                                            f"carries a torque {torque:.3g} N mm about the section normal, over the floor "
+                                           f"{TORSION_FLOOR * reference:.3g} N mm ({TORSION_FLOOR:g} of F x L = "
+                                           f"{reference:.3g} N mm): Annex 5-A linearisation has no torsion")
+
+
+def _check_section_torsion(face: _Face, plane: float, lines: _Lines, reference: float) -> None:
+    """Abstain when the stresses of the section carry a torque about its normal above the floor, whatever the applied
+    loads say. A shear gradient across the section twists it while the force balances and the bending moments stay
+    inside the aggregate residual; the torque the lines integrate is judged against the same floor as the applied one."""
+    torque = abs(lines.torque)
+    if not torque <= TORSION_FLOOR * reference:
+        raise _Abstain(TORSION_ON_SECTION, f"the section stresses at {AXES[face.axis]} = {plane:.6g} mm carry a torque "
+                                           f"{torque:.3g} N mm about the section normal, over the floor "
                                            f"{TORSION_FLOOR * reference:.3g} N mm ({TORSION_FLOOR:g} of F x L = "
                                            f"{reference:.3g} N mm): Annex 5-A linearisation has no torsion")
 
@@ -404,15 +448,19 @@ def _section(case: _Case, face: _Face) -> Section:
     applied = _applied(case, face.axis, plane, body, centre)
     if applied.force_scale <= 0:
         raise _Abstain(NO_APPLIED_LOAD, f"no force acts on the free body beyond the section for {where}")
+    if not all(math.isfinite(v) for v in (applied.force_scale, applied.moment_scale)):
+        raise _Abstain(LOAD_NOT_FINITE, f"the applied loads beyond the section for {where} overflow the float range")
     reference = applied.force_scale * max(box[1][k] - box[0][k] for k in range(3) if k != face.axis)
     _check_torsion(face, plane, applied, reference)
     lines = _lines(case, face, plane, _unit(face.axis, -body), centre, box)
     f_res, m_res = _residuals(lines, applied, reference)
-    if not max(f_res, m_res) <= TOLERANCE:  # also true for a residual that is nan
+    # Each residual on its own: max() returns its first argument when the second is nan, which would drop it.
+    if not (f_res <= TOLERANCE and m_res <= TOLERANCE):  # false for a nan residual
         raise _Abstain(CROSS_CHECK_FAILED, f"{where}, section at {AXES[face.axis]} = {plane:.6g} mm: force residual "
                                            f"{100 * f_res:.1f}% (limit {100 * TOLERANCE:g}%), moment residual "
                                            f"{100 * m_res:.1f}% (limit {100 * TOLERANCE:g}%): the integrated "
                                            "section force and moment do not match the applied loads")
+    _check_section_torsion(face, plane, lines, reference)
     wall_extent = min(box[1][k] - box[0][k] for k in range(3) if k != face.axis)
     return Section(face.kind, AXES[face.axis], face.value, plane, wall_extent, lines.sigma, lines.peak, f_res, m_res)
 
@@ -433,6 +481,12 @@ def assess(result: fs.FrdResult, elements: Mapping[int, study.Element], *, fixed
     try:
         if not result.coordinates:
             raise _Abstain(RESULTS_UNREADABLE, "the results hold no node")
+        # min() and max() over a nan are order-dependent, so every number that feeds a comparison is checked first.
+        bad = next((n for n, p in result.coordinates.items() if not all(math.isfinite(c) for c in p)), None)
+        if bad is not None:
+            raise _Abstain(MESH_NOT_FINITE, f"node {bad} has a coordinate that is not finite")
+        if not (math.isfinite(h_coarse) and math.isfinite(h_mesh) and h_coarse > 0 and h_mesh > 0):
+            raise _Abstain(MESH_NOT_FINITE, f"the mesh sizes {h_coarse:g} and {h_mesh:g} mm are not finite and positive")
         low, high = _extent(list(result.coordinates.values()))
         case = _Case(result, elements, frozenset(fixed), _merged_forces(loads), h_coarse, h_mesh, low, high)
         sections = tuple(_section(case, face) for face in _faces(case, loads))

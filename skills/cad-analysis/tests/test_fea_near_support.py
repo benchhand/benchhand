@@ -184,6 +184,14 @@ class Cantilever(unittest.TestCase):
         self.assertEqual((found.status, found.sigma_mpa), ("unknown", None))
         self.assertEqual(len(found.reasons), 1)
 
+    def test_a_node_or_mesh_size_that_is_not_finite_abstains(self) -> None:
+        # min() and max() over a nan depend on the order of their arguments, so the inputs are screened first.
+        self.coordinates[next(iter(self.coordinates))] = (math.nan, 0.0, 0.0)
+        self.assertEqual(self.assess().reasons, ("mesh_not_finite",))
+        self.coordinates, self.elements = bar()
+        self.fixed = nodes_at(self.coordinates, 0, 0.0)
+        self.assertEqual(self.assess(h_coarse=math.nan).reasons, ("mesh_not_finite",))
+
     def test_a_case_without_an_applied_force_abstains(self) -> None:
         self.loads = [{n: (0.0, 0.0, 0.0) for n in self.loads[0]}]
         self.assertEqual(self.assess().reasons, ("no_applied_load",))
@@ -230,6 +238,40 @@ class Cantilever(unittest.TestCase):
         self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("torsion_on_section",), None))
         self.assertRegex(found.message, r"torque 5 N mm about the section normal")
 
+    def twisting(self, gradient: float) -> Callable[[Point], tuple[float, ...]]:
+        """The beam field plus a shear tau_xz = gradient * (y - 5) MPa, which the applied loads do not balance."""
+        base = beam_field()
+
+        def field(p: Point) -> tuple[float, ...]:
+            sxx, syy, szz, sxy, syz, szx = base(p)
+            return (sxx, syy, szz, sxy, syz, szx + gradient * (p[1] - WIDTH / 2))
+        return field
+
+    def test_stress_side_torsion_abstains_when_the_applied_torque_is_zero(self) -> None:
+        # tau_xz = 0.012 (y - 5) over the 10 x 5 mm section: torque = 0.012 * 5 * the integral of (y - 5)^2 over 0..10
+        # = 0.012 * 5 * 83.33 = 5.0 N mm about x (4.94 on the nine strips), against the floor 1e-3 * 50 * 10 = 0.5 N mm.
+        # The force balances and the moment residual is 0.4%, so only a screen of the section's own torque sees it.
+        found = self.assess(self.twisting(0.012))
+        self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("torsion_on_section",), None))
+        self.assertRegex(found.message, r"section stresses.*torque 4\.9\d* N mm")
+
+    def test_a_stress_side_torque_under_the_floor_does_not_abstain(self) -> None:
+        # 0.0005 gives 0.0005 * 5 * 83.33 = 0.21 N mm, under the 0.5 N mm floor.
+        self.assertEqual(self.assess(self.twisting(0.0005)).status, "linearised")
+
+    def test_a_centred_load_of_3e153_with_doubled_bending_abstains_and_never_passes_on_a_nan_residual(self) -> None:
+        # The squared moment norms of a 3e153 N load overflow a naive norm to inf, and inf / inf is nan, which
+        # max() drops when it comes second. Doubled bending near the root (x < 10) is a 100% moment miss there, over
+        # the 5% limit; the load section at x = 25 is exact, so only the root section's residual can refuse.
+        load = 3e153
+        tip = nodes_at(self.coordinates, 0, LENGTH)
+        centre = next(n for n in tip if self.coordinates[n][1:] == (WIDTH / 2, DEPTH / 2))
+        self.loads = [{n: (0.0, 0.0, -load if n == centre else 0.0) for n in tip}]
+        exact, doubled = beam_field(load), beam_field(load, bending=2.0)
+        found = self.assess(lambda p: doubled(p) if p[0] < 10.0 else exact(p))
+        self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("cross_check_failed",), None))
+        self.assertRegex(found.message, r"fixed face.*moment residual")
+
     def test_a_torque_under_the_floor_does_not_abstain(self) -> None:
         # 0.005 mm of eccentricity is 0.25 N mm, under the 0.5 N mm floor.
         found = self.assess(loads=self.eccentric_tip_load(0.005))
@@ -275,8 +317,16 @@ class RealCantilever(unittest.TestCase):
         self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("cross_check_failed",), None))
         self.assertRegex(found.message, r"force residual 5\.\d%")
 
-    def test_with_the_limit_widened_the_sections_give_mc_over_i(self) -> None:
+    def test_the_smoothed_mesh_also_trips_the_torsion_floor_once_the_residual_limit_is_widened(self) -> None:
+        # Measured: the integrated section torque of the smoothed ccx stresses is 1.06 N mm at the root section and
+        # 0.52 N mm at the load section, 0.21% and 0.10% of F x L = 500 N mm, over the 0.1% floor (0.5 N mm).
         with patch.object(ns, "TOLERANCE", 0.10):
+            found = self.assess()
+        self.assertEqual((found.status, found.reasons, found.sigma_mpa), ("unknown", ("torsion_on_section",), None))
+        self.assertRegex(found.message, r"section stresses.*torque 1\.0\d* N mm")
+
+    def test_with_the_limit_and_the_floor_widened_the_sections_give_mc_over_i(self) -> None:
+        with patch.object(ns, "TOLERANCE", 0.10), patch.object(ns, "TORSION_FLOOR", 0.005):
             found = self.assess()
         self.assertEqual((found.status, found.reasons), ("linearised", ()))
         by_face = {s.face: s for s in found.sections}
