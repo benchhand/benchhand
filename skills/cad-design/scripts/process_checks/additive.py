@@ -761,10 +761,10 @@ def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[st
     worst = warp.bounds("mm")[1]
     for feature, surface in ctx.critical_features().items():
         for item in ctx.surface_raw(surface).get("criteria") or ():
-            if item.get("property") == "flatness" and item.get("operator") == "<=" \
+            if item.get("property") == "flatness" and item.get("operator") in ctx.mi.UPPER_BOUND_OPERATORS \
                     and surface.dimension_state == "as_manufactured":
                 limit = ctx.mi.convert(item["value"], item.get("units", "mm"), "mm")
-                if worst > limit + 1e-9:
+                if ctx.mi.exceeds_upper_bound(worst, item["operator"], limit, 1e-9):
                     findings.append(Draft(f"process.{_k(ctx)}.warp", "major", FAIL, length(worst),
                                           {**item, "units": item.get("units", "mm")}, "calibrated warp against the criterion",
                                           f"calibration {warp.calibration.id}",

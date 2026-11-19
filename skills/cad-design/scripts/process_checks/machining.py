@@ -485,13 +485,13 @@ def precision(ctx: Context) -> Result:
 def _achievable(ctx: Context, surface: Any, criterion: Any, findings: list[Draft]) -> tuple[str, str]:
     prop, operator = criterion.get("property"), criterion.get("operator")
     units = criterion.get("units") or "mm"
-    if prop == "surface_roughness" and operator == "<=":
+    if prop == "surface_roughness" and operator in ctx.mi.UPPER_BOUND_OPERATORS:
         cal = ctx.calibrated("surface_roughness")
         limit = criterion["value"]
         if not cal.known:
             return _uncalibrated(ctx, surface, cal, findings)
         achieved = cal.limits.to(units).bounds[1]
-        if achieved > limit + 1e-12:
+        if ctx.mi.exceeds_upper_bound(achieved, operator, limit, 1e-12):
             findings.append(Draft("process.cnc.finish", "major", FAIL, {"value": achieved, "units": units}, criterion,
                                   "calibrated roughness against the criterion", f"calibration {cal.calibration.id}",
                                   f"the calibrated finish does not meet the {surface.feature} roughness limit",

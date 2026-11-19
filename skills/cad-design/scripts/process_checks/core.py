@@ -187,7 +187,12 @@ class Calibrated:
         units = units or limits.units
         if value is None:
             lower, upper = limits.to(units).bounds
-            value = [lower, upper] if operator == "between" else (upper if operator == ">=" else lower)
+            if operator == "between":
+                value = [lower, upper]
+            elif operator in (">=", ">", "<=", "<"):  # a minimum must hold at the calibration's worst (upper) end
+                value = upper if operator in (">=", ">") else lower
+            else:
+                raise ValueError(f"a calibration states no criterion value for operator {operator!r}")
         scope = ", ".join(f"{k} {v}" for k, v in sorted(cal.scope.items()) if not isinstance(v, Mapping))
         return {"id": cal.id, "property": prop or self.characteristic, "operator": operator, "value": value,
                 "units": units, "source": source_dict(cal.source),

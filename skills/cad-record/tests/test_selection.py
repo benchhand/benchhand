@@ -522,5 +522,30 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(tree_digest(hw), before)
 
 
+class StrictMaterialCriteria(unittest.TestCase):
+    """A material value against a strict `<` or `>` criterion: the limit itself fails, as a 5 mm boundary shows."""
+
+    def verdict(self, operator: str, limit: float, value: float) -> str:
+        criterion = mi.Criterion.from_data(fx.criterion("wall", operator, limit, "mm"))
+        return str(selection._compare(mi.quantity(fx.quantity(value, "mm")), criterion)[0])
+
+    def test_the_limit_itself_fails_a_strict_bound_and_meets_a_non_strict_one(self) -> None:
+        cases = [  # (operator, value, verdict) against a limit of 5 mm
+            ("<", 5, "fail"), ("<=", 5, "pass"), ("<", 4.999, "pass"), ("<=", 4.999, "pass"), ("<", 5.001, "fail"),
+            (">", 5, "fail"), (">=", 5, "pass"), (">", 5.001, "pass"), (">=", 5.001, "pass"), (">", 4.999, "fail"),
+        ]
+        for operator, value, verdict in cases:
+            with self.subTest(operator=operator, value=value):
+                self.assertEqual(self.verdict(operator, 5, value), verdict)
+
+    def test_an_interval_straddling_a_strict_limit_is_unknown(self) -> None:
+        for operator in ("<", ">"):
+            with self.subTest(operator=operator):
+                criterion = mi.Criterion.from_data(fx.criterion("wall", operator, 5, "mm"))
+                verdict, why = selection._compare(mi.quantity(fx.quantity(lower=4, upper=6, units="mm")), criterion)
+                self.assertEqual(verdict, "unknown")
+                self.assertIn("straddles", why)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -465,6 +465,39 @@ class Criterion:
                    data.get("units"), data.get("id"), data.get("state"), data.get("conditions"))
 
 
+UPPER_BOUND_OPERATORS = ("<=", "<")
+LOWER_BOUND_OPERATORS = (">=", ">")
+STRICT_OPERATORS = ("<", ">")
+
+
+def tightens(old: tuple[str, float], new: tuple[str, float]) -> bool:
+    """Whether the one-sided bound `new` is at least as tight as `old`; each is an (operator, value) pair.
+
+    Both bounds must be on the same side: `<=` or `<` (upper), or `>=` or `>` (lower). A smaller upper limit, or a
+    larger lower limit, is tighter. At equal limits a strict bound (`<`, `>`) is tighter than its non-strict
+    one (`<=`, `>=`), and equal bounds tighten each other. Bounds on opposite sides, or an operator that is not
+    one-sided (`between`, `equals`, `one_of`, unknown), cannot be compared: ValueError. Pure: no I/O, no state."""
+    (old_operator, old_value), (new_operator, new_value) = old, new
+    for sides in (UPPER_BOUND_OPERATORS, LOWER_BOUND_OPERATORS):
+        if old_operator in sides and new_operator in sides:
+            break
+    else:
+        raise ValueError(f"bounds {old_operator!r} and {new_operator!r} are not two one-sided bounds on the same side")
+    if new_value == old_value:
+        return new_operator in STRICT_OPERATORS or old_operator not in STRICT_OPERATORS
+    return new_value < old_value if old_operator in UPPER_BOUND_OPERATORS else new_value > old_value
+
+
+def exceeds_upper_bound(worst: float, operator: str, limit: float, tolerance: float = 0.0) -> bool:
+    """Whether a worst case of `worst` breaks the upper bound `worst <operator> limit` (`<=` or `<`).
+
+    A worst case on the limit, within `tolerance`, breaks `<` and meets `<=`. ValueError for any other operator,
+    so a lower bound is never read as an upper one. Pure."""
+    if operator not in UPPER_BOUND_OPERATORS:
+        raise ValueError(f"{operator!r} is not an upper bound: use '<=' or '<'")
+    return worst >= limit - tolerance if operator == "<" else worst > limit + tolerance
+
+
 @dataclass(frozen=True)
 class Requirement:
     id: str

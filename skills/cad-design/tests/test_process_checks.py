@@ -29,6 +29,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
@@ -520,12 +521,13 @@ def cut(pn: str, *, stock: Any = ACRYLIC, thickness: dict[str, Any] | None = Non
     return part(pn, route, process="laser", material=material)
 
 
-def tab_slot(*, tab_thickness: dict[str, Any], coating: dict[str, Any] | None, calibrations: list) -> dict[str, Any]:
+def tab_slot(*, tab_thickness: dict[str, Any], coating: dict[str, Any] | None, calibrations: list,
+             clearance: dict[str, Any] | None = None) -> dict[str, Any]:
     interface = FX.interface("IF-002", "TST-0301", "TST-0302", "mounting", {
         "critical": known(True), "functions": [{"function": "locating"}],
         "surfaces": [{"PN": "TST-0301", "feature": "slot", "role": "locating", "dimension_state": "assembled"},
                      {"PN": "TST-0302", "feature": "tab", "role": "locating", "dimension_state": "assembled"}],
-        "acceptance": [{"criterion": FX.criterion("clearance", "between", [0.0, 0.3], "mm", id="tab_fit"),
+        "acceptance": [{"criterion": clearance or FX.criterion("clearance", "between", [0.0, 0.3], "mm", id="tab_fit"),
                         "verification": {"method": "T", "evidence_required": ["physically_validated"], "stage": "release"}}]})
     coater = FX.capability_profile("tst_coater", "coating", parameters={"coating_type": known("TST paint"), "method": known("spray")})
     return FX.record(parts=[cut("TST-0301", coat="slot" if coating else None, coating=coating),
@@ -1191,6 +1193,85 @@ class OtherRouteKindTests(Checks):
                 result = self.assess(documents)
                 self.assertEqual(self.outcome(result, "process.laser.thermal@TST-0902/cut"), outcome)
                 self.assertEqual(outcome == "fail", "process.laser.flatness" in self.codes(result))
+
+
+# --- strict criteria: `<` and `>` beside `<=` and `>=` ----------------------------------------------------------------
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class StrictCriterionTests(Checks):
+    """A strict criterion is evaluated strictly or refused as UNKNOWN; it is never read as its non-strict neighbour."""
+
+    def test_a_calibration_states_its_criterion_with_the_operator_it_was_asked_for(self) -> None:
+        calibrated = pc.core.Calibrated("calibrated", "wall", MI.quantity(mm(lower=2, upper=3)), (), SimpleNamespace(
+            id="cal_1", scope={}, samples=3, date="2026-06-01", source=FX.source("calibration")))
+        for operator, value in ((">", 3), (">=", 3), ("<", 2), ("<=", 2), ("between", [2, 3])):
+            with self.subTest(operator=operator):
+                found = calibrated.criterion("wall", operator)
+                self.assertEqual((found["operator"], found["value"]), (operator, value))
+        with self.assertRaises(ValueError):
+            calibrated.criterion("wall", "equals")
+
+    def test_a_calibrated_waterjet_edge_at_a_strict_roughness_limit_fails_it(self) -> None:
+        taper = calibration("taper_study", "taper", ALU, 0.0, 0.05)
+        finish = calibration("finish_study", "edge_finish", ALU, 1.6, 3.2, "um")
+        for operator, limit, outcome in (("<=", 3.2, "pass"), ("<", 3.2, "fail"), ("<", 3.3, "pass"), ("<=", 3.1, "fail")):
+            with self.subTest(operator=operator, limit=limit):
+                edge = [surface("cut_edge", "seal", criteria=[FX.criterion("surface_roughness", operator, limit, "um")])]
+                result = self.assess(shaped("waterjet", [taper, finish], critical=edge))
+                self.assertEqual(self.outcome(result, "process.waterjet.edge@TST-0902/form"), outcome)
+                self.assertEqual(outcome == "fail", "process.waterjet.edge_finish" in self.codes(result))
+
+    def test_calibrated_laser_flatness_at_a_strict_limit_fails_it(self) -> None:
+        thermal = [calibration("flat_study", "flatness", ACRYLIC, 0.0, 0.3),
+                   calibration("haz_study", "heat_affected_zone", ACRYLIC, 0.0, 0.2)]
+        documents = FX.record(parts=[cut("TST-0902")], materials=materials(),
+                              capabilities=[laser_profile(ACRYLIC_APPROVAL, calibrations=[KERF, *thermal])])
+        made = documents["parts/TST-0902/part.yaml"]["intent"]
+        for operator, limit, outcome in (("<=", 0.3, "pass"), ("<", 0.3, "fail"), ("<", 0.31, "pass")):
+            with self.subTest(operator=operator, limit=limit):
+                made["critical_surfaces"] = [surface("datum_a", "datum", criteria=[FX.criterion("flatness", operator, limit, "mm")])]
+                result = self.assess(documents)
+                self.assertEqual(self.outcome(result, "process.laser.thermal@TST-0902/cut"), outcome)
+                self.assertEqual(outcome == "fail", "process.laser.flatness" in self.codes(result))
+
+    def test_calibrated_print_warp_at_a_strict_flatness_limit_fails_it(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.3, size=mm(15))
+        for operator, limit, expected in (("<=", 0.3, []), ("<", 0.3, ["process.fdm.warp"]), ("<", 0.31, [])):
+            with self.subTest(operator=operator, limit=limit):
+                datum = [surface("datum_a", "datum", criteria=[FX.criterion("flatness", operator, limit, "mm")])]
+                documents = printed("TST-0101", {"strategy": "none"}, calibrations=[CONTACT, warp], critical=datum)
+                result = self.assess(documents, geometry("TST-0101", stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]])))
+                self.assertEqual([c for c in self.codes(result) if c == "process.fdm.warp"], expected)
+
+    def test_a_calibrated_milled_finish_at_a_strict_roughness_limit_fails_it_and_a_strict_lower_bound_is_refused(self) -> None:
+        profile = FX.capability_profile("tst_mill", "cnc", parameters={"axes": known(mm(3, units="count"))},
+                                        materials=[approval(ALU, operations=["machine"])],
+                                        calibrations=[calibration("finish_study", "surface_roughness", ALU, 0.8, 3.2, "um")])
+        obligation = "process.cnc.precision@TST-0201/mill"
+        for operator, limit, outcome, finding in (("<=", 3.2, "pass", False), ("<", 3.2, "fail", True), ("<", 3.3, "pass", False),
+                                                  (">", 1.0, "unknown", False), (">=", 1.0, "unknown", False)):
+            with self.subTest(operator=operator, limit=limit):
+                critical = [surface("pocket_floor", "seal", criteria=[FX.criterion("surface_roughness", operator, limit, "um")])]
+                documents = FX.record(parts=[milled("TST-0201", [end_mill(4.0, 25.0)], critical=critical)],
+                                      capabilities=[profile], materials=materials())
+                result = self.assess(documents, geometry("TST-0201", POCKET))
+                self.assertEqual(self.outcome(result, obligation), outcome)
+                self.assertEqual("process.cnc.finish" in self.codes(result), finding)
+
+    def test_a_strict_lower_bound_on_a_diameter_band_is_no_band(self) -> None:
+        ctx = SimpleNamespace(surface_raw=lambda _surface: {"criteria": [FX.criterion("diameter", operator, 6, "mm")]})
+        for operator in (">", ">=", "<", "<="):
+            with self.subTest(operator=operator):
+                self.assertIsNone(pc.additive._diameter_band(ctx, None))
+
+    def test_a_strict_tab_slot_clearance_is_refused_never_read_as_a_minimum(self) -> None:
+        for operator in (">", "<"):
+            with self.subTest(operator=operator):
+                documents = tab_slot(tab_thickness=mm(lower=2.95, upper=3.05), coating=None, calibrations=[KERF],
+                                     clearance=FX.criterion("clearance", operator, -1.0, "mm", id="tab_fit"))
+                result = self.assess(documents, geometry("TST-0301", SLOT))
+                self.assertEqual(self.outcome(result, "process.laser.kerf@TST-0301/cut"), "unknown")
+                self.assertNotIn("process.laser.tab_slot_fit", self.codes(result))
 
 
 # --- contract -------------------------------------------------------------------------------------------------------

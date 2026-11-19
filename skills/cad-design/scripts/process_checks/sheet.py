@@ -286,7 +286,8 @@ def _tab_slot_fits(ctx: Context, cal: Calibrated, findings: list[Draft]) -> list
         elif criterion.get("operator") == ">=":
             need_low, need_high = convert(criterion["value"], c_units, "mm"), math.inf
         else:
-            parts.append((UNKNOWN, f"{if_id} clearance criterion is not a range"))
+            parts.append((UNKNOWN, f"{if_id} clearance criterion operator {criterion.get('operator')} is not one this "
+                                   "check evaluates (>= or between)"))
             continue
         measured = {"lower": round(low, 6) + 0.0, "upper": round(high, 6) + 0.0, "units": "mm"}
         why = (f"nominal clearance {nominal:+.3f} mm; slot {width:g} mm with kerf {dev_low:+g}..{dev_high:+g} mm, "
@@ -451,14 +452,14 @@ def thermal(ctx: Context) -> Result:
 
 def _within(ctx: Context, surface: Any, cal: Calibrated, prop: str, units: str, code: str, remedy: str, recheck: str,
             findings: list[Draft]) -> tuple[str, str]:
-    """The calibrated upper bound of `cal` against every `prop <=` criterion of `surface`: FAIL when the
+    """The calibrated upper bound of `cal` against every `prop <=` or `prop <` criterion of `surface`: FAIL when the
     calibration can exceed one; a surface stating no such limit has nothing stricter for the calibration to meet."""
     limits = [item for item in ctx.surface_raw(surface).get("criteria") or ()
-              if item.get("property") == prop and item.get("operator") == "<="]
+              if item.get("property") == prop and item.get("operator") in ctx.mi.UPPER_BOUND_OPERATORS]
     for item in limits:
         limit_units = item.get("units") or units
         worst = cal.bounds(limit_units)[1]
-        if worst > float(item["value"]) + 1e-9:
+        if ctx.mi.exceeds_upper_bound(worst, item["operator"], float(item["value"]), 1e-9):
             findings.append(Draft(code, "major", FAIL, {"value": round(worst, 6) + 0.0, "units": limit_units},
                                   {**item, "units": limit_units}, f"calibrated {cal.characteristic} against the criterion",
                                   f"calibration {cal.calibration.id}",
