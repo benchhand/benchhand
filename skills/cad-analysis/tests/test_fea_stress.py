@@ -286,6 +286,15 @@ class MalformedRecordTests(unittest.TestCase):
         for block, header in self.BLOCKS:
             self.assert_refused(block, header, lambda r: r[:3], "marker only")
 
+    def test_a_component_line_after_a_block_record_is_refused_with_its_block(self) -> None:
+        # A ` -5` line describes a component, so it belongs before the first record; after one it would go unread.
+        late = " -5  SXY         1    4    1    2"
+        for block, header in self.BLOCKS:
+            with self.subTest(block=block):
+                text = self.corrupt(self.good(), header, lambda r: r + "\n" + late)
+                with self.assertRaisesRegex(fs.FrdError, rf"{block} block has a component line after its first record"):
+                    fs.read_frd(text)
+
 
 class StressTensorTests(unittest.TestCase):
     """`read_frd` keeps each node's six stress components, in the order ccx 2.23 writes them."""
