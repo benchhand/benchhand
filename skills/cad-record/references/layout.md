@@ -254,6 +254,10 @@ old file back only while the target is absent, so a file that another writer ren
 file it cannot put back moves to `hw/.cad/cache/recovery/`, where `cache.findings` names it. On a
 filesystem without that swap, `place_object()` places nothing, and cad-model builds the part again.
 
+For a kept file on another filesystem, `place_object()` copies it to the recovery folder and syncs the
+copy. Then it removes the original. If the copy fails, the file stays, and the cleanup of the run keeps
+it.
+
 ## Git storage
 
 Generated results stay out of git unless the user approved storing them: `product.yaml`

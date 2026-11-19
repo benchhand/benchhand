@@ -689,9 +689,9 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
             raise UsageError(f"run staged files outside the cad-record layout: {stray}")
         write_json(work / "manifest.json", manifest)
         publish(work, final, label)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-        shutil.rmtree(states, ignore_errors=True)
+    finally:  # remove_tree spares a file a failed reuse kept in place (cad-record store.py Store._keep)
+        parts_store.remove_tree(work)
+        parts_store.remove_tree(states)
 
     try:
         point_latest(hw, label, manifest)

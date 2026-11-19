@@ -764,9 +764,9 @@ class PlaceObject(Fixture):
                 self.assert_left(target, b"FOREIGN", [b"OLD"])
                 self.assertEqual(self.kept(target), [kept])
 
-    def test_a_kept_file_on_another_filesystem_than_the_store_stays_beside_its_target(self) -> None:
-        digest, stored = self.stored(b"cross-device")
-        target = self.target("cross-device", b"OLD")
+    @contextlib.contextmanager
+    def across_filesystems(self) -> Iterator[None]:
+        """While the block runs, a rename into the recovery folder fails as it does across filesystems (EXDEV)."""
         real = store._rename2
 
         def rename2(source, onto, *args, **kwargs):
@@ -774,10 +774,35 @@ class PlaceObject(Fixture):
                 raise OSError(errno.EXDEV, "Cross-device link")
             return real(source, onto, *args, **kwargs)
 
-        with mock.patch.object(store, "_rename2", rename2), self.at_the_rename(before=self.failing_hash(stored)), \
+        with mock.patch.object(store, "_rename2", rename2):
+            yield
+
+    def test_a_kept_file_on_another_filesystem_than_the_store_is_copied_to_the_recovery_folder(self) -> None:
+        digest, stored = self.stored(b"cross-device")
+        target = self.target("cross-device", b"OLD")
+        with self.across_filesystems(), self.at_the_rename(before=self.failing_hash(stored)), \
                 self.at_the_undo(target, lambda: None, self.foreign(target)):
             self.assertFalse(self.store.place_object(digest, target))
+        self.assert_left(target, b"FOREIGN", [b"OLD"])
+
+    def test_a_kept_file_whose_copy_fails_stays_in_place_and_the_stores_cleanup_spares_it(self) -> None:
+        """The copy into the recovery folder cannot be synced, so the kept file stays beside its target, named
+        there in cache.findings. Store.remove_tree, the cleanup that cad-model runs, removes everything else."""
+        digest, stored = self.stored(b"copy fails")
+        target = self.target("copy fails", b"OLD")
+        with self.across_filesystems(), self.at_the_rename(before=self.failing_hash(stored)), \
+                self.at_the_undo(target, lambda: None, self.foreign(target)), \
+                mock.patch.object(store.os, "fsync", side_effect=OSError(errno.EIO, "Input/output error")):
+            self.assertFalse(self.store.place_object(digest, target))
         self.assert_left(target, b"FOREIGN", [b"OLD"], where=target.parent)
+        self.assertEqual([path.read_bytes() for path in self.recovery.iterdir()] if self.recovery.exists() else [],
+                         [])  # no partial copy
+        (target.parent / "sub").mkdir()
+        (target.parent / "sub" / "other").write_bytes(b"OTHER")
+        [kept] = self.kept(target)
+        self.store.remove_tree(target.parent)
+        self.assertEqual(sorted(path.name for path in target.parent.iterdir()), [kept.name])
+        self.assertEqual(kept.read_bytes(), b"OLD")
 
     def test_a_recovery_log_that_cannot_be_written_changes_no_outcome_and_loses_no_file(self) -> None:
         """findings.jsonl is a folder, so the `kept:` line cannot be written. place_object still returns False,

@@ -20,7 +20,7 @@ fresh folder and renames that folder into place, so a reader sees the whole set 
 linked before the folder gets its name. `place_object` links one object, swaps the link onto its name and then
 hashes it, under a lock on the folder. When that hash fails, it puts the old file back, and never over a file
 another writer renamed there since: such a file stands, and the old one moves to `cache.recovery`, named in
-`cache.findings`. Only `holds` answers from
+`cache.findings` (copied there from another filesystem, or kept in place, which `remove_tree` spares). Only `holds` answers from
 the hashes this Store took before (`_settled`). Every write lands beside its name and the store renames it onto that
 name, and every store
 path is a plain file or folder. `gc` keeps what any sealed manifest under hw/ names and removes the rest, and the part store of
@@ -123,6 +123,27 @@ def _link_or_copy(source: Path, target: Path, *, exclusive: bool = False) -> Non
             with open(source, "rb") as reading, open(target, "xb") as writing:
                 shutil.copyfileobj(reading, writing)
     os.chmod(target, READ_ONLY)
+
+
+def _copy_in(source: Path, durable: Path) -> None:
+    """Copy `source` to the new file `durable` (O_EXCL: FileExistsError while it exists), with its mode, then
+    fsync the copy and its folder. On any error the partial copy goes, and `source` stays as it was."""
+    try:
+        with open(source, "rb") as reading, open(durable, "xb") as writing:
+            shutil.copyfileobj(reading, writing)
+            writing.flush()
+            os.fchmod(writing.fileno(), stat.S_IMODE(os.fstat(reading.fileno()).st_mode))
+            os.fsync(writing.fileno())
+        handle = os.open(durable.parent, os.O_RDONLY)
+        try:
+            os.fsync(handle)
+        finally:
+            os.close(handle)
+    except FileExistsError:
+        raise
+    except BaseException:
+        durable.unlink(missing_ok=True)  # only the copy this call made
+        raise
 
 
 def _fresh(near: Path, kind: str) -> Path:
@@ -326,6 +347,7 @@ class Store:
         # `holds` reuses one only while it is settled (`_settled`); `record`, `place` and `place_object` never do.
         self._checked: dict[str, tuple[tuple[int, int, int, int, int], int, bool]] = {}
         self._held = threading.local()  # the keys whose lock this thread holds through this Store
+        self._pinned: set[tuple[int, int]] = set()  # kept files that stay in place: `remove_tree` spares them
 
     def _path(self, entry_id: str, digest: str) -> Path:
         return Path(layout.resolve(self.hw, entry_id, SHA=digest))
@@ -440,25 +462,17 @@ class Store:
         raise StoreError(f"no free name beside {target} to stage object {digest}")
 
     def _keep(self, path: Path, held: str, digest: str, target: Path) -> None:
-        """Move the file `path` that a failed `place_object` of `digest` onto `target` kept to the recovery folder
-        (cache.recovery), out of reach of whatever removes the target's folder, then name it in cache.findings.
-        The move is a no-replace rename onto a fresh name. Where it fails, such as on another filesystem, the
-        file stays where it is. The finding is best effort: an error writing it never changes what
-        `place_object` returns or raises."""
+        """Secure the file `path` that a failed `place_object` of `digest` onto `target` kept, then name it in
+        cache.findings. It moves to the recovery folder (cache.recovery) with a no-replace rename onto a fresh
+        name. Across filesystems, it is copied there instead (`_copy_in`), and the original goes only once the
+        copy and the folder are synced. When that fails too, the file stays where it is, and `remove_tree`
+        spares it, so the caller's cleanup cannot remove it. The finding is best effort: an error writing it
+        never changes what `place_object` returns or raises."""
         try:
-            folder = self._folder("cache.recovery")
-            if os.stat(folder).st_dev == os.stat(path, follow_symlinks=False).st_dev:
-                for _ in range(5):
-                    durable = _fresh(folder / target.name, held)
-                    durable = durable.with_name(durable.name.lstrip("."))
-                    try:
-                        _rename2(path, durable, swap=False)
-                        path = durable
-                        break
-                    except FileExistsError:  # a kept file has that name: it stays, and the next name is fresh
-                        continue
-        except OSError:  # the file stays where it is
-            pass
+            path = self._recover(path, held, target)
+        except Exception:  # noqa: BLE001 - the file stays where it is, and remove_tree spares it
+            with contextlib.suppress(OSError):
+                self._pinned.add(_inode(os.stat(path, follow_symlinks=False)))
         what = ("the file that the target named before" if held == "old" else
                 "a file another writer renamed onto the target")
         try:
@@ -466,6 +480,50 @@ class Store:
                                   "failed, and could not put it back without replacing a newer file there")
         except Exception:  # noqa: BLE001 - best effort: findings.jsonl may be unwritable, and the file is kept
             pass
+
+    def _recover(self, path: Path, held: str, target: Path) -> Path:
+        """Where `_keep` puts `path`: renamed into the recovery folder on the same filesystem, else copied there,
+        with the original removed once the copy is synced. An OSError or StoreError leaves `path` as it was."""
+        folder = self._folder("cache.recovery")
+        rename = os.stat(folder).st_dev == os.stat(path, follow_symlinks=False).st_dev
+        for _ in range(5):
+            durable = _fresh(folder / target.name, held)
+            durable = durable.with_name(durable.name.lstrip("."))
+            try:
+                if rename:
+                    _rename2(path, durable, swap=False)
+                    return durable
+                _copy_in(path, durable)
+            except FileExistsError:  # a kept file has that name: it stays, and the next name is fresh
+                continue
+            except OSError as exc:
+                if not rename or exc.errno != errno.EXDEV:
+                    raise
+                rename = False  # another filesystem after all: copy instead
+                continue
+            with contextlib.suppress(OSError):  # the synced copy stands either way
+                path.unlink()
+            return durable
+        raise StoreError(f"no free name in {folder} for {path}")
+
+    def remove_tree(self, folder: Path) -> None:
+        """Remove `folder` as `shutil.rmtree(folder, ignore_errors=True)` does, but spare each file that a failed
+        `place_object` of this Store kept in place (`_keep`), and the folders that hold it."""
+        folder = Path(folder)
+        if not self._pinned:
+            shutil.rmtree(folder, ignore_errors=True)
+            return
+        for root, dirnames, filenames in os.walk(folder, topdown=False):  # never follows a link
+            for name in [*filenames, *dirnames]:
+                path = Path(root) / name
+                with contextlib.suppress(OSError):
+                    found = os.stat(path, follow_symlinks=False)
+                    if stat.S_ISDIR(found.st_mode):
+                        path.rmdir()  # fails while it holds a spared file
+                    elif _inode(found) not in self._pinned:
+                        path.unlink()
+        with contextlib.suppress(OSError):
+            folder.rmdir()
 
     # --- records ---------------------------------------------------------------------------------------------------
 
