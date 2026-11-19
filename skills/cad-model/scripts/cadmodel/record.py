@@ -17,6 +17,8 @@ RECORD_SCRIPTS = Path(__file__).resolve().parents[3] / "cad-record" / "scripts"
 LAYOUT_SCRIPT = RECORD_SCRIPTS / "layout.py"
 INTENT_SCRIPT = RECORD_SCRIPTS / "manufacturing_intent.py"
 YAML_LOADER_SCRIPT = RECORD_SCRIPTS / "yaml_loader.py"
+GUIDELINES_SCRIPT = RECORD_SCRIPTS / "guidelines.py"
+RESERVED_COPIES = "manufacturing/guidelines/shipped--"  # guidelines.SHIPPED_COPY below PROJECT_RELATIVE
 
 
 class RecordError(ValueError):
@@ -53,8 +55,15 @@ def snapshot(hw: Path, pns: Iterable[str]) -> dict[str, bytes]:
     the cad-record layout's `version.record` entry names that exists (`snapshot_names`): the product,
     requirement, interface and assembly records, parts/<PN>/part.yaml of each PN, the manufacturing
     capability, material and selection records and every supporting source file below
-    manufacturing/sources/. Never the findings or evidence ledgers, which checks produce afterwards."""
-    return {name: (hw / name).read_bytes() for name in load_layout().snapshot_names(hw, pns)}
+    manufacturing/sources/ and the project's guideline sets below manufacturing/guidelines/. The shipped guideline sets that
+    win over the project's are copied beside them as manufacturing/guidelines/shipped--<name>, byte for byte, so a later
+    reader sees the sets this version was built with. Never the findings or evidence ledgers, which checks produce afterwards."""
+    files = {name: (hw / name).read_bytes() for name in load_layout().snapshot_names(hw, pns)}
+    reserved = sorted(name for name in files if name.startswith(RESERVED_COPIES))
+    if reserved:
+        raise RecordError(f"hw/{reserved[0]} uses a name reserved for the shipped guideline sets a build copies (shipped--*); rename it")
+    files.update(_load("cad_record_guidelines", GUIDELINES_SCRIPT).snapshot_files(hw))
+    return files
 
 
 def write_snapshot(folder: Path, files: Mapping[str, bytes]) -> dict[str, str]:
@@ -120,4 +129,4 @@ def read_snapshot(files: Mapping[str, bytes]) -> Snapshot:
         intent.record_version(product if isinstance(product, Mapping) else {})
     except intent.UnsupportedRecordVersion as error:
         raise RecordError(f"hw/product.yaml: {error}") from error
-    return Snapshot(files, parsed, intent.normalize_record(parsed))
+    return Snapshot(files, parsed, intent.with_guideline_files(intent.normalize_record(parsed), files, snapshot=True))

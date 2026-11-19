@@ -792,7 +792,7 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     manufacturing = {}
     for rel, schema in intent.DOCUMENT_SCHEMAS:
         path = hw / rel
-        if rel.startswith("manufacturing/") and path.is_file():
+        if rel.startswith("manufacturing/") and "*" not in rel and path.is_file():  # the guideline wildcard is read below
             manufacturing[rel] = (schema, load_yaml(path, findings))
             if manufacturing[rel][1] is not None:
                 parsed[rel] = manufacturing[rel][1]
@@ -800,6 +800,9 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems)
     if record.version != intent.RECORD_VERSION:
         return record
+    known = len(record.problems)
+    record = intent.with_guidelines(record, hw)  # a guideline file that discovery refuses is an error, by name
+    findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems[known:])
     for rel, (schema, data) in manufacturing.items():
         validate_document(data, schema, str(hw / rel), findings)
     product = documents.get("product.yaml")

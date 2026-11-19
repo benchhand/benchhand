@@ -209,6 +209,7 @@ DOCUMENT_SCHEMAS: tuple[tuple[str, str], ...] = (
     ("manufacturing/selection.yaml", "manufacturing-selection.schema.json"),
     ("manufacturing/findings.yaml", "manufacturing-findings.schema.json"),
     ("manufacturing/evidence.yaml", "manufacturing-evidence.schema.json"),
+    ("manufacturing/guidelines/*.yaml", "manufacturing-guideline.schema.json"),
 )
 REQUIRED_DESIGN_FILES = ("manufacturing/capabilities.yaml", "manufacturing/materials.yaml", "manufacturing/selection.yaml")
 
@@ -378,6 +379,7 @@ class Source:
     decision: str | None = None
     date: str | None = None
     document: str | None = None  # the document that holds a policy
+    locator: str | None = None  # where in the source the value is stated
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any]) -> Source:
@@ -786,6 +788,7 @@ class Record:
     problems: tuple[Problem, ...]
     assembly_inventory: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)  # assembly.yaml occurrences, subassemblies
     assembly_document: Any = None  # assembly.yaml as written: the GLB-STEP agreement and declared dimensions depend on all of it
+    guideline_digests: Mapping[str, Mapping[str, str]] = field(default_factory=lambda: _EMPTY)  # profile id -> {id@revision: sha256}
 
 
 # --- record version --------------------------------------------------------------------------------------------
@@ -901,18 +904,54 @@ def check_documents(documents: Mapping[str, Any], paths: Iterable[str]) -> list[
     return [problem for problem in problems if problem.path in wanted]
 
 
-def load_record(hw: Path) -> Record:
-    """The normalized record at `hw`, with the problems of reading and checking it (schema aside)."""
+def load_record(hw: Path, *, snapshot: bool = False) -> Record:
+    """The normalized record at `hw`, with the problems of reading and checking it (schema aside). With `snapshot`, `hw`
+    is a version's record/ folder: the guideline sets are read from its own copies only (see `with_guidelines`)."""
     documents, problems = read_documents(hw)
     record = normalize_record(documents, hw=hw)
-    return _with_problems(record, problems + list(record.problems))
+    return with_guidelines(_with_problems(record, problems + list(record.problems)), hw, snapshot=snapshot)
 
 
-def check_record(hw: Path) -> tuple[Record, list[Problem]]:
+def check_record(hw: Path, *, snapshot: bool = False) -> tuple[Record, list[Problem]]:
     """load_record plus schema_problems: everything this contract reports about the record at `hw`."""
     documents, problems = read_documents(hw)
     record = normalize_record(documents, hw=hw)
+    record = with_guidelines(_with_problems(record, list(record.problems)), hw, snapshot=snapshot)
     return record, problems + schema_problems(documents) + list(record.problems)
+
+
+def with_guidelines(record: Record, hw: Path, *, snapshot: bool = False) -> Record:
+    """`record` with the digest of every guideline set its capability profiles can resolve through (impact.py folds
+    them into the `source` fingerprint), and a problem for each guideline file that discovery refused. `hw` is the
+    project's hw/, or with `snapshot` a version's record/ folder, whose own copies are the only sets read."""
+    guidelines = _sibling("cad_record_guidelines", "guidelines.py")
+    problems = list(record.problems)
+    try:
+        catalog = guidelines.discover(hw, snapshot=snapshot)
+    except ImportError as error:  # the validator is missing: a check that cannot run is an error, never "no change"
+        raise IntentError(f"the guideline sets cannot be checked: {error}. Run with jsonschema installed.") from error
+    for refusal in catalog.refused:
+        shown = f"hw/{refusal.path}" if refusal.path.startswith(f"{guidelines.PROJECT_RELATIVE.as_posix()}/") else refusal.path
+        problems.append(Problem("intent.guideline", shown, "", "; ".join(refusal.problems)))
+    values = {name: getattr(record, name) for name in record.__dataclass_fields__}
+    values["problems"] = tuple(problems)
+    values["guideline_digests"] = freeze(guidelines.record_digests(record, catalog))
+    return Record(**values)
+
+
+def with_guideline_files(record: Record, files: Mapping[str, bytes], *, snapshot: bool = False) -> Record:
+    """`with_guidelines` for record files held as bytes (a git index, a version's record snapshot): the project guideline
+    sets among `files` are written to a scratch folder and read from there, so discovery sees the same layout as on disk."""
+    import tempfile  # noqa: PLC0415 - needed only to read guideline sets
+
+    prefix = "manufacturing/guidelines/"
+    with tempfile.TemporaryDirectory(prefix="cad-guidelines-") as scratch:
+        for name, data in files.items():
+            if name.startswith(prefix) and name.endswith(".yaml") and "/" not in name[len(prefix):]:
+                target = Path(scratch) / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+        return with_guidelines(record, Path(scratch), snapshot=snapshot)
 
 
 def _with_problems(record: Record, problems: list[Problem]) -> Record:

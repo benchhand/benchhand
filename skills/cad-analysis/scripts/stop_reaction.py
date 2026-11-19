@@ -540,7 +540,7 @@ def file_hashes(record_hw: Path, names: Iterable[str]) -> dict[str, str]:
 
 def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the packet, the evidence detail) of one run."""
-    record = intent.load_record(record_hw)
+    record = intent.load_record(record_hw, snapshot=version is not None)
     expected = [o for o in intent.required_checks(record) if o.family == FAMILY]
     dependencies = file_hashes(record_hw, ("assembly.yaml", "interfaces.yaml", "product.yaml"))
     if version is not None:

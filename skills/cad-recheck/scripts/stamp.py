@@ -145,7 +145,7 @@ def staged_record(root: Path, committed: bool = False) -> Staged:
             documents[rel] = yaml_loader.safe_load(data.decode("utf-8"))
         except (UnicodeError, yaml.YAMLError) as error:
             raise RuntimeError(f"cannot parse staged hw/{rel}: {error}") from error
-    return Staged(intent.normalize_record(documents), evidence.record_digest(files),
+    return Staged(intent.with_guideline_files(intent.normalize_record(documents), files), evidence.record_digest(files),
                   evidence.selection.input_digest(documents))
 
 

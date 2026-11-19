@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["pyyaml>=6.0"]
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
 # ///
 """Change impact over the manufacturing-intent dependency domains of a record version 2 design record.
 
@@ -30,9 +30,10 @@ DIGEST_SCOPE): changed inputs, or a selection.yaml assessment that records anoth
 selection's assessment decision; the recorded choice counts again only once it is re-assessed and
 confirmed through the approval gate.
 
-The module is standard library only; load it by path as `cad_record_impact` (dataclasses look it up
-in sys.modules). The CLI reads YAML with PyYAML. Prints one JSON report: exit 0 no impact, 1 impact
-found (report only), 2 usage or infrastructure error.
+The module needs PyYAML to read the record, and jsonschema to check guideline sets when a project or the plugin
+has any (a missing jsonschema is an error, exit 2, never "unchanged"). Load it by path as `cad_record_impact`
+(dataclasses look it up in sys.modules). Prints one JSON report: exit 0 no impact, 1 impact found (report only),
+2 usage or infrastructure error.
 """
 
 from __future__ import annotations
@@ -157,7 +158,8 @@ def subject_key(subject: Mapping[str, Any]) -> str:
 def plain(value: Any) -> Any:
     """`value` as plain JSON data: dataclasses as dicts of their fields, mappings as dicts, sequences as lists."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {f.name: plain(getattr(value, f.name)) for f in dataclasses.fields(value) if f.name != "raw"}
+        return {f.name: plain(getattr(value, f.name)) for f in dataclasses.fields(value)
+                if f.name != "raw" and not (f.name == "locator" and getattr(value, f.name) is None)}
     if isinstance(value, Mapping):
         return {str(key): plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -336,6 +338,11 @@ class _Record:
         }
         sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
+        digests = getattr(self.record, "guideline_digests", None) or {}
+        for op in self.route(pn):  # a guideline set the part's capability profile resolves through stales it like a source
+            profile = op.get("capability")
+            for ref, sha in sorted((digests.get(profile) or {}).items()) if isinstance(profile, str) else ():
+                values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:
             values["occurrences"] = mounting
@@ -666,7 +673,7 @@ def read_inputs(directory: Path, ledgers_from: Path | None = None) -> tuple[dict
         current, _ = mi.read_documents(ledgers_from)
         documents = {rel: data for rel, data in documents.items() if rel not in LEDGERS}
         documents.update({rel: current[rel] for rel in LEDGERS if rel in current})
-    return documents, mi.normalize_record(documents)
+    return documents, mi.with_guidelines(mi.normalize_record(documents), directory, snapshot=ledgers_from is not None)
 
 
 def read_record(directory: Path, ledgers_from: Path | None = None) -> Any:

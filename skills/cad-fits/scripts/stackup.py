@@ -1067,7 +1067,7 @@ def main(argv: list[str] | None = None) -> int:
             version, _, record_dir = LAYOUT.built_version(args.hw, args.version)
             # a stack at hw/analysis/cases/<case>/case.yaml is that analysis case: it publishes as the case
             case = LAYOUT.analysis_case(args.hw.resolve(), stack_path)
-            record = _intent_module().load_record(record_dir)
+            record = _intent_module().load_record(record_dir, snapshot=True)
             decisions = recorded_decisions(args.hw)
         result = compute(stack, record, case=case, on=date.today() if record is not None else None, decisions=decisions)
         status = status_of(result)
