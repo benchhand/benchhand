@@ -49,12 +49,13 @@ REACH_MARGIN = 2.0      # the reach is this many times the sum of both deflectio
                         # worst clean point sits at 1.19 of the sum (LMP-0004, a 1.2 mm fillet torus). The reach
                         # and EPS_MM leave a 1.74x margin. A bare sum would fail that clean part
 MAX_SAMPLES = 1500      # points checked per direction and occurrence
-CELLS = 8               # grid cells along the longest side of a mesh, for the triangle lookup
+WIDE_CELLS = 64         # a triangle whose grown box covers more lookup cells is tested against every point
 SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contribute a sample point
 PLANAR_TOLERANCE = 1e-7  # a surface this flat is a plane whatever its type, and its reference cannot stray
 CHECKED_TRIANGLES = 8  # per measured face, the largest triangles of the reference mesh
 WORST_POINTS = 5        # failing points measured exactly, to report the distance
-BATCH = 256            # query points against their candidate triangles at once
+BATCH = 256            # query points against the wide triangles at once
+PAIR_BATCH = 1 << 16   # (point, triangle) pairs of the lookup measured at once
 COMPONENTS = {5121: "<u1", 5123: "<u2", 5125: "<u4", 5126: "<f4"}
 TYPE_WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3}
 
@@ -294,51 +295,71 @@ def _triangle_sq(p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> 
 
 
 class _Surface:
-    """A mesh's triangles in a uniform grid of cells at least twice `reach` wide, so a point's reach ball lies in
-    the 27 cells around its own."""
+    """A mesh's triangles in a uniform grid of cells, each triangle in every cell its reach-grown box touches, so a
+    point needs only the triangles of its own cell. A cell is at least twice `reach` wide and as wide as the median
+    grown box. A triangle whose grown box covers more than WIDE_CELLS cells is tested against every point instead.
+    The cell index rises with each coordinate, so a point inside a grown box lies in one of the box's cells. Every
+    candidate then takes the box test and the distance test of a search of all triangles, with the same answer."""
 
     def __init__(self, mesh: Mesh, reach: float) -> None:
         self.reach = reach
         self.corners = mesh.points[mesh.triangles]  # (M, 3 corners, 3)
         self.box_low, self.box_high = self.corners.min(axis=1) - reach, self.corners.max(axis=1) + reach
-        low = mesh.points.min(axis=0)
-        self.origin = low
-        self.cell = max(2.0 * reach, float((mesh.points.max(axis=0) - low).max()) / CELLS, 1e-9)
-        lows, highs = self._index(self.corners.min(axis=1)).tolist(), self._index(self.corners.max(axis=1)).tolist()
-        self.cells: dict[tuple[int, int, int], list[int]] = {}
-        for number, (lo, hi) in enumerate(zip(lows, highs)):
-            for x in range(lo[0], hi[0] + 1):
-                for y in range(lo[1], hi[1] + 1):
-                    for z in range(lo[2], hi[2] + 1):
-                        self.cells.setdefault((x, y, z), []).append(number)
+        self.origin = self.box_low.min(axis=0)
+        extent = float(np.median((self.box_high - self.box_low).max(axis=1)))
+        self.cell = max(2.0 * reach, extent, 1e-9)
+        low, high = self._index(self.box_low), self._index(self.box_high)
+        span = high - low + 1
+        count = span.prod(axis=1)
+        self.wide = np.flatnonzero(count > WIDE_CELLS)
+        narrow = np.flatnonzero(count <= WIDE_CELLS)
+        self.shape = high[narrow].max(axis=0) + 1 if len(narrow) else np.zeros(3, dtype=np.int64)
+        # One row per (triangle, cell) pair: the k-th cell of a triangle's box, x fastest
+        per = count[narrow]
+        triangle = np.repeat(narrow, per)
+        k = np.arange(len(triangle)) - np.repeat(np.cumsum(per) - per, per)
+        sx, sy = span[triangle, 0], span[triangle, 1]
+        cells = low[triangle] + np.stack([k % sx, (k // sx) % sy, k // (sx * sy)], axis=1)
+        keys = self._key(cells)
+        order = np.argsort(keys, kind="stable")
+        self.members = triangle[order]  # CSR: the triangles of cell keys[i] are members[starts[i]:starts[i + 1]]
+        self.keys, self.starts = np.unique(keys[order], return_index=True)
+        self.starts = np.append(self.starts, len(order))
 
     def _index(self, points: np.ndarray) -> np.ndarray:
         return np.floor((points - self.origin) / self.cell).astype(np.int64)
 
+    def _key(self, cells: np.ndarray) -> np.ndarray:
+        return cells[:, 0] + self.shape[0] * (cells[:, 1] + self.shape[1] * cells[:, 2])
+
+    def _near(self, points: np.ndarray, point: np.ndarray, triangle: np.ndarray) -> np.ndarray:
+        """Of the pairs (point, triangle): the points whose triangle's grown box holds them and lies within reach."""
+        p = points[point]
+        boxed = np.all((p >= self.box_low[triangle]) & (p <= self.box_high[triangle]), axis=1)
+        point, triangle, p = point[boxed], triangle[boxed], p[boxed]
+        corners = self.corners[triangle]
+        squared = _triangle_sq(p, corners[:, 0], corners[:, 1], corners[:, 2])
+        return point[squared <= self.reach * self.reach]
+
     def within(self, points: np.ndarray) -> np.ndarray:
         """Per point: whether a triangle lies within `reach` of it."""
         result = np.zeros(len(points), dtype=bool)
-        groups: dict[tuple[int, int, int], list[int]] = {}
-        for number, key in enumerate(map(tuple, self._index(points).tolist())):
-            groups.setdefault(key, []).append(number)
-        limit = self.reach * self.reach
-        for (cx, cy, cz), members in groups.items():
-            near = {t for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
-                    for t in self.cells.get((cx + dx, cy + dy, cz + dz), ())}
-            if not near:
-                continue
-            near = np.array(sorted(near))
-            for start in range(0, len(members), BATCH):
-                chosen = np.array(members[start:start + BATCH])
-                p = points[chosen]
-                box = np.all((p[:, None, :] >= self.box_low[near][None]) & (p[:, None, :] <= self.box_high[near][None]),
-                             axis=2)  # triangles whose reach-grown box holds the point
-                point, triangle = np.nonzero(box)
-                if not len(point):
-                    continue
-                corners = self.corners[near[triangle]]
-                squared = _triangle_sq(p[point], corners[:, 0], corners[:, 1], corners[:, 2])
-                result[chosen[point[squared <= limit]]] = True
+        cells = self._index(points)
+        inside = np.flatnonzero(np.all((cells >= 0) & (cells < self.shape), axis=1))
+        keys = self._key(cells[inside])
+        slot = np.minimum(np.searchsorted(self.keys, keys), max(len(self.keys) - 1, 0))
+        hit = self.keys[slot] == keys if len(self.keys) else np.zeros(len(keys), dtype=bool)
+        point, slot = inside[hit], slot[hit]
+        per = self.starts[slot + 1] - self.starts[slot]
+        pairs = np.repeat(point, per)
+        rows = np.arange(len(pairs)) - np.repeat(np.cumsum(per) - per, per) + np.repeat(self.starts[slot], per)
+        for start in range(0, len(pairs), PAIR_BATCH):
+            batch = slice(start, start + PAIR_BATCH)
+            result[self._near(points, pairs[batch], self.members[rows[batch]])] = True
+        for start in range(0, len(points) if len(self.wide) else 0, BATCH):
+            chosen = np.arange(start, min(start + BATCH, len(points)))
+            point, triangle = np.repeat(chosen, len(self.wide)), np.tile(self.wide, len(chosen))
+            result[self._near(points, point, triangle)] = True
         return result
 
     def nearest(self, point: np.ndarray) -> float:
