@@ -913,11 +913,11 @@ class _IntentStack:
             outcome = "pass" if passed else "fail"
         if outcome == "fail":
             self.violation(nominal, nominal_pass, worst, statistical, governing)
-        if clearance is not None and clearance.failed:
-            outcome = "fail"  # a nominal gap below a guideline minimum is a miss; a met one never raises the outcome
         elif complete and wc_pass is False and governing == "justified_rss":
             self.limits.append(f"the worst case {worst['min']}..{worst['max']} mm violates the requirement; the "
                                f"approved statistical interval governs this {self.consequence} consequence")
+        if clearance is not None and clearance.failed:
+            outcome = "fail"  # a nominal gap below a guideline minimum is a miss; a met one never raises the outcome
         obligation = self.obligation_id()
         coverage = (f"declared contributors {', '.join(c.id for c in self.contributors)} over effects "
                     f"{', '.join(self.relevant)}; " + "; ".join(LIMITS))
@@ -970,7 +970,7 @@ class _IntentStack:
                                     "conditions": "a design guideline, not a calibration of this printer and material"},
                          consequence=(f"the nominal gap of {row['nominal_per_side_mm']} mm per side is below the "
                                       f"{row['minimum_mm']} mm minimum sliding clearance: the parts may bind"),
-                         remedy="open the gap to the minimum, or calibrate the sliding clearance on the target printer and material",
+                         remedy="open the nominal gap to the guideline minimum, then rerun the stack",
                          uncertainty="the guideline is a single design value, not a measurement of this machine")
         return result
 
@@ -1065,6 +1065,8 @@ def _resolve_sliding(record: Any, pns: list[str], catalog: Any, on: date | None,
         resolutions.append(resolved)
         context = GUIDELINES.context_for(record.capabilities[op.capability], record.materials[material])
         digests.update(GUIDELINES.applicable_digests(catalog, context))
+        if resolved.status == "calibrated":
+            return [], f"{pn}: a calibrated {CLEARANCE_CHARACTERISTIC} limit exists, but calibration not judged in stackup yet"
         if resolved.status != "guideline":
             return [], f"{pn}: " + "; ".join(resolved.reasons or (f"no guideline states {CLEARANCE_CHARACTERISTIC}",))
         if resolved.operator not in MINIMUM_OPERATORS:
@@ -1073,6 +1075,17 @@ def _resolve_sliding(record: Any, pns: list[str], catalog: Any, on: date | None,
         if unapplied:
             return [], f"{pn}: a guideline the profile pins is not applied: {'; '.join(unapplied)}"
     return resolutions, None
+
+
+def _unreadable_route(record: Any, pns: list[str]) -> str | None:
+    """Why a sliding part cannot be told apart as printed by fdm or not: it is no part of the record, or its route is unknown."""
+    for pn in pns:
+        part = record.parts.get(pn)
+        if part is None:
+            return f"{pn} is not a part of the record"
+        if _intent_module().is_fact(part.intent.route):
+            return f"{pn}'s route is unknown, so whether fdm prints it is unknown"
+    return None
 
 
 def _clearance_inputs(record: Any, interface_id: str | None, catalog: Any) -> tuple[list[str], str | None]:
@@ -1084,6 +1097,9 @@ def _clearance_inputs(record: Any, interface_id: str | None, catalog: Any) -> tu
     pns = _sliding_pns(record, interface_id)
     if not pns:
         return [], f"{interface_id or 'the stack subject'} records no surface with role sliding"
+    unreadable = _unreadable_route(record, pns)
+    if unreadable is not None:
+        return [], unreadable
     printed = [pn for pn in pns if _fdm_operation(record, pn) is not None]
     if not printed:
         return [], f"no sliding part is printed by fdm ({', '.join(pns)}): the guidelines cover fdm only"
@@ -1104,7 +1120,7 @@ def _clearance_result(per: str, record: Any, interface_id: str | None, catalog: 
     if why is not None or nominal is None:
         reason = why or "the nominal gap is not established: a contributor is unknown"
         return _ClearanceResult(dict(row, reasons=[reason]), reason)
-    binding = max(resolutions, key=lambda r: float(r.value.to("mm").value))
+    binding = max(resolutions, key=lambda r: (float(r.value.to("mm").value), r.operator == ">"))  # equal values: the strict one
     minimum = float(binding.value.to("mm").value)
     per_side = nominal / (1 if per == "side" else 2)
     met = per_side > minimum + CLEARANCE_EPS if binding.operator == ">" else per_side >= minimum - CLEARANCE_EPS

@@ -39,9 +39,10 @@ READERS = {  # an ImportError here is a failure of the test, never a silently dr
     "stop_reaction": load("cad_lch_snapshot_stop_reaction", SKILLS / "cad-analysis" / "scripts" / "stop_reaction.py"),
 }
 _STACKUP = load("cad_lch_snapshot_stackup", SKILLS / "cad-fits" / "scripts" / "stackup.py")
-# stackup binds its record in main, not an assess(); its input loader is the reader under test
-READERS["stackup"] = types.SimpleNamespace(
-    assess=lambda args, version, record_hw: _STACKUP.load_inputs(record_hw, snapshot=version is not None))
+# stackup binds its record in main, not an assess(); its input loader is the reader under test. It reads a built
+# version only (main always passes snapshot=True), so it has no live mode and stays out of the live-record loop
+SNAPSHOT_ONLY = {"stackup": types.SimpleNamespace(
+    assess=lambda args, version, record_hw: _STACKUP.load_inputs(record_hw, snapshot=True))}
 
 
 class Stop(Exception):
@@ -99,7 +100,7 @@ class FrozenVersion(unittest.TestCase):
 
 class SnapshotReaders(FrozenVersion):
     def test_each_producer_reads_the_frozen_guideline_copies_not_the_live_install(self) -> None:
-        for name, module in READERS.items():
+        for name, module in {**READERS, **SNAPSHOT_ONLY}.items():
             with self.subTest(reader=name):
                 args = argparse.Namespace(version="v1", hw=self.hw, version_dir=self.record_dir.parent, record_hw=self.record_dir)
                 self.assert_frozen(self.loaded(lambda: module.assess(args, "v1", self.record_dir)))
