@@ -138,6 +138,16 @@ class ValidateProject(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(report, {"ok": True, "findings": []})
 
+    def test_a_plausibility_warning_does_not_fail_validation(self) -> None:
+        """validate.py (and so the release gate, which decides through blocking) lets a plausibility.<field> warning pass."""
+        from modload import load_module  # noqa: PLC0415 - used by this test alone
+
+        validate = load_module("cad_record_validate", SKILL / "scripts" / "validate.py")
+        warning = fx.intent_module().Problem("plausibility.limits", "hw/manufacturing/capabilities.yaml", "x", "m", "warning").finding()
+        error = {**warning, "severity": "error"}
+        self.assertEqual(validate.blocking([warning]), [])
+        self.assertEqual(validate.blocking([warning, error]), [error])
+
     def test_product_license_accepts_spdx_expressions_and_rejects_malformed_values(self) -> None:
         path = self.hw / "product.yaml"
         product = yaml.safe_load(path.read_text(encoding="utf-8"))
