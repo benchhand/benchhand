@@ -257,6 +257,27 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "unknown")
         self.assertIn("stack.effect_missing", codes(result))
 
+    def test_press_fit_pin_is_unknown_and_names_the_missing_source(self) -> None:
+        stack = fixture("closing_gap.yaml")
+        stack["requirement"]["min"] = -1.0
+        documents = closing_gap_documents()
+        documents["interfaces.yaml"]["interfaces"][0]["limits"] = {
+            "press_fit": {"fit": "5 H7/p6", "hole": {"PN": "TST-0001", "feature": "cover_seat"},
+                          "shaft": {"PN": "TST-0002", "feature": "shoulder_length"}}}
+        result = self.bound(documents, stack, "closing-gap")
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(codes(result), ["stack.press_fit_unknown"])
+        finding = result["findings"][0]
+        self.assertEqual(finding["outcome"], "unknown")
+        self.assertIn("no qualifying press-fit source", finding["measured"]["reason"])
+        self.assertIn("printed coupon on the target printer and material", finding["measured"]["reason"])
+
+    def test_a_stack_without_a_press_fit_has_no_press_fit_finding(self) -> None:
+        stack = fixture("closing_gap.yaml")
+        stack["requirement"]["min"] = -1.0
+        result = self.bound(closing_gap_documents(), stack, "closing-gap")
+        self.assertNotIn("stack.press_fit_unknown", codes(result))
+
     def test_an_effect_the_interface_declares_relevant_cannot_be_dropped(self) -> None:
         result = self.bound(closing_gap_documents(relevant=("manufacture", "coating", "thermal", "moisture")),
                             fixture("closing_gap.yaml"), "closing-gap")

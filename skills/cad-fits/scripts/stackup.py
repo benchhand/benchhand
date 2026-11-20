@@ -613,6 +613,7 @@ class _IntentStack:
             self.mismatch(f"{interface_id} is not in interfaces.yaml")
             return
         self.critical = self.interface_critical(interface)
+        self.press_fit_unknown(interface_id, interface)
         variation = interface.functional.raw.get("variation")
         if not isinstance(variation, Mapping):
             self.mismatch(f"{interface_id} declares no functional.variation naming this stack")
@@ -624,6 +625,21 @@ class _IntentStack:
             self.mismatch(f"{interface_id} declares {', '.join(missing)} relevant, which the stack omits")
         if variation.get("method") != self.method:
             self.mismatch(f"{interface_id} governs by {variation.get('method')}, the stack by {self.method}")
+
+    def press_fit_unknown(self, interface_id: str, interface: Any) -> None:
+        """A press-fit pin on the interface has no qualifying interference source, so its seat is unknown, never a
+        pass or a default: the value is set by a printed coupon on the target printer and material."""
+        press_fit = (interface.raw.get("limits") or {}).get("press_fit")
+        if not isinstance(press_fit, Mapping):
+            return
+        shaft = press_fit.get("shaft") or {}
+        pin = f"{shaft.get('PN')} {shaft.get('feature')}" if shaft else interface_id
+        self.unknown("stack.press_fit_unknown", None,
+                     f"the press fit of {pin} on {interface_id} ({press_fit.get('fit')}) is unknown: no qualifying "
+                     "press-fit source exists, so the interference is set by a printed coupon on the target printer "
+                     "and material",
+                     "print and measure a press-fit coupon on the target printer and material, then record its "
+                     "calibrated interference", inputs=["hw/interfaces.yaml"])
 
     def check_finish_counted(self, item: _Contributor, subject: Mapping[str, Any], finishing: list[Any]) -> None:
         """An as-manufactured size of a feature the route finishes before assembly: a machining finish
