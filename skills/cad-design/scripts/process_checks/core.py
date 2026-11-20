@@ -170,6 +170,12 @@ def stable_id(*parts: Any) -> str:
     return f"f_{digest}"
 
 
+def _noted(coverage: str, note: str) -> str:
+    """`coverage` with `(note)` appended, once however many limits a check graded."""
+    tag = f"({note})"
+    return coverage if coverage.endswith(tag) else f"{coverage} {tag}"
+
+
 # --- calibrations -----------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -359,6 +365,57 @@ class Geometry:
 
 
 # --- the context of one obligation ------------------------------------------------------------------------------
+
+def component_ids(part: Any) -> list[str]:
+    """The component ids of `part`: its declared components, else the implicit sole solid."""
+    return [c.id for c in part.intent.components] or [IMPLICIT]
+
+
+def component_contexts(record: Any, pn: str, component: str, catalog: Any, today: date) -> list[Context]:
+    """The context of every route operation that acts on `component` of part `pn`, in route order: the operations
+    a component-wide scan (probe_plan) reads. A part the record does not hold has none."""
+    part = record.parts.get(pn)
+    if part is None or intent().is_fact(part.intent.route):
+        return []
+    return [Context(record, pn, component, op, None, today, catalog=catalog)
+            for op in part.intent.route if not op.components or component in op.components]
+
+
+def guideline_scope(record: Any, pn: str, catalog: Any, today: date) -> tuple[list[Any], list[str]]:
+    """(guideline scopes, reasons) of part `pn`: the guidelines.Context of each route operation on each of its
+    components that has one (Context.guideline_context: capability profile and stock material), in route order. With
+    none, the scopes are empty and the reasons say why each operation, or the part, has none. The reading of the scope
+    that form_check's part-level diagnostic shares with the process checks."""
+    part = record.parts.get(pn)
+    if part is None:
+        return [], [f"{pn} is not a part of the record"]
+    route = part.intent.route
+    if intent().is_fact(route):
+        return [], [f"the route of {pn} is not recorded"]
+    ids = component_ids(part)
+    scopes: list[Any] = []
+    reasons: list[str] = []
+    for component in ids:
+        for ctx in component_contexts(record, pn, component, catalog, today):
+            scope = ctx.guideline_context()
+            if scope is not None:
+                scopes.append(scope)
+                continue
+            op = ctx.operation
+            if ctx.profile is not None:
+                reasons.append(f"{ctx.label}: {op.capability} is a {ctx.profile.process} capability"
+                               + (", which no guideline set covers" if catalog is not None else " and no guideline catalog is given"))
+            elif isinstance(op.capability, str):
+                reasons.append(f"{ctx.label} names capability {op.capability}, which the record does not hold")
+            else:
+                reasons.append(f"{ctx.label} names no capability profile")
+    if scopes:
+        return scopes, []
+    if not reasons:
+        reasons = [f"none of its {len(route)} route operations acts on a component of {pn} ({', '.join(ids)})" if route
+                   else f"{pn} has no route operation"]
+    return [], list(dict.fromkeys(reasons))
+
 
 def parse_side(value: str) -> tuple[float, float, float] | None:
     """An access side as an axis direction of the native manufacturing frame (+X .. -Z); None otherwise."""
@@ -585,7 +642,7 @@ class Context:
         if limit.status == "calibrated" or (limit.status == "guideline" and service in GUIDELINE_PASS_CLASSES):
             return PASS, coverage
         if limit.status == "unknown":
-            return UNKNOWN, f"{coverage} (limit unknown)"
+            return UNKNOWN, _noted(coverage, "limit unknown")
         kind = self.operation.kind
         findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
                               limit.criterion(prop, units), method,
@@ -595,7 +652,7 @@ class Context:
                               remedy=f"calibrate {limit.characteristic} for this material and machine, or waive this finding "
                                      "with an approved decision",
                               recheck=[f"process.{kind}"], feature=feature))
-        return UNKNOWN, f"{coverage} (guideline value only)"
+        return UNKNOWN, _noted(coverage, "guideline value only")
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:
         """UNKNOWN or FAIL when the operation has no usable capability profile of its own kind."""

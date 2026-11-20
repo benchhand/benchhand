@@ -32,8 +32,10 @@ rules). Process comes from hw/parts/<PN>/part.yaml (`fdm`, `cnc`, `purchased`); 
 Joints: hw/assembly.yaml. When DIR holds build_reference.py's `build.json`, its
 in-memory facts per part feed the two kernel checks below. An fdm part's minimum wall is the
 guideline value (cad-record guidelines.py, the project's sets over the shipped ones) for the capability
-profile and material of its first fdm route operation: 3 x line width (or nozzle) with a 0.8 mm floor, or
-the plain floor when no nozzle or line width is known. `product.yaml` `manufacturing.min_wall_mm`, where
+profile and material of each fdm route operation on each component of the part. The largest of those
+minimums applies: 3 x line width (or nozzle) with a 0.8 mm floor. The floor alone applies only where the
+guideline set states it, for a profile with no nozzle or line width. A part with no capability profile has
+an unknown minimum wall (`min_wall_limit_unknown`). `product.yaml` `manufacturing.min_wall_mm`, where
 written, overrides it per process (`fdm`, `cnc`; each above 0 mm) as a project policy, with a warning when
 it is looser; an invalid override is an error (exit 2), never a silent default.
 
@@ -552,25 +554,18 @@ def minimum_wall_overrides(hw: Path) -> dict[str, float]:
     return thresholds
 
 
-def _fdm_profile(mi: Any, record: Any, pn: str) -> tuple[Any, Any]:
-    """(capability profile, material profile) of the first fdm route operation of part `pn`, each None when unknown."""
-    part = record.parts.get(pn) if record is not None else None
-    if part is None or mi.is_fact(part.intent.route):
-        return None, None
-    op = next((o for o in part.intent.route if o.kind == "fdm" and isinstance(o.capability, str)), None)
-    profile = record.capabilities.get(op.capability) if op is not None else None
-    material = part.intent.material_profile
-    return profile, record.materials.get(material) if isinstance(material, str) else None
-
-
 def wall_limit(pc: Any, record: Any, pn: str, process: str | None, catalog: Any,
-               overrides: dict[str, float]) -> dict[str, Any] | None:
+               overrides: dict[str, float], today: date | None = None) -> dict[str, Any] | None:
     """The minimum wall of the legacy diagnostic for part `pn`, with where it comes from.
 
     An fdm part resolves min_wall through the guideline sets (cad-record guidelines.resolve_guidelines) for the
-    capability profile and material of its first fdm route operation: the profile's line width or nozzle diameter
-    sizes the line-width rule. Without them the plain floor applies, and `note` says so. product.yaml
-    manufacturing.min_wall_mm, where it names the process, overrides that value as a project policy and warns when it
+    scopes the process checks read (process_checks guideline_scope: the capability profile and stock material of every
+    route operation on every component): the profile's line width or nozzle diameter sizes the line-width rule, and
+    the largest minimum of the operations applies, as probe_plan scans at the largest limit of its operations. This is
+    a guideline diagnostic: it reads neither calibrations, which the process checks' wall obligation judges, nor
+    min_web. A profile without a nozzle or line width gets the plain floor, and `note` says so; a part none of whose
+    operations has a scope is unknown, with the reason for each. `today` is the version's date (default today).
+    product.yaml manufacturing.min_wall_mm, where it names the process, overrides that value as a project policy and warns when it
     is looser. None when neither gives a minimum (a purchased part, cnc without an override); a limit the guideline
     sets cannot state has status unknown with its reasons."""
     resolved: dict[str, Any] | None = None
@@ -578,19 +573,23 @@ def wall_limit(pc: Any, record: Any, pn: str, process: str | None, catalog: Any,
         resolved = {"required_mm": None, "status": "unknown", "reasons": ["no guideline set was consulted for min_wall"]}
     elif process == "fdm":
         gl = pc.guidelines()
-        profile, material = _fdm_profile(pc.intent(), record, pn)
-        context = gl.context_for(profile, material) if profile is not None else gl.Context("fdm")
-        found = gl.resolve_guidelines(catalog, context, "min_wall")
-        if found.status == "guideline" and found.operator in (">=", ">"):
-            resolved = {"required_mm": float(found.value.to("mm").value), "status": "guideline", "source": dict(found.source),
-                        "guideline": found.provenance[0].guideline, "layer": found.provenance[0].layer}
+        scopes, why = pc.guideline_scope(record, pn, catalog, today or date.today()) if record is not None \
+            else ([], ["no record was read, so no capability profile is known"])
+        found_all = [(context, gl.resolve_guidelines(catalog, context, "min_wall")) for context in scopes]
+        minimums = [(context, found) for context, found in found_all
+                    if found.status == "guideline" and found.operator in (">=", ">")]
+        if minimums:  # the largest minimum, as probe_plan scans at the largest of its operations' limits
+            context, found = max(minimums, key=lambda pair: float(pair[1].value.to("mm").value))
+            resolved = {"required_mm": float(found.value.to("mm").value), "status": "guideline",
+                        "source": dict(found.source), "guideline": found.provenance[0].guideline,
+                        "layer": found.provenance[0].layer}
             if context.base_mm is None:
-                why = "the profile states no nozzle or line width" if profile is not None \
-                    else "the part names no fdm capability profile, so no nozzle or line width is known"
-                resolved["note"] = f"min_wall from the {resolved['required_mm']:g} mm floor; {why}"
+                resolved["note"] = (f"min_wall from the {resolved['required_mm']:g} mm floor; "
+                                    "the profile states no nozzle or line width")
         else:
-            resolved = {"required_mm": None, "status": "unknown",
-                        "reasons": list(found.reasons) or [f"the guideline min_wall is {found.operator}, not a minimum"]}
+            reasons = why or [r for _, found in found_all
+                              for r in (found.reasons or [f"the guideline min_wall is {found.operator}, not a minimum"])]
+            resolved = {"required_mm": None, "status": "unknown", "reasons": list(dict.fromkeys(reasons))}
     if process not in overrides:
         return resolved
     value = overrides[process]
@@ -1397,7 +1396,7 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
                                  "max": READBACK_REL, "kernel_volume_mm3": kernel_v, "step_volume_mm3": volume})
         if level < 2:
             continue
-        limit = wall_limit(pc, record, pn, row["process"], catalog, overrides)  # None: purchased, or no minimum
+        limit = wall_limit(pc, record, pn, row["process"], catalog, overrides, args.on)  # None: purchased, or no minimum
         required_wall = limit["required_mm"] if limit is not None else None
         row["min_wall"] = {"required_mm": None}
         if limit is not None and required_wall is None:
