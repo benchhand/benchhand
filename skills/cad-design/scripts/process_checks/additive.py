@@ -600,7 +600,7 @@ def _smallest(ctx: Context, g: Geometry, findings: list[Draft], items: list[Mapp
               check: str, prop: str, words: tuple[str, str, str, str, str]) -> tuple[str, str]:
     """The smallest diameter of `items` against the `characteristic` limit (Context.limit, graded by Context.grade)."""
     noun, plural, method, reliable, remedy = words
-    if not items:
+    if not items or (characteristic == "min_hole" and ctx.operation.kind != "fdm"):  # only FDM has a hole guideline
         return NOT_APPLICABLE, ""
     kind = _k(ctx)
     limit = ctx.limit(characteristic, MINIMUM)

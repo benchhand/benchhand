@@ -574,7 +574,9 @@ def wall_limit(pc: Any, record: Any, pn: str, process: str | None, catalog: Any,
     is looser. None when neither gives a minimum (a purchased part, cnc without an override); a limit the guideline
     sets cannot state has status unknown with its reasons."""
     resolved: dict[str, Any] | None = None
-    if process == "fdm" and catalog is not None:
+    if process == "fdm" and catalog is None:
+        resolved = {"required_mm": None, "status": "unknown", "reasons": ["no guideline set was consulted for min_wall"]}
+    elif process == "fdm":
         gl = pc.guidelines()
         profile, material = _fdm_profile(pc.intent(), record, pn)
         context = gl.context_for(profile, material) if profile is not None else gl.Context("fdm")
@@ -1500,6 +1502,15 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def trace_row(pc: Any, assessment: Any, directory: Path, shown: str) -> dict[str, str] | None:
+    """Write the resolution trace of `assessment` into `directory` (guidelines.write_trace) and return its file_hash row
+    with the path as `shown`/<name>, or None when no guideline was consulted."""
+    if not assessment.resolutions:
+        return None
+    written = pc.guidelines().write_trace(directory, assessment.resolutions)
+    return {"path": f"{shown}/{written.name}", "sha256": _sha256(written)}
+
+
 def producer_code(pc: Any) -> str:
     """The code a process bundle's recipe and packet name: the process checks, this file and cad-record's guideline
     resolver (GUIDELINES_PATH). A change to any of them can change a limit, so a bundle of other code is never reused."""
@@ -1572,15 +1583,18 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
         packet, bundle = json.loads((reused / "result.json").read_text(encoding="utf-8")), reused
     else:
         geometry = version_geometry(pc, record, folder, label, manifest, today, catalog)
-        packet = pc.assess(record, geometry, today=today, catalog=catalog).packet(
-            {"version_manifest": _sha256(manifest_path), "producer_code": code})
-        load_check_packet().validate(packet)  # never seal or hand on a packet that breaks its schema
+        assessment = pc.assess(record, geometry, today=today, catalog=catalog)
+        dependencies = {"version_manifest": _sha256(manifest_path), "producer_code": code}
         if args.out:
             bundle = layout.scratch_path(args.hw, args.out, "--out")
             bundle.parent.mkdir(parents=True, exist_ok=True)
+            packet = assessment.packet(dependencies, trace=trace_row(pc, assessment, bundle.parent, str(args.out.parent)))
+            load_check_packet().validate(packet)  # never seal or hand on a packet that breaks its schema
             bundle.write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
         else:
             stage = layout.staging(args.hw, "bundle.checks")
+            packet = assessment.packet(dependencies, trace=trace_row(pc, assessment, stage, f"hw/checks/{label}/{PROCESS_SUBJECT}"))
+            load_check_packet().validate(packet)
             (stage / "result.json").write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
             bundle = layout.publish(args.hw, "bundle.checks", params, stage, recipe=recipe, producer=pc.PRODUCER,
                                     status=packet["result"], replace=args.replace).path

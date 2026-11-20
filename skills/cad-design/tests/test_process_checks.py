@@ -1595,11 +1595,15 @@ class GuidelineLimitTests(Checks):
         self.assertEqual({r.characteristic for r in result.resolutions} >= {"min_wall"}, True)
 
     def test_a_resin_part_with_a_hole_is_judged_as_before(self) -> None:
+        """Resin shares the geometry handler but has no guideline sets: a hole adds no min_hole finding, as on main."""
         wall = calibration("wall_study", "min_wall", POLYMER, 0.8, 1.2)
-        result = self.assess(shaped("resin", [wall], material=POLYMER), geometry("TST-0902", walled(3.0, holes=(1.0,))),
-                             catalog=SHIPPED)
-        self.assertEqual(self.outcome(result, "process.resin.geometry@TST-0902/form"), "pass")
-        self.assertEqual([c for c in self.codes(result) if "small_hole" in c], [])
+        outcomes = []
+        for holes in ((), (1.0,)):
+            result = self.assess(shaped("resin", [wall], material=POLYMER), geometry("TST-0902", walled(3.0, holes=holes)),
+                                 catalog=SHIPPED)
+            outcomes.append((self.outcome(result, "process.resin.geometry@TST-0902/form"), self.codes(result)))
+        self.assertEqual(outcomes[0], outcomes[1])
+        self.assertEqual([c for c in outcomes[1][1] if "small_hole" in c], [])
 
     def test_the_guideline_pass_classes_are_known_service_classes(self) -> None:
         self.assertLessEqual(set(pc.GUIDELINE_PASS_CLASSES), set(MI.SERVICE_CLASSES) - {"unknown"})

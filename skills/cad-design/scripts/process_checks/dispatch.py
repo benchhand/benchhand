@@ -103,6 +103,8 @@ class Assessment:
     outcomes: tuple[dict[str, Any], ...]
     findings: tuple[dict[str, Any], ...]
     guideline_digests: Mapping[str, str] = types.MappingProxyType({})  # id@revision -> sha256 the limits can come from
+    resolutions: tuple[Any, ...] = ()  # guidelines.Resolved of every guideline limit looked up (the trace's rows)
+    traced: frozenset[str] = frozenset()  # ids of the findings of obligations that consulted a guideline
 
     @property
     def complete(self) -> bool:
@@ -123,15 +125,27 @@ class Assessment:
     def by_code(self, code: str) -> list[dict[str, Any]]:
         return [f for f in self.findings if f["code"] == code]
 
-    def packet(self, dependencies: Mapping[str, str], *, scope: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def _cited(self, finding: Mapping[str, Any], trace: Mapping[str, str] | None) -> dict[str, Any]:
+        item = dict(finding)
+        if trace is not None and item["id"] in self.traced:
+            method = dict(item["method"])
+            method["evidence"] = [*method.get("evidence", ()), dict(trace)]
+            item["method"] = method
+        return item
+
+    def packet(self, dependencies: Mapping[str, str], *, scope: list[dict[str, Any]] | None = None,
+               trace: Mapping[str, str] | None = None) -> dict[str, Any]:
         """The manufacturing-check-result.schema.json packet of this assessment. Its dependencies are `dependencies`
-        and every guideline set the operations' limits can resolve through (guidelines.packet_dependencies)."""
+        and every guideline set the operations' limits can resolve through (guidelines.packet_dependencies). `trace`
+        (a file_hash row of the resolution trace) is cited in method.evidence of every finding of an obligation that
+        consulted a guideline."""
+        findings = [self._cited(f, trace) for f in self.findings]
         dependencies = {**dependencies, **guidelines().packet_dependencies(self.guideline_digests)}
         pns = sorted({o.subject["PN"] for o in self.expected if o.subject.get("PN")})
         return {"schema_version": 1, "record_version": intent().RECORD_VERSION, "producer": PRODUCER,
                 "scope": scope or ([{"PN": pn} for pn in pns] or [{"product": True}]),
                 "expected": [o.as_dict() for o in self.expected], "outcomes": [dict(o) for o in self.outcomes],
-                "findings": [dict(f) for f in self.findings], "dependencies": dict(sorted(dependencies.items())),
+                "findings": findings, "dependencies": dict(sorted(dependencies.items())),
                 "complete": self.complete, "result": self.result}
 
 
@@ -154,12 +168,15 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
     today = today or date.today()
     outcomes, findings = [], []
     digests: dict[str, str] = {}
+    resolutions: list[Any] = []  # shared by every Context: the trace's rows
+    traced: set[str] = set()
+    refused_reported = False
     for obligation in obligations:
         subject = obligation.subject
         pn = subject["PN"]
         component = subject.get("component") or IMPLICIT
         op = _operation(record, pn, subject.get("operation"))
-        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry, catalog)
+        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry, catalog, resolutions)
         scope = ctx.guideline_context()
         if scope is not None:
             digests.update(guidelines().applicable_digests(catalog, scope))
@@ -168,11 +185,16 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
         else:
             handler = handler_for(obligation.family, op.kind if op is not None else None)
             result = handler(ctx) if handler is not None else _no_handler(ctx, obligation)
+        if scope is not None and catalog.refused and not refused_reported:
+            refused_reported = True  # once per assessment, on the first obligation that could use a guideline
+            result.findings.append(_refused(catalog.refused))
         drafted = _findings(ctx, obligation, result, geometry.get((pn, component)))
         for item in drafted:
             if item.get("obligation") == obligation.id and item["outcome"] == FAIL and result.outcome != FAIL:
                 raise HandlerError(f"{obligation.id}: finding {item['code']} fails it but the outcome is {result.outcome}")
         findings += drafted
+        if ctx.consulted:
+            traced.update(f["id"] for f in drafted)
         row = {"obligation": obligation.id, "outcome": result.outcome, "level": obligation.level,
                "method": result.method, "coverage": result.coverage}
         if result.source:
@@ -183,7 +205,18 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
         if linked:
             row["findings"] = linked
         outcomes.append(mi.thaw(row))
-    return Assessment(obligations, tuple(outcomes), tuple(findings), types.MappingProxyType(dict(sorted(digests.items()))))
+    return Assessment(obligations, tuple(outcomes), tuple(findings), types.MappingProxyType(dict(sorted(digests.items()))),
+                      tuple(resolutions), frozenset(traced))
+
+
+def _refused(refused: Any) -> Draft:
+    """The guideline files a catalog refused: a limit may have been judged without them, so the result says so."""
+    names = "; ".join(str(r) for r in refused)
+    return Draft("process.guideline_refused", "minor", UNKNOWN, text(names),
+                 policy("guideline_files", "equals", "every file valid", note="a refused file supplies no limit"),
+                 "guideline catalog discovery", "the refused files are not read at all",
+                 "a project guideline that should tighten or replace a limit is not applied",
+                 remedy="fix or remove the refused guideline files, then recheck", recheck=["process"], link=False)
 
 
 def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry | None) -> list[dict[str, Any]]:

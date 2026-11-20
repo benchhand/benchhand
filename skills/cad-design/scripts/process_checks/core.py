@@ -30,6 +30,8 @@ ASSEMBLY_DATA_MODULE = "cad_record_assembly_data"  # the shared name cad-motion 
 GUIDELINES_PATH = INTENT_PATH.with_name("guidelines.py")
 GUIDELINES_MODULE = "cad_record_guidelines"  # the shared name manufacturing_intent loads it under
 
+GUIDELINE_PROCESSES = frozenset({"fdm"})  # the processes the shipped guideline sets cover (resin and the rest have none)
+
 # The service classes whose checks take a guideline value as a pass (the user's rule). Every other class, unknown
 # included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
 GUIDELINE_PASS_CLASSES = frozenset({"appearance_concept", "fit_assembly", "functional_demo"})
@@ -244,6 +246,11 @@ class Limit:
         return self.status != "unknown"
 
     @property
+    def warnings(self) -> tuple[str, ...]:
+        """What the resolver warned about while resolving this limit (a relaxation, a pin that matched nothing)."""
+        return tuple(self.resolved.warnings) if self.resolved is not None else ()
+
+    @property
     def reasons(self) -> tuple[str, ...]:
         found = list(self.calibrated.reasons)
         if self.resolved is None:
@@ -252,6 +259,7 @@ class Limit:
             found.extend(self.resolved.reasons or (f"no guideline states {self.characteristic}",))
         elif self.status == "unknown":
             found.append(f"the guideline {self.characteristic} limit is {self.resolved.operator}, not a {self.side}")
+        found.extend(f"guideline resolver warning: {w}" for w in self.warnings)
         return tuple(found)
 
     @property
@@ -290,6 +298,8 @@ class Limit:
                      "not a calibration of this machine and material"
         if self.calibrated.status == "refused":
             conditions += f"; calibrations not used: {'; '.join(self.calibrated.reasons)}"
+        if self.warnings:
+            conditions += f"; guideline resolver warnings: {'; '.join(self.warnings)}"
         return {"property": prop, "operator": self.operator, "value": self.threshold(units), "units": units,
                 "source": dict(self.resolved.source), "conditions": conditions}
 
@@ -376,6 +386,8 @@ class Context:
     today: date
     geometries: Mapping[tuple[str, str], Geometry] = field(default_factory=dict)
     catalog: Any = None  # cad-record guidelines.Catalog; None: no guideline set is consulted, so only calibrations count
+    resolutions: list[Any] = field(default_factory=list, compare=False)  # guidelines.Resolved of every limit looked up (shared)
+    consulted: list[Any] = field(default_factory=list, compare=False)  # the same, for this obligation alone
 
     # record views ---------------------------------------------------------------------------------------------
     @property
@@ -538,9 +550,9 @@ class Context:
 
     def guideline_context(self) -> Any | None:
         """The guideline scope (guidelines.Context) of this operation's capability profile and material, or None
-        without a catalog or a profile."""
+        without a catalog, a profile or a process in GUIDELINE_PROCESSES."""
         profile = self.profile
-        if self.catalog is None or profile is None:
+        if self.catalog is None or profile is None or profile.process not in GUIDELINE_PROCESSES:
             return None
         material_id = self.stock_material_id()
         return guidelines().context_for(profile, self.record.materials.get(material_id) if material_id else None)
@@ -554,6 +566,9 @@ class Context:
         if cal.known or context is None:
             return Limit(characteristic, side, cal)
         found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation)
+        self.consulted.append(found)
+        if found not in self.resolutions:
+            self.resolutions.append(found)
         return Limit(characteristic, side, cal, found, context.base_mm)
 
     @property
@@ -563,11 +578,14 @@ class Context:
 
     def grade(self, limit: Limit, coverage: str, findings: list[Draft], *, check: str, measured: Mapping[str, Any],
               prop: str, units: str, method: str, feature: str | None = None) -> tuple[str, str]:
-        """A sub-check that met `limit`: a pass, unless the limit is a guideline value and the service class is not one
-        of GUIDELINE_PASS_CLASSES. Then it is unknown, with a finding a calibration or an approved waiver settles."""
+        """A sub-check that met `limit`: a pass for a calibrated limit, or a guideline value when the service class is one
+        of GUIDELINE_PASS_CLASSES. A guideline value in another class is unknown, with a finding a calibration or an
+        approved waiver settles. An unknown limit is unknown too (its callers report why)."""
         service = self.service_class
-        if limit.status != "guideline" or service in GUIDELINE_PASS_CLASSES:
+        if limit.status == "calibrated" or (limit.status == "guideline" and service in GUIDELINE_PASS_CLASSES):
             return PASS, coverage
+        if limit.status == "unknown":
+            return UNKNOWN, f"{coverage} (limit unknown)"
         kind = self.operation.kind
         findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
                               limit.criterion(prop, units), method,
