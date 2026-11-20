@@ -8,7 +8,7 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 |---|---|---|
 | Host Python | 3.12 or later. Most PEP 723 headers say `>=3.12,<3.15`. | `README.md`, `scripts/test_script_floors.py` |
 | FreeCAD job Python | 3.11, the Python that FreeCAD bundles. Code that `freecadcmd` runs stays 3.11 compatible. | `README.md`, `scripts/freecad_job_modules.txt` |
-| uv | Runs every script and test. No version is pinned. | `.github/workflows/ci.yml` |
+| uv | Runs the standalone skill scripts (through their PEP 723 headers), the tests and several tools. CI also runs `scripts/docs_only.py` and `scripts/ci_shards.py files` with plain `python3`. No uv version is pinned. | `.github/workflows/ci.yml` (lines 90 and 231) |
 | FreeCAD | 1.1.4, checked by SHA-256 in CI | `.github/workflows/ci.yml`, `README.md` |
 | CalculiX `ccx` | 2.23, bundled with FreeCAD. Recorded in solver manifests. | `skills/cad-analysis/tests/test_fea_static.py` |
 | gmsh | 4.15.0, bundled with FreeCAD. Recorded in solver manifests. | `skills/cad-analysis/tests/test_fea_static.py` |
@@ -27,13 +27,23 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 
 Other pins in the script headers (`pillow`, `ocp_viewer`, `imageio-ffmpeg`, `lib3mf`, `lxml`, `networkx`) live with the script that uses them. Read the header of the script for the exact pin. Harness targets are Claude Code, Codex CLI, OpenCode and Kiro CLI (`README.md`).
 
-There is no root `pyproject.toml` and no package install. Each script declares its dependencies in a PEP 723 header, and `uv run --script` builds the environment. CI runs tests with `--no-project --with-requirements harness/test-requirements*.txt`.
+There is no root `pyproject.toml` and no package install. Dependencies come from one of three places:
+
+- Standalone skill scripts under `skills/*/scripts` declare them in a PEP 723 header, and `uv run --script` builds the environment.
+- `scripts/complexity_ratchet.py`, `scripts/repro_check.py` and `scripts/typecheck.py` also carry a PEP 723 header. CI runs the first and the last with `uv run --no-project --script`.
+- Tests and the other tooling have no header. These are `harness/generate.py`, `harness/install.py`, `scripts/ci_shards.py`, `scripts/docs_only.py`, `scripts/import_check.py`, `scripts/decision_fixture.py`, `scripts/modload.py` and `scripts/property_profile.py`. They run under the shared files `harness/test-requirements*.txt` (`--no-project --with-requirements`) or with plain Python. CI runs `docs_only.py` and `ci_shards.py files` with `python3` (`.github/workflows/ci.yml` lines 90 and 231). `harness/generate.py` imports PyYAML without a header, so its CI step passes `harness/test-requirements-min.txt`.
 
 Release automation is release-please (`release-please-config.json`, `.github/workflows/release-please.yml`). Renovate keeps dependencies current (`.github/renovate.json5`).
 
 ## Layout and dependency direction
 
-- `skills/<name>/` holds one skill. Each has `SKILL.md`, `scripts/` (code), `tests/` (unittest files and fixtures) and `references/` (documents the skill cites). The skills are `cad-flow`, `cad-record`, `cad-concept`, `cad-model`, `cad-design`, `cad-motion`, `cad-render`, `cad-viewer`, `cad-analysis`, `cad-bom`, `cad-drawings`, `cad-fits`, `cad-recheck`, `cad-review-dfm` and `cad-review-mech`.
+- `skills/<name>/` holds one skill. Every skill has `SKILL.md`. A skill may also have `scripts/` (code), `tests/` (unittest files and fixtures) and `references/` (documents the skill cites). Not every skill has every directory:
+  - `cad-review-dfm` and `cad-review-mech` have only `SKILL.md`.
+  - `cad-bom` has `scripts/` but no `tests/` or `references/`. Its test file `test_bom.py` sits at the skill root.
+  - `cad-fits` keeps `test_fits.py`, `test_fits_properties.py` and `test_stackup.py` at the skill root.
+  - `cad-recheck`, `cad-render` and `cad-viewer` have no `references/`.
+  Test files live in `skills/<name>/tests/` or in `skills/<name>/`, so both `skills/*/test_*.py` and `skills/*/tests/test_*.py` count (`README.md`, `scripts/ci_shards.py`).
+- The skills are `cad-flow`, `cad-record`, `cad-concept`, `cad-model`, `cad-design`, `cad-motion`, `cad-render`, `cad-viewer`, `cad-analysis`, `cad-bom`, `cad-drawings`, `cad-fits`, `cad-recheck`, `cad-review-dfm` and `cad-review-mech`.
 - `agents/` holds the source of the seven agent profiles.
 - `harness/` holds `generate.py`, which builds the per-harness profiles in `harness/claude`, `harness/codex`, `harness/opencode` and `harness/kiro`, and `install.py`, which copies skills and profiles into a project. Generated profiles are byte-compared with generator output, so edit the source and rerun `generate.py`, never the output (`REUSE.toml`).
 - `scripts/` holds repository tooling: `ci_shards.py`, `complexity_ratchet.py`, `docs_only.py`, `import_check.py`, `typecheck.py`, `repro_check.py` and their tests.
@@ -92,12 +102,17 @@ uvx --from 'reuse[charset-normalizer]==6.3.0' reuse lint
 
 `harness/generate.py --check` compares the committed profiles with generator output. `scripts/typecheck.py` runs mypy over the modules in `mypy.ini`. The complexity ratchet reads `scripts/complexity-baseline.json`.
 
-Skill tests. Run each test file on its own with the test pins:
+Skill tests. Run each test file on its own with the test pins, from the directory that holds it. The "Tests" section of `README.md` loops over both locations:
 
 ```sh
-uv run --no-project --with-requirements harness/test-requirements.txt \
-  python -B -m unittest discover -s skills/<skill>/tests -p test_<name>.py
+for test in skills/*/test_*.py skills/*/tests/test_*.py; do
+  [ -f "$test" ] || continue
+  uv run --no-project --with-requirements harness/test-requirements.txt \
+    python -B -m unittest discover -s "$(dirname "$test")" -p "$(basename "$test")"
+done
 ```
+
+CI lists the same two globs in `scripts/ci_shards.py` (`git ls-files "skills/*/test_*.py" "skills/*/tests/test_*.py"`) and runs one file at a time with `python -B scripts/ci_shards.py run <shard> <file>`.
 
 CI splits the files into the shards `motion`, `motion-b`, `cad-model`, `freecad-gated` and `rest` (`scripts/ci_shards.py`, the `SHARDS` text in `ci.yml`). The files in the `freecad-gated` shard need FreeCAD 1.1.4 on `PATH` or `FREECADCMD`. Without it those tests skip, and `CAD_REQUIRE_FREECAD=1` turns the skip into a failure, as CI does. The `freecad-gated` shard also runs the mutation corpus rate check: `uv run --script skills/cad-design/tests/mfg_corpus/rates.py --check-baseline`. A pull request that changes only paths no skill test reads skips the shards (`scripts/docs_only.py`).
 
