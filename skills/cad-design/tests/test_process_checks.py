@@ -1565,9 +1565,12 @@ class GuidelineLimitTests(Checks):
                 self.assertEqual(self.outcome(result, SUPPORT), outcome)
                 self.assertEqual("process.fdm.support_guideline_only" in self.codes(result), outcome == "unknown")
 
-    def test_an_unknown_limit_grades_unknown_without_a_guideline_only_finding(self) -> None:
-        result = self.assess(guided(service="functional_demo"), geometry("TST-0101", walled(3.0)))
-        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+    def test_an_unknown_recorded_limit_grades_unknown_once_without_a_guideline_only_finding(self) -> None:
+        """No catalog and no calibration: the overhang limit is unknown, and a flat down-facing face (nothing beyond
+        any limit) still reaches the support grade, which says so once and files no guideline-only finding."""
+        result = self.assess(guided(service="functional_demo"), geometry("TST-0101", underside(0.0)))
+        self.assertEqual(self.outcome(result, SUPPORT), "unknown")
+        self.assertEqual(result.outcome(SUPPORT)["coverage"].count("(limit unknown)"), 1, result.outcome(SUPPORT)["coverage"])
         self.assertEqual([c for c in self.codes(result) if c.endswith("_guideline_only")], [])
 
     def test_a_resolver_warning_reaches_the_finding_that_cites_the_limit(self) -> None:
@@ -1629,6 +1632,23 @@ class GuidelineLimitTests(Checks):
         self.assertEqual(result.statuses[GEOMETRY].result, "waived")
 
 
+TPU_WALL_SET = """\
+schema_version: 1
+id: fdm.test.tpu_wall
+revision: 1
+title: A project wall for tpu
+scope:
+  process: fdm
+  material_family: [tpu]
+limits:
+  - characteristic: min_wall
+    operator: ">="
+    quantity: {value: 2, units: mm}
+    citations:
+      - {kind: datasheet, reference: Synthetic fixture, url: "https://example.invalid/guide", accessed: "2026-01-01"}
+"""
+
+
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
 class LegacyWallLimitTests(Checks):
     """form_check's legacy min_wall diagnostic reads the resolved guideline value, and a product.yaml override is a
@@ -1640,7 +1660,8 @@ class LegacyWallLimitTests(Checks):
 
     def limit(self, documents: dict[str, Any], process: str | None = "fdm", overrides: dict | None = None,
               catalog: Any = SHIPPED) -> Any:
-        return self.form_check.wall_limit(pc, load(self, documents), "TST-0101", process, catalog, overrides or {})
+        record = load(self, documents) if isinstance(documents, dict) else documents  # a Record: built unchecked
+        return self.form_check.wall_limit(pc, record, "TST-0101", process, catalog, overrides or {})
 
     def test_an_fdm_part_without_a_catalog_has_an_unknown_limit_not_a_skipped_scan(self) -> None:
         limit = self.limit(guided(), catalog=None)
@@ -1669,12 +1690,60 @@ class LegacyWallLimitTests(Checks):
                 planned = pc.probe_plan(load(self, documents), "TST-0101", "main", today=TODAY, catalog=SHIPPED)["wall_mm"]
                 self.assertEqual(self.limit(documents)["required_mm"], planned)
 
-    def test_an_fdm_part_whose_wall_limit_is_unknown_says_why(self) -> None:
-        bare = FX.record(parts=[part("TST-0101", [FX.operation("print", "fdm")], process="fdm", material=None)],
-                         materials=materials())
-        limit = self.limit(bare)
-        self.assertEqual((limit["required_mm"], limit["status"]), (None, "unknown"))
-        self.assertTrue(limit["reasons"])
+    def test_a_later_operation_with_a_valid_profile_gives_the_wall_limit_the_probe_plan_scans_at(self) -> None:
+        """The first fdm operation names a capability the record lacks, or a profile of another process; a later one
+        names the 0.4 mm printer. The scan runs at 1.2 mm, and so must the diagnostic."""
+        for name, first in (("a missing profile", "tst_missing"), ("a milling profile", "tst_mill")):
+            with self.subTest(name):
+                record = MI.normalize_record(self.after_a_broken_operation(first))  # the schema refuses this first operation
+                planned = pc.probe_plan(record, "TST-0101", "main", today=TODAY, catalog=SHIPPED)["wall_mm"]
+                self.assertEqual((planned, self.limit(record)["required_mm"]), (1.2, 1.2))
+
+    def test_the_unknown_wall_limit_says_whether_the_operation_or_its_profile_is_missing(self) -> None:
+        unnamed = FX.record(parts=[part("TST-0101", [FX.operation("print", "fdm")], process="fdm")], materials=materials())
+        cases = {"no capability named": (MI.normalize_record(unnamed), "names no capability"),
+                 "a missing capability": (MI.normalize_record(self.after_a_broken_operation("tst_missing", valid=False)),
+                                          "tst_missing, which the record does not hold"),
+                 "a capability of another process": (MI.normalize_record(self.after_a_broken_operation("tst_mill", valid=False)),
+                                                     "tst_mill is a cnc capability")}
+        for name, (record, reason) in cases.items():
+            with self.subTest(name):
+                limit = self.limit(record)
+                self.assertEqual((limit["required_mm"], limit["status"]), (None, "unknown"))
+                self.assertIn(reason, " ".join(limit["reasons"]))
+
+    def test_the_stock_material_of_the_setup_scopes_the_wall_limit_in_both_paths(self) -> None:
+        """A project set asks 2 mm of tpu. The part's own material is not tpu, but the print setup names tpu stock,
+        which the process checks read, so the diagnostic must too."""
+        stock = FX.material_profile("tst_tpu_stock", form="printed", material_family=known("tpu"))
+        route = [FX.operation("print", "fdm", "tst_printer", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"}, setup={"stock": {"material_profile": "tst_tpu_stock"}})]
+        profile = FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE, parameters=copy.deepcopy(NOZZLE_04))
+        documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[profile],
+                              materials=materials(stock), product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "manufacturing" / "guidelines"
+            folder.mkdir(parents=True)
+            (folder / "tpu_wall.yaml").write_text(TPU_WALL_SET, encoding="utf-8")
+            catalog = GL.discover(Path(tmp))
+        self.assertEqual(list(catalog.refused), [])
+        planned = pc.probe_plan(load(self, documents), "TST-0101", "main", today=TODAY, catalog=catalog)["wall_mm"]
+        self.assertEqual((planned, self.limit(documents, catalog=catalog)["required_mm"]), (2.0, 2.0))
+
+    @staticmethod
+    def after_a_broken_operation(first: str, *, valid: bool = True) -> dict[str, Any]:
+        """A print route whose first fdm operation names capability `first` (absent from the record, or a cnc profile),
+        followed, when `valid`, by one that names the 0.4 mm printer."""
+        route = [FX.operation("pre", "fdm", first, output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"})]
+        if valid:
+            route.append(FX.operation("print", "fdm", "tst_printer", output_state="printed",
+                                      orientation=copy.deepcopy(APPROVED), supports={"strategy": "none"}))
+        capabilities = [FX.capability_profile("tst_mill", "cnc")]
+        if valid:
+            capabilities.append(FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE, parameters=copy.deepcopy(NOZZLE_04)))
+        return FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=capabilities, materials=materials(),
+                         product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
 
     def test_an_override_is_a_project_policy_that_warns_when_looser(self) -> None:
         looser = self.limit(guided(), overrides={"fdm": 1.0})

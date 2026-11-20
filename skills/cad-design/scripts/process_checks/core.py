@@ -366,11 +366,34 @@ class Geometry:
 
 # --- the context of one obligation ------------------------------------------------------------------------------
 
-def guideline_scope(record: Any, pn: str, op: Any, catalog: Any, today: date) -> Any | None:
-    """The guideline scope (guidelines.Context) of route operation `op` of part `pn`, resolved as a check resolves it
-    (Context.guideline_context: the operation's capability profile and stock material), or None when the operation has
-    no profile, no catalog or no process the guideline sets cover. The one reading, shared with form_check."""
-    return Context(record, pn, IMPLICIT, op, None, today, catalog=catalog).guideline_context()
+def component_contexts(record: Any, pn: str, component: str, catalog: Any, today: date) -> list[Context]:
+    """The context of every route operation that acts on `component` of part `pn`, in route order: the operations
+    a component-wide scan (probe_plan) and the legacy wall diagnostic (form_check) both read."""
+    route = record.parts[pn].intent.route
+    if intent().is_fact(route):
+        return []
+    return [Context(record, pn, component, op, None, today, catalog=catalog)
+            for op in route if not op.components or component in op.components]
+
+
+def guideline_scope(record: Any, pn: str, catalog: Any, today: date, component: str = IMPLICIT) -> tuple[Any | None, list[str]]:
+    """(guideline scope, reasons) of component `component` of part `pn`: the guidelines.Context of the first of its
+    operations that has one (Context.guideline_context: capability profile and stock material), else None with why
+    each operation has none. The one reading of the scope, shared with form_check."""
+    reasons: list[str] = []
+    for ctx in component_contexts(record, pn, component, catalog, today):
+        context = ctx.guideline_context()
+        if context is not None:
+            return context, []
+        op = ctx.operation
+        if ctx.profile is not None:
+            reasons.append(f"{ctx.label}: {op.capability} is a {ctx.profile.process} capability"
+                           + (", which no guideline set covers" if catalog is not None else " and no guideline catalog is given"))
+        elif isinstance(op.capability, str):
+            reasons.append(f"{ctx.label} names capability {op.capability}, which the record does not hold")
+        else:
+            reasons.append(f"{ctx.label} names no capability profile")
+    return None, reasons or [f"{pn} has no route operation"]
 
 
 def parse_side(value: str) -> tuple[float, float, float] | None:

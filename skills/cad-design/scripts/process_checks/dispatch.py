@@ -24,7 +24,7 @@ from typing import Any
 
 from . import additive, machining, purchased, route, secondary, shaping, sheet
 from .core import (FAIL, IMPLICIT, MINIMUM, PASS, UNKNOWN, Context, Draft, Geometry, Handler, Result, access_directions,
-                   direction_key, guidelines, intent, policy, stable_id, text)
+                   component_contexts, direction_key, guidelines, intent, policy, stable_id, text)
 
 PRODUCER = "cad-design form_check.py process_checks 1"
 OWNED_PREFIXES = ("process.", "purchase.", "route.")
@@ -271,14 +271,10 @@ def probe_plan(record: Any, pn: str, component: str, *, today: date | None = Non
     limits of its operations name: a calibration, else a guideline value from `catalog` (None: no wall
     limit, so no scan)."""
     today = today or date.today()
-    part = record.parts[pn]
-    route_ = part.intent.route
     directions: dict[str, list[float]] = {}
     walls: list[float] = []
-    for op in () if intent().is_fact(route_) else route_:
-        if op.components and component not in op.components:
-            continue
-        ctx = Context(record, pn, component, op, None, today, catalog=catalog)
+    for ctx in component_contexts(record, pn, component, catalog, today):
+        op = ctx.op
         parsed, _ = access_directions(((op.setup or {}).get("access") or {}).get("sides") or ())
         for _, vector in parsed:
             key = direction_key(vector)  # a parsed side is an axis direction, so it always has a key
