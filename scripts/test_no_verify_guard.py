@@ -6,33 +6,36 @@
 
 A test repo that must not run host hooks sets ``core.hooksPath`` to an empty directory instead.
 
-Scanned: every tracked file under a ``scripts/`` or ``tests/`` directory at any depth, under ``harness/``
-or ``.github/``, and every ``test_*`` file. Markdown is skipped, so docs may quote the flag.
+Scanned: every tracked Python file under a ``scripts/`` or ``tests/`` directory at any depth, under
+``harness/`` or ``.github/``, and every ``test_*`` file, plus every ``run:`` value in the YAML files under
+``.github/``. The repo tracks no shell scripts, and the guard has no shell lexer.
 
-The guard does not try to recognise git invocations; a wrapper, a helper that takes the repo first, an argv
-built in a variable or a splat would all escape that. It applies two coarse rules instead:
-1. The long flag. A Python string constant equal to ``--no-verify`` fails, wherever it sits. In shell and
-   YAML text, a ``--no-verify`` word outside a comment fails. Docstrings are not read.
-2. A short cluster. A Python string constant that matches ``-[A-Za-z]*n[A-Za-z]*`` (``-n``, ``-qn``, ``-nq``)
-   fails when the same function, or the module top level, also holds the string constant ``commit``. In
-   shell text, the same cluster and the word ``commit`` on one joined command line fail. A cluster in a
-   function that holds ``push`` and no ``commit`` passes: there ``-n`` means ``--dry-run``.
+Python files are read with ``ast``. A string constant equal to ``--no-verify`` fails, wherever it sits
+outside a docstring. A short cluster (a constant matching ``-[A-Za-z]*n[A-Za-z]*``, such as ``-n`` or
+``-qn``) fails when the same function, or the module top level, also holds the constant ``commit``. A
+cluster in a function that holds ``push`` and no ``commit`` passes: there ``-n`` means ``--dry-run``.
 
-A real non-git use that rule 2 catches takes the same-line comment ``# no-verify-guard: not git``. Only
-rule 2 honours it. The guard writes every marker it finds to stderr, and ``EXPECTED_MARKERS`` pins how many
-the repo holds, so a new marker shows in review.
+Workflow files are read with PyYAML, and each ``run:`` value is judged as plain text by two coarse rules:
+1. The value contains ``--no-verify`` anywhere, comments included.
+2. The value contains the word ``commit`` and a short cluster such as ``-n`` or ``-qn`` anywhere. The cluster must
+   not touch a letter, digit, underscore or hyphen, so any other character bounds it: ``-n>/dev/null``,
+   ``-qn;true`` and ``-n)`` all match.
+The rules over-flag on purpose, for example ``true;# commit -n``, so that no shell parsing is needed. A YAML
+file that does not parse fails, naming the file.
 
-Known limits. The guard reads string constants, so it cannot see:
+A real non-git use that rule 2 catches takes the marker ``# no-verify-guard: not git`` in the same Python
+line or anywhere in the run value. Only rule 2 honours it. The guard writes every marker it finds to stderr,
+and ``EXPECTED_MARKERS`` pins how many the repo holds, so a new marker shows in review.
+
+Known limits (follow-up issue #269). The Python check reads string constants, so it cannot see:
 - a flag built at runtime, by f-string interpolation or by ``+``;
 - a short cluster passed into a helper defined in another function, such as the ``commit`` helper in
   ``skills/cad-recheck/tests/test_recheck.py``, which holds ``commit`` while its callers hold the cluster.
-Both are tracked in follow-up issue #269.
 """
 
 import ast
 import io
 import re
-import shlex
 import subprocess
 import sys
 import tokenize
@@ -40,13 +43,16 @@ import unittest
 from collections import defaultdict
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 SCANNED = re.compile(r"^(harness|\.github)/|(^|/)(scripts|tests)/|(^|/)test_[^/]*$")
-TEXT_SUFFIXES = {".sh", ".bash", ".zsh", ".yml", ".yaml", ".mk", ""}
+WORKFLOWS = re.compile(r"^\.github/.*\.ya?ml$")
 LONG_FLAG = "--no-" + "verify"
-SUBCOMMAND = "commit"
+SUBCOMMAND = re.compile(r"\bcommit\b")
+SUBCOMMAND_CONSTANT = "commit"
 CLUSTER = re.compile(r"^-[A-Za-z]*n[A-Za-z]*$")
-QUOTES = re.compile(r"['\"`]")
+WORKFLOW_CLUSTER = re.compile(r"(?<![A-Za-z0-9_-])-[A-Za-z]*n[A-Za-z]*(?![A-Za-z0-9_-])")
 MARKER = re.compile(r"#\s*no-verify-guard: not git")
 EXPECTED_MARKERS = 0
 
@@ -106,82 +112,73 @@ def python_offences(source: str) -> list[int]:
     collector.visit(tree)
     found = set()
     for strings in collector.scopes.values():
-        has_commit = any(value == SUBCOMMAND for value, _ in strings)
+        has_commit = any(value == SUBCOMMAND_CONSTANT for value, _ in strings)
         for value, line in strings:
             if value == LONG_FLAG or (has_commit and CLUSTER.match(value) and line not in marked):
                 found.add(line)
     return sorted(found)
 
 
-def logical_lines(text: str) -> list[tuple[int, str]]:
-    """(first physical line number, text) for each line, with backslash continuations joined."""
-    lines: list[tuple[int, str]] = []
-    pending: tuple[int, str] | None = None
-    for number, line in enumerate(text.splitlines(), 1):
-        start, joined = pending if pending else (number, "")
-        joined += line
-        if joined.endswith("\\"):
-            pending = (start, joined[:-1] + " ")
-        else:
-            pending = None
-            lines.append((start, joined))
-    if pending:
-        lines.append(pending)
-    return lines
+def run_values(text: str) -> list[tuple[int, str]]:
+    """(line of the first text row, value) for every ``run:`` scalar in a workflow. Raises yaml.YAMLError on a parse failure."""
+    found: list[tuple[int, str]] = []
+
+    def walk(node: yaml.Node) -> None:
+        if isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                if isinstance(key, yaml.ScalarNode) and key.value == "run" and isinstance(value, yaml.ScalarNode):
+                    first_row = value.start_mark.line + 1 + (value.style in ("|", ">"))
+                    found.append((first_row, value.value))
+                walk(value)
+        elif isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                walk(item)
+
+    for document in yaml.compose_all(text, Loader=yaml.SafeLoader):
+        if document is not None:
+            walk(document)
+    return found
 
 
-def shell_words(line: str) -> list[str]:
-    """Words of one joined command line, as a shell reads quotes. shlex drops a comment but keeps a # inside quotes. An unbalanced quote falls back to whitespace words with the quote characters stripped."""
-    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    lexer.commenters = "#"
+def run_breaks_rules(value: str) -> bool:
+    if LONG_FLAG in value:
+        return True
+    if MARKER.search(value) or not SUBCOMMAND.search(value):
+        return False
+    return WORKFLOW_CLUSTER.search(value) is not None
+
+
+def workflow_offences(path: str, text: str) -> list[str]:
     try:
-        return list(lexer)
-    except ValueError:
-        return [QUOTES.sub("", word) for word in line.split()]
-
-
-def scanned_words(line: str) -> list[str]:
-    """Words of the line scanner: cut at a whitespace-led #, then split on quotes and operators. It sees an embedded # and a quoted command."""
-    code = re.sub(r"(^|\s)#.*", "", line)
-    return [word for word in re.split(r"[\s'\"`;&|()=]+", code) if word]
-
-
-def breaks_rules(words: list[str], marked: bool) -> bool:
-    bare_cluster = any(CLUSTER.match(word) for word in words) and SUBCOMMAND in words
-    return LONG_FLAG in words or (bare_cluster and not marked)
-
-
-def line_offends(line: str) -> bool:
-    """True when either word reading of the line breaks rule 1 or rule 2."""
-    marked = bool(MARKER.search(line))
-    return any(breaks_rules(words, marked) for words in (shell_words(line), scanned_words(line)))
-
-
-def text_offences(text: str) -> list[int]:
-    """Line numbers of the joined shell or YAML command lines that break rule 1 or rule 2."""
-    return [number for number, line in logical_lines(text) if line_offends(line)]
+        values = run_values(text)
+    except yaml.YAMLError as error:
+        return [f"{path}: YAML does not parse: {str(error).splitlines()[0]}"]
+    return [f"{path}:{line}: {value.strip().splitlines()[0] if value.strip() else ''}" for line, value in values if run_breaks_rules(value)]
 
 
 def marker_lines(path: str, text: str) -> list[int]:
     if path.endswith(".py"):
         return python_marker_lines(text)
-    return [number for number, line in logical_lines(text) if MARKER.search(line)]
+    if not WORKFLOWS.match(path):
+        return []
+    try:
+        values = run_values(text)
+    except yaml.YAMLError:
+        return []
+    return [line + offset for line, value in values for offset, row in enumerate(value.splitlines()) if MARKER.search(row)]
 
 
 def offences(path: str, text: str) -> list[str]:
-    suffix = Path(path).suffix
-    if suffix == ".py":
+    if path.endswith(".py"):
         try:
             lines = python_offences(text)
-        except SyntaxError:
-            lines = text_offences(text)
-    elif suffix in TEXT_SUFFIXES:
-        lines = text_offences(text)
-    else:
-        return []
-    source = text.splitlines()
-    return [f"{path}:{n}: {source[n - 1].strip() if n <= len(source) else ''}" for n in lines]
+        except SyntaxError as error:
+            return [f"{path}: Python does not parse: {error.msg}"]
+        source = text.splitlines()
+        return [f"{path}:{n}: {source[n - 1].strip() if n <= len(source) else ''}" for n in lines]
+    if WORKFLOWS.match(path):
+        return workflow_offences(path, text)
+    return []
 
 
 def tracked_texts() -> list[tuple[str, str]]:
@@ -190,6 +187,17 @@ def tracked_texts() -> list[tuple[str, str]]:
     ).stdout.split("\0")
     chosen = [path for path in filter(None, listing) if selected(path) and (ROOT / path).is_file()]
     return [(path, (ROOT / path).read_text(encoding="utf-8", errors="replace")) for path in chosen]
+
+
+def wf(run: str) -> str:
+    """A workflow with one step whose ``run`` is the given YAML scalar text."""
+    return f"jobs:\n  j:\n    steps:\n      - run: {run}\n"
+
+
+def wf_block(*lines: str) -> str:
+    """A workflow with one step whose ``run`` is a literal block of the given lines."""
+    body = "".join(f"          {line}\n" for line in lines)
+    return f"jobs:\n  j:\n    steps:\n      - run: |\n{body}"
 
 
 class SelectionTests(unittest.TestCase):
@@ -253,56 +261,99 @@ class CoarseRuleTests(unittest.TestCase):
         source = 'def f():\n    go("commit", "-n")  # no-verify-guard: not git\n    go("-qn")\n'
         self.assertEqual(python_offences(source), [3])
         self.assertEqual(marker_lines("a.py", source), [2])
-        self.assertEqual(marker_lines("a.sh", "grep -n x # no-verify-guard: not git\n"), [1])
         self.assertEqual(marker_lines("a.py", 'X = "# no-verify-guard: not git"\n'), [])
 
-    def test_text_flags_the_long_flag_and_short_clusters_per_command_line(self) -> None:
-        for name, text in {
-            "long flag": "git push --no-verify origin main",
-            "long flag in yaml": "run: git commit -m x --no-verify",
-            "cluster beside commit": "git commit -qn -m x",
-            "continued lines": "git commit \\\n  -qn \\\n  -m x",
-            "cluster split by quotes": "git commit '-n' -m x",
-        }.items():
-            self.assertTrue(text_offences(text), name)
-        for name, text in {
-            "comment": "# git commit -n\necho ok",
-            "trailing comment": "git commit -m x # --no-verify",
-            "grep -n alone": "grep -n x file",
-            "push dry run": "git push -n",
-            "marker": "grep -n commit f # no-verify-guard: not git",
-        }.items():
-            self.assertEqual(text_offences(text), [], name)
+    def test_python_flags_the_call_shapes_of_the_recheck_helpers(self) -> None:
+        cases = {
+            "method call long flag": 'def f(self):\n    self.git("commit", "-q", "--no-verify", "-m", "x")',
+            "method call cluster": 'def f(self):\n    self.git("commit", "-qn", "-m", "x")',
+            "run wrapper": 'def f(repo):\n    run(repo, "commit", "-n")',
+        }
+        for name, source in cases.items():
+            with self.subTest(name):
+                self.assertEqual(len(python_offences(source)), 1)
 
-    def test_a_hash_inside_quotes_is_not_a_comment(self) -> None:
+
+class WorkflowRunTests(unittest.TestCase):
+    """Workflow ``run:`` values are read with the YAML parser and judged by two coarse token rules."""
+
+    PATH = ".github/workflows/ci.yml"
+
+    def found(self, text: str) -> int:
+        return len(offences(self.PATH, text))
+
+    def test_the_long_flag_anywhere_in_a_run_value_fails(self) -> None:
         for name, text in {
-            "long flag after a quoted hash": "git commit -m 'fix #263' --no-verify",
-            "short cluster after a quoted hash": "git commit -m 'fix #263' -n",
+            "plain scalar": wf("git push --no-verify origin main"),
+            "embedded hash before the flag": wf("git commit -m fix#263 --no-verify"),
+            "quoted whole command": wf('"git commit -m x --no-verify"'),
+            "quoted flag in a multiline value": wf_block('git commit "--no-verify" -m "first', 'second"'),
+            "quoted hash in a message, then the flag": wf_block("git commit -m 'fix #263' --no-verify"),
+            "embedded hash, then a quoted hash": wf_block("git commit -m fix#1 --no-verify -m '#'"),
+            "two messages, the second quoted with a hash": wf_block("git commit -m fix#1 -m 'fix #2' --no-verify"),
+            "inside a comment": wf_block("git commit -m x # --no-verify"),
         }.items():
             with self.subTest(name):
-                self.assertEqual(text_offences(text), [1])
+                self.assertEqual(self.found(text), 1)
 
-    def test_a_hash_inside_a_word_is_not_a_comment(self) -> None:
+    def test_a_short_cluster_beside_commit_fails(self) -> None:
         for name, text in {
-            "long flag after an embedded hash": "git commit -m fix#263 --no-verify",
-            "short cluster after an embedded hash": "git commit -m fix#263 -n",
+            "plain": wf("git commit -qn -m x"),
+            "embedded hash before the cluster": wf("git commit -m fix#263 -n"),
+            "quoted whole command": wf('"git commit -m x -n"'),
+            "quoted token": wf_block("git commit '-n' -m x"),
+            "quoted hash in a message, then the cluster": wf_block("git commit -m 'fix #263' -n"),
+            "continued lines": wf_block("git commit \\", "  -qn \\", "  -m x"),
         }.items():
             with self.subTest(name):
-                self.assertEqual(text_offences(text), [1])
+                self.assertEqual(self.found(text), 1)
 
-    def test_a_quoted_flag_before_a_multiline_message_is_still_seen(self) -> None:
-        self.assertEqual(text_offences('git commit "--no-verify" -m "first\nsecond"\n'), [1])
-
-    def test_a_yaml_value_that_quotes_the_whole_command_is_read(self) -> None:
+    def test_a_short_cluster_glued_to_a_shell_separator_fails(self) -> None:
         for name, text in {
-            "long flag": 'run: "git commit -m x --no-verify"',
-            "short cluster": 'run: "git commit -m x -n"',
+            "redirect": wf("git commit -n>/dev/null -m x"),
+            "and list": wf("git commit -n&&echo done"),
+            "semicolon": wf("git commit -qn;true"),
+            "pipe": wf("git commit -n|cat"),
+            "semicolon then a word": wf("git commit -qn;echo ok"),
+            "line continuation": wf_block("git commit -qn\\", "  -m x"),
+            "command substitution in quotes": wf_block('echo "$(git commit -m fix -n)."'),
+            "subshell": wf_block("(git commit -n)"),
+            "backticks": wf_block("`git commit -qn`"),
+            "input redirect": wf("git commit -n</dev/null -m x"),
         }.items():
             with self.subTest(name):
-                self.assertEqual(text_offences(text), [1])
+                self.assertEqual(self.found(text), 1)
 
-    def test_reports_the_first_physical_line_of_a_wrapped_command(self) -> None:
-        self.assertEqual(text_offences("echo ok\ngit commit \\\n  -qn \\\n  -m x\necho done\n"), [2])
+    def test_a_comment_hash_glued_to_a_command_is_over_flagged_by_design(self) -> None:
+        """#273 listed ``true;# commit -n`` as a false positive. Rule 2 reads tokens, not shell comments, so it now fails."""
+        self.assertEqual(self.found(wf_block("true;# commit -n")), 1)
+
+    def test_a_run_value_without_commit_passes_rule_2(self) -> None:
+        for name, text in {
+            "push dry run": wf("git push -n"),
+            "grep -n": wf("grep -n foo file"),
+            "plain commit": wf("git commit -qm x"),
+            "no run key": "name: ci\non: push\n",
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(self.found(text), 0)
+
+    def test_text_outside_run_values_is_not_read(self) -> None:
+        self.assertEqual(self.found("# git commit -n --no-verify\njobs:\n  j:\n    name: commit -n\n    steps: []\n"), 0)
+
+    def test_the_marker_exempts_rule_2_only(self) -> None:
+        self.assertEqual(self.found(wf_block("grep -n commit f # no-verify-guard: not git")), 0)
+        self.assertEqual(self.found(wf_block("git commit --no-verify # no-verify-guard: not git")), 1)
+        self.assertEqual(marker_lines(self.PATH, wf_block("echo ok", "grep -n commit f # no-verify-guard: not git")), [6])
+
+    def test_malformed_yaml_fails_and_names_the_file(self) -> None:
+        found = offences(self.PATH, "jobs: [unclosed\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn(self.PATH, found[0])
+
+    def test_the_offence_names_the_line_of_the_run_value(self) -> None:
+        found = offences(self.PATH, wf("echo ok") + "      - run: git push --no-verify\n")
+        self.assertTrue(found[0].startswith(self.PATH + ":5:"), found)
 
 
 class NoVerifyGuardTests(unittest.TestCase):
