@@ -51,10 +51,11 @@ Release automation is release-please (`release-please-config.json`, `.github/wor
 
 Dependency direction, as far as the repository shows it:
 
-- `harness/` and `scripts/` read skills as files. No production script under `skills/*/scripts` imports `harness/` or `scripts/` (checked with `rg -n "harness|scripts/|modload" skills/*/scripts`). No test enforces this, so the rule is unverified.
-- Skill tests do import from them. These two imports are test-only:
+- Shipped skill code never imports `harness/` or `scripts/`. `skill_files()` in `harness/install.py` (lines 58 to 69) copies `skills/cad-*` without `tests/` or `__pycache__`, so the installed skills carry no path to either directory. `rg -n "harness|scripts/|modload" skills/*/scripts` finds only comments and printed or run commands.
+- Tests may import them, through `scripts/modload.py`, the shared test helper (its docstring: "Shared test helpers"). Two cases:
   - `skills/cad-bom/test_bom.py` (lines 25 and 26) puts `scripts/` on `sys.path` and imports `result_payload` from `scripts/modload.py`.
-  - `skills/cad-model/tests/test_cad_model.py` (lines 3413 to 3416) loads `harness/install.py` with `importlib`.
+  - `skills/cad-model/tests/test_cad_model.py` (lines 3413 to 3416) loads `harness/install.py` with `importlib` on purpose.
+- `cad-bom/test_bom.py`, `cad-fits/test_fits.py` and `cad-fits/test_stackup.py` sit outside `tests/`, so the installer ships them. benchhand-to6 tracks that move and a planned harness check for this rule.
 - Skills are separate script trees. `cad-record` supplies the record schemas, `emit.py` and the validators that other skills read. Skills reach a sibling through a path built from the skill folder (for example `freecad_lookup.py` in `cad-analysis` adds `cad-flow`'s scripts to `sys.path`). No import checker enforces which skill may import which. Unverified.
 - Code that `freecadcmd` runs must import on Python 3.11 with only PyYAML and jsonschema. `scripts/freecad_job_modules.txt` lists those modules, and CI checks them (`scripts/import_check.py --manifest`).
 - `scripts/test_docs_guard.py` and `scripts/docs_only.py` decide which paths no skill test reads, so a docs-only PR skips the skill shards.
@@ -69,7 +70,6 @@ Standards:
 - Text files are opened with an explicit encoding (ruff `PLW1514`, CI).
 - Complexity findings `C901`, `PLR0912` and `PLR0915` may not rise above `scripts/complexity-baseline.json`.
 - Tests and scripts must not skip git hooks (`scripts/test_no_verify_guard.py`).
-- Prose in Markdown follows the slopvac rules in `slopvac.toml`. Pull request bodies pass the strict profile.
 - Type checking is incremental: `mypy.ini` lists the checked modules, and some are strict.
 
 Approved departures. The tracking IDs come from the bead ledger, which the repository does not hold, so the ledger facts below are unverified.
@@ -78,8 +78,7 @@ Approved departures. The tracking IDs come from the bead ledger, which the repos
 |---|---|---|
 | A hand-written spatial index in `skills/cad-model/scripts/cadmodel/agreement.py` (`_Surface`, a uniform grid of cells with a box prefilter in `within`) for the GLB to STEP agreement check | The module imports numpy and abstains without it, so the index keeps to numpy. The profiling result, the proposed finer grid and the bead status are unverified (ledger only). | benchhand-1tq |
 | Hand-written shell lexing in `scripts/test_no_verify_guard.py` (a `shlex` based word splitter near line 134) | The plan to replace it, the reasons and the bead status are unverified (ledger only). | benchhand-ci0 |
-| `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | none found in the repository; unverified |
-| Heavy suites run on the pace host | The reason and the rule are not written in the repository. `skills/cad-render/scripts/parity_policy.py` cites measurements taken on pace. | unverified |
+| `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | benchhand-76q |
 | Provisional FEA constants in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | The module docstring and comments call both values provisional. A section whose residual or torque exceeds them abstains. The absence of a sourced value is unverified (ledger only). | benchhand-2dq |
 | The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate (`DUCTILE_FORMS` in `skills/cad-analysis/scripts/fea_conditions.py`) | The docstring in `fea_conditions.py` says the profile schema holds no ductility field. | benchhand-2dq |
 
@@ -119,28 +118,11 @@ CI lists the same two globs in `scripts/ci_shards.py` (`git ls-files "skills/*/t
 
 CI splits the files into the shards `motion`, `motion-b`, `cad-model`, `freecad-gated` and `rest` (`scripts/ci_shards.py`, the `SHARDS` text in `ci.yml`). The files in the `freecad-gated` shard need FreeCAD 1.1.4 on `PATH` or `FREECADCMD`. Without it those tests skip, and `CAD_REQUIRE_FREECAD=1` turns the skip into a failure, as CI does. The `freecad-gated` shard also runs the mutation corpus rate check: `uv run --script skills/cad-design/tests/mfg_corpus/rates.py --check-baseline`. A pull request that changes only paths no skill test reads skips the shards (`scripts/docs_only.py`).
 
-Prose lint. Changed Markdown goes through slopvac:
-
-```sh
-slopvac lint docs/engineering.md --format json
-```
-
-A pull request body takes the strict profile:
-
-```sh
-VALE_GRAMMARS_PATH=<path to the grammar directory> slopvac lint <body file> --profile strict --format json
-```
-
-The grammar directory is local to the machine and is not in the repository. It is the value of `$VALE_GRAMMARS_PATH`, for example `~/.local/share/vale/grammars`, and the slopvac install sets it.
-
 Git hooks are not defined in the repository (no hook files found). Never pass `--no-verify`; the guard test fails on it.
 
 ## Unverified items
 
-- The import rule between skills, `harness/` and `scripts/` (no enforcing test).
 - The profiling result, the proposed finer grid and the bead status behind benchhand-1tq.
 - The plan, the reasons and the bead status behind benchhand-ci0.
 - The plan and the lack of a sourced value behind benchhand-2dq.
-- The Apache-2.0 departure has no ledger ID.
-- The pace-host rule for heavy suites has no source in the repository.
 - The root `AGENTS.md` is absent from this commit; `CONTRIBUTING.md` and `README.md` stand in.
