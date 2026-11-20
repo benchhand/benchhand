@@ -1676,7 +1676,7 @@ class LegacyWallLimitTests(Checks):
 
     def test_without_a_nozzle_or_line_width_the_floor_applies_and_says_so(self) -> None:
         limit = self.limit(guided(parameters={}))
-        self.assertEqual((limit["required_mm"], limit["guideline"]), (0.8, "fdm.generic@1"))
+        self.assertEqual((limit["required_mm"], limit["guideline"]), (0.8, "fdm.generic@2"))
         self.assertIn("no nozzle or line width", limit["note"])
 
     def test_the_wall_diagnostic_and_the_process_checks_agree_on_every_limit_they_cannot_state(self) -> None:
