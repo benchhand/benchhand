@@ -171,6 +171,24 @@ class SurfaceIndex(unittest.TestCase):
         self.assertEqual(measured, 300 * 300)
         self.assertLessEqual(largest, agreement.PAIR_BATCH)
 
+    def test_more_wide_triangles_than_a_batch_are_split_across_blocks(self) -> None:
+        """With PAIR_BATCH patched to 8, 30 wide triangles (copies of a 100 mm triangle moved by whole millimetres,
+        beside a thousand small ones that fix the cell) outnumber a batch. The answer must equal a search of every
+        triangle, and no pair array may exceed 8."""
+        small = np.tile(np.array([(0, 0, 0), (0.75, 0, 0), (0, 0.75, 0)], dtype=float), (1_000, 1))
+        big = np.concatenate([np.array([(k, 0, 0), (k + 100, 0, 0), (k, 100, 0)], dtype=float) for k in range(30)])
+        corners = np.concatenate([small, big]).reshape(-1, 3, 3)
+        points = np.array([(-50, -50, 0), (50, 10, 0), (-0.1, 5, 0), (-0.2, 5, 0), (29.1, 5, 0), (60, 60, 0),
+                           (60, 60, 0.1), (60, 60, 0.2), (130, 1, 0), (129.9, 1, 0), (10, 10, 3), (10, 1, 0)],
+                          dtype=float)
+        with mock.patch.object(agreement, "PAIR_BATCH", 8):
+            largest, measured, found = self.measure_pairs(corners, points, 0.155)
+        want = brute_force(corners, 0.155, points)
+        self.assertTrue(want.any() and not want.all())  # the points tell found from not found
+        np.testing.assert_array_equal(found, want)
+        self.assertEqual(measured, len(points) * 30)
+        self.assertLessEqual(largest, 8)
+
     @given(case())
     def test_the_lookup_answers_every_point_as_a_search_of_every_triangle(
             self, drawn: tuple[np.ndarray, float, np.ndarray]) -> None:
