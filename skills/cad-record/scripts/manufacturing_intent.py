@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 if TYPE_CHECKING:
+    from jsonschema.exceptions import ValidationError
     from typing_extensions import TypeIs
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
@@ -878,19 +879,66 @@ def _color_rule() -> Mapping[str, Any]:
     return types.MappingProxyType(schema["$defs"]["intent"]["properties"]["color"])
 
 
-def _leaves(error: Any) -> list[Any]:
-    """The errors under `error` that have no branch errors of their own (`error` itself when it has none)."""
-    return [leaf for branch in error.context for leaf in _leaves(branch)] if error.context else [error]
+def _rules_out_branch(error: ValidationError, keyword: str, discriminators: set[tuple[str | int, ...]] | None = None) -> bool:
+    """Whether `error`, from one branch of a oneOf/anyOf, shows the value is not meant for that branch.
+
+    A direct `const`/`enum` or a root `type` mismatch can distinguish branches. Nested value failures
+    do not rule out the containing branch.
+    """
+    if error.context and not error.relative_path:
+        return all(_rules_out_branch(branch, keyword, discriminators) for branch in error.context)
+    return (error.validator == keyword and len(error.relative_path) <= (0 if keyword == "type" else 1)
+            and (discriminators is None or tuple(error.relative_path) in discriminators))
 
 
-def _deepest_error(error: Any) -> Any:
-    """The deepest leaf under a oneOf/anyOf `error` (jsonschema's `relevance` ranks deepest first), else `error`.
+def _shared_discriminators(errors: list[ValidationError]) -> set[tuple[str | int, ...]]:
+    """Direct const/enum fields declared by every candidate branch, excluding branch-local value enums."""
+    fields: dict[str | int, set[tuple[str | int, ...]]] = {}
+    for error in errors:
+        declared = fields.setdefault(error.schema_path[0], set())
+        if error.validator in {"const", "enum"} and len(error.relative_path) <= 1:
+            declared.add(tuple(error.relative_path))
+        if not error.relative_path and isinstance(error.schema, Mapping):
+            declared.update((name,) for name, rule in error.schema.get("properties", {}).items()
+                            if isinstance(rule, Mapping) and ("const" in rule or "enum" in rule))
+    return set.intersection(*fields.values()) if fields else set()
 
-    `best_match` stops at an anyOf whose branches tie, and then quotes the whole value; this keeps descending.
+
+def _compatible_errors(error: ValidationError) -> list[ValidationError]:
+    """Errors in a uniquely compatible branch, or none when branch selection is ambiguous.
+
+    Types and constants distinguish shapes before enums: a known fact's invalid value enum must not
+    outweigh its matching status constant. A single branch with only nested failures also matches
+    the value's shape; otherwise the parent error remains.
+    """
+    candidates = error.context
+    for keyword in ("type", "const"):
+        ruled_out = {branch.schema_path[0] for branch in candidates if _rules_out_branch(branch, keyword)}
+        candidates = [branch for branch in candidates if branch.schema_path[0] not in ruled_out]
+    if len({branch.schema_path[0] for branch in candidates}) > 1:
+        discriminators = _shared_discriminators(candidates)
+        ruled_out = {branch.schema_path[0] for branch in candidates if _rules_out_branch(branch, "enum", discriminators)}
+        candidates = [branch for branch in candidates if branch.schema_path[0] not in ruled_out]
+    if len({branch.schema_path[0] for branch in candidates}) > 1:
+        nested = {branch.schema_path[0] for branch in candidates}
+        nested.difference_update(branch.schema_path[0] for branch in candidates if not branch.relative_path)
+        candidates = [branch for branch in candidates if branch.schema_path[0] in nested]
+    return candidates if len({branch.schema_path[0] for branch in candidates}) == 1 else []
+
+
+def _deepest_error(error: ValidationError) -> ValidationError:
+    """The error to report for a oneOf/anyOf `error`: the deepest one in the branches the value is meant for.
+
+    Branches whose discriminator the value does not match are skipped, so an unknown fact without a reason is
+    reported as missing its reason, not as failing `status: known`. With no such branch, `error` itself stands.
+    `best_match` is not enough: it stops at an anyOf whose branches tie and then quotes the whole value.
     """
     from jsonschema.exceptions import relevance  # noqa: PLC0415 - jsonschema is optional, needed only to validate
 
-    return min(_leaves(error), key=relevance)
+    if not error.context:
+        return error
+    return min((_deepest_error(branch) for branch in _compatible_errors(error)),
+               key=lambda leaf: (-len(leaf.absolute_path), leaf.validator in {"oneOf", "anyOf"}, relevance(leaf)), default=error)
 
 
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
