@@ -928,6 +928,21 @@ class PlausibilityWarnings(unittest.TestCase):
         self.assertTrue(mi.schema_problems(documents))
         self.assertEqual([p.pointer for p in mi.plausibility_problems(documents)], ["drawing/edges/external/0"])
 
+    def test_a_deviation_inside_its_hard_bound_warns_when_its_sibling_breaks_it_under_a_oneof(self) -> None:
+        part = fx.part("TST-0001")
+        part["drawing"] = {"type": "detail", "dimensions": [
+            {"id": "d1", "operation": "distance", "features": ["a", "b"], "tolerance": {"deviation_mm": [2, 11]}}]}
+        documents = {"parts/TST-0001/part.yaml": part}
+        self.assertTrue([p for p in mi.schema_problems(documents) if "tolerance" in p.pointer])  # 11 is past the 10 mm hard bound
+        pointers = [p.pointer for p in mi.plausibility_problems(documents)]
+        self.assertEqual(pointers, ["drawing/dimensions/0/tolerance/deviation_mm/0"])  # 2 is past the band's 1 mm only
+
+    def test_a_list_where_a_plain_number_is_expected_has_no_member_warning(self) -> None:
+        """general_tolerance [1] is refused by every alternative of its oneOf; the numeric branch's band must not warn at its member."""
+        documents = {"product.yaml": fx.product(general_tolerance=[1])}
+        self.assertTrue([p for p in mi.schema_problems(documents) if p.pointer.startswith("general_tolerance")])
+        self.assertEqual(mi.plausibility_problems(documents), [])
+
     def test_a_unit_that_is_not_a_string_is_a_schema_problem_and_no_crash(self) -> None:
         documents = fx.record(capabilities=[fx.capability_profile(
             "tst_printer", "fdm", calibrations=[fx.calibration("hole", "min_hole", "tst_polymer_printed", {"value": 15, "units": ["mm"]})])])

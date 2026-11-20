@@ -989,12 +989,16 @@ def plausibility_problems(documents: Mapping[str, Any]) -> list[Problem]:
         name = schema_for(rel)
         if name is None:
             continue
-        refused = [tuple(e.absolute_path) for e in _leaves(schemas.document_validator(SCHEMAS, name).iter_errors(document))]
+        leaves = list(_leaves(schemas.document_validator(SCHEMAS, name).iter_errors(document)))
+        refused = [tuple(e.absolute_path) for e in leaves]
+        mistyped = [tuple(e.absolute_path) for e in leaves if e.validator == "type"]  # a value of the wrong type has no members to band
         banded = schemas.keyword_validator(SCHEMAS, name, "x-plausible", _plausible_keyword)
         seen = set()
         for error in _plausible_errors(banded.iter_errors(document)):
             path = tuple(error.absolute_path)
             if any(hard[: len(path)] == path for hard in refused):  # the member itself fails its hard bound
+                continue
+            if any(path[: len(wrong)] == wrong and len(wrong) < len(path) for wrong in mistyped):  # [1] where a number is due
                 continue
             pointer = "/".join(str(part) for part in path)
             message = f"{pointer + ': ' if pointer else ''}{error.message}"
