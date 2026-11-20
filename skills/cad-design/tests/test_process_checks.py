@@ -367,6 +367,12 @@ class SupportPolicyTests(Checks):
         self.assertEqual((found["criterion"]["source"]["kind"], found["criterion"]["source"]["reference"],
                           found["criterion"]["source"]["revision"]), ("guideline", "fdm.generic", "1"))
 
+    def test_without_a_calibration_or_a_catalog_the_need_for_support_is_unknown_never_a_universal_angle(self) -> None:
+        result = self.assess(printed("TST-0101", {"strategy": "none"}, calibrations=[]), geometry("TST-0101", SHELF))
+        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0101/print"), "unknown")
+        found = self.finding(result, "process.fdm.overhang_uncalibrated")
+        self.assertEqual(found["criterion"]["status"], "unknown")
+
     def test_an_absent_support_strategy_is_unknown_never_none(self) -> None:
         documents = printed("TST-0101", None)
         del documents["parts/TST-0101/part.yaml"]["intent"]["route"][0]["supports"]
@@ -1409,13 +1415,14 @@ SUPPORT = "process.fdm.support@TST-0101/print"
 
 
 def guided(*, service: str | None = None, calibrations: tuple = (), parameters: dict | None = None,
-           dispositions: tuple = ()) -> dict[str, Any]:
+           dispositions: tuple = (), supports: Any = None, pin: tuple = ()) -> dict[str, Any]:
     """A printed part on a 0.4 mm nozzle profile (unless `parameters` say otherwise) whose limits come from the shipped
     guideline sets unless `calibrations` hold them, with support strategy none and the use case's `service` class."""
     route = [FX.operation("print", "fdm", "tst_printer", output_state="printed", orientation=copy.deepcopy(APPROVED),
-                          supports={"strategy": "none"})]
+                          supports=supports or {"strategy": "none"})]
     profile = FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE, calibrations=list(calibrations),
-                                    parameters=copy.deepcopy(NOZZLE_04 if parameters is None else parameters))
+                                    parameters=copy.deepcopy(NOZZLE_04 if parameters is None else parameters),
+                                    **({"guidelines": list(pin)} if pin else {}))
     use = FX.use_case(**({"service_class": known(service)} if service else {}))
     documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[profile], materials=materials(),
                           product_data=FX.product(use), decisions=("DR-001", "DR-002"))
@@ -1532,6 +1539,68 @@ class GuidelineLimitTests(Checks):
         self.assertEqual(pc.probe_plan(record, "TST-0101", "main", today=TODAY, catalog=SHIPPED)["wall_mm"], 1.2)
         self.assertIsNone(pc.probe_plan(record, "TST-0101", "main", today=TODAY)["wall_mm"])
 
+    def test_a_value_equal_to_a_non_strict_limit_passes_and_a_bridge_inside_the_strict_one_passes(self) -> None:
+        cases = {"wall at 1.2 mm": (walled(1.2), GEOMETRY), "overhang at 45 deg": (underside(45.0), SUPPORT),
+                 "pin at 2.0 mm": (walled(3.0, pins=(2.0,)), GEOMETRY), "hole at 2.0 mm": (walled(3.0, holes=(2.0,)), GEOMETRY),
+                 "bridge of 4.9 mm under the strict 5 mm": (underside(90.0, "bridge", 4.9), SUPPORT)}
+        for name, (data, obligation) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.outcome(self.judged(data, service="functional_demo"), obligation), "pass")
+
+    def test_planned_supports_keep_the_guideline_grade(self) -> None:
+        planned = {"strategy": "reachable_noncritical", "contact_regions": [{"feature": "underside"}], "removal": REMOVAL}
+        strict = sorted(set(MI.SERVICE_CLASSES) - LENIENT)[0]
+        for service, outcome in (("functional_demo", "pass"), (strict, "unknown")):
+            with self.subTest(service=service):
+                result = self.judged(underside(60.0), service=service, supports=planned)
+                self.assertEqual(self.outcome(result, SUPPORT), outcome)
+                self.assertEqual("process.fdm.support_guideline_only" in self.codes(result), outcome == "unknown")
+
+    def test_grade_is_unknown_by_itself_for_an_unknown_limit(self) -> None:
+        record = load(self, guided(service="functional_demo"))
+        op = record.parts["TST-0101"].intent.route[0]
+        ctx = pc.core.Context(record, "TST-0101", "main", op, None, TODAY, catalog=SHIPPED)
+        unknown_limit = ctx.limit("no_such_characteristic", "minimum")
+        findings: list = []
+        verdict = ctx.grade(unknown_limit, "covered", findings, check="x", measured={"value": 1, "units": "mm"},
+                            prop="p", units="mm", method="m")
+        self.assertEqual((verdict[0], findings), ("unknown", []))
+
+    def test_a_resolver_warning_reaches_the_finding_that_cites_the_limit(self) -> None:
+        result = self.judged(walled(1.0), pin=("fdm.generic@7",))
+        conditions = self.finding(result, "process.fdm.wall")["criterion"]["conditions"]
+        self.assertIn("pinned fdm.generic@7, but the catalog has revision 1: not applied", conditions)
+
+    def test_a_refused_guideline_file_surfaces_as_a_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "manufacturing" / "guidelines"
+            folder.mkdir(parents=True)
+            (folder / "garbled.yaml").write_text("id: [unclosed\n", encoding="utf-8")
+            catalog = GL.discover(Path(tmp))
+        self.assertEqual([r.path for r in catalog.refused], ["manufacturing/guidelines/garbled.yaml"])
+        result = self.assess(guided(service="functional_demo"), geometry("TST-0101", walled(3.0)), catalog=catalog)
+        found = self.finding(result, "process.guideline_refused")
+        self.assertIn("manufacturing/guidelines/garbled.yaml is refused", found["measured"]["text"])
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
+        clean = self.judged(walled(3.0), service="functional_demo")
+        self.assertNotIn("process.guideline_refused", self.codes(clean))
+
+    def test_the_packet_cites_the_resolution_trace_on_findings_that_used_a_guideline(self) -> None:
+        result = pc.assess(load(self, guided()), geometry("TST-0101", walled(1.0)), today=TODAY, catalog=SHIPPED)
+        row = {"path": "hw/checks/v1/process/guideline-trace-x.json", "sha256": "c" * 64}
+        packet = result.packet({"version_manifest": "0" * 64}, trace=row)
+        self.assertEqual(packet_errors(packet), [])
+        wall = next(f for f in packet["findings"] if f["code"] == "process.fdm.wall")
+        self.assertIn(row, wall["method"]["evidence"])
+        self.assertEqual({r.characteristic for r in result.resolutions} >= {"min_wall"}, True)
+
+    def test_a_resin_part_with_a_hole_is_judged_as_before(self) -> None:
+        wall = calibration("wall_study", "min_wall", POLYMER, 0.8, 1.2)
+        result = self.assess(shaped("resin", [wall], material=POLYMER), geometry("TST-0902", walled(3.0, holes=(1.0,))),
+                             catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, "process.resin.geometry@TST-0902/form"), "pass")
+        self.assertEqual([c for c in self.codes(result) if "small_hole" in c], [])
+
     def test_the_guideline_pass_classes_are_known_service_classes(self) -> None:
         self.assertLessEqual(set(pc.GUIDELINE_PASS_CLASSES), set(MI.SERVICE_CLASSES) - {"unknown"})
 
@@ -1561,8 +1630,25 @@ class LegacyWallLimitTests(Checks):
     def setUpClass(cls) -> None:
         cls.form_check = load_module("tst_form_check_walls", FORM_CHECK)
 
-    def limit(self, documents: dict[str, Any], process: str | None = "fdm", overrides: dict | None = None) -> Any:
-        return self.form_check.wall_limit(pc, load(self, documents), "TST-0101", process, SHIPPED, overrides or {})
+    def limit(self, documents: dict[str, Any], process: str | None = "fdm", overrides: dict | None = None,
+              catalog: Any = SHIPPED) -> Any:
+        return self.form_check.wall_limit(pc, load(self, documents), "TST-0101", process, catalog, overrides or {})
+
+    def test_an_fdm_part_without_a_catalog_has_an_unknown_limit_not_a_skipped_scan(self) -> None:
+        limit = self.limit(guided(), catalog=None)
+        self.assertEqual((limit["required_mm"], limit["status"]), (None, "unknown"))
+        self.assertTrue(limit["reasons"])
+
+    def test_the_trace_is_written_beside_the_packet_and_named_by_its_hash(self) -> None:
+        result = pc.assess(load(self, guided()), geometry("TST-0101", walled(1.0)), today=TODAY, catalog=SHIPPED)
+        with tempfile.TemporaryDirectory() as tmp:
+            row = self.form_check.trace_row(pc, result, Path(tmp), "hw/checks/v1/process")
+            written = Path(tmp) / Path(row["path"]).name
+            self.assertEqual(row["sha256"], hashlib.sha256(written.read_bytes()).hexdigest())
+            self.assertTrue(row["path"].startswith("hw/checks/v1/process/guideline-trace-"))
+            self.assertIn("min_wall", [r["characteristic"] for r in json.loads(written.read_text())["resolutions"]])
+        bare = pc.assess(load(self, guided()), {}, today=TODAY)
+        self.assertIsNone(self.form_check.trace_row(pc, bare, Path(tmp), "x"))
 
     def test_an_fdm_part_on_a_0_4_mm_nozzle_takes_three_line_widths(self) -> None:
         limit = self.limit(guided())
