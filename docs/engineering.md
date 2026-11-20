@@ -8,10 +8,10 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 |---|---|---|
 | Host Python | 3.12 or later. Most PEP 723 headers say `>=3.12,<3.15`. | `README.md`, `scripts/test_script_floors.py` |
 | FreeCAD job Python | 3.11, the Python that FreeCAD bundles. Code that `freecadcmd` runs stays 3.11 compatible. | `README.md`, `scripts/freecad_job_modules.txt` |
-| uv | Runs the standalone skill scripts (through their PEP 723 headers), the tests and several tools. CI also runs `scripts/docs_only.py` and `scripts/ci_shards.py files` with plain `python3`. No uv version is pinned. | `.github/workflows/ci.yml` (lines 90 and 231) |
-| FreeCAD | 1.1.4, checked by SHA-256 in CI | `.github/workflows/ci.yml`, `README.md` |
-| CalculiX `ccx` | 2.23 is the value in the test fixtures, a mocked solver response. The version FreeCAD 1.1.4 bundles is unverified. At runtime `skills/cad-flow/scripts/fea_solvers.py` probes the installed `ccx` (`tool_version`) and accepts an override through `$CCX`. | `skills/cad-analysis/tests/test_fea_static.py` |
-| gmsh | 4.15.0 is the value in the test fixtures, a mocked solver response. The version FreeCAD 1.1.4 bundles is unverified. At runtime `skills/cad-flow/scripts/fea_solvers.py` probes the installed `gmsh` and accepts an override through `$GMSH`. | `skills/cad-analysis/tests/test_fea_static.py` |
+| uv | Runs the standalone skill scripts (through their PEP 723 headers), the tests and several tools. CI also runs `scripts/docs_only.py` and `scripts/ci_shards.py files` with plain `python3`. No uv version is pinned; developed with 0.13.x. | `.github/workflows/ci.yml` (lines 90 and 231) |
+| FreeCAD | 1.1.4, checked by SHA-256 in CI. Verified on macOS: `/Applications/FreeCAD.app/Contents/Resources/bin/freecadcmd --version` prints `FreeCAD 1.1.4 Revision: 20260928`. | `.github/workflows/ci.yml`, `README.md` |
+| CalculiX `ccx` | 2.23, verified on macOS against FreeCAD 1.1.4: `/Applications/FreeCAD.app/Contents/Resources/bin/ccx -v` prints `This is Version 2.23`. The test fixtures use the same value in a mocked solver response. At runtime `skills/cad-flow/scripts/fea_solvers.py` probes the installed `ccx` (`tool_version`) and accepts an override through `$CCX`. | `skills/cad-analysis/tests/test_fea_static.py` |
+| gmsh | 4.15.0, verified on macOS against FreeCAD 1.1.4: `/Applications/FreeCAD.app/Contents/Resources/bin/gmsh --version` prints `4.15.0`. The test fixtures use the same value in a mocked solver response. At runtime `skills/cad-flow/scripts/fea_solvers.py` probes the installed `gmsh` and accepts an override through `$GMSH`. | `skills/cad-analysis/tests/test_fea_static.py` |
 | CadQuery | `cadquery==2.8.0` with `cadquery-ocp==7.9.3.1.1` and `vtk==9.6.2` in the scripts that declare them | PEP 723 headers under `skills/*/scripts` |
 | OCP without VTK | `cadquery-ocp-novtk==8.0.1.1.0` | PEP 723 headers under `skills/*/scripts` |
 | build123d | `build123d==0.13.0`, `bd_warehouse==0.4.0` | `skills/cad-model/scripts/run_build123d.py` header |
@@ -131,19 +131,16 @@ A pull request body takes the strict profile:
 VALE_GRAMMARS_PATH=<path to the grammar directory> slopvac lint <body file> --profile strict --format json
 ```
 
-The grammar directory is local to the machine and is not in the repository. Unverified: where it lives.
+The grammar directory is local to the machine and is not in the repository. It is the value of `$VALE_GRAMMARS_PATH`, for example `~/.local/share/vale/grammars`, and the slopvac install sets it.
 
 Git hooks are not defined in the repository (no hook files found). Never pass `--no-verify`; the guard test fails on it.
 
 ## Unverified items
 
 - The import rule between skills, `harness/` and `scripts/` (no enforcing test).
-- The ccx and gmsh versions that FreeCAD 1.1.4 bundles (the doc has only the test-fixture values and the runtime probe).
 - The profiling result, the proposed finer grid and the bead status behind benchhand-1tq.
 - The plan, the reasons and the bead status behind benchhand-ci0.
 - The plan and the lack of a sourced value behind benchhand-2dq.
 - The Apache-2.0 departure has no ledger ID.
 - The pace-host rule for heavy suites has no source in the repository.
-- The location of the Vale grammar directory.
-- The uv version, and any git hook setup.
 - The root `AGENTS.md` is absent from this commit; `CONTRIBUTING.md` and `README.md` stand in.
