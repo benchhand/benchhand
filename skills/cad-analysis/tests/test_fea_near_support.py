@@ -33,10 +33,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import yaml
+
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
+import fea_conditions as conditions  # noqa: E402
 import fea_near_support as ns  # noqa: E402
 import fea_stress as fs  # noqa: E402
 import fea_stress_study as study  # noqa: E402
@@ -390,7 +393,7 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
     def solve(self, plan: list[dict[str, Any]], docs: dict[str, Any] | None = None,
               material: dict[str, Any] | None = None) -> dict[str, Any]:
         self.plan = plan
-        self.build(docs or conditions_tests.documents())
+        self.build(docs or conditions_tests.documents(profiles=[self.ductile_alloy()]))
         if material and "effective_isotropic" in material:
             conditions_tests.write_test_decision(self.hw, "DR-003", title="DR-003: effective isotropic model")
         case = self.case(material or {"conditions": conditions_tests.SERVICE}, mode="stress", mesh_size=1.0,
@@ -400,6 +403,28 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         found = report["stress_study"]
         self.assertEqual(found["outcome"], "settled_away_from_support", found["message"])
         return report
+
+    @staticmethod
+    def ductile_alloy(elongation: float | None = 0.14, gauge: str | None = "5.65sqrtS0", *, orientation: str | None = None,
+                      base: dict[str, Any] | None = None) -> dict[str, Any]:
+        """The synthetic wrought alloy with an elongation_at_break of `elongation` (a ratio) on `gauge`, or with no
+        elongation entry at all when `elongation` is None. The default sits exactly on the EN 13445-2 4.1.4 limit."""
+        tests = conditions_tests
+        profile = base or tests.alloy()
+        if elongation is not None:
+            entry = tests.prop("elongation_at_break", elongation, "dimensionless",
+                               temperature=tests.fx.quantity(lower=10, upper=40, units="deg_C"),
+                               **({"orientation": tests.fx.known(orientation)} if orientation else {}))
+            if gauge is not None:
+                entry["conditions"]["gauge"] = gauge
+            profile["properties"].append(entry)
+        return profile
+
+    def fresh(self) -> None:
+        """Forget the published bundle and the recorded jobs, so the next solve of a changed profile reruns."""
+        for published in ("analysis", "checks"):
+            shutil.rmtree(self.hw / published / "v1", ignore_errors=True)
+        self.jobs.clear()
 
     def row(self, report: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
         row = next(r for r in report["engineering"]["outcomes"] if r["obligation"] == STRENGTH)
@@ -424,7 +449,7 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
     def test_a_record_gap_turns_a_linearised_strength_fail_into_unknown(self) -> None:
         # The same 210 N case fails strength at 1.8718 against 2 (test above). A record that fails its schema is a gap
         # (#262): it leaves the verdict unknown on the near-support path as on every other.
-        docs = conditions_tests.documents()
+        docs = conditions_tests.documents(profiles=[self.ductile_alloy()])
         docs["requirements.yaml"]["bogus"] = 1
         report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0), docs)
         self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
@@ -455,15 +480,59 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         self.assertEqual(report["stress_study"]["near_support"]["reasons"], ["scl_outside_mesh"])
         self.assertEqual(self.row(report)[0]["outcome"], "unknown")
 
-    def test_a_material_not_shown_ductile_stays_unknown_even_when_linearised(self) -> None:
-        profile = conditions_tests.alloy()
-        profile["form"] = "bulk"
-        report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0),
-                            conditions_tests.documents(profiles=[profile]))
-        self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
-        row, _ = self.row(report)
-        self.assertEqual(row["outcome"], "unknown")
-        self.assertIn("ductile", row["uncertainty"])
+    def test_ductility_needs_the_en_13445_elongation_on_the_5_65_gauge(self) -> None:
+        # EN 13445-2:2014 4.1.4: at least 14% (0.14 as a ratio) on 5.65 * sqrt(S0). Every other case is not shown
+        # ductile, so the linearised 133.56 MPa (factor 1.8718 against 2) stays unknown instead of failing.
+        cases = {
+            "exactly 0.14 on the EN gauge": (0.14, "5.65sqrtS0", "pass", None),
+            "0.139 on the EN gauge": (0.139, "5.65sqrtS0", "unknown", "0.139"),
+            "a good value on the A50mm gauge": (0.30, "A50mm", "unknown", "A50mm"),
+            "a good value on the 5d gauge": (0.30, "5d", "unknown", "5d"),
+            "a good value with no gauge": (0.30, None, "unknown", "stated on no gauge"),
+            "no elongation entry": (None, None, "unknown", "records no elongation_at_break"),
+        }
+        for name, (value, gauge, outcome, why) in cases.items():
+            with self.subTest(name):
+                self.fresh()
+                load = LOAD if outcome == "pass" else 210.0
+                field = beam_field() if outcome == "pass" else beam_field(210.0)
+                report = self.solve(beam_plan(field, (0.0,), LENGTH, load),
+                                    conditions_tests.documents(profiles=[self.ductile_alloy(value, gauge)]))
+                self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
+                row, _ = self.row(report)
+                self.assertEqual(row["outcome"], outcome, row)
+                self.assertEqual(report["material"]["ductility"]["shown"], outcome == "pass")
+                if why:
+                    self.assertIn("not shown ductile and isotropic", row["uncertainty"])
+                    self.assertIn(why, row["uncertainty"])
+
+    def test_a_percent_elongation_is_compared_as_a_ratio(self) -> None:
+        profile = self.ductile_alloy(None)
+        tested = conditions_tests.fx.quantity(lower=10, upper=40, units="deg_C")
+        entry = conditions_tests.prop("elongation_at_break", 14, "percent", temperature=tested)
+        entry["conditions"]["gauge"] = "5.65sqrtS0"
+        profile["properties"].append(entry)
+        report = self.solve(beam_plan(beam_field(), (0.0,), LENGTH, LOAD), conditions_tests.documents(profiles=[profile]))
+        self.assertEqual(self.row(report)[0]["outcome"], "pass")
+
+    def test_a_shipped_polymer_profile_shows_no_ductility(self) -> None:
+        # No shipped polymer states an elongation gauge, so none can meet the EN 13445-2 threshold: PMMA and PC
+        # sheet were eligible under the old form stand-in and are not now.
+        assets = HERE.parents[1] / "cad-record" / "assets" / "manufacturing" / "material-profiles"
+        metals = ("steel", "aluminium", "fastener")
+        checked = []
+        for path in sorted(assets.glob("*.yaml")):
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            profiles, _ = conditions.intent().profile_document(data, "materials", path.name)
+            for profile in profiles:
+                if any(word in str(profile.family).lower() for word in metals):
+                    continue
+                checked.append(profile.id)
+                elongations = [p for p in profile.properties if p.name == "elongation_at_break"]
+                with self.subTest(profile.id):
+                    self.assertIsNotNone(conditions.ductility_gap(elongations))
+        self.assertIn("sheet_pc_makrolon_gp_clear_099", checked)
+        self.assertIn("fdm_petg_polylite", checked)
 
     def test_an_effective_isotropic_material_stays_unknown_even_when_linearised(self) -> None:
         # The printed Z yield is 20 MPa against a 133.56 MPa stress: were the material eligible this would fail.
@@ -479,11 +548,11 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         self.assertEqual(row["outcome"], "unknown")
         self.assertIn("not shown ductile and isotropic", row["uncertainty"])
 
-    def test_a_rod_with_orientation_dependent_properties_stays_unknown_under_an_effective_isotropic_model(self) -> None:
-        # The form says rod, which alone would pass the ductility stand-in, but the properties differ by orientation
-        # (Z yield 20 MPa against 133.56 MPa): the isotropy, not the form, must hold the strength back.
+    def test_good_elongation_does_not_make_orientation_dependent_properties_eligible(self) -> None:
+        # The Z elongation is 0.30 on the EN gauge, so the ductility evidence holds, but the properties differ by
+        # orientation (Z yield 20 MPa against 133.56 MPa): the isotropy must hold the strength back on its own.
         tests = conditions_tests
-        profile = tests.printed()
+        profile = self.ductile_alloy(0.30, "5.65sqrtS0", orientation="Z", base=tests.printed())
         profile["form"] = "rod"
         profile["process_state"] = {"process": tests.fx.unknown(), "conditioning": "dry"}
         model = {"decision": "DR-003", "justification": "TST: Z-direction values bound the layer-normal load path"}
@@ -491,12 +560,13 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
                             tests.documents(profiles=[profile], part=tests.bracket("tst_polymer_fdm")),
                             {"conditions": {**tests.DRY_23C, "orientation": "Z"}, "effective_isotropic": model})
         self.assertEqual(report["material"]["isotropy"]["model"], "effective_isotropic")
+        self.assertTrue(report["material"]["ductility"]["shown"])
         row, _ = self.row(report)
         self.assertEqual(row["outcome"], "unknown")
-        self.assertIn("not shown ductile and isotropic", row["uncertainty"])
+        self.assertIn("effective_isotropic", row["uncertainty"])
 
-    def allowable_profile(self, *, allowable: bool = True) -> dict[str, Any]:
-        """A bulk (not wrought, sheet or rod) alloy with a 250 MPa typical yield and, when asked, a 200 MPa allowable."""
+    def allowable_profile(self, *, allowable: bool = True, elongation: float | None = None) -> dict[str, Any]:
+        """An alloy with a 250 MPa typical yield and, when asked, a 200 MPa allowable and a 5.65sqrtS0 elongation."""
         tests = conditions_tests
         tested = tests.fx.quantity(lower=10, upper=40, units="deg_C")
         profile = tests.alloy(
@@ -507,29 +577,35 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
             *([tests.prop("yield_strength", 200, "MPa", basis="allowable", temperature=tested)] if allowable else []),
             typical_not_allowable=False)
         profile["form"] = "bulk"
-        return profile
+        return self.ductile_alloy(elongation, base=profile)
 
-    def test_a_sourced_yield_allowable_makes_a_bulk_material_eligible(self) -> None:
-        # Production service asks for the allowable: 200 / 31.8 passes where the typical yield of the same
-        # material, under prototype service, stays unknown.
-        plan = beam_plan(beam_field(), (0.0,), LENGTH, LOAD)
-        production = self.solve(plan, conditions_tests.documents(profiles=[self.allowable_profile()],
-                                                                 service_class="production"),
-                                {"conditions": conditions_tests.SERVICE})
-        rows = {row["input"]: row for row in production["material"]["properties"]}
+    def production(self, profile: dict[str, Any]) -> dict[str, Any]:
+        return self.solve(beam_plan(beam_field(), (0.0,), LENGTH, LOAD),
+                          conditions_tests.documents(profiles=[profile], service_class="production"),
+                          {"conditions": conditions_tests.SERVICE})
+
+    def test_a_sourced_yield_allowable_alone_does_not_show_ductility(self) -> None:
+        # An allowable is a statistical strength value: it says nothing about elongation. 200 / 31.8 would pass
+        # were the material eligible, so the unknown here is the ductility gate, not the factor.
+        report = self.production(self.allowable_profile())
+        rows = {row["input"]: row for row in report["material"]["properties"]}
         self.assertEqual(rows["yield"]["basis"], "allowable")
-        self.assertEqual(production["stress_study"]["near_support"]["outcome"], "linearised")
-        self.assertEqual(self.row(production)[0]["outcome"], "pass", self.row(production))
-        for published in ("analysis", "checks"):  # the recipe differs only in the profile: never reuse the bundle
-            shutil.rmtree(self.hw / published / "v1", ignore_errors=True)
-        self.jobs.clear()
-        prototype = self.solve(plan, conditions_tests.documents(profiles=[self.allowable_profile(allowable=False)]),
-                               {"conditions": conditions_tests.SERVICE})
-        self.assertNotEqual({row["input"]: row for row in prototype["material"]["properties"]}["yield"]["basis"],
-                            "allowable")
-        row, _ = self.row(prototype)
+        self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
+        row, _ = self.row(report)
         self.assertEqual(row["outcome"], "unknown")
-        self.assertIn("not shown ductile and isotropic", row["uncertainty"])
+        self.assertIn("records no elongation_at_break", row["uncertainty"])
+
+    def test_a_sourced_yield_allowable_with_the_elongation_evidence_is_eligible(self) -> None:
+        report = self.production(self.allowable_profile(elongation=0.20))
+        self.assertEqual({row["input"]: row for row in report["material"]["properties"]}["yield"]["basis"], "allowable")
+        self.assertEqual(self.row(report)[0]["outcome"], "pass", self.row(report))
+
+    def test_the_typical_yield_with_the_elongation_evidence_is_eligible_under_prototype_service(self) -> None:
+        report = self.solve(beam_plan(beam_field(), (0.0,), LENGTH, LOAD),
+                            conditions_tests.documents(profiles=[self.allowable_profile(allowable=False, elongation=0.20)]),
+                            {"conditions": conditions_tests.SERVICE})
+        self.assertNotEqual({row["input"]: row for row in report["material"]["properties"]}["yield"]["basis"], "allowable")
+        self.assertEqual(self.row(report)[0]["outcome"], "pass", self.row(report))
 
 
 if __name__ == "__main__":
