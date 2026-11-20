@@ -68,7 +68,7 @@ Approved departures. Each one has a tracking ID in the bead ledger.
 | `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | none found in the repository; unverified |
 | Heavy suites run on the pace host | The FreeCAD-gated and mutation suites are too slow for a laptop. Measurements in the repository cite pace (`skills/cad-render/scripts/parity_policy.py`). The rule itself is not written in the repository. | unverified |
 | Provisional FEA constants in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | No sourced value exists yet. A section whose residual or torque exceeds them abstains. | benchhand-2dq |
-| The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate | Material profiles have no ductility field yet. | benchhand-2dq |
+| The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate (`DUCTILE_FORMS` in `skills/cad-analysis/scripts/fea_conditions.py`) | Material profiles have no ductility field yet. | benchhand-2dq |
 
 benchhand-2dq will replace the two constants with sourced values (or cite their basis) and add a ductility field that the gate reads instead of the form stand-in.
 
