@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.10"
-# dependencies = []
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Record version 2 manufacturing intent: the typed, immutable view of a design record's use case,
 classified statements, per-part intent, interface functions and capability, material and selection
