@@ -1593,7 +1593,8 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
             bundle.write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
         else:
             stage = layout.staging(args.hw, "bundle.checks")
-            packet = assessment.packet(dependencies, trace=trace_row(pc, assessment, stage, f"hw/checks/{label}/{PROCESS_SUBJECT}"))
+            packet = assessment.packet(dependencies, trace=trace_row(pc, assessment, stage / "evidence",
+                                                                     f"hw/checks/{label}/{PROCESS_SUBJECT}/evidence"))
             load_check_packet().validate(packet)
             (stage / "result.json").write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
             bundle = layout.publish(args.hw, "bundle.checks", params, stage, recipe=recipe, producer=pc.PRODUCER,
