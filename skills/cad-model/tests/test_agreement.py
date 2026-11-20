@@ -232,6 +232,9 @@ class SurfaceIndexTests(unittest.TestCase):
     def test_many_triangles_in_one_cell_are_measured_in_bounded_batches(self) -> None:
         self.run_probe("test_many_triangles_in_one_cell_are_measured_in_bounded_batches")
 
+    def test_many_wide_triangles_are_measured_in_bounded_batches(self) -> None:
+        self.run_probe("test_many_wide_triangles_are_measured_in_bounded_batches")
+
 
 if __name__ == "__main__":
     unittest.main()

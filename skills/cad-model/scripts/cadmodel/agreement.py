@@ -54,7 +54,6 @@ SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contr
 PLANAR_TOLERANCE = 1e-7  # a surface this flat is a plane whatever its type, and its reference cannot stray
 CHECKED_TRIANGLES = 8  # per measured face, the largest triangles of the reference mesh
 WORST_POINTS = 5        # failing points measured exactly, to report the distance
-BATCH = 256            # query points against the wide triangles at once
 PAIR_BATCH = 1 << 16   # (point, triangle) pairs of the lookup measured at once
 COMPONENTS = {5121: "<u1", 5123: "<u2", 5125: "<u4", 5126: "<f4"}
 TYPE_WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3}
@@ -357,10 +356,14 @@ class _Surface:
             entry = np.searchsorted(after, flat, side="right")
             rows = self.starts[slot[entry]] + flat - (after[entry] - per[entry])
             result[self._near(points, point[entry], self.members[rows])] = True
-        for start in range(0, len(points) if len(self.wide) else 0, BATCH):
-            chosen = np.arange(start, min(start + BATCH, len(points)))
-            point, triangle = np.repeat(chosen, len(self.wide)), np.tile(self.wide, len(chosen))
-            result[self._near(points, point, triangle)] = True
+        # Every point against every wide triangle, in blocks of at most PAIR_BATCH pairs
+        block = min(len(self.wide), PAIR_BATCH)
+        step = max(PAIR_BATCH // block, 1) if block else 1
+        for first in range(0, len(points) if block else 0, step):
+            chosen = np.arange(first, min(first + step, len(points)))
+            for low in range(0, len(self.wide), block):
+                wide = self.wide[low:low + block]
+                result[self._near(points, np.repeat(chosen, len(wide)), np.tile(wide, len(chosen)))] = True
         return result
 
     def nearest(self, point: np.ndarray) -> float:

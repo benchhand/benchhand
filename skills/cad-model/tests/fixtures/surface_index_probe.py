@@ -123,17 +123,14 @@ class SurfaceIndex(unittest.TestCase):
         mesh = agreement.Mesh(corners, np.arange(len(corners)).reshape(-1, 3))
         self.assertEqual(agreement.compare(mesh, mesh, 0.04)["status"], "pass")
 
-    def test_many_triangles_in_one_cell_are_measured_in_bounded_batches(self) -> None:
-        """100,000 copies of one triangle share every cell, so 1,500 points in its cells pair with 1.5e8 triangles.
-        No array of those pairs may exist at once: the largest array `within` builds stays at PAIR_BATCH. SEAM:
-        `_Surface.within` takes the points directly (compare samples its own). A wrapper on numpy's `repeat`
-        and `arange`, which build the pair arrays, records the largest length they return; that length stands in
-        for memory, which a test cannot measure stably. `_near` is wrapped to count the pairs measured."""
-        corners = np.tile(np.array([(0, 0, 0), (1, 0, 0), (0, 1, 0)], dtype=float), (100_000, 1))
-        surface = agreement._Surface(mesh_of(corners.reshape(-1, 3, 3)), 0.155)
-        points = np.tile([1.2, 1.2, 0.0], (1_500, 1))
+    def measure_pairs(self, corners: np.ndarray, points: np.ndarray, reach: float) -> tuple[int, int, np.ndarray]:
+        """(the largest array `within` builds, the pairs it measures, its answer). SEAM: `_Surface.within` takes
+        the points directly (compare samples its own). A wrapper on numpy's `repeat`, `tile` and `arange`, which
+        build the pair arrays, records the largest length they return; that length stands in for memory, which a
+        test cannot measure stably. `_near` is wrapped to count the pairs measured."""
+        surface = agreement._Surface(mesh_of(corners), reach)
         largest, measured = [0], [0]
-        repeat, arange, near = np.repeat, np.arange, surface._near
+        repeat, tile, arange, near = np.repeat, np.tile, np.arange, surface._near
 
         def sized(build: Callable[..., np.ndarray]) -> Callable[..., np.ndarray]:
             def wrapper(*args: Any, **kwargs: Any) -> np.ndarray:
@@ -147,11 +144,32 @@ class SurfaceIndex(unittest.TestCase):
             return near(points, point, triangle)
 
         surface._near = counted  # type: ignore[method-assign]
-        with mock.patch.object(np, "repeat", sized(repeat)), mock.patch.object(np, "arange", sized(arange)):
+        with (mock.patch.object(np, "repeat", sized(repeat)), mock.patch.object(np, "tile", sized(tile)),
+              mock.patch.object(np, "arange", sized(arange))):
             found = surface.within(points)
+        return largest[0], measured[0], found
+
+    def test_many_triangles_in_one_cell_are_measured_in_bounded_batches(self) -> None:
+        """100,000 copies of one triangle share every cell, so 1,500 points in its cells pair with 1.5e8 triangles.
+        No array of those pairs may exist at once: the largest stays at PAIR_BATCH."""
+        corners = np.tile(np.array([(0, 0, 0), (1, 0, 0), (0, 1, 0)], dtype=float), (100_000, 1)).reshape(-1, 3, 3)
+        points = np.tile([1.2, 1.2, 0.0], (1_500, 1))
+        largest, measured, found = self.measure_pairs(corners, points, 0.155)
         self.assertFalse(found.any())  # (1.2, 1.2) is 0.28 mm from the triangle, beyond the reach
-        self.assertEqual(measured[0], 1_500 * 100_000)
-        self.assertLessEqual(largest[0], agreement.PAIR_BATCH)
+        self.assertEqual(measured, 1_500 * 100_000)
+        self.assertLessEqual(largest, agreement.PAIR_BATCH)
+
+    def test_many_wide_triangles_are_measured_in_bounded_batches(self) -> None:
+        """A thousand small triangles fix a cell of about 1 mm, so 300 copies of a 100 mm triangle, each over
+        thousands of cells, are wide. 300 points pair with all of them: 90,000 pairs, more than PAIR_BATCH."""
+        small = np.tile(np.array([(0, 0, 0), (0.75, 0, 0), (0, 0.75, 0)], dtype=float), (1_000, 1))
+        big = np.tile(np.array([(0, 0, 0), (100, 0, 0), (0, 100, 0)], dtype=float), (300, 1))
+        corners = np.concatenate([small, big]).reshape(-1, 3, 3)
+        points = np.tile([-50.0, -50.0, 0.0], (300, 1))  # far from every triangle
+        largest, measured, found = self.measure_pairs(corners, points, 0.155)
+        self.assertFalse(found.any())
+        self.assertEqual(measured, 300 * 300)
+        self.assertLessEqual(largest, agreement.PAIR_BATCH)
 
     @given(case())
     def test_the_lookup_answers_every_point_as_a_search_of_every_triangle(
