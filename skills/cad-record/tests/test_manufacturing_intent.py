@@ -806,6 +806,45 @@ class SubjectOccurrences(unittest.TestCase):
         self.assertEqual(self.problems({"PN": "TST-0001"}), [])
 
 
+class CombinatorPointers(unittest.TestCase):
+    """A oneOf/anyOf error is reported where its best branch fails, not at the branch point."""
+
+    def load_problems(self, application: Any) -> list[Any]:
+        documents = fx.tst_record()
+        documents["product.yaml"]["use_case"]["loads"][0]["application"] = application
+        return mi.schema_problems(documents)
+
+    def test_a_bad_load_application_points_at_application_and_names_the_keyword(self) -> None:
+        problems = self.load_problems({"bogus": 1})
+        self.assertEqual([(p.pointer, p.message) for p in problems],
+                         [("use_case/loads/0/application",
+                           "use_case/loads/0/application: Additional properties are not allowed ('bogus' was unexpected)")])
+
+    def test_a_bad_value_inside_application_points_at_that_key(self) -> None:
+        problems = self.load_problems({"PN": "bad pn!"})
+        self.assertEqual([p.pointer for p in problems], ["use_case/loads/0/application/PN"])
+        self.assertIn("does not match", problems[0].message)
+        self.assertNotIn("head_load", problems[0].message, "the whole load is not quoted")
+
+    def test_a_bad_fact_value_is_reported_inside_the_fact(self) -> None:
+        documents = fx.tst_record()
+        documents["product.yaml"]["use_case"]["service_class"] = {"status": "known", "value": "nonsense", "sources": []}
+        problems = mi.schema_problems(documents)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].pointer.startswith("use_case/service_class/"), problems[0].pointer)
+        self.assertNotIn("is not valid under any of the given schemas", problems[0].message)
+
+    def test_check_documents_filters_on_the_document_of_the_deeper_pointer(self) -> None:
+        documents = fx.tst_record()
+        documents["product.yaml"]["use_case"]["loads"][0]["application"] = {"bogus": 1}
+        pointers = lambda paths: [p.pointer for p in mi.check_documents(documents, paths) if p.code == "intent.schema"]  # noqa: E731
+        self.assertEqual(pointers({"hw/product.yaml"}), ["use_case/loads/0/application"])
+        self.assertEqual(pointers({"hw/requirements.yaml"}), [])
+
+    def test_the_tst_record_has_no_schema_problems(self) -> None:
+        self.assertEqual(mi.schema_problems(fx.tst_record()), [])
+
+
 class CheckDocuments(unittest.TestCase):
     """check_documents: schema and record problems of the documents named by `paths` (hw/-prefixed) only."""
 

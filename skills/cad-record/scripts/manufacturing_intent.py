@@ -878,6 +878,21 @@ def _color_rule() -> Mapping[str, Any]:
     return types.MappingProxyType(schema["$defs"]["intent"]["properties"]["color"])
 
 
+def _leaves(error: Any) -> list[Any]:
+    """The errors under `error` that have no branch errors of their own (`error` itself when it has none)."""
+    return [leaf for branch in error.context for leaf in _leaves(branch)] if error.context else [error]
+
+
+def _deepest_error(error: Any) -> Any:
+    """The deepest leaf under a oneOf/anyOf `error` (jsonschema's `relevance` ranks deepest first), else `error`.
+
+    `best_match` stops at an anyOf whose branches tie, and then quotes the whole value; this keeps descending.
+    """
+    from jsonschema.exceptions import relevance  # noqa: PLC0415 - jsonschema is optional, needed only to validate
+
+    return min(_leaves(error), key=relevance)
+
+
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """JSON-schema problems of every document (needs jsonschema), offline: every bundled schema resolves by $id."""
     schemas = _sibling("cad_record_schema_registry", "schema_registry.py")
@@ -887,7 +902,8 @@ def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
         if name is None:
             continue
         validator = schemas.document_validator(SCHEMAS, name)
-        for error in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
+        for top in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
+            error = _deepest_error(top)
             pointer = "/".join(str(part) for part in error.absolute_path)
             problems.append(Problem("intent.schema", f"hw/{rel}", pointer, f"{pointer + ': ' if pointer else ''}{error.message}"))
     return problems
