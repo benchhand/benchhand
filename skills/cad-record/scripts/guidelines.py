@@ -832,6 +832,14 @@ def _merge(group: list[_Candidate]) -> _Bound | None:
     return merged
 
 
+def _disputed(group: list[_Candidate], merged: _Bound) -> list[Shadowed]:
+    """The trace of an equally specific group whose sources differ: no source states the intersection that is kept."""
+    if any(c.bound.within(merged) and merged.within(c.bound) for c in group):
+        return []
+    return [Shadowed(c.shown, c.defined_in.ref, c.layer, f"equally specific and disputed; the intersection {_show(merged)} is kept")
+            for c in group]
+
+
 def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[Key, str]], warnings: list[str],
           mi: Any) -> Resolved:
     """Tightens group by group, most general first. A candidate that cannot be a bound and outranks the group the fold
@@ -853,9 +861,7 @@ def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[K
         strictest = [c for c in group if c.bound.within(merged) and merged.within(c.bound)] or group
         for loser in (c for c in group if c not in strictest):
             hide(loser, "equally specific; the stricter value is kept")
-        if not any(c.bound.within(merged) and merged.within(c.bound) for c in group):
-            for member in group:  # no source states the intersection: the equally specific sources differ
-                hide(member, f"equally specific and disputed; the intersection {_show(merged)} is kept")
+        shadowed.extend(_disputed(group, merged))
         if current is not None and not merged.within(current):
             if current.meets(merged) and not all("relaxes" in c.limit for c in strictest):
                 # a set meeting a range keeps the sizes the range admits: a tightening of both, whichever is more specific
