@@ -1534,6 +1534,15 @@ class GuidelineLimitTests(Checks):
             self.assertEqual(packet["dependencies"][key], SHIPPED.guidelines[ref].sha256)
         self.assertNotIn("guideline_fdm_nozzle_d0_6_r1", packet["dependencies"], "a 0.6 mm set cannot apply to a 0.4 mm nozzle")
 
+    def test_the_guideline_only_note_is_stated_once_when_an_overhang_and_a_bridge_are_both_judged(self) -> None:
+        strict = sorted(set(MI.SERVICE_CLASSES) - LENIENT)[0]
+        data = facts(faces=(bed_face(), face("f10", features=("underside",), down_=down(60.0, 200.0)),
+                            face("f11", features=("bridge",), down_=down(90.0, 200.0, "bridge", span=4.0))),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        planned = {"strategy": "reachable_noncritical", "contact_regions": [{"feature": "underside"}], "removal": REMOVAL}
+        coverage = self.judged(data, service=strict, supports=planned).outcome(SUPPORT)["coverage"]
+        self.assertEqual(coverage.count("(guideline value only)"), 1, coverage)
+
     def test_the_probe_plan_scans_walls_at_the_guideline_minimum(self) -> None:
         record = load(self, guided())
         self.assertEqual(pc.probe_plan(record, "TST-0101", "main", today=TODAY, catalog=SHIPPED)["wall_mm"], 1.2)
@@ -1556,15 +1565,10 @@ class GuidelineLimitTests(Checks):
                 self.assertEqual(self.outcome(result, SUPPORT), outcome)
                 self.assertEqual("process.fdm.support_guideline_only" in self.codes(result), outcome == "unknown")
 
-    def test_grade_is_unknown_by_itself_for_an_unknown_limit(self) -> None:
-        record = load(self, guided(service="functional_demo"))
-        op = record.parts["TST-0101"].intent.route[0]
-        ctx = pc.core.Context(record, "TST-0101", "main", op, None, TODAY, catalog=SHIPPED)
-        unknown_limit = ctx.limit("no_such_characteristic", "minimum")
-        findings: list = []
-        verdict = ctx.grade(unknown_limit, "covered", findings, check="x", measured={"value": 1, "units": "mm"},
-                            prop="p", units="mm", method="m")
-        self.assertEqual((verdict[0], findings), ("unknown", []))
+    def test_an_unknown_limit_grades_unknown_without_a_guideline_only_finding(self) -> None:
+        result = self.assess(guided(service="functional_demo"), geometry("TST-0101", walled(3.0)))
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertEqual([c for c in self.codes(result) if c.endswith("_guideline_only")], [])
 
     def test_a_resolver_warning_reaches_the_finding_that_cites_the_limit(self) -> None:
         result = self.judged(walled(1.0), pin=("fdm.generic@7",))
@@ -1592,7 +1596,7 @@ class GuidelineLimitTests(Checks):
         self.assertEqual(packet_errors(packet), [])
         wall = next(f for f in packet["findings"] if f["code"] == "process.fdm.wall")
         self.assertIn(row, wall["method"]["evidence"])
-        self.assertEqual({r.characteristic for r in result.resolutions} >= {"min_wall"}, True)
+        self.assertLessEqual({"min_wall"}, {r.characteristic for r in result.resolutions})
 
     def test_a_resin_part_with_a_hole_is_judged_as_before(self) -> None:
         """Resin shares the geometry handler but has no guideline sets: a hole adds no min_hole finding, as on main."""
@@ -1643,17 +1647,6 @@ class LegacyWallLimitTests(Checks):
         self.assertEqual((limit["required_mm"], limit["status"]), (None, "unknown"))
         self.assertTrue(limit["reasons"])
 
-    def test_the_trace_is_written_beside_the_packet_and_named_by_its_hash(self) -> None:
-        result = pc.assess(load(self, guided()), geometry("TST-0101", walled(1.0)), today=TODAY, catalog=SHIPPED)
-        with tempfile.TemporaryDirectory() as tmp:
-            row = self.form_check.trace_row(pc, result, Path(tmp), "hw/checks/v1/process")
-            written = Path(tmp) / Path(row["path"]).name
-            self.assertEqual(row["sha256"], hashlib.sha256(written.read_bytes()).hexdigest())
-            self.assertTrue(row["path"].startswith("hw/checks/v1/process/guideline-trace-"))
-            self.assertIn("min_wall", [r["characteristic"] for r in json.loads(written.read_text())["resolutions"]])
-        bare = pc.assess(load(self, guided()), {}, today=TODAY)
-        self.assertIsNone(self.form_check.trace_row(pc, bare, Path(tmp), "x"))
-
     def test_an_fdm_part_on_a_0_4_mm_nozzle_takes_three_line_widths(self) -> None:
         limit = self.limit(guided())
         self.assertEqual((limit["required_mm"], limit["status"], limit["guideline"]), (1.2, "guideline", "fdm.nozzle.d0_4@1"))
@@ -1661,13 +1654,27 @@ class LegacyWallLimitTests(Checks):
         self.assertNotIn("note", limit)
 
     def test_without_a_nozzle_or_line_width_the_floor_applies_and_says_so(self) -> None:
-        for name, documents in (("profile without nozzle", guided(parameters={})),
-                                ("no capability profile", FX.record(parts=[part("TST-0101", [FX.operation("print", "fdm")],
-                                                                                 process="fdm")], materials=materials()))):
+        limit = self.limit(guided(parameters={}))
+        self.assertEqual((limit["required_mm"], limit["guideline"]), (0.8, "fdm.generic@1"))
+        self.assertIn("no nozzle or line width", limit["note"])
+
+    def test_the_wall_diagnostic_and_the_process_checks_agree_on_every_limit_they_cannot_state(self) -> None:
+        """A part with no capability profile (so no material scope either) has no minimum wall in the process checks'
+        probe plan, so the diagnostic must not invent the 0.8 mm floor: an unknown is never a default."""
+        bare = FX.record(parts=[part("TST-0101", [FX.operation("print", "fdm")], process="fdm", material=None)],
+                         materials=materials())
+        for name, documents in (("no capability profile, material unknown", bare), ("0.4 mm nozzle", guided()),
+                                ("profile without nozzle", guided(parameters={}))):
             with self.subTest(name):
-                limit = self.limit(documents)
-                self.assertEqual((limit["required_mm"], limit["guideline"]), (0.8, "fdm.generic@1"))
-                self.assertIn("no nozzle or line width", limit["note"])
+                planned = pc.probe_plan(load(self, documents), "TST-0101", "main", today=TODAY, catalog=SHIPPED)["wall_mm"]
+                self.assertEqual(self.limit(documents)["required_mm"], planned)
+
+    def test_an_fdm_part_whose_wall_limit_is_unknown_says_why(self) -> None:
+        bare = FX.record(parts=[part("TST-0101", [FX.operation("print", "fdm")], process="fdm", material=None)],
+                         materials=materials())
+        limit = self.limit(bare)
+        self.assertEqual((limit["required_mm"], limit["status"]), (None, "unknown"))
+        self.assertTrue(limit["reasons"])
 
     def test_an_override_is_a_project_policy_that_warns_when_looser(self) -> None:
         looser = self.limit(guided(), overrides={"fdm": 1.0})
@@ -1691,6 +1698,26 @@ class LegacyWallLimitTests(Checks):
             changed.write_bytes(self.form_check.GUIDELINES_PATH.read_bytes() + b"\n# changed\n")
             with mock.patch.object(self.form_check, "GUIDELINES_PATH", changed):
                 self.assertNotEqual(self.form_check.producer_code(stub), before)
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class GuidelineTraceTests(Checks):
+    """form_check writes the guideline resolution trace into the bundle's evidence folder."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.form_check = load_module("tst_form_check_trace", FORM_CHECK)
+
+    def test_the_trace_is_written_under_evidence_and_named_by_its_hash(self) -> None:
+        result = pc.assess(load(self, guided()), geometry("TST-0101", walled(1.0)), today=TODAY, catalog=SHIPPED)
+        with tempfile.TemporaryDirectory() as tmp:
+            row = self.form_check.trace_row(pc, result, Path(tmp), "hw/checks/v1/process/evidence")
+            written = Path(tmp) / Path(row["path"]).name
+            self.assertEqual(row["sha256"], hashlib.sha256(written.read_bytes()).hexdigest())
+            self.assertTrue(row["path"].startswith("hw/checks/v1/process/evidence/guideline-trace-"))
+            self.assertIn("min_wall", [r["characteristic"] for r in json.loads(written.read_text())["resolutions"]])
+        bare = pc.assess(load(self, guided()), {}, today=TODAY)
+        self.assertIsNone(self.form_check.trace_row(pc, bare, Path(tmp), "x"))
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")

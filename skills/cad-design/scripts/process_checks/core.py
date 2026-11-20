@@ -170,6 +170,12 @@ def stable_id(*parts: Any) -> str:
     return f"f_{digest}"
 
 
+def _noted(coverage: str, note: str) -> str:
+    """`coverage` with `(note)` appended, once however many limits a check graded."""
+    tag = f"({note})"
+    return coverage if coverage.endswith(tag) else f"{coverage} {tag}"
+
+
 # --- calibrations -----------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -359,6 +365,13 @@ class Geometry:
 
 
 # --- the context of one obligation ------------------------------------------------------------------------------
+
+def guideline_scope(record: Any, pn: str, op: Any, catalog: Any, today: date) -> Any | None:
+    """The guideline scope (guidelines.Context) of route operation `op` of part `pn`, resolved as a check resolves it
+    (Context.guideline_context: the operation's capability profile and stock material), or None when the operation has
+    no profile, no catalog or no process the guideline sets cover. The one reading, shared with form_check."""
+    return Context(record, pn, IMPLICIT, op, None, today, catalog=catalog).guideline_context()
+
 
 def parse_side(value: str) -> tuple[float, float, float] | None:
     """An access side as an axis direction of the native manufacturing frame (+X .. -Z); None otherwise."""
@@ -585,7 +598,7 @@ class Context:
         if limit.status == "calibrated" or (limit.status == "guideline" and service in GUIDELINE_PASS_CLASSES):
             return PASS, coverage
         if limit.status == "unknown":
-            return UNKNOWN, f"{coverage} (limit unknown)"
+            return UNKNOWN, _noted(coverage, "limit unknown")
         kind = self.operation.kind
         findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
                               limit.criterion(prop, units), method,
@@ -595,7 +608,7 @@ class Context:
                               remedy=f"calibrate {limit.characteristic} for this material and machine, or waive this finding "
                                      "with an approved decision",
                               recheck=[f"process.{kind}"], feature=feature))
-        return UNKNOWN, f"{coverage} (guideline value only)"
+        return UNKNOWN, _noted(coverage, "guideline value only")
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:
         """UNKNOWN or FAIL when the operation has no usable capability profile of its own kind."""

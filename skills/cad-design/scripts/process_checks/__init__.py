@@ -34,9 +34,9 @@ Public API: `expected(record)`, `assess(record, geometry, today=, catalog=)` -> 
 `TABLE`, `owned`, `NotAssessable`, `HandlerError`, `PRODUCER`, `PROBE_FORMAT`, `GUIDELINE_PASS_CLASSES`, `guidelines`.
 """
 
-from .core import GUIDELINE_PASS_CLASSES, IMPLICIT, PROBE_FORMAT, Geometry, guidelines, intent
+from .core import GUIDELINE_PASS_CLASSES, IMPLICIT, PROBE_FORMAT, Geometry, guideline_scope, guidelines, intent
 from .dispatch import (PRODUCER, TABLE, Assessment, HandlerError, NotAssessable, assess, code_sha256, expected,
                        handler_for, owned, probe_plan)
 
 __all__ = ["GUIDELINE_PASS_CLASSES", "IMPLICIT", "PROBE_FORMAT", "PRODUCER", "TABLE", "Assessment", "Geometry", "HandlerError",
-           "NotAssessable", "assess", "code_sha256", "expected", "guidelines", "handler_for", "intent", "owned", "probe_plan"]
+           "NotAssessable", "assess", "code_sha256", "expected", "guideline_scope", "guidelines", "handler_for", "intent", "owned", "probe_plan"]
