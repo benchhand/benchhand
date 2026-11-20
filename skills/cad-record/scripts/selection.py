@@ -77,10 +77,10 @@ FEASIBLE, CONDITIONAL, ELIMINATED = "feasible", "conditional", "eliminated"
 # Service classes whose stress acceptance needs a justified design allowable; a typical value cannot pass it.
 ALLOWABLE_SERVICE = frozenset({"production", "safety_critical"})
 # Mechanical properties that change with temperature: they resolve only at the use case's operating
-# temperature when it is known. Temperatures themselves (heat deflection, glass transition) do not.
+# temperature when it is known. The ratios (fu/fy, elongations) are not stress-like, so they are named. Temperatures themselves (heat deflection, glass transition) do not.
 _TEMPERATURE_QUALIFIED = frozenset(
     name for name, dimensions in mi.MATERIAL_PROPERTIES.items()
-    if {"stress", "energy_per_area", "energy_per_length"} & set(dimensions)) | {"elongation_at_yield", "elongation_at_break"}
+    if {"stress", "energy_per_area", "energy_per_length"} & set(dimensions)) | {"fu_fy_ratio", "elongation_at_yield", "elongation_at_break"}
 # The material form whose properties describe a part shaped by a route kind; other kinds take stock.
 _FORM_OF_KIND = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": "moulded"}
 PROPERTY_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
