@@ -2512,6 +2512,7 @@ Parameters by name. A named parameter that has a hard bound is checked in every 
 Constraints not expressed by the type:
 
 - propertyNames: {"$ref":"manufacturing.schema.json#/$defs/semantic_id"}
+- additionalProperties: {"$ref":"manufacturing.schema.json#/$defs/fact"}
 
 ### ManufacturingCapabilitiesProfile
 

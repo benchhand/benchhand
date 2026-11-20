@@ -48,6 +48,10 @@ NOTE_KEYS = (
 )
 SCALARS = {"string": "str", "integer": "int", "number": "float", "boolean": "bool", "null": "None"}
 NO_DEFAULT = object()
+# Notes that record an object closed to extra keys. Any other object accepts them.
+CLOSING_NOTES = ("additionalProperties: false", "unevaluatedProperties: false")
+# PEP 728 gave TypedDict `extra_items`; typing.TypedDict accepts it from Python 3.15.
+EXTRA_ITEMS_GATE = "sys.version_info >= (3, 15)"
 
 
 def dump(value: Any) -> str:
@@ -92,6 +96,7 @@ class TypeDef:
     title: str = ""
     description: str = ""
     fields: list[Field] | None = None  # None: an alias
+    open: bool = False  # the schema allows keys beyond `fields`
     alias: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -323,7 +328,11 @@ class Walker:
                 self.inline_notes(schema, child),
             ))
         typedef.fields += [Field(name, "Any", True, "", NO_DEFAULT, []) for name in required if name not in props]
+        extra = node.get("additionalProperties")
+        if isinstance(extra, dict):
+            notes.append(f"additionalProperties: {dump(extra)}")
         typedef.notes = list(dict.fromkeys(notes))
+        typedef.open = not any(note in CLOSING_NOTES for note in notes)
 
     # -- notes: constructs the types cannot carry ------------------------------------------------
 
@@ -400,11 +409,11 @@ def wrap(f: Field, quote: bool) -> str:
     return f"{'Required' if f.required else 'NotRequired'}[{json.dumps(f.expr) if quote else f.expr}]"
 
 
-def render_class(typedef: TypeDef, quoted: set[tuple[str, str]]) -> list[str]:
+def render_class(typedef: TypeDef, quoted: set[tuple[str, str]], extra_items: bool = False) -> list[str]:
     assert typedef.fields is not None
     docs = type_docs(typedef)
     if all(f.name.isidentifier() and not keyword.iskeyword(f.name) for f in typedef.fields):
-        out = [f"class {typedef.name}(TypedDict):", *docstring(docs, "    ")]
+        out = [f"class {typedef.name}(TypedDict{', extra_items=Any' if extra_items else ''}):", *docstring(docs, "    ")]
         out += [f"    {f.name}: {wrap(f, (typedef.name, f.name) in quoted)}" for f in typedef.fields]
         return out
     out = ["# " + line if line else "#" for line in docs]
@@ -412,8 +421,20 @@ def render_class(typedef: TypeDef, quoted: set[tuple[str, str]]) -> list[str]:
     out.append(f'    "{typedef.name}",')
     out.append("    {")
     out += [f"        {json.dumps(f.name)}: {wrap(f, (typedef.name, f.name) in quoted)}," for f in typedef.fields]
-    out += ["    },", ")"]
+    out += ["    },", *(["    extra_items=Any,"] if extra_items else []), ")"]
     return out
+
+
+def indented(lines: list[str]) -> list[str]:
+    return [f"    {line}" if line else line for line in lines]
+
+
+def render_object(typedef: TypeDef, quoted: set[tuple[str, str]]) -> list[str]:
+    """A closed object is one TypedDict. An open one gets `extra_items=Any` where typing has it
+    and the plain class before, so the module still imports on Python 3.11."""
+    if not typedef.open:
+        return render_class(typedef, quoted)
+    return [f"if {EXTRA_ITEMS_GATE}:", *indented(render_class(typedef, quoted, True)), "else:", *indented(render_class(typedef, quoted))]
 
 
 def render_alias(typedef: TypeDef) -> list[str]:
@@ -511,8 +532,9 @@ def render_api(types: list[TypeDef], schemas: list[Schema]) -> str:
     ordered, quoted = order_types(types)
     body: list[str] = []
     for typedef in ordered:
-        body += (render_class(typedef, quoted) if typedef.fields is not None else render_alias(typedef)) + ["", ""]
+        body += (render_object(typedef, quoted) if typedef.fields is not None else render_alias(typedef)) + ["", ""]
     text = "\n".join(body)
+    prelude = ["import sys", ""] * any(t.open for t in types)
     imports = ["Any"] * bool(re.search(r"\bAny\b", text)) + ["Never"] * bool(re.search(r"\bNever\b", text)) + ["Literal"] * ("Literal[" in text)
     imports += ["NotRequired"] * ("NotRequired[" in text) + ["Required"] * bool(re.search(r"(?<!Not)Required\[", text)) + ["TypedDict"] * any(t.fields is not None for t in types)
     names = sorted(t.name for t in types)
@@ -529,6 +551,7 @@ def render_api(types: list[TypeDef], schemas: list[Schema]) -> str:
         "validate with them (schema_registry.py) and use these types for editor and type-checker help.",
         '"""',
         "",
+        *prelude,
         f"from typing import {', '.join(sorted(imports))}",
         "",
         "__all__ = [",

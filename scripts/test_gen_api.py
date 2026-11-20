@@ -7,6 +7,7 @@ catches stale committed output."""
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import hashlib
 import importlib.util
@@ -107,11 +108,11 @@ class TypedDictOutput(FixtureTree):
             '    mode: NotRequired[Literal["fixed"]]',
             "    note: NotRequired[str | None]",
             "    parts: NotRequired[list[WidgetPart]]",
-            "class WidgetDims(TypedDict):",
-            "    w: Required[float]",
-            "    h: NotRequired[float]",
-            "class WidgetPart(TypedDict):",
-            "    n: Required[int]",
+            "    class WidgetDims(TypedDict):",
+            "        w: Required[float]",
+            "        h: NotRequired[float]",
+            "    class WidgetPart(TypedDict):",
+            "        n: Required[int]",
             'SharedColor = Literal["red", "green"]',
             "SharedId = str",
         ):
@@ -199,8 +200,72 @@ class UnionAlternatives(FixtureTree):
         self.assertEqual(set(alternatives) - set(objects), {str, type(None)})
 
     def test_a_field_refers_to_the_union_alias_not_any(self) -> None:
-        self.assertIn("\n    shape: Required[ChoiceShape]\n", self.api())
-        self.assertIn("\n    pick: NotRequired[ChoicePick]\n", self.api())
+        self.assertIn("\n        shape: Required[ChoiceShape]\n", self.api())
+        self.assertIn("\n        pick: NotRequired[ChoicePick]\n", self.api())
+
+
+class OpenObjects(FixtureTree):
+    """An object that does not forbid extra keys accepts them (PEP 728 extra_items on Python 3.15+)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/bag.schema.json", {
+            "$id": BASE + "bag.schema.json",
+            "$defs": {
+                "open": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["box", "sphere"]}}},
+                "closed": {"type": "object", "additionalProperties": False, "properties": {"a": {"type": "integer"}}},
+                "typed": {"type": "object", "additionalProperties": {"type": "number"}, "properties": {"a": {"type": "integer"}}},
+                "dashed": {"type": "object", "properties": {"x-y": {"type": "integer"}}},
+                "base": {"type": "object", "properties": {"a": {"type": "integer"}}},
+                "child": {"allOf": [{"$ref": "#/$defs/base"}, {"type": "object", "unevaluatedProperties": False, "properties": {"b": {"type": "integer"}}}]},
+            },
+        })
+
+    def definitions(self, name: str) -> list[ast.stmt]:
+        """The module-level statements that define `name`, looking inside `if` blocks."""
+        found: list[ast.stmt] = []
+        for node in ast.walk(ast.parse(self.api())):
+            if isinstance(node, ast.ClassDef) and node.name == name:
+                found.append(node)
+            elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                found.append(node)
+        return found
+
+    def test_open_objects_are_defined_with_extra_items_behind_a_version_gate(self) -> None:
+        for name in ("BagOpen", "BagTyped", "BagDashed"):
+            with self.subTest(name=name):
+                self.assertEqual(len(self.definitions(name)), 2, "one definition for 3.15+, one for older Pythons")
+        self.assertIn("if sys.version_info >= (3, 15):", self.api())
+        self.assertIn("class BagOpen(TypedDict, extra_items=Any):", self.api())
+        self.assertIn("    BagDashed = TypedDict(", self.api())
+        self.assertIn("        },\n        extra_items=Any,\n    )", self.api())
+
+    def test_closed_objects_stay_a_single_plain_typeddict(self) -> None:
+        for name in ("BagClosed", "BagChild"):
+            with self.subTest(name=name):
+                self.assertEqual(len(self.definitions(name)), 1)
+        self.assertIn("class BagClosed(TypedDict):", self.api())
+
+    def test_extra_key_schema_is_kept_in_the_notes(self) -> None:
+        self.assertIn('additionalProperties: {"type":"number"}', self.doc())
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.15")
+    def test_python_315_accepts_extra_keys_only_on_open_objects(self) -> None:
+        script = (
+            "print(generated.BagOpen.__extra_items__ is typing.Any, generated.BagClosed.__extra_items__ is typing.Any,"
+            " generated.BagChild.__extra_items__ is typing.Any)"
+        )
+        result = run_python(self.root, self.api(), script, "3.15")
+        if "No interpreter found" in result.stderr or "Failed to" in result.stderr:
+            self.skipTest("Python 3.15 is not installed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "True False False")
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.11")
+    def test_python_311_still_imports_the_module(self) -> None:
+        result = run_python(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.BagOpen)))", "3.11")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['type']")
 
 
 class RecursiveSchema(FixtureTree):
@@ -233,9 +298,9 @@ class SelfReferencingClass(FixtureTree):
 
     def test_self_reference_is_quoted(self) -> None:
         api = self.api()
-        self.assertIn('\n    next: NotRequired["Node"]\n', api)
-        self.assertIn('\n    children: NotRequired["list[Node]"]\n', api)
-        self.assertIn("\n    name: Required[str]\n", api)
+        self.assertIn('\n        next: NotRequired["Node"]\n', api)
+        self.assertIn('\n        children: NotRequired["list[Node]"]\n', api)
+        self.assertIn("\n        name: Required[str]\n", api)
 
     @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.11")
     def test_module_imports_on_python_311_and_hints_resolve(self) -> None:
@@ -250,13 +315,17 @@ class SelfReferencingClass(FixtureTree):
         self.assertEqual(result.stdout.strip(), "['children', 'name', 'next']")
 
 
-def run_python311(root: Path, source: str, script: str) -> subprocess.CompletedProcess[str]:
-    """Import `source` as module `generated` under Python 3.11 and run `script` against it."""
+def run_python(root: Path, source: str, script: str, version: str) -> subprocess.CompletedProcess[str]:
+    """Import `source` as module `generated` under the given Python and run `script` against it."""
     (root / "generated.py").write_text(source, encoding="utf-8")
     return subprocess.run(
-        ["uv", "run", "--no-project", "--python", "3.11", "python", "-B", "-c", "import generated, typing\n" + script],
+        ["uv", "run", "--no-project", "--python", version, "python", "-B", "-c", "import generated, typing\n" + script],
         cwd=root, capture_output=True, text=True, check=False,
     )
+
+
+def run_python311(root: Path, source: str, script: str) -> subprocess.CompletedProcess[str]:
+    return run_python(root, source, script, "3.11")
 
 
 class ReviewRound1(FixtureTree):
@@ -276,7 +345,7 @@ class ReviewRound1(FixtureTree):
         }, "$defs": {"vec": {"type": "array", "prefixItems": [{"type": "number"}] * 3, "minItems": 3, "maxItems": 3}}})
         api = self.api()
         self.assertIn("\nPosVec = list[float]\n", api)
-        self.assertIn("\n    mixed: NotRequired[list[float | str]]\n", api)
+        self.assertIn("\n        mixed: NotRequired[list[float | str]]\n", api)
         self.assertNotIn("tuple[", api)
         self.assert_in_both('prefixItems: [{"type":"number"},{"type":"number"},{"type":"number"}]', "minItems: 3", 'prefixItems: [{"type":"number"},{"type":"string"}]', "items: false")
 
@@ -312,7 +381,7 @@ class ReviewRound1(FixtureTree):
         self.add("std", {"type": "object", "properties": {
             "standards": {"type": "object", "required": ["dimensioning"], "additionalProperties": {"type": "string"}},
         }})
-        self.assertIn("\n    standards: NotRequired[dict[str, str]]\n", self.api())
+        self.assertIn("\n        standards: NotRequired[dict[str, str]]\n", self.api())
         self.assert_in_both('required keys: ["dimensioning"]')
 
     def test_keyword_named_optional_field_stays_optional_on_python_311(self) -> None:
@@ -351,8 +420,8 @@ class RefSiblingConstraints(FixtureTree):
         write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos", "maximum": 10}))
         outputs = gen_api.generate(self.root)
         api = outputs[gen_api.API_REL]
-        self.assertIn("\n    reach: NotRequired[RefsPos]\n", api)
-        self.assertIn("\n    code: NotRequired[RefsTag]\n", api)
+        self.assertIn("\n        reach: NotRequired[RefsPos]\n", api)
+        self.assertIn("\n        code: NotRequired[RefsTag]\n", api)
         for rel, text in outputs.items():
             for fragment in ("reach: maximum: 10", 'code: pattern: "^t-"') if rel == gen_api.API_REL else ("`reach`: maximum: 10", '`code`: pattern: "^t-"'):
                 with self.subTest(output=rel, fragment=fragment):
