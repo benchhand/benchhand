@@ -130,6 +130,7 @@ CHANGED_FILES = (
     "skills/cad-design/tests/mfg_corpus/families/form_check_kernel_validity.py",
 )
 STRICT_FILES = (
+    "scripts/gen_api.py",
     "skills/cad-analysis/scripts/fea_conditions.py",
     "skills/cad-analysis/scripts/fea_linearise.py",
     "skills/cad-analysis/scripts/fea_near_support.py",

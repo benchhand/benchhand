@@ -151,8 +151,8 @@ class Walker:
             token = token.replace("~1", "/").replace("~0", "~")
             try:
                 node = node[int(token)] if isinstance(node, list) else node[token]
-            except (KeyError, IndexError, ValueError):
-                raise ValueError(f"{schema.rel}: $ref {ref!r} does not resolve (no {token!r})") from None
+            except (KeyError, IndexError, ValueError) as err:
+                raise ValueError(f"{schema.rel}: $ref {ref!r} does not resolve (no {token!r})") from err
         return target, "/" + "/".join(t for t in fragment.split("/") if t) if fragment.strip("/") else "", node
 
     def named(self, schema: Schema, pointer: str, node: Any) -> str:

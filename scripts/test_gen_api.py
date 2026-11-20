@@ -643,6 +643,15 @@ class Coverage(FixtureTree):
         self.assertNotEqual(code, 0)
         self.assertIn("missing.schema.json", err)
 
+    def test_a_ref_that_does_not_resolve_keeps_the_original_lookup_error_as_its_cause(self) -> None:
+        broken = json.loads(json.dumps(WIDGET))
+        broken["properties"]["id"] = {"$ref": "shared.schema.json#/$defs/nope"}
+        write_json(self.root, WIDGET_REL, broken)
+        with self.assertRaises(ValueError) as caught:
+            gen_api.generate(self.root)
+        self.assertIn("nope", str(caught.exception))
+        self.assertIsInstance(caught.exception.__cause__, KeyError)
+
     def test_missing_schema_directory_fails(self) -> None:
         (self.root / SHARED_REL).unlink()
         (self.root / "skills/cad-record/schemas").rmdir()
