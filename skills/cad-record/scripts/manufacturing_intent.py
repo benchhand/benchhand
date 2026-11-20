@@ -110,6 +110,7 @@ MATERIAL_PROPERTIES: Mapping[str, tuple[str, ...]] = types.MappingProxyType({
     "density": ("mass_density",),
     "youngs_modulus": ("stress",), "flexural_modulus": ("stress",), "shear_modulus": ("stress",), "creep_modulus": ("stress",),
     "poisson_ratio": ("ratio",),
+    "fu_fy_ratio": ("ratio",),
     "yield_strength": ("stress",), "tensile_strength": ("stress",), "flexural_strength": ("stress",),
     "compressive_strength": ("stress",), "shear_strength": ("stress",), "interlayer_strength": ("stress",),
     "fatigue_strength": ("stress",),
@@ -728,6 +729,7 @@ class MaterialProperty:
     temperature: Fact  # value is a Quantity when known
     conditioning: str
     orientation: Fact | None
+    gauge: str | None = None  # elongation gauge (schema enum), None when the property states none
 
 
 @dataclass(frozen=True)
@@ -2112,7 +2114,7 @@ class _Reader:
             properties.append(MaterialProperty(
                 name, value, self.fact(conditions.get("test_standard"), path, f"{where}/conditions/test_standard"),
                 self.fact(conditions.get("temperature"), path, f"{where}/conditions/temperature", ("temperature",)),
-                conditions.get("conditioning", "unknown"), orientation))
+                conditions.get("conditioning", "unknown"), orientation, conditions.get("gauge")))
         if not isinstance(ident, str):
             return None
         return MaterialProfile(ident, int(item.get("revision", 0)), level, item.get("family"), grade, form,

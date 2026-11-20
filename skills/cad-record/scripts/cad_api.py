@@ -18,7 +18,7 @@
 # schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b skills/cad-record/schemas/manufacturing-evidence.schema.json
 # schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
 # schema-sha256 bdc5967aef3613e5b59782b91c2dbcfb34e2b4390252756b614cd08f426b18f6 skills/cad-record/schemas/manufacturing-guideline.schema.json
-# schema-sha256 c137bec2b22b6350101cab3b05816c867b148faaba8c18e34fe53a71e94d1a0e skills/cad-record/schemas/manufacturing-materials.schema.json
+# schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 # schema-sha256 a4c5f14334712d8ccde92a2692cb5ee469418a16cef2eb94de2654a6be32c97d skills/cad-record/schemas/manufacturing-selection.schema.json
 # schema-sha256 0a0c8fe8f2a949444d88c191937f9060e6c80c2d683bb227f44b09623bc570fc skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
@@ -286,14 +286,17 @@ __all__ = [
     "ManufacturingMaterials",
     "ManufacturingMaterialsConditioning",
     "ManufacturingMaterialsFactDensity",
+    "ManufacturingMaterialsFactFuFy",
     "ManufacturingMaterialsFactModulus",
     "ManufacturingMaterialsFactPoisson",
     "ManufacturingMaterialsFactTemperature",
+    "ManufacturingMaterialsGauge",
     "ManufacturingMaterialsProfile",
     "ManufacturingMaterialsProfileProcessState",
     "ManufacturingMaterialsProperty",
     "ManufacturingMaterialsPropertyConditions",
     "ManufacturingMaterialsQtyDensity",
+    "ManufacturingMaterialsQtyFuFy",
     "ManufacturingMaterialsQtyModulus",
     "ManufacturingMaterialsQtyPoisson",
     "ManufacturingMaterialsQtyTemperature",
@@ -4385,6 +4388,12 @@ class ManufacturingMaterialsProfileProcessState(TypedDict):
     notes: NotRequired[ManufacturingText]
 
 
+# The gauge length the elongation after fracture was measured on. Elongations on different gauges are not comparable: ASME uses k=5, EN uses 5.65*sqrt(S0), ASTM E8 uses 50 mm or 2 in. A missing gauge means the value cannot be compared with a ductility threshold, so a gate treats the material as not shown ductile (unknown). The thresholds are percentages and the value is a ratio, so 14% is 0.14. EN 13445-2:2014 4.1.4 requires at least 14% on 5.65*sqrt(S0) for steels, and EN 1993-1-1 3.2.2 recommends at least 15% with fu/fy of at least 1.10; both clause numbers are from secondary sources and are not checked against the standards
+#
+# Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/gauge
+ManufacturingMaterialsGauge = Literal["5.65sqrtS0", "5d", "A50mm", "A2in", "other"]
+
+
 class ManufacturingMaterialsPropertyConditions(TypedDict):
     """Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/property/properties/conditions
 
@@ -4393,11 +4402,13 @@ class ManufacturingMaterialsPropertyConditions(TypedDict):
 
     Field notes:
     - orientation: the print or grain orientation of the specimen
+    - gauge: allowed on elongation_at_break only; optional
     """
     test_standard: Required[ManufacturingTextFact]
     temperature: Required[ManufacturingQuantityFact]
     conditioning: Required[ManufacturingMaterialsConditioning]
     orientation: NotRequired[ManufacturingTextFact]
+    gauge: NotRequired[ManufacturingMaterialsGauge]
     specimen: NotRequired[ManufacturingText]
     rate: NotRequired[ManufacturingText]
     notes: NotRequired[ManufacturingText]
@@ -4412,6 +4423,8 @@ class ManufacturingMaterialsProperty(TypedDict):
     - if {"required":["name"],"properties":{"name":{"enum":["density"]}}} then {"properties":{"value":{"$ref":"#/$defs/fact_density"}}}
     - if {"required":["name"],"properties":{"name":{"enum":["heat_deflection_temperature","vicat_softening_temperature","glass_transition_temperature","melting_temperature","max_service_temperature"]}}} then {"properties":{"value":{"$ref":"#/$defs/fact_temperature"}}}
     - if {"required":["name"],"properties":{"name":{"enum":["poisson_ratio"]}}} then {"properties":{"value":{"$ref":"#/$defs/fact_poisson"}}}
+    - if {"required":["name"],"properties":{"name":{"enum":["fu_fy_ratio"]}}} then {"properties":{"value":{"$ref":"#/$defs/fact_fu_fy"}}}
+    - if {"required":["name"],"properties":{"name":{"not":{"const":"elongation_at_break"}}}} then {"properties":{"conditions":{"not":{"required":["gauge"]}}}}
     """
     name: Required[ManufacturingSemanticId]
     value: Required[ManufacturingQuantityFact]
@@ -4473,6 +4486,13 @@ class ManufacturingMaterials(TypedDict):
 ManufacturingMaterialsFactDensity = Any
 
 
+# Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/fact_fu_fy
+#
+# Not expressible as types (see the schema):
+# - if {"required":["status"],"properties":{"status":{"const":"known"}}} then {"properties":{"value":{"$ref":"#/$defs/qty_fu_fy"}}}
+ManufacturingMaterialsFactFuFy = Any
+
+
 # Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/fact_modulus
 #
 # Not expressible as types (see the schema):
@@ -4502,6 +4522,16 @@ ManufacturingMaterialsFactTemperature = Any
 # - allOf[0].if {"required":["units"],"properties":{"units":{"const":"g_cm3"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":25},"lower":{"exclusiveMinimum":0,"maximum":25},"upper":{"exclusiveMinimum":0,"maximum":25}}}
 # - allOf[1].if {"required":["units"],"properties":{"units":{"const":"kg_m3"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":25000},"lower":{"exclusiveMinimum":0,"maximum":25000},"upper":{"exclusiveMinimum":0,"maximum":25000}}}
 ManufacturingMaterialsQtyDensity = Any
+
+
+# The ratio of tensile strength fu to yield strength fy: at least 1, since fu is never below fy. EN 1993-1-1 3.2.2 recommends at least 1.10 for structural steel (clause number from a secondary source; the National Annex may change it)
+#
+# Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/qty_fu_fy
+#
+# Not expressible as types (see the schema):
+# - allOf[0].if {"required":["units"],"properties":{"units":{"const":"dimensionless"}}} then {"properties":{"value":{"minimum":1},"lower":{"minimum":1},"upper":{"minimum":1}}}
+# - allOf[1].if {"required":["units"],"properties":{"units":{"const":"percent"}}} then {"properties":{"value":{"minimum":100},"lower":{"minimum":100},"upper":{"minimum":100}}}
+ManufacturingMaterialsQtyFuFy = Any
 
 
 # Elastic, flexural, shear and creep modulus: above 0 and at most 1200 GPa, diamond's
