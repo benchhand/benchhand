@@ -11,6 +11,7 @@ properties, calibrated capability limits and required checks)."""
 from __future__ import annotations
 
 import copy
+import json
 import math
 import shutil
 import sys
@@ -19,6 +20,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable
+from unittest.mock import patch
 
 
 HERE = Path(__file__).resolve().parent
@@ -873,6 +875,74 @@ class CombinatorPointers(unittest.TestCase):
         problems = mi.schema_problems(documents)
         self.assertEqual([p.pointer for p in problems], ["use_case/service_class"])
         self.assertIn("is not valid under any of the given schemas", problems[0].message)
+
+    def test_an_unknown_orientation_does_not_report_an_invalid_rotation(self) -> None:
+        documents = fx.tst_record()
+        documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["orientation"] = {
+            "status": "unknown", "rotation": {"quaternion": [1, "bad", 0, 0]}}
+        problems = mi.schema_problems(documents)
+        self.assertEqual([p.pointer for p in problems], ["intent/route/0/orientation"])
+        self.assertIn("Additional properties", problems[0].message)
+        self.assertNotIn("is not valid under any of the given schemas", problems[0].message)
+
+    def test_an_orientation_with_a_bogus_status_keeps_the_parent_error(self) -> None:
+        documents = fx.tst_record()
+        documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["orientation"] = {
+            "status": "bogus", "rotation": {"quaternion": [1, "bad", 0, 0]}}
+        problems = mi.schema_problems(documents)
+        self.assertEqual([p.pointer for p in problems], ["intent/route/0/orientation"])
+        self.assertIn("is not valid under any of the given schemas", problems[0].message)
+
+    def test_a_matching_orientation_status_reports_its_invalid_rotation(self) -> None:
+        for status in ("proposed", "approved"):
+            with self.subTest(status=status):
+                documents = fx.tst_record()
+                documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["orientation"] = {
+                    "status": status, "rotation": {"quaternion": [1, "bad", 0, 0]}, "decision": "DR-001"}
+                problems = mi.schema_problems(documents)
+                self.assertEqual([p.pointer for p in problems], ["intent/route/0/orientation/rotation/quaternion/1"])
+                self.assertIn("is not of type 'number'", problems[0].message)
+
+    def test_a_known_quantity_wrapped_in_allof_reports_its_invalid_value(self) -> None:
+        documents = fx.tst_record()
+        documents["product.yaml"]["use_case"]["environment"]["temperature"] = fx.known({"value": "hot", "units": "deg_C"})
+        problems = mi.schema_problems(documents)
+        self.assertEqual([p.pointer for p in problems], ["use_case/environment/temperature/value/value"])
+        self.assertIn("is not of type 'number'", problems[0].message)
+
+    def test_a_quantity_selected_by_type_reports_its_invalid_unit(self) -> None:
+        documents = fx.tst_record()
+        documents["requirements.yaml"]["assumptions"] = [{
+            "id": "ASM-001", "text": "TST force", "origin": "TST fixture", "reason": "TST estimate",
+            "owner": "TST owner", "validation": "TST measurement", "status": "open",
+            "bounds": {"value": 5, "units": "bogus"}}]
+        problems = mi.schema_problems(documents)
+        self.assertEqual([p.pointer for p in problems], ["assumptions/0/bounds/units"])
+        self.assertIn("'bogus' is not one of", problems[0].message)
+
+    def test_a_bogus_fact_status_keeps_the_parent_after_type_selection(self) -> None:
+        for field in ("functions", "route"):
+            with self.subTest(field=field):
+                documents = fx.tst_record()
+                documents["parts/TST-0001/part.yaml"]["intent"][field] = {"status": "bogus", "reason": "TST reason"}
+                problems = mi.schema_problems(documents)
+                self.assertEqual([p.pointer for p in problems], [f"intent/{field}"])
+                self.assertIn("is not valid under any of the given schemas", problems[0].message)
+
+    def test_discriminator_collection_stops_at_a_recursive_alternative(self) -> None:
+        schemas = temp_hw(self).parent / "schemas"
+        shutil.copytree(mi.SCHEMAS, schemas)
+        path = schemas / "part.schema.json"
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        schema["$defs"]["orientation"]["allOf"] = [{"$ref": "#/$defs/orientation_guard"}]
+        schema["$defs"]["orientation_guard"] = {"anyOf": [{"type": "object"}, {"$ref": "#/$defs/orientation_guard"}]}
+        path.write_text(json.dumps(schema), encoding="utf-8")
+        documents = fx.tst_record()
+        documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["orientation"]["rotation"]["quaternion"][1] = "bad"
+        with patch.object(mi, "SCHEMAS", schemas):
+            problems = mi.schema_problems(documents)
+        self.assertEqual([p.pointer for p in problems], ["intent/route/0/orientation/rotation/quaternion/1"])
+        self.assertIn("is not of type 'number'", problems[0].message)
 
     def test_a_fact_without_a_matching_status_stays_at_the_fact(self) -> None:
         for fact in ({"status": "bogus"}, {}):
