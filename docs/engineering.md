@@ -79,10 +79,8 @@ Approved departures. The tracking IDs come from the bead ledger, which the repos
 | A hand-written spatial index in `skills/cad-model/scripts/cadmodel/agreement.py` (`_Surface`, a uniform grid of cells with a box prefilter in `within`) for the GLB to STEP agreement check | The module imports numpy and abstains without it, so the index keeps to numpy. The profiling result, the proposed finer grid and the bead status are unverified (ledger only). | benchhand-1tq |
 | Hand-written shell lexing in `scripts/test_no_verify_guard.py` (a `shlex` based word splitter near line 134) | The plan to replace it, the reasons and the bead status are unverified (ledger only). | benchhand-ci0 |
 | `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | benchhand-76q |
-| Provisional FEA constants in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | The module docstring and comments call both values provisional. A section whose residual or torque exceeds them abstains. The absence of a sourced value is unverified (ledger only). | benchhand-2dq |
-| The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate (`DUCTILE_FORMS` in `skills/cad-analysis/scripts/fea_conditions.py`) | The docstring in `fea_conditions.py` says the profile schema holds no ductility field. | benchhand-2dq |
-
-The plan in benchhand-2dq to replace the constants and add a ductility field is unverified (ledger only).
+| FEA thresholds in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | Recorded as engineering judgement (decision U-2, 20 Nov). A section that misses a gate abstains, never a pass or a fail. Neither ASME VIII-2 Annex 5-A nor EN 13445-3 gives a number. | benchhand-2dq |
+| The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate (`DUCTILE_FORMS` in `skills/cad-analysis/scripts/fea_conditions.py`) | The docstring in `fea_conditions.py` says the profile schema holds no ductility field. The stand-in stays until a sourced elongation field replaces it, in a later PR. | benchhand-2dq, benchhand-2dq.2 |
 
 ## Build, test and lint commands
 
@@ -124,5 +122,4 @@ Git hooks are not defined in the repository (no hook files found). Never pass `-
 
 - The profiling result, the proposed finer grid and the bead status behind benchhand-1tq.
 - The plan, the reasons and the bead status behind benchhand-ci0.
-- The plan and the lack of a sourced value behind benchhand-2dq.
 - The root `AGENTS.md` is absent from this commit; `CONTRIBUTING.md` and `README.md` stand in.
