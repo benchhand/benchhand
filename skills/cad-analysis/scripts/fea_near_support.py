@@ -45,13 +45,13 @@ its own, so a nan fails; the norms use math.hypot so a 3e153 N load does not ove
 is not finite abstains first (`mesh_not_finite`, `load_not_finite`).
 
 Neither ASME VIII-2 Annex 5-A nor EN 13445-3 gives a number for these thresholds. The user chose the 5% of
-`TOLERANCE` and the 0.1% of `TORSION_FLOOR` on 20 Nov 2026 (decision U-2 on #209) as engineering judgement, not as
+`TOLERANCE` and the 0.1% of `TORSION_FLOOR` on 20 Nov 2026 (decision U-2 on #209) as engineering judgment, not as
 provisional values awaiting a source. A section that misses either gate abstains (`unknown`) and never gives a pass or
 a fail. With the gate passed, the stress error is of the same order as the residual, which is small against a design
 factor, and the check is first yield with no 1.5 bending credit. Annex 5-A has no torsion term, so refusing on a torque
 about the section normal is conservative.
 The research behind this read Mackenzie PVP2017 (strathprints 60871) on 5-A.4.1.2, the O'Donnell and Becht summaries
-(placing the classification lines is judgement) and the EN 13445 background to part 3. It did not read the full texts
+(placing the classification lines is judgment) and the EN 13445 background to part 3. It did not read the full texts
 of ASME VIII-2, of EN 13445-3 Annex C or of the NAFEMS guides.
 
 The 5% was set against the 4.5 mm cantilever fixture (test_fea_near_support), and that fixture does not clear it: at
@@ -84,12 +84,12 @@ T_LOCAL_FACTOR = 1.0
 # Lines across a section's width, one per equal strip.
 STRIPS = 9
 # Largest section force and moment residual, as a share of the sum of the nodal force and moment magnitudes.
-# Engineering judgement, chosen by the user on 20 Nov 2026 (U-2, #209): no standard gives a number. A miss abstains,
+# Engineering judgment, chosen by the user on 20 Nov 2026 (U-2, #209): no standard gives a number. A miss abstains,
 # and a pass leaves a stress error of the order of the residual, small against a design factor. See the module
 # docstring.
 TOLERANCE = 0.05
 # A torque about the section normal above this share of F x L abstains. F is the sum of the nodal force magnitudes on
-# the free body and L the section's longest in-plane extent. Engineering judgement, chosen by the user on 20 Nov 2026
+# the free body and L the section's longest in-plane extent. Engineering judgment, chosen by the user on 20 Nov 2026
 # like TOLERANCE: Annex 5-A has no torsion term, so refusing is conservative. 0.1% of F x L is 0.5 N mm for a 50 N load
 # on a 10 mm section, a 0.01 mm offset of the load from the section centre.
 TORSION_FLOOR = 1e-3
