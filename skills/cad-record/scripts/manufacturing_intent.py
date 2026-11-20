@@ -110,6 +110,7 @@ MATERIAL_PROPERTIES: Mapping[str, tuple[str, ...]] = types.MappingProxyType({
     "density": ("mass_density",),
     "youngs_modulus": ("stress",), "flexural_modulus": ("stress",), "shear_modulus": ("stress",), "creep_modulus": ("stress",),
     "poisson_ratio": ("ratio",),
+    "fu_fy_ratio": ("ratio",),
     "yield_strength": ("stress",), "tensile_strength": ("stress",), "flexural_strength": ("stress",),
     "compressive_strength": ("stress",), "shear_strength": ("stress",), "interlayer_strength": ("stress",),
     "fatigue_strength": ("stress",),

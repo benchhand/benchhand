@@ -84,7 +84,7 @@ _TEMPERATURE_QUALIFIED = frozenset(
 # The material form whose properties describe a part shaped by a route kind; other kinds take stock.
 _FORM_OF_KIND = {"fdm": "printed", "resin": "printed", "casting": "cast", "moulding": "moulded"}
 PROPERTY_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("strength", ("yield_strength", "tensile_strength", "flexural_strength", "compressive_strength", "shear_strength",
+    ("strength", ("yield_strength", "tensile_strength", "fu_fy_ratio", "flexural_strength", "compressive_strength", "shear_strength",
                   "interlayer_strength", "elongation_at_yield", "elongation_at_break", "impact_strength_charpy_notched",
                   "impact_strength_charpy_unnotched", "impact_strength_izod_notched")),
     ("stiffness", ("youngs_modulus", "flexural_modulus", "shear_modulus", "poisson_ratio")),
