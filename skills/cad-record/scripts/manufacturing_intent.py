@@ -35,8 +35,11 @@ from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
+from urllib.parse import urljoin
 
 if TYPE_CHECKING:
+    from jsonschema.exceptions import ValidationError
+    from referencing.jsonschema import Schema, SchemaRegistry, SchemaResource
     from typing_extensions import TypeIs
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
@@ -878,16 +881,143 @@ def _color_rule() -> Mapping[str, Any]:
     return types.MappingProxyType(schema["$defs"]["intent"]["properties"]["color"])
 
 
+def _wrong_branch_type(error: ValidationError) -> bool:
+    """A root type mismatch, including alternatives that all reject the same instance type."""
+    if error.context and not error.relative_path:
+        return all(_wrong_branch_type(branch) for branch in error.context)
+    return error.validator == "type" and not error.relative_path
+
+
+def _schema_bases(resource: SchemaResource, base_uri: str, bases: dict[int, str]) -> None:
+    """Index schema object identities with their reference scope, using the library's schema traversal."""
+    bases[id(resource.contents)] = base_uri
+    base_uri = urljoin(base_uri, resource.id() or "")
+    for child in resource.subresources():
+        _schema_bases(child, base_uri, bases)
+
+
+def _combine_discriminators(keyword: str, branches: list[dict[str, Any]]) -> dict[str, Any]:
+    """Empty projections impose no constraint: drop them in AND, or leave an OR unrestricted."""
+    if keyword == "allOf":
+        branches = [branch for branch in branches if branch]
+    if not branches or not all(branches):
+        return {}
+    return branches[0] if len(branches) == 1 else {keyword: branches}
+
+
+def _discriminator_schema(schema: Schema, registry: SchemaRegistry, bases: Mapping[int, str],
+                          seen: frozenset[tuple[str, int, bool]], *, properties: bool = True, enums: bool = True) -> dict[str, Any]:
+    """Project direct const/enum constraints through references and root compositions, with a cycle guard.
+
+    Alternatives keep their OR semantics (oneOf becomes anyOf), and allOf retains conjunction.
+    Property value schemas contribute literal constraints only, not discriminators of nested objects.
+    """
+    if not isinstance(schema, Mapping):
+        return {}
+    base_uri = urljoin(bases[id(schema)], schema.get("$id", ""))
+    key = (base_uri, id(schema), properties)
+    if key in seen:
+        return {}
+    seen = seen | {key}
+    direct = {keyword: schema[keyword] for keyword in (("const", "enum") if enums else ("const",)) if keyword in schema}
+    if properties:
+        fields = {name: _discriminator_schema(rule, registry, bases, seen, properties=False, enums=enums)
+                  for name, rule in schema.get("properties", {}).items()}
+        fields = {name: rule for name, rule in fields.items() if rule}
+        if fields:
+            direct["properties"] = fields
+    clauses = [direct] if direct else []
+    if "$ref" in schema:
+        resolved = registry.resolver(base_uri).lookup(schema["$ref"])
+        clauses.append(_discriminator_schema(resolved.contents, registry, bases, seen, properties=properties, enums=enums))
+    for keyword in ("oneOf", "anyOf", "allOf"):
+        if keyword in schema:
+            clauses.append(_combine_discriminators("allOf" if keyword == "allOf" else "anyOf", [
+                _discriminator_schema(branch, registry, bases, seen, properties=properties, enums=enums) for branch in schema[keyword]]))
+    return _combine_discriminators("allOf", clauses)
+
+
+def _discriminator_fields(schema: Mapping[str, Any]) -> set[tuple[str, ...]]:
+    fields: set[tuple[str, ...]] = {(name,) for name in schema.get("properties", {})}
+    if "const" in schema or "enum" in schema:
+        fields.add(())
+    for keyword in ("allOf", "anyOf"):
+        for branch in schema.get(keyword, []):
+            fields.update(_discriminator_fields(branch))
+    return fields
+
+
+def _only_discriminators(schema: Mapping[str, Any], fields: set[tuple[str, ...]]) -> dict[str, Any]:
+    """Restrict a projected schema to fields shared by the candidate branches."""
+    result = {keyword: schema[keyword] for keyword in ("const", "enum") if () in fields and keyword in schema}
+    if "properties" in schema:
+        result["properties"] = {name: rule for name, rule in schema["properties"].items() if (name,) in fields}
+    for keyword in ("allOf", "anyOf"):
+        if keyword in schema:
+            result[keyword] = [_only_discriminators(branch, fields) for branch in schema[keyword]]
+    return result
+
+
+def _compatible_errors(error: ValidationError, registry: SchemaRegistry, bases: Mapping[int, str]) -> list[ValidationError]:
+    """Errors in a uniquely compatible branch, or none when branch selection is ambiguous.
+
+    Root types and literal discriminators are checked before preferring nested failures. A lone
+    type-compatible branch still checks constants, but its value enums do not select a branch.
+    Projection preserves nested alternatives, so a matching fact_open status survives a missing reason.
+    """
+    from jsonschema import Draft202012Validator  # noqa: PLC0415 - optional, needed only to validate
+
+    ruled_out = {branch.schema_path[0] for branch in error.context if _wrong_branch_type(branch)}
+    candidates = [branch for branch in error.context if branch.schema_path[0] not in ruled_out]
+    if not candidates:
+        return candidates
+    enums = len({branch.schema_path[0] for branch in candidates}) > 1
+    projections = {index: _discriminator_schema(branch, registry, bases, frozenset(), enums=enums)
+                   for index, branch in enumerate(error.schema[error.validator]) if index not in ruled_out}
+    discriminators = set.intersection(*(_discriminator_fields(schema) for schema in projections.values())) if projections else set()
+    compatible = {index for index, schema in projections.items()
+                  if Draft202012Validator(_only_discriminators(schema, discriminators)).is_valid(error.instance)}
+    candidates = [branch for branch in error.context if branch.schema_path[0] in compatible]
+    if len({branch.schema_path[0] for branch in candidates}) > 1:
+        nested = {branch.schema_path[0] for branch in candidates}
+        nested.difference_update(branch.schema_path[0] for branch in candidates if not branch.relative_path)
+        candidates = [branch for branch in candidates if branch.schema_path[0] in nested]
+    return candidates if len({branch.schema_path[0] for branch in candidates}) == 1 else []
+
+
+def _deepest_error(error: ValidationError, registry: SchemaRegistry, bases: Mapping[int, str]) -> ValidationError:
+    """The deepest error in the branch selected by root types, literal discriminators and nested failures.
+
+    This selection does not infer compatibility from every domain constraint. Without one selected
+    branch, `error` itself stands. An unknown fact's missing reason cannot select a known-status branch.
+    `best_match` is not enough: it stops at an anyOf whose branches tie and then quotes the whole value.
+    """
+    from jsonschema.exceptions import relevance  # noqa: PLC0415 - jsonschema is optional, needed only to validate
+
+    if not error.context:
+        return error
+    return min((_deepest_error(branch, registry, bases) for branch in _compatible_errors(error, registry, bases)),
+               key=lambda leaf: (-len(leaf.absolute_path), leaf.validator in {"oneOf", "anyOf"}, relevance(leaf)), default=error)
+
+
 def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """JSON-schema problems of every document (needs jsonschema), offline: every bundled schema resolves by $id."""
+    from referencing.jsonschema import DRAFT202012  # noqa: PLC0415 - jsonschema's dependency, needed only to validate
+
     schemas = _sibling("cad_record_schema_registry", "schema_registry.py")
+    registry = schemas.registry(SCHEMAS)
+    bases: dict[int, str] = {}
+    for uri, resource in registry.items():
+        _schema_bases(resource, uri, bases)
     problems = []
     for rel, document in sorted(documents.items()):
         name = schema_for(rel)
         if name is None:
             continue
         validator = schemas.document_validator(SCHEMAS, name)
-        for error in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
+        _schema_bases(DRAFT202012.create_resource(validator.schema), "", bases)
+        for top in sorted(validator.iter_errors(document), key=lambda e: [str(p) for p in e.absolute_path]):
+            error = _deepest_error(top, registry, bases)
             pointer = "/".join(str(part) for part in error.absolute_path)
             problems.append(Problem("intent.schema", f"hw/{rel}", pointer, f"{pointer + ': ' if pointer else ''}{error.message}"))
     return problems
