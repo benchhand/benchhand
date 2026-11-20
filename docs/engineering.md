@@ -37,17 +37,7 @@ Release automation is release-please (`release-please-config.json`, `.github/wor
 
 ## Layout and dependency direction
 
-- `skills/<name>/` holds one skill. Every skill has `SKILL.md`. A skill may also have `scripts/` (code), `tests/` (unittest files and fixtures) and `references/` (documents the skill cites). Not every skill has every directory:
-  - `cad-review-dfm` and `cad-review-mech` have only `SKILL.md`.
-  - `cad-bom` has `scripts/` but no `tests/` or `references/`. Its test file `test_bom.py` sits at the skill root.
-  - `cad-fits` keeps `test_fits.py`, `test_fits_properties.py` and `test_stackup.py` at the skill root.
-  - `cad-recheck`, `cad-render` and `cad-viewer` have no `references/`.
-  Test files live in `skills/<name>/tests/` or in `skills/<name>/`, so both `skills/*/test_*.py` and `skills/*/tests/test_*.py` count (`README.md`, `scripts/ci_shards.py`).
-- The skills are `cad-flow`, `cad-record`, `cad-concept`, `cad-model`, `cad-design`, `cad-motion`, `cad-render`, `cad-viewer`, `cad-analysis`, `cad-bom`, `cad-drawings`, `cad-fits`, `cad-recheck`, `cad-review-dfm` and `cad-review-mech`.
-- `agents/` holds the source of the seven agent profiles.
-- `harness/` holds `generate.py`, which builds the per-harness profiles in `harness/claude`, `harness/codex`, `harness/opencode` and `harness/kiro`, and `install.py`, which copies skills and profiles into a project. Generated profiles are byte-compared with generator output, so edit the source and rerun `generate.py`, never the output (`REUSE.toml`).
-- `scripts/` holds repository tooling: `ci_shards.py`, `complexity_ratchet.py`, `docs_only.py`, `import_check.py`, `typecheck.py`, `repro_check.py` and their tests.
-- `docs/` holds user and engineering documents. `examples/` holds the lamp-arm example project.
+The directory layout, the components and the flows are in [architecture.md](architecture.md). This section keeps the import rules.
 
 Dependency direction, as far as the repository shows it:
 
@@ -122,4 +112,3 @@ Git hooks are not defined in the repository (no hook files found). Never pass `-
 
 - The profiling result, the proposed finer grid and the bead status behind benchhand-1tq.
 - The plan, the reasons and the bead status behind benchhand-ci0.
-- The root `AGENTS.md` is absent from this commit; `CONTRIBUTING.md` and `README.md` stand in.
