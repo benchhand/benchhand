@@ -44,11 +44,20 @@ two in-plane axes (the membrane arms and the bending couple) and, here, the torq
 its own, so a nan fails; the norms use math.hypot so a 3e153 N load does not overflow; a node, mesh size or load that
 is not finite abstains first (`mesh_not_finite`, `load_not_finite`).
 
-No code states this tolerance. The 5% is provisional (decision on #209); bead benchhand-2dq tracks sourcing it. It
-was set against the 4.5 mm cantilever fixture (test_fea_near_support), and that fixture does not clear it: at its
-zone depth the sections show force residuals of 5.2% and 6.1% and moment residuals under 0.5%, and at other coarse
+Neither ASME VIII-2 Annex 5-A nor EN 13445-3 gives a number for these thresholds. The user chose the 5% of
+`TOLERANCE` and the 0.1% of `TORSION_FLOOR` on 20 Nov 2026 (decision U-2 on #209) as engineering judgement, not as
+provisional values awaiting a source. A section that misses either gate abstains (`unknown`) and never gives a pass or
+a fail. With the gate passed, the stress error is of the same order as the residual, which is small against a design
+factor, and the check is first yield with no 1.5 bending credit. Annex 5-A has no torsion term, so refusing on a torque
+about the section normal is conservative.
+The research behind this read Mackenzie PVP2017 (strathprints 60871) on 5-A.4.1.2, the O'Donnell and Becht summaries
+(placing the classification lines is judgement) and the EN 13445 background to part 3. It did not read the full texts
+of ASME VIII-2, of EN 13445-3 Annex C or of the NAFEMS guides.
+
+The 5% was set against the 4.5 mm cantilever fixture (test_fea_near_support), and that fixture does not clear it: at
+its zone depth the sections show force residuals of 5.2% and 6.1% and moment residuals under 0.5%, and at other coarse
 sizes (2 to 6 mm) the force residual reaches 18%. ccx smooths nodal stress, and the shear force suffers most. A real
-mesh therefore abstains on the force gate more often than on the moment gate, until the tolerance is sourced.
+mesh therefore abstains on the force gate more often than on the moment gate.
 
 The clause numbers of Annex 5-A come from secondary sources (Kezar Engineering's summary, Mackenzie PVP2017 and
 Kalnins PVP2008); see `fea_linearise`. Each still needs checking against the licensed text.
@@ -75,11 +84,14 @@ T_LOCAL_FACTOR = 1.0
 # Lines across a section's width, one per equal strip.
 STRIPS = 9
 # Largest section force and moment residual, as a share of the sum of the nodal force and moment magnitudes.
-# Provisional (decision on #209): bead benchhand-2dq tracks sourcing it.
+# Engineering judgement, chosen by the user on 20 Nov 2026 (U-2, #209): no standard gives a number. A miss abstains,
+# and a pass leaves a stress error of the order of the residual, small against a design factor. See the module
+# docstring.
 TOLERANCE = 0.05
 # A torque about the section normal above this share of F x L abstains. F is the sum of the nodal force magnitudes on
-# the free body and L the section's longest in-plane extent. Provisional, like TOLERANCE: 0.1% of F x L is 0.5 N mm
-# for a 50 N load on a 10 mm section, a 0.01 mm offset of the load from the section centre.
+# the free body and L the section's longest in-plane extent. Engineering judgement, chosen by the user on 20 Nov 2026
+# like TOLERANCE: Annex 5-A has no torsion term, so refusing is conservative. 0.1% of F x L is 0.5 N mm for a 50 N load
+# on a 10 mm section, a 0.01 mm offset of the load from the section centre.
 TORSION_FLOOR = 1e-3
 # A coordinate is on a plane, or a face is flat, when it lies within this share of the part's largest extent.
 _FLAT = 1e-6
