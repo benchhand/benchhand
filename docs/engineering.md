@@ -10,8 +10,8 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 | FreeCAD job Python | 3.11, the Python that FreeCAD bundles. Code that `freecadcmd` runs stays 3.11 compatible. | `README.md`, `scripts/freecad_job_modules.txt` |
 | uv | Runs the standalone skill scripts (through their PEP 723 headers), the tests and several tools. CI also runs `scripts/docs_only.py` and `scripts/ci_shards.py files` with plain `python3`. No uv version is pinned. | `.github/workflows/ci.yml` (lines 90 and 231) |
 | FreeCAD | 1.1.4, checked by SHA-256 in CI | `.github/workflows/ci.yml`, `README.md` |
-| CalculiX `ccx` | 2.23, bundled with FreeCAD. Recorded in solver manifests. | `skills/cad-analysis/tests/test_fea_static.py` |
-| gmsh | 4.15.0, bundled with FreeCAD. Recorded in solver manifests. | `skills/cad-analysis/tests/test_fea_static.py` |
+| CalculiX `ccx` | 2.23 is the value in the test fixtures, a mocked solver response. The version FreeCAD 1.1.4 bundles is unverified. At runtime `skills/cad-flow/scripts/fea_solvers.py` probes the installed `ccx` (`tool_version`) and accepts an override through `$CCX`. | `skills/cad-analysis/tests/test_fea_static.py` |
+| gmsh | 4.15.0 is the value in the test fixtures, a mocked solver response. The version FreeCAD 1.1.4 bundles is unverified. At runtime `skills/cad-flow/scripts/fea_solvers.py` probes the installed `gmsh` and accepts an override through `$GMSH`. | `skills/cad-analysis/tests/test_fea_static.py` |
 | CadQuery | `cadquery==2.8.0` with `cadquery-ocp==7.9.3.1.1` and `vtk==9.6.2` in the scripts that declare them | PEP 723 headers under `skills/*/scripts` |
 | OCP without VTK | `cadquery-ocp-novtk==8.0.1.1.0` | PEP 723 headers under `skills/*/scripts` |
 | build123d | `build123d==0.13.0`, `bd_warehouse==0.4.0` | `skills/cad-model/scripts/run_build123d.py` header |
@@ -51,7 +51,10 @@ Release automation is release-please (`release-please-config.json`, `.github/wor
 
 Dependency direction, as far as the repository shows it:
 
-- `harness/` and `scripts/` read skills as files. Skills do not import from `harness/` or `scripts/`. This is unverified as an enforced rule; no test checks it.
+- `harness/` and `scripts/` read skills as files. No production script under `skills/*/scripts` imports `harness/` or `scripts/` (checked with `rg -n "harness|scripts/|modload" skills/*/scripts`). No test enforces this, so the rule is unverified.
+- Skill tests do import from them. These two imports are test-only:
+  - `skills/cad-bom/test_bom.py` (lines 25 and 26) puts `scripts/` on `sys.path` and imports `result_payload` from `scripts/modload.py`.
+  - `skills/cad-model/tests/test_cad_model.py` (lines 3413 to 3416) loads `harness/install.py` with `importlib`.
 - Skills are separate script trees. `cad-record` supplies the record schemas, `emit.py` and the validators that other skills read. Skills reach a sibling through a path built from the skill folder (for example `freecad_lookup.py` in `cad-analysis` adds `cad-flow`'s scripts to `sys.path`). No import checker enforces which skill may import which. Unverified.
 - Code that `freecadcmd` runs must import on Python 3.11 with only PyYAML and jsonschema. `scripts/freecad_job_modules.txt` lists those modules, and CI checks them (`scripts/import_check.py --manifest`).
 - `scripts/test_docs_guard.py` and `scripts/docs_only.py` decide which paths no skill test reads, so a docs-only PR skips the skill shards.
@@ -69,18 +72,18 @@ Standards:
 - Prose in Markdown follows the slopvac rules in `slopvac.toml`. Pull request bodies pass the strict profile.
 - Type checking is incremental: `mypy.ini` lists the checked modules, and some are strict.
 
-Approved departures. Each one has a tracking ID in the bead ledger.
+Approved departures. The tracking IDs come from the bead ledger, which the repository does not hold, so the ledger facts below are unverified.
 
 | Departure | Why | ID |
 |---|---|---|
-| A hand-rolled spatial index in `skills/cad-model/scripts/cadmodel/agreement.py` (a cell grid with a dense box prefilter) for the GLB to STEP agreement check | It keeps the check numpy-only. Profiling on the pace host showed the prefilter dominates the compare time on large curved parts. A finer exact grid is proposed, still numpy-only. | benchhand-1tq (open) |
-| Hand-rolled shell lexing in `scripts/test_no_verify_guard.py` | It was the quick way to scan shell text. It does not converge on edge cases. The user decided to drop it and keep the Python `ast` check plus YAML run values read with a YAML parser. `bashlex` was rejected: last release January 2023, GPLv3+ licence. | benchhand-ci0 (in progress) |
+| A hand-written spatial index in `skills/cad-model/scripts/cadmodel/agreement.py` (`_Surface`, a uniform grid of cells with a box prefilter in `within`) for the GLB to STEP agreement check | The module imports numpy and abstains without it, so the index keeps to numpy. The profiling result, the proposed finer grid and the bead status are unverified (ledger only). | benchhand-1tq |
+| Hand-written shell lexing in `scripts/test_no_verify_guard.py` (a `shlex` based word splitter near line 134) | The plan to replace it, the reasons and the bead status are unverified (ledger only). | benchhand-ci0 |
 | `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | none found in the repository; unverified |
-| Heavy suites run on the pace host | The FreeCAD-gated and mutation suites are too slow for a laptop. Measurements in the repository cite pace (`skills/cad-render/scripts/parity_policy.py`). The rule itself is not written in the repository. | unverified |
-| Provisional FEA constants in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | No sourced value exists yet. A section whose residual or torque exceeds them abstains. | benchhand-2dq |
-| The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate (`DUCTILE_FORMS` in `skills/cad-analysis/scripts/fea_conditions.py`) | Material profiles have no ductility field yet. | benchhand-2dq |
+| Heavy suites run on the pace host | The reason and the rule are not written in the repository. `skills/cad-render/scripts/parity_policy.py` cites measurements taken on pace. | unverified |
+| Provisional FEA constants in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | The module docstring and comments call both values provisional. A section whose residual or torque exceeds them abstains. The absence of a sourced value is unverified (ledger only). | benchhand-2dq |
+| The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate (`DUCTILE_FORMS` in `skills/cad-analysis/scripts/fea_conditions.py`) | The docstring in `fea_conditions.py` says the profile schema holds no ductility field. | benchhand-2dq |
 
-benchhand-2dq will replace the two constants with sourced values (or cite their basis) and add a ductility field that the gate reads instead of the form stand-in.
+The plan in benchhand-2dq to replace the constants and add a ductility field is unverified (ledger only).
 
 ## Build, test and lint commands
 
@@ -135,6 +138,10 @@ Git hooks are not defined in the repository (no hook files found). Never pass `-
 ## Unverified items
 
 - The import rule between skills, `harness/` and `scripts/` (no enforcing test).
+- The ccx and gmsh versions that FreeCAD 1.1.4 bundles (the doc has only the test-fixture values and the runtime probe).
+- The profiling result, the proposed finer grid and the bead status behind benchhand-1tq.
+- The plan, the reasons and the bead status behind benchhand-ci0.
+- The plan and the lack of a sourced value behind benchhand-2dq.
 - The Apache-2.0 departure has no ledger ID.
 - The pace-host rule for heavy suites has no source in the repository.
 - The location of the Vale grammar directory.
