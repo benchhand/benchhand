@@ -110,6 +110,7 @@ def _shared_module(name: str, path: Path) -> Any:
 
 LAYOUT = _shared_module("cad_record_layout", LAYOUT_PATH)
 CHECK_PACKET = _shared_module("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
+GUIDELINES = _shared_module("cad_record_guidelines", SKILLS / "cad-record" / "scripts" / "guidelines.py")
 # hw/checks/<V>/stack-<case, or id lowercased>/: an intent stack's packet beside its analysis bundle (a bundle.checks
 # subject is a PN or a lowercase slug, and a case id or published stack id is one of those)
 CHECK_PREFIX = "stack-"
@@ -128,7 +129,12 @@ SHEET_CUTTING = frozenset(("laser", "waterjet", "plasma"))
 FINISHING = frozenset(("drilling", "reaming", "tapping", "finishing", "coating", "joining"))
 EFFECT_FINISHES = {"coating": "coating", "joining": "joining"}  # finishes counted by their own effect contributor
 STACK_KEYS = frozenset(("intent_version", "id", "title", "units", "subject", "requirements", "dimension_state",
-                        "consequence", "relevant", "requirement", "statistics", "contributors", "note"))
+                        "consequence", "relevant", "requirement", "statistics", "contributors", "clearance", "note"))
+CLEARANCE_KEYS = frozenset(("characteristic", "per"))
+CLEARANCE_CHARACTERISTIC = "sliding_clearance"
+CLEARANCE_BASES = ("side", "diameter")  # the nominal gap is per side, or across the diameter (two sides)
+MINIMUM_OPERATORS = (">=", ">")
+CLEARANCE_EPS = 1e-9
 CONTRIBUTOR_KEYS = frozenset(("id", "category", "description", "status", "reason", "direction", "nominal", "tol",
                               "tol_plus", "tol_minus", "subject", "state", "source", "capability", "operation",
                               "inspection", "designation", "process", "distribution"))
@@ -184,10 +190,12 @@ def _verdict(low: float, high: float, req_min: float | None, req_max: float | No
 
 
 def compute(stack: dict[str, Any], record: Any = None, *, case: str | None = None, on: date | None = None,
-            decisions: frozenset[str] | None = None) -> dict[str, Any]:
+            decisions: frozenset[str] | None = None, catalog: Any = None) -> dict[str, Any]:
     """Evaluate a parsed intent stack (`intent_version: 2`); raise StackError on invalid input. The stack is
     bound to `record` (a manufacturing_intent Record) when one is given, as the analysis case `case`, with
-    calibrations judged valid `on` that date and `decisions` the project's recorded DR ids."""
+    calibrations judged valid `on` that date and `decisions` the project's recorded DR ids. `catalog` is the
+    guideline catalog (cad-record guidelines.Catalog) of the same record snapshot; a stack's `clearance` check reads
+    the sliding clearance through it."""
     if not isinstance(stack, dict):
         raise StackError("stack file must be a mapping")
     version = stack.get("intent_version")
@@ -196,7 +204,7 @@ def compute(stack: dict[str, Any], record: Any = None, *, case: str | None = Non
     problem = None if record is None else _intent_module().version_problem(record.product)
     if problem is not None:
         raise StackError(f"{problem.code}: {problem.message}")
-    return _IntentStack(stack, record, case, on, decisions).evaluate()
+    return _IntentStack(stack, record, case, on, decisions, catalog).evaluate()
 
 
 # --------------------------------------------------------------------------- intent stacks (version 2)
@@ -308,8 +316,9 @@ class _IntentStack:
     """One intent stack's evaluation: parse, bind to the record, then judge by the governing method."""
 
     def __init__(self, stack: dict[str, Any], record: Any, case: str | None, on: date | None,
-                 decisions: frozenset[str] | None) -> None:
+                 decisions: frozenset[str] | None, catalog: Any = None) -> None:
         self.stack, self.record, self.case, self.on, self.decisions = stack, record, case, on, decisions
+        self.catalog = catalog
         self.findings: list[dict[str, Any]] = []
         self.unknown_reasons: list[str] = []
         self.critical = False
@@ -361,6 +370,20 @@ class _IntentStack:
         if len(set(ids)) != len(ids):
             raise StackError("contributor ids must be unique")
         self.refuse_double_counting()
+        self.clearance = self.parse_clearance(stack.get("clearance"))
+
+    @staticmethod
+    def parse_clearance(block: Any) -> Mapping[str, Any] | None:
+        if block is None:
+            return None
+        clearance = _mapping(block, "clearance")
+        _keys(clearance, CLEARANCE_KEYS, "clearance")
+        if clearance.get("characteristic") != CLEARANCE_CHARACTERISTIC:
+            raise StackError(f"clearance.characteristic must be {CLEARANCE_CHARACTERISTIC}")
+        if clearance.get("per") not in CLEARANCE_BASES:
+            raise StackError(f"clearance.per must be one of {', '.join(CLEARANCE_BASES)}: say whether the gap is per side "
+                             "or across the diameter")
+        return clearance
 
     def parse_requirement(self, requirement: Mapping[str, Any]) -> None:
         _keys(requirement, REQUIREMENT_KEYS, "requirement")
@@ -882,6 +905,7 @@ class _IntentStack:
         wc_pass = _verdict(worst["min"], worst["max"], self.req_min, self.req_max) if complete else None
         stat_pass = (_verdict(statistical["min"], statistical["max"], self.req_min, self.req_max)
                      if statistical["status"] == "justified" else None)
+        clearance = self.check_clearance(nominal if complete else None)
         if self.unknown_reasons:
             outcome = "unknown"
         else:
@@ -889,6 +913,8 @@ class _IntentStack:
             outcome = "pass" if passed else "fail"
         if outcome == "fail":
             self.violation(nominal, nominal_pass, worst, statistical, governing)
+        if clearance is not None and clearance.failed:
+            outcome = "fail"  # a nominal gap below a guideline minimum is a miss; a met one never raises the outcome
         elif complete and wc_pass is False and governing == "justified_rss":
             self.limits.append(f"the worst case {worst['min']}..{worst['max']} mm violates the requirement; the "
                                f"approved statistical interval governs this {self.consequence} consequence")
@@ -903,7 +929,7 @@ class _IntentStack:
             outcome_row["uncertainty"] = "; ".join(self.unknown_reasons)
         if not outcome_row["findings"]:
             del outcome_row["findings"]
-        return {
+        result: dict[str, Any] = {
             "intent_version": INTENT_VERSION, "id": self.id, "title": self.title, "units": "mm",
             "subject": json.loads(json.dumps(self.subject)), "requirements": self.requirements,
             "dimension_state": self.state, "consequence": self.consequence, "relevant": self.relevant,
@@ -920,6 +946,33 @@ class _IntentStack:
             "required_evidence": self.required_evidence, "limits": self.limits,
             "evaluated_on": None if self.on is None else self.on.isoformat(),
         }
+        if clearance is not None:
+            result["clearance"] = clearance.row
+        return result
+
+    def check_clearance(self, nominal: float | None) -> _ClearanceResult | None:
+        """The stack's sliding-clearance check, or None when the stack asks for none. It is no contributor: the gap
+        it judges is the stack's nominal closing dimension, counted once."""
+        if self.clearance is None:
+            return None
+        result = _clearance_result(self.clearance["per"], self.record, self.subject.get("interface"), self.catalog,
+                                   self.on, nominal)
+        if result.reason is not None:
+            self.unknown("stack.clearance_unknown", None, result.reason,
+                         "record the sliding parts, their FDM capability profile and material, and a guideline set that "
+                         "states a minimum sliding clearance, then rerun", inputs=["hw/interfaces.yaml"])
+        elif result.failed:
+            row = result.row
+            self.finding("stack.clearance_below_minimum", "clearance", severity=self.severity(), outcome="fail",
+                         measured={"value": row["nominal_per_side_mm"], "units": "mm"},
+                         criterion={"property": "sliding_clearance_per_side", "operator": row["operator"],
+                                    "value": row["minimum_mm"], "units": "mm", "source": row["source"],
+                                    "conditions": "a design guideline, not a calibration of this printer and material"},
+                         consequence=(f"the nominal gap of {row['nominal_per_side_mm']} mm per side is below the "
+                                      f"{row['minimum_mm']} mm minimum sliding clearance: the parts may bind"),
+                         remedy="open the gap to the minimum, or calibrate the sliding clearance on the target printer and material",
+                         uncertainty="the guideline is a single design value, not a measurement of this machine")
+        return result
 
     def rss_refused(self, reasons: list[str], worst: Mapping[str, Any]) -> None:
         self.limits.append("justified RSS refused: " + "; ".join(reasons) + "; the worst case governs")
@@ -960,6 +1013,92 @@ class _IntentStack:
                                     "tradeoffs": "adds an operation, allowance and inspection"},
                                    {"text": "add an adjustment or a selective-fit step at assembly",
                                     "tradeoffs": "assembly effort and a recorded adjustment procedure"}])
+
+
+@dataclass(frozen=True)
+class _ClearanceResult:
+    row: dict[str, Any]
+    reason: str | None = None  # why the clearance is unknown
+    failed: bool = False
+
+
+def _sliding_pns(record: Any, interface_id: str | None) -> list[str]:
+    interface = record.interfaces.get(interface_id) if interface_id else None
+    surfaces = interface.functional.raw.get("surfaces") if interface is not None else None
+    found = {s.get("PN") for s in surfaces or () if isinstance(s, Mapping) and s.get("role") == "sliding"}
+    return sorted(pn for pn in found if isinstance(pn, str))
+
+
+def _fdm_operation(record: Any, pn: str) -> Any:
+    part = record.parts.get(pn)
+    if part is None or _intent_module().is_fact(part.intent.route):
+        return None
+    return next((op for op in part.intent.route if op.kind == "fdm"), None)
+
+
+def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, str | None]:
+    """((the PN's FDM route operation, its material profile id), None), or (None, why it has none). The material is
+    checked here because the resolver would otherwise fall back to the generic set without it."""
+    op = _fdm_operation(record, pn)
+    if op is None:
+        return None, f"{pn} has no fdm route operation"
+    if not isinstance(op.capability, str) or op.capability not in record.capabilities:
+        return None, f"{pn}'s {op.id} operation names no capability profile of the record"
+    material = record.parts[pn].intent.material_profile
+    if not isinstance(material, str):
+        return None, f"{pn}'s material profile is unknown"
+    if material not in record.materials:
+        return None, f"{pn}'s material profile {material} is not in the record's materials"
+    return (op, material), None
+
+
+def _clearance_result(per: str, record: Any, interface_id: str | None, catalog: Any, on: date | None,
+                      nominal: float | None) -> _ClearanceResult:
+    """Judge the nominal gap per side against the largest minimum sliding clearance the sliding parts resolve."""
+    row: dict[str, Any] = {"characteristic": CLEARANCE_CHARACTERISTIC, "per": per, "status": "unknown", "met": None,
+                           "parts": [], "resolutions": [], "guidelines": {}}
+
+    def unknown(reason: str) -> _ClearanceResult:
+        return _ClearanceResult(dict(row, reasons=[reason]), reason)
+
+    if record is None:
+        return unknown("no bound record: the sliding parts, their printer and their material are unverified")
+    if catalog is None:
+        return unknown("no guideline catalog was given for this record")
+    pns = _sliding_pns(record, interface_id)
+    if not pns:
+        return unknown(f"{interface_id or 'the stack subject'} records no surface with role sliding")
+    printed = [pn for pn in pns if _fdm_operation(record, pn) is not None]
+    if not printed:
+        return unknown(f"no sliding part is printed by fdm ({', '.join(pns)}): the guidelines cover fdm only")
+    resolutions = []
+    for pn in printed:
+        scope, why = _clearance_scope(record, pn)
+        if scope is None:
+            return unknown(str(why))
+        op, material = scope
+        resolved = GUIDELINES.resolve(record, op, CLEARANCE_CHARACTERISTIC, catalog=catalog, material=material, on=on)
+        resolutions.append(resolved)
+        context = GUIDELINES.context_for(record.capabilities[op.capability], record.materials[material])
+        row["guidelines"].update(GUIDELINES.applicable_digests(catalog, context))
+        row["parts"].append(pn)
+        if resolved.status != "guideline":
+            return unknown(f"{pn}: " + "; ".join(resolved.reasons or (f"no guideline states {CLEARANCE_CHARACTERISTIC}",)))
+        if resolved.operator not in MINIMUM_OPERATORS:
+            return unknown(f"{pn}: the {CLEARANCE_CHARACTERISTIC} limit is {resolved.operator}, not a minimum")
+        unapplied = [w for w in resolved.warnings if "not applied" in w or w.startswith("pinned ")]  # a pin that matched nothing
+        if unapplied:
+            return unknown(f"{pn}: a guideline the profile pins is not applied: {'; '.join(unapplied)}")
+    row["resolutions"] = GUIDELINES.trace_document(resolutions)["resolutions"]
+    if nominal is None:
+        return unknown("the nominal gap is not established: a contributor is unknown")
+    binding = max(resolutions, key=lambda r: float(r.value.to("mm").value))
+    minimum = float(binding.value.to("mm").value)
+    per_side = nominal if per == "side" else nominal / 2
+    met = per_side > minimum + CLEARANCE_EPS if binding.operator == ">" else per_side >= minimum - CLEARANCE_EPS
+    row.update(status="guideline", met=met, nominal_per_side_mm=_round(per_side), minimum_mm=_round(minimum),
+               operator=binding.operator, source=dict(binding.source or {}))
+    return _ClearanceResult(row, None, not met)
 
 
 def _positive_semidefinite(ids: list[str], rho: Mapping[frozenset[str], float]) -> bool:
@@ -1052,10 +1191,19 @@ def publish_check(hw: Path, version: str, subject: str, result: Mapping[str, Any
     return path
 
 
-def packet_dependencies(hw: Path, stack_path: Path, stack: Mapping[str, Any]) -> dict[str, str]:
-    """sha256 of the inputs beyond the version's record snapshot: the stack case and, for statistics,
-    the decision that approves them."""
+def load_inputs(record_dir: Path, *, snapshot: bool) -> tuple[Any, Any]:
+    """The record at `record_dir` and the guideline catalog read from the same place: with `snapshot`, a built
+    version's record/ and its own copies of the sets, never the live install."""
+    return _intent_module().load_record(record_dir, snapshot=snapshot), GUIDELINES.discover(record_dir, snapshot=snapshot)
+
+
+def packet_dependencies(hw: Path, stack_path: Path, stack: Mapping[str, Any],
+                        guidelines: Mapping[str, str] | None = None) -> dict[str, str]:
+    """sha256 of the inputs beyond the version's record snapshot: the stack case, every guideline set the
+    clearance check could resolve through (guidelines.packet_dependencies) and, for statistics, the decision
+    that approves them."""
     found = {"stack_case": hashlib.sha256(stack_path.read_bytes()).hexdigest()}
+    found.update(GUIDELINES.packet_dependencies(guidelines or {}))
     statistics = stack.get("statistics")
     decision = statistics.get("decision") if isinstance(statistics, Mapping) else None
     if isinstance(decision, str) and DECISION.match(decision):
@@ -1078,14 +1226,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         stack_path = args.stack.resolve()
         stack = load_stack(stack_path)
-        record = case = decisions = None
+        record = case = decisions = catalog = None
         if args.hw:
             version, _, record_dir = LAYOUT.built_version(args.hw, args.version)
             # a stack at hw/analysis/cases/<case>/case.yaml is that analysis case: it publishes as the case
             case = LAYOUT.analysis_case(args.hw.resolve(), stack_path)
-            record = _intent_module().load_record(record_dir, snapshot=True)
+            record, catalog = load_inputs(record_dir, snapshot=True)
             decisions = recorded_decisions(args.hw)
-        result = compute(stack, record, case=case, on=date.today() if record is not None else None, decisions=decisions)
+        result = compute(stack, record, case=case, on=date.today() if record is not None else None, decisions=decisions,
+                         catalog=catalog)
         status = status_of(result)
         if args.hw:
             result["status"] = status
@@ -1115,7 +1264,8 @@ def main(argv: list[str] | None = None) -> int:
                 result["bundle"] = str(published.path)
                 result["reused"] = published.reused
             if record is not None:
-                packet = check_packet(result, record, packet_dependencies(args.hw, stack_path, stack))
+                packet = check_packet(result, record, packet_dependencies(
+                    args.hw, stack_path, stack, (result.get("clearance") or {}).get("guidelines")))
                 result["check_bundle"] = (None if packet is None else
                                           publish_check(args.hw, version, subject, result, packet, args.replace))
         elif args.out is not None:

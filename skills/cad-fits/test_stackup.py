@@ -464,6 +464,151 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual(codes(result), ["stack.capability_unresolved"])
 
 
+GL = stackup.GUIDELINES
+GENERIC_SHA = "ab" * 32
+
+
+def clearance_catalog(*limits: dict, revision: int = 2) -> object:
+    """A hand-built catalog holding fdm.generic with `limits`, so these tests do not depend on the shipped file."""
+    generic = GL.Guideline("fdm.generic", revision, "TST generic", (), False, {"process": "fdm"}, tuple(limits),
+                           "manufacturing/guidelines/fdm.generic.yaml", "shipped", GENERIC_SHA)
+    return GL.Catalog({"fdm.generic": generic})
+
+
+def clearance_limit(value: float = 0.3, operator: str = ">=") -> dict:
+    return {"characteristic": "sliding_clearance", "operator": operator, "quantity": {"value": value, "units": "mm"},
+            "citations": [{"kind": "supplier", "reference": "TST clearance guide", "accessed": "2026-11-20"}]}
+
+
+def clearance_documents(*, pn: str = "TST-0001", relevant: tuple[str, ...] = ("manufacture", "coating", "thermal")) -> dict:
+    """closing_gap_documents with IF-001's sliding surface on `pn`."""
+    documents = closing_gap_documents(relevant=relevant)
+    documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"] = [
+        {"PN": pn, "feature": "pivot_bore", "role": "sliding", "dimension_state": "assembled"}]
+    return documents
+
+
+def clearance_stack(per: str = "side", *, nominal_gap: float = 0.20, requirement_min: float = -1.0) -> dict:
+    stack = fixture("closing_gap.yaml")
+    stack["requirement"]["min"] = requirement_min
+    contributor(stack, "H")["nominal"] = round(20.02 + nominal_gap, 6)
+    stack["clearance"] = {"characteristic": "sliding_clearance", "per": per}
+    return stack
+
+
+class ClearanceTests(unittest.TestCase):
+    """The stack-level sliding-clearance check: the nominal gap per side against the guideline minimum."""
+
+    def run_stack(self, documents: dict, stack: dict, catalog: object | None, *, bound: bool = True) -> dict:
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", documents)
+            write_case(hw, "closing-gap", stack)
+            record = intent.load_record(hw) if bound else None
+            result = stackup.compute(stack, record, case="closing-gap", on=ON, decisions=frozenset({"DR-001"}),
+                                     catalog=catalog)
+        for finding in result["findings"]:
+            self.assertEqual(list(stackup._validator("finding").iter_errors(finding)), [], finding["id"])
+        return result
+
+    def test_a_nominal_gap_below_the_guideline_minimum_fails_and_cites_the_set(self) -> None:
+        result = self.run_stack(clearance_documents(), clearance_stack("side"), clearance_catalog(clearance_limit()))
+        self.assertEqual(result["outcome"], "fail")
+        self.assertEqual(codes(result), ["stack.clearance_below_minimum"])
+        row = result["clearance"]
+        self.assertEqual((row["status"], row["met"], row["per"]), ("guideline", False, "side"))
+        self.assertAlmostEqual(row["nominal_per_side_mm"], 0.2, places=6)
+        self.assertEqual((row["minimum_mm"], row["operator"]), (0.3, ">="))
+        winner = row["resolutions"][0]["provenance"][0]
+        self.assertEqual(winner["guideline"], "fdm.generic@2")
+        self.assertEqual(row["guidelines"], {"fdm.generic@2": GENERIC_SHA})
+
+    def test_a_diametral_gap_is_halved_before_it_is_compared(self) -> None:
+        stack = clearance_stack("diameter", nominal_gap=0.5)
+        result = self.run_stack(clearance_documents(), stack, clearance_catalog(clearance_limit()))
+        self.assertAlmostEqual(result["clearance"]["nominal_per_side_mm"], 0.25, places=6)
+        self.assertEqual(codes(result), ["stack.clearance_below_minimum"])
+
+    def test_a_met_guideline_clearance_never_raises_an_unknown_stack_to_pass(self) -> None:
+        stack = clearance_stack("diameter", nominal_gap=0.8)
+        stack["relevant"].append("moisture")  # a relevant effect with no contributor: the stack is unknown
+        documents = clearance_documents(relevant=("manufacture", "coating", "thermal", "moisture"))
+        result = self.run_stack(documents, stack, clearance_catalog(clearance_limit()))
+        self.assertTrue(result["clearance"]["met"])
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(codes(result), ["stack.effect_missing"])
+
+    def test_a_met_guideline_clearance_leaves_a_passing_stack_passing_and_adds_no_finding(self) -> None:
+        stack = clearance_stack("side", nominal_gap=0.4)
+        result = self.run_stack(clearance_documents(), stack, clearance_catalog(clearance_limit()))
+        self.assertTrue(result["clearance"]["met"])
+        self.assertEqual((result["outcome"], codes(result)), ("pass", []))
+
+    def test_each_missing_input_makes_the_clearance_unknown_with_its_reason(self) -> None:
+        def pinned(documents: dict) -> None:
+            documents["manufacturing/capabilities.yaml"]["profiles"][0]["guidelines"] = ["fdm.generic@2", "fdm.material.nope@1"]
+
+        def no_material(documents: dict) -> None:
+            documents["parts/TST-0001/part.yaml"]["intent"]["material_profile"] = "tst_unrecorded_material"
+
+        def no_profile(documents: dict) -> None:
+            documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["capability"] = "tst_unrecorded_printer"
+
+        generic = clearance_catalog(clearance_limit())
+        cases = {
+            "no bound record": (clearance_documents(), generic, False, "no bound record"),
+            "no sliding part printed by fdm": (clearance_documents(pn="TST-0002"), generic, True, "no sliding part is printed by fdm"),
+            "no capability profile": (no_profile, generic, True, "capability profile"),
+            "material missing from the record": (no_material, generic, True, "tst_unrecorded_material"),
+            "no catalog": (clearance_documents(), None, True, "no guideline catalog"),
+            "the resolver finds no limit": (clearance_documents(), clearance_catalog(), True, "sliding_clearance"),
+            "a maximum is no minimum": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<=")), True, "<="),
+            "a pin that is not applied": (pinned, generic, True, "not applied"),
+        }
+        for label, (documents, catalog, bound, reason) in cases.items():
+            with self.subTest(label):
+                if callable(documents):
+                    base = clearance_documents()
+                    documents(base)
+                    documents = base
+                result = self.run_stack(documents, clearance_stack("side"), catalog, bound=bound)
+                self.assertEqual(result["outcome"], "unknown")
+                self.assertEqual(codes(result), ["stack.clearance_unknown"])
+                self.assertEqual(result["clearance"]["status"], "unknown")
+                self.assertIn(reason, result["findings"][0]["measured"]["reason"])
+
+    def test_the_shipped_catalog_sliding_clearance_resolves_in_a_stack(self) -> None:
+        shipped = GL.discover(None)
+        result = self.run_stack(clearance_documents(), clearance_stack("side"), shipped)
+        row = result["clearance"]
+        self.assertEqual((row["status"], row["minimum_mm"], row["operator"], row["met"]), ("guideline", 0.3, ">=", False))
+        generic = shipped.guidelines["fdm.generic"]
+        self.assertEqual(row["guidelines"]["fdm.generic@2"], generic.sha256)
+        self.assertEqual(codes(result), ["stack.clearance_below_minimum"])
+
+    def test_the_packet_depends_on_every_guideline_set_the_clearance_resolved_through(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            stack_path = Path(directory) / "case.yaml"
+            stack_path.write_text("id: STK\n", encoding="utf-8")
+            found = stackup.packet_dependencies(Path(directory), stack_path, {}, {"fdm.generic@2": GENERIC_SHA})
+        self.assertEqual(found["guideline_fdm_generic_r2"], GENERIC_SHA)
+        self.assertIn("stack_case", found)
+
+    def test_a_stack_without_a_clearance_block_has_no_clearance_row(self) -> None:
+        stack = clearance_stack()
+        del stack["clearance"]
+        result = self.run_stack(clearance_documents(), stack, clearance_catalog(clearance_limit()))
+        self.assertNotIn("clearance", result)
+
+    def test_the_clearance_block_names_its_characteristic_and_basis(self) -> None:
+        for block in ({"characteristic": "sliding_clearance"}, {"characteristic": "min_wall", "per": "side"},
+                      {"characteristic": "sliding_clearance", "per": "radius"}, {"per": "side"}):
+            with self.subTest(block=block):
+                stack = clearance_stack()
+                stack["clearance"] = block
+                with self.assertRaises(stackup.StackError):
+                    self.run_stack(clearance_documents(), stack, clearance_catalog(clearance_limit()))
+
+
 class StackPacketTests(unittest.TestCase):
     """A record-bound intent stack at hw/analysis/cases/<case>/case.yaml publishes its analysis bundle as
     hw/analysis/<V>/<case>/ (the bundle release.py requires for the case) and the interface.stack / feature.fit
