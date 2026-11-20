@@ -168,6 +168,41 @@ def import_source(source: str, path: Path) -> typing.Any:
     return module
 
 
+class UnionAlternatives(FixtureTree):
+    """oneOf and anyOf keep every alternative and its required fields, so a union never degrades to Any."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/choice.schema.json", {
+            "$id": BASE + "choice.schema.json",
+            "$defs": {
+                "circle": {"type": "object", "required": ["radius"], "properties": {"radius": {"type": "number"}, "tag": {"type": "string"}}},
+                "rect": {"type": "object", "required": ["w", "h"], "properties": {"w": {"type": "number"}, "h": {"type": "number"}}},
+                "shape": {"oneOf": [{"$ref": "#/$defs/circle"}, {"$ref": "#/$defs/rect"}]},
+                "pick": {"anyOf": [{"type": "object", "required": ["x"], "properties": {"x": {"type": "integer"}}}, {"type": "string"}, {"type": "null"}]},
+                "holder": {"type": "object", "required": ["shape"], "properties": {"shape": {"$ref": "#/$defs/shape"}, "pick": {"$ref": "#/$defs/pick"}}},
+            },
+        })
+        self.module = import_source(self.api(), self.root / "cad_api_choice.py")
+
+    def test_one_of_refs_become_a_union_of_both_classes_with_their_required_fields(self) -> None:
+        alternatives = typing.get_args(self.module.ChoiceShape)
+        self.assertEqual(set(alternatives), {self.module.ChoiceCircle, self.module.ChoiceRect})
+        self.assertEqual(self.module.ChoiceCircle.__required_keys__, {"radius"})
+        self.assertEqual(self.module.ChoiceRect.__required_keys__, {"w", "h"})
+
+    def test_any_of_keeps_an_inline_object_a_scalar_and_null(self) -> None:
+        alternatives = typing.get_args(self.module.ChoicePick)
+        objects = [a for a in alternatives if typing.is_typeddict(a)]
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(objects[0].__required_keys__, {"x"})
+        self.assertEqual(set(alternatives) - set(objects), {str, type(None)})
+
+    def test_a_field_refers_to_the_union_alias_not_any(self) -> None:
+        self.assertIn("\n    shape: Required[ChoiceShape]\n", self.api())
+        self.assertIn("\n    pick: NotRequired[ChoicePick]\n", self.api())
+
+
 class RecursiveSchema(FixtureTree):
     def test_a_type_that_contains_itself_imports(self) -> None:
         write_json(self.root, "skills/cad-record/schemas/tree.schema.json", {
