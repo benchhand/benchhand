@@ -46,8 +46,11 @@ Resolution, per characteristic:
      warning). It makes a categorical limit (equals, one_of: enclosure, nozzle_material) unknown: such
      a requirement never falls through to a lower layer.
   6. A one_of limit on nozzle_diameter lists discrete sizes (`quantities`), compared as whole micrometres, never
-     as floats. A subset of the parent set, or a set wholly inside a parent interval, tightens it; any other
-     set needs `relaxes`. Its scope facts follow rule 5 as for any requirement.
+     as floats. A set meeting a range (>=, <=, <, >, between), in either layer order or at equal specificity,
+     resolves to the members the range admits: a tightening, with no warning; the dropped sizes go in the
+     trace. Equally specific sets from different guidelines that differ are recorded as disputed in the
+     trace. An empty result is unknown with a conflict reason. `relaxes` replaces in both directions. Its
+     scope facts follow rule 5 as for any requirement.
 """
 
 from __future__ import annotations
@@ -628,6 +631,10 @@ class _Bound:
         """Whether this bound is a discrete set of sizes in whole micrometres, not a categorical set."""
         return self.options is not None and self.units == "um"
 
+    def meets(self, other: _Bound) -> bool:
+        """Whether one of the two is a discrete set of sizes and the other a numeric interval."""
+        return (self.sizes_set() and other.interval is not None) or (other.sizes_set() and self.interval is not None)
+
     def admits(self, micrometres: int) -> bool:
         """Whether a whole number of micrometres lies in this numeric interval, its open ends excluded."""
         assert self.interval is not None and self.units is not None
@@ -834,6 +841,14 @@ def _merge(group: list[_Candidate]) -> _Bound | None:
     return merged
 
 
+def _disputed(group: list[_Candidate], merged: _Bound) -> list[Shadowed]:
+    """The trace of an equally specific group whose sources differ: no source states the intersection that is kept."""
+    if any(c.bound.within(merged) and merged.within(c.bound) for c in group):
+        return []
+    return [Shadowed(c.shown, c.defined_in.ref, c.layer, f"equally specific and disputed; the intersection {_show(merged)} is kept")
+            for c in group]
+
+
 def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[Key, str]], warnings: list[str],
           mi: Any) -> Resolved:
     """Tightens group by group, most general first. A candidate that cannot be a bound and outranks the group the fold
@@ -846,7 +861,7 @@ def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[K
         shadowed.append(Shadowed(candidate.shown, candidate.defined_in.ref, candidate.layer, why))
 
     for key in sorted({c.key for c in ready}):
-        group = [c for c in ready if c.key == key]
+        group = sorted((c for c in ready if c.key == key), key=lambda c: c.defined_in.ref)
         merged = _merge(group)
         if merged is None:
             names = ", ".join(f"{c.defined_in.ref} ({c.shown})" for c in group)
@@ -855,7 +870,17 @@ def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[K
         strictest = [c for c in group if c.bound.within(merged) and merged.within(c.bound)] or group
         for loser in (c for c in group if c not in strictest):
             hide(loser, "equally specific; the stricter value is kept")
+        shadowed.extend(_disputed(group, merged))
         if current is not None and not merged.within(current):
+            if current.meets(merged) and not all("relaxes" in c.limit for c in strictest):
+                # a set meeting a range keeps the sizes the range admits: a tightening of both, whichever is more specific
+                narrowed = current.intersect(merged)
+                if narrowed is None:
+                    names = ", ".join(f"{c.defined_in.ref} ({c.shown})" for c in [*strictest, *winners])
+                    return Resolved(characteristic, "unknown", warnings=tuple(warnings),
+                                    reasons=(f"{characteristic}: a discrete set and a range share no size: {names}",))
+                current, winners = narrowed, [*strictest, *winners]
+                continue
             if not all("relaxes" in c.limit for c in strictest):
                 for ignored in strictest:
                     hide(ignored, "weaker than a less specific limit and states no relaxes")
@@ -876,7 +901,21 @@ def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[K
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
                         reasons=(f"{characteristic}: the limit {_show(current)} cannot be stated with one operator "
                                  "(an interval with an open end); restate the sets so that one bound applies",))
+    shadowed.extend(_dropped(current, winners))
     return _resolved(characteristic, current, winners, shadowed, warnings, mi)
+
+
+def _dropped(current: _Bound, winners: list[_Candidate]) -> list[Shadowed]:
+    """The sizes of each winning set that another winner leaves out of the resolved set, with the winners that dropped them."""
+    if not current.sizes_set():
+        return []
+    found: list[Shadowed] = []
+    for kept in winners:
+        lost = (kept.bound.options or frozenset()) - (current.options or frozenset()) if kept.bound.sizes_set() else frozenset()
+        if lost:
+            by = ", ".join(f"{c.defined_in.ref} ({c.layer})" for c in winners if c is not kept)
+            found.append(Shadowed(_show(_Bound(None, "um", lost)), kept.defined_in.ref, kept.layer, f"sizes dropped by {by}"))
+    return found
 
 
 def _resolved(characteristic: str, current: _Bound, winners: list[_Candidate], shadowed: list[Shadowed], warnings: list[str],
