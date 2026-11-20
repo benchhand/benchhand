@@ -844,16 +844,30 @@ class JointNozzleConstraints(Directories):
                 self.assertIn("fdm.machine.tst@1", found.reasons[0])
                 self.assertFalse(any("would relax" in w for w in found.warnings), found.warnings)
 
-    def test_a_set_and_a_range_of_equal_rank_give_the_same_result_whatever_the_file_order(self) -> None:
+    def test_a_set_and_a_range_of_equal_rank_give_the_same_result_whatever_the_discovery_order(self) -> None:
+        put(self.shipped, "pa", guideline("fdm.material.pa", [discrete(*self.H2D)], material_family=["pa"]))
+        put(self.shipped, "pb", guideline("fdm.material.pb", [self.rng(">=", 0.6)], material_family=["pa"]))
+        real = gl.applicable
         results = []
-        for names in (("pa", "pb"), ("pb", "pa")):
-            put(self.shipped, names[0], guideline(f"fdm.material.{names[0]}", [discrete(*self.H2D)], material_family=["pa"]))
-            put(self.shipped, names[1], guideline(f"fdm.material.{names[1]}", [self.rng(">=", 0.6)], material_family=["pa"]))
-            found = resolve(record(), self.catalog(), "nozzle_diameter")
-            results.append((found.value, found.warnings, found.source, [p.guideline for p in found.provenance]))
+        for name, order in (("id order", list), ("reversed", lambda found: found[::-1])):
+            with self.subTest(name), mock.patch.object(gl, "applicable", lambda catalog, context: order(real(catalog, context))):
+                found = resolve(record(), self.catalog(), "nozzle_diameter")
+                dropped = [(s.value, s.guideline, s.why) for s in found.provenance[0].shadowed if "dropped" in s.why]
+                results.append((found.value, found.warnings, found.source, [p.guideline for p in found.provenance],
+                                [(s.guideline, s.why) for s in found.provenance[0].shadowed if "disputed" in s.why], dropped))
         self.assertEqual(results[0][:2], (microns(600, 800), ()))
-        self.assertEqual(results[0][:2], results[1][:2])
-        self.assertEqual(sorted(results[0][3]), sorted(results[1][3]))
+        self.assertEqual(results[0][2]["reference"], "fdm.material.pa")
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(sorted(g for g, _ in results[0][4]), ["fdm.material.pa@1", "fdm.material.pb@1"])
+        self.assertEqual(results[0][5], [("200 um, 400 um", "fdm.material.pa@1", "sizes dropped by fdm.material.pb@1 (material)")])
+
+    def test_a_set_and_a_range_of_equal_rank_from_different_sets_are_recorded_as_disputed(self) -> None:
+        put(self.shipped, "pa", guideline("fdm.material.pa", [discrete(*self.H2D)], material_family=["pa"]))
+        put(self.shipped, "pb", guideline("fdm.material.pb", [self.rng(">=", 0.6)], material_family=["pa"]))
+        found = resolve(record(), self.catalog(), "nozzle_diameter")
+        disputed = [s for s in found.provenance[0].shadowed if "disputed" in s.why]
+        self.assertEqual(sorted(s.guideline for s in disputed), ["fdm.material.pa@1", "fdm.material.pb@1"])
+        self.assertTrue(all("equally specific" in s.why and "600 um, 800 um" in s.why for s in disputed), disputed)
 
     def test_the_sizes_a_range_drops_reach_the_provenance_with_the_range_that_dropped_them(self) -> None:
         self.stack(self.rng(">=", 0.6), machine=discrete(*self.H2D))

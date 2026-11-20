@@ -46,8 +46,11 @@ Resolution, per characteristic:
      warning). It makes a categorical limit (equals, one_of: enclosure, nozzle_material) unknown: such
      a requirement never falls through to a lower layer.
   6. A one_of limit on nozzle_diameter lists discrete sizes (`quantities`), compared as whole micrometres, never
-     as floats. A subset of the parent set, or a set wholly inside a parent interval, tightens it; any other
-     set needs `relaxes`. Its scope facts follow rule 5 as for any requirement.
+     as floats. A set meeting a range (>=, <=, <, >, between), in either layer order or at equal specificity,
+     resolves to the members the range admits: a tightening, with no warning; the dropped sizes go in the
+     trace. Equally specific sets from different guidelines that differ are recorded as disputed in the
+     trace. An empty result is unknown with a conflict reason. `relaxes` replaces in both directions. Its
+     scope facts follow rule 5 as for any requirement.
 """
 
 from __future__ import annotations
@@ -850,6 +853,9 @@ def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[K
         strictest = [c for c in group if c.bound.within(merged) and merged.within(c.bound)] or group
         for loser in (c for c in group if c not in strictest):
             hide(loser, "equally specific; the stricter value is kept")
+        if not any(c.bound.within(merged) and merged.within(c.bound) for c in group):
+            for member in group:  # no source states the intersection: the equally specific sources differ
+                hide(member, f"equally specific and disputed; the intersection {_show(merged)} is kept")
         if current is not None and not merged.within(current):
             if current.meets(merged) and not all("relaxes" in c.limit for c in strictest):
                 # a set meeting a range keeps the sizes the range admits: a tightening of both, whichever is more specific
