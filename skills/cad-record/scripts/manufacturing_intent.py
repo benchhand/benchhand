@@ -29,7 +29,7 @@ import hashlib
 import math
 import re
 import types
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
@@ -893,14 +893,129 @@ def schema_problems(documents: Mapping[str, Any]) -> list[Problem]:
     return problems
 
 
+def _band_text(band: Mapping[str, Any]) -> str:
+    low, high, units = band.get("min"), band.get("max"), band.get("units")
+    tail = f" {units}" if units else ""
+    if low is not None and high is not None:
+        return f"{low:g} to {high:g}{tail}"
+    return f"at least {low:g}{tail}" if low is not None else f"at most {high:g}{tail}"
+
+
+def _outside(value: float, band: Mapping[str, Any]) -> bool:
+    """Whether `value` lies beyond an edge of `band`; a conversion's rounding noise (10000 um is 10.000000000000002 mm)
+    stays inside."""
+    low, high = band.get("min"), band.get("max")
+    if low is not None and value < low and not math.isclose(value, low, rel_tol=1e-9):
+        return True
+    return high is not None and value > high and not math.isclose(value, high, rel_tol=1e-9)
+
+
+def _is_number(value: Any) -> TypeGuard[float]:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _band_values(band: Mapping[str, Any], instance: Any) -> list[tuple[str, float, int | str | None]]:
+    """The (label, value in the band's units, member) of every number `instance` holds that the band governs; the member
+    is the key of a quantity's end (value, lower, upper) or the index of an array element, None for a bare number. A quantity is read in the band's units. A quantity whose unit is not a
+    known unit that converts to them is left to the hard bounds (schema_problems reports it)."""
+    if isinstance(instance, Mapping) and "units" in instance:
+        written, units = instance["units"], band.get("units")
+        found: list[tuple[str, float, int | str | None]] = []
+        if not isinstance(written, str) or not isinstance(units, str):
+            return found
+        for key in ("value", "lower", "upper"):
+            number = instance.get(key)
+            if _is_number(number):
+                try:
+                    found.append((f"{key} {number:g} {written}", convert(number, written, units), key))
+                except IntentError:
+                    continue
+        return found
+    if isinstance(instance, (list, tuple)):
+        return [(f"{item:g}", item, index) for index, item in enumerate(instance) if _is_number(item)]
+    return [(f"{instance:g}", instance, None)] if _is_number(instance) else []
+
+
+def _plausible_keyword(_validator: Any, band: Any, instance: Any, _schema: Any) -> Iterator[Any]:
+    """The jsonschema `x-plausible` keyword: one error for each number outside the band, at the member that holds it
+    (a quantity's end or an array element), so a sibling's hard-bound error does not hide it. A band relative to a sibling (`relative_to`) needs that sibling, which a keyword does not see, so it is not
+    checked here."""
+    from jsonschema import ValidationError  # noqa: PLC0415 - needed only to validate
+
+    if not isinstance(band, Mapping) or "relative_to" in band:
+        return
+    for label, value, member in _band_values(band, instance):
+        if _outside(value, band):
+            yield ValidationError(f"{label} is outside the plausible band {_band_text(band)}",
+                                  path=[] if member is None else [member])
+
+
+def _plausible_errors(errors: Iterable[Any]) -> Iterator[Any]:
+    """The x-plausible errors among `errors` and, below a oneOf or anyOf the band made fail, among their contexts."""
+    for error in errors:
+        if error.validator == "x-plausible":
+            yield error
+        yield from _plausible_errors(error.context or ())
+
+
+def _leaves(errors: Iterable[Any]) -> Iterator[Any]:
+    """The errors among `errors` with no context and, for a oneOf or anyOf, the errors of its branches: the places a
+    value was refused, not the alternatives that held it."""
+    for error in errors:
+        if error.context:
+            yield from _leaves(error.context)
+        else:
+            yield error
+
+
+def _field(path: Sequence[Any]) -> str:
+    """The field a warning is about: the last name in `path`; a quantity's end (value, lower, upper) and a fact's `value`
+    are not names of their own, so the name before them."""
+    names = [str(part) for part in path if not isinstance(part, int)]
+    while len(names) > 1 and names[-1] in ("value", "lower", "upper"):
+        names.pop()
+    return names[-1] if names else "document"
+
+
+def plausibility_problems(documents: Mapping[str, Any]) -> list[Problem]:
+    """A warning `plausibility.<field>` for each value inside its schema's hard bound and outside the `x-plausible` band that
+    applies to it (needs jsonschema). The band is the one the validator reaches for that value, through `$ref`, `allOf` and
+    `if`/`then`, so a calibration's limits take the band of their characteristic, and a quantity is read in the band's
+    units (15000 um against a band in mm). A number that fails its schema gets none (schema_problems reports it), while a sibling end of the same interval or array that is inside its hard bound still warns. A band
+    relative to a sibling value (layer_height to nozzle_diameter) is not checked."""
+    schemas = _sibling("cad_record_schema_registry", "schema_registry.py")
+    problems = []
+    for rel, document in sorted(documents.items()):
+        name = schema_for(rel)
+        if name is None:
+            continue
+        leaves = list(_leaves(schemas.document_validator(SCHEMAS, name).iter_errors(document)))
+        refused = [tuple(e.absolute_path) for e in leaves]
+        mistyped = [tuple(e.absolute_path) for e in leaves if e.validator == "type"]  # a value of the wrong type has no members to band
+        banded = schemas.keyword_validator(SCHEMAS, name, "x-plausible", _plausible_keyword)
+        seen = set()
+        for error in _plausible_errors(banded.iter_errors(document)):
+            path = tuple(error.absolute_path)
+            if any(hard[: len(path)] == path for hard in refused):  # the member itself fails its hard bound
+                continue
+            if any(path[: len(wrong)] == wrong and len(wrong) < len(path) for wrong in mistyped):  # [1] where a number is due
+                continue
+            pointer = "/".join(str(part) for part in path)
+            message = f"{pointer + ': ' if pointer else ''}{error.message}"
+            if (pointer, message) not in seen:
+                seen.add((pointer, message))
+                problems.append(Problem(f"plausibility.{_field(path)}", f"hw/{rel}", pointer, message, "warning"))
+    return problems
+
+
 def check_documents(documents: Mapping[str, Any], paths: Iterable[str]) -> list[Problem]:
-    """schema_problems plus the normalized record's problems of `documents`, only those whose `Problem.path` is in `paths`.
+    """schema_problems, plausibility_problems (warnings) and the normalized record's problems of `documents`, only those whose `Problem.path` is in `paths`.
 
     `paths` takes the `hw/`-prefixed form Problem.path uses (`hw/requirements.yaml`), not bare rels.
     The record is normalized without an `hw` directory, so file-backed references (decisions, cases,
     source artifacts) are not checked; `check_record` checks them."""
     wanted = frozenset(paths)
-    problems = schema_problems(documents) + list(normalize_record(documents).problems)
+    problems = schema_problems(documents) + plausibility_problems(documents) + list(normalize_record(documents).problems)
     return [problem for problem in problems if problem.path in wanted]
 
 
@@ -913,11 +1028,11 @@ def load_record(hw: Path, *, snapshot: bool = False) -> Record:
 
 
 def check_record(hw: Path, *, snapshot: bool = False) -> tuple[Record, list[Problem]]:
-    """load_record plus schema_problems: everything this contract reports about the record at `hw`."""
+    """load_record plus schema_problems and plausibility_problems: everything this contract reports about the record at `hw`."""
     documents, problems = read_documents(hw)
     record = normalize_record(documents, hw=hw)
     record = with_guidelines(_with_problems(record, list(record.problems)), hw, snapshot=snapshot)
-    return record, problems + schema_problems(documents) + list(record.problems)
+    return record, problems + schema_problems(documents) + plausibility_problems(documents) + list(record.problems)
 
 
 def with_guidelines(record: Record, hw: Path, *, snapshot: bool = False) -> Record:

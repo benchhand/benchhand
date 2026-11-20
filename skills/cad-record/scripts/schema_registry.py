@@ -167,6 +167,23 @@ def document_validator(root: Path, name: str, *, formats: bool = False, also: It
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
+def _keyword_validator(digest: str, state: State, keyword: str, check: Callable[..., Any]) -> Any:
+    from jsonschema import Draft202012Validator, validators  # noqa: PLC0415 - needed only to validate
+
+    extended = validators.extend(Draft202012Validator, {keyword: check})
+    return extended(_schema(digest), registry=_registry(state))
+
+
+def keyword_validator(root: Path, name: str, keyword: str, check: Callable[..., Any]) -> Any:
+    """The validator of `root/name` with one extra keyword, `check(validator, value, instance, schema)` as in
+    jsonschema.validators.extend. jsonschema keeps no annotations, so this is how a caller reads an annotation
+    such as `x-plausible` at the instance the schema applies it to, through the same `$ref`, `allOf`, `if` and
+    `then` resolution as validation. `check` must be a module-level function: it is part of the cache key."""
+    resolved = _resolved(str(root))
+    return _keyword_validator(_content(resolved / name), _directory_state(_roots(root, ())), keyword, check)
+
+
+@lru_cache(maxsize=_CACHE_SIZE)
 def _ref_validator(ref: str, state: State) -> Any:
     from jsonschema import Draft202012Validator  # noqa: PLC0415 - needed only to validate
 
