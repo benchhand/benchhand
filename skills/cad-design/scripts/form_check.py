@@ -1588,7 +1588,7 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
         if args.out:
             bundle = layout.scratch_path(args.hw, args.out, "--out")
             bundle.parent.mkdir(parents=True, exist_ok=True)
-            packet = assessment.packet(dependencies, trace=trace_row(pc, assessment, bundle.parent, str(args.out.parent)))
+            packet = assessment.packet(dependencies)  # a scratch packet is no sealed bundle: no hw/ path can cite a trace
             load_check_packet().validate(packet)  # never seal or hand on a packet that breaks its schema
             bundle.write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
         else:
