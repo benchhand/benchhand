@@ -31,3 +31,7 @@ skills/cad-analysis/scripts/ccx_failure.py
 skills/cad-analysis/scripts/mesh_quality.py
 skills/cad-analysis/scripts/fea_modes.py
 skills/cad-flow/scripts/fea_solvers.py
+
+# Generated typed shapes of the record schemas (scripts/gen_api.py), for job code that wants them;
+# standard library only.
+skills/cad-record/scripts/cad_api.py

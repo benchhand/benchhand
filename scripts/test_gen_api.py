@@ -1,0 +1,694 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
+"""gen_api turns the hand-written JSON Schemas into a typed API module and a reference doc, and --check
+catches stale committed output."""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import importlib.util
+import io
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import typing
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gen_api
+
+BASE = "https://srobroek.com/cad/schemas/"
+REPO = Path(__file__).resolve().parents[1]
+
+SHARED = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": BASE + "shared.schema.json",
+    "title": "Shared bits",
+    "$defs": {
+        "color": {"description": "A paint colour.", "enum": ["red", "green"]},
+        "id": {"type": "string", "pattern": "^[A-Z]{2}-[0-9]{4}$"},
+    },
+}
+WIDGET = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": BASE + "widget.schema.json",
+    "title": "Widget",
+    "description": "A widget record.",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["id", "dims"],
+    "properties": {
+        "id": {"$ref": "shared.schema.json#/$defs/id"},
+        "color": {"$ref": "shared.schema.json#/$defs/color"},
+        "size": {"type": "integer", "minimum": 1, "default": 3},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "dims": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["w"],
+            "properties": {"w": {"type": "number"}, "h": {"type": "number"}},
+        },
+        "mode": {"const": "fixed"},
+        "note": {"type": ["string", "null"]},
+        "parts": {"type": "array", "items": {"$ref": "#/$defs/part"}},
+    },
+    "dependentRequired": {"size": ["color"]},
+    "allOf": [{"if": {"properties": {"mode": {"const": "fixed"}}}, "then": {"required": ["size"]}}],
+    "$defs": {"part": {"type": "object", "additionalProperties": False, "required": ["n"], "properties": {"n": {"type": "integer"}}}},
+}
+SHARED_REL = "skills/cad-record/schemas/shared.schema.json"
+WIDGET_REL = "skills/cad-concept/assets/schemas/widget.schema.json"
+
+
+def write_json(root: Path, rel: str, data: dict[str, typing.Any]) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def run_main(argv: list[str], root: Path) -> tuple[int, str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = gen_api.main(argv, root=root)
+    return code, out.getvalue(), err.getvalue()
+
+
+class FixtureTree(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        write_json(self.root, SHARED_REL, SHARED)
+        write_json(self.root, WIDGET_REL, WIDGET)
+
+    def api(self) -> str:
+        return gen_api.generate(self.root)[gen_api.API_REL]
+
+    def doc(self) -> str:
+        return gen_api.generate(self.root)[gen_api.DOC_REL]
+
+
+class TypedDictOutput(FixtureTree):
+    def test_fields_types_and_required(self) -> None:
+        api = self.api()
+        for line in (
+            "class Widget(TypedDict):",
+            "    id: Required[SharedId]",
+            "    dims: Required[WidgetDims]",
+            "    color: NotRequired[SharedColor]",
+            "    size: NotRequired[int]",
+            "    tags: NotRequired[list[str]]",
+            '    mode: NotRequired[Literal["fixed"]]',
+            "    note: NotRequired[str | None]",
+            "    parts: NotRequired[list[WidgetPart]]",
+            "class WidgetDims(TypedDict):",
+            "    w: Required[float]",
+            "    h: NotRequired[float]",
+            "class WidgetPart(TypedDict):",
+            "    n: Required[int]",
+            'SharedColor = Literal["red", "green"]',
+            "SharedId = str",
+        ):
+            with self.subTest(line=line):
+                self.assertIn("\n" + line + "\n", api)
+
+    def test_unrepresentable_constraints_are_documented(self) -> None:
+        api = self.api()
+        for fragment in (
+            "^[A-Z]{2}-[0-9]{4}$",  # pattern on the shared id alias
+            "minimum: 1",
+            "dependentRequired",
+            '"size":["color"]',
+            "if",
+            "additionalProperties: false",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, api)
+
+    def test_generated_module_starts_with_the_spdx_header(self) -> None:
+        self.assertEqual(
+            self.api().splitlines()[:3],
+            ["# SPDX-FileCopyrightText: 2026 Sjors Robroek", "#", "# SPDX-License-Identifier: MPL-2.0"],
+        )
+
+    def test_header_marks_output_generated(self) -> None:
+        marker = self.api().splitlines()[3]
+        self.assertIn("generated by scripts/gen_api.py", marker)
+        self.assertIn("do not edit", marker)
+        self.assertIn("generated by scripts/gen_api.py", self.doc().splitlines()[0])
+
+    def test_reference_doc_lists_fields_defaults_and_enums(self) -> None:
+        doc = self.doc()
+        self.assertIn("A widget record.", doc)
+        self.assertIn("| `size` | `int` | no | `3` |", doc)
+        self.assertIn("| `id` | `SharedId` | yes |", doc)
+        self.assertIn('`Literal["red", "green"]`', doc)
+
+    def test_generated_module_imports_and_resolves_every_annotation(self) -> None:
+        module = import_source(self.api(), self.root / "cad_api_fixture.py")
+        hints = typing.get_type_hints(module.Widget, include_extras=False)
+        self.assertEqual(set(hints), {"id", "dims", "color", "size", "tags", "mode", "note", "parts"})
+        self.assertEqual(module.Widget.__required_keys__, {"id", "dims"})
+        self.assertEqual(module.WidgetDims.__optional_keys__, {"h"})
+
+
+def import_source(source: str, path: Path) -> typing.Any:
+    path.write_text(source, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[path.stem] = module  # TypedDict resolves string annotations through sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+class UnionAlternatives(FixtureTree):
+    """oneOf and anyOf keep every alternative and its required fields, so a union never degrades to Any."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/choice.schema.json", {
+            "$id": BASE + "choice.schema.json",
+            "$defs": {
+                "circle": {"type": "object", "additionalProperties": False, "required": ["radius"], "properties": {"radius": {"type": "number"}, "tag": {"type": "string"}}},
+                "rect": {"type": "object", "additionalProperties": False, "required": ["w", "h"], "properties": {"w": {"type": "number"}, "h": {"type": "number"}}},
+                "shape": {"oneOf": [{"$ref": "#/$defs/circle"}, {"$ref": "#/$defs/rect"}]},
+                "pick": {"anyOf": [{"type": "object", "additionalProperties": False, "required": ["x"], "properties": {"x": {"type": "integer"}}}, {"type": "string"}, {"type": "null"}]},
+                "holder": {"type": "object", "additionalProperties": False, "required": ["shape"], "properties": {"shape": {"$ref": "#/$defs/shape"}, "pick": {"$ref": "#/$defs/pick"}}},
+            },
+        })
+        self.module = import_source(self.api(), self.root / "cad_api_choice.py")
+
+    def test_one_of_refs_become_a_union_of_both_classes_with_their_required_fields(self) -> None:
+        alternatives = typing.get_args(self.module.ChoiceShape)
+        self.assertEqual(set(alternatives), {self.module.ChoiceCircle, self.module.ChoiceRect})
+        self.assertEqual(self.module.ChoiceCircle.__required_keys__, {"radius"})
+        self.assertEqual(self.module.ChoiceRect.__required_keys__, {"w", "h"})
+
+    def test_any_of_keeps_an_inline_object_a_scalar_and_null(self) -> None:
+        alternatives = typing.get_args(self.module.ChoicePick)
+        objects = [a for a in alternatives if typing.is_typeddict(a)]
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(objects[0].__required_keys__, {"x"})
+        self.assertEqual(set(alternatives) - set(objects), {str, type(None)})
+
+    def test_a_field_refers_to_the_union_alias_not_any(self) -> None:
+        self.assertIn("\n    shape: Required[ChoiceShape]\n", self.api())
+        self.assertIn("\n    pick: NotRequired[ChoicePick]\n", self.api())
+
+
+class OpenObjects(FixtureTree):
+    """An object that does not forbid extra keys accepts them (PEP 728 extra_items on Python 3.15+)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/bag.schema.json", {
+            "$id": BASE + "bag.schema.json",
+            "$defs": {
+                "open": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["box", "sphere"]}}},
+                "closed": {"type": "object", "additionalProperties": False, "properties": {"a": {"type": "integer"}}},
+                "typed": {"type": "object", "additionalProperties": {"type": "number"}, "properties": {"a": {"type": "integer"}}},
+                "dashed": {"type": "object", "properties": {"x-y": {"type": "integer"}}},
+                "base": {"type": "object", "properties": {"a": {"type": "integer"}}},
+                "child": {"allOf": [{"$ref": "#/$defs/base"}, {"type": "object", "unevaluatedProperties": False, "properties": {"b": {"type": "integer"}}}]},
+            },
+        })
+
+    def test_open_objects_are_mappings_for_every_python_and_say_what_that_costs(self) -> None:
+        api = self.api()
+        for name in ("BagOpen", "BagTyped", "BagDashed"):
+            with self.subTest(name=name):
+                self.assertIn(f"\n{name} = Mapping[str, Any]\n", api)
+        self.assertIn("from collections.abc import Mapping", api)
+        self.assertNotIn("extra_items", api)
+        self.assertNotIn("sys.version_info", api)
+        self.assertIn('Known keys: type: Literal["box", "sphere"]', api)
+        self.assertIn("Type checkers do not check the known keys", api)
+
+    def test_the_reference_lists_the_known_keys_of_an_open_object_and_the_lost_precision(self) -> None:
+        doc = self.doc()
+        section = doc[doc.index("### BagOpen"):doc.index("### BagTyped")]
+        self.assertIn("Alias of `Mapping[str, Any]`", section)
+        self.assertIn("Type checkers do not check the known keys", section)
+        self.assertIn("| `type` |", section)
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run the pinned mypy")
+    def test_the_projects_mypy_accepts_extra_keys_on_open_objects_and_rejects_them_on_closed_ones(self) -> None:
+        pin = re.search(r"mypy==([0-9.]+)", (REPO / "scripts" / "typecheck.py").read_text(encoding="utf-8"))
+        assert pin is not None
+        (self.root / "cad_api_bag.py").write_text(self.api(), encoding="utf-8")
+        (self.root / "consumer.py").write_text(
+            "from cad_api_bag import BagClosed, BagOpen\n"
+            "\n"
+            'open_literal: BagOpen = {"type": "box", "size": 3, "radius": 1.5}\n'
+            'closed_literal: BagClosed = {"a": 1}\n'
+            'closed_unknown: BagClosed = {"a": 1, "zzz": 2}\n',
+            encoding="utf-8",
+        )
+        # The way scripts/typecheck.py runs mypy: the repository config at the config's target version.
+        result = subprocess.run(
+            ["uv", "run", "--no-project", "--python", "3.12", "--with", f"mypy=={pin.group(1)}", "python", "-m", "mypy",
+             "--config-file", str(REPO / "mypy.ini"), "consumer.py"],
+            cwd=self.root, capture_output=True, text=True, check=False,
+        )
+        errors = [line for line in result.stdout.splitlines() if line.startswith("consumer.py:")]
+        self.assertEqual(len(errors), 1, result.stdout + result.stderr)
+        self.assertTrue(errors[0].startswith("consumer.py:5:"), errors[0])
+        self.assertIn("zzz", errors[0])
+
+    def test_closed_objects_stay_typeddicts(self) -> None:
+        for name in ("BagClosed", "BagChild"):
+            with self.subTest(name=name):
+                self.assertIn(f"\nclass {name}(TypedDict):\n", self.api())
+
+    def test_extra_key_schema_is_kept_in_the_notes(self) -> None:
+        self.assertIn('additionalProperties: {"type":"number"}', self.doc())
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.11")
+    def test_python_311_still_imports_the_module(self) -> None:
+        result = run_python(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.BagClosed)), generated.BagOpen)", "3.11")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['a'] collections.abc.Mapping[str, typing.Any]")
+
+
+class RecursiveSchema(FixtureTree):
+    def test_a_type_that_contains_itself_imports(self) -> None:
+        write_json(self.root, "skills/cad-record/schemas/tree.schema.json", {
+            "$id": BASE + "tree.schema.json",
+            "$defs": {
+                "node": {"oneOf": [{"$ref": "#/$defs/branch"}, {"type": "string"}]},
+                "branch": {"type": "object", "additionalProperties": False, "required": ["children"], "properties": {"children": {"type": "array", "items": {"$ref": "#/$defs/node"}}}},
+            },
+        })
+        module = import_source(self.api(), self.root / "cad_api_tree.py")
+        hints = typing.get_type_hints(module.TreeBranch)
+        self.assertEqual(set(hints), {"children"})
+
+
+class SelfReferencingClass(FixtureTree):
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/node.schema.json", {
+            "$id": BASE + "node.schema.json",
+            "type": "object", "additionalProperties": False,
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string"},
+                "next": {"$ref": "#"},
+                "children": {"type": "array", "items": {"$ref": "#"}},
+            },
+        })
+
+    def test_self_reference_is_quoted(self) -> None:
+        api = self.api()
+        self.assertIn('\n    next: NotRequired["Node"]\n', api)
+        self.assertIn('\n    children: NotRequired["list[Node]"]\n', api)
+        self.assertIn("\n    name: Required[str]\n", api)
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.11")
+    def test_module_imports_on_python_311_and_hints_resolve(self) -> None:
+        path = self.root / "cad_api_node.py"
+        path.write_text(self.api(), encoding="utf-8")
+        script = "import cad_api_node, typing; print(sorted(typing.get_type_hints(cad_api_node.Node)))"
+        result = subprocess.run(
+            ["uv", "run", "--no-project", "--python", "3.11", "python", "-B", "-c", script],
+            cwd=self.root, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['children', 'name', 'next']")
+
+
+def run_python(root: Path, source: str, script: str, version: str) -> subprocess.CompletedProcess[str]:
+    """Import `source` as module `generated` under the given Python and run `script` against it."""
+    (root / "generated.py").write_text(source, encoding="utf-8")
+    return subprocess.run(
+        ["uv", "run", "--no-project", "--python", version, "python", "-B", "-c", "import generated, typing\n" + script],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+
+
+def run_python311(root: Path, source: str, script: str) -> subprocess.CompletedProcess[str]:
+    return run_python(root, source, script, "3.11")
+
+
+class ReviewRound1(FixtureTree):
+    def add(self, stem: str, body: dict[str, typing.Any]) -> None:
+        write_json(self.root, f"skills/cad-record/schemas/{stem}.schema.json", {"$id": BASE + f"{stem}.schema.json", **body})
+
+    def assert_in_both(self, *fragments: str) -> None:
+        outputs = gen_api.generate(self.root)
+        for fragment in fragments:
+            for rel, text in outputs.items():
+                with self.subTest(fragment=fragment, output=rel):
+                    self.assertIn(fragment, text)
+
+    def test_prefix_items_are_a_list_type_with_positional_constraints_documented(self) -> None:
+        self.add("pos", {"type": "object", "additionalProperties": False, "properties": {
+            "mixed": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "string"}], "minItems": 2, "maxItems": 2, "items": False},
+        }, "$defs": {"vec": {"type": "array", "prefixItems": [{"type": "number"}] * 3, "minItems": 3, "maxItems": 3}}})
+        api = self.api()
+        self.assertIn("\nPosVec = list[float]\n", api)
+        self.assertIn("\n    mixed: NotRequired[list[float | str]]\n", api)
+        self.assertNotIn("tuple[", api)
+        self.assert_in_both('prefixItems: [{"type":"number"},{"type":"number"},{"type":"number"}]', "minItems: 3", 'prefixItems: [{"type":"number"},{"type":"string"}]', "items: false")
+
+    def test_all_of_and_ref_siblings_merge_fields_required_flags_and_notes(self) -> None:
+        self.add("base", {"$defs": {"base": {
+            "type": "object", "additionalProperties": False, "required": ["a"],
+            "properties": {"a": {"type": "string", "pattern": "^x$"}, "b": {"type": "integer"}},
+        }}})
+        self.add("merged", {"type": "object", "$defs": {
+            "viaAllOf": {"allOf": [{"$ref": "base.schema.json#/$defs/base"}, {"required": ["b"], "properties": {"c": {"type": "boolean"}}}]},
+            "viaRefSiblings": {"$ref": "base.schema.json#/$defs/base", "required": ["b"], "properties": {"d": {"type": "number", "minimum": 0}}},
+        }})
+        api = self.api()
+        for cls, extra in (("MergedViaAllOf", "    c: NotRequired[bool]"), ("MergedViaRefSiblings", "    d: NotRequired[float]")):
+            body = api.split(f"class {cls}(TypedDict):")[1].split("\n\n\n")[0]
+            with self.subTest(cls=cls):
+                self.assertIn("\n    a: Required[str]\n", body)
+                self.assertIn("\n    b: Required[int]\n", body)
+                self.assertIn(extra, body)
+                self.assertIn("additionalProperties: false", body)
+                self.assertIn("^x$", body)
+        doc = self.doc()
+        for cls, row in (("MergedViaAllOf", "| `c` | `bool` | no |"), ("MergedViaRefSiblings", "| `d` | `float` | no |")):
+            section = doc.split(f"### {cls}\n")[1].split("\n### ")[0]
+            with self.subTest(cls=cls, output="doc"):
+                self.assertIn("| `a` | `str` | yes |", section)
+                self.assertIn("| `b` | `int` | yes |", section)
+                self.assertIn(row, section)
+                self.assertIn("additionalProperties: false", section)
+                self.assertIn("^x$", section)
+
+    def test_required_keys_without_properties_are_documented(self) -> None:
+        self.add("std", {"type": "object", "additionalProperties": False, "properties": {
+            "standards": {"type": "object", "required": ["dimensioning"], "additionalProperties": {"type": "string"}},
+        }})
+        self.assertIn("\n    standards: NotRequired[dict[str, str]]\n", self.api())
+        self.assert_in_both('required keys: ["dimensioning"]')
+
+    def test_keyword_named_optional_field_stays_optional_on_python_311(self) -> None:
+        self.add("kw", {"type": "object", "additionalProperties": False, "required": ["from"], "properties": {"class": {"type": "string"}, "from": {"type": "integer"}}})
+        result = run_python311(self.root, self.api(), "print(sorted(generated.Kw.__required_keys__), sorted(generated.Kw.__optional_keys__))")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['from'] ['class']")
+
+    def test_conditional_only_root_keeps_its_documentation_and_conditions(self) -> None:
+        self.add("pick", {
+            "title": "Pick one", "description": "Chooses a version by schema_version.",
+            "if": {"type": "object", "required": ["schema_version"]},
+            "then": {"$ref": "#/$defs/v2"}, "else": {"$ref": "#/$defs/v1"},
+            "$defs": {"v1": {"type": "object", "properties": {"a": {"type": "string"}}}, "v2": {"type": "object", "properties": {"b": {"type": "string"}}}},
+        })
+        self.assertIn("\nPick = PickV2 | PickV1\n", self.api())
+        self.assert_in_both("Chooses a version by schema_version.", 'if {"type":"object","required":["schema_version"]} then')
+
+    def test_false_schema_property_generates_an_importable_module(self) -> None:
+        self.add("nothing", {"type": "object", "additionalProperties": False, "properties": {"gone": False}})
+        result = run_python311(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.Nothing)))")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "['gone']")
+
+
+class RefSiblingConstraints(FixtureTree):
+    def schema(self, reach: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        return {
+            "$id": BASE + "refs.schema.json",
+            "type": "object", "additionalProperties": False,
+            "properties": {"reach": reach, "code": {"$ref": "#/$defs/Tag", "pattern": "^t-"}},
+            "$defs": {"Pos": {"type": "number"}, "Tag": {"type": "string"}},
+        }
+
+    def test_constraints_beside_a_ref_are_documented_and_the_type_stays_the_alias(self) -> None:
+        write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos", "maximum": 10}))
+        outputs = gen_api.generate(self.root)
+        api = outputs[gen_api.API_REL]
+        self.assertIn("\n    reach: NotRequired[RefsPos]\n", api)
+        self.assertIn("\n    code: NotRequired[RefsTag]\n", api)
+        for rel, text in outputs.items():
+            for fragment in ("reach: maximum: 10", 'code: pattern: "^t-"') if rel == gen_api.API_REL else ("`reach`: maximum: 10", '`code`: pattern: "^t-"'):
+                with self.subTest(output=rel, fragment=fragment):
+                    self.assertIn(fragment, text)
+
+    def test_check_reports_drift_when_a_bound_is_added_beside_a_ref(self) -> None:
+        write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos"}))
+        self.assertEqual(run_main([], self.root)[0], 0)
+        write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos", "maximum": 10}))
+        code, _, err = run_main(["--check"], self.root)
+        self.assertNotEqual(code, 0)
+        self.assertIn(gen_api.API_REL, err)
+        self.assertIn(gen_api.DOC_REL, err)
+
+
+class DroppedConstraints(FixtureTree):
+    """A bound on a $ref's sibling `items`, or inside a conditional allOf member, reaches both outputs."""
+
+    QTY_MM = {"if": {"required": ["units"], "properties": {"units": {"const": "mm"}}}, "then": {"properties": {"value": {"maximum": 3}}}}
+    QTY_M = {"if": {"required": ["units"], "properties": {"units": {"const": "m"}}}, "then": {"properties": {"value": {"maximum": 0.003}}}}
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/limits.schema.json", {
+            "$id": BASE + "limits.schema.json",
+            "type": "object", "additionalProperties": False,
+            "properties": {"vec": {"$ref": "#/$defs/vec", "items": {"minimum": 0}}},
+            "$defs": {
+                "vec": {"type": "array", "items": {"type": "number"}},
+                "qty": {"properties": {"units": {"enum": ["mm", "m"]}}, "allOf": [self.QTY_MM, self.QTY_M]},
+            },
+        })
+
+    def assert_in_both(self, *fragments: str) -> None:
+        for rel, text in gen_api.generate(self.root).items():
+            for fragment in fragments:
+                with self.subTest(output=rel, fragment=fragment):
+                    self.assertIn(fragment, text)
+
+    def test_items_bound_beside_a_ref_is_documented_and_the_type_stays_the_alias(self) -> None:
+        self.assert_in_both("items.minimum: 0")
+        self.assertIn("\n    vec: NotRequired[LimitsVec]\n", self.api())
+
+    def test_each_conditional_all_of_member_keeps_its_per_unit_bound(self) -> None:
+        self.assert_in_both('"const":"mm"', '"maximum":3}', '"const":"m"', '"maximum":0.003}')
+
+    def test_the_four_material_quantities_keep_their_per_unit_bounds(self) -> None:
+        outputs = gen_api.generate(REPO)
+        for rel, text in outputs.items():
+            for fragment in ('"const":"GPa"', '"maximum":1200000', '"const":"deg_C"', '"const":"g_cm3"'):
+                with self.subTest(output=rel, fragment=fragment):
+                    self.assertIn(fragment, text)
+
+
+class SchemaHashDrift(FixtureTree):
+    REL = "skills/cad-record/schemas/inherit.schema.json"
+    BASE_DOC = {
+        "$id": BASE + "inherit.schema.json",
+        "$defs": {
+            "base": {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}},
+            "Strs": {"type": "array", "items": {"type": "string"}},
+        },
+        "allOf": [{"$ref": "#/$defs/base"}, {"properties": {"a": {"maxLength": 9}}}],
+        "properties": {"names": {"$ref": "#/$defs/Strs"}},
+    }
+
+    def rendered_body(self) -> dict[str, str]:
+        """The generated outputs without their schema-hash header lines."""
+        return {rel: "\n".join(line for line in text.splitlines() if "schema-sha256" not in line) for rel, text in gen_api.generate(self.root).items()}
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, self.REL, self.BASE_DOC)
+        code, _, err = run_main([], self.root)
+        self.assertEqual(code, 0, err)
+
+    def check(self) -> tuple[int, str]:
+        code, _, err = run_main(["--check"], self.root)
+        return code, err
+
+    def test_edits_the_renderer_does_not_show_still_fail_check_naming_the_schema(self) -> None:
+        edits = {
+            "refined inherited bound": lambda d: d["allOf"][1]["properties"]["a"].update(maxLength=5),
+            "unrendered keyword": lambda d: d.update({"$comment": "reworded"}),
+        }
+        for name, edit in edits.items():
+            with self.subTest(edit=name):
+                changed = json.loads(json.dumps(self.BASE_DOC))
+                edit(changed)
+                before = self.rendered_body()
+                write_json(self.root, self.REL, changed)
+                self.assertEqual(self.rendered_body(), before, "the edit must be invisible to the renderer")
+                code, err = self.check()
+                self.assertNotEqual(code, 0)
+                self.assertIn(self.REL, err)
+                self.assertIn("python3 scripts/gen_api.py", err)
+                self.assertEqual(run_main([], self.root)[0], 0)
+                self.assertEqual(self.check()[0], 0)
+                write_json(self.root, self.REL, self.BASE_DOC)
+                run_main([], self.root)
+
+    def test_each_output_header_lists_every_schema_digest_sorted(self) -> None:
+        schema_files = [p for d in gen_api.SCHEMA_DIRS for p in (self.root / d).glob("*.schema.json")]
+        expected = sorted(((hashlib.sha256(p.read_bytes()).hexdigest(), p.relative_to(self.root).as_posix()) for p in schema_files), key=lambda pair: pair[1])
+        self.assertGreaterEqual(len(expected), 3)
+        for rel in (gen_api.API_REL, gen_api.DOC_REL):
+            with self.subTest(output=rel):
+                recorded = re.findall(r"schema-sha256 ([0-9a-f]{64}) (\S+)", (self.root / rel).read_text(encoding="utf-8"))
+                self.assertEqual(recorded, expected)
+
+    def test_an_invisible_edit_makes_both_outputs_stale(self) -> None:
+        changed = json.loads(json.dumps(self.BASE_DOC))
+        changed["$comment"] = "reworded"
+        write_json(self.root, self.REL, changed)
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        for rel in (gen_api.API_REL, gen_api.DOC_REL):
+            with self.subTest(output=rel):
+                self.assertIn(f"stale {rel}", err)
+
+    def test_a_whitespace_only_edit_fails_check(self) -> None:
+        path = self.root / self.REL
+        path.write_bytes(path.read_bytes() + b"\n")
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        self.assertIn(self.REL, err)
+
+    def test_regenerating_after_an_edit_passes_check(self) -> None:
+        path = self.root / self.REL
+        path.write_bytes(path.read_bytes() + b"\n")
+        self.assertEqual(run_main([], self.root)[0], 0)
+        self.assertEqual(self.check()[0], 0)
+
+    def test_an_added_schema_fails_check_naming_it(self) -> None:
+        rel = "skills/cad-concept/assets/schemas/extra.schema.json"
+        write_json(self.root, rel, {"$id": BASE + "extra.schema.json", "type": "object", "properties": {"x": {"type": "string"}}})
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        self.assertIn(rel, err)
+
+    def test_a_removed_schema_fails_check_naming_it(self) -> None:
+        (self.root / self.REL).unlink()
+        code, err = self.check()
+        self.assertNotEqual(code, 0)
+        self.assertIn(self.REL, err)
+
+
+class Determinism(FixtureTree):
+    def test_two_runs_are_byte_equal(self) -> None:
+        self.assertEqual(gen_api.generate(self.root), gen_api.generate(self.root))
+
+
+class CheckMode(FixtureTree):
+    def regenerate(self) -> None:
+        code, _, err = run_main([], self.root)
+        self.assertEqual(code, 0, err)
+
+    def test_check_passes_on_fresh_output(self) -> None:
+        self.regenerate()
+        code, out, err = run_main(["--check"], self.root)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("PASS", out)
+
+    def test_check_fails_naming_each_edited_file_and_the_fix(self) -> None:
+        self.regenerate()
+        for rel in (gen_api.API_REL, gen_api.DOC_REL):
+            with self.subTest(rel=rel):
+                path = self.root / rel
+                original = path.read_text(encoding="utf-8")
+                path.write_text(original + "# hand edit\n", encoding="utf-8")
+                code, _, err = run_main(["--check"], self.root)
+                path.write_text(original, encoding="utf-8")
+                self.assertNotEqual(code, 0)
+                self.assertIn(rel, err)
+                self.assertIn("python3 scripts/gen_api.py", err)
+
+    def test_check_fails_when_a_schema_changes_without_regeneration(self) -> None:
+        self.regenerate()
+        changed = json.loads(json.dumps(WIDGET))
+        changed["properties"]["extra"] = {"type": "boolean"}
+        write_json(self.root, WIDGET_REL, changed)
+        code, _, err = run_main(["--check"], self.root)
+        self.assertNotEqual(code, 0)
+        self.assertIn(gen_api.API_REL, err)
+        self.assertIn(gen_api.DOC_REL, err)
+
+    def test_check_fails_when_outputs_are_missing(self) -> None:
+        code, _, err = run_main(["--check"], self.root)
+        self.assertNotEqual(code, 0)
+        self.assertIn(gen_api.API_REL, err)
+
+    def test_check_writes_nothing(self) -> None:
+        run_main(["--check"], self.root)
+        self.assertFalse((self.root / gen_api.API_REL).exists())
+
+
+class Coverage(FixtureTree):
+    def test_a_new_schema_in_either_directory_appears_in_both_outputs(self) -> None:
+        for rel, name in (
+            ("skills/cad-record/schemas/gadget.schema.json", "Gadget"),
+            ("skills/cad-concept/assets/schemas/gizmo.schema.json", "Gizmo"),
+        ):
+            with self.subTest(rel=rel):
+                write_json(self.root, rel, {
+                    "$id": BASE + Path(rel).name,
+                    "title": name,
+                    "type": "object", "additionalProperties": False,
+                    "properties": {"x": {"type": "string"}},
+                })
+                outputs = gen_api.generate(self.root)
+                self.assertIn(f"class {name}(TypedDict):", outputs[gen_api.API_REL])
+                self.assertIn(Path(rel).name, outputs[gen_api.DOC_REL])
+
+    def test_unresolvable_ref_fails_with_the_ref_named(self) -> None:
+        broken = json.loads(json.dumps(WIDGET))
+        broken["properties"]["id"] = {"$ref": "missing.schema.json#/$defs/id"}
+        write_json(self.root, WIDGET_REL, broken)
+        code, _, err = run_main(["--check"], self.root)
+        self.assertNotEqual(code, 0)
+        self.assertIn("missing.schema.json", err)
+
+    def test_a_ref_that_does_not_resolve_keeps_the_original_lookup_error_as_its_cause(self) -> None:
+        broken = json.loads(json.dumps(WIDGET))
+        broken["properties"]["id"] = {"$ref": "shared.schema.json#/$defs/nope"}
+        write_json(self.root, WIDGET_REL, broken)
+        with self.assertRaises(ValueError) as caught:
+            gen_api.generate(self.root)
+        self.assertIn("nope", str(caught.exception))
+        self.assertIsInstance(caught.exception.__cause__, KeyError)
+
+    def test_missing_schema_directory_fails(self) -> None:
+        (self.root / SHARED_REL).unlink()
+        (self.root / "skills/cad-record/schemas").rmdir()
+        code, _, err = run_main(["--check"], self.root)
+        self.assertNotEqual(code, 0)
+        self.assertIn("skills/cad-record/schemas", err)
+
+
+class RepositorySchemas(unittest.TestCase):
+    """The committed schemas, as the CI check sees them."""
+
+    def test_every_schema_file_in_the_repository_is_walked(self) -> None:
+        on_disk = {p.relative_to(REPO).as_posix() for p in REPO.glob("skills/**/*.schema.json")}
+        doc = gen_api.generate(REPO)[gen_api.DOC_REL]
+        missing = sorted(rel for rel in on_disk if rel not in doc)
+        self.assertEqual(missing, [], "schema files absent from the generated reference; register their directory in gen_api.SCHEMA_DIRS")
+
+    def test_committed_api_module_imports_and_resolves_every_annotation(self) -> None:
+        path = REPO / gen_api.API_REL
+        with tempfile.TemporaryDirectory() as tmp:
+            module = import_source(path.read_text(encoding="utf-8"), Path(tmp) / "cad_api_committed.py")
+        classes = [v for v in vars(module).values() if typing.is_typeddict(v)]
+        self.assertGreater(len(classes), 20)
+        for cls in classes:
+            with self.subTest(cls=cls.__name__):
+                typing.get_type_hints(cls)
+
+
+if __name__ == "__main__":
+    unittest.main()

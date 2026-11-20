@@ -57,6 +57,9 @@ jobs:
       - name: Generated files
         run: uv run --no-project --with-requirements harness/test-requirements-min.txt python -B harness/generate.py --check
 
+      - name: Generated typed API and schema reference
+        run: uv run --no-project --python 3.11 python -B scripts/gen_api.py --check
+
       - name: Scoped Python type check
         run: uv run --no-project --locked --script scripts/typecheck.py
 
