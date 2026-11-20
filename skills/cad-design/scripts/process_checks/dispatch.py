@@ -274,7 +274,7 @@ def probe_plan(record: Any, pn: str, component: str, *, today: date | None = Non
     directions: dict[str, list[float]] = {}
     walls: list[float] = []
     for ctx in component_contexts(record, pn, component, catalog, today):
-        op = ctx.op
+        op = ctx.operation
         parsed, _ = access_directions(((op.setup or {}).get("access") or {}).get("sides") or ())
         for _, vector in parsed:
             key = direction_key(vector)  # a parsed side is an axis direction, so it always has a key
