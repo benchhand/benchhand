@@ -32,8 +32,10 @@ rules). Process comes from hw/parts/<PN>/part.yaml (`fdm`, `cnc`, `purchased`); 
 Joints: hw/assembly.yaml. When DIR holds build_reference.py's `build.json`, its
 in-memory facts per part feed the two kernel checks below. An fdm part's minimum wall is the
 guideline value (cad-record guidelines.py, the project's sets over the shipped ones) for the capability
-profile and material of its first fdm route operation: 3 x line width (or nozzle) with a 0.8 mm floor, or
-the plain floor when no nozzle or line width is known. `product.yaml` `manufacturing.min_wall_mm`, where
+profile and material of each fdm route operation on each component of the part. The largest of those
+minimums applies: 3 x line width (or nozzle) with a 0.8 mm floor. The floor alone applies only where the
+guideline set states it, for a profile with no nozzle or line width. A part with no capability profile has
+an unknown minimum wall (`min_wall_limit_unknown`). `product.yaml` `manufacturing.min_wall_mm`, where
 written, overrides it per process (`fdm`, `cnc`; each above 0 mm) as a project policy, with a warning when
 it is looser; an invalid override is an error (exit 2), never a silent default.
 
