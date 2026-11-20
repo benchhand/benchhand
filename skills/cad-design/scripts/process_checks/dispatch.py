@@ -162,7 +162,6 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
     (keyed (PN, component); the sole solid is `main`). Without geometry every geometric check is UNKNOWN. `catalog`
     (cad-record guidelines.discover) gives the guideline limits where no calibration holds; without it only
     calibrations count."""
-    mi = intent()
     obligations = expected(record)
     geometry = dict(geometry or {})
     today = today or date.today()
@@ -180,11 +179,7 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
         scope = ctx.guideline_context()
         if scope is not None:
             digests.update(guidelines().applicable_digests(catalog, scope))
-        if obligation.family.endswith(".coverage") and obligation.family.startswith("process."):
-            result = coverage_gap(ctx, obligation)
-        else:
-            handler = handler_for(obligation.family, op.kind if op is not None else None)
-            result = handler(ctx) if handler is not None else _no_handler(ctx, obligation)
+        result = _result(ctx, obligation)
         if scope is not None and catalog.refused and not refused_reported:
             refused_reported = True  # once per assessment, on the first obligation that could use a guideline
             result.findings.append(_refused(catalog.refused))
@@ -195,18 +190,30 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
         findings += drafted
         if ctx.consulted:
             traced.update(f["id"] for f in drafted)
-        row = {"obligation": obligation.id, "outcome": result.outcome, "level": obligation.level,
-               "method": result.method, "coverage": result.coverage}
-        if result.source:
-            row["source"] = dict(result.source)
-        if result.uncertainty:
-            row["uncertainty"] = result.uncertainty
-        linked = [f["id"] for f in drafted if f.get("obligation") == obligation.id]
-        if linked:
-            row["findings"] = linked
-        outcomes.append(mi.thaw(row))
+        row = _row(obligation, result, drafted)
+        outcomes.append(intent().thaw(row))
     return Assessment(obligations, tuple(outcomes), tuple(findings), types.MappingProxyType(dict(sorted(digests.items()))),
                       tuple(resolutions), frozenset(traced))
+
+
+def _result(ctx: Context, obligation: Any) -> Result:
+    if obligation.family.endswith(".coverage") and obligation.family.startswith("process."):
+        return coverage_gap(ctx, obligation)
+    handler = handler_for(obligation.family, ctx.op.kind if ctx.op is not None else None)
+    return handler(ctx) if handler is not None else _no_handler(ctx, obligation)
+
+
+def _row(obligation: Any, result: Result, drafted: list[dict[str, Any]]) -> dict[str, Any]:
+    row: dict[str, Any] = {"obligation": obligation.id, "outcome": result.outcome, "level": obligation.level,
+                           "method": result.method, "coverage": result.coverage}
+    if result.source:
+        row["source"] = dict(result.source)
+    if result.uncertainty:
+        row["uncertainty"] = result.uncertainty
+    linked = [f["id"] for f in drafted if f.get("obligation") == obligation.id]
+    if linked:
+        row["findings"] = linked
+    return row
 
 
 def _refused(refused: Any) -> Draft:
