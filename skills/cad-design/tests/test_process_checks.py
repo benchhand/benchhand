@@ -1730,6 +1730,50 @@ class LegacyWallLimitTests(Checks):
         planned = pc.probe_plan(load(self, documents), "TST-0101", "main", today=TODAY, catalog=catalog)["wall_mm"]
         self.assertEqual((planned, self.limit(documents, catalog=catalog)["required_mm"]), (2.0, 2.0))
 
+    def test_a_part_with_declared_components_takes_the_limit_of_the_operation_that_names_its_component(self) -> None:
+        components = [{"id": "body", "witness": [20.0, 10.0, 5.0]}, {"id": "tab", "witness": [65.0, 2.5, 1.0]}]
+        route = [FX.operation("print", "fdm", "tst_printer", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"}, components=["body"])]
+        profile = FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE, parameters=copy.deepcopy(NOZZLE_04))
+        documents = FX.record(parts=[part("TST-0101", route, process="fdm", components=components)], capabilities=[profile],
+                              materials=materials(), product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+        planned = pc.probe_plan(load(self, documents), "TST-0101", "body", today=TODAY, catalog=SHIPPED)["wall_mm"]
+        limit = self.limit(documents)
+        self.assertEqual((planned, limit["required_mm"], limit["status"]), (1.2, 1.2, "guideline"))
+
+    def test_an_operation_that_acts_on_no_component_of_the_part_is_named_as_such(self) -> None:
+        components = [{"id": "body", "witness": [20.0, 10.0, 5.0]}]
+        route = [FX.operation("print", "fdm", "tst_printer", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"}, components=["ghost"])]
+        profile = FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE, parameters=copy.deepcopy(NOZZLE_04))
+        record = MI.normalize_record(FX.record(parts=[part("TST-0101", route, process="fdm", components=components)],
+                                               capabilities=[profile], materials=materials()))  # the schema refuses "ghost"
+        limit = self.limit(record)
+        self.assertEqual((limit["required_mm"], limit["status"]), (None, "unknown"))
+        self.assertIn("none of its 1 route operations acts on a component of TST-0101 (body)", " ".join(limit["reasons"]))
+
+    def test_the_largest_guideline_wall_of_the_scoped_operations_applies_whatever_their_order(self) -> None:
+        """A 0.4 mm nozzle asks 1.2 mm and a 0.6 mm nozzle 1.8 mm. The probe plan scans at the largest minimum of any
+        operation, so the diagnostic does too. (It stays a guideline diagnostic: it reads neither calibrations, which the
+        process checks' wall obligation judges, nor min_web.)"""
+        nozzle_06 = {"nozzle_diameter": known(mm(0.6), "supplier_typical", [datasheet("TST printer datasheet")])}
+        for name, order in (("0.4 mm first", ("tst_fine", "tst_coarse")), ("0.6 mm first", ("tst_coarse", "tst_fine"))):
+            with self.subTest(name):
+                route = [FX.operation(f"print_{i}", "fdm", cap, output_state="printed", orientation=copy.deepcopy(APPROVED),
+                                      supports={"strategy": "none"}) for i, cap in enumerate(order)]
+                profiles = [FX.capability_profile("tst_fine", "fdm", envelope=ENVELOPE, parameters=copy.deepcopy(NOZZLE_04)),
+                            FX.capability_profile("tst_coarse", "fdm", envelope=ENVELOPE, parameters=nozzle_06)]
+                documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=profiles,
+                                      materials=materials(), product_data=FX.product(FX.use_case()),
+                                      decisions=("DR-001", "DR-002"))
+                planned = pc.probe_plan(load(self, documents), "TST-0101", "main", today=TODAY, catalog=SHIPPED)["wall_mm"]
+                self.assertEqual((planned, self.limit(documents)["required_mm"]), (1.8, 1.8))
+
+    def test_a_part_name_the_record_does_not_hold_has_an_unknown_wall_limit_not_a_traceback(self) -> None:
+        limit = self.form_check.wall_limit(pc, load(self, guided()), "TST-9999", "fdm", SHIPPED, {})
+        self.assertEqual((limit["required_mm"], limit["status"]), (None, "unknown"))
+        self.assertIn("TST-9999 is not a part of the record", " ".join(limit["reasons"]))
+
     @staticmethod
     def after_a_broken_operation(first: str, *, valid: bool = True) -> dict[str, Any]:
         """A print route whose first fdm operation names capability `first` (absent from the record, or a cnc profile),

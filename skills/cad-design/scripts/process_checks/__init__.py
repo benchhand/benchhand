@@ -30,13 +30,15 @@ Policy this package applies (a plugin rule, not a product fact):
   trials and first-article inspection are physical evidence the ledger holds (they are named as findings).
 
 Public API: `expected(record)`, `assess(record, geometry, today=, catalog=)` -> `Assessment` (`outcomes`, `findings`,
-`complete`, `result`, `packet(dependencies)`), `probe_plan(record, PN, component, catalog=)`, `Geometry`,
+`complete`, `result`, `packet(dependencies)`), `probe_plan(record, PN, component, catalog=)`, `component_contexts`, `guideline_scope`, `Geometry`,
 `TABLE`, `owned`, `NotAssessable`, `HandlerError`, `PRODUCER`, `PROBE_FORMAT`, `GUIDELINE_PASS_CLASSES`, `guidelines`.
 """
 
-from .core import GUIDELINE_PASS_CLASSES, IMPLICIT, PROBE_FORMAT, Geometry, guideline_scope, guidelines, intent
+from .core import (GUIDELINE_PASS_CLASSES, IMPLICIT, PROBE_FORMAT, Geometry, component_contexts, guideline_scope, guidelines,
+                   intent)
 from .dispatch import (PRODUCER, TABLE, Assessment, HandlerError, NotAssessable, assess, code_sha256, expected,
                        handler_for, owned, probe_plan)
 
 __all__ = ["GUIDELINE_PASS_CLASSES", "IMPLICIT", "PROBE_FORMAT", "PRODUCER", "TABLE", "Assessment", "Geometry", "HandlerError",
-           "NotAssessable", "assess", "code_sha256", "expected", "guideline_scope", "guidelines", "handler_for", "intent", "owned", "probe_plan"]
+           "NotAssessable", "assess", "code_sha256", "component_contexts", "expected", "guideline_scope", "guidelines",
+           "handler_for", "intent", "owned", "probe_plan"]

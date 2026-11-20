@@ -557,9 +557,11 @@ def wall_limit(pc: Any, record: Any, pn: str, process: str | None, catalog: Any,
     """The minimum wall of the legacy diagnostic for part `pn`, with where it comes from.
 
     An fdm part resolves min_wall through the guideline sets (cad-record guidelines.resolve_guidelines) for the
-    scope the process checks read (process_checks guideline_scope: the capability profile and stock material of the
-    first route operation that has one, as probe_plan walks them): the profile's line width or nozzle diameter sizes
-    the line-width rule. A profile without them gets the plain floor, and `note` says so; a part none of whose
+    scopes the process checks read (process_checks guideline_scope: the capability profile and stock material of every
+    route operation on every component): the profile's line width or nozzle diameter sizes the line-width rule, and
+    the largest minimum of the operations applies, as probe_plan scans at the largest limit of its operations. This is
+    a guideline diagnostic: it reads neither calibrations, which the process checks' wall obligation judges, nor
+    min_web. A profile without a nozzle or line width gets the plain floor, and `note` says so; a part none of whose
     operations has a scope is unknown, with the reason for each. `today` is the version's date (default today).
     product.yaml manufacturing.min_wall_mm, where it names the process, overrides that value as a project policy and warns when it
     is looser. None when neither gives a minimum (a purchased part, cnc without an override); a limit the guideline
@@ -569,22 +571,23 @@ def wall_limit(pc: Any, record: Any, pn: str, process: str | None, catalog: Any,
         resolved = {"required_mm": None, "status": "unknown", "reasons": ["no guideline set was consulted for min_wall"]}
     elif process == "fdm":
         gl = pc.guidelines()
-        context, why = pc.guideline_scope(record, pn, catalog, today or date.today()) if record is not None \
-            else (None, ["no record was read, so no capability profile is known"])
-        if context is None:  # the process checks read the same scope; without it they have no minimum either
-            resolved = {"required_mm": None, "status": "unknown", "reasons": why}
+        scopes, why = pc.guideline_scope(record, pn, catalog, today or date.today()) if record is not None \
+            else ([], ["no record was read, so no capability profile is known"])
+        found_all = [(context, gl.resolve_guidelines(catalog, context, "min_wall")) for context in scopes]
+        minimums = [(context, found) for context, found in found_all
+                    if found.status == "guideline" and found.operator in (">=", ">")]
+        if minimums:  # the largest minimum, as probe_plan scans at the largest of its operations' limits
+            context, found = max(minimums, key=lambda pair: float(pair[1].value.to("mm").value))
+            resolved = {"required_mm": float(found.value.to("mm").value), "status": "guideline",
+                        "source": dict(found.source), "guideline": found.provenance[0].guideline,
+                        "layer": found.provenance[0].layer}
+            if context.base_mm is None:
+                resolved["note"] = (f"min_wall from the {resolved['required_mm']:g} mm floor; "
+                                    "the profile states no nozzle or line width")
         else:
-            found = gl.resolve_guidelines(catalog, context, "min_wall")
-            if found.status == "guideline" and found.operator in (">=", ">"):
-                resolved = {"required_mm": float(found.value.to("mm").value), "status": "guideline",
-                            "source": dict(found.source), "guideline": found.provenance[0].guideline,
-                            "layer": found.provenance[0].layer}
-                if context.base_mm is None:
-                    resolved["note"] = (f"min_wall from the {resolved['required_mm']:g} mm floor; "
-                                        "the profile states no nozzle or line width")
-            else:
-                resolved = {"required_mm": None, "status": "unknown",
-                            "reasons": list(found.reasons) or [f"the guideline min_wall is {found.operator}, not a minimum"]}
+            reasons = why or [r for _, found in found_all
+                              for r in (found.reasons or [f"the guideline min_wall is {found.operator}, not a minimum"])]
+            resolved = {"required_mm": None, "status": "unknown", "reasons": list(dict.fromkeys(reasons))}
     if process not in overrides:
         return resolved
     value = overrides[process]
