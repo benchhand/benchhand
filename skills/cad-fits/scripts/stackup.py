@@ -1052,49 +1052,61 @@ def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, str 
     return (op, material), None
 
 
+def _resolve_sliding(record: Any, pns: list[str], catalog: Any, on: date | None,
+                     digests: dict[str, str]) -> tuple[list[Any], str | None]:
+    """(each part's resolved sliding clearance, or [] and why one is unusable). `digests` collects the sets consulted."""
+    resolutions = []
+    for pn in pns:
+        scope, why = _clearance_scope(record, pn)
+        if scope is None:
+            return [], str(why)
+        op, material = scope
+        resolved = GUIDELINES.resolve(record, op, CLEARANCE_CHARACTERISTIC, catalog=catalog, material=material, on=on)
+        resolutions.append(resolved)
+        context = GUIDELINES.context_for(record.capabilities[op.capability], record.materials[material])
+        digests.update(GUIDELINES.applicable_digests(catalog, context))
+        if resolved.status != "guideline":
+            return [], f"{pn}: " + "; ".join(resolved.reasons or (f"no guideline states {CLEARANCE_CHARACTERISTIC}",))
+        if resolved.operator not in MINIMUM_OPERATORS:
+            return [], f"{pn}: the {CLEARANCE_CHARACTERISTIC} limit is {resolved.operator}, not a minimum"
+        unapplied = [w for w in resolved.warnings if "not applied" in w or w.startswith("pinned ")]  # a pin that matched nothing
+        if unapplied:
+            return [], f"{pn}: a guideline the profile pins is not applied: {'; '.join(unapplied)}"
+    return resolutions, None
+
+
+def _clearance_inputs(record: Any, interface_id: str | None, catalog: Any) -> tuple[list[str], str | None]:
+    """(the sliding parts printed by fdm, or [] and why the check cannot start)."""
+    if record is None:
+        return [], "no bound record: the sliding parts, their printer and their material are unverified"
+    if catalog is None:
+        return [], "no guideline catalog was given for this record"
+    pns = _sliding_pns(record, interface_id)
+    if not pns:
+        return [], f"{interface_id or 'the stack subject'} records no surface with role sliding"
+    printed = [pn for pn in pns if _fdm_operation(record, pn) is not None]
+    if not printed:
+        return [], f"no sliding part is printed by fdm ({', '.join(pns)}): the guidelines cover fdm only"
+    return printed, None
+
+
 def _clearance_result(per: str, record: Any, interface_id: str | None, catalog: Any, on: date | None,
                       nominal: float | None) -> _ClearanceResult:
     """Judge the nominal gap per side against the largest minimum sliding clearance the sliding parts resolve."""
     row: dict[str, Any] = {"characteristic": CLEARANCE_CHARACTERISTIC, "per": per, "status": "unknown", "met": None,
                            "parts": [], "resolutions": [], "guidelines": {}}
-
-    def unknown(reason: str) -> _ClearanceResult:
+    printed, why = _clearance_inputs(record, interface_id, catalog)
+    resolutions: list[Any] = []
+    if why is None:
+        row["parts"] = printed
+        resolutions, why = _resolve_sliding(record, printed, catalog, on, row["guidelines"])
+        row["resolutions"] = GUIDELINES.trace_document(resolutions)["resolutions"]
+    if why is not None or nominal is None:
+        reason = why or "the nominal gap is not established: a contributor is unknown"
         return _ClearanceResult(dict(row, reasons=[reason]), reason)
-
-    if record is None:
-        return unknown("no bound record: the sliding parts, their printer and their material are unverified")
-    if catalog is None:
-        return unknown("no guideline catalog was given for this record")
-    pns = _sliding_pns(record, interface_id)
-    if not pns:
-        return unknown(f"{interface_id or 'the stack subject'} records no surface with role sliding")
-    printed = [pn for pn in pns if _fdm_operation(record, pn) is not None]
-    if not printed:
-        return unknown(f"no sliding part is printed by fdm ({', '.join(pns)}): the guidelines cover fdm only")
-    resolutions = []
-    for pn in printed:
-        scope, why = _clearance_scope(record, pn)
-        if scope is None:
-            return unknown(str(why))
-        op, material = scope
-        resolved = GUIDELINES.resolve(record, op, CLEARANCE_CHARACTERISTIC, catalog=catalog, material=material, on=on)
-        resolutions.append(resolved)
-        context = GUIDELINES.context_for(record.capabilities[op.capability], record.materials[material])
-        row["guidelines"].update(GUIDELINES.applicable_digests(catalog, context))
-        row["parts"].append(pn)
-        if resolved.status != "guideline":
-            return unknown(f"{pn}: " + "; ".join(resolved.reasons or (f"no guideline states {CLEARANCE_CHARACTERISTIC}",)))
-        if resolved.operator not in MINIMUM_OPERATORS:
-            return unknown(f"{pn}: the {CLEARANCE_CHARACTERISTIC} limit is {resolved.operator}, not a minimum")
-        unapplied = [w for w in resolved.warnings if "not applied" in w or w.startswith("pinned ")]  # a pin that matched nothing
-        if unapplied:
-            return unknown(f"{pn}: a guideline the profile pins is not applied: {'; '.join(unapplied)}")
-    row["resolutions"] = GUIDELINES.trace_document(resolutions)["resolutions"]
-    if nominal is None:
-        return unknown("the nominal gap is not established: a contributor is unknown")
     binding = max(resolutions, key=lambda r: float(r.value.to("mm").value))
     minimum = float(binding.value.to("mm").value)
-    per_side = nominal if per == "side" else nominal / 2
+    per_side = nominal / (1 if per == "side" else 2)
     met = per_side > minimum + CLEARANCE_EPS if binding.operator == ">" else per_side >= minimum - CLEARANCE_EPS
     row.update(status="guideline", met=met, nominal_per_side_mm=_round(per_side), minimum_mm=_round(minimum),
                operator=binding.operator, source=dict(binding.source or {}))
