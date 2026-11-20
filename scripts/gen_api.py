@@ -354,12 +354,16 @@ class Walker:
         if not isinstance(node, dict):
             return []
         if self.pure_ref(node):
-            return [label + n for n in self.node_notes(node)]
+            return [label + n for n in self.node_notes(node)] + self.child_notes(schema, node, label)
         notes = [label + n for n in self.node_notes(node) if not (label == "" and n == "additionalProperties: false" and self.is_object(schema, "", node))]
         if self.is_object(schema, "", node):
             return []
         if node.get("type") == "object" and "required" in node:
             notes.append(f"{label}required keys: {dump(node['required'])}")
+        return notes + self.child_notes(schema, node, label)
+
+    def child_notes(self, schema: Schema, node: dict[str, Any], label: str) -> list[str]:
+        """Notes of the schemas nested in `node` (items, extra keys, positions, alternatives and allOf members)."""
         children: list[tuple[str, Any]] = []
         if isinstance(node.get("items"), dict):
             children.append(("items.", node["items"]))
@@ -367,9 +371,10 @@ class Walker:
             children.append(("additionalProperties.", node["additionalProperties"]))
         children += [(f"prefixItems[{i}].", m) for i, m in enumerate(node.get("prefixItems", []))]
         for key in ("oneOf", "anyOf", "allOf"):
-            children += [(f"{key}[{i}].", m) for i, m in enumerate(node.get(key, [])) if isinstance(m, dict) and "if" not in m]
+            children += [(f"{key}[{i}].", m) for i, m in enumerate(node.get(key, [])) if isinstance(m, dict)]
+        notes: list[str] = []
         for prefix, child in children:
-            if not (isinstance(child, dict) and any(k in child for k in ("properties",))):
+            if not (isinstance(child, dict) and "properties" in child):
                 notes.extend(self.inline_notes(schema, child, label + prefix))
         return notes
 

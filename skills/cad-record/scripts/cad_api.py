@@ -4740,6 +4740,9 @@ class ManufacturingLoad(TypedDict):
 # A fact a guideline scope matches on: a known value is lowercase, as scope names are, so 'PLA' is refused
 #
 # Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/scope_fact
+#
+# Not expressible as types (see the schema):
+# - allOf[1].if {"required":["status"],"properties":{"status":{"const":"known"}}} then {"properties":{"value":{"pattern":"^[a-z0-9][a-z0-9_.-]*$"}}}
 ManufacturingMaterialsScopeFact = ManufacturingTextFact
 
 
@@ -4879,24 +4882,41 @@ ManufacturingMaterialsFactTemperature = Any
 # Density: above 0 and at most 25 g/cm3; below 0.5 g/cm3 is unusual for a solid
 #
 # Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/qty_density
+#
+# Not expressible as types (see the schema):
+# - allOf[0].if {"required":["units"],"properties":{"units":{"const":"g_cm3"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":25},"lower":{"exclusiveMinimum":0,"maximum":25},"upper":{"exclusiveMinimum":0,"maximum":25}}}
+# - allOf[1].if {"required":["units"],"properties":{"units":{"const":"kg_m3"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":25000},"lower":{"exclusiveMinimum":0,"maximum":25000},"upper":{"exclusiveMinimum":0,"maximum":25000}}}
 ManufacturingMaterialsQtyDensity = Any
 
 
 # Elastic, flexural, shear and creep modulus: above 0 and at most 1200 GPa, diamond's
 #
 # Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/qty_modulus
+#
+# Not expressible as types (see the schema):
+# - allOf[0].if {"required":["units"],"properties":{"units":{"const":"GPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1200},"lower":{"exclusiveMinimum":0,"maximum":1200},"upper":{"exclusiveMinimum":0,"maximum":1200}}}
+# - allOf[1].if {"required":["units"],"properties":{"units":{"const":"MPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1200000},"lower":{"exclusiveMinimum":0,"maximum":1200000},"upper":{"exclusiveMinimum":0,"maximum":1200000}}}
+# - allOf[2].if {"required":["units"],"properties":{"units":{"const":"bar"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":12000000},"lower":{"exclusiveMinimum":0,"maximum":12000000},"upper":{"exclusiveMinimum":0,"maximum":12000000}}}
 ManufacturingMaterialsQtyModulus = Any
 
 
 # Poisson's ratio: 0 up to, not including, 0.5
 #
 # Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/qty_poisson
+#
+# Not expressible as types (see the schema):
+# - allOf[0].if {"required":["units"],"properties":{"units":{"const":"dimensionless"}}} then {"properties":{"value":{"minimum":0,"exclusiveMaximum":0.5},"lower":{"minimum":0,"exclusiveMaximum":0.5},"upper":{"minimum":0,"exclusiveMaximum":0.5}}}
+# - allOf[1].if {"required":["units"],"properties":{"units":{"const":"percent"}}} then {"properties":{"value":{"minimum":0,"exclusiveMaximum":50},"lower":{"minimum":0,"exclusiveMaximum":50},"upper":{"minimum":0,"exclusiveMaximum":50}}}
 ManufacturingMaterialsQtyPoisson = Any
 
 
 # A temperature property: above absolute zero and at most 1000 deg_C; above 300 deg_C is unusual for a printed polymer
 #
 # Source: skills/cad-record/schemas/manufacturing-materials.schema.json#/$defs/qty_temperature
+#
+# Not expressible as types (see the schema):
+# - allOf[0].if {"required":["units"],"properties":{"units":{"const":"deg_C"}}} then {"properties":{"value":{"exclusiveMinimum":-273.15,"maximum":1000},"lower":{"exclusiveMinimum":-273.15,"maximum":1000},"upper":{"exclusiveMinimum":-273.15,"maximum":1000}}}
+# - allOf[1].if {"required":["units"],"properties":{"units":{"const":"K"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1273.15},"lower":{"exclusiveMinimum":0,"maximum":1273.15},"upper":{"exclusiveMinimum":0,"maximum":1273.15}}}
 ManufacturingMaterialsQtyTemperature = Any
 
 

@@ -437,6 +437,45 @@ class RefSiblingConstraints(FixtureTree):
         self.assertIn(gen_api.DOC_REL, err)
 
 
+class DroppedConstraints(FixtureTree):
+    """A bound on a $ref's sibling `items`, or inside a conditional allOf member, reaches both outputs."""
+
+    QTY_MM = {"if": {"required": ["units"], "properties": {"units": {"const": "mm"}}}, "then": {"properties": {"value": {"maximum": 3}}}}
+    QTY_M = {"if": {"required": ["units"], "properties": {"units": {"const": "m"}}}, "then": {"properties": {"value": {"maximum": 0.003}}}}
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/limits.schema.json", {
+            "$id": BASE + "limits.schema.json",
+            "type": "object",
+            "properties": {"vec": {"$ref": "#/$defs/vec", "items": {"minimum": 0}}},
+            "$defs": {
+                "vec": {"type": "array", "items": {"type": "number"}},
+                "qty": {"properties": {"units": {"enum": ["mm", "m"]}}, "allOf": [self.QTY_MM, self.QTY_M]},
+            },
+        })
+
+    def assert_in_both(self, *fragments: str) -> None:
+        for rel, text in gen_api.generate(self.root).items():
+            for fragment in fragments:
+                with self.subTest(output=rel, fragment=fragment):
+                    self.assertIn(fragment, text)
+
+    def test_items_bound_beside_a_ref_is_documented_and_the_type_stays_the_alias(self) -> None:
+        self.assert_in_both("items.minimum: 0")
+        self.assertIn("\n        vec: NotRequired[LimitsVec]\n", self.api())
+
+    def test_each_conditional_all_of_member_keeps_its_per_unit_bound(self) -> None:
+        self.assert_in_both('"const":"mm"', '"maximum":3}', '"const":"m"', '"maximum":0.003}')
+
+    def test_the_four_material_quantities_keep_their_per_unit_bounds(self) -> None:
+        outputs = gen_api.generate(REPO)
+        for rel, text in outputs.items():
+            for fragment in ('"const":"GPa"', '"maximum":1200000', '"const":"deg_C"', '"const":"g_cm3"'):
+                with self.subTest(output=rel, fragment=fragment):
+                    self.assertIn(fragment, text)
+
+
 class SchemaHashDrift(FixtureTree):
     REL = "skills/cad-record/schemas/inherit.schema.json"
     BASE_DOC = {
@@ -467,7 +506,6 @@ class SchemaHashDrift(FixtureTree):
         edits = {
             "refined inherited bound": lambda d: d["allOf"][1]["properties"]["a"].update(maxLength=5),
             "unrendered keyword": lambda d: d.update({"$comment": "reworded"}),
-            "items constraint beside a ref": lambda d: d["properties"]["names"].update(items={"minLength": 1}),
         }
         for name, edit in edits.items():
             with self.subTest(edit=name):
