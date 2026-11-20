@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import sys
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 import numpy as np
 from hypothesis import given, strategies as st
@@ -53,20 +56,18 @@ def triangle(draw: st.DrawFn) -> np.ndarray:
 
 
 @st.composite
-def case(draw: st.DrawFn) -> tuple[np.ndarray, float, np.ndarray, np.ndarray]:
-    """(corners (M, 3, 3), reach, free points (K, 3), cell-border picks (J, 4)) for one lookup."""
+def case(draw: st.DrawFn) -> tuple[np.ndarray, float, np.ndarray]:
+    """(corners (M, 3, 3), reach, points (K, 3)) for one lookup."""
     corners = np.stack(draw(st.lists(triangle(), min_size=1, max_size=40)))
     reach = draw(REACH)
-    points = [np.array(p) for p in draw(st.lists(POINT, max_size=20))]
+    points = [np.array(p) for p in draw(st.lists(POINT, max_size=40))]
     for _ in range(draw(st.integers(0, 30))):  # points at a set fraction of the reach from a triangle
         corner = corners[draw(st.integers(0, len(corners) - 1))]
         weights = np.array(draw(st.tuples(*[st.integers(0, 4)] * 3)), dtype=float) + 1e-3
         direction = np.array(draw(st.tuples(*[st.integers(-3, 3)] * 3)), dtype=float) + (1e-3, 0.0, 0.0)
         offset = direction / np.linalg.norm(direction) * reach * draw(NEAR_REACH)
         points.append(weights @ corner / weights.sum() + offset)
-    borders = np.array(draw(st.lists(st.tuples(st.integers(-2, 70), st.integers(-2, 70), st.integers(-2, 70),
-                                               st.integers(0, 7)), max_size=20)), dtype=float).reshape(-1, 4)
-    return corners, reach, np.array(points).reshape(-1, 3), borders
+    return corners, reach, np.array(points).reshape(-1, 3)
 
 
 def mesh_of(corners: np.ndarray) -> agreement.Mesh:
@@ -113,18 +114,56 @@ def joined(*meshes: agreement.Mesh) -> agreement.Mesh:
 
 
 class SurfaceIndex(unittest.TestCase):
+    def test_a_triangle_spanning_billions_of_cells_leaves_a_mesh_agreeing_with_itself(self) -> None:
+        """One triangle's grown box spans about 4e6 cells per axis, whose product overflows int64. It must still
+        count as wide, and the mesh of it and three small triangles must agree with itself."""
+        far = 4194303.0
+        small = [(0, 0, 0), (0.75, 0, 0), (0, 0.75, 0)]
+        corners = np.array(small * 3 + [(0, 0, 0), (far, far, 0), (far, 0, far)], dtype=float)
+        mesh = agreement.Mesh(corners, np.arange(len(corners)).reshape(-1, 3))
+        self.assertEqual(agreement.compare(mesh, mesh, 0.04)["status"], "pass")
+
+    def test_many_triangles_in_one_cell_are_measured_in_bounded_batches(self) -> None:
+        """100,000 copies of one triangle share every cell, so 1,500 points in its cells pair with 1.5e8 triangles.
+        No array of those pairs may exist at once: the largest array `within` builds stays at PAIR_BATCH. SEAM:
+        `_Surface.within` takes the points directly (compare samples its own). A wrapper on numpy's `repeat`
+        and `arange`, which build the pair arrays, records the largest length they return; that length stands in
+        for memory, which a test cannot measure stably. `_near` is wrapped to count the pairs measured."""
+        corners = np.tile(np.array([(0, 0, 0), (1, 0, 0), (0, 1, 0)], dtype=float), (100_000, 1))
+        surface = agreement._Surface(mesh_of(corners.reshape(-1, 3, 3)), 0.155)
+        points = np.tile([1.2, 1.2, 0.0], (1_500, 1))
+        largest, measured = [0], [0]
+        repeat, arange, near = np.repeat, np.arange, surface._near
+
+        def sized(build: Callable[..., np.ndarray]) -> Callable[..., np.ndarray]:
+            def wrapper(*args: Any, **kwargs: Any) -> np.ndarray:
+                made = build(*args, **kwargs)
+                largest[0] = max(largest[0], len(made))
+                return made
+            return wrapper
+
+        def counted(points: np.ndarray, point: np.ndarray, triangle: np.ndarray) -> np.ndarray:
+            measured[0] += len(point)
+            return near(points, point, triangle)
+
+        surface._near = counted  # type: ignore[method-assign]
+        with mock.patch.object(np, "repeat", sized(repeat)), mock.patch.object(np, "arange", sized(arange)):
+            found = surface.within(points)
+        self.assertFalse(found.any())  # (1.2, 1.2) is 0.28 mm from the triangle, beyond the reach
+        self.assertEqual(measured[0], 1_500 * 100_000)
+        self.assertLessEqual(largest[0], agreement.PAIR_BATCH)
+
     @given(case())
     def test_the_lookup_answers_every_point_as_a_search_of_every_triangle(
-            self, drawn: tuple[np.ndarray, float, np.ndarray, np.ndarray]) -> None:
-        corners, reach, points, borders = drawn
-        surface = agreement._Surface(mesh_of(corners), reach)
-        # Border picks: a cell corner of the lookup's own grid on the axes the mask names, else a free coordinate
-        mask = ((borders[:, 3:4].astype(int) >> np.arange(3)) & 1).astype(bool)
-        on_border = surface.origin + borders[:, :3] * surface.cell
-        free = corners.reshape(-1, 3)[np.arange(len(borders)) % (3 * len(corners))]
-        points = np.concatenate([points, np.where(mask, on_border, free)])
+            self, drawn: tuple[np.ndarray, float, np.ndarray]) -> None:
+        """Points on the 1/8 mm lattice land on cell borders without the test reading the grid: for the reaches
+        that are multiples of 1/8 mm the origin (a corner minus the reach) and the cell (twice the reach, or the
+        median extent of the boxes) are multiples of 1/8 mm too. SEAM: `_Surface` is built directly because
+        compare samples its own points; only its constructor and `within` are used."""
+        corners, reach, points = drawn
         if not len(points):
             return
+        surface = agreement._Surface(mesh_of(corners), reach)
         np.testing.assert_array_equal(surface.within(points), brute_force(corners, reach, points))
 
     def test_a_large_face_of_two_triangles_agrees_with_a_fine_mesh_of_it(self) -> None:

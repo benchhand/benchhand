@@ -226,6 +226,12 @@ class SurfaceIndexTests(unittest.TestCase):
     def test_a_face_off_axis_moved_0_2_mm_along_its_normal_does_not_agree(self) -> None:
         self.run_probe("test_a_face_off_axis_moved_0_2_mm_along_its_normal_does_not_agree")
 
+    def test_a_triangle_spanning_billions_of_cells_leaves_a_mesh_agreeing_with_itself(self) -> None:
+        self.run_probe("test_a_triangle_spanning_billions_of_cells_leaves_a_mesh_agreeing_with_itself")
+
+    def test_many_triangles_in_one_cell_are_measured_in_bounded_batches(self) -> None:
+        self.run_probe("test_many_triangles_in_one_cell_are_measured_in_bounded_batches")
+
 
 if __name__ == "__main__":
     unittest.main()

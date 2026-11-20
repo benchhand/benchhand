@@ -309,7 +309,7 @@ class _Surface:
         extent = float(np.median((self.box_high - self.box_low).max(axis=1)))
         self.cell = max(2.0 * reach, extent, 1e-9)
         low, high = self._index(self.box_low), self._index(self.box_high)
-        span = high - low + 1
+        span = np.minimum(high - low + 1, WIDE_CELLS + 1)  # capped per axis, so the product below cannot overflow
         count = span.prod(axis=1)
         self.wide = np.flatnonzero(count > WIDE_CELLS)
         narrow = np.flatnonzero(count <= WIDE_CELLS)
@@ -351,11 +351,12 @@ class _Surface:
         hit = self.keys[slot] == keys if len(self.keys) else np.zeros(len(keys), dtype=bool)
         point, slot = inside[hit], slot[hit]
         per = self.starts[slot + 1] - self.starts[slot]
-        pairs = np.repeat(point, per)
-        rows = np.arange(len(pairs)) - np.repeat(np.cumsum(per) - per, per) + np.repeat(self.starts[slot], per)
-        for start in range(0, len(pairs), PAIR_BATCH):
-            batch = slice(start, start + PAIR_BATCH)
-            result[self._near(points, pairs[batch], self.members[rows[batch]])] = True
+        after = np.cumsum(per)  # pair j of the flat (point, member) list belongs to the first entry with after > j
+        for start in range(0, int(after[-1]) if len(after) else 0, PAIR_BATCH):
+            flat = np.arange(start, min(start + PAIR_BATCH, int(after[-1])))
+            entry = np.searchsorted(after, flat, side="right")
+            rows = self.starts[slot[entry]] + flat - (after[entry] - per[entry])
+            result[self._near(points, point[entry], self.members[rows])] = True
         for start in range(0, len(points) if len(self.wide) else 0, BATCH):
             chosen = np.arange(start, min(start + BATCH, len(points)))
             point, triangle = np.repeat(chosen, len(self.wide)), np.tile(self.wide, len(chosen))
