@@ -20,7 +20,8 @@ record/ snapshot), then, for a record version 2 snapshot, process_checks: each o
 manufacturing_intent.required_checks this producer owns (process.<kind>.*, purchase.*, route.*,
 optical.route; physically validated ones belong to the evidence ledger) gets one outcome, judged on the
 exported manufacturing component files (versions/<V>/manufacturing/<PN>[/components/<COMP>]) in their
-export pose, against capability-profile calibrations only. The packet
+export pose, against capability-profile calibrations, else the guideline sets the version's record/ holds
+(graded by service class; process_checks). The packet
 (manufacturing-check-result.schema.json) is published as hw/checks/<V>/process/result.json (reused when
 the recipe matches; --replace for another), or written to --out instead. A snapshot of an unsupported record version is
 `not_assessed` with record.version_unsupported.
@@ -29,9 +30,12 @@ Parts: one STEP per part in DIR, named `<PN>.step` (cad-motion `--parts-dir`
 rules). Process comes from hw/parts/<PN>/part.yaml (`fdm`, `cnc`, `purchased`); a bought part
 (`make_buy: buy`, such as a pin made to drawing) is checked in its bought form, as `purchased`.
 Joints: hw/assembly.yaml. When DIR holds build_reference.py's `build.json`, its
-in-memory facts per part feed the two kernel checks below. `product.yaml`
-`manufacturing.min_wall_mm` overrides the minimum wall per process (`fdm`, `cnc`; each
-above 0 mm); an invalid override is an error (exit 2), never a silent default.
+in-memory facts per part feed the two kernel checks below. An fdm part's minimum wall is the
+guideline value (cad-record guidelines.py, the project's sets over the shipped ones) for the capability
+profile and material of its first fdm route operation: 3 x line width (or nozzle) with a 0.8 mm floor, or
+the plain floor when no nozzle or line width is known. `product.yaml` `manufacturing.min_wall_mm`, where
+written, overrides it per process (`fdm`, `cnc`; each above 0 mm) as a project policy, with a warning when
+it is looser; an invalid override is an error (exit 2), never a silent default.
 
 Per part (stdout JSON `parts`):
     form_class             part.yaml value (solid when absent)
@@ -40,7 +44,10 @@ Per part (stdout JSON `parts`):
                            thickness_mm and location_mm (null when no wall was
                            measured), faces, faces_sampled, samples, measured, tapered,
                            shallow with shallow_thickness_mm and shallow_location_mm,
-                           capped_faces, spacing_mm and seconds (see minimum_wall)
+                           capped_faces, spacing_mm and seconds (see minimum_wall), and
+                           `limit`: required_mm, status (guideline, override or unknown), source,
+                           guideline id@revision and layer, note, warnings and the resolved value an
+                           override replaced (see wall_limit)
     valid                  BRepCheck_Analyzer verdict on the STEP read-back
     solids, volume_mm3, area_mm2
     kernel_valid           BRepCheck verdict on the in-memory shape (build.json)
@@ -66,14 +73,16 @@ Checks (each failure is one `findings` entry):
                             (concave), purchased parts a shank (convex)
     block_like              F2+, made solid parts only: (axis_planar_fraction >= 0.80 or
                             blend_faces + freeform_faces == 0), with both OBB exemptions
-    min_wall                F2+, a process with a minimum (fdm 1.2 mm, or the override):
+    min_wall                F2+, a process with a minimum (the resolved fdm value, or the override):
                             the shortest sampled wall is below it
     min_wall_unmeasured     F2+, the same parts: no sample reached an opposing face, so
                             the scan proves nothing
+    min_wall_limit_unknown  F2+, an fdm part whose guideline min_wall cannot be stated: no scan,
+                            the reasons instead
     fdm_exterior_radius     F2+, fdm parts: min_convex_radius < --fdm-min-radius
     cnc_internal_radius     F2+, cnc parts: min_concave_radius < --cnc-tool-radius
 
-    The form checks (block_like, min_wall, min_wall_unmeasured, fdm_exterior_radius,
+    The form checks (block_like, min_wall, min_wall_unmeasured, min_wall_limit_unknown, fdm_exterior_radius,
     cnc_internal_radius) are universal heuristics: diagnostics with `blocking: false` (decision 3).
     Only brep_invalid, step_readback and joint_bore_missing carry `blocking: true`.
 
@@ -103,6 +112,7 @@ from typing import Any, NamedTuple
 SCRIPTS_DIR = Path(__file__).resolve().parent
 LAYOUT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "layout.py"
 CHECK_PACKET_PATH = LAYOUT_PATH.with_name("check_packet.py")
+GUIDELINES_PATH = LAYOUT_PATH.with_name("guidelines.py")  # the guideline resolver, hashed into producer_code
 PROCESS_SUBJECT = "process"  # hw/checks/<V>/process: this producer's bundle subject
 BLOCKING_CHECKS = frozenset({"brep_invalid", "step_readback", "joint_bore_missing"})  # the rest are diagnostics
 
@@ -131,7 +141,6 @@ BLOCK_MAX_THICKNESS_FRACTION = 0.10
 BLEND_MAX_RADIUS = 10.0
 BLEND_MAX_SPAN = math.radians(120.0)  # a fillet turns through its edge angle; a lug end turns 180 degrees
 AXIS_TOL = 1e-4  # sine of the allowed angle between a cylinder axis and a joint axis
-MIN_WALL_BY_PROCESS = {"fdm": 1.2}  # built-in minimum wall, mm: a 0.4 mm FDM nozzle's three perimeters
 MIN_WALL_PROCESSES = ("fdm", "cnc")  # the keys product.yaml manufacturing.min_wall_mm may set
 WALL_SPACING_FRACTION = 0.5  # sample spacing along each UV direction, as a fraction of the minimum wall
 WALL_FACE_SAMPLE_CAP = 4096  # samples per face; a larger face is sampled coarser and counted in capped_faces
@@ -517,16 +526,16 @@ def part_form_class(hw: Path, pn: str) -> str:
     return value if value in {"solid", "frame", "plate", "skeleton", "shell"} else "solid"
 
 
-def minimum_wall_thresholds(hw: Path) -> dict[str, float]:
-    """Built-in minima with product.yaml manufacturing.min_wall_mm overrides; an invalid override is a RecordError.
+def minimum_wall_overrides(hw: Path) -> dict[str, float]:
+    """product.yaml manufacturing.min_wall_mm, only where it is written; an invalid override is a RecordError.
 
     The override contract is cad-record's product schema: a non-empty mapping whose keys
-    are MIN_WALL_PROCESSES, each a number above 0 mm.
+    are MIN_WALL_PROCESSES, each a number above 0 mm. The schema's default is never applied as an override.
     """
     path = hw / "product.yaml"
     product = load_yaml_loader().safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
     manufacturing = product.get("manufacturing") if isinstance(product, dict) else None
-    thresholds = dict(MIN_WALL_BY_PROCESS)
+    thresholds: dict[str, float] = {}
     if not isinstance(manufacturing, dict) or "min_wall_mm" not in manufacturing:
         return thresholds
     overrides = manufacturing["min_wall_mm"]
@@ -541,6 +550,59 @@ def minimum_wall_thresholds(hw: Path) -> dict[str, float]:
             raise RecordError(f"{path}: manufacturing.min_wall_mm.{process} must be a number above 0 mm, got {value!r}")
         thresholds[process] = float(value)
     return thresholds
+
+
+def _fdm_profile(mi: Any, record: Any, pn: str) -> tuple[Any, Any]:
+    """(capability profile, material profile) of the first fdm route operation of part `pn`, each None when unknown."""
+    part = record.parts.get(pn) if record is not None else None
+    if part is None or mi.is_fact(part.intent.route):
+        return None, None
+    op = next((o for o in part.intent.route if o.kind == "fdm" and isinstance(o.capability, str)), None)
+    profile = record.capabilities.get(op.capability) if op is not None else None
+    material = part.intent.material_profile
+    return profile, record.materials.get(material) if isinstance(material, str) else None
+
+
+def wall_limit(pc: Any, record: Any, pn: str, process: str | None, catalog: Any,
+               overrides: dict[str, float]) -> dict[str, Any] | None:
+    """The minimum wall of the legacy diagnostic for part `pn`, with where it comes from.
+
+    An fdm part resolves min_wall through the guideline sets (cad-record guidelines.resolve_guidelines) for the
+    capability profile and material of its first fdm route operation: the profile's line width or nozzle diameter
+    sizes the line-width rule. Without them the plain floor applies, and `note` says so. product.yaml
+    manufacturing.min_wall_mm, where it names the process, overrides that value as a project policy and warns when it
+    is looser. None when neither gives a minimum (a purchased part, cnc without an override); a limit the guideline
+    sets cannot state has status unknown with its reasons."""
+    resolved: dict[str, Any] | None = None
+    if process == "fdm" and catalog is None:
+        resolved = {"required_mm": None, "status": "unknown", "reasons": ["no guideline set was consulted for min_wall"]}
+    elif process == "fdm":
+        gl = pc.guidelines()
+        profile, material = _fdm_profile(pc.intent(), record, pn)
+        context = gl.context_for(profile, material) if profile is not None else gl.Context("fdm")
+        found = gl.resolve_guidelines(catalog, context, "min_wall")
+        if found.status == "guideline" and found.operator in (">=", ">"):
+            resolved = {"required_mm": float(found.value.to("mm").value), "status": "guideline", "source": dict(found.source),
+                        "guideline": found.provenance[0].guideline, "layer": found.provenance[0].layer}
+            if context.base_mm is None:
+                why = "the profile states no nozzle or line width" if profile is not None \
+                    else "the part names no fdm capability profile, so no nozzle or line width is known"
+                resolved["note"] = f"min_wall from the {resolved['required_mm']:g} mm floor; {why}"
+        else:
+            resolved = {"required_mm": None, "status": "unknown",
+                        "reasons": list(found.reasons) or [f"the guideline min_wall is {found.operator}, not a minimum"]}
+    if process not in overrides:
+        return resolved
+    value = overrides[process]
+    limit: dict[str, Any] = {"required_mm": value, "status": "override",
+                             "source": {"kind": "policy", "reference": f"product.yaml manufacturing.min_wall_mm.{process}",
+                                        "origin": "project", "document": f"hw/product.yaml#/manufacturing/min_wall_mm/{process}"}}
+    if resolved is not None:
+        limit["resolved"] = resolved
+        if resolved["required_mm"] is not None and value < resolved["required_mm"] - 1e-9:
+            limit["warnings"] = [(f"manufacturing.min_wall_mm.{process} {value:g} mm is looser than the resolved "
+                                  f"{resolved['required_mm']:g} mm ({resolved['guideline']})")]
+    return limit
 
 
 def surface_sample(face: Any) -> tuple[Any, tuple[float, float, float], tuple[float, float, float], tuple[float, float, float, float]]:
@@ -1293,11 +1355,14 @@ def kernel_facts(parts_dir: Path) -> dict[str, dict[str, Any]]:
     return {pn: row for pn, row in parts.items() if "kernel_valid" in row and "kernel_volume_mm3" in row}
 
 
-def check(args: argparse.Namespace, pose: Any) -> dict[str, Any]:
+def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any = None) -> dict[str, Any]:
+    """The fidelity checks on `args.parts_dir`. `record` (manufacturing_intent.Record) and `catalog`
+    (guidelines.Catalog) give each fdm part its resolved minimum wall (wall_limit)."""
     from cadmodel.stepfile import READBACK_REL
 
     level = FIDELITY.index(args.fidelity)
-    wall_thresholds = minimum_wall_thresholds(args.hw)  # an invalid override stops the check before any part loads
+    overrides = minimum_wall_overrides(args.hw)  # an invalid override stops the check before any part loads
+    pc = load_process_checks()
     loaded = pose.load_definitions(args.hw, args.parts_dir)
     assembly = pose.load_assembly(args.hw)
     process = processes(args.hw)
@@ -1332,10 +1397,14 @@ def check(args: argparse.Namespace, pose: Any) -> dict[str, Any]:
                                  "max": READBACK_REL, "kernel_volume_mm3": kernel_v, "step_volume_mm3": volume})
         if level < 2:
             continue
-        required_wall = wall_thresholds.get(row["process"])  # none for purchased parts or a process without a minimum
+        limit = wall_limit(pc, record, pn, row["process"], catalog, overrides)  # None: purchased, or no minimum
+        required_wall = limit["required_mm"] if limit is not None else None
         row["min_wall"] = {"required_mm": None}
+        if limit is not None and required_wall is None:
+            row["min_wall"]["limit"] = limit
+            findings.append({"check": "min_wall_limit_unknown", "part": pn, "reasons": limit["reasons"]})
         if required_wall is not None:
-            wall = row["min_wall"] = minimum_wall(part.shape, required_wall)
+            wall = row["min_wall"] = {**minimum_wall(part.shape, required_wall), "limit": limit}
             if wall["thickness_mm"] is None:
                 findings.append({"check": "min_wall_unmeasured", "part": pn, "min_mm": required_wall,
                                  "faces": wall["faces"], "faces_sampled": wall["faces_sampled"],
@@ -1433,10 +1502,26 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def trace_row(pc: Any, assessment: Any, directory: Path, shown: str) -> dict[str, str] | None:
+    """Write the resolution trace of `assessment` into `directory` (guidelines.write_trace) and return its file_hash row
+    with the path as `shown`/<name>, or None when no guideline was consulted."""
+    if not assessment.resolutions:
+        return None
+    written = pc.guidelines().write_trace(directory, assessment.resolutions)
+    return {"path": f"{shown}/{written.name}", "sha256": _sha256(written)}
+
+
+def producer_code(pc: Any) -> str:
+    """The code a process bundle's recipe and packet name: the process checks, this file and cad-record's guideline
+    resolver (GUIDELINES_PATH). A change to any of them can change a limit, so a bundle of other code is never reused."""
+    return hashlib.sha256((pc.code_sha256() + _sha256(Path(__file__)) + _sha256(GUIDELINES_PATH)).encode("ascii")).hexdigest()
+
+
 def version_geometry(pc: Any, record: Any, folder: Path, label: str, manifest: dict[str, Any],
-                     today: date) -> dict[tuple[str, str], Any]:
+                     today: date, catalog: Any = None) -> dict[tuple[str, str], Any]:
     """The probe facts of every exported manufacturing component of a built version, keyed (PN, COMP).
-    Each component file is read alone; native feature locators are moved by its placement transform."""
+    Each component file is read alone; native feature locators are moved by its placement transform. `catalog`
+    gives the guideline wall minimum the scan runs at where no calibration names one."""
     from cadmodel import manufacture
 
     def document(key: str) -> dict[str, Any]:
@@ -1461,7 +1546,7 @@ def version_geometry(pc: Any, record: Any, folder: Path, label: str, manifest: d
             frame = placement.get("frame") or "model"
             build_axis = list(transform[2][:3]) if frame == "bed" and transform else None  # R^T z: the build axis, native
             measured = probe(part.shape, frame=frame, locators=transform_locators(locators, transform),
-                             plan=pc.probe_plan(record, pn, component, today=today), build_axis=build_axis)
+                             plan=pc.probe_plan(record, pn, component, today=today, catalog=catalog), build_axis=build_axis)
             evidence = ({"path": f"hw/versions/{label}/{entry['path']}/{name}", "sha256": _sha256(path)},)
             found[(pn, component)] = pc.Geometry(pn, component, measured, evidence)
     return found
@@ -1475,11 +1560,12 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
 
     layout = load_layout()
     label, folder, record_dir = layout.built_version(args.hw, args.version)
-    legacy = argparse.Namespace(**{**vars(args), "hw": record_dir, "parts_dir": folder / "parts"})
-    report = check(legacy, pose)
-    report["version"] = label
     pc = load_process_checks()
     record = model_record.read_snapshot(model_record.read_folder(record_dir)).intent
+    catalog = pc.guidelines().discover(record_dir, snapshot=True)  # the version's own copies of the guideline sets
+    legacy = argparse.Namespace(**{**vars(args), "hw": record_dir, "parts_dir": folder / "parts"})
+    report = check(legacy, pose, record, catalog)
+    report["version"] = label
     blocking = report["status"] == "fail"
     if record.version != pc.intent().RECORD_VERSION:
         problem = pc.intent().version_problem(dict(record.product), f"hw/versions/{label}/record/product.yaml")
@@ -1489,23 +1575,27 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
     today = args.on or date.today()
     manifest_path = folder / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    code = hashlib.sha256((pc.code_sha256() + _sha256(Path(__file__))).encode("ascii")).hexdigest()
+    code = producer_code(pc)
     recipe = {"producer": pc.PRODUCER, "code_sha256": code, "probe_format": pc.PROBE_FORMAT, "on": today.isoformat()}
     params = {"V": label, "S": PROCESS_SUBJECT}
     reused = None if args.out else layout.reusable(args.hw, "bundle.checks", params, recipe, replace=args.replace)
     if reused is not None:
         packet, bundle = json.loads((reused / "result.json").read_text(encoding="utf-8")), reused
     else:
-        geometry = version_geometry(pc, record, folder, label, manifest, today)
-        packet = pc.assess(record, geometry, today=today).packet(
-            {"version_manifest": _sha256(manifest_path), "producer_code": code})
-        load_check_packet().validate(packet)  # never seal or hand on a packet that breaks its schema
+        geometry = version_geometry(pc, record, folder, label, manifest, today, catalog)
+        assessment = pc.assess(record, geometry, today=today, catalog=catalog)
+        dependencies = {"version_manifest": _sha256(manifest_path), "producer_code": code}
         if args.out:
             bundle = layout.scratch_path(args.hw, args.out, "--out")
             bundle.parent.mkdir(parents=True, exist_ok=True)
+            packet = assessment.packet(dependencies)  # a scratch packet is no sealed bundle: no hw/ path can cite a trace
+            load_check_packet().validate(packet)  # never seal or hand on a packet that breaks its schema
             bundle.write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
         else:
             stage = layout.staging(args.hw, "bundle.checks")
+            packet = assessment.packet(dependencies, trace=trace_row(pc, assessment, stage / "evidence",
+                                                                     f"hw/checks/{label}/{PROCESS_SUBJECT}/evidence"))
+            load_check_packet().validate(packet)
             (stage / "result.json").write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
             bundle = layout.publish(args.hw, "bundle.checks", params, stage, recipe=recipe, producer=pc.PRODUCER,
                                     status=packet["result"], replace=args.replace).path
@@ -1550,7 +1640,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with pose.stdout_to_stderr():
             if args.version is None:
-                report = check(args, pose)
+                pc = load_process_checks()
+                report = check(args, pose, pc.intent().load_record(args.hw), pc.guidelines().discover(args.hw))
                 code = 1 if report["status"] == "fail" else 0
             else:
                 report, code = check_version(args, pose)

@@ -27,6 +27,14 @@ INTENT_PATH = Path(__file__).resolve().parents[3] / "cad-record" / "scripts" / "
 INTENT_MODULE = "cad_record_manufacturing_intent"  # the shared name cad-model and cad-record load it under
 ASSEMBLY_DATA_PATH = INTENT_PATH.with_name("assembly_data.py")
 ASSEMBLY_DATA_MODULE = "cad_record_assembly_data"  # the shared name cad-motion and cad-record load it under
+GUIDELINES_PATH = INTENT_PATH.with_name("guidelines.py")
+GUIDELINES_MODULE = "cad_record_guidelines"  # the shared name manufacturing_intent loads it under
+
+GUIDELINE_PROCESSES = frozenset({"fdm"})  # the processes the shipped guideline sets cover (resin and the rest have none)
+
+# The service classes whose checks take a guideline value as a pass (the user's rule). Every other class, unknown
+# included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
+GUIDELINE_PASS_CLASSES = frozenset({"appearance_concept", "fit_assembly", "functional_demo"})
 
 PASS, FAIL, UNKNOWN, NOT_APPLICABLE = "pass", "fail", "unknown", "not_applicable"
 IMPLICIT = "main"  # the component id of a sole solid (cad-model components.IMPLICIT)
@@ -61,6 +69,11 @@ def intent() -> Any:
 def assembly_data() -> Any:
     """cad-record assembly_data.py (the occurrence inventory) under its shared module name."""
     return _load(ASSEMBLY_DATA_MODULE, ASSEMBLY_DATA_PATH)
+
+
+def guidelines() -> Any:
+    """cad-record guidelines.py (discovery and resolution of guideline limits) under its shared module name."""
+    return _load(GUIDELINES_MODULE, GUIDELINES_PATH)
 
 
 # --- results ----------------------------------------------------------------------------------------------------
@@ -199,6 +212,98 @@ class Calibrated:
                 "conditions": f"calibration {cal.id} ({cal.samples} samples, {cal.date}): {scope}"}
 
 
+MINIMUM, MAXIMUM = "minimum", "maximum"
+_SIDE_OPERATORS = {MINIMUM: (">=", ">"), MAXIMUM: ("<=", "<")}
+EPS = 1e-9
+
+
+@dataclass(frozen=True)
+class Limit:
+    """The limit a check judges one characteristic against: the calibration of the operation's capability profile,
+    else the value the guideline sets give for that profile and material (cad-record guidelines.resolve_guidelines),
+    else unknown with every reason. `side` is how the check reads it: a minimum the measured value must reach
+    (min_wall, min_feature, min_hole) or a maximum it must stay within (overhang_angle, bridge_span)."""
+
+    characteristic: str
+    side: str
+    calibrated: Calibrated
+    resolved: Any = None  # guidelines.Resolved; None when no catalog was given or the operation has no capability profile
+    base_mm: float | None = None  # the profile's line width, else its nozzle diameter; None when it states neither
+
+    @property
+    def status(self) -> str:
+        """calibrated, guideline or unknown. A guideline limit on the other side of the check (a maximum for a
+        minimum check, an interval) is no answer to it, so it is unknown."""
+        if self.calibrated.known:
+            return "calibrated"
+        if self.resolved is not None and self.resolved.status == "guideline" and \
+                self.resolved.operator in _SIDE_OPERATORS[self.side]:
+            return "guideline"
+        return "unknown"
+
+    @property
+    def known(self) -> bool:
+        return self.status != "unknown"
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        """What the resolver warned about while resolving this limit (a relaxation, a pin that matched nothing)."""
+        return tuple(self.resolved.warnings) if self.resolved is not None else ()
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        found = list(self.calibrated.reasons)
+        if self.resolved is None:
+            found.append(f"no guideline set was consulted for {self.characteristic}")
+        elif self.resolved.status != "guideline":
+            found.extend(self.resolved.reasons or (f"no guideline states {self.characteristic}",))
+        elif self.status == "unknown":
+            found.append(f"the guideline {self.characteristic} limit is {self.resolved.operator}, not a {self.side}")
+        found.extend(f"guideline resolver warning: {w}" for w in self.warnings)
+        return tuple(found)
+
+    @property
+    def operator(self) -> str:
+        if self.status == "guideline":
+            operator: str = self.resolved.operator
+            return operator
+        return _SIDE_OPERATORS[self.side][0]
+
+    def threshold(self, units: str) -> float:
+        """The value a measurement is compared with: a calibration's worst end (upper for a minimum, lower for a
+        maximum), or the guideline value. Only for a known limit."""
+        if self.status == "calibrated":
+            lower, upper = self.calibrated.bounds(units)
+            return upper if self.side == MINIMUM else lower
+        assert self.status == "guideline", f"{self.characteristic} is unknown"
+        return float(self.resolved.value.to(units).value)
+
+    def breaks(self, measured: float, units: str) -> bool:
+        """Whether `measured` misses the limit. > and < are strict: a value equal to the limit misses them."""
+        limit = self.threshold(units)
+        strict = self.operator in (">", "<")
+        if self.side == MINIMUM:
+            return measured <= limit + EPS if strict else measured < limit - EPS
+        return measured >= limit - EPS if strict else measured > limit + EPS
+
+    def criterion(self, prop: str, units: str) -> dict[str, Any]:
+        """The limit as a finding criterion: the calibration's, the guideline's with its source (id, revision and
+        sha256 of the set) and where it comes from, or unknown with the reasons."""
+        if self.status == "calibrated":
+            return self.calibrated.criterion(prop, self.operator, self.threshold(units), units)
+        if self.status == "unknown":
+            return unknown("; ".join(self.reasons))
+        winner = self.resolved.provenance[0]
+        conditions = f"guideline {winner.guideline} ({winner.layer} layer, {winner.path}): a design guideline, " \
+                     "not a calibration of this machine and material"
+        if self.calibrated.status == "refused":
+            conditions += f"; calibrations not used: {'; '.join(self.calibrated.reasons)}"
+        if self.warnings:
+            conditions += f"; guideline resolver warnings: {'; '.join(self.warnings)}"
+        return {"property": prop, "operator": self.operator, "value": self.threshold(units), "units": units,
+                "source": dict(self.resolved.source), "conditions": conditions}
+
+
 # --- the geometry facts adapter ---------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -280,6 +385,9 @@ class Context:
     geometry: Geometry | None
     today: date
     geometries: Mapping[tuple[str, str], Geometry] = field(default_factory=dict)
+    catalog: Any = None  # cad-record guidelines.Catalog; None: no guideline set is consulted, so only calibrations count
+    resolutions: list[Any] = field(default_factory=list, compare=False)  # guidelines.Resolved of every limit looked up (shared)
+    consulted: list[Any] = field(default_factory=list, compare=False)  # the same, for this obligation alone
 
     # record views ---------------------------------------------------------------------------------------------
     @property
@@ -439,6 +547,55 @@ class Context:
         if found.status == "calibrated":
             return Calibrated("calibrated", characteristic, found.calibration.limits, (), found.calibration)
         return Calibrated(found.status, characteristic, None, tuple(found.reasons))
+
+    def guideline_context(self) -> Any | None:
+        """The guideline scope (guidelines.Context) of this operation's capability profile and material, or None
+        without a catalog, a profile or a process in GUIDELINE_PROCESSES."""
+        profile = self.profile
+        if self.catalog is None or profile is None or profile.process not in GUIDELINE_PROCESSES:
+            return None
+        material_id = self.stock_material_id()
+        return guidelines().context_for(profile, self.record.materials.get(material_id) if material_id else None)
+
+    def limit(self, characteristic: str, side: str, *, orientation: str | None = None) -> Limit:
+        """The limit of `characteristic` for this operation: its calibration (`calibrated`), else the guideline value
+        for its profile and material, else unknown. A refused calibration (another material, an expired one) lets the
+        guideline apply and keeps its reasons."""
+        cal = self.calibrated(characteristic, orientation=orientation)
+        context = self.guideline_context()
+        if cal.known or context is None:
+            return Limit(characteristic, side, cal)
+        found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation)
+        self.consulted.append(found)
+        if found not in self.resolutions:
+            self.resolutions.append(found)
+        return Limit(characteristic, side, cal, found, context.base_mm)
+
+    @property
+    def service_class(self) -> str | None:
+        fact = self.record.use_case.service_class
+        return str(fact.value) if fact.known else None
+
+    def grade(self, limit: Limit, coverage: str, findings: list[Draft], *, check: str, measured: Mapping[str, Any],
+              prop: str, units: str, method: str, feature: str | None = None) -> tuple[str, str]:
+        """A sub-check that met `limit`: a pass for a calibrated limit, or a guideline value when the service class is one
+        of GUIDELINE_PASS_CLASSES. A guideline value in another class is unknown, with a finding a calibration or an
+        approved waiver settles. An unknown limit is unknown too (its callers report why)."""
+        service = self.service_class
+        if limit.status == "calibrated" or (limit.status == "guideline" and service in GUIDELINE_PASS_CLASSES):
+            return PASS, coverage
+        if limit.status == "unknown":
+            return UNKNOWN, f"{coverage} (limit unknown)"
+        kind = self.operation.kind
+        findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
+                              limit.criterion(prop, units), method,
+                              f"{limit.characteristic} is a design-guideline value, not a calibration of this machine and material",
+                              f"a {service or 'unknown'} service class needs a calibrated or waived {limit.characteristic}: "
+                              "a guideline value alone does not pass it",
+                              remedy=f"calibrate {limit.characteristic} for this material and machine, or waive this finding "
+                                     "with an approved decision",
+                              recheck=[f"process.{kind}"], feature=feature))
+        return UNKNOWN, f"{coverage} (guideline value only)"
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:
         """UNKNOWN or FAIL when the operation has no usable capability profile of its own kind."""

@@ -15,6 +15,7 @@ never a pass and never another process's checks.
 from __future__ import annotations
 
 import hashlib
+import types
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -22,8 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from . import additive, machining, purchased, route, secondary, shaping, sheet
-from .core import (FAIL, IMPLICIT, PASS, UNKNOWN, Context, Draft, Geometry, Handler, Result, access_directions,
-                   direction_key, intent, policy, stable_id, text)
+from .core import (FAIL, IMPLICIT, MINIMUM, PASS, UNKNOWN, Context, Draft, Geometry, Handler, Result, access_directions,
+                   direction_key, guidelines, intent, policy, stable_id, text)
 
 PRODUCER = "cad-design form_check.py process_checks 1"
 OWNED_PREFIXES = ("process.", "purchase.", "route.")
@@ -101,6 +102,9 @@ class Assessment:
     expected: tuple[Any, ...]
     outcomes: tuple[dict[str, Any], ...]
     findings: tuple[dict[str, Any], ...]
+    guideline_digests: Mapping[str, str] = types.MappingProxyType({})  # id@revision -> sha256 the limits can come from
+    resolutions: tuple[Any, ...] = ()  # guidelines.Resolved of every guideline limit looked up (the trace's rows)
+    traced: frozenset[str] = frozenset()  # ids of the findings of obligations that consulted a guideline
 
     @property
     def complete(self) -> bool:
@@ -121,13 +125,27 @@ class Assessment:
     def by_code(self, code: str) -> list[dict[str, Any]]:
         return [f for f in self.findings if f["code"] == code]
 
-    def packet(self, dependencies: Mapping[str, str], *, scope: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        """The manufacturing-check-result.schema.json packet of this assessment."""
+    def _cited(self, finding: Mapping[str, Any], trace: Mapping[str, str] | None) -> dict[str, Any]:
+        item = dict(finding)
+        if trace is not None and item["id"] in self.traced:
+            method = dict(item["method"])
+            method["evidence"] = [*method.get("evidence", ()), dict(trace)]
+            item["method"] = method
+        return item
+
+    def packet(self, dependencies: Mapping[str, str], *, scope: list[dict[str, Any]] | None = None,
+               trace: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """The manufacturing-check-result.schema.json packet of this assessment. Its dependencies are `dependencies`
+        and every guideline set the operations' limits can resolve through (guidelines.packet_dependencies). `trace`
+        (a file_hash row of the resolution trace) is cited in method.evidence of every finding of an obligation that
+        consulted a guideline."""
+        findings = [self._cited(f, trace) for f in self.findings]
+        dependencies = {**dependencies, **guidelines().packet_dependencies(self.guideline_digests)}
         pns = sorted({o.subject["PN"] for o in self.expected if o.subject.get("PN")})
         return {"schema_version": 1, "record_version": intent().RECORD_VERSION, "producer": PRODUCER,
                 "scope": scope or ([{"PN": pn} for pn in pns] or [{"product": True}]),
                 "expected": [o.as_dict() for o in self.expected], "outcomes": [dict(o) for o in self.outcomes],
-                "findings": [dict(f) for f in self.findings], "dependencies": dict(sorted(dependencies.items())),
+                "findings": findings, "dependencies": dict(sorted(dependencies.items())),
                 "complete": self.complete, "result": self.result}
 
 
@@ -138,41 +156,74 @@ def _operation(record: Any, pn: str, ident: str | None) -> Any | None:
     return None if intent().is_fact(route_) else next((op for op in route_ if op.id == ident), None)
 
 
-def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = None, *, today: date | None = None) -> Assessment:
+def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = None, *, today: date | None = None,
+           catalog: Any = None) -> Assessment:
     """One outcome per expected obligation, from the record and the measured component geometry
-    (keyed (PN, component); the sole solid is `main`). Without geometry every geometric check is UNKNOWN."""
-    mi = intent()
+    (keyed (PN, component); the sole solid is `main`). Without geometry every geometric check is UNKNOWN. `catalog`
+    (cad-record guidelines.discover) gives the guideline limits where no calibration holds; without it only
+    calibrations count."""
     obligations = expected(record)
     geometry = dict(geometry or {})
     today = today or date.today()
     outcomes, findings = [], []
+    digests: dict[str, str] = {}
+    resolutions: list[Any] = []  # shared by every Context: the trace's rows
+    traced: set[str] = set()
+    refused_reported = False
     for obligation in obligations:
         subject = obligation.subject
         pn = subject["PN"]
         component = subject.get("component") or IMPLICIT
         op = _operation(record, pn, subject.get("operation"))
-        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry)
-        if obligation.family.endswith(".coverage") and obligation.family.startswith("process."):
-            result = coverage_gap(ctx, obligation)
-        else:
-            handler = handler_for(obligation.family, op.kind if op is not None else None)
-            result = handler(ctx) if handler is not None else _no_handler(ctx, obligation)
+        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry, catalog, resolutions)
+        scope = ctx.guideline_context()
+        if scope is not None:
+            digests.update(guidelines().applicable_digests(catalog, scope))
+        result = _result(ctx, obligation)
+        if scope is not None and catalog.refused and not refused_reported:
+            refused_reported = True  # once per assessment, on the first obligation that could use a guideline
+            result.findings.append(_refused(catalog.refused))
         drafted = _findings(ctx, obligation, result, geometry.get((pn, component)))
         for item in drafted:
             if item.get("obligation") == obligation.id and item["outcome"] == FAIL and result.outcome != FAIL:
                 raise HandlerError(f"{obligation.id}: finding {item['code']} fails it but the outcome is {result.outcome}")
         findings += drafted
-        row = {"obligation": obligation.id, "outcome": result.outcome, "level": obligation.level,
-               "method": result.method, "coverage": result.coverage}
-        if result.source:
-            row["source"] = dict(result.source)
-        if result.uncertainty:
-            row["uncertainty"] = result.uncertainty
-        linked = [f["id"] for f in drafted if f.get("obligation") == obligation.id]
-        if linked:
-            row["findings"] = linked
-        outcomes.append(mi.thaw(row))
-    return Assessment(obligations, tuple(outcomes), tuple(findings))
+        if ctx.consulted:
+            traced.update(f["id"] for f in drafted)
+        row = _row(obligation, result, drafted)
+        outcomes.append(intent().thaw(row))
+    return Assessment(obligations, tuple(outcomes), tuple(findings), types.MappingProxyType(dict(sorted(digests.items()))),
+                      tuple(resolutions), frozenset(traced))
+
+
+def _result(ctx: Context, obligation: Any) -> Result:
+    if obligation.family.endswith(".coverage") and obligation.family.startswith("process."):
+        return coverage_gap(ctx, obligation)
+    handler = handler_for(obligation.family, ctx.op.kind if ctx.op is not None else None)
+    return handler(ctx) if handler is not None else _no_handler(ctx, obligation)
+
+
+def _row(obligation: Any, result: Result, drafted: list[dict[str, Any]]) -> dict[str, Any]:
+    row: dict[str, Any] = {"obligation": obligation.id, "outcome": result.outcome, "level": obligation.level,
+                           "method": result.method, "coverage": result.coverage}
+    if result.source:
+        row["source"] = dict(result.source)
+    if result.uncertainty:
+        row["uncertainty"] = result.uncertainty
+    linked = [f["id"] for f in drafted if f.get("obligation") == obligation.id]
+    if linked:
+        row["findings"] = linked
+    return row
+
+
+def _refused(refused: Any) -> Draft:
+    """The guideline files a catalog refused: a limit may have been judged without them, so the result says so."""
+    names = "; ".join(str(r) for r in refused)
+    return Draft("process.guideline_refused", "minor", UNKNOWN, text(names),
+                 policy("guideline_files", "equals", "every file valid", note="a refused file supplies no limit"),
+                 "guideline catalog discovery", "the refused files are not read at all",
+                 "a project guideline that should tighten or replace a limit is not applied",
+                 remedy="fix or remove the refused guideline files, then recheck", recheck=["process"], link=False)
 
 
 def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry | None) -> list[dict[str, Any]]:
@@ -214,10 +265,11 @@ def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry 
     return out
 
 
-def probe_plan(record: Any, pn: str, component: str, *, today: date | None = None) -> dict[str, Any]:
+def probe_plan(record: Any, pn: str, component: str, *, today: date | None = None, catalog: Any = None) -> dict[str, Any]:
     """What form_check must measure on one component before the handlers run: the ray directions
     (access sides and pull senses, keyed as the handlers read them) and the wall threshold that the
-    calibrations of its operations name (None: no calibrated wall, so no scan)."""
+    limits of its operations name: a calibration, else a guideline value from `catalog` (None: no wall
+    limit, so no scan)."""
     today = today or date.today()
     part = record.parts[pn]
     route_ = part.intent.route
@@ -226,7 +278,7 @@ def probe_plan(record: Any, pn: str, component: str, *, today: date | None = Non
     for op in () if intent().is_fact(route_) else route_:
         if op.components and component not in op.components:
             continue
-        ctx = Context(record, pn, component, op, None, today)
+        ctx = Context(record, pn, component, op, None, today, catalog=catalog)
         parsed, _ = access_directions(((op.setup or {}).get("access") or {}).get("sides") or ())
         for _, vector in parsed:
             key = direction_key(vector)  # a parsed side is an axis direction, so it always has a key
@@ -239,9 +291,9 @@ def probe_plan(record: Any, pn: str, component: str, *, today: date | None = Non
                 directions["-pull"] = [-c for c in pull]
         if ctx.profile is not None and op.kind != "purchased":
             for name in ("min_wall", "min_web"):
-                cal = ctx.calibrated(name)
-                if cal.known:
-                    walls.append(cal.bounds("mm")[1])
+                limit = ctx.limit(name, MINIMUM)
+                if limit.known:
+                    walls.append(limit.threshold("mm"))
     return {"directions": directions, "wall_mm": max(walls) if walls else None}
 
 

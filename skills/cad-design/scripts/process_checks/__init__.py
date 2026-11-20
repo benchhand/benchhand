@@ -13,9 +13,12 @@ Policy this package applies (a plugin rule, not a product fact):
 - Unknown never becomes pass: a missing calibration, plan entry or measurement leaves its obligation UNKNOWN.
 - No universal limit: wall, overhang, bridge, hole, kerf, radius, draft and tolerance criteria are
   calibrations of the actual equipment (`manufacturing_intent.capability_limit`); machine parameters,
-  nominal resolution and general-tolerance labels never answer them. form_check's old FDM numbers
-  (1.2 mm wall, block_like, build-volume fit) are diagnostics only.
-- Supports: on reachable non-critical surfaces they are accepted; an overhang beyond the calibrated limit
+  nominal resolution and general-tolerance labels never answer them. For FDM overhang, bridge, wall, small
+  feature and small hole, a missing calibration falls back to the guideline sets of the profile and material
+  (cad-record guidelines.py, given as `assess(catalog=)`). A guideline fail fails; a guideline pass counts only
+  for GUIDELINE_PASS_CLASSES and is UNKNOWN for every other service class until calibrated or waived.
+  block_like and build-volume fit stay form_check diagnostics.
+- Supports: on reachable non-critical surfaces they are accepted; an overhang beyond the unsupported limit
   is a planning finding when a support or bridge plan covers it; unplanned contact on a precision or running
   surface is a MAJOR finding; soluble or interface supports alone establish no precision; an exception needs
   a later finishing operation, an allowance, removal access and inspection, and stays physically unvalidated.
@@ -26,14 +29,14 @@ Policy this package applies (a plugin rule, not a product fact):
 - Geometry PASS covers only the measured facts named in its coverage; coupons, slicer or CAM review, print
   trials and first-article inspection are physical evidence the ledger holds (they are named as findings).
 
-Public API: `expected(record)`, `assess(record, geometry, today=)` -> `Assessment` (`outcomes`, `findings`,
-`complete`, `result`, `packet(dependencies)`), `probe_plan(record, PN, component)`, `Geometry`,
-`TABLE`, `owned`, `NotAssessable`, `HandlerError`, `PRODUCER`, `PROBE_FORMAT`.
+Public API: `expected(record)`, `assess(record, geometry, today=, catalog=)` -> `Assessment` (`outcomes`, `findings`,
+`complete`, `result`, `packet(dependencies)`), `probe_plan(record, PN, component, catalog=)`, `Geometry`,
+`TABLE`, `owned`, `NotAssessable`, `HandlerError`, `PRODUCER`, `PROBE_FORMAT`, `GUIDELINE_PASS_CLASSES`, `guidelines`.
 """
 
-from .core import IMPLICIT, PROBE_FORMAT, Geometry, intent
+from .core import GUIDELINE_PASS_CLASSES, IMPLICIT, PROBE_FORMAT, Geometry, guidelines, intent
 from .dispatch import (PRODUCER, TABLE, Assessment, HandlerError, NotAssessable, assess, code_sha256, expected,
                        handler_for, owned, probe_plan)
 
-__all__ = ["IMPLICIT", "PROBE_FORMAT", "PRODUCER", "TABLE", "Assessment", "Geometry", "HandlerError", "NotAssessable",
-           "assess", "code_sha256", "expected", "handler_for", "intent", "owned", "probe_plan"]
+__all__ = ["GUIDELINE_PASS_CLASSES", "IMPLICIT", "PROBE_FORMAT", "PRODUCER", "TABLE", "Assessment", "Geometry", "HandlerError",
+           "NotAssessable", "assess", "code_sha256", "expected", "guidelines", "handler_for", "intent", "owned", "probe_plan"]
