@@ -7,7 +7,6 @@ catches stale committed output."""
 
 from __future__ import annotations
 
-import ast
 import contextlib
 import hashlib
 import importlib.util
@@ -52,6 +51,7 @@ WIDGET = {
         "tags": {"type": "array", "items": {"type": "string"}},
         "dims": {
             "type": "object",
+            "additionalProperties": False,
             "required": ["w"],
             "properties": {"w": {"type": "number"}, "h": {"type": "number"}},
         },
@@ -61,7 +61,7 @@ WIDGET = {
     },
     "dependentRequired": {"size": ["color"]},
     "allOf": [{"if": {"properties": {"mode": {"const": "fixed"}}}, "then": {"required": ["size"]}}],
-    "$defs": {"part": {"type": "object", "required": ["n"], "properties": {"n": {"type": "integer"}}}},
+    "$defs": {"part": {"type": "object", "additionalProperties": False, "required": ["n"], "properties": {"n": {"type": "integer"}}}},
 }
 SHARED_REL = "skills/cad-record/schemas/shared.schema.json"
 WIDGET_REL = "skills/cad-concept/assets/schemas/widget.schema.json"
@@ -108,11 +108,11 @@ class TypedDictOutput(FixtureTree):
             '    mode: NotRequired[Literal["fixed"]]',
             "    note: NotRequired[str | None]",
             "    parts: NotRequired[list[WidgetPart]]",
-            "    class WidgetDims(TypedDict):",
-            "        w: Required[float]",
-            "        h: NotRequired[float]",
-            "    class WidgetPart(TypedDict):",
-            "        n: Required[int]",
+            "class WidgetDims(TypedDict):",
+            "    w: Required[float]",
+            "    h: NotRequired[float]",
+            "class WidgetPart(TypedDict):",
+            "    n: Required[int]",
             'SharedColor = Literal["red", "green"]',
             "SharedId = str",
         ):
@@ -177,11 +177,11 @@ class UnionAlternatives(FixtureTree):
         write_json(self.root, "skills/cad-record/schemas/choice.schema.json", {
             "$id": BASE + "choice.schema.json",
             "$defs": {
-                "circle": {"type": "object", "required": ["radius"], "properties": {"radius": {"type": "number"}, "tag": {"type": "string"}}},
-                "rect": {"type": "object", "required": ["w", "h"], "properties": {"w": {"type": "number"}, "h": {"type": "number"}}},
+                "circle": {"type": "object", "additionalProperties": False, "required": ["radius"], "properties": {"radius": {"type": "number"}, "tag": {"type": "string"}}},
+                "rect": {"type": "object", "additionalProperties": False, "required": ["w", "h"], "properties": {"w": {"type": "number"}, "h": {"type": "number"}}},
                 "shape": {"oneOf": [{"$ref": "#/$defs/circle"}, {"$ref": "#/$defs/rect"}]},
-                "pick": {"anyOf": [{"type": "object", "required": ["x"], "properties": {"x": {"type": "integer"}}}, {"type": "string"}, {"type": "null"}]},
-                "holder": {"type": "object", "required": ["shape"], "properties": {"shape": {"$ref": "#/$defs/shape"}, "pick": {"$ref": "#/$defs/pick"}}},
+                "pick": {"anyOf": [{"type": "object", "additionalProperties": False, "required": ["x"], "properties": {"x": {"type": "integer"}}}, {"type": "string"}, {"type": "null"}]},
+                "holder": {"type": "object", "additionalProperties": False, "required": ["shape"], "properties": {"shape": {"$ref": "#/$defs/shape"}, "pick": {"$ref": "#/$defs/pick"}}},
             },
         })
         self.module = import_source(self.api(), self.root / "cad_api_choice.py")
@@ -200,8 +200,8 @@ class UnionAlternatives(FixtureTree):
         self.assertEqual(set(alternatives) - set(objects), {str, type(None)})
 
     def test_a_field_refers_to_the_union_alias_not_any(self) -> None:
-        self.assertIn("\n        shape: Required[ChoiceShape]\n", self.api())
-        self.assertIn("\n        pick: NotRequired[ChoicePick]\n", self.api())
+        self.assertIn("\n    shape: Required[ChoiceShape]\n", self.api())
+        self.assertIn("\n    pick: NotRequired[ChoicePick]\n", self.api())
 
 
 class OpenObjects(FixtureTree):
@@ -221,51 +221,61 @@ class OpenObjects(FixtureTree):
             },
         })
 
-    def definitions(self, name: str) -> list[ast.stmt]:
-        """The module-level statements that define `name`, looking inside `if` blocks."""
-        found: list[ast.stmt] = []
-        for node in ast.walk(ast.parse(self.api())):
-            if isinstance(node, ast.ClassDef) and node.name == name:
-                found.append(node)
-            elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
-                found.append(node)
-        return found
-
-    def test_open_objects_are_defined_with_extra_items_behind_a_version_gate(self) -> None:
+    def test_open_objects_are_mappings_for_every_python_and_say_what_that_costs(self) -> None:
+        api = self.api()
         for name in ("BagOpen", "BagTyped", "BagDashed"):
             with self.subTest(name=name):
-                self.assertEqual(len(self.definitions(name)), 2, "one definition for 3.15+, one for older Pythons")
-        self.assertIn("if sys.version_info >= (3, 15):", self.api())
-        self.assertIn("class BagOpen(TypedDict, extra_items=Any):", self.api())
-        self.assertIn("    BagDashed = TypedDict(", self.api())
-        self.assertIn("        },\n        extra_items=Any,\n    )", self.api())
+                self.assertIn(f"\n{name} = Mapping[str, Any]\n", api)
+        self.assertIn("from collections.abc import Mapping", api)
+        self.assertNotIn("extra_items", api)
+        self.assertNotIn("sys.version_info", api)
+        self.assertIn('Known keys: type: Literal["box", "sphere"]', api)
+        self.assertIn("Type checkers do not check the known keys", api)
 
-    def test_closed_objects_stay_a_single_plain_typeddict(self) -> None:
+    def test_the_reference_lists_the_known_keys_of_an_open_object_and_the_lost_precision(self) -> None:
+        doc = self.doc()
+        section = doc[doc.index("### BagOpen"):doc.index("### BagTyped")]
+        self.assertIn("Alias of `Mapping[str, Any]`", section)
+        self.assertIn("Type checkers do not check the known keys", section)
+        self.assertIn("| `type` |", section)
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run the pinned mypy")
+    def test_the_projects_mypy_accepts_extra_keys_on_open_objects_and_rejects_them_on_closed_ones(self) -> None:
+        pin = re.search(r"mypy==([0-9.]+)", (REPO / "scripts" / "typecheck.py").read_text(encoding="utf-8"))
+        assert pin is not None
+        (self.root / "cad_api_bag.py").write_text(self.api(), encoding="utf-8")
+        (self.root / "consumer.py").write_text(
+            "from cad_api_bag import BagClosed, BagOpen\n"
+            "\n"
+            'open_literal: BagOpen = {"type": "box", "size": 3, "radius": 1.5}\n'
+            'closed_literal: BagClosed = {"a": 1}\n'
+            'closed_unknown: BagClosed = {"a": 1, "zzz": 2}\n',
+            encoding="utf-8",
+        )
+        # The way scripts/typecheck.py runs mypy: the repository config at the config's target version.
+        result = subprocess.run(
+            ["uv", "run", "--no-project", "--python", "3.12", "--with", f"mypy=={pin.group(1)}", "python", "-m", "mypy",
+             "--config-file", str(REPO / "mypy.ini"), "consumer.py"],
+            cwd=self.root, capture_output=True, text=True, check=False,
+        )
+        errors = [line for line in result.stdout.splitlines() if line.startswith("consumer.py:")]
+        self.assertEqual(len(errors), 1, result.stdout + result.stderr)
+        self.assertTrue(errors[0].startswith("consumer.py:5:"), errors[0])
+        self.assertIn("zzz", errors[0])
+
+    def test_closed_objects_stay_typeddicts(self) -> None:
         for name in ("BagClosed", "BagChild"):
             with self.subTest(name=name):
-                self.assertEqual(len(self.definitions(name)), 1)
-        self.assertIn("class BagClosed(TypedDict):", self.api())
+                self.assertIn(f"\nclass {name}(TypedDict):\n", self.api())
 
     def test_extra_key_schema_is_kept_in_the_notes(self) -> None:
         self.assertIn('additionalProperties: {"type":"number"}', self.doc())
 
-    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.15")
-    def test_python_315_accepts_extra_keys_only_on_open_objects(self) -> None:
-        script = (
-            "print(generated.BagOpen.__extra_items__ is typing.Any, generated.BagClosed.__extra_items__ is typing.Any,"
-            " generated.BagChild.__extra_items__ is typing.Any)"
-        )
-        result = run_python(self.root, self.api(), script, "3.15")
-        if "No interpreter found" in result.stderr or "Failed to" in result.stderr:
-            self.skipTest("Python 3.15 is not installed")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "True False False")
-
     @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.11")
     def test_python_311_still_imports_the_module(self) -> None:
-        result = run_python(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.BagOpen)))", "3.11")
+        result = run_python(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.BagClosed)), generated.BagOpen)", "3.11")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "['type']")
+        self.assertEqual(result.stdout.strip(), "['a'] collections.abc.Mapping[str, typing.Any]")
 
 
 class RecursiveSchema(FixtureTree):
@@ -274,7 +284,7 @@ class RecursiveSchema(FixtureTree):
             "$id": BASE + "tree.schema.json",
             "$defs": {
                 "node": {"oneOf": [{"$ref": "#/$defs/branch"}, {"type": "string"}]},
-                "branch": {"type": "object", "required": ["children"], "properties": {"children": {"type": "array", "items": {"$ref": "#/$defs/node"}}}},
+                "branch": {"type": "object", "additionalProperties": False, "required": ["children"], "properties": {"children": {"type": "array", "items": {"$ref": "#/$defs/node"}}}},
             },
         })
         module = import_source(self.api(), self.root / "cad_api_tree.py")
@@ -287,7 +297,7 @@ class SelfReferencingClass(FixtureTree):
         super().setUp()
         write_json(self.root, "skills/cad-record/schemas/node.schema.json", {
             "$id": BASE + "node.schema.json",
-            "type": "object",
+            "type": "object", "additionalProperties": False,
             "required": ["name"],
             "properties": {
                 "name": {"type": "string"},
@@ -298,9 +308,9 @@ class SelfReferencingClass(FixtureTree):
 
     def test_self_reference_is_quoted(self) -> None:
         api = self.api()
-        self.assertIn('\n        next: NotRequired["Node"]\n', api)
-        self.assertIn('\n        children: NotRequired["list[Node]"]\n', api)
-        self.assertIn("\n        name: Required[str]\n", api)
+        self.assertIn('\n    next: NotRequired["Node"]\n', api)
+        self.assertIn('\n    children: NotRequired["list[Node]"]\n', api)
+        self.assertIn("\n    name: Required[str]\n", api)
 
     @unittest.skipUnless(shutil.which("uv"), "uv is needed to run Python 3.11")
     def test_module_imports_on_python_311_and_hints_resolve(self) -> None:
@@ -340,12 +350,12 @@ class ReviewRound1(FixtureTree):
                     self.assertIn(fragment, text)
 
     def test_prefix_items_are_a_list_type_with_positional_constraints_documented(self) -> None:
-        self.add("pos", {"type": "object", "properties": {
+        self.add("pos", {"type": "object", "additionalProperties": False, "properties": {
             "mixed": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "string"}], "minItems": 2, "maxItems": 2, "items": False},
         }, "$defs": {"vec": {"type": "array", "prefixItems": [{"type": "number"}] * 3, "minItems": 3, "maxItems": 3}}})
         api = self.api()
         self.assertIn("\nPosVec = list[float]\n", api)
-        self.assertIn("\n        mixed: NotRequired[list[float | str]]\n", api)
+        self.assertIn("\n    mixed: NotRequired[list[float | str]]\n", api)
         self.assertNotIn("tuple[", api)
         self.assert_in_both('prefixItems: [{"type":"number"},{"type":"number"},{"type":"number"}]', "minItems: 3", 'prefixItems: [{"type":"number"},{"type":"string"}]', "items: false")
 
@@ -378,14 +388,14 @@ class ReviewRound1(FixtureTree):
                 self.assertIn("^x$", section)
 
     def test_required_keys_without_properties_are_documented(self) -> None:
-        self.add("std", {"type": "object", "properties": {
+        self.add("std", {"type": "object", "additionalProperties": False, "properties": {
             "standards": {"type": "object", "required": ["dimensioning"], "additionalProperties": {"type": "string"}},
         }})
-        self.assertIn("\n        standards: NotRequired[dict[str, str]]\n", self.api())
+        self.assertIn("\n    standards: NotRequired[dict[str, str]]\n", self.api())
         self.assert_in_both('required keys: ["dimensioning"]')
 
     def test_keyword_named_optional_field_stays_optional_on_python_311(self) -> None:
-        self.add("kw", {"type": "object", "required": ["from"], "properties": {"class": {"type": "string"}, "from": {"type": "integer"}}})
+        self.add("kw", {"type": "object", "additionalProperties": False, "required": ["from"], "properties": {"class": {"type": "string"}, "from": {"type": "integer"}}})
         result = run_python311(self.root, self.api(), "print(sorted(generated.Kw.__required_keys__), sorted(generated.Kw.__optional_keys__))")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "['from'] ['class']")
@@ -401,7 +411,7 @@ class ReviewRound1(FixtureTree):
         self.assert_in_both("Chooses a version by schema_version.", 'if {"type":"object","required":["schema_version"]} then')
 
     def test_false_schema_property_generates_an_importable_module(self) -> None:
-        self.add("nothing", {"type": "object", "properties": {"gone": False}})
+        self.add("nothing", {"type": "object", "additionalProperties": False, "properties": {"gone": False}})
         result = run_python311(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.Nothing)))")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "['gone']")
@@ -411,7 +421,7 @@ class RefSiblingConstraints(FixtureTree):
     def schema(self, reach: dict[str, typing.Any]) -> dict[str, typing.Any]:
         return {
             "$id": BASE + "refs.schema.json",
-            "type": "object",
+            "type": "object", "additionalProperties": False,
             "properties": {"reach": reach, "code": {"$ref": "#/$defs/Tag", "pattern": "^t-"}},
             "$defs": {"Pos": {"type": "number"}, "Tag": {"type": "string"}},
         }
@@ -420,8 +430,8 @@ class RefSiblingConstraints(FixtureTree):
         write_json(self.root, "skills/cad-record/schemas/refs.schema.json", self.schema({"$ref": "#/$defs/Pos", "maximum": 10}))
         outputs = gen_api.generate(self.root)
         api = outputs[gen_api.API_REL]
-        self.assertIn("\n        reach: NotRequired[RefsPos]\n", api)
-        self.assertIn("\n        code: NotRequired[RefsTag]\n", api)
+        self.assertIn("\n    reach: NotRequired[RefsPos]\n", api)
+        self.assertIn("\n    code: NotRequired[RefsTag]\n", api)
         for rel, text in outputs.items():
             for fragment in ("reach: maximum: 10", 'code: pattern: "^t-"') if rel == gen_api.API_REL else ("`reach`: maximum: 10", '`code`: pattern: "^t-"'):
                 with self.subTest(output=rel, fragment=fragment):
@@ -447,7 +457,7 @@ class DroppedConstraints(FixtureTree):
         super().setUp()
         write_json(self.root, "skills/cad-record/schemas/limits.schema.json", {
             "$id": BASE + "limits.schema.json",
-            "type": "object",
+            "type": "object", "additionalProperties": False,
             "properties": {"vec": {"$ref": "#/$defs/vec", "items": {"minimum": 0}}},
             "$defs": {
                 "vec": {"type": "array", "items": {"type": "number"}},
@@ -463,7 +473,7 @@ class DroppedConstraints(FixtureTree):
 
     def test_items_bound_beside_a_ref_is_documented_and_the_type_stays_the_alias(self) -> None:
         self.assert_in_both("items.minimum: 0")
-        self.assertIn("\n        vec: NotRequired[LimitsVec]\n", self.api())
+        self.assertIn("\n    vec: NotRequired[LimitsVec]\n", self.api())
 
     def test_each_conditional_all_of_member_keeps_its_per_unit_bound(self) -> None:
         self.assert_in_both('"const":"mm"', '"maximum":3}', '"const":"m"', '"maximum":0.003}')
@@ -628,7 +638,7 @@ class Coverage(FixtureTree):
                 write_json(self.root, rel, {
                     "$id": BASE + Path(rel).name,
                     "title": name,
-                    "type": "object",
+                    "type": "object", "additionalProperties": False,
                     "properties": {"x": {"type": "string"}},
                 })
                 outputs = gen_api.generate(self.root)

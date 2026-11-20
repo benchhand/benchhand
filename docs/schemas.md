@@ -1514,6 +1514,12 @@ Source: schema root
 
 The tunable numbers of a static FEA case, with hard bounds (a violation is an error) and plausibility bands (x-plausible: a miss is the warning plausibility.<field>, never blocking). The material numbers are facts about a real material and have no default; the tunables do. Only fields with a number or a closed value set are described; fea_static.load_case checks the selectors, loads and evidence. Keys keep the names the case files use today, so the unit sits in x-unit: E and yield are in MPa, density in kg/m3, mesh_size in mm, timeout_seconds in seconds
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `step` | `str` | no |  |  |
@@ -1565,6 +1571,12 @@ Constraints not expressed by the type:
 
 Source: `/properties/loads/items`
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `force` | `list[float]` | yes |  | three components in N |
@@ -1579,6 +1591,12 @@ Constraints not expressed by the type:
 Source: `/properties/material`
 
 Either the four explicit numbers or the conditions of the part's material profile (profile, conditions, effective_isotropic); fea_conditions checks the profile form
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -1905,6 +1923,12 @@ Constraints not expressed by the type:
 ### InterfacesInterfacesItemsLimits
 
 Source: `/properties/interfaces/items/properties/limits`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2494,6 +2518,12 @@ Source: `/$defs/parameters`
 
 Parameters by name. A named parameter that has a hard bound is checked in every unit of its dimension; the bounds are in the qty_* and fact_* definitions below and the plausibility band (x-plausible, a warning) beside them. layer_height at most nozzle_diameter compares two facts in possibly different units, so the config loader checks it
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `nozzle_diameter` | `ManufacturingFact` | no |  |  |
@@ -2599,6 +2629,12 @@ Source: `/$defs/qty_bed_max_temperature`
 
 Bed limit: 0 to 150 deg_C
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["deg_C", "K"]` | no |  |  |
@@ -2613,6 +2649,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_bridge_span`
 
 Calibrated unsupported bridge: 0 to 256 mm, the largest build volume
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2630,6 +2672,12 @@ Source: `/$defs/qty_clearance_per_side`
 
 Sliding clearance per side between mating parts: above 0 to 5 mm. A fact of the machine and material, so it has no default. The 0.1 to 0.5 mm plausibility band is a heuristic with no source table and only warns; the sourced value is 0.3 mm per side (S4 in the FDM survey). A press fit is not a negative clearance: use qty_interference_per_side
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["mm", "m", "um"]` | no |  |  |
@@ -2645,6 +2693,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_deviation`
 
 Calibrated as-made minus nominal deviation: -2 to 2 mm
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2662,6 +2716,12 @@ Source: `/$defs/qty_hotend_max_temperature`
 
 Hotend limit: 0 to 500 deg_C
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["deg_C", "K"]` | no |  |  |
@@ -2676,6 +2736,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_interference_per_side`
 
 Press-fit interference per side, shaft larger than hole: above 0 to 1 mm, never negative. A fact of the machine and material, so it has no default. The 0.05 to 0.3 mm plausibility band is a heuristic with no source table and only warns; the intended press-fit range is 0.10 to 0.15 mm per side
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2693,6 +2759,12 @@ Source: `/$defs/qty_layer_height`
 
 Layer height: above 0 and at most 3 mm, the largest nozzle; a plausible layer is at most 0.8 of the nozzle diameter
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["mm", "m", "um"]` | no |  |  |
@@ -2709,6 +2781,12 @@ Source: `/$defs/qty_max_speed`
 
 Print speed: above 0 and at most 1000 mm/s
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["mm_s", "m_s"]` | no |  |  |
@@ -2724,6 +2802,12 @@ Source: `/$defs/qty_min_bed_contact_area`
 
 Calibrated smallest reliable first-layer contact area: above 0 mm2. A fact of the machine and material, so it has no default. The plausibility band waits for more calibrations (#141)
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["mm2"]` | no |  |  |
@@ -2737,6 +2821,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_min_feature`
 
 Calibrated smallest reliable pin or boss diameter: 0.2 to 20 mm
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2754,6 +2844,12 @@ Source: `/$defs/qty_min_hole`
 
 Calibrated smallest reliable cut hole diameter: 0.1 to 25 mm. The 0.5 to 10 mm plausibility band is a heuristic with no source table and only warns; the sourced guideline value is 2.0 mm (Protolabs, S3 in the FDM survey)
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["mm", "m", "um"]` | no |  |  |
@@ -2769,6 +2865,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_min_wall`
 
 Calibrated thinnest wall: 0.1 to 25 mm
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2786,6 +2888,12 @@ Source: `/$defs/qty_nozzle_diameter`
 
 Nozzle diameter: above 0 and at most 3 mm
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["mm", "m", "um"]` | no |  |  |
@@ -2802,6 +2910,12 @@ Source: `/$defs/qty_overhang_angle`
 
 Calibrated unsupported overhang, from vertical: 0 to 90 deg
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["deg", "rad"]` | no |  |  |
@@ -2816,6 +2930,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_power`
 
 Laser power: above 0 and at most 10 kW; a desktop laser stays under 300 W
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2832,6 +2952,12 @@ Source: `/$defs/qty_press_brake_force`
 
 Press brake force: above 0 and at most 10000 kN
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["kN", "N"]` | no |  |  |
@@ -2846,6 +2972,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_pump_pressure`
 
 Waterjet pump pressure: above 0 and at most 700 MPa
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2863,6 +2995,12 @@ Source: `/$defs/qty_spindle_max_speed`
 
 Spindle limit: above 0 and at most 200000 rpm
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["rpm", "Hz"]` | no |  |  |
@@ -2877,6 +3015,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_travel_x`
 
 Axis travel: above 0 and at most 10 m
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -2894,6 +3038,12 @@ Source: `/$defs/qty_travel_y`
 
 Axis travel: above 0 and at most 10 m
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `units` | `Literal["mm", "m", "um"]` | no |  |  |
@@ -2909,6 +3059,12 @@ Constraints not expressed by the type:
 Source: `/$defs/qty_travel_z`
 
 Axis travel: above 0 and at most 10 m
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -6191,6 +6347,12 @@ Source: schema root
 
 The numeric bounds of a stack file; stackup.py checks its structure. The contributor tolerances are magnitudes in mm. Hard bounds are errors; x-plausible bands are warnings (plausibility.<field>)
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `contributors` | `list[StackupContributorsItems]` | no |  |  |
@@ -6199,6 +6361,12 @@ The numeric bounds of a stack file; stackup.py checks its structure. The contrib
 ### StackupContributorsItems
 
 Source: `/properties/contributors/items`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -6218,6 +6386,12 @@ Constraints not expressed by the type:
 ### StackupStatistics
 
 Source: `/properties/statistics`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -6604,6 +6778,12 @@ Constraints not expressed by the type:
 
 Source: `/$defs/transform`
 
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `position` | `ConceptSceneVec3` | no |  | Origin in the parent frame, mm. Default [0,0,0]. |
@@ -6767,6 +6947,12 @@ Constraints not expressed by the type:
 Source: `/$defs/node/properties/shape`
 
 Parts only: the concept primitive, verbatim from the scene.
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |

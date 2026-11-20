@@ -32,14 +32,14 @@
 """Typed shapes of the CAD record and concept JSON Schemas.
 
 Standard library only and Python 3.11 compatible, so FreeCAD job code can import it. Each schema
-object is a TypedDict; each shared definition is a type alias. Types cannot express if/then,
+object that forbids extra keys is a TypedDict; an object that allows them is a Mapping[str, Any], so
+its known keys are documented but not checked; each shared definition is a type alias. Types cannot express if/then,
 dependentRequired, patterns, numeric bounds, uniqueness, additionalProperties: false or oneOf
 exclusivity; the docstrings and comments list them. The JSON Schemas stay authoritative:
 validate with them (schema_registry.py) and use these types for editor and type-checker help.
 """
 
-import sys
-
+from collections.abc import Mapping
 from typing import Any, Literal, NotRequired, Required, TypedDict
 
 __all__ = [
@@ -1453,26 +1453,15 @@ class ConceptScene(TypedDict):
     retired: NotRequired[list[ConceptSceneRetired]]
 
 
-if sys.version_info >= (3, 15):
-    class ConceptSceneTransform(TypedDict, extra_items=Any):
-        """Source: skills/cad-concept/assets/schemas/concept-scene.schema.json#/$defs/transform
-
-        Field notes:
-        - position: Origin in the parent frame, mm. Default [0,0,0].
-        - rotation: XYZ Euler angles in degrees. Default [0,0,0].
-        """
-        position: NotRequired[ConceptSceneVec3]
-        rotation: NotRequired[ConceptSceneVec3]
-else:
-    class ConceptSceneTransform(TypedDict):
-        """Source: skills/cad-concept/assets/schemas/concept-scene.schema.json#/$defs/transform
-
-        Field notes:
-        - position: Origin in the parent frame, mm. Default [0,0,0].
-        - rotation: XYZ Euler angles in degrees. Default [0,0,0].
-        """
-        position: NotRequired[ConceptSceneVec3]
-        rotation: NotRequired[ConceptSceneVec3]
+# Source: skills/cad-concept/assets/schemas/concept-scene.schema.json#/$defs/transform
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: position: ConceptSceneVec3 (optional), rotation: ConceptSceneVec3 (optional)
+#
+# Field notes:
+# - position: Origin in the parent frame, mm. Default [0,0,0].
+# - rotation: XYZ Euler angles in degrees. Default [0,0,0].
+ConceptSceneTransform = Mapping[str, Any]
 
 
 class DrawingAxialRetainer(TypedDict):
@@ -2182,57 +2171,27 @@ class EvidenceRun(TypedDict):
     stop_commands: NotRequired[list[str]]
 
 
-if sys.version_info >= (3, 15):
-    # Either the four explicit numbers or the conditions of the part's material profile (profile, conditions, effective_isotropic); fea_conditions checks the profile form
-    #
-    # Source: skills/cad-record/schemas/fea-case.schema.json#/properties/material
-    #
-    # Field notes:
-    # - E: Young's modulus; the bound is 1200 GPa, diamond's; maximum: 1200000; exclusiveMinimum: 0
-    # - nu: Poisson's ratio; exclusiveMinimum: 0; exclusiveMaximum: 0.5
-    # - density: maximum: 25000; exclusiveMinimum: 0
-    # - yield: maximum: 5000; exclusiveMinimum: 0
-    FeaCaseMaterial = TypedDict(
-        "FeaCaseMaterial",
-        {
-            "E": NotRequired[float],
-            "nu": NotRequired[float],
-            "density": NotRequired[float],
-            "yield": NotRequired[float],
-        },
-        extra_items=Any,
-    )
-else:
-    # Either the four explicit numbers or the conditions of the part's material profile (profile, conditions, effective_isotropic); fea_conditions checks the profile form
-    #
-    # Source: skills/cad-record/schemas/fea-case.schema.json#/properties/material
-    #
-    # Field notes:
-    # - E: Young's modulus; the bound is 1200 GPa, diamond's; maximum: 1200000; exclusiveMinimum: 0
-    # - nu: Poisson's ratio; exclusiveMinimum: 0; exclusiveMaximum: 0.5
-    # - density: maximum: 25000; exclusiveMinimum: 0
-    # - yield: maximum: 5000; exclusiveMinimum: 0
-    FeaCaseMaterial = TypedDict(
-        "FeaCaseMaterial",
-        {
-            "E": NotRequired[float],
-            "nu": NotRequired[float],
-            "density": NotRequired[float],
-            "yield": NotRequired[float],
-        },
-    )
-
-
-class FeaCaseMeshConvergence(TypedDict):
-    """Source: skills/cad-record/schemas/fea-case.schema.json#/properties/mesh_convergence
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-
-    Field notes:
-    - decision: pattern: "^DR-[0-9]{3}$"
-    """
-    decision: Required[str]
+# CAD static FEA case (hw/analysis/cases/<case>/case.yaml)
+#
+# The tunable numbers of a static FEA case, with hard bounds (a violation is an error) and plausibility bands (x-plausible: a miss is the warning plausibility.<field>, never blocking). The material numbers are facts about a real material and have no default; the tunables do. Only fields with a number or a closed value set are described; fea_static.load_case checks the selectors, loads and evidence. Keys keep the names the case files use today, so the unit sits in x-unit: E and yield are in MPa, density in kg/m3, mesh_size in mm, timeout_seconds in seconds
+#
+# Source: skills/cad-record/schemas/fea-case.schema.json#
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: step: str (optional), mesh_size_extent_ratio: float (optional), mesh_size: float (optional), timeout_seconds: float (optional), required_safety_factor: float (optional), material: FeaCaseMaterial (optional), part: str (optional), solid_index: int (optional), occurrence: str (optional), mesh_convergence: FeaCaseMeshConvergence (optional), acceptance: FeaCaseAcceptance (optional), loads: list[FeaCaseLoadsItems] (optional)
+#
+# Field notes:
+# - step: minLength: 1
+# - mesh_size_extent_ratio: Largest element edge as a fraction of the part's largest extent. The default 0.05 is extent / 20, a starting point that the mesh convergence gate (#56) verifies, not a guarantee. An explicit mesh_size wins when set. The hard bounds are a quarter of the extent and a thousandth of it; warn above a tenth (too coarse) or below a two-hundredth (too many nodes); default 0.05; minimum: 0.001; maximum: 0.25
+# - mesh_size: Largest element edge in mm. An explicit value overrides mesh_size_extent_ratio and has no default of its own. A band relative to the part's largest extent: warn above a tenth of it (too coarse) or below a two-hundredth (too many nodes); minimum: 0.05; maximum: 1000
+# - timeout_seconds: Wall-clock limit for the FreeCAD job; default 600; minimum: 10; maximum: 86400
+# - required_safety_factor: The yield safety factor a completed solve must reach; below 1 would accept a failure; default 2.0; minimum: 1; maximum: 10
+# - material: Either the four explicit numbers or the conditions of the part's material profile (profile, conditions, effective_isotropic); fea_conditions checks the profile form
+# - part: minLength: 1
+# - solid_index: minimum: 1
+# - occurrence: pattern: "^@"
+# - loads: minItems: 1
+FeaCase = Mapping[str, Any]
 
 
 class FeaCaseAcceptance(TypedDict):
@@ -2250,88 +2209,41 @@ class FeaCaseAcceptance(TypedDict):
     stiffness: NotRequired[str]
 
 
-if sys.version_info >= (3, 15):
-    class FeaCaseLoadsItems(TypedDict, extra_items=Any):
-        """Source: skills/cad-record/schemas/fea-case.schema.json#/properties/loads/items
-
-        Field notes:
-        - force: three components in N; minItems: 3; maxItems: 3
-        """
-        force: Required[list[float]]
-else:
-    class FeaCaseLoadsItems(TypedDict):
-        """Source: skills/cad-record/schemas/fea-case.schema.json#/properties/loads/items
-
-        Field notes:
-        - force: three components in N; minItems: 3; maxItems: 3
-        """
-        force: Required[list[float]]
+# Source: skills/cad-record/schemas/fea-case.schema.json#/properties/loads/items
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: force: list[float]
+#
+# Field notes:
+# - force: three components in N; minItems: 3; maxItems: 3
+FeaCaseLoadsItems = Mapping[str, Any]
 
 
-if sys.version_info >= (3, 15):
-    class FeaCase(TypedDict, extra_items=Any):
-        """CAD static FEA case (hw/analysis/cases/<case>/case.yaml)
+# Either the four explicit numbers or the conditions of the part's material profile (profile, conditions, effective_isotropic); fea_conditions checks the profile form
+#
+# Source: skills/cad-record/schemas/fea-case.schema.json#/properties/material
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: E: float (optional), nu: float (optional), density: float (optional), yield: float (optional)
+#
+# Field notes:
+# - E: Young's modulus; the bound is 1200 GPa, diamond's; maximum: 1200000; exclusiveMinimum: 0
+# - nu: Poisson's ratio; exclusiveMinimum: 0; exclusiveMaximum: 0.5
+# - density: maximum: 25000; exclusiveMinimum: 0
+# - yield: maximum: 5000; exclusiveMinimum: 0
+FeaCaseMaterial = Mapping[str, Any]
 
-        The tunable numbers of a static FEA case, with hard bounds (a violation is an error) and plausibility bands (x-plausible: a miss is the warning plausibility.<field>, never blocking). The material numbers are facts about a real material and have no default; the tunables do. Only fields with a number or a closed value set are described; fea_static.load_case checks the selectors, loads and evidence. Keys keep the names the case files use today, so the unit sits in x-unit: E and yield are in MPa, density in kg/m3, mesh_size in mm, timeout_seconds in seconds
 
-        Source: skills/cad-record/schemas/fea-case.schema.json#
+class FeaCaseMeshConvergence(TypedDict):
+    """Source: skills/cad-record/schemas/fea-case.schema.json#/properties/mesh_convergence
 
-        Field notes:
-        - step: minLength: 1
-        - mesh_size_extent_ratio: Largest element edge as a fraction of the part's largest extent. The default 0.05 is extent / 20, a starting point that the mesh convergence gate (#56) verifies, not a guarantee. An explicit mesh_size wins when set. The hard bounds are a quarter of the extent and a thousandth of it; warn above a tenth (too coarse) or below a two-hundredth (too many nodes); default 0.05; minimum: 0.001; maximum: 0.25
-        - mesh_size: Largest element edge in mm. An explicit value overrides mesh_size_extent_ratio and has no default of its own. A band relative to the part's largest extent: warn above a tenth of it (too coarse) or below a two-hundredth (too many nodes); minimum: 0.05; maximum: 1000
-        - timeout_seconds: Wall-clock limit for the FreeCAD job; default 600; minimum: 10; maximum: 86400
-        - required_safety_factor: The yield safety factor a completed solve must reach; below 1 would accept a failure; default 2.0; minimum: 1; maximum: 10
-        - material: Either the four explicit numbers or the conditions of the part's material profile (profile, conditions, effective_isotropic); fea_conditions checks the profile form
-        - part: minLength: 1
-        - solid_index: minimum: 1
-        - occurrence: pattern: "^@"
-        - loads: minItems: 1
-        """
-        step: NotRequired[str]
-        mesh_size_extent_ratio: NotRequired[float]
-        mesh_size: NotRequired[float]
-        timeout_seconds: NotRequired[float]
-        required_safety_factor: NotRequired[float]
-        material: NotRequired[FeaCaseMaterial]
-        part: NotRequired[str]
-        solid_index: NotRequired[int]
-        occurrence: NotRequired[str]
-        mesh_convergence: NotRequired[FeaCaseMeshConvergence]
-        acceptance: NotRequired[FeaCaseAcceptance]
-        loads: NotRequired[list[FeaCaseLoadsItems]]
-else:
-    class FeaCase(TypedDict):
-        """CAD static FEA case (hw/analysis/cases/<case>/case.yaml)
+    Not expressible as types (see the schema):
+    - additionalProperties: false
 
-        The tunable numbers of a static FEA case, with hard bounds (a violation is an error) and plausibility bands (x-plausible: a miss is the warning plausibility.<field>, never blocking). The material numbers are facts about a real material and have no default; the tunables do. Only fields with a number or a closed value set are described; fea_static.load_case checks the selectors, loads and evidence. Keys keep the names the case files use today, so the unit sits in x-unit: E and yield are in MPa, density in kg/m3, mesh_size in mm, timeout_seconds in seconds
-
-        Source: skills/cad-record/schemas/fea-case.schema.json#
-
-        Field notes:
-        - step: minLength: 1
-        - mesh_size_extent_ratio: Largest element edge as a fraction of the part's largest extent. The default 0.05 is extent / 20, a starting point that the mesh convergence gate (#56) verifies, not a guarantee. An explicit mesh_size wins when set. The hard bounds are a quarter of the extent and a thousandth of it; warn above a tenth (too coarse) or below a two-hundredth (too many nodes); default 0.05; minimum: 0.001; maximum: 0.25
-        - mesh_size: Largest element edge in mm. An explicit value overrides mesh_size_extent_ratio and has no default of its own. A band relative to the part's largest extent: warn above a tenth of it (too coarse) or below a two-hundredth (too many nodes); minimum: 0.05; maximum: 1000
-        - timeout_seconds: Wall-clock limit for the FreeCAD job; default 600; minimum: 10; maximum: 86400
-        - required_safety_factor: The yield safety factor a completed solve must reach; below 1 would accept a failure; default 2.0; minimum: 1; maximum: 10
-        - material: Either the four explicit numbers or the conditions of the part's material profile (profile, conditions, effective_isotropic); fea_conditions checks the profile form
-        - part: minLength: 1
-        - solid_index: minimum: 1
-        - occurrence: pattern: "^@"
-        - loads: minItems: 1
-        """
-        step: NotRequired[str]
-        mesh_size_extent_ratio: NotRequired[float]
-        mesh_size: NotRequired[float]
-        timeout_seconds: NotRequired[float]
-        required_safety_factor: NotRequired[float]
-        material: NotRequired[FeaCaseMaterial]
-        part: NotRequired[str]
-        solid_index: NotRequired[int]
-        occurrence: NotRequired[str]
-        mesh_convergence: NotRequired[FeaCaseMeshConvergence]
-        acceptance: NotRequired[FeaCaseAcceptance]
-        loads: NotRequired[list[FeaCaseLoadsItems]]
+    Field notes:
+    - decision: pattern: "^DR-[0-9]{3}$"
+    """
+    decision: Required[str]
 
 
 class FindingSubject(TypedDict):
@@ -2448,20 +2360,13 @@ class HandoffVariant(TypedDict):
 HandoffVec3 = list[float]
 
 
-if sys.version_info >= (3, 15):
-    class HandoffNodeShape(TypedDict, extra_items=Any):
-        """Parts only: the concept primitive, verbatim from the scene.
-
-        Source: skills/cad-concept/assets/schemas/handoff.schema.json#/$defs/node/properties/shape
-        """
-        type: Required[Literal["box", "cylinder", "sphere", "capsule"]]
-else:
-    class HandoffNodeShape(TypedDict):
-        """Parts only: the concept primitive, verbatim from the scene.
-
-        Source: skills/cad-concept/assets/schemas/handoff.schema.json#/$defs/node/properties/shape
-        """
-        type: Required[Literal["box", "cylinder", "sphere", "capsule"]]
+# Parts only: the concept primitive, verbatim from the scene.
+#
+# Source: skills/cad-concept/assets/schemas/handoff.schema.json#/$defs/node/properties/shape
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: type: Literal["box", "cylinder", "sphere", "capsule"]
+HandoffNodeShape = Mapping[str, Any]
 
 
 class HandoffEnvelope(TypedDict):
@@ -2568,28 +2473,14 @@ class Handoff(TypedDict):
     alternatives: Required[list[HandoffAlternativesItems]]
 
 
-if sys.version_info >= (3, 15):
-    class InterfacesInterfacesItemsLimits(TypedDict, extra_items=Any):
-        """Source: skills/cad-record/schemas/interfaces.schema.json#/properties/interfaces/items/properties/limits
-
-        Field notes:
-        - heat_set: minItems: 1
-        """
-        press_fit: NotRequired[DrawingFit]
-        running_fit: NotRequired[DrawingFit]
-        locating_fit: NotRequired[DrawingFit]
-        heat_set: NotRequired[list[DrawingHeatSet]]
-else:
-    class InterfacesInterfacesItemsLimits(TypedDict):
-        """Source: skills/cad-record/schemas/interfaces.schema.json#/properties/interfaces/items/properties/limits
-
-        Field notes:
-        - heat_set: minItems: 1
-        """
-        press_fit: NotRequired[DrawingFit]
-        running_fit: NotRequired[DrawingFit]
-        locating_fit: NotRequired[DrawingFit]
-        heat_set: NotRequired[list[DrawingHeatSet]]
+# Source: skills/cad-record/schemas/interfaces.schema.json#/properties/interfaces/items/properties/limits
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: press_fit: DrawingFit (optional), running_fit: DrawingFit (optional), locating_fit: DrawingFit (optional), heat_set: list[DrawingHeatSet] (optional)
+#
+# Field notes:
+# - heat_set: minItems: 1
+InterfacesInterfacesItemsLimits = Mapping[str, Any]
 
 
 class ManufacturingBooleanFactOneOf0(TypedDict):
@@ -3277,78 +3168,17 @@ class ManufacturingCapabilitiesMaterialApproval(TypedDict):
     source: Required[ManufacturingSource]
 
 
-class ManufacturingFactKnown(TypedDict):
-    """Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/fact_known
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-    - if {"properties":{"basis":{"const":"estimate"}}} then {"required":["uncertainty"]}
-    - if {"properties":{"basis":{"const":"assumed"}}} then {"required":["assumption"]}
-    - if {"properties":{"basis":{"const":"allowable"}}} then {"required":["conditions","derivation"]}
-
-    Field notes:
-    - derivation: how an allowable was derived from its sources
-    """
-    status: Required[Literal["known"]]
-    value: Required[Any]
-    sources: Required[ManufacturingSources]
-    basis: Required[ManufacturingBasis]
-    uncertainty: NotRequired[ManufacturingUncertainty]
-    conditions: NotRequired[ManufacturingText]
-    assumption: NotRequired[ManufacturingAssumptionId]
-    derivation: NotRequired[ManufacturingText]
-    decision: NotRequired[ManufacturingDecision]
-    note: NotRequired[ManufacturingText]
-
-
-# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/fact
-ManufacturingFact = ManufacturingFactKnown | ManufacturingFactUnknown | ManufacturingFactNotApplicable
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesParameters(TypedDict, extra_items=Any):
-        """Parameters by name. A named parameter that has a hard bound is checked in every unit of its dimension; the bounds are in the qty_* and fact_* definitions below and the plausibility band (x-plausible, a warning) beside them. layer_height at most nozzle_diameter compares two facts in possibly different units, so the config loader checks it
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/parameters
-
-        Not expressible as types (see the schema):
-        - propertyNames: {"$ref":"manufacturing.schema.json#/$defs/semantic_id"}
-        - additionalProperties: {"$ref":"manufacturing.schema.json#/$defs/fact"}
-        """
-        nozzle_diameter: NotRequired[ManufacturingFact]
-        layer_height: NotRequired[ManufacturingFact]
-        hotend_max_temperature: NotRequired[ManufacturingFact]
-        bed_max_temperature: NotRequired[ManufacturingFact]
-        max_speed: NotRequired[ManufacturingFact]
-        travel_x: NotRequired[ManufacturingFact]
-        travel_y: NotRequired[ManufacturingFact]
-        travel_z: NotRequired[ManufacturingFact]
-        spindle_max_speed: NotRequired[ManufacturingFact]
-        power: NotRequired[ManufacturingFact]
-        pump_pressure: NotRequired[ManufacturingFact]
-        press_brake_force: NotRequired[ManufacturingFact]
-else:
-    class ManufacturingCapabilitiesParameters(TypedDict):
-        """Parameters by name. A named parameter that has a hard bound is checked in every unit of its dimension; the bounds are in the qty_* and fact_* definitions below and the plausibility band (x-plausible, a warning) beside them. layer_height at most nozzle_diameter compares two facts in possibly different units, so the config loader checks it
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/parameters
-
-        Not expressible as types (see the schema):
-        - propertyNames: {"$ref":"manufacturing.schema.json#/$defs/semantic_id"}
-        - additionalProperties: {"$ref":"manufacturing.schema.json#/$defs/fact"}
-        """
-        nozzle_diameter: NotRequired[ManufacturingFact]
-        layer_height: NotRequired[ManufacturingFact]
-        hotend_max_temperature: NotRequired[ManufacturingFact]
-        bed_max_temperature: NotRequired[ManufacturingFact]
-        max_speed: NotRequired[ManufacturingFact]
-        travel_x: NotRequired[ManufacturingFact]
-        travel_y: NotRequired[ManufacturingFact]
-        travel_z: NotRequired[ManufacturingFact]
-        spindle_max_speed: NotRequired[ManufacturingFact]
-        power: NotRequired[ManufacturingFact]
-        pump_pressure: NotRequired[ManufacturingFact]
-        press_brake_force: NotRequired[ManufacturingFact]
+# Parameters by name. A named parameter that has a hard bound is checked in every unit of its dimension; the bounds are in the qty_* and fact_* definitions below and the plausibility band (x-plausible, a warning) beside them. layer_height at most nozzle_diameter compares two facts in possibly different units, so the config loader checks it
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/parameters
+#
+# Not expressible as types (see the schema):
+# - propertyNames: {"$ref":"manufacturing.schema.json#/$defs/semantic_id"}
+# - additionalProperties: {"$ref":"manufacturing.schema.json#/$defs/fact"}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: nozzle_diameter: ManufacturingFact (optional), layer_height: ManufacturingFact (optional), hotend_max_temperature: ManufacturingFact (optional), bed_max_temperature: ManufacturingFact (optional), max_speed: ManufacturingFact (optional), travel_x: ManufacturingFact (optional), travel_y: ManufacturingFact (optional), travel_z: ManufacturingFact (optional), spindle_max_speed: ManufacturingFact (optional), power: ManufacturingFact (optional), pump_pressure: ManufacturingFact (optional), press_brake_force: ManufacturingFact (optional)
+ManufacturingCapabilitiesParameters = Mapping[str, Any]
 
 
 class ManufacturingCapabilitiesProfileToolsItems(TypedDict):
@@ -3569,532 +3399,289 @@ ManufacturingCapabilitiesFactTravelY = Any
 ManufacturingCapabilitiesFactTravelZ = Any
 
 
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyBedMaxTemperature(TypedDict, extra_items=Any):
-        """Bed limit: 0 to 150 deg_C
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_bed_max_temperature
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"deg_C"}}} then {"properties":{"value":{"minimum":0,"maximum":150},"lower":{"minimum":0,"maximum":150},"upper":{"minimum":0,"maximum":150}}}
-        - if {"required":["units"],"properties":{"units":{"const":"K"}}} then {"properties":{"value":{"minimum":273.15,"maximum":423.15},"lower":{"minimum":273.15,"maximum":423.15},"upper":{"minimum":273.15,"maximum":423.15}}}
-        """
-        units: NotRequired[Literal["deg_C", "K"]]
-else:
-    class ManufacturingCapabilitiesQtyBedMaxTemperature(TypedDict):
-        """Bed limit: 0 to 150 deg_C
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_bed_max_temperature
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"deg_C"}}} then {"properties":{"value":{"minimum":0,"maximum":150},"lower":{"minimum":0,"maximum":150},"upper":{"minimum":0,"maximum":150}}}
-        - if {"required":["units"],"properties":{"units":{"const":"K"}}} then {"properties":{"value":{"minimum":273.15,"maximum":423.15},"lower":{"minimum":273.15,"maximum":423.15},"upper":{"minimum":273.15,"maximum":423.15}}}
-        """
-        units: NotRequired[Literal["deg_C", "K"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyBridgeSpan(TypedDict, extra_items=Any):
-        """Calibrated unsupported bridge: 0 to 256 mm, the largest build volume
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_bridge_span
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0,"maximum":256},"lower":{"minimum":0,"maximum":256},"upper":{"minimum":0,"maximum":256}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0,"maximum":0.256},"lower":{"minimum":0,"maximum":0.256},"upper":{"minimum":0,"maximum":0.256}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":0,"maximum":256000.00000000003},"lower":{"minimum":0,"maximum":256000.00000000003},"upper":{"minimum":0,"maximum":256000.00000000003}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyBridgeSpan(TypedDict):
-        """Calibrated unsupported bridge: 0 to 256 mm, the largest build volume
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_bridge_span
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0,"maximum":256},"lower":{"minimum":0,"maximum":256},"upper":{"minimum":0,"maximum":256}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0,"maximum":0.256},"lower":{"minimum":0,"maximum":0.256},"upper":{"minimum":0,"maximum":0.256}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":0,"maximum":256000.00000000003},"lower":{"minimum":0,"maximum":256000.00000000003},"upper":{"minimum":0,"maximum":256000.00000000003}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyClearancePerSide(TypedDict, extra_items=Any):
-        """Sliding clearance per side between mating parts: above 0 to 5 mm. A fact of the machine and material, so it has no default. The 0.1 to 0.5 mm plausibility band is a heuristic with no source table and only warns; the sourced value is 0.3 mm per side (S4 in the FDM survey). A press fit is not a negative clearance: use qty_interference_per_side
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":5},"lower":{"exclusiveMinimum":0,"maximum":5},"upper":{"exclusiveMinimum":0,"maximum":5}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.005},"lower":{"exclusiveMinimum":0,"maximum":0.005},"upper":{"exclusiveMinimum":0,"maximum":0.005}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":5000},"lower":{"exclusiveMinimum":0,"maximum":5000},"upper":{"exclusiveMinimum":0,"maximum":5000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyClearancePerSide(TypedDict):
-        """Sliding clearance per side between mating parts: above 0 to 5 mm. A fact of the machine and material, so it has no default. The 0.1 to 0.5 mm plausibility band is a heuristic with no source table and only warns; the sourced value is 0.3 mm per side (S4 in the FDM survey). A press fit is not a negative clearance: use qty_interference_per_side
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":5},"lower":{"exclusiveMinimum":0,"maximum":5},"upper":{"exclusiveMinimum":0,"maximum":5}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.005},"lower":{"exclusiveMinimum":0,"maximum":0.005},"upper":{"exclusiveMinimum":0,"maximum":0.005}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":5000},"lower":{"exclusiveMinimum":0,"maximum":5000},"upper":{"exclusiveMinimum":0,"maximum":5000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyDeviation(TypedDict, extra_items=Any):
-        """Calibrated as-made minus nominal deviation: -2 to 2 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_deviation
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":-2,"maximum":2},"lower":{"minimum":-2,"maximum":2},"upper":{"minimum":-2,"maximum":2}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":-0.002,"maximum":0.002},"lower":{"minimum":-0.002,"maximum":0.002},"upper":{"minimum":-0.002,"maximum":0.002}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":-2000,"maximum":2000},"lower":{"minimum":-2000,"maximum":2000},"upper":{"minimum":-2000,"maximum":2000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyDeviation(TypedDict):
-        """Calibrated as-made minus nominal deviation: -2 to 2 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_deviation
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":-2,"maximum":2},"lower":{"minimum":-2,"maximum":2},"upper":{"minimum":-2,"maximum":2}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":-0.002,"maximum":0.002},"lower":{"minimum":-0.002,"maximum":0.002},"upper":{"minimum":-0.002,"maximum":0.002}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":-2000,"maximum":2000},"lower":{"minimum":-2000,"maximum":2000},"upper":{"minimum":-2000,"maximum":2000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyHotendMaxTemperature(TypedDict, extra_items=Any):
-        """Hotend limit: 0 to 500 deg_C
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_hotend_max_temperature
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"deg_C"}}} then {"properties":{"value":{"minimum":0,"maximum":500},"lower":{"minimum":0,"maximum":500},"upper":{"minimum":0,"maximum":500}}}
-        - if {"required":["units"],"properties":{"units":{"const":"K"}}} then {"properties":{"value":{"minimum":273.15,"maximum":773.15},"lower":{"minimum":273.15,"maximum":773.15},"upper":{"minimum":273.15,"maximum":773.15}}}
-        """
-        units: NotRequired[Literal["deg_C", "K"]]
-else:
-    class ManufacturingCapabilitiesQtyHotendMaxTemperature(TypedDict):
-        """Hotend limit: 0 to 500 deg_C
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_hotend_max_temperature
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"deg_C"}}} then {"properties":{"value":{"minimum":0,"maximum":500},"lower":{"minimum":0,"maximum":500},"upper":{"minimum":0,"maximum":500}}}
-        - if {"required":["units"],"properties":{"units":{"const":"K"}}} then {"properties":{"value":{"minimum":273.15,"maximum":773.15},"lower":{"minimum":273.15,"maximum":773.15},"upper":{"minimum":273.15,"maximum":773.15}}}
-        """
-        units: NotRequired[Literal["deg_C", "K"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyInterferencePerSide(TypedDict, extra_items=Any):
-        """Press-fit interference per side, shaft larger than hole: above 0 to 1 mm, never negative. A fact of the machine and material, so it has no default. The 0.05 to 0.3 mm plausibility band is a heuristic with no source table and only warns; the intended press-fit range is 0.10 to 0.15 mm per side
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_interference_per_side
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1},"lower":{"exclusiveMinimum":0,"maximum":1},"upper":{"exclusiveMinimum":0,"maximum":1}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.001},"lower":{"exclusiveMinimum":0,"maximum":0.001},"upper":{"exclusiveMinimum":0,"maximum":0.001}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1000},"lower":{"exclusiveMinimum":0,"maximum":1000},"upper":{"exclusiveMinimum":0,"maximum":1000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyInterferencePerSide(TypedDict):
-        """Press-fit interference per side, shaft larger than hole: above 0 to 1 mm, never negative. A fact of the machine and material, so it has no default. The 0.05 to 0.3 mm plausibility band is a heuristic with no source table and only warns; the intended press-fit range is 0.10 to 0.15 mm per side
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_interference_per_side
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1},"lower":{"exclusiveMinimum":0,"maximum":1},"upper":{"exclusiveMinimum":0,"maximum":1}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.001},"lower":{"exclusiveMinimum":0,"maximum":0.001},"upper":{"exclusiveMinimum":0,"maximum":0.001}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1000},"lower":{"exclusiveMinimum":0,"maximum":1000},"upper":{"exclusiveMinimum":0,"maximum":1000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyLayerHeight(TypedDict, extra_items=Any):
-        """Layer height: above 0 and at most 3 mm, the largest nozzle; a plausible layer is at most 0.8 of the nozzle diameter
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_layer_height
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3},"lower":{"exclusiveMinimum":0,"maximum":3},"upper":{"exclusiveMinimum":0,"maximum":3}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.003},"lower":{"exclusiveMinimum":0,"maximum":0.003},"upper":{"exclusiveMinimum":0,"maximum":0.003}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3000},"lower":{"exclusiveMinimum":0,"maximum":3000},"upper":{"exclusiveMinimum":0,"maximum":3000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyLayerHeight(TypedDict):
-        """Layer height: above 0 and at most 3 mm, the largest nozzle; a plausible layer is at most 0.8 of the nozzle diameter
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_layer_height
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3},"lower":{"exclusiveMinimum":0,"maximum":3},"upper":{"exclusiveMinimum":0,"maximum":3}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.003},"lower":{"exclusiveMinimum":0,"maximum":0.003},"upper":{"exclusiveMinimum":0,"maximum":0.003}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3000},"lower":{"exclusiveMinimum":0,"maximum":3000},"upper":{"exclusiveMinimum":0,"maximum":3000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyMaxSpeed(TypedDict, extra_items=Any):
-        """Print speed: above 0 and at most 1000 mm/s
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_max_speed
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm_s"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1000},"lower":{"exclusiveMinimum":0,"maximum":1000},"upper":{"exclusiveMinimum":0,"maximum":1000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m_s"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1},"lower":{"exclusiveMinimum":0,"maximum":1},"upper":{"exclusiveMinimum":0,"maximum":1}}}
-        """
-        units: NotRequired[Literal["mm_s", "m_s"]]
-else:
-    class ManufacturingCapabilitiesQtyMaxSpeed(TypedDict):
-        """Print speed: above 0 and at most 1000 mm/s
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_max_speed
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm_s"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1000},"lower":{"exclusiveMinimum":0,"maximum":1000},"upper":{"exclusiveMinimum":0,"maximum":1000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m_s"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1},"lower":{"exclusiveMinimum":0,"maximum":1},"upper":{"exclusiveMinimum":0,"maximum":1}}}
-        """
-        units: NotRequired[Literal["mm_s", "m_s"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyMinBedContactArea(TypedDict, extra_items=Any):
-        """Calibrated smallest reliable first-layer contact area: above 0 mm2. A fact of the machine and material, so it has no default. The plausibility band waits for more calibrations (#141)
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_bed_contact_area
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm2"}}} then {"properties":{"value":{"exclusiveMinimum":0},"lower":{"exclusiveMinimum":0},"upper":{"exclusiveMinimum":0}}}
-        """
-        units: NotRequired[Literal["mm2"]]
-else:
-    class ManufacturingCapabilitiesQtyMinBedContactArea(TypedDict):
-        """Calibrated smallest reliable first-layer contact area: above 0 mm2. A fact of the machine and material, so it has no default. The plausibility band waits for more calibrations (#141)
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_bed_contact_area
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm2"}}} then {"properties":{"value":{"exclusiveMinimum":0},"lower":{"exclusiveMinimum":0},"upper":{"exclusiveMinimum":0}}}
-        """
-        units: NotRequired[Literal["mm2"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyMinFeature(TypedDict, extra_items=Any):
-        """Calibrated smallest reliable pin or boss diameter: 0.2 to 20 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_feature
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.2,"maximum":20},"lower":{"minimum":0.2,"maximum":20},"upper":{"minimum":0.2,"maximum":20}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0002,"maximum":0.02},"lower":{"minimum":0.0002,"maximum":0.02},"upper":{"minimum":0.0002,"maximum":0.02}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":200,"maximum":20000},"lower":{"minimum":200,"maximum":20000},"upper":{"minimum":200,"maximum":20000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyMinFeature(TypedDict):
-        """Calibrated smallest reliable pin or boss diameter: 0.2 to 20 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_feature
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.2,"maximum":20},"lower":{"minimum":0.2,"maximum":20},"upper":{"minimum":0.2,"maximum":20}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0002,"maximum":0.02},"lower":{"minimum":0.0002,"maximum":0.02},"upper":{"minimum":0.0002,"maximum":0.02}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":200,"maximum":20000},"lower":{"minimum":200,"maximum":20000},"upper":{"minimum":200,"maximum":20000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyMinHole(TypedDict, extra_items=Any):
-        """Calibrated smallest reliable cut hole diameter: 0.1 to 25 mm. The 0.5 to 10 mm plausibility band is a heuristic with no source table and only warns; the sourced guideline value is 2.0 mm (Protolabs, S3 in the FDM survey)
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_hole
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.1,"maximum":25},"lower":{"minimum":0.1,"maximum":25},"upper":{"minimum":0.1,"maximum":25}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0001,"maximum":0.025},"lower":{"minimum":0.0001,"maximum":0.025},"upper":{"minimum":0.0001,"maximum":0.025}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":100,"maximum":25000},"lower":{"minimum":100,"maximum":25000},"upper":{"minimum":100,"maximum":25000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyMinHole(TypedDict):
-        """Calibrated smallest reliable cut hole diameter: 0.1 to 25 mm. The 0.5 to 10 mm plausibility band is a heuristic with no source table and only warns; the sourced guideline value is 2.0 mm (Protolabs, S3 in the FDM survey)
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_hole
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.1,"maximum":25},"lower":{"minimum":0.1,"maximum":25},"upper":{"minimum":0.1,"maximum":25}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0001,"maximum":0.025},"lower":{"minimum":0.0001,"maximum":0.025},"upper":{"minimum":0.0001,"maximum":0.025}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":100,"maximum":25000},"lower":{"minimum":100,"maximum":25000},"upper":{"minimum":100,"maximum":25000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyMinWall(TypedDict, extra_items=Any):
-        """Calibrated thinnest wall: 0.1 to 25 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_wall
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.1,"maximum":25},"lower":{"minimum":0.1,"maximum":25},"upper":{"minimum":0.1,"maximum":25}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0001,"maximum":0.025},"lower":{"minimum":0.0001,"maximum":0.025},"upper":{"minimum":0.0001,"maximum":0.025}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":100,"maximum":25000.000000000004},"lower":{"minimum":100,"maximum":25000.000000000004},"upper":{"minimum":100,"maximum":25000.000000000004}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyMinWall(TypedDict):
-        """Calibrated thinnest wall: 0.1 to 25 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_wall
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.1,"maximum":25},"lower":{"minimum":0.1,"maximum":25},"upper":{"minimum":0.1,"maximum":25}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0001,"maximum":0.025},"lower":{"minimum":0.0001,"maximum":0.025},"upper":{"minimum":0.0001,"maximum":0.025}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":100,"maximum":25000.000000000004},"lower":{"minimum":100,"maximum":25000.000000000004},"upper":{"minimum":100,"maximum":25000.000000000004}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyNozzleDiameter(TypedDict, extra_items=Any):
-        """Nozzle diameter: above 0 and at most 3 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3},"lower":{"exclusiveMinimum":0,"maximum":3},"upper":{"exclusiveMinimum":0,"maximum":3}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.003},"lower":{"exclusiveMinimum":0,"maximum":0.003},"upper":{"exclusiveMinimum":0,"maximum":0.003}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3000},"lower":{"exclusiveMinimum":0,"maximum":3000},"upper":{"exclusiveMinimum":0,"maximum":3000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyNozzleDiameter(TypedDict):
-        """Nozzle diameter: above 0 and at most 3 mm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3},"lower":{"exclusiveMinimum":0,"maximum":3},"upper":{"exclusiveMinimum":0,"maximum":3}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.003},"lower":{"exclusiveMinimum":0,"maximum":0.003},"upper":{"exclusiveMinimum":0,"maximum":0.003}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3000},"lower":{"exclusiveMinimum":0,"maximum":3000},"upper":{"exclusiveMinimum":0,"maximum":3000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyOverhangAngle(TypedDict, extra_items=Any):
-        """Calibrated unsupported overhang, from vertical: 0 to 90 deg
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_overhang_angle
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"deg"}}} then {"properties":{"value":{"minimum":0,"maximum":90},"lower":{"minimum":0,"maximum":90},"upper":{"minimum":0,"maximum":90}}}
-        - if {"required":["units"],"properties":{"units":{"const":"rad"}}} then {"properties":{"value":{"minimum":0,"maximum":1.570796326795},"lower":{"minimum":0,"maximum":1.570796326795},"upper":{"minimum":0,"maximum":1.570796326795}}}
-        """
-        units: NotRequired[Literal["deg", "rad"]]
-else:
-    class ManufacturingCapabilitiesQtyOverhangAngle(TypedDict):
-        """Calibrated unsupported overhang, from vertical: 0 to 90 deg
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_overhang_angle
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"deg"}}} then {"properties":{"value":{"minimum":0,"maximum":90},"lower":{"minimum":0,"maximum":90},"upper":{"minimum":0,"maximum":90}}}
-        - if {"required":["units"],"properties":{"units":{"const":"rad"}}} then {"properties":{"value":{"minimum":0,"maximum":1.570796326795},"lower":{"minimum":0,"maximum":1.570796326795},"upper":{"minimum":0,"maximum":1.570796326795}}}
-        """
-        units: NotRequired[Literal["deg", "rad"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyPower(TypedDict, extra_items=Any):
-        """Laser power: above 0 and at most 10 kW; a desktop laser stays under 300 W
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_power
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"kW"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"W"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        """
-        units: NotRequired[Literal["kW", "W"]]
-else:
-    class ManufacturingCapabilitiesQtyPower(TypedDict):
-        """Laser power: above 0 and at most 10 kW; a desktop laser stays under 300 W
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_power
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"kW"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"W"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        """
-        units: NotRequired[Literal["kW", "W"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyPressBrakeForce(TypedDict, extra_items=Any):
-        """Press brake force: above 0 and at most 10000 kN
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_press_brake_force
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"kN"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"N"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["kN", "N"]]
-else:
-    class ManufacturingCapabilitiesQtyPressBrakeForce(TypedDict):
-        """Press brake force: above 0 and at most 10000 kN
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_press_brake_force
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"kN"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"N"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["kN", "N"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyPumpPressure(TypedDict, extra_items=Any):
-        """Waterjet pump pressure: above 0 and at most 700 MPa
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_pump_pressure
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"MPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":700},"lower":{"exclusiveMinimum":0,"maximum":700},"upper":{"exclusiveMinimum":0,"maximum":700}}}
-        - if {"required":["units"],"properties":{"units":{"const":"GPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.7},"lower":{"exclusiveMinimum":0,"maximum":0.7},"upper":{"exclusiveMinimum":0,"maximum":0.7}}}
-        - if {"required":["units"],"properties":{"units":{"const":"bar"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":7000},"lower":{"exclusiveMinimum":0,"maximum":7000},"upper":{"exclusiveMinimum":0,"maximum":7000}}}
-        """
-        units: NotRequired[Literal["MPa", "GPa", "bar"]]
-else:
-    class ManufacturingCapabilitiesQtyPumpPressure(TypedDict):
-        """Waterjet pump pressure: above 0 and at most 700 MPa
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_pump_pressure
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"MPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":700},"lower":{"exclusiveMinimum":0,"maximum":700},"upper":{"exclusiveMinimum":0,"maximum":700}}}
-        - if {"required":["units"],"properties":{"units":{"const":"GPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.7},"lower":{"exclusiveMinimum":0,"maximum":0.7},"upper":{"exclusiveMinimum":0,"maximum":0.7}}}
-        - if {"required":["units"],"properties":{"units":{"const":"bar"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":7000},"lower":{"exclusiveMinimum":0,"maximum":7000},"upper":{"exclusiveMinimum":0,"maximum":7000}}}
-        """
-        units: NotRequired[Literal["MPa", "GPa", "bar"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtySpindleMaxSpeed(TypedDict, extra_items=Any):
-        """Spindle limit: above 0 and at most 200000 rpm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_spindle_max_speed
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"rpm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":200000},"lower":{"exclusiveMinimum":0,"maximum":200000},"upper":{"exclusiveMinimum":0,"maximum":200000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"Hz"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3333.333333333333},"lower":{"exclusiveMinimum":0,"maximum":3333.333333333333},"upper":{"exclusiveMinimum":0,"maximum":3333.333333333333}}}
-        """
-        units: NotRequired[Literal["rpm", "Hz"]]
-else:
-    class ManufacturingCapabilitiesQtySpindleMaxSpeed(TypedDict):
-        """Spindle limit: above 0 and at most 200000 rpm
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_spindle_max_speed
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"rpm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":200000},"lower":{"exclusiveMinimum":0,"maximum":200000},"upper":{"exclusiveMinimum":0,"maximum":200000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"Hz"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3333.333333333333},"lower":{"exclusiveMinimum":0,"maximum":3333.333333333333},"upper":{"exclusiveMinimum":0,"maximum":3333.333333333333}}}
-        """
-        units: NotRequired[Literal["rpm", "Hz"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyTravelX(TypedDict, extra_items=Any):
-        """Axis travel: above 0 and at most 10 m
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_x
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyTravelX(TypedDict):
-        """Axis travel: above 0 and at most 10 m
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_x
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyTravelY(TypedDict, extra_items=Any):
-        """Axis travel: above 0 and at most 10 m
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_y
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyTravelY(TypedDict):
-        """Axis travel: above 0 and at most 10 m
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_y
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-
-
-if sys.version_info >= (3, 15):
-    class ManufacturingCapabilitiesQtyTravelZ(TypedDict, extra_items=Any):
-        """Axis travel: above 0 and at most 10 m
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_z
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
-else:
-    class ManufacturingCapabilitiesQtyTravelZ(TypedDict):
-        """Axis travel: above 0 and at most 10 m
-
-        Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_z
-
-        Not expressible as types (see the schema):
-        - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
-        - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
-        - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
-        """
-        units: NotRequired[Literal["mm", "m", "um"]]
+# Bed limit: 0 to 150 deg_C
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_bed_max_temperature
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"deg_C"}}} then {"properties":{"value":{"minimum":0,"maximum":150},"lower":{"minimum":0,"maximum":150},"upper":{"minimum":0,"maximum":150}}}
+# - if {"required":["units"],"properties":{"units":{"const":"K"}}} then {"properties":{"value":{"minimum":273.15,"maximum":423.15},"lower":{"minimum":273.15,"maximum":423.15},"upper":{"minimum":273.15,"maximum":423.15}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["deg_C", "K"] (optional)
+ManufacturingCapabilitiesQtyBedMaxTemperature = Mapping[str, Any]
+
+
+# Calibrated unsupported bridge: 0 to 256 mm, the largest build volume
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_bridge_span
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0,"maximum":256},"lower":{"minimum":0,"maximum":256},"upper":{"minimum":0,"maximum":256}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0,"maximum":0.256},"lower":{"minimum":0,"maximum":0.256},"upper":{"minimum":0,"maximum":0.256}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":0,"maximum":256000.00000000003},"lower":{"minimum":0,"maximum":256000.00000000003},"upper":{"minimum":0,"maximum":256000.00000000003}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyBridgeSpan = Mapping[str, Any]
+
+
+# Sliding clearance per side between mating parts: above 0 to 5 mm. A fact of the machine and material, so it has no default. The 0.1 to 0.5 mm plausibility band is a heuristic with no source table and only warns; the sourced value is 0.3 mm per side (S4 in the FDM survey). A press fit is not a negative clearance: use qty_interference_per_side
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":5},"lower":{"exclusiveMinimum":0,"maximum":5},"upper":{"exclusiveMinimum":0,"maximum":5}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.005},"lower":{"exclusiveMinimum":0,"maximum":0.005},"upper":{"exclusiveMinimum":0,"maximum":0.005}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":5000},"lower":{"exclusiveMinimum":0,"maximum":5000},"upper":{"exclusiveMinimum":0,"maximum":5000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyClearancePerSide = Mapping[str, Any]
+
+
+# Calibrated as-made minus nominal deviation: -2 to 2 mm
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_deviation
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":-2,"maximum":2},"lower":{"minimum":-2,"maximum":2},"upper":{"minimum":-2,"maximum":2}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":-0.002,"maximum":0.002},"lower":{"minimum":-0.002,"maximum":0.002},"upper":{"minimum":-0.002,"maximum":0.002}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":-2000,"maximum":2000},"lower":{"minimum":-2000,"maximum":2000},"upper":{"minimum":-2000,"maximum":2000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyDeviation = Mapping[str, Any]
+
+
+# Hotend limit: 0 to 500 deg_C
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_hotend_max_temperature
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"deg_C"}}} then {"properties":{"value":{"minimum":0,"maximum":500},"lower":{"minimum":0,"maximum":500},"upper":{"minimum":0,"maximum":500}}}
+# - if {"required":["units"],"properties":{"units":{"const":"K"}}} then {"properties":{"value":{"minimum":273.15,"maximum":773.15},"lower":{"minimum":273.15,"maximum":773.15},"upper":{"minimum":273.15,"maximum":773.15}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["deg_C", "K"] (optional)
+ManufacturingCapabilitiesQtyHotendMaxTemperature = Mapping[str, Any]
+
+
+# Press-fit interference per side, shaft larger than hole: above 0 to 1 mm, never negative. A fact of the machine and material, so it has no default. The 0.05 to 0.3 mm plausibility band is a heuristic with no source table and only warns; the intended press-fit range is 0.10 to 0.15 mm per side
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_interference_per_side
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1},"lower":{"exclusiveMinimum":0,"maximum":1},"upper":{"exclusiveMinimum":0,"maximum":1}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.001},"lower":{"exclusiveMinimum":0,"maximum":0.001},"upper":{"exclusiveMinimum":0,"maximum":0.001}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1000},"lower":{"exclusiveMinimum":0,"maximum":1000},"upper":{"exclusiveMinimum":0,"maximum":1000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyInterferencePerSide = Mapping[str, Any]
+
+
+# Layer height: above 0 and at most 3 mm, the largest nozzle; a plausible layer is at most 0.8 of the nozzle diameter
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_layer_height
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3},"lower":{"exclusiveMinimum":0,"maximum":3},"upper":{"exclusiveMinimum":0,"maximum":3}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.003},"lower":{"exclusiveMinimum":0,"maximum":0.003},"upper":{"exclusiveMinimum":0,"maximum":0.003}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3000},"lower":{"exclusiveMinimum":0,"maximum":3000},"upper":{"exclusiveMinimum":0,"maximum":3000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyLayerHeight = Mapping[str, Any]
+
+
+# Print speed: above 0 and at most 1000 mm/s
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_max_speed
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm_s"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1000},"lower":{"exclusiveMinimum":0,"maximum":1000},"upper":{"exclusiveMinimum":0,"maximum":1000}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m_s"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":1},"lower":{"exclusiveMinimum":0,"maximum":1},"upper":{"exclusiveMinimum":0,"maximum":1}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm_s", "m_s"] (optional)
+ManufacturingCapabilitiesQtyMaxSpeed = Mapping[str, Any]
+
+
+# Calibrated smallest reliable first-layer contact area: above 0 mm2. A fact of the machine and material, so it has no default. The plausibility band waits for more calibrations (#141)
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_bed_contact_area
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm2"}}} then {"properties":{"value":{"exclusiveMinimum":0},"lower":{"exclusiveMinimum":0},"upper":{"exclusiveMinimum":0}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm2"] (optional)
+ManufacturingCapabilitiesQtyMinBedContactArea = Mapping[str, Any]
+
+
+# Calibrated smallest reliable pin or boss diameter: 0.2 to 20 mm
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_feature
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.2,"maximum":20},"lower":{"minimum":0.2,"maximum":20},"upper":{"minimum":0.2,"maximum":20}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0002,"maximum":0.02},"lower":{"minimum":0.0002,"maximum":0.02},"upper":{"minimum":0.0002,"maximum":0.02}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":200,"maximum":20000},"lower":{"minimum":200,"maximum":20000},"upper":{"minimum":200,"maximum":20000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyMinFeature = Mapping[str, Any]
+
+
+# Calibrated smallest reliable cut hole diameter: 0.1 to 25 mm. The 0.5 to 10 mm plausibility band is a heuristic with no source table and only warns; the sourced guideline value is 2.0 mm (Protolabs, S3 in the FDM survey)
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_hole
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.1,"maximum":25},"lower":{"minimum":0.1,"maximum":25},"upper":{"minimum":0.1,"maximum":25}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0001,"maximum":0.025},"lower":{"minimum":0.0001,"maximum":0.025},"upper":{"minimum":0.0001,"maximum":0.025}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":100,"maximum":25000},"lower":{"minimum":100,"maximum":25000},"upper":{"minimum":100,"maximum":25000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyMinHole = Mapping[str, Any]
+
+
+# Calibrated thinnest wall: 0.1 to 25 mm
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_min_wall
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"minimum":0.1,"maximum":25},"lower":{"minimum":0.1,"maximum":25},"upper":{"minimum":0.1,"maximum":25}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"minimum":0.0001,"maximum":0.025},"lower":{"minimum":0.0001,"maximum":0.025},"upper":{"minimum":0.0001,"maximum":0.025}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"minimum":100,"maximum":25000.000000000004},"lower":{"minimum":100,"maximum":25000.000000000004},"upper":{"minimum":100,"maximum":25000.000000000004}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyMinWall = Mapping[str, Any]
+
+
+# Nozzle diameter: above 0 and at most 3 mm
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3},"lower":{"exclusiveMinimum":0,"maximum":3},"upper":{"exclusiveMinimum":0,"maximum":3}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.003},"lower":{"exclusiveMinimum":0,"maximum":0.003},"upper":{"exclusiveMinimum":0,"maximum":0.003}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3000},"lower":{"exclusiveMinimum":0,"maximum":3000},"upper":{"exclusiveMinimum":0,"maximum":3000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyNozzleDiameter = Mapping[str, Any]
+
+
+# Calibrated unsupported overhang, from vertical: 0 to 90 deg
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_overhang_angle
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"deg"}}} then {"properties":{"value":{"minimum":0,"maximum":90},"lower":{"minimum":0,"maximum":90},"upper":{"minimum":0,"maximum":90}}}
+# - if {"required":["units"],"properties":{"units":{"const":"rad"}}} then {"properties":{"value":{"minimum":0,"maximum":1.570796326795},"lower":{"minimum":0,"maximum":1.570796326795},"upper":{"minimum":0,"maximum":1.570796326795}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["deg", "rad"] (optional)
+ManufacturingCapabilitiesQtyOverhangAngle = Mapping[str, Any]
+
+
+# Laser power: above 0 and at most 10 kW; a desktop laser stays under 300 W
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_power
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"kW"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
+# - if {"required":["units"],"properties":{"units":{"const":"W"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["kW", "W"] (optional)
+ManufacturingCapabilitiesQtyPower = Mapping[str, Any]
+
+
+# Press brake force: above 0 and at most 10000 kN
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_press_brake_force
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"kN"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
+# - if {"required":["units"],"properties":{"units":{"const":"N"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["kN", "N"] (optional)
+ManufacturingCapabilitiesQtyPressBrakeForce = Mapping[str, Any]
+
+
+# Waterjet pump pressure: above 0 and at most 700 MPa
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_pump_pressure
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"MPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":700},"lower":{"exclusiveMinimum":0,"maximum":700},"upper":{"exclusiveMinimum":0,"maximum":700}}}
+# - if {"required":["units"],"properties":{"units":{"const":"GPa"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":0.7},"lower":{"exclusiveMinimum":0,"maximum":0.7},"upper":{"exclusiveMinimum":0,"maximum":0.7}}}
+# - if {"required":["units"],"properties":{"units":{"const":"bar"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":7000},"lower":{"exclusiveMinimum":0,"maximum":7000},"upper":{"exclusiveMinimum":0,"maximum":7000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["MPa", "GPa", "bar"] (optional)
+ManufacturingCapabilitiesQtyPumpPressure = Mapping[str, Any]
+
+
+# Spindle limit: above 0 and at most 200000 rpm
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_spindle_max_speed
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"rpm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":200000},"lower":{"exclusiveMinimum":0,"maximum":200000},"upper":{"exclusiveMinimum":0,"maximum":200000}}}
+# - if {"required":["units"],"properties":{"units":{"const":"Hz"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":3333.333333333333},"lower":{"exclusiveMinimum":0,"maximum":3333.333333333333},"upper":{"exclusiveMinimum":0,"maximum":3333.333333333333}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["rpm", "Hz"] (optional)
+ManufacturingCapabilitiesQtySpindleMaxSpeed = Mapping[str, Any]
+
+
+# Axis travel: above 0 and at most 10 m
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_x
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyTravelX = Mapping[str, Any]
+
+
+# Axis travel: above 0 and at most 10 m
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_y
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyTravelY = Mapping[str, Any]
+
+
+# Axis travel: above 0 and at most 10 m
+#
+# Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_travel_z
+#
+# Not expressible as types (see the schema):
+# - if {"required":["units"],"properties":{"units":{"const":"mm"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000},"lower":{"exclusiveMinimum":0,"maximum":10000},"upper":{"exclusiveMinimum":0,"maximum":10000}}}
+# - if {"required":["units"],"properties":{"units":{"const":"m"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10},"lower":{"exclusiveMinimum":0,"maximum":10},"upper":{"exclusiveMinimum":0,"maximum":10}}}
+# - if {"required":["units"],"properties":{"units":{"const":"um"}}} then {"properties":{"value":{"exclusiveMinimum":0,"maximum":10000000},"lower":{"exclusiveMinimum":0,"maximum":10000000},"upper":{"exclusiveMinimum":0,"maximum":10000000}}}
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: units: Literal["mm", "m", "um"] (optional)
+ManufacturingCapabilitiesQtyTravelZ = Mapping[str, Any]
 
 
 # A check family, such as process.fdm.support or interface.fit
@@ -4481,6 +4068,34 @@ class ManufacturingEvidence(TypedDict):
 
 # Source: skills/cad-record/schemas/manufacturing-evidence.schema.json#/$defs/fingerprint_domain
 ManufacturingEvidenceFingerprintDomain = Literal["material", "lot", "condition", "process", "route", "orientation", "setup", "capability", "finish", "load", "environment", "interface", "occurrences", "criterion", "source", "geometry", "use_case", "appearance"]
+
+
+class ManufacturingFactKnown(TypedDict):
+    """Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/fact_known
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - if {"properties":{"basis":{"const":"estimate"}}} then {"required":["uncertainty"]}
+    - if {"properties":{"basis":{"const":"assumed"}}} then {"required":["assumption"]}
+    - if {"properties":{"basis":{"const":"allowable"}}} then {"required":["conditions","derivation"]}
+
+    Field notes:
+    - derivation: how an allowable was derived from its sources
+    """
+    status: Required[Literal["known"]]
+    value: Required[Any]
+    sources: Required[ManufacturingSources]
+    basis: Required[ManufacturingBasis]
+    uncertainty: NotRequired[ManufacturingUncertainty]
+    conditions: NotRequired[ManufacturingText]
+    assumption: NotRequired[ManufacturingAssumptionId]
+    derivation: NotRequired[ManufacturingText]
+    decision: NotRequired[ManufacturingDecision]
+    note: NotRequired[ManufacturingText]
+
+
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/fact
+ManufacturingFact = ManufacturingFactKnown | ManufacturingFactUnknown | ManufacturingFactNotApplicable
 
 
 class ManufacturingFindingsDispositionProducer(TypedDict):
@@ -6467,70 +6082,37 @@ class Requirements(TypedDict):
     requirements: Required[list[RequirementsRequirementsItems]]
 
 
-if sys.version_info >= (3, 15):
-    class StackupContributorsItems(TypedDict, extra_items=Any):
-        """Source: skills/cad-record/schemas/stackup.schema.json#/properties/contributors/items
-
-        Field notes:
-        - tol: Symmetric +/- tolerance, mm; minimum: 0; maximum: 5
-        - tol_plus: Upper tolerance magnitude, mm; minimum: 0; maximum: 5
-        - tol_minus: Lower tolerance magnitude, mm; minimum: 0; maximum: 5
-        """
-        tol: NotRequired[float]
-        tol_plus: NotRequired[float]
-        tol_minus: NotRequired[float]
-else:
-    class StackupContributorsItems(TypedDict):
-        """Source: skills/cad-record/schemas/stackup.schema.json#/properties/contributors/items
-
-        Field notes:
-        - tol: Symmetric +/- tolerance, mm; minimum: 0; maximum: 5
-        - tol_plus: Upper tolerance magnitude, mm; minimum: 0; maximum: 5
-        - tol_minus: Lower tolerance magnitude, mm; minimum: 0; maximum: 5
-        """
-        tol: NotRequired[float]
-        tol_plus: NotRequired[float]
-        tol_minus: NotRequired[float]
+# CAD tolerance stack-up bounds (cad-fits stackup.py, legacy and intent stack files)
+#
+# The numeric bounds of a stack file; stackup.py checks its structure. The contributor tolerances are magnitudes in mm. Hard bounds are errors; x-plausible bands are warnings (plausibility.<field>)
+#
+# Source: skills/cad-record/schemas/stackup.schema.json#
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: contributors: list[StackupContributorsItems] (optional), statistics: StackupStatistics (optional)
+Stackup = Mapping[str, Any]
 
 
-if sys.version_info >= (3, 15):
-    class StackupStatistics(TypedDict, extra_items=Any):
-        """Source: skills/cad-record/schemas/stackup.schema.json#/properties/statistics
-
-        Field notes:
-        - coverage_factor: k of a justified RSS. The default 2 follows the GUM convention (JCGM 100:2008, ISO/IEC Guide 98-3, section 6.3.3): k = 2 gives about 95 percent coverage for a normal distribution. stackup.py still requires an explicit k with an approving decision, so the default is the loader's starting value; default 2; minimum: 1; maximum: 6
-        """
-        coverage_factor: NotRequired[float]
-else:
-    class StackupStatistics(TypedDict):
-        """Source: skills/cad-record/schemas/stackup.schema.json#/properties/statistics
-
-        Field notes:
-        - coverage_factor: k of a justified RSS. The default 2 follows the GUM convention (JCGM 100:2008, ISO/IEC Guide 98-3, section 6.3.3): k = 2 gives about 95 percent coverage for a normal distribution. stackup.py still requires an explicit k with an approving decision, so the default is the loader's starting value; default 2; minimum: 1; maximum: 6
-        """
-        coverage_factor: NotRequired[float]
+# Source: skills/cad-record/schemas/stackup.schema.json#/properties/contributors/items
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: tol: float (optional), tol_plus: float (optional), tol_minus: float (optional)
+#
+# Field notes:
+# - tol: Symmetric +/- tolerance, mm; minimum: 0; maximum: 5
+# - tol_plus: Upper tolerance magnitude, mm; minimum: 0; maximum: 5
+# - tol_minus: Lower tolerance magnitude, mm; minimum: 0; maximum: 5
+StackupContributorsItems = Mapping[str, Any]
 
 
-if sys.version_info >= (3, 15):
-    class Stackup(TypedDict, extra_items=Any):
-        """CAD tolerance stack-up bounds (cad-fits stackup.py, legacy and intent stack files)
-
-        The numeric bounds of a stack file; stackup.py checks its structure. The contributor tolerances are magnitudes in mm. Hard bounds are errors; x-plausible bands are warnings (plausibility.<field>)
-
-        Source: skills/cad-record/schemas/stackup.schema.json#
-        """
-        contributors: NotRequired[list[StackupContributorsItems]]
-        statistics: NotRequired[StackupStatistics]
-else:
-    class Stackup(TypedDict):
-        """CAD tolerance stack-up bounds (cad-fits stackup.py, legacy and intent stack files)
-
-        The numeric bounds of a stack file; stackup.py checks its structure. The contributor tolerances are magnitudes in mm. Hard bounds are errors; x-plausible bands are warnings (plausibility.<field>)
-
-        Source: skills/cad-record/schemas/stackup.schema.json#
-        """
-        contributors: NotRequired[list[StackupContributorsItems]]
-        statistics: NotRequired[StackupStatistics]
+# Source: skills/cad-record/schemas/stackup.schema.json#/properties/statistics
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: coverage_factor: float (optional)
+#
+# Field notes:
+# - coverage_factor: k of a justified RSS. The default 2 follows the GUM convention (JCGM 100:2008, ISO/IEC Guide 98-3, section 6.3.3): k = 2 gives about 95 percent coverage for a normal distribution. stackup.py still requires an explicit k with an approving decision, so the default is the loader's starting value; default 2; minimum: 1; maximum: 6
+StackupStatistics = Mapping[str, Any]
 
 
 class ToolSettingsAccess(TypedDict):

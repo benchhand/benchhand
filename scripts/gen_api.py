@@ -48,10 +48,15 @@ NOTE_KEYS = (
 )
 SCALARS = {"string": "str", "integer": "int", "number": "float", "boolean": "bool", "null": "None"}
 NO_DEFAULT = object()
+# An open object has no static key set: mypy rejects extra keys in a TypedDict literal and ignores
+# PEP 728 `extra_items`, so the type is a read-only mapping and keeps the known keys in its docs.
+OPEN_OBJECT = "Mapping[str, Any]"
+OPEN_NOTE = (
+    "Open object: the schema allows other keys, so this is a Mapping[str, Any]. "
+    "Type checkers do not check the known keys' names or value types; the table of known keys is documentation."
+)
 # Notes that record an object closed to extra keys. Any other object accepts them.
 CLOSING_NOTES = ("additionalProperties: false", "unevaluatedProperties: false")
-# PEP 728 gave TypedDict `extra_items`; typing.TypedDict accepts it from Python 3.15.
-EXTRA_ITEMS_GATE = "sys.version_info >= (3, 15)"
 
 
 def dump(value: Any) -> str:
@@ -97,6 +102,11 @@ class TypeDef:
     description: str = ""
     fields: list[Field] | None = None  # None: an alias
     open: bool = False  # the schema allows keys beyond `fields`
+
+    @property
+    def is_class(self) -> bool:
+        """A closed object is a TypedDict; an open object and every other type is an alias."""
+        return self.fields is not None and not self.open
     alias: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -333,6 +343,8 @@ class Walker:
             notes.append(f"additionalProperties: {dump(extra)}")
         typedef.notes = list(dict.fromkeys(notes))
         typedef.open = not any(note in CLOSING_NOTES for note in notes)
+        if typedef.open:
+            typedef.alias = OPEN_OBJECT
 
     # -- notes: constructs the types cannot carry ------------------------------------------------
 
@@ -401,6 +413,8 @@ def type_docs(typedef: TypeDef) -> list[str]:
     lines += ["", f"Source: {typedef.schema.rel}#{typedef.pointer}"] if lines else [f"Source: {typedef.schema.rel}#{typedef.pointer}"]
     if typedef.notes:
         lines += ["", "Not expressible as types (see the schema):"] + [f"- {n}" for n in typedef.notes]
+    if typedef.open:
+        lines += ["", OPEN_NOTE, "Known keys: " + ", ".join(f"{f.name}: {f.expr}{'' if f.required else ' (optional)'}" for f in typedef.fields or [])]
     described = [f for f in typedef.fields or [] if f.description or f.default is not NO_DEFAULT or f.notes]
     if described:
         lines += ["", "Field notes:"]
@@ -414,11 +428,11 @@ def wrap(f: Field, quote: bool) -> str:
     return f"{'Required' if f.required else 'NotRequired'}[{json.dumps(f.expr) if quote else f.expr}]"
 
 
-def render_class(typedef: TypeDef, quoted: set[tuple[str, str]], extra_items: bool = False) -> list[str]:
+def render_class(typedef: TypeDef, quoted: set[tuple[str, str]]) -> list[str]:
     assert typedef.fields is not None
     docs = type_docs(typedef)
     if all(f.name.isidentifier() and not keyword.iskeyword(f.name) for f in typedef.fields):
-        out = [f"class {typedef.name}(TypedDict{', extra_items=Any' if extra_items else ''}):", *docstring(docs, "    ")]
+        out = [f"class {typedef.name}(TypedDict):", *docstring(docs, "    ")]
         out += [f"    {f.name}: {wrap(f, (typedef.name, f.name) in quoted)}" for f in typedef.fields]
         return out
     out = ["# " + line if line else "#" for line in docs]
@@ -426,20 +440,8 @@ def render_class(typedef: TypeDef, quoted: set[tuple[str, str]], extra_items: bo
     out.append(f'    "{typedef.name}",')
     out.append("    {")
     out += [f"        {json.dumps(f.name)}: {wrap(f, (typedef.name, f.name) in quoted)}," for f in typedef.fields]
-    out += ["    },", *(["    extra_items=Any,"] if extra_items else []), ")"]
+    out += ["    },", ")"]
     return out
-
-
-def indented(lines: list[str]) -> list[str]:
-    return [f"    {line}" if line else line for line in lines]
-
-
-def render_object(typedef: TypeDef, quoted: set[tuple[str, str]]) -> list[str]:
-    """A closed object is one TypedDict. An open one gets `extra_items=Any` where typing has it
-    and the plain class before, so the module still imports on Python 3.11."""
-    if not typedef.open:
-        return render_class(typedef, quoted)
-    return [f"if {EXTRA_ITEMS_GATE}:", *indented(render_class(typedef, quoted, True)), "else:", *indented(render_class(typedef, quoted))]
 
 
 def render_alias(typedef: TypeDef) -> list[str]:
@@ -479,7 +481,7 @@ class TypeOrder:
         if typedef.name in self.state:
             return
         self.state.add(typedef.name)
-        wait = self.visit_alias(typedef) if typedef.fields is None else self.visit_class(typedef)
+        wait = self.visit_alias(typedef) if not typedef.is_class else self.visit_class(typedef)
         if wait:
             self.waits[typedef.name] = wait
             self.pending.setdefault(wait, []).append(typedef)
@@ -504,7 +506,7 @@ class TypeOrder:
             if word in self.emitted:
                 continue
             # The alias needs a class that is still open: emit the alias right after that class.
-            wait = word if self.by_name[word].fields is not None else self.waits.get(word, "")
+            wait = word if self.by_name[word].is_class else self.waits.get(word, "")
             if not wait:
                 raise ValueError(f"type alias {typedef.name} is part of an alias cycle with {word}")
         return wait
@@ -537,11 +539,10 @@ def render_api(types: list[TypeDef], schemas: list[Schema]) -> str:
     ordered, quoted = order_types(types)
     body: list[str] = []
     for typedef in ordered:
-        body += (render_object(typedef, quoted) if typedef.fields is not None else render_alias(typedef)) + ["", ""]
+        body += (render_class(typedef, quoted) if typedef.is_class else render_alias(typedef)) + ["", ""]
     text = "\n".join(body)
-    prelude = ["import sys", ""] * any(t.open for t in types)
     imports = ["Any"] * bool(re.search(r"\bAny\b", text)) + ["Never"] * bool(re.search(r"\bNever\b", text)) + ["Literal"] * ("Literal[" in text)
-    imports += ["NotRequired"] * ("NotRequired[" in text) + ["Required"] * bool(re.search(r"(?<!Not)Required\[", text)) + ["TypedDict"] * any(t.fields is not None for t in types)
+    imports += ["NotRequired"] * ("NotRequired[" in text) + ["Required"] * bool(re.search(r"(?<!Not)Required\[", text)) + ["TypedDict"] * any(t.is_class for t in types)
     names = sorted(t.name for t in types)
     head = [
         *SPDX_LINES,
@@ -550,13 +551,14 @@ def render_api(types: list[TypeDef], schemas: list[Schema]) -> str:
         '"""Typed shapes of the CAD record and concept JSON Schemas.',
         "",
         "Standard library only and Python 3.11 compatible, so FreeCAD job code can import it. Each schema",
-        "object is a TypedDict; each shared definition is a type alias. Types cannot express if/then,",
+        "object that forbids extra keys is a TypedDict; an object that allows them is a Mapping[str, Any], so",
+        "its known keys are documented but not checked; each shared definition is a type alias. Types cannot express if/then,",
         "dependentRequired, patterns, numeric bounds, uniqueness, additionalProperties: false or oneOf",
         "exclusivity; the docstrings and comments list them. The JSON Schemas stay authoritative:",
         "validate with them (schema_registry.py) and use these types for editor and type-checker help.",
         '"""',
         "",
-        *prelude,
+        *["from collections.abc import Mapping"] * any(t.open for t in types),
         f"from typing import {', '.join(sorted(imports))}",
         "",
         "__all__ = [",
@@ -572,31 +574,36 @@ def md_cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def field_table(typedef: TypeDef) -> list[str]:
+    if not typedef.fields:
+        return []
+    out = ["| Field | Type | Required | Default | Description |", "| --- | --- | --- | --- | --- |"]
+    for f in typedef.fields:
+        default = "" if f.default is NO_DEFAULT else f"`{md_cell(dump(f.default))}`"
+        out.append(f"| `{f.name}` | `{md_cell(f.expr)}` | {'yes' if f.required else 'no'} | {default} | {md_cell(f.description)} |")
+    return [*out, ""]
+
+
+def doc_section(typedef: TypeDef) -> list[str]:
+    out = [f"### {typedef.name}", "", f"Source: `{typedef.pointer}`" if typedef.pointer else "Source: schema root", ""]
+    out += [f"**{typedef.title}**", ""] if typedef.title else []
+    out += [typedef.description, ""] if typedef.description else []
+    out += [] if typedef.is_class else [f"Alias of `{typedef.alias}`", ""]
+    out += [OPEN_NOTE, "", "Known keys:", ""] if typedef.open else []
+    out += field_table(typedef)
+    notes = [*typedef.notes, *[f"`{f.name}`: {n}" for f in typedef.fields or [] for n in f.notes]]
+    return out + (["Constraints not expressed by the type:", ""] + [f"- {md_cell(n)}" for n in notes] + [""] if notes else [])
+
+
 def render_doc(schemas: list[Schema], types: list[TypeDef]) -> str:
     out = [f"<!-- {HEADER}", *hash_lines(schemas), "-->", "", "# Schema reference", "",
            "Every type below is generated from the JSON Schemas listed in its section. The schemas stay authoritative;",
            "types show shape only, so the constraints a type cannot express are listed under each type.", ""]
     for schema in schemas:
         out += [f"## {Path(schema.rel).name}", "", f"- File: `{schema.rel}`", f"- `$id`: `{schema.id}`", ""]
-        if schema.data.get("title"):
-            out += [str(schema.data["title"]), ""]
+        out += [str(schema.data["title"]), ""] if schema.data.get("title") else []
         for typedef in sorted((t for t in types if t.schema is schema), key=lambda t: t.name):
-            out += [f"### {typedef.name}", "", f"Source: `{typedef.pointer or '#'}`" if typedef.pointer else "Source: schema root", ""]
-            if typedef.title:
-                out += [f"**{typedef.title}**", ""]
-            if typedef.description:
-                out += [typedef.description, ""]
-            if typedef.fields is None:
-                out += [f"Alias of `{typedef.alias}`", ""]
-            elif typedef.fields:
-                out += ["| Field | Type | Required | Default | Description |", "| --- | --- | --- | --- | --- |"]
-                for f in typedef.fields:
-                    default = "" if f.default is NO_DEFAULT else f"`{md_cell(dump(f.default))}`"
-                    out.append(f"| `{f.name}` | `{md_cell(f.expr)}` | {'yes' if f.required else 'no'} | {default} | {md_cell(f.description)} |")
-                out.append("")
-            notes = [*typedef.notes, *[f"`{f.name}`: {n}" for typedef_field in [typedef.fields or []] for f in typedef_field for n in f.notes]]
-            if notes:
-                out += ["Constraints not expressed by the type:", ""] + [f"- {md_cell(n)}" for n in notes] + [""]
+            out += doc_section(typedef)
     return "\n".join(out).rstrip("\n") + "\n"
 
 
