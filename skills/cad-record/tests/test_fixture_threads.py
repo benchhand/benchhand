@@ -18,12 +18,15 @@ from pathlib import Path
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py"
 
-# A module body that stalls after it starts until the second thread is about to load it.
+# A module body that stalls after it starts until the second thread is about to load it, then until
+# that thread's load call returns. A correct loader keeps the second thread waiting, so the last wait
+# times out on purpose; a broken one returns the half-built module first and the body then finishes.
 SLOW_BODY = """
-import sys, time
-sys._fixture_probe["started"].set()
-sys._fixture_probe["second_ready"].wait(10)
-time.sleep(0.2)
+import sys
+probe = sys._fixture_probe
+probe["started"].set()
+assert probe["second_ready"].wait(10), "the second thread never reached the loader"
+probe["second_returned"].wait(1)
 use_case_questions = "ready"
 """
 
@@ -35,7 +38,7 @@ class FixtureLoaderThreadTests(unittest.TestCase):
         loader = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(loader)
         name = "cad_record_thread_probe_module"
-        probe = {"started": threading.Event(), "second_ready": threading.Event()}
+        probe = {name_: threading.Event() for name_ in ("started", "second_ready", "second_returned")}
         sys._fixture_probe = probe  # type: ignore[attr-defined]
         self.addCleanup(lambda: delattr(sys, "_fixture_probe"))
         self.addCleanup(sys.modules.pop, name, None)
@@ -44,9 +47,11 @@ class FixtureLoaderThreadTests(unittest.TestCase):
             path.write_text(SLOW_BODY, encoding="utf-8")
 
             def second() -> bool:
-                probe["started"].wait(10)
+                assert probe["started"].wait(10), "the first thread never started loading"
                 probe["second_ready"].set()
-                return hasattr(loader._module(name, path), "use_case_questions")
+                complete = hasattr(loader._module(name, path), "use_case_questions")
+                probe["second_returned"].set()
+                return complete
 
             with ThreadPoolExecutor(2) as pool:
                 first = pool.submit(lambda: hasattr(loader._module(name, path), "use_case_questions"))

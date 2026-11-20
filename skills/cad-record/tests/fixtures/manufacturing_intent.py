@@ -49,7 +49,7 @@ def _module(name: str, path: Path) -> Any:
             try:
                 spec.loader.exec_module(module)
             except BaseException:
-                del sys.modules[name]
+                sys.modules.pop(name, None)
                 raise
         return sys.modules[name]
 
