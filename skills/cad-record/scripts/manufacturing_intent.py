@@ -910,33 +910,44 @@ def _outside(value: float, band: Mapping[str, Any]) -> bool:
     return high is not None and value > high and not math.isclose(value, high, rel_tol=1e-9)
 
 
-def _band_values(band: Mapping[str, Any], instance: Any) -> list[tuple[str, float, float]]:
-    """The (label, value as written, value in the band's units) of every number `instance` holds that the band governs.
-    A quantity is read in the band's units; a quantity whose unit cannot convert to them is left to the hard bounds."""
+def _is_number(value: Any) -> TypeGuard[float]:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _band_values(band: Mapping[str, Any], instance: Any) -> list[tuple[str, float, int | str | None]]:
+    """The (label, value in the band's units, member) of every number `instance` holds that the band governs; the member
+    is the key of a quantity's end (value, lower, upper) or the index of an array element, None for a bare number. A quantity is read in the band's units. A quantity whose unit is not a
+    known unit that converts to them is left to the hard bounds (schema_problems reports it)."""
     if isinstance(instance, Mapping) and "units" in instance:
-        units, found = band.get("units"), []
+        written, units = instance["units"], band.get("units")
+        found: list[tuple[str, float, int | str | None]] = []
+        if not isinstance(written, str) or not isinstance(units, str):
+            return found
         for key in ("value", "lower", "upper"):
             number = instance.get(key)
-            if isinstance(number, (int, float)) and not isinstance(number, bool) and units:
+            if _is_number(number):
                 try:
-                    found.append((f"{key} {number:g} {instance['units']}", number, convert(number, instance["units"], units)))
+                    found.append((f"{key} {number:g} {written}", convert(number, written, units), key))
                 except IntentError:
                     continue
         return found
-    items = instance if isinstance(instance, (list, tuple)) else [instance]
-    return [(f"{item:g}", item, item) for item in items if isinstance(item, (int, float)) and not isinstance(item, bool)]
+    if isinstance(instance, (list, tuple)):
+        return [(f"{item:g}", item, index) for index, item in enumerate(instance) if _is_number(item)]
+    return [(f"{instance:g}", instance, None)] if _is_number(instance) else []
 
 
 def _plausible_keyword(_validator: Any, band: Any, instance: Any, _schema: Any) -> Iterator[Any]:
-    """The jsonschema `x-plausible` keyword: one error for each number outside the band. A band relative to a sibling
-    (`relative_to`) needs that sibling, which a keyword does not see, so it is not checked here."""
+    """The jsonschema `x-plausible` keyword: one error for each number outside the band, at the member that holds it
+    (a quantity's end or an array element), so a sibling's hard-bound error does not hide it. A band relative to a sibling (`relative_to`) needs that sibling, which a keyword does not see, so it is not
+    checked here."""
     from jsonschema import ValidationError  # noqa: PLC0415 - needed only to validate
 
     if not isinstance(band, Mapping) or "relative_to" in band:
         return
-    for label, _written, value in _band_values(band, instance):
+    for label, value, member in _band_values(band, instance):
         if _outside(value, band):
-            yield ValidationError(f"{label} is outside the plausible band {_band_text(band)}")
+            yield ValidationError(f"{label} is outside the plausible band {_band_text(band)}",
+                                  path=[] if member is None else [member])
 
 
 def _plausible_errors(errors: Iterable[Any]) -> Iterator[Any]:
@@ -947,10 +958,21 @@ def _plausible_errors(errors: Iterable[Any]) -> Iterator[Any]:
         yield from _plausible_errors(error.context or ())
 
 
+def _leaves(errors: Iterable[Any]) -> Iterator[Any]:
+    """The errors among `errors` with no context and, for a oneOf or anyOf, the errors of its branches: the places a
+    value was refused, not the alternatives that held it."""
+    for error in errors:
+        if error.context:
+            yield from _leaves(error.context)
+        else:
+            yield error
+
+
 def _field(path: Sequence[Any]) -> str:
-    """The field a warning is about: the last name in `path`; a quantity's `value` is its fact's, so the name before it."""
+    """The field a warning is about: the last name in `path`; a quantity's end (value, lower, upper) and a fact's `value`
+    are not names of their own, so the name before them."""
     names = [str(part) for part in path if not isinstance(part, int)]
-    if len(names) > 1 and names[-1] == "value":
+    while len(names) > 1 and names[-1] in ("value", "lower", "upper"):
         names.pop()
     return names[-1] if names else "document"
 
@@ -959,7 +981,7 @@ def plausibility_problems(documents: Mapping[str, Any]) -> list[Problem]:
     """A warning `plausibility.<field>` for each value inside its schema's hard bound and outside the `x-plausible` band that
     applies to it (needs jsonschema). The band is the one the validator reaches for that value, through `$ref`, `allOf` and
     `if`/`then`, so a calibration's limits take the band of their characteristic, and a quantity is read in the band's
-    units (15000 um against a band in mm). A value that fails its schema gets none: schema_problems reports it. A band
+    units (15000 um against a band in mm). A number that fails its schema gets none (schema_problems reports it), while a sibling end of the same interval or array that is inside its hard bound still warns. A band
     relative to a sibling value (layer_height to nozzle_diameter) is not checked."""
     schemas = _sibling("cad_record_schema_registry", "schema_registry.py")
     problems = []
@@ -967,13 +989,12 @@ def plausibility_problems(documents: Mapping[str, Any]) -> list[Problem]:
         name = schema_for(rel)
         if name is None:
             continue
-        refused = [(tuple(e.absolute_path), e.validator in ("oneOf", "anyOf"))
-                   for e in schemas.document_validator(SCHEMAS, name).iter_errors(document)]
+        refused = [tuple(e.absolute_path) for e in _leaves(schemas.document_validator(SCHEMAS, name).iter_errors(document))]
         banded = schemas.keyword_validator(SCHEMAS, name, "x-plausible", _plausible_keyword)
         seen = set()
         for error in _plausible_errors(banded.iter_errors(document)):
             path = tuple(error.absolute_path)
-            if any(hard[: len(path)] == path or (alternatives and path[: len(hard)] == hard) for hard, alternatives in refused):
+            if any(hard[: len(path)] == path for hard in refused):  # the member itself fails its hard bound
                 continue
             pointer = "/".join(str(part) for part in path)
             message = f"{pointer + ': ' if pointer else ''}{error.message}"

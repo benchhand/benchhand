@@ -848,7 +848,7 @@ class PlausibilityWarnings(unittest.TestCase):
         self.assertEqual(mi.schema_problems(documents), [])
         (problem,) = mi.plausibility_problems(documents)
         self.assertEqual((problem.code, problem.severity, problem.path), ("plausibility.limits", "warning", "hw/manufacturing/capabilities.yaml"))
-        self.assertEqual(problem.pointer, "profiles/0/calibrations/0/result/limits")
+        self.assertEqual(problem.pointer, "profiles/0/calibrations/0/result/limits/value")
         self.assertIn("value 15 mm", problem.message)
         self.assertIn("0.5 to 10 mm", problem.message)
 
@@ -892,6 +892,50 @@ class PlausibilityWarnings(unittest.TestCase):
         documents = self.documents(calibrations=[fx.calibration("hole", "min_hole", "tst_polymer_printed", fx.quantity(lower=1, upper=15))])
         (problem,) = mi.plausibility_problems(documents)
         self.assertIn("upper 15 mm", problem.message)
+
+    def test_an_interval_end_inside_its_hard_bound_still_warns_when_its_sibling_breaks_the_bound(self) -> None:
+        documents = self.documents(calibrations=[fx.calibration("hole", "min_hole", "tst_polymer_printed", fx.quantity(lower=0.2, upper=26))])
+        self.assertTrue(mi.schema_problems(documents))  # upper 26 mm is past the 25 mm hard bound
+        (problem,) = mi.plausibility_problems(documents)  # lower 0.2 mm is inside it and below the 0.5 mm band
+        self.assertEqual(problem.pointer, "profiles/0/calibrations/0/result/limits/lower")
+        self.assertIn("lower 0.2 mm", problem.message)
+
+    def test_a_plain_number_takes_its_band(self) -> None:
+        def tolerance(value: Any) -> list[Any]:
+            return mi.plausibility_problems({"product.yaml": fx.product(general_tolerance=value)})
+
+        (problem,) = tolerance(1)  # a linear general tolerance in mm: band 0.01 to 0.5, hard bound 5
+        self.assertEqual((problem.code, problem.pointer), ("plausibility.general_tolerance", "general_tolerance"))
+        self.assertIn("0.01 to 0.5", problem.message)
+        for value in (0.1, "ISO 2768-m", 6):  # inside the band, a standard's name, past the hard bound
+            with self.subTest(value=value):
+                self.assertEqual(tolerance(value), [])
+
+    def part_with_edges(self, external: list[float]) -> dict[str, Any]:
+        part = fx.part("TST-0001")
+        part["drawing"] = {"type": "vendor_specification", "edges": {"external": external, "internal": [0, 0]}}
+        return {"parts/TST-0001/part.yaml": part}
+
+    def test_each_array_element_warns_at_its_own_index(self) -> None:
+        documents = self.part_with_edges([1, 1])  # ISO 13715 edge limits, band -0.5 to 0.5, hard bound -5 to 5
+        self.assertEqual(mi.schema_problems(documents), [])
+        problems = mi.plausibility_problems(documents)
+        self.assertEqual([p.pointer for p in problems], ["drawing/edges/external/0", "drawing/edges/external/1"])
+        self.assertEqual({p.code for p in problems}, {"plausibility.external"})
+
+    def test_an_array_element_inside_its_hard_bound_warns_when_another_breaks_it(self) -> None:
+        documents = self.part_with_edges([1, 9])
+        self.assertTrue(mi.schema_problems(documents))
+        self.assertEqual([p.pointer for p in mi.plausibility_problems(documents)], ["drawing/edges/external/0"])
+
+    def test_a_unit_that_is_not_a_string_is_a_schema_problem_and_no_crash(self) -> None:
+        documents = fx.record(capabilities=[fx.capability_profile(
+            "tst_printer", "fdm", calibrations=[fx.calibration("hole", "min_hole", "tst_polymer_printed", {"value": 15, "units": ["mm"]})])])
+        self.assertEqual(mi.plausibility_problems(documents), [])
+        with tempfile.TemporaryDirectory(prefix="cad-plausibility-") as scratch:
+            _record, problems = mi.check_record(fx.write_record(Path(scratch) / "hw", documents))
+        self.assertTrue([p for p in problems if p.code == "intent.schema" and "units" in p.message])
+        self.assertEqual([p for p in problems if p.code.startswith("plausibility.")], [])
 
     def test_check_documents_and_check_record_carry_the_warning_without_an_error(self) -> None:
         documents = fx.record(capabilities=[fx.capability_profile(
