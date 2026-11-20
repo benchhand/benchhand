@@ -1880,8 +1880,14 @@ class LooseComponentCoverageTests(Checks):
         self.assertEqual(outcomes["route.consistency@TST-0001.tab"], "unknown")
         self.assertIn("route.component_unplanned", {f["code"] for f in packet["findings"]})
         measured = [f for f in packet["findings"] if f["subject"].get("component") == "body" and "evidence" in f["method"]]
+        rows = [e for f in measured for e in f["method"]["evidence"]]
+        trace = [e for e in rows if e["path"].startswith("hw/checks/v1/process/evidence/guideline-trace-")]
+        self.assertTrue(trace, "findings of a guideline-consulting obligation cite the resolution trace")
         self.assertTrue(all(e["path"].startswith("hw/versions/v1/manufacturing/TST-0001/components/body/")
-                            for f in measured for e in f["method"]["evidence"]))
+                            for e in rows if e not in trace))
+        for row in trace:  # the cited file is in the sealed bundle, and its hash is the row's
+            written = bundle / "evidence" / Path(row["path"]).name
+            self.assertEqual(row["sha256"], hashlib.sha256(written.read_bytes()).hexdigest())
         manifest = self.hw / "versions" / "v1" / "manifest.json"
         self.assertEqual(packet["dependencies"]["version_manifest"], hashlib.sha256(manifest.read_bytes()).hexdigest())
 
