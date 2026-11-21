@@ -392,9 +392,16 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
     node at x = 3.5: 50 * 26.5 * 2.5 / I = 31.8 MPa at 50 N, a factor of 7.86, and 133.56 MPa at 210 N, 1.8718."""
 
     def solve(self, plan: list[dict[str, Any]], docs: dict[str, Any] | None = None,
-              material: dict[str, Any] | None = None) -> dict[str, Any]:
+              material: dict[str, Any] | None = None, artifacts: dict[str, bytes] | None = None) -> dict[str, Any]:
+        """`artifacts` are source files (relative to the record) that the version's record snapshot also holds."""
         self.plan = plan
         self.build(docs or conditions_tests.documents(profiles=[self.ductile_alloy()]))
+        for rel, data in (artifacts or {}).items():
+            target = self.hw / "versions" / "v1" / "record" / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        if artifacts:
+            self.seal("v1")
         if material and "effective_isotropic" in material:
             conditions_tests.write_test_decision(self.hw, "DR-003", title="DR-003: effective isotropic model")
         case = self.case(material or {"conditions": conditions_tests.SERVICE}, mode="stress", mesh_size=1.0,
@@ -546,6 +553,28 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
             fx.source("datasheet", "TST sheet", artifact="manufacturing/sources/missing.pdf", sha256=fx.sha256(b"x"),
                       conditions="TST")]
         self.unknown_with(profile, "manufacturing/sources/missing.pdf is not in the version's record snapshot")
+
+    def test_an_elongation_source_artifact_must_match_its_recorded_digest(self) -> None:
+        # The artifact is in the snapshot in both cases. Only its bytes differ from the recorded sha256.
+        fx, rel = conditions_tests.fx, "manufacturing/sources/elongation.pdf"
+        for name, held, ductile in (("bytes match", b"recorded bytes", True), ("bytes differ", b"other bytes", False)):
+            with self.subTest(name):
+                profile = self.ductile_alloy(0.30)
+                profile["properties"][-1]["value"]["sources"] = [
+                    fx.source("datasheet", "TST sheet", artifact=rel, sha256=fx.sha256(b"recorded bytes"), conditions="TST")]
+                self.fresh()
+                load = LOAD if ductile else 210.0
+                report = self.solve(beam_plan(beam_field() if ductile else beam_field(210.0), (0.0,), LENGTH, load),
+                                    conditions_tests.documents(profiles=[profile]), artifacts={rel: held})
+                self.assertEqual(report["material"]["ductility"]["shown"], ductile)
+                row, _ = self.row(report)
+                if ductile:
+                    self.assertEqual(row["outcome"], "pass", row)
+                else:
+                    self.assertEqual(row["outcome"], "unknown", row)
+                    reason = f"elongation_at_break source artifact {rel} does not match its recorded sha256"
+                    self.assertIn(reason, report["material"]["ductility"]["reason"])
+                    self.assertIn(reason, row["uncertainty"])
 
     def test_an_elongation_tested_under_other_conditions_is_not_used(self) -> None:
         tested = conditions_tests.fx.quantity(lower=50, upper=80, units="deg_C")
