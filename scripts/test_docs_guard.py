@@ -117,6 +117,8 @@ ALLOWED = [
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_an_effective_isotropic_decision_the_reader_refuses_or_in_the_old_form_is_no_evidence', 'DR-003.md', HW, 2),
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualifiedProfile.test_an_effective_isotropic_decision_the_reader_refuses_or_in_the_old_form_is_no_evidence', 'DR-003-model.md', HW),
     Allow('skills/cad-analysis/tests/test_fea_conditions.py', 'QualificationBypasses.test_only_a_valid_accepted_madr_record_counts', 'DR-002.md', HW),
+    Allow('skills/cad-flow/tests/test_flow_profile.py', 'Record.test_an_index_that_cannot_be_updated_removes_the_new_record_and_restores_the_product', 'DR-*.md', HW),
+    Allow('skills/cad-flow/tests/test_flow_profile.py', 'Record.test_an_index_that_cannot_be_updated_removes_the_new_record_and_restores_the_product', 'index.md', HW, 2),
     Allow('skills/cad-flow/tests/test_flow_profile.py', 'Record.test_record_refuses_a_decision_that_exists_and_changes_nothing', 'DR-*.md', HW),
     Allow('skills/cad-flow/tests/test_flow_profile.py', 'Record.test_record_writes_an_accepted_madr_decision', 'index.md', HW),
     Allow('skills/cad-flow/tests/test_preflight.py', 'HarnessInstallTests.test_opencode_receipt_uses_installer_project_paths', '.opencode/agents/cad-analyst.md', STUB, 2),
