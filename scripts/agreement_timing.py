@@ -11,11 +11,12 @@
 """Times `cadmodel.agreement.compare` on a fixed, generated mesh pair, so a timing needs no FreeCAD and no export.
 
 The pair is a large curved part: a torus (major radius 45 mm, minor radius 12 mm, close to the 44.85 mm fillet torus
-of lamp-arm's LMP-0004, grown to a size that loads the lookup). The "GLB" mesh is 96 x 48 quads (9216 triangles). The
-"STEP reference" is the same torus at 128 x 64 quads (16384 triangles), moved by a small seeded shift of its grid
-phase and seeded noise of up to 0.002 mm, as a second tessellation of one surface differs from the first. Both meshes
-are rounded to 0.1 micrometer, so the digest holds across platforms. The chord error of the coarse mesh is below
-0.031 mm, inside the 0.05 mm deflection that `compare` takes, so the verdict is `pass`.
+of lamp-arm's LMP-0004) tessellated finely enough that the triangle lookup, not the 1500-sample cap, sets the cost.
+The "GLB" mesh is 400 x 200 quads (160000 triangles). The "STEP reference" is the same torus at 512 x 256 quads
+(262144 triangles), moved by a small seeded shift of its grid phase and seeded noise of up to 0.002 mm, as a second
+tessellation of one surface differs from the first. Both meshes are rounded to 0.1 micrometer, so the digest holds
+across platforms. The verdict is `pass`. On the Mac of the author compare takes about 0.6 s here, and 2.0 s on the
+code before #286 (ab2adc51^), so the pair is sensitive to the lookup.
 
 Usage: uv run --script scripts/agreement_timing.py [--runs N] [--json]
 Run it on one host before and after a change to the agreement code. Timings differ between hosts.
@@ -39,8 +40,8 @@ from cadmodel import agreement  # noqa: E402
 
 SEED = 20260429
 MAJOR_MM, MINOR_MM = 45.0, 12.0
-GLB_GRID = (96, 48)    # quads around the ring, and around the tube
-STEP_GRID = (128, 64)
+GLB_GRID = (400, 200)    # quads around the ring, and around the tube
+STEP_GRID = (512, 256)
 NOISE_MM = 0.002
 LINEAR_MM = 0.05       # the GLB deflection the exporter caps a large assembly at
 UNIT_MM = 1e-4         # coordinates are rounded to this grid
@@ -94,6 +95,7 @@ def measure(runs: int, seed: int = SEED) -> dict[str, Any]:
     return {
         "seed": seed, "digest": digest(glb, step), "status": verdict["status"], "runs": runs,
         "glb_triangles": len(glb.triangles), "step_triangles": len(step.triangles),
+        # compare() returns no sample counts, so the script asks the sampler it uses
         "glb_samples": len(agreement._samples(glb)), "step_samples": len(agreement._samples(step)),
         "median_s": statistics.median(seconds), "min_s": min(seconds), "max_s": max(seconds),
     }

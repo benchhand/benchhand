@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "agreement_timing.py"
-DIGEST = "2e8f5f263629e8cddd3fec41e81e891da3a71ca2454b349e6a9361452bd1d1af"
+DIGEST = "a2575c0fcc3f21af8aa00007c25049d2715da12297c5747ec9cede1ee72b68f3"
 
 
 class AgreementReferenceTests(unittest.TestCase):
@@ -34,10 +34,10 @@ class AgreementReferenceTests(unittest.TestCase):
         assert proc.returncode == 0, proc.stderr[-2000:]
         cls.result = json.loads(proc.stdout)
 
-    def test_the_reference_has_thousands_of_triangles(self) -> None:
-        """A 96 x 48 quad grid is 2 x 4608 triangles, a 128 x 64 grid is 2 x 8192."""
-        self.assertEqual(self.result["glb_triangles"], 9216)
-        self.assertEqual(self.result["step_triangles"], 16384)
+    def test_the_reference_has_the_fixed_triangle_counts(self) -> None:
+        """A 400 x 200 quad grid is 2 x 80000 triangles, a 512 x 256 grid is 2 x 131072."""
+        self.assertEqual(self.result["glb_triangles"], 160000)
+        self.assertEqual(self.result["step_triangles"], 262144)
 
     def test_the_reference_arrays_are_unchanged(self) -> None:
         self.assertEqual(self.result["seed"], 20260429)
