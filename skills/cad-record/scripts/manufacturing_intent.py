@@ -345,6 +345,16 @@ class Quantity:
         return f"{self.lower:g}..{self.upper:g} {self.units}"
 
 
+def _is_finite_number(value: object) -> bool:
+    """Whether `value` is an int or float that a float holds and that is finite; an integer past float range is not."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def quantity(data: Mapping[str, Any]) -> Quantity:
     """A Quantity from its schema form; IntentError for an unknown unit, non-finite number or reversed interval."""
     units = data.get("units")
@@ -352,7 +362,7 @@ def quantity(data: Mapping[str, Any]) -> Quantity:
         raise _unknown_unit(units)
     unit(units)
     numbers = [data.get(key) for key in ("value", "lower", "upper") if key in data]
-    if not numbers or any(isinstance(n, bool) or not isinstance(n, (int, float)) or not math.isfinite(n) for n in numbers):
+    if not numbers or not all(_is_finite_number(n) for n in numbers):
         raise IntentError(f"a quantity needs finite numbers, got {dict(data)!r}")
     if "value" in data:
         return Quantity(units, value=float(data["value"]))
@@ -1043,7 +1053,15 @@ def _outside(value: float, band: Mapping[str, Any]) -> bool:
 
 
 def _is_number(value: Any) -> TypeGuard[float]:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Whether `value` is a number a band can judge. An integer too large for a float is past every hard bound, which
+    schema_problems reports, and cannot be formatted or converted, so it is no number here."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        float(value)
+    except OverflowError:
+        return False
+    return True
 
 
 def _band_values(band: Mapping[str, Any], instance: Any) -> list[tuple[str, float, int | str | None]]:
