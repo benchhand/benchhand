@@ -297,6 +297,10 @@ class Check(unittest.TestCase):
                 self.assertEqual([p["path"] for p in report["problems"]],
                                  ["flow/profile/asked/processes/fdm/orientation"] if code else [])
 
+    def test_the_lamp_arm_example_records_a_profile_that_passes_the_check(self) -> None:
+        result = run("check", "--hw", str(SKILLS.parent / "examples" / "lamp-arm" / "hw"))
+        self.assertEqual((result.returncode, json.loads(result.stdout)["problems"]), (0, []), result.stdout)
+
     def test_check_exits_2_without_a_readable_record_or_with_an_unknown_stage(self) -> None:
         self.write("parts", fx.flow_profile())
         self.assertEqual(run("check", "--hw", str(self.hw), "--stage", "assembly").returncode, 2)
