@@ -533,6 +533,90 @@ def clearance_stack(per: str = "side", *, nominal_gap: float = 0.20, requirement
     return stack
 
 
+def pinned(documents: dict) -> None:
+    documents["manufacturing/capabilities.yaml"]["profiles"][0]["guidelines"] = ["fdm.generic@2", "fdm.material.nope@1"]
+
+def no_material(documents: dict) -> None:
+    documents["parts/TST-0001/part.yaml"]["intent"]["material_profile"] = "tst_unrecorded_material"
+
+def no_profile(documents: dict) -> None:
+    documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["capability"] = "tst_unrecorded_printer"
+
+def unknown_material(documents: dict) -> None:
+    documents["parts/TST-0001/part.yaml"]["intent"]["material_profile"] = fx.unknown("material not chosen yet")
+
+def absent_part(documents: dict) -> None:
+    documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"][0]["PN"] = "TST-0099"
+
+def no_sliding_surface(documents: dict) -> None:
+    documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"][0]["role"] = "fixed"
+
+def unknown_family(documents: dict) -> None:
+    documents["manufacturing/materials.yaml"]["profiles"][0]["material_family"] = fx.unknown("family not tested yet")
+
+def family_tst_a(documents: dict) -> None:
+    documents["manufacturing/materials.yaml"]["profiles"][0]["material_family"] = fx.known("tst_a")
+
+def one_of(*sizes: float) -> dict:
+    return {**clearance_limit(), "operator": "one_of", "quantities": [{"value": size, "units": "mm"} for size in sizes]}
+
+def relative(to: str) -> dict:
+    limit = {**clearance_limit(), "relative": {"relative_to": to, "factor": 1.0, "floor": {"value": 0.1, "units": "mm"}}}
+    del limit["quantity"]
+    return limit
+
+def pin_generic_at_revision_1(documents: dict) -> None:
+    documents["manufacturing/capabilities.yaml"]["profiles"][0]["guidelines"] = ["fdm.generic@1"]
+
+def no_nozzle(documents: dict) -> None:
+    documents["manufacturing/capabilities.yaml"]["profiles"][0]["parameters"].pop("nozzle_diameter")
+
+
+def unknown_clearance_cases() -> dict:
+    """label -> (documents or a function that edits them, catalog, bound, reason, remedy), one per way the clearance is unknown."""
+    generic = clearance_catalog(clearance_limit())
+    fallback = "resolve the guideline problem the reason names"
+    cases = {
+        "no bound record": (clearance_documents(), generic, False, "no bound record", "bind the stack to a hardware record"),
+        "no sliding part printed by fdm": (clearance_documents(pn="TST-0002"), generic, True, "no sliding part is printed by fdm",
+                                           "record an fdm route operation for a sliding part"),
+        "no capability profile": (no_profile, generic, True, "capability profile", "name a capability profile"),
+        "material missing from the record": (no_material, generic, True, "tst_unrecorded_material",
+                                             "add the material profile tst_unrecorded_material"),
+        "material profile unknown": (unknown_material, generic, True, "material profile is unknown",
+                                     "record the material profile of TST-0001"),
+        "sliding part absent from the record": (absent_part, generic, True, "TST-0099 is not a part of the record",
+                                                "add TST-0099 to the record"),
+        "no sliding surface": (no_sliding_surface, generic, True, "records no surface with role sliding",
+                               "record the sliding surfaces"),
+        "no catalog": (clearance_documents(), None, True, "no guideline catalog", "give the run a guideline catalog"),
+        "the resolver finds no limit": (clearance_documents(), clearance_catalog(), True, "sliding_clearance",
+                                        "record a guideline set that states a minimum sliding clearance"),
+        "a scope fact is unknown": (unknown_family, clearance_catalog(family_limits={"tst_a": {**clearance_limit(), "operator": "equals", "value": True}}), True,
+                                    "scope fact is unknown", "record the scope fact"),
+        "equally specific limits conflict": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<"), clearance_limit(0.3, ">=")),
+                                             True, "share no value", "change one of the named guideline limits"),
+        "a set and a range share no size": (family_tst_a, clearance_catalog(clearance_limit(1.0), family_limits={"tst_a": one_of(0.2, 0.3)}),
+                                            True, "share no size", "change the named discrete set or range"),
+        "a relative limit without a nozzle diameter": (no_nozzle, clearance_catalog(relative("nozzle_diameter")), True,
+                                                       "states no nozzle diameter", "record the nozzle diameter"),
+        "a relative limit without a line width": (no_nozzle, clearance_catalog(relative("line_width")), True,
+                                                  "neither a line width nor a nozzle diameter", "record the line width or the nozzle diameter"),
+        "an unsupported operator": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "~")), True,
+                                    "operator ~ is not supported", fallback),
+        "an extends parent that is not a known set": (clearance_documents(), extending_catalog("fdm.nope"), True,
+                                                      "fdm.nope is not a known guideline set", fallback),
+        "a pin at another revision": (pin_generic_at_revision_1, extending_catalog("fdm.generic"), True, "is pinned at revision 1", fallback),
+        "no operator can state the limit": (clearance_documents(), clearance_catalog(clearance_limit(0.3, ">"), clearance_limit(0.5, "<=")),
+                                            True, "cannot be stated", "state the sliding clearance with limits one operator"),
+        "a maximum is no minimum": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<=")), True, "<=",
+                                    "state the sliding clearance as a minimum"),
+        "a pin that is not applied": (pinned, generic, True, "not applied", "correct the guideline pin"),
+    }
+    return cases
+
+
+
 class ClearanceTests(unittest.TestCase):
     """The stack-level sliding-clearance check: the nominal gap per side against the guideline minimum."""
 
@@ -582,83 +666,7 @@ class ClearanceTests(unittest.TestCase):
         self.assertEqual((result["outcome"], codes(result)), ("pass", []))
 
     def test_each_missing_input_makes_the_clearance_unknown_with_its_reason(self) -> None:
-        def pinned(documents: dict) -> None:
-            documents["manufacturing/capabilities.yaml"]["profiles"][0]["guidelines"] = ["fdm.generic@2", "fdm.material.nope@1"]
-
-        def no_material(documents: dict) -> None:
-            documents["parts/TST-0001/part.yaml"]["intent"]["material_profile"] = "tst_unrecorded_material"
-
-        def no_profile(documents: dict) -> None:
-            documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["capability"] = "tst_unrecorded_printer"
-
-        def unknown_material(documents: dict) -> None:
-            documents["parts/TST-0001/part.yaml"]["intent"]["material_profile"] = fx.unknown("material not chosen yet")
-
-        def absent_part(documents: dict) -> None:
-            documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"][0]["PN"] = "TST-0099"
-
-        def no_sliding_surface(documents: dict) -> None:
-            documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"][0]["role"] = "fixed"
-
-        def unknown_family(documents: dict) -> None:
-            documents["manufacturing/materials.yaml"]["profiles"][0]["material_family"] = fx.unknown("family not tested yet")
-
-        def family_tst_a(documents: dict) -> None:
-            documents["manufacturing/materials.yaml"]["profiles"][0]["material_family"] = fx.known("tst_a")
-
-        def one_of(*sizes: float) -> dict:
-            return {**clearance_limit(), "operator": "one_of", "quantities": [{"value": size, "units": "mm"} for size in sizes]}
-
-        def relative(to: str) -> dict:
-            limit = {**clearance_limit(), "relative": {"relative_to": to, "factor": 1.0, "floor": {"value": 0.1, "units": "mm"}}}
-            del limit["quantity"]
-            return limit
-
-        def pin_generic_at_revision_1(documents: dict) -> None:
-            documents["manufacturing/capabilities.yaml"]["profiles"][0]["guidelines"] = ["fdm.generic@1"]
-
-        def no_nozzle(documents: dict) -> None:
-            documents["manufacturing/capabilities.yaml"]["profiles"][0]["parameters"].pop("nozzle_diameter")
-
-        generic = clearance_catalog(clearance_limit())
-        fallback = "resolve the guideline problem the reason names"
-        cases = {
-            "no bound record": (clearance_documents(), generic, False, "no bound record", "bind the stack to a hardware record"),
-            "no sliding part printed by fdm": (clearance_documents(pn="TST-0002"), generic, True, "no sliding part is printed by fdm",
-                                               "record an fdm route operation for a sliding part"),
-            "no capability profile": (no_profile, generic, True, "capability profile", "name a capability profile"),
-            "material missing from the record": (no_material, generic, True, "tst_unrecorded_material",
-                                                 "add the material profile tst_unrecorded_material"),
-            "material profile unknown": (unknown_material, generic, True, "material profile is unknown",
-                                         "record the material profile of TST-0001"),
-            "sliding part absent from the record": (absent_part, generic, True, "TST-0099 is not a part of the record",
-                                                    "add TST-0099 to the record"),
-            "no sliding surface": (no_sliding_surface, generic, True, "records no surface with role sliding",
-                                   "record the sliding surfaces"),
-            "no catalog": (clearance_documents(), None, True, "no guideline catalog", "give the run a guideline catalog"),
-            "the resolver finds no limit": (clearance_documents(), clearance_catalog(), True, "sliding_clearance",
-                                            "record a guideline set that states a minimum sliding clearance"),
-            "a scope fact is unknown": (unknown_family, clearance_catalog(family_limits={"tst_a": {**clearance_limit(), "operator": "equals", "value": True}}), True,
-                                        "scope fact is unknown", "record the scope fact"),
-            "equally specific limits conflict": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<"), clearance_limit(0.3, ">=")),
-                                                 True, "share no value", "change one of the named guideline limits"),
-            "a set and a range share no size": (family_tst_a, clearance_catalog(clearance_limit(1.0), family_limits={"tst_a": one_of(0.2, 0.3)}),
-                                                True, "share no size", "change the named discrete set or range"),
-            "a relative limit without a nozzle diameter": (no_nozzle, clearance_catalog(relative("nozzle_diameter")), True,
-                                                           "states no nozzle diameter", "record the nozzle diameter"),
-            "a relative limit without a line width": (no_nozzle, clearance_catalog(relative("line_width")), True,
-                                                      "neither a line width nor a nozzle diameter", "record the line width or the nozzle diameter"),
-            "an unsupported operator": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "~")), True,
-                                        "operator ~ is not supported", fallback),
-            "an extends parent that is not a known set": (clearance_documents(), extending_catalog("fdm.nope"), True,
-                                                          "fdm.nope is not a known guideline set", fallback),
-            "a pin at another revision": (pin_generic_at_revision_1, extending_catalog("fdm.generic"), True, "is pinned at revision 1", fallback),
-            "no operator can state the limit": (clearance_documents(), clearance_catalog(clearance_limit(0.3, ">"), clearance_limit(0.5, "<=")),
-                                                True, "cannot be stated", "state the sliding clearance with limits one operator"),
-            "a maximum is no minimum": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<=")), True, "<=",
-                                        "state the sliding clearance as a minimum"),
-            "a pin that is not applied": (pinned, generic, True, "not applied", "correct the guideline pin"),
-        }
+        cases = unknown_clearance_cases()
         for label, (documents, catalog, bound, reason, remedy) in cases.items():
             with self.subTest(label):
                 if callable(documents):
