@@ -21,10 +21,8 @@ Findings carry the architecture's failure codes (§8.2). Pure Python: no FreeCAD
 
 from __future__ import annotations
 
-import importlib.util
 import math
 import re
-import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -34,9 +32,9 @@ from typing import Any
 
 import feature_geometry as fg
 from feature_geometry import Face, ResolvedFeature, Vector
+from shared_module import load_shared
 
 FITS = Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py"
-INTENT = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "manufacturing_intent.py"
 EPS = fg.GEOMETRY_EPS
 FIT_KEYS = ("press_fit", "running_fit", "locating_fit")
 VENDOR_TYPES = ("vendor_specification", "source_control")
@@ -63,32 +61,12 @@ THREAD = re.compile(r"^M(?P<d>[0-9]+(?:\.[0-9]+)?)x(?P<p>[0-9]+(?:\.[0-9]+)?)-(?
 
 @cache
 def _fits() -> Any:
-    """cad-fits' fits.py, the single ISO 286 implementation."""
-    spec = importlib.util.spec_from_file_location("cad_fits_fits", FITS)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load cad-fits at {FITS}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    """cad-fits' fits.py, the single ISO 286 implementation; measuring runs on worker threads."""
+    return load_shared("cad_fits_fits", FITS)
 
 
 def finding(code: str, message: str, **where: Any) -> dict[str, Any]:
     return {"code": code, "message": message, **where}
-
-
-@cache
-def _intent() -> Any:
-    """cad-record's manufacturing_intent.py, the one reader of the record version."""
-    module = sys.modules.get("cad_record_manufacturing_intent")
-    if module is None:
-        spec = importlib.util.spec_from_file_location("cad_record_manufacturing_intent", INTENT)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"cannot load cad-record at {INTENT}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-    return module
 
 
 def finished_state_findings(pn: str, part: Mapping[str, Any], feature: str, source: str) -> list[dict[str, Any]]:
