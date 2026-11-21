@@ -216,6 +216,13 @@ class OpenObjects(FixtureTree):
                 "closed": {"type": "object", "additionalProperties": False, "properties": {"a": {"type": "integer"}}},
                 "typed": {"type": "object", "additionalProperties": {"type": "number"}, "properties": {"a": {"type": "integer"}}},
                 "dashed": {"type": "object", "properties": {"x-y": {"type": "integer"}}},
+                "holder": {"type": "object", "additionalProperties": False, "properties": {
+                    "free": {"type": "object"},
+                    "maybe": {"type": ["object", "null"]},
+                    "rows": {"type": "array", "items": {"type": "object"}},
+                    "scores": {"type": "object", "additionalProperties": {"type": "number"}},
+                    "shut": {"type": "object", "additionalProperties": False},
+                }},
                 "base": {"type": "object", "properties": {"a": {"type": "integer"}}},
                 "child": {"allOf": [{"$ref": "#/$defs/base"}, {"type": "object", "unevaluatedProperties": False, "properties": {"b": {"type": "integer"}}}]},
             },
@@ -249,7 +256,17 @@ class OpenObjects(FixtureTree):
             "\n"
             'open_literal: BagOpen = {"type": "box", "size": 3, "radius": 1.5}\n'
             'closed_literal: BagClosed = {"a": 1}\n'
-            'closed_unknown: BagClosed = {"a": 1, "zzz": 2}\n',
+            'closed_unknown: BagClosed = {"a": 1, "zzz": 2}\n'
+            "\n"
+            "from collections.abc import Mapping\n"
+            "from typing import Any\n"
+            "from cad_api_bag import BagHolder\n"
+            "\n"
+            "def holder(m: Mapping[str, Any], scores: Mapping[str, float]) -> BagHolder:\n"
+            '    return {"free": m, "maybe": m, "rows": [m], "scores": scores, "shut": {}}\n'
+            "\n"
+            "def nullable(m: Mapping[str, Any]) -> BagHolder:\n"
+            '    return {"maybe": None, "rows": [m, m]}\n',
             encoding="utf-8",
         )
         # The way scripts/typecheck.py runs mypy: the repository config at the config's target version.
@@ -391,7 +408,7 @@ class ReviewRound1(FixtureTree):
         self.add("std", {"type": "object", "additionalProperties": False, "properties": {
             "standards": {"type": "object", "required": ["dimensioning"], "additionalProperties": {"type": "string"}},
         }})
-        self.assertIn("\n    standards: NotRequired[dict[str, str]]\n", self.api())
+        self.assertIn("\n    standards: NotRequired[Mapping[str, str]]\n", self.api())
         self.assert_in_both('required keys: ["dimensioning"]')
 
     def test_keyword_named_optional_field_stays_optional_on_python_311(self) -> None:
