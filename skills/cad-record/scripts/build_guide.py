@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["defusedxml>=0.7.1", "pyyaml>=6.0"]
+# dependencies = ["defusedxml>=0.7.1", "pyyaml>=6.0", "jsonschema>=4.23", "referencing>=0.28.4"]
 # ///
 """Generate a structured GitBuilding guide, an OKH manifest and a DIN SPEC 3105-1 checklist from a
 hardware record and built version.

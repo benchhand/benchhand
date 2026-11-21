@@ -19,6 +19,7 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 | trimesh, python-fcl | `trimesh==4.*`, `python-fcl==0.7.0.11` | PEP 723 headers |
 | jsonschema | `>=4.23` in script headers. Test pin `4.26.0`. | `harness/test-requirements.txt` |
 | PyYAML | `>=6.0` in script headers. Test pin `6.0.3`. | `harness/test-requirements.txt` |
+| referencing | `>=0.28.4` in 21 script headers. No test pin: `jsonschema` installs it. Scripts import it directly, so they declare it. | PEP 723 headers, `scripts/test_script_dependencies.py` |
 | Playwright | `playwright==1.65.2`, with Chromium | `skills/cad-render` and `skills/cad-viewer` headers, `README.md` |
 | Test-only pins | `defusedxml==0.7.1`, `hypothesis==6.170.15`, `click==8.5.1` | `harness/test-requirements.txt` |
 | mypy, click for the type check | `mypy==2.4.1`, `click==8.5.1`, locked in `scripts/typecheck.py.lock` | `scripts/typecheck.py` header |
@@ -57,6 +58,7 @@ Standards:
 - Every source file carries an SPDX header (`MPL-2.0`, copyright "2026 Sjors Robroek"). Data and documents are covered by `REUSE.toml`, so Markdown files take no header. `reuse lint` enforces both.
 - The CLA applies to every contribution (`CONTRIBUTING.md`).
 - Host scripts need a `requires-python` floor of 3.12, except modules that FreeCAD runs on 3.11 (`scripts/test_script_floors.py`).
+- A script's PEP 723 `dependencies` cover the third-party packages that its code, and the repository files it imports or loads, import. `scripts/test_script_dependencies.py` derives them with `ast` over `skills/*/scripts/**/*.py`. Its `OPTIONAL_LOADS` list names the reaches it skips, with the reason for each.
 - Text files are opened with an explicit encoding (ruff `PLW1514`, CI).
 - Complexity findings `C901`, `PLR0912` and `PLR0915` may not rise above `scripts/complexity-baseline.json`.
 - Tests and scripts must not skip git hooks (`scripts/test_no_verify_guard.py`).

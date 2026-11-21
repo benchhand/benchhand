@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Evidence of a record version 2 design: what each expected check, requirement and part has shown,
 at which evidence level, against which configuration; the stage gates and the release service policy

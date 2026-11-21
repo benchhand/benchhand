@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 # /// script
-# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Run a static linear FreeCAD FEM analysis from a case YAML file."""
 
