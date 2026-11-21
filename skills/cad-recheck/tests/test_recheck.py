@@ -323,7 +323,7 @@ class RecheckHookTests(unittest.TestCase):
     def test_a_decisions_folder_without_a_decision_record_is_refused(self) -> None:
         self.provisional_gate("parts", decision=None)
         folder = self.root / "hw" / "decisions"
-        folder.mkdir()
+        folder.mkdir(exist_ok=True)
         (folder / "notes.txt").write_text("not a decision record\n", encoding="utf-8")
         (folder / "DR-001.txt").write_text("not a decision record either\n", encoding="utf-8")
         self.git("add", "hw")
