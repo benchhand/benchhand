@@ -325,13 +325,25 @@ def write_profile_decision(decisions: Path, number: int, profile: Mapping[str, A
                "`product.yaml` `flow.profile` records the answers. The lead showed the user each question with its "
                f"default: `{USER}` marks an answer the user gave, `{ACCEPTED_DEFAULT}` a default the user accepted, and "
                "`stated` the motion sweep, which runs once a joint moves and is never asked.")
+    partial = decisions / f"DR-{number:03d}-{decision_records.slugify('Flow profile')}.md"
+    existed = partial.exists()
     try:
         return Path(decision_records.write_decision(
             decisions, title="Flow profile", status="accepted", date=today, context=context, options=(RECORDED_OPTION,),
             chosen=RECORDED_OPTION, justification="the user answered each project-start question or accepted its default",
             more_information=answers_table(profile), number=number))
-    except decision_records.DecisionRecordError as error:
-        raise ProfileError(str(error)) from error
+    except (decision_records.DecisionRecordError, OSError) as error:
+        if not existed:
+            partial.unlink(missing_ok=True)  # written, then the index failed: the record would cite nothing
+        raise ProfileError(f"cannot write the decision record: {error}") from error
+
+
+def _restore(path: Path, original: str) -> None:
+    """Put the original text of `path` back, byte for byte, after a record that failed at its decision."""
+    try:
+        _replace(path, original)
+    except OSError as error:
+        raise ProfileError(f"cannot restore {path} after a failed record: {error}") from error
 
 
 def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = (),
@@ -375,8 +387,15 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
     if yaml_loader.safe_load(after) != expected:
         raise ProfileError(f"{path}: the textual edit would not give the intended data; simplify its flow block")
-    record_path = write_profile_decision(decisions, number, profile, today or date.today())
-    _replace(path, after, newline)
+    try:
+        _replace(path, after, newline)
+    except OSError as error:
+        raise ProfileError(f"cannot write {path}: {error}") from error
+    try:
+        record_path = write_profile_decision(decisions, number, profile, today or date.today())
+    except ProfileError:
+        _restore(path, raw)
+        raise
     return {"product": str(path), "decision": str(record_path)}
 
 

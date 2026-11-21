@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -25,8 +26,8 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "scripts" / "flow_profile.py"
 SKILLS = HERE.parents[1]
 sys.path.insert(0, str(SKILLS.parent / "scripts"))
-from decision_fixture import write_test_decision  # noqa: E402
-from modload import load_module  # noqa: E402
+from decision_fixture import write_test_decision  # noqa: E402 - the path to scripts/ is put on sys.path just above
+from modload import load_module  # noqa: E402 - the path to scripts/ is put on sys.path just above
 
 flow_profile = load_module("cad_flow_profile", SCRIPT)
 gate = flow_profile.gate
@@ -218,6 +219,35 @@ class Record(unittest.TestCase):
         self.assertEqual((self.profile()["decision"], self.profile()["fea"]), ("DR-002", {"enabled": True, "mode": "accurate"}))
         self.assertEqual(self.product.read_text(encoding="utf-8").count("profile:"), 1)
         self.assertEqual([r.id for r in decision_records.read_decisions(self.hw / "decisions")], ["DR-001", "DR-002"])
+
+    def read_only(self, directory: Path) -> None:
+        """Make `directory` unwritable for this test; the cleanup restores it so the temp tree can be removed."""
+        if os.geteuid() == 0:
+            self.skipTest("root writes through a read-only directory")
+        directory.chmod(0o555)
+        self.addCleanup(directory.chmod, 0o755)
+
+    def test_a_product_that_cannot_be_written_leaves_no_decision_and_a_message_not_a_traceback(self) -> None:
+        (self.hw / "decisions").mkdir()
+        self.read_only(self.hw)
+        result = self.record("DR-001", "--fea", "accurate")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("cannot write", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
+        self.assertEqual(sorted(path.name for path in (self.hw / "decisions").iterdir()), [])
+
+    def test_a_decision_that_cannot_be_written_restores_the_product(self) -> None:
+        decisions = self.hw / "decisions"
+        decisions.mkdir()
+        self.read_only(decisions)
+        result = self.record("DR-001", "--fea", "accurate")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
+        self.assertEqual(sorted(path.name for path in decisions.iterdir()), [])
+        decisions.chmod(0o755)
+        self.assertEqual(self.record("DR-001", "--fea", "accurate").returncode, 0, "the retry is not refused")
 
     def test_record_refuses_a_flow_it_cannot_edit_as_text(self) -> None:
         text = PRODUCT.replace("flow:\n  stage: intent\n  recheck_from: intent\n", "flow: {stage: intent, recheck_from: intent}\n")

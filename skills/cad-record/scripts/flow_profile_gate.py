@@ -231,7 +231,7 @@ def shape_problems(profile: Any, skip: Iterable[str] = ()) -> list[Problem]:
     """The schema's findings on a recorded profile, at their flow/profile paths, except those at `skip`."""
     validator = schema_registry.ref_validator(SCHEMAS, PROFILE_REF)
     found = []
-    for error in sorted(validator.iter_errors(profile), key=lambda item: list(item.absolute_path)):
+    for error in sorted(validator.iter_errors(profile), key=lambda item: [str(part) for part in item.absolute_path]):
         path = "/".join(["flow/profile", *(str(part) for part in error.absolute_path)])
         if path not in skip:
             found.append(Problem(path, error.message, "correct the value, or record the answers again"))

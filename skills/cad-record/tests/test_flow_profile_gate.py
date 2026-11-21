@@ -22,7 +22,7 @@ import yaml
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
 sys.path.insert(0, str(SKILL.parents[1] / "scripts"))
-from modload import load_module  # noqa: E402
+from modload import load_module  # noqa: E402 - the path to scripts/ is put on sys.path just above
 
 gate_module = load_module("cad_record_flow_profile_gate", SKILL / "scripts" / "flow_profile_gate.py")
 yaml_loader = load_module("cad_record_yaml_loader", SKILL / "scripts" / "yaml_loader.py")
@@ -205,6 +205,13 @@ class Gate(unittest.TestCase):
     def test_an_unknown_provenance_is_a_schema_finding(self) -> None:
         profile = fx.flow_profile(asked={**fx.flow_profile()["asked"], "critique": "not_asked"})
         self.assertIn("flow/profile/asked/critique", [path for _code, path in self.check("parts", profile)])
+
+    def test_asked_keys_of_mixed_types_with_bad_provenance_are_findings_not_a_crash(self) -> None:
+        """YAML reads `1: bogus` as an integer key beside the string keys; the findings still sort and report."""
+        profile = fx.flow_profile(asked={**fx.flow_profile()["asked"], 1: "bogus", "fea": "bogus"})
+        paths = [path for _code, path in self.check("parts", profile)]
+        self.assertIn("flow/profile/asked/1", paths)
+        self.assertIn("flow/profile/asked/fea", paths)
 
     def test_a_default_marked_accepted_must_equal_the_default(self) -> None:
         profile = fx.flow_profile(stack_up="off")
