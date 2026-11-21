@@ -16,9 +16,15 @@ skills/cad-drawings/scripts/freecad_views.py
 skills/cad-drawings/scripts/feature_geometry.py
 skills/cad-drawings/scripts/feature_recognition.py
 
-# feature_recognition imports drawing_intent, which loads cad-fits and cad-record by path.
+# feature_recognition imports drawing_intent, which loads cad-fits by path through shared_module.
 skills/cad-drawings/scripts/drawing_intent.py
+skills/cad-drawings/scripts/shared_module.py
 skills/cad-fits/scripts/fits.py
+# Nothing in cad-drawings loads the next three any more (drawing_intent dropped its cad-record loader).
+# They stay for two guards: scripts/test_script_floors.py allows manufacturing_intent.py its
+# requires-python >=3.10 only while it is listed, and harness/test-requirements-freecad.txt pins
+# pyyaml and jsonschema only for these modules (scripts/test_test_requirements.py). Drop all three
+# together with the floor raise to 3.12 and the two pins.
 skills/cad-record/scripts/manufacturing_intent.py
 # manufacturing_intent loads these two by path.
 skills/cad-record/scripts/yaml_loader.py
