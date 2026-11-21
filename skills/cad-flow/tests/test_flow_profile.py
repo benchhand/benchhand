@@ -249,6 +249,30 @@ class Record(unittest.TestCase):
         decisions.chmod(0o755)
         self.assertEqual(self.record("DR-001", "--fea", "accurate").returncode, 0, "the retry is not refused")
 
+    def test_an_index_that_cannot_be_updated_removes_the_new_record_and_restores_the_product(self) -> None:
+        """decisions/ is writable, so the record is created; the index write then fails because index.md is a directory."""
+        earlier = write_test_decision(self.hw, "DR-001", title="An earlier decision")
+        before = earlier.read_text(encoding="utf-8")
+        index = self.hw / "decisions" / "index.md"
+        index.unlink()
+        index.mkdir()
+        marker = index / "marker"
+        marker.write_text("prior state\n", encoding="utf-8")
+        result = self.record("DR-002", "--fea", "accurate")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("cannot write the decision record", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(self.product.read_bytes(), PRODUCT.encode("utf-8"))
+        self.assertEqual([path.name for path in (self.hw / "decisions").glob("DR-*.md")], [earlier.name])
+        self.assertEqual(earlier.read_text(encoding="utf-8"), before)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "prior state\n")
+        marker.unlink()
+        index.rmdir()
+        self.assertEqual(self.record("DR-002", "--fea", "accurate").returncode, 0, "the retry is not refused")
+        listing = (self.hw / "decisions" / "index.md").read_text(encoding="utf-8")
+        self.assertIn("[DR-001]", listing)
+        self.assertIn("[DR-002]", listing)
+
     def test_record_refuses_a_flow_it_cannot_edit_as_text(self) -> None:
         text = PRODUCT.replace("flow:\n  stage: intent\n  recheck_from: intent\n", "flow: {stage: intent, recheck_from: intent}\n")
         self.product.write_text(text, encoding="utf-8")
