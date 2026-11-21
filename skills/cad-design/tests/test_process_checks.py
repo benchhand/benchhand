@@ -1212,16 +1212,32 @@ class OtherRouteKindTests(Checks):
         self.assertEqual(self.outcome(result, "process.waterjet.edge@TST-0902/form"), "unknown")
         self.assertIn("states no surface_roughness limit", result.outcome("process.waterjet.edge@TST-0902/form")["coverage"])
 
-    def test_calibrated_join_distortion_with_no_stated_limit_is_unknown_never_pass(self) -> None:
+    JOIN = "process.joining.distortion@TST-0902/join"
+
+    def joined(self, criteria: list[dict[str, Any]] | None) -> Any:
+        """A laser-cut TST-0902 joined by an operation whose calibrated join distortion is 0.0..0.2 mm."""
         distortion = calibration("join_study", "join_distortion", ACRYLIC, 0.0, 0.2)
         joiner = FX.capability_profile("tst_joiner", "joining", calibrations=[distortion], materials=[approval(ACRYLIC)])
         documents = FX.record(parts=[cut("TST-0902")], materials=materials(),
                               capabilities=[laser_profile(ACRYLIC_APPROVAL, calibrations=[KERF]), joiner])
-        documents["parts/TST-0902/part.yaml"]["intent"]["route"].append(FX.operation("join", "joining", "tst_joiner"))
-        result = self.assess(documents)
-        obligation = "process.joining.distortion@TST-0902/join"
-        self.assertEqual(self.outcome(result, obligation), "unknown")
-        self.assertIn("no critical surface states a join_distortion limit", result.outcome(obligation)["coverage"])
+        intent = documents["parts/TST-0902/part.yaml"]["intent"]
+        intent["route"].append(FX.operation("join", "joining", "tst_joiner"))
+        if criteria is not None:
+            intent["critical_surfaces"] = [surface("datum_a", "datum", criteria=criteria)]
+        return self.assess(documents)
+
+    def test_calibrated_join_distortion_with_no_stated_limit_is_unknown_never_pass(self) -> None:
+        result = self.joined(None)
+        self.assertEqual(self.outcome(result, self.JOIN), "unknown")
+        self.assertIn("no critical surface states a join_distortion limit", result.outcome(self.JOIN)["coverage"])
+
+    def test_calibrated_join_distortion_is_compared_with_the_stated_limit(self) -> None:
+        for operator, limit, outcome in (("<=", 0.2, "pass"), ("<", 0.2, "fail"), ("<=", 0.1, "fail"), ("<", 0.21, "pass"),
+                                         (">=", 0.1, "unknown")):
+            with self.subTest(operator=operator, limit=limit):
+                result = self.joined([FX.criterion("join_distortion", operator, limit, "mm")])
+                self.assertEqual(self.outcome(result, self.JOIN), outcome)
+                self.assertEqual(outcome == "fail", "process.joining.distortion" in self.codes(result))
 
     def test_calibrated_laser_flatness_must_meet_the_datum_flatness_limit(self) -> None:
         thermal = [calibration("flat_study", "flatness", ACRYLIC, 0.0, 0.3),
@@ -1284,6 +1300,15 @@ class StrictCriterionTests(Checks):
                 documents = printed("TST-0101", {"strategy": "none"}, calibrations=[CONTACT, warp], critical=datum)
                 result = self.assess(documents, geometry("TST-0101", stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]])))
                 self.assertEqual([c for c in self.codes(result) if c == "process.fdm.warp"], expected)
+
+    def test_calibrated_print_warp_with_no_stated_flatness_limit_is_unknown_never_pass(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.3, size=mm(15))
+        datum = [surface("datum_a", "datum")]
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[CONTACT, warp], critical=datum)
+        result = self.assess(documents, geometry("TST-0101", stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]])))
+        obligation = next(o.id for o in result.expected if o.id.startswith("process.fdm.thermal_distortion"))
+        self.assertEqual(self.outcome(result, obligation), "unknown")
+        self.assertIn("no critical surface states a flatness limit", result.outcome(obligation)["coverage"])
 
     def test_a_calibrated_milled_finish_at_a_strict_roughness_limit_fails_it_and_a_strict_lower_bound_is_refused(self) -> None:
         profile = FX.capability_profile("tst_mill", "cnc", parameters={"axes": known(mm(3, units="count"))},
