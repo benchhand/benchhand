@@ -652,12 +652,18 @@ def not_an_approval(record: Any) -> str | None:
     return f"has status {record.status}, not the user's approval ({APPROVING_STATUS})"
 
 
+def approval_problem(hw: Path, decision: str | None) -> str | None:
+    """Why decision `decision` cannot approve, as a predicate of the decision ("has no record: ...", "has status ...");
+    None when it is a valid record under hw/decisions/ with status `accepted`."""
+    if not isinstance(decision, str):
+        return "is not a DR-### id"
+    record, problem = load_decision(hw, decision)
+    return problem if problem is not None else not_an_approval(record)
+
+
 def decision_approves(hw: Path, decision: str | None) -> bool:
     """Whether decision `decision` is a valid record under hw/decisions/ with status `accepted`."""
-    if not isinstance(decision, str):
-        return False
-    record, problem = load_decision(hw, decision)
-    return problem is None and not_an_approval(record) is None
+    return approval_problem(hw, decision) is None
 
 
 def check_flow(product: dict[str, Any], path: str, hw: Path, part_records: dict[str, Any],
