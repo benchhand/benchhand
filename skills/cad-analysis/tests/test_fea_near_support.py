@@ -707,6 +707,7 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         self.assertEqual(row["outcome"], "pass")
         self.assertEqual(report["material"]["ductility"], {"shown": True, "reason": None})
         self.assertNotIn("form stand-in", row["uncertainty"])
+
     def test_only_the_shipped_304_passes_the_gauge_step_of_the_ductility_gate(self) -> None:
         # Outokumpu Table 5 defines "A" as 5.65*sqrt(S0), so 304 is on the EN gauge. The Hydro sheets state "2 in or 4
         # times specimen diameter" and Salzgitter "A80": none of them is the EN gauge, so those stay not shown ductile.
