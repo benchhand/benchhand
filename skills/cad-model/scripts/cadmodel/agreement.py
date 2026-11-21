@@ -50,6 +50,7 @@ REACH_MARGIN = 2.0      # the reach is this many times the sum of both deflectio
                         # and EPS_MM leave a 1.74x margin. A bare sum would fail that clean part
 MAX_SAMPLES = 1500      # points checked per direction and occurrence
 WIDE_CELLS = 64         # a triangle whose grown box covers more lookup cells is tested against every point
+MAX_INDEX = 2.0 ** 40  # a cell index beyond this is clipped, so int64 (2**63) never overflows
 SAMPLE_CELLS = 48       # cells along the longest side of a mesh that each contribute a sample point
 PLANAR_TOLERANCE = 1e-7  # a surface this flat is a plane whatever its type, and its reference cannot stray
 CHECKED_TRIANGLES = 8  # per measured face, the largest triangles of the reference mesh
@@ -326,7 +327,10 @@ class _Surface:
         self.starts = np.append(self.starts, len(order))
 
     def _index(self, points: np.ndarray) -> np.ndarray:
-        return np.floor((points - self.origin) / self.cell).astype(np.int64)
+        """The cell index of each point, clipped to +-MAX_INDEX: a float past int64 would wrap in the conversion.
+        The clip keeps the index rising with each coordinate, and a box wider than WIDE_CELLS stays wide."""
+        cells = np.floor((points - self.origin) / self.cell)
+        return np.clip(cells, -MAX_INDEX, MAX_INDEX).astype(np.int64)
 
     def _key(self, cells: np.ndarray) -> np.ndarray:
         return cells[:, 0] + self.shape[0] * (cells[:, 1] + self.shape[1] * cells[:, 2])
@@ -406,6 +410,10 @@ def compare(glb: Mesh, step: Mesh, linear_mm: float) -> dict[str, Any]:
     if not len(glb.triangles) or not len(step.triangles):
         return {"status": "unknown", "tolerance_mm": reach,
                 "reason": f"the {'GLB mesh' if not len(glb.triangles) else 'STEP shape'} has no triangles to compare"}
+    for name, mesh in (("GLB mesh", glb), ("STEP shape", step)):
+        if not np.isfinite(mesh.points[mesh.triangles]).all():  # no cell index, and no distance, exists for these
+            return {"status": "unknown", "tolerance_mm": reach,
+                    "reason": f"the {name} has a nonfinite coordinate, so its distance cannot be measured"}
     glb_off, glb_count = _off(_samples(glb), _Surface(step, reach))
     step_off, step_count = _off(_samples(step), _Surface(glb, reach))
     ok = glb_count == 0 and step_count == 0
