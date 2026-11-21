@@ -157,3 +157,4 @@ def rewrite_part(hw: Path, **record: Any) -> None:
         if rel.startswith("_"):
             continue
         (hw / rel).write_text(yaml.safe_dump(document, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    add_flow_profile(hw)  # the rewritten product.yaml carries no profile
