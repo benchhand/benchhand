@@ -391,10 +391,12 @@ def _samples(mesh: Mesh) -> np.ndarray:
     found = np.concatenate([mesh.points[used], mesh.points[mesh.triangles].mean(axis=1)])
     low = found.min(axis=0)
     span = float((found.max(axis=0) - low).max()) / SAMPLE_CELLS or 1.0
-    # Each index is in 0..SAMPLE_CELLS, so the key of an (SAMPLE_CELLS + 1)-cube grid is below 49**3: no overflow. The
-    # clip and nan_to_num only matter when the extent overflows to inf, and then they merge cells, never drop one.
-    cells = np.clip(np.nan_to_num(np.floor((found - low) / span)), 0, SAMPLE_CELLS).astype(np.int64)
-    _, first = np.unique(_cell_key(cells, np.full(3, SAMPLE_CELLS + 1)), return_index=True)
+    cells = np.floor((found - low) / span).astype(np.int64)
+    if cells.min() >= 0 and cells.max() <= SAMPLE_CELLS:
+        # In range, so the key of a (SAMPLE_CELLS + 1)-cube grid is below 49**3: no overflow, and one key per cell.
+        _, first = np.unique(_cell_key(cells, np.full(3, SAMPLE_CELLS + 1)), return_index=True)
+    else:  # a subnormal span or an overflowing extent puts indices out of range: keep each cell apart as the rows do
+        _, first = np.unique(cells, axis=0, return_index=True)
     chosen = np.sort(first)
     if len(chosen) > MAX_SAMPLES:
         chosen = chosen[::math.ceil(len(chosen) / MAX_SAMPLES)]

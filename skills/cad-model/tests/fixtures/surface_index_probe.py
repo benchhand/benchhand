@@ -147,10 +147,33 @@ class Samples(unittest.TestCase):
                 np.testing.assert_array_equal(got, sample_oracle(mesh))
                 self.assertGreaterEqual(len(got), 6)
 
+    def test_samples_come_in_the_order_of_the_vertices_then_the_centers(self) -> None:
+        """Vertex 0 lies in a later grid cell (higher x) than vertex 1, so a key-ordered answer lists them swapped."""
+        mesh = mesh_of(np.array([[(10, 0, 0), (0, 0, 0), (0, 0, 5)], [(10, 5, 0), (0, 0, 0), (0, 5, 0)]], dtype=float))
+        got = agreement._samples(mesh)
+        np.testing.assert_array_equal(got, sample_oracle(mesh))
+        self.assertEqual(got[0].tolist(), [10.0, 0.0, 0.0])
+
     def test_the_samples_of_a_large_mesh_are_thinned_by_an_even_stride(self) -> None:
         mesh = square(100.0, 60)  # 3,721 vertices and 7,200 centers fill every one of the 49 x 49 cells
         np.testing.assert_array_equal(agreement._samples(mesh), sample_oracle(mesh))
         self.assertLessEqual(len(agreement._samples(mesh)), agreement.MAX_SAMPLES)
+
+    def test_a_subnormal_span_keeps_cells_beyond_the_grid_apart(self) -> None:
+        """With q = 2**-1074 the span of (0, 60q, 71q) rounds to q, so the x indices are 0, 60 and 71: past
+        SAMPLE_CELLS, yet distinct. Every vertex must stay a sample."""
+        q = 2.0 ** -1074
+        mesh = mesh_of(np.array([[(0, 0, 0), (60 * q, 0, 0), (71 * q, 0, 0)]], dtype=float))
+        got = agreement._samples(mesh)
+        np.testing.assert_array_equal(got, sample_oracle(mesh))
+        self.assertIn(71 * q, got[:, 0])
+
+    def test_an_extent_that_overflows_is_sampled_as_the_tuple_cells_sample_it(self) -> None:
+        """The extent of -1e308 to 1e308 is inf, so the indices are 0, NaN or inf cast to int64 (platform sentinels)."""
+        big = 1e308
+        mesh = mesh_of(np.array([[(-big, 0, 0), (big, 0, 0), (0, 0, 0)], [(0, 1, 0), (0, 0, 1), (big, big, big)]],
+                                dtype=float))
+        np.testing.assert_array_equal(agreement._samples(mesh), sample_oracle(mesh))
 
     def test_the_samples_of_far_and_degenerate_meshes_keep_every_cell(self) -> None:
         """Coordinates near 1e19 and 1e300, one distant corner, and a single point repeated (zero extent)."""

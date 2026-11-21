@@ -250,6 +250,15 @@ class SurfaceIndexTests(unittest.TestCase):
     def test_cells_apart_along_one_axis_only_each_keep_a_sample(self) -> None:
         self.run_probe("test_cells_apart_along_one_axis_only_each_keep_a_sample", "Samples")
 
+    def test_a_subnormal_span_keeps_cells_beyond_the_grid_apart(self) -> None:
+        self.run_probe("test_a_subnormal_span_keeps_cells_beyond_the_grid_apart", "Samples")
+
+    def test_an_extent_that_overflows_is_sampled_as_the_tuple_cells_sample_it(self) -> None:
+        self.run_probe("test_an_extent_that_overflows_is_sampled_as_the_tuple_cells_sample_it", "Samples")
+
+    def test_samples_come_in_the_order_of_the_vertices_then_the_centers(self) -> None:
+        self.run_probe("test_samples_come_in_the_order_of_the_vertices_then_the_centers", "Samples")
+
     def test_the_samples_of_a_large_mesh_are_thinned_by_an_even_stride(self) -> None:
         self.run_probe("test_the_samples_of_a_large_mesh_are_thinned_by_an_even_stride", "Samples")
 
