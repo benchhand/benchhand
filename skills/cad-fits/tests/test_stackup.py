@@ -580,6 +580,15 @@ class ClearanceTests(unittest.TestCase):
         def no_profile(documents: dict) -> None:
             documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["capability"] = "tst_unrecorded_printer"
 
+        def unknown_material(documents: dict) -> None:
+            documents["parts/TST-0001/part.yaml"]["intent"]["material_profile"] = fx.unknown("material not chosen yet")
+
+        def absent_part(documents: dict) -> None:
+            documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"][0]["PN"] = "TST-0099"
+
+        def no_sliding_surface(documents: dict) -> None:
+            documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"][0]["role"] = "fixed"
+
         generic = clearance_catalog(clearance_limit())
         cases = {
             "no bound record": (clearance_documents(), generic, False, "no bound record", "bind the stack to a hardware record"),
@@ -588,6 +597,12 @@ class ClearanceTests(unittest.TestCase):
             "no capability profile": (no_profile, generic, True, "capability profile", "name a capability profile"),
             "material missing from the record": (no_material, generic, True, "tst_unrecorded_material",
                                                  "add the material profile tst_unrecorded_material"),
+            "material profile unknown": (unknown_material, generic, True, "material profile is unknown",
+                                         "record the material profile of TST-0001"),
+            "sliding part absent from the record": (absent_part, generic, True, "TST-0099 is not a part of the record",
+                                                    "add TST-0099 to the record"),
+            "no sliding surface": (no_sliding_surface, generic, True, "records no surface with role sliding",
+                                   "record the sliding surfaces"),
             "no catalog": (clearance_documents(), None, True, "no guideline catalog", "give the run a guideline catalog"),
             "the resolver finds no limit": (clearance_documents(), clearance_catalog(), True, "sliding_clearance",
                                             "record a guideline set that states a minimum sliding clearance"),
