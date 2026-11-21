@@ -110,7 +110,11 @@ uv run --no-project --python 3.11 python -B scripts/gen_api.py --check
 
 Limits:
 
-- An object that allows extra keys becomes `Mapping[str, Any]`. The type does not check its known key names or value types. The table of known keys in `docs/schemas.md` is documentation only. The generator does not emit PEP 728 `extra_items`, because mypy ignores it (`OPEN_OBJECT` in `scripts/gen_api.py`). Only objects closed with `additionalProperties: false` or `unevaluatedProperties: false` become `TypedDict` classes.
+- An object that allows extra keys never becomes a `TypedDict`. Three cases:
+  - With declared properties, it becomes `Mapping[str, Any]` (`OPEN_OBJECT`, `gen_api.py:347-349`). The type loses per-key precision. Type checkers skip the known key names and their value types. The table of known keys in `docs/schemas.md` is documentation only.
+  - Without declared properties, it becomes `Mapping[str, V]`, where `V` comes from the `additionalProperties` schema (`inline_typed`, `gen_api.py:265-271`). `Assembly.profiles` is `Mapping[str, AssemblyProfile]`. `test_gen_api.py:443` expects `Mapping[str, str]` for a string value schema.
+  - With unconstrained values, it becomes `Mapping[str, Any]` (same code).
+- The generator does not emit PEP 728 `extra_items`, because mypy ignores it. Only objects closed with `additionalProperties: false` or `unevaluatedProperties: false` can be a `TypedDict`.
 - A type cannot express the keywords in `NOTE_KEYS`, nor `if`/`then` and `dependentRequired`. The generator lists each one it finds in the docstring of `cad_api.py` and in `docs/schemas.md`. It drops none.
 - A `const` or `enum` with a float value cannot be a `Literal`. A `const` falls back to `Any`, and an `enum` falls back to the scalar type of its values.
 
