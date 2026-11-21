@@ -48,8 +48,9 @@ Resolution, per characteristic:
   6. A one_of limit on nozzle_diameter lists discrete sizes (`quantities`), compared as whole micrometres, never
      as floats. A set meeting a range (>=, <=, <, >, between), in either layer order or at equal specificity,
      resolves to the members the range admits: a tightening, with no warning; the dropped sizes go in the
-     trace. Equally specific sets from different guidelines that differ are recorded as disputed in the
-     trace. An empty result is unknown with a conflict reason. `relaxes` replaces in both directions. Its
+     trace. Equally specific limits that differ and come from at least two different guidelines (by the
+     guideline that defines the limit, so children inheriting one parent count as one source) are recorded as
+     disputed in the trace, unless one of them states the kept intersection; one guideline stating both a set and a range is not disputed. An empty result is unknown with a conflict reason. `relaxes` replaces in both directions. Its
      scope facts follow rule 5 as for any requirement.
 """
 
@@ -842,8 +843,8 @@ def _merge(group: list[_Candidate]) -> _Bound | None:
 
 
 def _disputed(group: list[_Candidate], merged: _Bound) -> list[Shadowed]:
-    """The trace of an equally specific group whose sources differ: no source states the intersection that is kept."""
-    if any(c.bound.within(merged) and merged.within(c.bound) for c in group):
+    """The trace of an equally specific group of two or more distinct defining guidelines: none states the intersection that is kept."""
+    if len({c.defined_in.ref for c in group}) < 2 or any(c.bound.within(merged) and merged.within(c.bound) for c in group):
         return []
     return [Shadowed(c.shown, c.defined_in.ref, c.layer, f"equally specific and disputed; the intersection {_show(merged)} is kept")
             for c in group]
@@ -861,6 +862,7 @@ def _fold(characteristic: str, ready: list[_Candidate], unresolved: list[tuple[K
         shadowed.append(Shadowed(candidate.shown, candidate.defined_in.ref, candidate.layer, why))
 
     for key in sorted({c.key for c in ready}):
+        # by defining guideline: the result, winners[0] included, does not depend on discovery order
         group = sorted((c for c in ready if c.key == key), key=lambda c: c.defined_in.ref)
         merged = _merge(group)
         if merged is None:
