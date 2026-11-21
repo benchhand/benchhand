@@ -4,7 +4,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "numpy==2.5.5", "referencing>=0.28.4"]
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Mechanism play: the `motion.play` check of every interface and part the record obliges, under its
 declared play and loads, as one required-check packet.

@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["pyyaml>=6.0"]
+# dependencies = ["pyyaml>=6.0", "jsonschema>=4.23", "referencing>=0.28.4"]
 # ///
 """Build cad-design reference parts in one kernel and write one STEP AP242 per part.
 
