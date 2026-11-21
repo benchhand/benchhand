@@ -386,7 +386,9 @@ class LoadByPathWithoutOptionalDependencies(unittest.TestCase):
                 "print('ok', len(record.parts), [n for n in ('yaml', 'jsonschema', 'referencing') if n in sys.modules])\n")
         done = subprocess.run([sys.executable, "-c", code, str(SKILL / "scripts" / "manufacturing_intent.py")],
                               input=pickle.dumps(documents), capture_output=True, check=False)
-        self.assertEqual(done.stdout.decode().strip(), f"ok {len(mi.normalize_record(documents).parts)} []", done.stderr.decode())
+        parts = len(mi.normalize_record(documents).parts)
+        self.assertGreater(parts, 0, "the fixture must hold parts, or the count below proves nothing")
+        self.assertEqual(done.stdout.decode().strip(), f"ok {parts} []", done.stderr.decode())
 
 
 class UseCaseReadiness(unittest.TestCase):
