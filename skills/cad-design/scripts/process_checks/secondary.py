@@ -14,8 +14,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .core import (FAIL, NOT_APPLICABLE, PASS, UNKNOWN, Context, Draft, Result, access_directions, combine, direction_key, dot,
-                   gated, length, policy, text, unknown)
+from .core import (FAIL, NO_LIMIT, NOT_APPLICABLE, PASS, UNKNOWN, Calibrated, Context, Draft, Result, access_directions, combine,
+                   direction_key, dot, gated, judge_upper_bound, length, policy, text, unknown)
 from .machining import tools
 
 CLEANUP_PURPOSES = frozenset({"stock", "finish", "support_removal"})
@@ -336,11 +336,30 @@ def coating_access(ctx: Context) -> Result:
     return combine(method, parts, findings)
 
 
+def _join_distortion_against_limits(ctx: Context, cal: Calibrated, method: str) -> Result:
+    """The calibrated worst join distortion against the `join_distortion` limit of every critical surface the join leaves
+    as made (a surface a later operation re-machines, or one not as manufactured, is not judged here). UNKNOWN when no
+    surface states a limit."""
+    findings: list[Draft] = []
+    parts: list[tuple[str, str]] = []
+    for surface in ctx.surfaces():
+        if surface.dimension_state != "as_manufactured" or any(surface.feature in ctx.targets(op) for op in ctx.after()):
+            continue
+        outcome, reason = judge_upper_bound(ctx, surface, cal, "join_distortion", "mm", code="process.joining.distortion",
+                                            state="joined", recheck="process.joining", findings=findings,
+                                            remedy=f"machine {surface.feature} after joining, or relax the limit with the design owner")
+        if outcome != NO_LIMIT:
+            parts.append((outcome, reason))
+    if not parts:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+        parts.append((UNKNOWN, f"calibrated ({cal.calibration.id}); no critical surface states a join_distortion limit"))
+    return combine(method, parts, findings)
+
+
 def joining_distortion(ctx: Context) -> Result:
     method = "joining distortion against a calibration"
     cal = ctx.calibrated("join_distortion")
     if cal.known:
-        return Result(PASS, method, f"calibrated ({cal.calibration.id})")
+        return _join_distortion_against_limits(ctx, cal, method)
     draft = Draft("process.joining.distortion_uncalibrated", "minor", UNKNOWN, unknown("join distortion"),
                   cal.criterion("join_distortion"), "capability calibrations", "; ".join(cal.reasons),
                   "the distortion the join leaves on aligned features is unknown",

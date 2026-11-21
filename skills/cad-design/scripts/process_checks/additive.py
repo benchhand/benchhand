@@ -824,11 +824,13 @@ def thermal_distortion(ctx: Context) -> Result:
 def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[str, str]:
     worst = warp.bounds("mm")[1]
     unsupported: list[str] = []
+    stated = False
     for feature, surface in ctx.critical_features().items():
         if surface.dimension_state != "as_manufactured":
             continue
         limits, other = ctx.split_criteria(surface, "flatness", ctx.mi.UPPER_BOUND_OPERATORS)
         unsupported += other
+        stated = stated or bool(limits)
         for item in limits:
             limit = ctx.mi.convert(item["value"], item.get("units", "mm"), "mm")
             if ctx.mi.exceeds_upper_bound(worst, item["operator"], limit, 1e-9):
@@ -841,6 +843,8 @@ def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[st
                 return FAIL, f"{feature} flatness"
     if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
         return UNKNOWN, f"flatness criterion with operator {', '.join(sorted(set(unsupported)))} is not judged against calibrated warp"
+    if not stated:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+        return UNKNOWN, "no critical surface states a flatness limit to judge the calibrated warp against"
     return PASS, "warp calibrated for this footprint"
 
 
