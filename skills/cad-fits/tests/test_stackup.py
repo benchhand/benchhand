@@ -589,6 +589,15 @@ class ClearanceTests(unittest.TestCase):
         def no_sliding_surface(documents: dict) -> None:
             documents["interfaces.yaml"]["interfaces"][0]["functional"]["surfaces"][0]["role"] = "fixed"
 
+        def unknown_family(documents: dict) -> None:
+            documents["manufacturing/materials.yaml"]["profiles"][0]["material_family"] = fx.unknown("family not tested yet")
+
+        def family_tst_a(documents: dict) -> None:
+            documents["manufacturing/materials.yaml"]["profiles"][0]["material_family"] = fx.known("tst_a")
+
+        def one_of(*sizes: float) -> dict:
+            return {**clearance_limit(), "operator": "one_of", "quantities": [{"value": size, "units": "mm"} for size in sizes]}
+
         generic = clearance_catalog(clearance_limit())
         cases = {
             "no bound record": (clearance_documents(), generic, False, "no bound record", "bind the stack to a hardware record"),
@@ -606,6 +615,14 @@ class ClearanceTests(unittest.TestCase):
             "no catalog": (clearance_documents(), None, True, "no guideline catalog", "give the run a guideline catalog"),
             "the resolver finds no limit": (clearance_documents(), clearance_catalog(), True, "sliding_clearance",
                                             "record a guideline set that states a minimum sliding clearance"),
+            "a scope fact is unknown": (unknown_family, clearance_catalog(family_limits={"tst_a": {**clearance_limit(), "operator": "equals", "value": True}}), True,
+                                        "scope fact is unknown", "record the scope fact"),
+            "equally specific limits conflict": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<"), clearance_limit(0.3, ">=")),
+                                                 True, "share no value", "change one of the named guideline limits"),
+            "a set and a range share no size": (family_tst_a, clearance_catalog(clearance_limit(1.0), family_limits={"tst_a": one_of(0.2, 0.3)}),
+                                                True, "share no size", "change the named discrete set or range"),
+            "no operator can state the limit": (clearance_documents(), clearance_catalog(clearance_limit(0.3, ">"), clearance_limit(0.5, "<=")),
+                                                True, "cannot be stated", "state the sliding clearance with limits one operator"),
             "a maximum is no minimum": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<=")), True, "<=",
                                         "state the sliding clearance as a minimum"),
             "a pin that is not applied": (pinned, generic, True, "not applied", "correct the guideline pin"),
