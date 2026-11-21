@@ -8,7 +8,7 @@ schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 s
 schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
 schema-sha256 2f37357dc1813b5794dcd558ff9eab7c1bbf608138fb523a5d4487c23f877f4a skills/cad-record/schemas/finding.schema.json
-schema-sha256 7f68782d4b57379b118085a1d4137bf6b3152d0698ae8cd59f4cab2f48d21868 skills/cad-record/schemas/interfaces.schema.json
+schema-sha256 4b1f107ed3be3c46a1a68c1b4cb81f1625f3053f3a29f95bd6b0de2bd02f02af skills/cad-record/schemas/interfaces.schema.json
 schema-sha256 5d04c1dd2745de30144da9fe4080e55cea79e23c3a207b3474601dd6eb8e9125 skills/cad-record/schemas/layout.schema.json
 schema-sha256 2af936cbacdc55c0cf3789c97db7ef72a6e230ad2ab0a5a968862238ab75fcad skills/cad-record/schemas/manufacturing-capabilities.schema.json
 schema-sha256 c1cf876a115b1fe2fdb6e4260123a7038726f3b2dda54f110a916f2d66696e7e skills/cad-record/schemas/manufacturing-check-result.schema.json
@@ -20,9 +20,9 @@ schema-sha256 a4c5f14334712d8ccde92a2692cb5ee469418a16cef2eb94de2654a6be32c97d s
 schema-sha256 0a0c8fe8f2a949444d88c191937f9060e6c80c2d683bb227f44b09623bc570fc skills/cad-record/schemas/manufacturing.schema.json
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 schema-sha256 7c8c783ae3e4cf6a511604f715645e7c727f1229b192a25e65e8d1277887893c skills/cad-record/schemas/part.schema.json
-schema-sha256 c38806ef651cb7d034118630d8750a7a33bb26c87bbd459f7c6fefaf795b1a91 skills/cad-record/schemas/product.schema.json
+schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
 schema-sha256 5b5a8f868dbc6bb1829cb66e35a7ae64ae6cb7988e27653269cd2d837dda47e6 skills/cad-record/schemas/release-manifest.schema.json
-schema-sha256 9084d966c07bbaa59ec4ce3e3115354f91a953540368a52ff7859f7d140df782 skills/cad-record/schemas/requirements.schema.json
+schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
 schema-sha256 3f66dcd1ef22b8b40aa94f0c95919cf0f90b6b848bb0e36bffb772fa506292c1 skills/cad-record/schemas/stackup.schema.json
 schema-sha256 60c50ec2df3452d6896b33d1d2c344b7ada20e0df00ce56a800c520b9e34571f skills/cad-record/schemas/tool-settings.schema.json
 schema-sha256 c363591bfab50f264b92a38aa36be5d3999cfd54451264a96115de36edc624e4 skills/cad-record/schemas/verification-row.schema.json
@@ -1721,6 +1721,24 @@ Constraints not expressed by the type:
 
 - additionalProperties: false
 
+### InterfacesFace
+
+Source: `/$defs/face`
+
+One face of a part, by its semantic feature id
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `PN` | `ManufacturingPn` | yes |  |  |
+| `occurrence` | `ManufacturingOccurrenceRef` | no |  |  |
+| `component` | `ManufacturingSemanticId` | no |  |  |
+| `feature` | `ManufacturingSemanticId` | yes |  |  |
+| `region` | `ManufacturingSemanticId` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
 ### InterfacesFunctional
 
 Source: `/$defs/functional`
@@ -1741,6 +1759,7 @@ Record version 2 functional contract of an interface. Desired fit limits (limits
 | `contact` | `InterfacesFunctionalContact` | no |  |  |
 | `play` | `InterfacesFunctionalPlay` | no |  | The joint's free movement at this interface: each component the total play about the nominal, centred pose (an interval's upper bound governs the extremes), axial along the joint axis, radial across it, angular as tilt of the axis, backlash along the joint's own coordinate; compliance the elastic displacement under the interface's declared loads (spring preload, operating loads), sourced from a calculation or test, added to the play at the extremes. A component the interface function needs and the record does not declare is unknown, never zero. scenario_cases name the motion cases evaluated under play |
 | `assembly_operations` | `list[ManufacturingAssemblyOperationId]` | no |  |  |
+| `print_in_place` | `list[InterfacesFunctionalPrintInPlaceItems]` | no |  | The joints at this interface that print already assembled: each joint's kind, the joint value it prints at, the face pairs its gap separates and how it breaks free after printing. min_clearance_mm must be at least the governing product.yaml flow.profile processes.fdm.pip_clearance_mm |
 | `inspections` | `ManufacturingSemanticIds` | no |  |  |
 | `decisions` | `list[ManufacturingDecision]` | no |  |  |
 
@@ -1752,6 +1771,7 @@ Constraints not expressed by the type:
 - `acceptance`: minItems: 1
 - `assembly_operations`: minItems: 1
 - `assembly_operations`: uniqueItems: true
+- `print_in_place`: minItems: 1
 - `decisions`: minItems: 1
 - `decisions`: uniqueItems: true
 
@@ -1844,6 +1864,40 @@ Constraints not expressed by the type:
 
 - minProperties: 1
 - additionalProperties: false
+
+### InterfacesFunctionalPrintInPlaceItems
+
+Source: `/$defs/functional/properties/print_in_place/items`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `joint` | `Literal["hinge", "pin", "ball", "captive", "living_hinge"]` | yes |  |  |
+| `print_pose` | `Mapping[str, float]` | yes |  | the value each assembly.yaml joint prints at, in that joint's units |
+| `gap_features` | `list[list[InterfacesFace]]` | yes |  |  |
+| `break_free` | `InterfacesFunctionalPrintInPlaceItemsBreakFree` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `print_pose`: minProperties: 1
+- `print_pose`: propertyNames: {"pattern":"^J-[0-9]{3}$"}
+- `gap_features`: minItems: 1
+- `gap_features`: items.minItems: 2
+- `gap_features`: items.maxItems: 2
+
+### InterfacesFunctionalPrintInPlaceItemsBreakFree
+
+Source: `/$defs/functional/properties/print_in_place/items/properties/break_free`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `method` | `ManufacturingText` | yes |  |  |
+| `force_n` | `float` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `force_n`: exclusiveMinimum: 0
 
 ### InterfacesFunctionalSurfacesItems
 
@@ -5572,6 +5626,16 @@ Constraints not expressed by the type:
 - `affected_parts`: uniqueItems: true
 - `affected_parts`: items.pattern: "^[A-Z]{2,5}-[0-9]{4}$"
 
+### ProductClearance
+
+Source: `/$defs/clearance`
+
+Alias of `Literal["calibrated"] | float`
+
+Constraints not expressed by the type:
+
+- oneOf[0].exclusiveMinimum: 0
+
 ### ProductDecision
 
 Source: `/$defs/decision`
@@ -5598,6 +5662,64 @@ Constraints not expressed by the type:
 - `clearance_margin_mm`: minimum: 0
 - `clearance_margin_mm`: maximum: 1
 
+### ProductFdmProfile
+
+Source: `/$defs/fdm_profile`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `orientation` | `Literal["user", "propose"]` | yes | `"user"` |  |
+| `supports` | `Literal["allowed", "free", "off"]` | yes | `"allowed"` |  |
+| `overhang_deg` | `Literal["calibrated", "off"] \| float` | yes | `"calibrated"` |  |
+| `bridge_mm` | `ProductLimit` | yes | `"calibrated"` |  |
+| `min_wall_mm` | `ProductLimit` | yes | `"calibrated"` |  |
+| `min_feature_mm` | `ProductLimit` | yes | `"calibrated"` |  |
+| `warp` | `Literal["calibrated", "off"]` | yes | `"calibrated"` |  |
+| `cosmetic_faces` | `bool` | yes | `false` | true adds the critical-surface role cosmetic, which supports may not touch |
+| `print_in_place` | `bool` | yes | `false` | true: offer to print hinges and joints already assembled where that fits; false: assemble them |
+| `pip_clearance_mm` | `ProductFdmProfilePipClearanceMm` | yes |  | The smallest print-in-place gap that separates, across the layers (xy) and between layers (z) |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `overhang_deg`: oneOf[0].exclusiveMinimum: 0
+- `overhang_deg`: oneOf[0].exclusiveMaximum: 90
+
+### ProductFdmProfilePipClearanceMm
+
+Source: `/$defs/fdm_profile/properties/pip_clearance_mm`
+
+The smallest print-in-place gap that separates, across the layers (xy) and between layers (z)
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `xy` | `ProductClearance` | yes | `"calibrated"` |  |
+| `z` | `ProductClearance` | yes | `"calibrated"` |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### ProductFea
+
+Source: `/$defs/fea`
+
+Whether and how FEA runs, the shape agreed with package A. mode is required when enabled. fast escalates a case to accurate when the fast result lies within fast_band_pct of its criterion limit, |limit - result| / limit x 100 <= fast_band_pct; without fast_band_pct, cad-analysis uses its measured default band, twice the worst-case bias.
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `enabled` | `bool` | yes | `true` |  |
+| `mode` | `Literal["fast", "accurate"]` | no | `"accurate"` |  |
+| `fast_band_pct` | `float` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- if {"properties":{"enabled":{"const":true}}} then {"required":["mode"]} else {"not":{"anyOf":[{"required":["mode"]},{"required":["fast_band_pct"]}]}}
+- if {"required":["fast_band_pct"]} then {"required":["mode"],"properties":{"mode":{"const":"fast"}}}
+- `fast_band_pct`: maximum: 50
+- `fast_band_pct`: exclusiveMinimum: 0
+
 ### ProductFlow
 
 Source: `/properties/flow`
@@ -5608,6 +5730,7 @@ Source: `/properties/flow`
 | `recheck_from` | `ProductStage` | yes |  |  |
 | `frozen` | `ProductFrozen` | no |  |  |
 | `change` | `ProductChange` | no |  |  |
+| `profile` | `ProductProfile` | no |  |  |
 
 Constraints not expressed by the type:
 
@@ -5631,6 +5754,14 @@ Constraints not expressed by the type:
 
 - additionalProperties: false
 
+### ProductIso52900Category
+
+Source: `/$defs/iso_52900_category`
+
+The ISO/ASTM 52900 additive process category of a flow.profile process, null for a subtractive or forming process. cad-record flow_profile_gate.py ISO_52900_CATEGORY maps each process key to one
+
+Alias of `Literal["mex", "pbf", "vpp", "bjt", "ded", "mjt", "shl", None]`
+
 ### ProductLicense
 
 Source: `/properties/license`
@@ -5648,6 +5779,16 @@ Constraints not expressed by the type:
 - additionalProperties: false
 - `hardware`: minLength: 1
 - `documentation`: minLength: 1
+
+### ProductLimit
+
+Source: `/$defs/limit`
+
+Alias of `Literal["calibrated", "off"] | float`
+
+Constraints not expressed by the type:
+
+- oneOf[0].exclusiveMinimum: 0
 
 ### ProductManufacturing
 
@@ -5691,6 +5832,40 @@ Constraints not expressed by the type:
 Source: `/$defs/process`
 
 Alias of `ManufacturingPrimaryProcess`
+
+### ProductProfile
+
+Source: `/$defs/profile`
+
+The user's answers to the project-start questions (cad-flow flow_profile.py questions), recorded at INTENT with the decision that holds them. Each question has a default the user is shown; asked records, per question, whether the user answered (user) or accepted the default (asked-accepted-default). A number is the user's design limit; calibrated stays unknown until a calibration exists; off means not assessed. A two-state answer is a boolean; a word answer is a string, written quoted, since YAML reads a bare on, off, yes or no as a boolean
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `decision` | `ProductDecision` | no |  |  |
+| `human_approval` | `Literal["all", "key"]` | yes | `"all"` | all: every stage gate waits for the user; key: intent, variant, freeze and release do, and a passing full check approves the middle gates |
+| `fea` | `ProductFea` | yes |  |  |
+| `stack_up` | `Literal["auto", "on", "off"]` | yes | `"auto"` | auto turns on when SPECIFY names a critical interface or a stack case |
+| `critique` | `Literal["full", "light", "off"]` | yes | `"full"` | light: both reviewers at the L2 light-review scope, rerun on the analysed version |
+| `motion` | `Literal["auto"]` | yes | `"auto"` | auto: on once a joint moves; stated to the user, never asked |
+| `storage_results_in_git` | `bool` | yes | `false` |  |
+| `asked` | `Mapping[str, Literal["user", "asked-accepted-default"]]` | no |  | How each project-start question was settled, keyed by its field path below flow.profile (fea, stack_up, processes/fdm/orientation, processes/fdm/pip_clearance_mm/xy, ...). cad-record flow_profile_gate.py QUESTION_FIELDS lists the keys; its gate reports a missing one |
+| `processes` | `ProductProfileProcesses` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### ProductProfileProcesses
+
+Source: `/$defs/profile/properties/processes`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `fdm` | `ProductFdmProfile` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
 
 ### ProductSha256
 
@@ -6338,6 +6513,7 @@ Source: `/properties/requirements/items/properties/verification`
 | --- | --- | --- | --- | --- |
 | `method` | `Literal["I", "A", "D", "T"]` | yes |  |  |
 | `criteria` | `str` | yes |  |  |
+| `step` | `Literal["interference", "form", "visibility", "access", "process", "motion", "stack_up", "fea", "drawing", "critique", "physical"]` | no |  | The flow step that verifies it, so validate.py can flag a profile that turns that step off (flow.conflict): fea for a strength or stiffness requirement, physical for a trial or inspection outside CAD |
 
 Constraints not expressed by the type:
 

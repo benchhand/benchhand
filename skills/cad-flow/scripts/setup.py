@@ -184,6 +184,8 @@ def plan(report, cwd: Path, home: Path, environ: Mapping[str, str], harness: str
 
 def storage_answer(hw: Path) -> bool | None:
     """product.yaml `storage.results_in_git`: the user's true or false, None while the user was not asked."""
+    # TODO(benchhand-d55): read flow.profile storage_results_in_git (None while `asked` lacks it), the answer to
+    # project-start question 9, and drop storage.results_in_git with layout.json's setting.
     import yaml  # in setup's environment; plain `python3 setup.py` without PyYAML reports it as a manual step
 
     path = hw / "product.yaml"
