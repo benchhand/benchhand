@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -124,6 +125,18 @@ def read_snapshot(files: Mapping[str, bytes]) -> tuple[record.Snapshot, dict[str
         return snapshot, snapshot.parts
     except record.RecordError as error:
         raise UsageError(str(error)) from error
+
+
+def require_profile(hw: Path, snapshot: record.Snapshot) -> None:
+    """Refuse a build whose product has no settled project-start profile (cad-record flow_profile_gate, checked
+    at L1 LAYOUT at the earliest, since a build is LAYOUT work). The product and parts come from the snapshot
+    this version is built from; only the cited decision is read from hw/decisions/."""
+    validate = record.load_validate()
+    gate = validate.profile_gate
+    _stage, found = gate.gate(snapshot.documents.get("product.yaml"), snapshot.parts,
+                              functools.partial(validate.approval_problem, hw), build=True)
+    if found:
+        raise UsageError(gate.refusal(found))
 
 
 def discover(hw: Path, records: Mapping[str, Mapping[str, Any]]) -> tuple[list[PartSource], list[dict[str, Any]]]:
@@ -499,6 +512,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
         raise UsageError(f"{label} is not after the newest version v{newest}; labels increase, pick v{newest + 1}")
     files = record.snapshot(hw, part_folders(hw))  # the record this version is built from, read once
     snapshot, records = read_snapshot(files)
+    require_profile(hw, snapshot)
     sources, findings = discover(hw, records)
     model_sha = {p.pn: sha256(p.model) for p in sources}
     by_pn = {p.pn: p for p in sources}

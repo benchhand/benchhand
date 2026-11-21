@@ -20,7 +20,8 @@ here from its statuses and from the staged record's selection report (cad-record
 the digest of the staged selection inputs), passes, so a stale, failed or unknown due check, or a
 recorded final choice the selection does not support, cannot be stamped as passed.
 `--verify` reads the staged index: the record inputs, the stamp and its packet, never the work tree
-beyond the layout audit. It is the whole commit-time check: a commit that stages no hw/ change passes.
+beyond the layout audit. It also refuses a project-start profile (cad-record flow_profile_gate) that blocks at
+the staged flow.stage, judged on the index's product, parts and decision records, before the threshold check below. It is the whole commit-time check: a commit that stages no hw/ change passes.
 `--hw` names the hw/ directory, as in evidence.py (default: hw/ at the git root). `--verify --committed` checks HEAD's
 hw/ tree and stamp instead of the index, and never skips: CI runs it on a clean checkout.
 flow.recheck_from is the threshold and may only stay or move earlier than
@@ -30,6 +31,7 @@ HEAD's: raising it would suppress the checks of the stages it skips.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import importlib.util
 import json
@@ -90,6 +92,42 @@ def tree_paths(root: Path, committed: bool) -> list[str]:
     return [name.decode("utf-8", errors="surrogateescape") for name in raw.split(b"\0") if name]
 
 
+def tree_decisions(root: Path, committed: bool, folder: Path) -> None:
+    """Write the hw/decisions/DR-###*.md records of the index (HEAD when `committed`) into `folder`, so cad-record's
+    decision reader can read them without the work tree."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for path in tree_paths(root, committed):
+        name = path.removeprefix("hw/decisions/")
+        if path.startswith("hw/decisions/") and "/" not in name and name.startswith("DR-") and name.endswith(".md"):
+            (folder / name).write_bytes(tree_blob(root, path, committed))
+
+
+def tree_parts(root: Path, committed: bool) -> dict[str, Any]:
+    """The parsed hw/parts/<PN>/part.yaml records of the index (HEAD when `committed`), by the PN folder."""
+    found = {}
+    for path in tree_paths(root, committed):
+        pieces = path.split("/")
+        if len(pieces) == 4 and pieces[:2] == ["hw", "parts"] and pieces[3] == "part.yaml":
+            try:
+                found[pieces[2]] = yaml_loader.safe_load(tree_blob(root, path, committed).decode("utf-8"))
+            except (UnicodeError, yaml.YAMLError) as error:
+                raise RuntimeError(f"cannot parse staged {path}: {error}") from error
+    return found
+
+
+def require_profile(root: Path, committed: bool, product: dict[str, Any]) -> None:
+    """Refuse a tree whose project-start profile blocks at its flow.stage (cad-record flow_profile_gate). The product
+    is the index's (HEAD's when `committed`), and so are the parts and the decision the profile cites: the work tree
+    is never read."""
+    gate = validate.profile_gate
+    with tempfile.TemporaryDirectory() as scratch:
+        tree_decisions(root, committed, Path(scratch) / "decisions")
+        _stage, found = gate.gate(product, tree_parts(root, committed),
+                                  functools.partial(validate.approval_problem, Path(scratch)))
+    if found:
+        raise RuntimeError(gate.refusal(found))
+
+
 def require_gate_decision(root: Path, committed: bool, gate: str, stamp_time: Any) -> None:
     """Refuse an advance of flow.stage past the stamped stage unless a decision record of hw/decisions records it:
     status proposed (provisional) or accepted, not superseded, dated on or after the stamp's UTC day. Reads the index,
@@ -104,10 +142,7 @@ def require_gate_decision(root: Path, committed: bool, gate: str, stamp_time: An
         raise RuntimeError(f"{problem}: the recheck stamp timestamp {stamp_time!r} has no time zone offset")
     stamped_on = stamped.astimezone(timezone.utc).date()
     with tempfile.TemporaryDirectory() as scratch:
-        for path in tree_paths(root, committed):
-            name = path.removeprefix("hw/decisions/")
-            if path.startswith("hw/decisions/") and "/" not in name and name.startswith("DR-") and name.endswith(".md"):
-                (Path(scratch) / name).write_bytes(tree_blob(root, path, committed))
+        tree_decisions(root, committed, Path(scratch))
         try:
             records = decision_records.read_decisions(Path(scratch))
         except decision_records.DecisionRecordError as error:
@@ -403,6 +438,7 @@ def main() -> int:
             require_clean_layout(root, product)
             if not committed:
                 require_threshold_kept(root, threshold)
+            require_profile(root, committed, product)
             if validate.stages().index(current_stage) < validate.stages().index(threshold):
                 print(json.dumps({"passed": True, "required": False, "stage": current_stage}))
                 return 0

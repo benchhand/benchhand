@@ -31,6 +31,8 @@ ISO 286 tables). It declares them, and `closure(script, data)` hashes each decla
 file under a declared folder into the same table. `referenced_data(script)` lists the data that
 the closure's modules name by a path expression, so a test can check that the declaration covers it.
 
+GATE_ONLY names the modules a closure leaves out because they only gate a run (cad-record validate.py).
+
 Standard library only. cad-record's `layout.code_shas` (#114) can take over this closure once it lands.
 """
 
@@ -54,6 +56,12 @@ THIRD_PARTY = frozenset({"OCP", "build123d", "cadquery", "defusedxml", "fcl", "j
 # Modules hashed into a closure whose own loads it does not follow: preflight finds the FreeCAD command and
 # checks the whole install (viewer, browser, solvers), and none of that decides a producer's verdict.
 UNFOLLOWED = frozenset({"cad-flow/scripts/preflight.py"})
+# Modules that gate a producer and decide nothing it publishes: they refuse or allow a run, and change no geometry
+# and no output byte. A closure neither hashes them nor follows their loads, so an edit to one leaves the recipe key
+# alone; a file only they reach (the SARIF schema, evidence.py) drops out with them. A producer that does read a gate's
+# verdict into what it publishes must list the gate in its own closure by another route, not through this table.
+# - cad-record validate.py: `cad_model.py run` consults it for the project-start profile and builds or refuses.
+GATE_ONLY = frozenset({"cad-record/scripts/validate.py"})
 
 
 class CodeShaError(ValueError):
@@ -210,6 +218,10 @@ def _import_targets(tree: ast.Module, file: Path) -> Iterator[Path]:
         yield from (_top_level_module(dotted, file) if root is None else _package_modules(root, dotted, names, file))
 
 
+def _is_gate_only(path: Path) -> bool:
+    return path.is_relative_to(SKILLS) and path.relative_to(SKILLS).as_posix() in GATE_ONLY
+
+
 def _data_files(entry: Path) -> list[Path]:
     """A declared data file, or every file under a declared data folder."""
     if entry.is_file():
@@ -272,7 +284,7 @@ def _closure(script: Path, data: tuple[Path, ...]) -> tuple[tuple[str, str], ...
         tree = ast.parse(found[path], filename=str(path))
         for target in (*_path_targets(tree, path), *_import_targets(tree, path)):
             target = target.resolve()
-            if target not in found:
+            if target not in found and not _is_gate_only(target):
                 pending.append(target)
     for entry in data:
         for path in _data_files(entry):

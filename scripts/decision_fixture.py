@@ -9,11 +9,16 @@ Tests put this directory on sys.path (see modload.py). A call replaces the recor
 from __future__ import annotations
 
 import datetime
+import json
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 from modload import load_module
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "cad-record" / "scripts"
+FIXTURES = Path(__file__).resolve().parents[1] / "skills" / "cad-record" / "tests" / "fixtures"
 records = load_module("cad_record_decision_records", SCRIPTS / "decision_records.py")
 
 
@@ -35,3 +40,20 @@ def decision_path(hw: Path, ident: str) -> Path:
     """The file of record `ident` under `hw`/decisions/."""
     (found,) = (Path(hw) / "decisions").glob(f"{ident}-*.md")
     return found
+
+
+def add_flow_profile(hw: Path, *, decision: str | None = None, status: str = "accepted", **changes: Any) -> str:
+    """Settle the project-start profile of the test project `hw`: write the decision record (default the id the
+    cad-record fixture profile cites, with MADR `status`) and set product.yaml flow.profile to that fixture
+    profile (`changes` as in its `flow_profile`). Returns the decision id. product.yaml must exist."""
+    fixtures = load_module("cad_record_mi_fixtures", FIXTURES / "manufacturing_intent.py")
+    decision = decision or fixtures.PROFILE_DECISION
+    write_test_decision(hw, decision, status=status)
+    path = Path(hw) / "product.yaml"
+    text = path.read_text(encoding="utf-8")
+    product = yaml.safe_load(text) or {}
+    product.setdefault("flow", {})["profile"] = fixtures.flow_profile(decision, **changes)
+    # a product written as JSON (a YAML flow mapping) stays JSON, for tests that read it back with json.loads
+    path.write_text(json.dumps(product, indent=1) + "\n" if text.lstrip().startswith("{")
+                    else yaml.safe_dump(product, sort_keys=False), encoding="utf-8")
+    return str(decision)
