@@ -1017,6 +1017,13 @@ class FlowProfileFindings(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertTrue(any(str(item["path"]).endswith("interfaces.yaml") for item in report["findings"]))
         self.assertEqual([item for item in report["findings"] if item.get("code") == "flow.conflict"], [])
+    def test_a_malformed_product_is_a_schema_finding_and_judges_no_conflict(self) -> None:
+        self.edit_product("enabled: false", "enabled: true\n      mode: accurate")  # a conflict on a valid product
+        self.product_path.write_text(self.product_path.read_text(encoding="utf-8") + "bogus: 1\n", encoding="utf-8")
+        result, report = self.validate()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(any(str(item["path"]).endswith("product.yaml") for item in report["findings"]))
+        self.assertEqual([item for item in report["findings"] if item.get("code") == "flow.conflict"], [])
 
 
 if __name__ == "__main__":
