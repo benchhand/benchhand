@@ -36,7 +36,6 @@ import feature_geometry as fg
 from feature_geometry import Face, ResolvedFeature, Vector
 
 FITS = Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py"
-INTENT = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "manufacturing_intent.py"
 EPS = fg.GEOMETRY_EPS
 FIT_KEYS = ("press_fit", "running_fit", "locating_fit")
 VENDOR_TYPES = ("vendor_specification", "source_control")
@@ -75,20 +74,6 @@ def _fits() -> Any:
 
 def finding(code: str, message: str, **where: Any) -> dict[str, Any]:
     return {"code": code, "message": message, **where}
-
-
-@cache
-def _intent() -> Any:
-    """cad-record's manufacturing_intent.py, the one reader of the record version."""
-    module = sys.modules.get("cad_record_manufacturing_intent")
-    if module is None:
-        spec = importlib.util.spec_from_file_location("cad_record_manufacturing_intent", INTENT)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"cannot load cad-record at {INTENT}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-    return module
 
 
 def finished_state_findings(pn: str, part: Mapping[str, Any], feature: str, source: str) -> list[dict[str, Any]]:
