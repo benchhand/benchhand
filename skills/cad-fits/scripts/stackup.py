@@ -83,7 +83,7 @@ import json
 import math
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -957,8 +957,8 @@ class _IntentStack:
             return None
         result = _clearance_result(self.clearance["per"], self.record, self.subject.get("interface"), self.catalog,
                                    self.on, nominal)
-        if result.reason is not None:
-            self.unknown("stack.clearance_unknown", None, result.reason, result.remedy or CLEARANCE_REMEDY,
+        if result.unusable is not None:
+            self.unknown("stack.clearance_unknown", None, result.unusable.reason, result.unusable.remedy,
                          inputs=["hw/interfaces.yaml"])
         elif result.failed:
             row = result.row
@@ -1014,10 +1014,6 @@ class _IntentStack:
                                     "tradeoffs": "assembly effort and a recorded adjustment procedure"}])
 
 
-CLEARANCE_REMEDY = ("record the sliding parts, their FDM capability profile and material, and a guideline set that "
-                    "states a minimum sliding clearance, then rerun")
-
-
 class _Unusable(NamedTuple):
     """Why the clearance cannot be judged, and the step that clears exactly that reason."""
     reason: str
@@ -1027,9 +1023,8 @@ class _Unusable(NamedTuple):
 @dataclass(frozen=True)
 class _ClearanceResult:
     row: dict[str, Any]
-    reason: str | None = None  # why the clearance is unknown
+    unusable: _Unusable | None = None  # why the clearance is unknown, with the step that clears it
     failed: bool = False
-    remedy: str | None = None  # what clears that reason
 
 
 def _sliding_pns(record: Any, interface_id: str | None) -> list[str]:
@@ -1050,8 +1045,7 @@ def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, _Unu
     """((the PN's FDM route operation, its material profile id), None), or (None, why it has none). The material is
     checked here because the resolver would otherwise fall back to the generic set without it."""
     op = _fdm_operation(record, pn)
-    if op is None:
-        return None, _Unusable(f"{pn} has no fdm route operation", f"record an fdm route operation for {pn}, then rerun")
+    assert op is not None  # _clearance_inputs keeps only the sliding parts with an fdm operation
     if not isinstance(op.capability, str) or op.capability not in record.capabilities:
         return None, _Unusable(f"{pn}'s {op.id} operation names no capability profile of the record",
                                f"name a capability profile of the record on {pn}'s {op.id} operation, then rerun")
@@ -1062,6 +1056,26 @@ def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, _Unu
         return None, _Unusable(f"{pn}'s material profile {material} is not in the record's materials",
                                f"add the material profile {material} to the record's materials, then rerun")
     return (op, material), None
+
+
+# What clears each reason the guideline resolver gives for an unknown limit, keyed by a phrase of the reason.
+_RESOLVER_REMEDIES = (
+    ("scope fact is unknown", "record the scope fact the reason names on the material or capability profile, then rerun"),
+    ("share no value", "change one of the named guideline limits so the equally specific sets share a value, then rerun"),
+    ("share no size", "change the named discrete set or range so that they share a size, then rerun"),
+    ("cannot be stated", "state the sliding clearance with limits one operator can express (one bound or a closed range), "
+                         "then rerun"),
+    ("no applicable guideline", "record a guideline set that states a minimum sliding clearance for this printer and "
+                                "material, then rerun"),
+)
+_RESOLVER_REMEDY_OTHER = "resolve the guideline problem the reason names, in the guideline sets or the record, then rerun"
+
+
+def _resolver_remedy(reasons: Sequence[str]) -> str:
+    """The step for each distinct problem among the resolver's reasons."""
+    steps = [next((step for phrase, step in _RESOLVER_REMEDIES if phrase in reason), _RESOLVER_REMEDY_OTHER)
+             for reason in reasons]
+    return "; ".join(dict.fromkeys(steps))
 
 
 def _resolve_sliding(record: Any, pns: list[str], catalog: Any, on: date | None,
@@ -1083,9 +1097,8 @@ def _resolve_sliding(record: Any, pns: list[str], catalog: Any, on: date | None,
                 "compare the nominal gap per side with the calibrated sliding clearance by hand and record the result; "
                 "this stack check does not judge a calibration")
         if resolved.status != "guideline":
-            return [], _Unusable(f"{pn}: " + "; ".join(resolved.reasons or (f"no guideline states {CLEARANCE_CHARACTERISTIC}",)),
-                                 "record a guideline set that states a minimum sliding clearance for this printer "
-                                 "and material, then rerun")
+            reasons = resolved.reasons or (f"no applicable guideline states {CLEARANCE_CHARACTERISTIC}",)
+            return [], _Unusable(f"{pn}: " + "; ".join(reasons), _resolver_remedy(reasons))
         if resolved.operator not in MINIMUM_OPERATORS:
             return [], _Unusable(f"{pn}: the {CLEARANCE_CHARACTERISTIC} limit is {resolved.operator}, not a minimum",
                                  "state the sliding clearance as a minimum (>= or >) in the guideline set, then rerun")
@@ -1147,7 +1160,7 @@ def _clearance_result(per: str, record: Any, interface_id: str | None, catalog: 
                         "establish the unknown contributor so the nominal gap is known, then rerun")
     if why is not None or nominal is None:
         assert why is not None  # nominal is None sets why above
-        return _ClearanceResult(dict(row, reasons=[why.reason]), why.reason, remedy=why.remedy)
+        return _ClearanceResult(dict(row, reasons=[why.reason]), why)
     binding = max(resolutions, key=lambda r: (float(r.value.to("mm").value), r.operator == ">"))  # equal values: the strict one
     minimum = float(binding.value.to("mm").value)
     per_side = nominal / (1 if per == "side" else 2)
