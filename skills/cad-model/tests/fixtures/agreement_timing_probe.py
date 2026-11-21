@@ -22,7 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
-import agreement_timing  # noqa: E402
+import agreement_timing  # noqa: E402  (the import needs the sys.path entry above)
 
 TICKS = itertools.chain([0.0, 1.0, 1.0, 3.0, 3.0, 6.0], itertools.repeat(float("nan")))  # a fourth run would read NaN
 calls: list[int] = []
