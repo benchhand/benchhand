@@ -17,7 +17,7 @@
 # schema-sha256 c1cf876a115b1fe2fdb6e4260123a7038726f3b2dda54f110a916f2d66696e7e skills/cad-record/schemas/manufacturing-check-result.schema.json
 # schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b skills/cad-record/schemas/manufacturing-evidence.schema.json
 # schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
-# schema-sha256 bdc5967aef3613e5b59782b91c2dbcfb34e2b4390252756b614cd08f426b18f6 skills/cad-record/schemas/manufacturing-guideline.schema.json
+# schema-sha256 3a70ff36a1ebb40d1485b7fa0008051dcdacfaa1d05651ac1694cf02f3ab6f83 skills/cad-record/schemas/manufacturing-guideline.schema.json
 # schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 # schema-sha256 a4c5f14334712d8ccde92a2692cb5ee469418a16cef2eb94de2654a6be32c97d skills/cad-record/schemas/manufacturing-selection.schema.json
 # schema-sha256 0a0c8fe8f2a949444d88c191937f9060e6c80c2d683bb227f44b09623bc570fc skills/cad-record/schemas/manufacturing.schema.json
@@ -4284,6 +4284,7 @@ class ManufacturingGuidelineLimit(TypedDict):
     - if {"properties":{"characteristic":{"const":"nozzle_diameter"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_nozzle_diameter"}}}}}
     - if {"properties":{"characteristic":{"const":"min_feature"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_feature"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_feature"}}}}}
     - if {"properties":{"characteristic":{"const":"min_hole"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_hole"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_hole"}}}}}
+    - if {"properties":{"characteristic":{"const":"sliding_clearance"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"}}}}}
     - if {"properties":{"characteristic":{"enum":["hole_diameter_deviation","dimensional_deviation","profile_deviation"]}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}
     - if {"properties":{"characteristic":{"enum":["enclosure","nozzle_material"]}},"required":["characteristic"]} then {"properties":{"operator":{"enum":["equals","one_of"]}}}
     - if {"properties":{"characteristic":{"const":"enclosure"}},"required":["characteristic"]} then {"properties":{"value":{"description":"a boolean fact: the requirement is true or false","anyOf":[{"type":"boolean"},{"type":"array","items":{"type":"boolean"}}]}}}
@@ -4296,7 +4297,7 @@ class ManufacturingGuidelineLimit(TypedDict):
     - value: the categorical requirement of equals and one_of, such as enclosure true or nozzle_material hardened_steel; no default; minItems: 1; uniqueItems: true; items.minLength: 1
     - disputed: true when the cited sources disagree; the stricter value applies
     """
-    characteristic: Required[Literal["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "enclosure", "nozzle_material"]]
+    characteristic: Required[Literal["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "sliding_clearance", "enclosure", "nozzle_material"]]
     operator: Required[Literal[">=", "<=", ">", "<", "between", "equals", "one_of"]]
     quantity: NotRequired[ManufacturingQuantity]
     relative: NotRequired[ManufacturingGuidelineRelative]
