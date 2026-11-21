@@ -21,12 +21,16 @@ schema cannot say:
   and `max_speed`, which also names the frozen slicer file (`artifact` and `sha256`, checked against the file);
 - every guideline pin names a set of the `guidelines.discover()` catalog, at that revision;
 - a profile with no `machine` carries no pin.
+- the record has a supported `record_version` in product.yaml, because the loader stops before it hashes a source
+  artifact otherwise; a missing or unsupported version is a finding, never a silent skip.
 
 An UNKNOWN fact with a reason is accepted. Each problem prints as `<profile id>: <field path>: <message>`; the exit
 status is 1 when there is any, and 2 when a file or answer cannot be used (an `error:` line on stderr). `write` takes one bare profile mapping (the answers file), adds it to capabilities.yaml or replaces the
 profile of the same id, and copies the starter material profile of each material it does not forbid into materials.yaml when
 that file lacks it (a starter is found by its exact id). It writes nothing when `check` would fail, and replaces the
-files together (staged beside each target, then `os.replace`). YAML comments in the rewritten files are not kept.
+files one after the other (each staged beside its target, then `os.replace`d; materials.yaml first). A failure while
+staging changes nothing. A failure after the first replace leaves the new materials.yaml with the old capabilities.yaml:
+an unused starter profile, never a profile without its material. YAML comments in the rewritten files are not kept.
 """
 
 from __future__ import annotations
@@ -142,12 +146,13 @@ def documents_problems(documents: Mapping[str, Any], hw: Path) -> list[str]:
     """Every problem of the capability (and material) documents: the record's own checks, then the profile rules.
 
     `intent.check_documents` does not fit: it normalizes without `hw`, so it never checks a named source artifact against
-    its sha256, which a user `max_speed` rests on. Problems about the artifacts these documents name are kept."""
+    its sha256, which a user `max_speed` rests on. Problems about the artifacts these documents name are kept, and so is a
+    missing or unsupported record version: the loader stops there before it hashes any artifact, so the check reports it."""
     own = {rel: documents[rel] for rel in (CAPABILITIES, MATERIALS) if rel in documents}
     record = intent.normalize_record(documents, hw=hw)
     wanted = {f"hw/{rel}" for rel in own} | {f"hw/{artifact}" for artifact in _artifacts(list(own.values()))}
     found = [problem for problem in intent.schema_problems(own) + list(record.problems)
-             if problem.path in wanted and problem.severity == "error"]
+             if (problem.path in wanted or problem.code == intent.VERSION_UNSUPPORTED) and problem.severity == "error"]
     messages = [f"{problem.path}: {problem.pointer or '-'}: {problem.message}" for problem in found]
     catalog = guidelines.discover(hw)
     for profile in (documents.get(CAPABILITIES) or {}).get("profiles") or ():
