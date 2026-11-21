@@ -79,6 +79,47 @@ Environment flags follow `CAD_REQUIRE_FREECAD` (`skills/cad-flow/scripts/preflig
 |---|---|---|---|---|
 | `CAD_FEA_METALS_NEAR_SUPPORT` | off | package A (FEA) | A metal profile that fails the elongation rule is shown ductile by its form (wrought, sheet or rod). Only the shipped profiles `al_6061_t6_hydro`, `al_6082_t6_hydro`, `steel_dc01_salzgitter` and `stainless_304_outokumpu_core` count as metals, because the profile schema has no metal field. Isotropy is still required. Each strength verdict the flag decides carries `form stand-in, flag on` in `material.ductility.reason` and in the row's uncertainty. A material that passes the elongation rule is not affected. | Delete the flag by 2026-12-31 or when benchhand-y87 adds sourced elongation data to the metal profiles, whichever is first. |
 
+## Schema API generator
+
+`scripts/gen_api.py` is the only writer of two files. Never edit them by hand.
+
+- `skills/cad-record/scripts/cad_api.py`: `TypedDict` classes and type aliases. It uses only the standard library and imports on Python 3.11, so FreeCAD job code can load it.
+- `docs/schemas.md`: the schema reference.
+
+The input is every `*.schema.json` file in two directories (`SCHEMA_DIRS`): `skills/cad-record/schemas` and `skills/cad-concept/assets/schemas`. The JSON Schemas stay the source. The run stops with `FAIL` on:
+
+- a `$ref` that no schema declares as `$id`
+- a duplicate `$id`
+- a missing schema directory
+
+`scripts/test_gen_api.py` fails when a schema file exists outside those two directories.
+
+Both outputs open with a header that holds `schema-sha256` lines, one per schema, hashed over the exact file bytes. Any edit to a schema, including whitespace, makes the outputs stale until you regenerate.
+
+Regenerate from the repository root with the command that both outputs print in their header:
+
+```sh
+python3 scripts/gen_api.py
+```
+
+`--check` regenerates in memory and writes nothing. It exits 1 when an output differs from the committed file or does not exist. The failure message names each stale file and each changed schema, and prints the regenerate command. CI runs it as the step "Generated typed API and schema reference" in `.github/workflows/ci.yml`:
+
+```sh
+uv run --no-project --python 3.11 python -B scripts/gen_api.py --check
+```
+
+Limits:
+
+- An object that allows extra keys never becomes a `TypedDict`. Three cases:
+  - With declared properties, it becomes `Mapping[str, Any]` (`OPEN_OBJECT`, `gen_api.py:347-349`). The type loses per-key precision. Type checkers skip the known key names and their value types. The table of known keys in `docs/schemas.md` is documentation only.
+  - Without declared properties, it becomes `Mapping[str, V]`, where `V` comes from the `additionalProperties` schema (`inline_typed`, `gen_api.py:265-271`). `Assembly.profiles` is `Mapping[str, AssemblyProfile]`. `test_gen_api.py:443` expects `Mapping[str, str]` for a string value schema.
+  - With unconstrained values, it becomes `Mapping[str, Any]` (same code).
+- The generator does not emit PEP 728 `extra_items`, because mypy ignores it. Only objects closed with `additionalProperties: false` or `unevaluatedProperties: false` can be a `TypedDict`.
+- A type cannot express the keywords in `NOTE_KEYS`, nor `if`/`then` and `dependentRequired`. The generator lists most of them in the docstring of `cad_api.py` and in `docs/schemas.md`, but those notes are not a complete list. For example, `Walker.collect` ignores a later refinement that holds only a bound on an existing property (`gen_api.py:324-325`). The `schema-sha256` headers still make `--check` fail on an edit that the renderer does not show.
+- A `const` or `enum` with a float value cannot be a `Literal`. A `const` falls back to `Any`, and an `enum` falls back to the scalar type of its values.
+
+Tests are in `scripts/test_gen_api.py`. They run in the light batch (`unittest discover -s scripts`).
+
 ## Build, test and lint commands
 
 All commands run from the repository root. They are copied from `README.md` and `.github/workflows/ci.yml`.
