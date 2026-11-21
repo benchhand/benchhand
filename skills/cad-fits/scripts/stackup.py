@@ -1142,10 +1142,11 @@ def _clearance_result(per: str, record: Any, interface_id: str | None, catalog: 
         row["parts"] = printed
         resolutions, why = _resolve_sliding(record, printed, catalog, on, row["guidelines"])
         row["resolutions"] = GUIDELINES.trace_document(resolutions)["resolutions"]
-    if why is None and nominal is None:
+    if nominal is None and why is None:
         why = _Unusable("the nominal gap is not established: a contributor is unknown",
                         "establish the unknown contributor so the nominal gap is known, then rerun")
-    if why is not None:
+    if why is not None or nominal is None:
+        assert why is not None  # nominal is None sets why above
         return _ClearanceResult(dict(row, reasons=[why.reason]), why.reason, remedy=why.remedy)
     binding = max(resolutions, key=lambda r: (float(r.value.to("mm").value), r.operator == ">"))  # equal values: the strict one
     minimum = float(binding.value.to("mm").value)
