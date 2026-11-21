@@ -808,7 +808,7 @@ class StackPacketTests(unittest.TestCase):
         self.assertEqual([p.message for p in seen[0].problems if p.code == "intent.guideline"], [], "a shipped copy is accepted")
         self.assertEqual(dict(seen[0].guideline_digests.get("tst_printer", {}).get("tst_polymer_printed", {})), frozen, "the digests are those of the snapshot")
 
-    def test_main_reads_the_clearance_through_the_snapshot_catalog_and_the_packet_depends_on_it(self) -> None:
+    def build_with_snapshot_catalog(self) -> None:
         self.build(clearance_documents(), clearance_stack("side", nominal_gap=0.4))
         for name, data in GL.snapshot_files(self.hw).items():  # what a build copies into the version
             target = self.hw / "versions" / "v1" / "record" / name
@@ -816,9 +816,16 @@ class StackPacketTests(unittest.TestCase):
             target.write_bytes(data)
         (self.hw / "versions" / "v1" / "manifest.json").unlink()
         snapshot_version(self.hw)
+
+    def test_main_reads_the_clearance_through_the_snapshot_catalog(self) -> None:
+        self.build_with_snapshot_catalog()
         status, output = self.run_stack()
         row = output["clearance"]
         self.assertEqual((status, row["status"], row["minimum_mm"], row["met"]), (0, "guideline", 0.3, True))
+
+    def test_the_packet_depends_on_the_guideline_set_the_clearance_read(self) -> None:
+        self.build_with_snapshot_catalog()
+        self.run_stack()
         packet, _ = self.packet()
         shipped = GL.discover(None).guidelines["fdm.generic"].sha256
         self.assertEqual(packet["dependencies"]["guideline_fdm_generic_r2"], shipped)
