@@ -20,7 +20,8 @@ here from its statuses and from the staged record's selection report (cad-record
 the digest of the staged selection inputs), passes, so a stale, failed or unknown due check, or a
 recorded final choice the selection does not support, cannot be stamped as passed.
 `--verify` reads the staged index: the record inputs, the stamp and its packet, never the work tree
-beyond the layout audit. It is the whole commit-time check: a commit that stages no hw/ change passes.
+beyond the layout audit. It also refuses a project-start profile (cad-record flow_profile_gate) that blocks at
+the staged flow.stage, judged on the index's product, parts and decision records, before the threshold check below. It is the whole commit-time check: a commit that stages no hw/ change passes.
 `--hw` names the hw/ directory, as in evidence.py (default: hw/ at the git root). `--verify --committed` checks HEAD's
 hw/ tree and stamp instead of the index, and never skips: CI runs it on a clean checkout.
 flow.recheck_from is the threshold and may only stay or move earlier than

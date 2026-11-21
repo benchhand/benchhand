@@ -74,6 +74,17 @@ Approved departures. The tracking IDs come from the bead ledger, which the repos
 | `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | benchhand-76q |
 | FEA thresholds in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | Recorded as engineering judgment (decision U-2, 20 Nov). The user chose these values on 20 Nov 2026: `TOLERANCE` stays at 5% and `TORSION_FLOOR` stays at 0.1% of F x L. A section that misses a gate abstains, never a pass or a fail. Neither ASME VIII-2 Annex 5-A nor EN 13445-3 gives a number. | benchhand-2dq |
 
+## Project-start profile gate
+
+The user's answers to the project-start questions live in `product.yaml` `flow.profile`, with the `DR-###` decision that holds them. From SPECIFY on, a missing profile, one whose cited decision is not `accepted`, or an applicable question with no `asked` answer blocks.
+
+- Owner: `skills/cad-record/scripts/flow_profile_gate.py`, a pure function of the parsed product, the part records and an `approval` callable. It reads no file. `skills/cad-flow/scripts/flow_profile.py` owns the questions and the `record` and `check` commands.
+- Callers, each of which supplies the records and the approval:
+  - `validate.py` `check_flow_profile` reads the work tree. The `flow.profile` and `flow.profile_unquoted` findings are errors; a `flow.conflict` runs only on schema-valid documents, is an error from LAYOUT on and for the safety rule at any stage, and is a warning before LAYOUT. Only an authored FEA case (a `case.yaml` with `step`) counts as one that needs FEA; a stack-up case in the same folder does not.
+  - `cad_model.py run` (`cadmodel/build.py` `require_profile`) reads the record snapshot it builds from, checks at LAYOUT at the earliest and exits 2 on a block.
+  - `stamp.py --verify` (`require_profile`) checks before the `flow.recheck_from` early return, so a stage below the threshold is still checked once SPECIFY is due.
+- The commit check reads the index only: the product, the part records (`tree_parts`) and the decision records (`tree_decisions`) come from the staged tree, or from HEAD with `--committed`. A decision that is accepted in the work tree but proposed in the index does not pass. Do not add a work-tree read to it.
+
 ## Feature flags
 
 Environment flags follow `CAD_REQUIRE_FREECAD` (`skills/cad-flow/scripts/preflight.py`): only the string `1` turns one on.
