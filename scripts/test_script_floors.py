@@ -11,9 +11,10 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from modload import PEP723_BLOCK
+
 ROOT = Path(__file__).resolve().parent.parent
 JOB_LIST = ROOT / "scripts" / "freecad_job_modules.txt"
-BLOCK = re.compile(r"^# /// script\n((?:#.*\n)+?)# ///$", re.MULTILINE)
 FLOOR = re.compile(r"""^#\s*requires-python\s*=\s*["']\s*(?:>=|==)\s*(\d+)\.(\d+)""", re.MULTILINE)
 MINIMUM = (3, 12)
 
@@ -31,7 +32,7 @@ def tracked_python() -> list[str]:
 
 
 def floor_of(source: str) -> tuple[int, int] | None:
-    block = BLOCK.search(source)
+    block = PEP723_BLOCK.search(source)
     match = FLOOR.search(block.group(1)) if block else None
     return (int(match.group(1)), int(match.group(2))) if match else None
 

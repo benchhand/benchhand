@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["defusedxml>=0.7.1", "pyyaml>=6.0", "jsonschema>=4.23"]
+# dependencies = ["defusedxml>=0.7.1", "pyyaml>=6.0", "jsonschema>=4.23", "referencing>=0.28.4"]
 # ///
 """Merge a reviewed drawing draft's ``drawing`` block into the part's part.yaml.
 

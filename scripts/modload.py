@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+PEP723_BLOCK = re.compile(r"^# /// script\n((?:#.*\n)+?)# ///$", re.MULTILINE)
 
 
 def load_fresh(name: str, path: Path) -> ModuleType:

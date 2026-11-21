@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Stop reaction: the `engineering.stop_reaction` check of every critical structural interface that carries
 a load, derived from the modelled contact as one required-check packet.

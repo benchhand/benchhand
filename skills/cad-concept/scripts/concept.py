@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["jsonschema>=4.23"]
+# dependencies = ["jsonschema>=4.23", "referencing>=0.28.4"]
 # ///
 """Check a cad-concept scene and export the concept-to-CAD handoff manifest.
 
