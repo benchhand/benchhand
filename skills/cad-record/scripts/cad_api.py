@@ -13,7 +13,7 @@
 # schema-sha256 2f37357dc1813b5794dcd558ff9eab7c1bbf608138fb523a5d4487c23f877f4a skills/cad-record/schemas/finding.schema.json
 # schema-sha256 7f68782d4b57379b118085a1d4137bf6b3152d0698ae8cd59f4cab2f48d21868 skills/cad-record/schemas/interfaces.schema.json
 # schema-sha256 5d04c1dd2745de30144da9fe4080e55cea79e23c3a207b3474601dd6eb8e9125 skills/cad-record/schemas/layout.schema.json
-# schema-sha256 da0e18b038e7a46cfa25acb2d17f0bbbfd9a71b8d8ec26707863a1a974be3179 skills/cad-record/schemas/manufacturing-capabilities.schema.json
+# schema-sha256 97968a0080785fc5196ce7c0b3afa0e2b3edae5b5e8534a6dec50dd238d78a6f skills/cad-record/schemas/manufacturing-capabilities.schema.json
 # schema-sha256 c1cf876a115b1fe2fdb6e4260123a7038726f3b2dda54f110a916f2d66696e7e skills/cad-record/schemas/manufacturing-check-result.schema.json
 # schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b skills/cad-record/schemas/manufacturing-evidence.schema.json
 # schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
@@ -3457,7 +3457,7 @@ ManufacturingCapabilitiesQtyClearancePerSide = Mapping[str, Any]
 ManufacturingCapabilitiesQtyDeviation = Mapping[str, Any]
 
 
-# Hotend limit: 0 to 500 deg_C
+# Hotend limit: 0 to 500 deg_C; a plausible limit is at most 350 deg_C, which current printers reach: the Bambu Lab H2D (https://bambulab.com/uk/h2d/tech-specs, Max Nozzle Temperature 350 °C) and the Creality K2 Plus (https://www.creality.com/products/k2-series-3d-printer, Max Nozzle Temperature 350 °C)
 #
 # Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_hotend_max_temperature
 #
@@ -3498,7 +3498,7 @@ ManufacturingCapabilitiesQtyInterferencePerSide = Mapping[str, Any]
 ManufacturingCapabilitiesQtyLayerHeight = Mapping[str, Any]
 
 
-# Print speed: above 0 and at most 1000 mm/s
+# Print speed: above 0 and at most 1000 mm/s. The plausible band equals the hard bound because current printers such as the Bambu Lab H2D reach it (https://bambulab.com/uk/h2d/tech-specs, Max Speed of Toolhead 1000 mm/s)
 #
 # Source: skills/cad-record/schemas/manufacturing-capabilities.schema.json#/$defs/qty_max_speed
 #
