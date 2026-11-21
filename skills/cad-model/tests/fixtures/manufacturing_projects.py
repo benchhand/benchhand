@@ -17,6 +17,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
+from decision_fixture import add_flow_profile  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 SHARED = HERE.parents[2] / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py"
 PN = "TST-0001"
@@ -61,6 +64,7 @@ def upgrade_project(hw: Path) -> Path:
     material profile for each material in DENSITIES."""
     fx = shared()
     fx.upgrade_record(hw)
+    add_flow_profile(hw)  # `run` builds only on a settled project-start profile
     profiles = [fx.material_profile(profile_id(name), properties=[fx.material_property("density", density, "g_cm3")])
                 for name, density in DENSITIES.items()]
     import yaml
@@ -140,6 +144,7 @@ def set_model(hw: Path, kernel: str, tabs: list[list[float]]) -> None:
 def loose_project(hw: Path, kernel: str, tabs: list[list[float]], **record: Any) -> Path:
     """Write the loose project's record (`documents(**record)`) and model below `hw`."""
     shared().write_record(hw, documents(**record))
+    add_flow_profile(hw)  # `run` builds only on a settled project-start profile
     set_model(hw, kernel, tabs)
     return hw
 
