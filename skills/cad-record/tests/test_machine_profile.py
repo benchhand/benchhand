@@ -62,6 +62,8 @@ class Case(unittest.TestCase):
         self.hw = Path(tmp.name) / "hw"
         (self.hw / "manufacturing").mkdir(parents=True)
         self.path = self.hw / "manufacturing" / "capabilities.yaml"
+        self.product = self.hw / "product.yaml"
+        self.product.write_text(f"record_version: {machine_profile.intent.RECORD_VERSION}\n", encoding="utf-8")
 
     def put(self, *profiles: dict[str, Any]) -> None:
         self.path.write_text(yaml.safe_dump({"profiles": list(profiles)}, sort_keys=False), encoding="utf-8")
@@ -161,7 +163,6 @@ class CheckTests(Case):
         self.assertTrue(any("capabilities.yaml" in m and "title" in m for m in found), found)
 
     def slicer_file(self, content: bytes = b"frozen slicer export") -> tuple[str, str]:
-        (self.hw / "product.yaml").write_text("record_version: 2\n", encoding="utf-8")  # a v2 record checks artifacts
         directory = self.hw / "manufacturing" / "sources"
         directory.mkdir(parents=True)
         (directory / "bench.3mf").write_bytes(content)
@@ -187,6 +188,19 @@ class CheckTests(Case):
         self.put(self.max_speed({**user("slicer export"), "artifact": artifact, "sha256": "0" * 64}))
         found = self.messages()
         self.assertTrue(any("manufacturing/sources/bench.3mf" in m and "sha256" in m for m in found), found)
+
+    def test_missing_product_file_is_reported_not_skipped(self) -> None:
+        artifact, _ = self.slicer_file()
+        self.product.unlink()
+        self.put(self.max_speed({**user("slicer export"), "artifact": artifact, "sha256": "0" * 64}))
+        found = self.messages()
+        self.assertTrue(any(m.startswith("hw/product.yaml") and "record_version" in m for m in found), found)
+
+    def test_unsupported_record_version_is_reported_not_skipped(self) -> None:
+        self.product.write_text("record_version: 0\n", encoding="utf-8")
+        self.put(profile())
+        found = self.messages()
+        self.assertTrue(any(m.startswith("hw/product.yaml") and "not supported" in m for m in found), found)
 
     def test_user_tool_max_speed_needs_a_frozen_file_too(self) -> None:
         p = profile(tools=[{"id": "t1", "description": "hotend", "parameters": {"max_speed": known(500, "mm_s", user())}}])
@@ -246,7 +260,7 @@ class WriteTests(Case):
     def test_write_copies_the_starter_material_profile(self) -> None:
         material = "fdm_petg_polylite"
         entry = {"material": material, "status": "approved", "operations": ["print"],
-                 "source": {"kind": "decision", "reference": "owner approved it", "decision": "DR-001"}}
+                 "source": user("owner approved it")}
         self.assertEqual(self.run_write(self.answers(profile(materials=[entry]))), 0)
         copied = yaml.safe_load((self.hw / "manufacturing" / "materials.yaml").read_text(encoding="utf-8"))["profiles"]
         self.assertEqual([m["id"] for m in copied], [material])
@@ -258,14 +272,14 @@ class WriteTests(Case):
         mine["title"] = "my edit"
         (self.hw / "manufacturing" / "materials.yaml").write_text(yaml.safe_dump({"profiles": [mine]}, sort_keys=False), encoding="utf-8")
         entry = {"material": material, "status": "approved", "operations": ["print"],
-                 "source": {"kind": "decision", "reference": "owner approved it", "decision": "DR-001"}}
+                 "source": user("owner approved it")}
         self.assertEqual(self.run_write(self.answers(profile(materials=[entry]))), 0)
         copied = yaml.safe_load((self.hw / "manufacturing" / "materials.yaml").read_text(encoding="utf-8"))["profiles"]
         self.assertEqual([m["title"] for m in copied], ["my edit"])
 
     def approval(self, material: str, status: str = "approved") -> dict[str, Any]:
         entry = {"material": material, "status": status, "operations": ["print"],
-                 "source": {"kind": "decision", "reference": "owner decided it", "decision": "DR-001"}}
+                 "source": user("owner decided it")}
         if status == "forbidden":
             entry["reason"] = "the owner rules it out"
         return entry
@@ -274,12 +288,17 @@ class WriteTests(Case):
         return self.hw / "manufacturing" / "materials.yaml"
 
     def test_family_material_does_not_copy_a_grade_starter(self) -> None:
+        shipped = (LAMP_ARM / "manufacturing" / "materials.yaml").read_text(encoding="utf-8")
+        self.materials_path().write_text(shipped, encoding="utf-8")
         self.assertEqual(self.run_write(self.answers(profile(materials=[self.approval("petg")]))), 0)
-        self.assertFalse(self.materials_path().exists())
+        stored = yaml.safe_load(self.materials_path().read_text(encoding="utf-8"))["profiles"]
+        self.assertEqual([m["id"] for m in stored], ["petg"])
 
     def test_forbidden_material_copies_no_starter(self) -> None:
-        self.assertEqual(self.run_write(self.answers(profile(materials=[self.approval("fdm_petg_polylite", "forbidden")]))), 0)
+        # No profile declares the material, so the record refuses the write. A copied starter would have declared it.
+        self.assertEqual(self.run_write(self.answers(profile(materials=[self.approval("fdm_petg_polylite", "forbidden")]))), 1)
         self.assertFalse(self.materials_path().exists())
+        self.assertFalse(self.path.exists())
 
     def test_answers_wrapped_in_a_profile_key_is_an_operational_error(self) -> None:
         self.assertEqual(self.run_write(self.answers({"profile": profile()})), 2)
