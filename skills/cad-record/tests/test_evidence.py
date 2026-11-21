@@ -114,6 +114,26 @@ def not_assessed_packet(record: Any, *others: tuple[str, str], result: str = "no
     return evidence.ProducerPacket("hw/checks/v1/tst", "b" * 64, data)
 
 
+class PacketResultOrder(unittest.TestCase):
+    """check_packet.build: a packet's result is fail, else unknown, else not_assessed, else pass (D37)."""
+
+    def result(self, *outcomes: str, missing: bool = False) -> str:
+        record = normalized(documents())
+        expected = [o for o in mi.required_checks(record) if o.id in (READBACK, STRENGTH)]
+        rows = [{"obligation": o.id, "outcome": outcome} for o, outcome in zip(expected, outcomes)]
+        return check_packet.build(record, expected[:len(rows) + (1 if missing else 0)], "tst", rows, [], {})["result"]
+
+    def test_the_result_follows_the_order(self) -> None:
+        cases = {("pass", "pass"): "pass", ("pass", "not_assessed"): "not_assessed", ("not_assessed", "not_assessed"): "not_assessed",
+                 ("unknown", "not_assessed"): "unknown", ("fail", "not_assessed"): "fail", ("not_assessed", "pass"): "not_assessed"}
+        for outcomes, shown in cases.items():
+            with self.subTest(outcomes=outcomes):
+                self.assertEqual(self.result(*outcomes), shown)
+
+    def test_an_incomplete_packet_is_unknown_even_with_not_assessed_outcomes(self) -> None:
+        self.assertEqual(self.result("not_assessed", missing=True), "unknown")
+
+
 class NotAssessedIsNoPass(unittest.TestCase):
     """D37: a not_assessed packet is consistent, blocks nothing of its own and gives no obligation a pass."""
 

@@ -1046,7 +1046,9 @@ class _Assessor:
         if assessed.status == CONDITIONAL:
             return "conditional: " + " | ".join(describe(e) for e in assessed.mandatory("unknown"))
         passed = sorted({e.constraint for e in assessed.evaluations if e.mandatory and e.outcome == "pass"})
-        return f"feasible: every mandatory constraint assessed passes ({', '.join(passed) or 'none applies'})"
+        text = f"feasible: every mandatory constraint assessed passes ({', '.join(passed) or 'none applies'})"
+        unassessed = sorted({e.constraint for e in assessed.mandatory("not_assessed")})  # D37: blocks nothing, is no pass
+        return text + (f"; not assessed, not a pass: {', '.join(unassessed)}" if unassessed else "")
 
     def properties(self, candidate: Candidate, group: str) -> str:
         names = dict(PROPERTY_GROUPS)[group]
