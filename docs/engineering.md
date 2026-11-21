@@ -105,6 +105,8 @@ CI lists the same two globs in `scripts/ci_shards.py` (`git ls-files "skills/*/t
 
 CI splits the files into the shards `motion`, `motion-b`, `cad-model`, `freecad-gated` and `rest` (`scripts/ci_shards.py`, the `SHARDS` text in `ci.yml`). The files in the `freecad-gated` shard need FreeCAD 1.1.4 on `PATH` or `FREECADCMD`. Without it those tests skip, and `CAD_REQUIRE_FREECAD=1` turns the skip into a failure, as CI does. The `freecad-gated` shard also runs the mutation corpus rate check: `uv run --script skills/cad-design/tests/mfg_corpus/rates.py --check-baseline`. A pull request that changes only paths no skill test reads skips the shards (`scripts/docs_only.py`).
 
+Agreement timing (not a CI gate): `uv run --script scripts/agreement_timing.py --runs 5` times `compare` on a seeded, generated mesh pair (9216 and 16384 triangles) with no FreeCAD; `skills/cad-model/tests/test_agreement_reference.py` pins the pair.
+
 Git hooks are not defined in the repository (no hook files found). Never pass `--no-verify`; the guard test fails on it.
 
 ## Unverified items
