@@ -43,7 +43,7 @@ def profile(**changes: Any) -> dict[str, Any]:
         "envelope": {"x": known(200, "mm"), "y": known(200, "mm"), "z": known(200, "mm")},
         "parameters": {"nozzle_diameter": known(0.4, "mm"),
                        "layer_height": {"status": "unknown", "reason": "the vendor publishes no layer-height range"}},
-        "materials": [], "calibrations": [],
+        "materials": {"status": "unknown", "reason": "no material is approved yet"}, "calibrations": [],
     }
     base.update(changes)
     return base
