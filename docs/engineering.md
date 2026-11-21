@@ -43,9 +43,9 @@ Dependency direction, as far as the repository shows it:
 
 - Shipped skill code never imports `harness/` or `scripts/`. `skill_files()` in `harness/install.py` (lines 58 to 69) copies `skills/cad-*` without `tests/` or `__pycache__`, so the installed skills carry no path to either directory. `rg -n "harness|scripts/|modload" skills/*/scripts` finds only comments and printed or run commands.
 - Tests may import them, through `scripts/modload.py`, the shared test helper (its docstring: "Shared test helpers"). Two cases:
-  - `skills/cad-bom/test_bom.py` (lines 25 and 26) puts `scripts/` on `sys.path` and imports `result_payload` from `scripts/modload.py`.
+  - `skills/cad-bom/tests/test_bom.py` (lines 25 and 26) puts `scripts/` on `sys.path` and imports `result_payload` from `scripts/modload.py`.
   - `skills/cad-model/tests/test_cad_model.py` (lines 3413 to 3416) loads `harness/install.py` with `importlib` on purpose.
-- `cad-bom/test_bom.py`, `cad-fits/test_fits.py` and `cad-fits/test_stackup.py` sit outside `tests/`, so the installer ships them. benchhand-to6 tracks that move and a planned harness check for this rule.
+- Every test file sits under a skill's `tests/` directory, which the installer skips. `ShippedSkillFilesTests` in `harness/test_install.py` fails when `skill_files()` returns a test file or a Python file that imports `harness` or `scripts`, or climbs to them with `parents[n] / "scripts"` on `sys.path`.
 - Skills are separate script trees. `cad-record` supplies the record schemas, `emit.py` and the validators that other skills read. Skills reach a sibling through a path built from the skill folder (for example `freecad_lookup.py` in `cad-analysis` adds `cad-flow`'s scripts to `sys.path`). No import checker enforces which skill may import which. Unverified.
 - Code that `freecadcmd` runs must import on Python 3.11 with only PyYAML and jsonschema. `scripts/freecad_job_modules.txt` lists those modules, and CI checks them (`scripts/import_check.py --manifest`).
 - `scripts/test_docs_guard.py` and `scripts/docs_only.py` decide which paths no skill test reads, so a docs-only PR skips the skill shards.

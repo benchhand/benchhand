@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import os
 from pathlib import Path
 import json
@@ -27,6 +29,73 @@ AGENT_FILES = {
     harness: sorted(path.name for path in (CAD / "harness" / harness / "agents").glob("*"))
     for harness in HARNESS_PATHS
 }
+
+
+def _install_module() -> object:
+    spec = importlib.util.spec_from_file_location("benchhand_install", INSTALLER)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _is_sys_path_edit(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"insert", "append"}
+        and ast.unparse(node.func.value) == "sys.path"
+    )
+
+
+def _names_repo_root_dir(call: ast.AST) -> bool:
+    """True when ``<...>.parents[n] / "harness"`` or ``/ "scripts"`` appears in the call."""
+    return any(
+        isinstance(n, ast.BinOp)
+        and isinstance(n.op, ast.Div)
+        and isinstance(n.right, ast.Constant)
+        and n.right.value in {"harness", "scripts"}
+        and isinstance(n.left, ast.Subscript)
+        and isinstance(n.left.value, ast.Attribute)
+        and n.left.value.attr == "parents"
+        for n in ast.walk(call)
+    )
+
+
+def _repo_imports(tree: ast.AST) -> list[str]:
+    """Return what a module pulls from repo-root harness/ or scripts/."""
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [a.name for a in node.names if a.name.split(".")[0] in {"harness", "scripts"}]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            if node.module.split(".")[0] in {"harness", "scripts"}:
+                found.append(node.module)
+        elif _is_sys_path_edit(node) and _names_repo_root_dir(node):
+            found.append("sys.path edit")
+    return found
+
+
+class ShippedSkillFilesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.files = _install_module().skill_files()  # type: ignore[attr-defined]
+
+    def test_no_shipped_file_is_a_test_file(self) -> None:
+        bad = [
+            str(path.relative_to(CAD))
+            for path in self.files
+            if path.match("test_*.py") or path.match("*_test.py") or "tests" in path.relative_to(CAD).parts
+        ]
+        self.assertEqual(bad, [])
+
+    def test_no_shipped_python_reaches_into_harness_or_scripts(self) -> None:
+        bad = {
+            str(path.relative_to(CAD)): hits
+            for path in self.files
+            if path.suffix == ".py" and (hits := _repo_imports(ast.parse(path.read_text(encoding="utf-8"))))
+        }
+        self.assertEqual(bad, {})
 
 
 class InstallerTests(unittest.TestCase):

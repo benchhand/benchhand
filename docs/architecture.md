@@ -17,7 +17,7 @@ Benchhand is a set of agent skills and agent profiles for mechanical CAD (`READM
 | `docs/` | User and engineering documents | `docs/` |
 | `examples/lamp-arm/` | The example project | `README.md` |
 
-Not every skill has every subdirectory. `cad-review-dfm` and `cad-review-mech` have only `SKILL.md`. `cad-bom` and `cad-fits` keep some test files at the skill root. Both test locations count: `skills/*/test_*.py` and `skills/*/tests/test_*.py` (`scripts/ci_shards.py`).
+Not every skill has every subdirectory. `cad-review-dfm` and `cad-review-mech` have only `SKILL.md`. Tests live under `skills/*/tests/test_*.py` (`scripts/ci_shards.py`).
 
 ## Skills as separate script trees
 

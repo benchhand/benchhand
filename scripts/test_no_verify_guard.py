@@ -206,7 +206,7 @@ class SelectionTests(unittest.TestCase):
             "scripts/ci_shards.py",
             "skills/cad-recheck/scripts/stamp.py",
             "skills/cad-model/tests/test_cad_model.py",
-            "skills/cad-bom/test_bom.py",
+            "skills/cad-bom/tests/test_bom.py",
             "harness/install.sh",
             ".github/workflows/ci.yml",
         ]
