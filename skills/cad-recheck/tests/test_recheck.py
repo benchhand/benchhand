@@ -101,16 +101,22 @@ class RecheckHookTests(unittest.TestCase):
         product.parent.mkdir(parents=True, exist_ok=True)
         if legacy:
             product.write_text(LEGACY_PRODUCT.format(stage=stage, threshold=threshold), encoding="utf-8")
+            self.add_profile(stage)
             return
         flow = {"stage": stage, **({"recheck_from": threshold} if threshold else {})}
         data = {"record_version": 2, "id": "test-project", "flow": flow,
                 "use_case": acceptance.confirmed_use_case("appearance_concept")}
         product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
-        if stamp_module.validate.stages().index(stage) >= stamp_module.validate.stages().index("specify"):
-            add_flow_profile(self.root / "hw")  # the project-start profile is due from SPECIFY on
+        self.add_profile(stage)
         assembly = self.root / "hw" / "assembly.yaml"
         if not assembly.exists():
             assembly.write_text("operations: []\n", encoding="utf-8")
+
+    def add_profile(self, stage: str, project: Path | None = None) -> None:
+        """The project-start profile, due from SPECIFY on, in the product of `project` (default: the repository)."""
+        order = stamp_module.validate.stages()
+        if order.index(stage) >= order.index("specify"):
+            add_flow_profile((project or self.root) / "hw")
 
     def test_the_staged_record_carries_the_digests_of_its_guideline_sets(self) -> None:
         (self.root / "hw" / "manufacturing" / "guidelines").mkdir(parents=True)
@@ -677,6 +683,7 @@ class RecheckHookTests(unittest.TestCase):
         (project / "hw" / "product.yaml").write_text(
             json.dumps({"record_version": 2, "id": "test-project", "flow": {"stage": "detail", "recheck_from": "layout"},
                         "use_case": acceptance.confirmed_use_case("appearance_concept")}, indent=1) + "\n", encoding="utf-8")
+        self.add_profile("detail", project)
         self.git("add", subdirectory)
         checks = self.evidence_packet("detail", project=project)
         result = self.run_python(STAMP, "--hw", f"{subdirectory}/hw", "--stage", "detail", "--checks", str(checks), "--passed",
