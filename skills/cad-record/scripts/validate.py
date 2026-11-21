@@ -805,6 +805,7 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems[known:])
     for rel, (schema, data) in manufacturing.items():
         validate_document(data, schema, str(hw / rel), findings)
+    findings.extend(_intent_finding(hw, problem.finding()) for problem in intent.plausibility_problems(parsed))  # warnings only
     product = documents.get("product.yaml")
     flow = product.get("flow") if isinstance(product, dict) else None
     stage = flow.get("stage") if isinstance(flow, dict) else None

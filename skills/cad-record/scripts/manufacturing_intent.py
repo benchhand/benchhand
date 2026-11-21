@@ -1070,14 +1070,18 @@ def _band_values(band: Mapping[str, Any], instance: Any) -> list[tuple[str, floa
 
 def _plausible_keyword(_validator: Any, band: Any, instance: Any, _schema: Any) -> Iterator[Any]:
     """The jsonschema `x-plausible` keyword: one error for each number outside the band, at the member that holds it
-    (a quantity's end or an array element), so a sibling's hard-bound error does not hide it. A band relative to a sibling (`relative_to`) needs that sibling, which a keyword does not see, so it is not
-    checked here."""
+    (a quantity's end or an array element), so a sibling's hard-bound error does not hide it. A band relative to a sibling
+    (`relative_to`) needs that sibling, which a keyword does not see: it yields every number of that band unjudged, and
+    plausibility_problems compares each with the sibling (`_relative_message`)."""
     from jsonschema import ValidationError  # noqa: PLC0415 - needed only to validate
 
-    if not isinstance(band, Mapping) or "relative_to" in band:
+    if not isinstance(band, Mapping):
         return
-    for label, value, member in _band_values(band, instance):
-        if _outside(value, band):
+    relative = "relative_to" in band
+    # a relative band has no units of its own: the numbers are read as written
+    reading = {**band, "units": instance["units"]} if relative and isinstance(instance, Mapping) and "units" in instance else band
+    for label, value, member in _band_values(reading, instance):
+        if relative or _outside(value, band):
             yield ValidationError(f"{label} is outside the plausible band {_band_text(band)}",
                                   path=[] if member is None else [member])
 
@@ -1088,6 +1092,46 @@ def _plausible_errors(errors: Iterable[Any]) -> Iterator[Any]:
         if error.validator == "x-plausible":
             yield error
         yield from _plausible_errors(error.context or ())
+
+
+def _at(document: Any, path: Sequence[Any]) -> Any:
+    """The member of `document` at `path`, or None when the path leaves it."""
+    for part in path:
+        try:
+            document = document[part]
+        except (KeyError, IndexError, TypeError):
+            return None
+    return document
+
+
+def _relative_message(document: Any, error: Any) -> str | None:
+    """The warning text of a number outside a band relative to its sibling field (layer_height at most 0.8 of the
+    nozzle_diameter beside it), or None when it is inside the band or the sibling is not a known quantity. The sibling
+    sits beside the field, at the error's path with the member, the fact's value key and the field name replaced. The upper edge reads the
+    sibling's upper end and the lower edge its lower end, so an interval is judged on its widest case; the sibling is
+    converted to the number's units."""
+    band, path, instance = error.validator_value, list(error.absolute_path), error.instance
+    if len(path) < 3 or not isinstance(instance, Mapping):
+        return None
+    sibling = _at(document, [*path[:-3], band["relative_to"]])
+    quantity = sibling.get("value") if isinstance(sibling, Mapping) and sibling.get("status") == "known" else None
+    number = instance.get(path[-1])
+    if not isinstance(quantity, Mapping) or not isinstance(quantity.get("units"), str) or not _is_number(number):
+        return None
+    parts = []
+    for edge, word, key in (("min", "at least", "lower"), ("max", "at most", "upper")):
+        reference = quantity.get(key, quantity.get("value"))
+        if band.get(edge) is None or not _is_number(reference):
+            continue
+        try:
+            limit = band[edge] * convert(reference, quantity["units"], instance["units"])
+        except IntentError:
+            return None
+        if _outside(number, {edge: limit}):
+            parts.append(f"{word} {band[edge]:g} of {band['relative_to']} {reference:g} {quantity['units']}")
+    if not parts:
+        return None
+    return f"{path[-1]} {number:g} {instance['units']} is outside the plausible band {' to '.join(parts)}"
 
 
 def _leaves(errors: Iterable[Any]) -> Iterator[Any]:
@@ -1133,7 +1177,10 @@ def plausibility_problems(documents: Mapping[str, Any]) -> list[Problem]:
             if any(path[: len(wrong)] == wrong and len(wrong) < len(path) for wrong in mistyped):  # [1] where a number is due
                 continue
             pointer = "/".join(str(part) for part in path)
-            message = f"{pointer + ': ' if pointer else ''}{error.message}"
+            text = _relative_message(document, error) if "relative_to" in error.validator_value else error.message
+            if text is None:
+                continue
+            message = f"{pointer + ': ' if pointer else ''}{text}"
             if (pointer, message) not in seen:
                 seen.add((pointer, message))
                 problems.append(Problem(f"plausibility.{_field(path)}", f"hw/{rel}", pointer, message, "warning"))
