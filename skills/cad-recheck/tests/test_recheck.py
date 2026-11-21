@@ -33,7 +33,7 @@ ACCEPTANCE = SKILL.parent / "cad-record" / "tests" / "fixtures" / "acceptance.py
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import load_module as load  # noqa: E402
-from decision_fixture import decision_path, write_test_decision  # noqa: E402
+from decision_fixture import add_flow_profile, decision_path, write_test_decision  # noqa: E402
 
 
 stamp_module = load("cad_recheck_stamp", STAMP)
@@ -106,6 +106,8 @@ class RecheckHookTests(unittest.TestCase):
         data = {"record_version": 2, "id": "test-project", "flow": flow,
                 "use_case": acceptance.confirmed_use_case("appearance_concept")}
         product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        if stamp_module.validate.stages().index(stage) >= stamp_module.validate.stages().index("specify"):
+            add_flow_profile(self.root / "hw")  # the project-start profile is due from SPECIFY on
         assembly = self.root / "hw" / "assembly.yaml"
         if not assembly.exists():
             assembly.write_text("operations: []\n", encoding="utf-8")
@@ -364,6 +366,53 @@ class RecheckHookTests(unittest.TestCase):
         write_test_decision(self.root / "hw", "DR-001", status="accepted", date=DAY)  # in the work tree, not staged
         self.refused_gate(self.verify())
         self.refused_gate(self.run_python(STAMP, "--verify", "--committed", cwd=self.root))
+
+    def without_profile(self) -> None:
+        """product.yaml without flow.profile, as an old commit holds it."""
+        path = self.root / "hw" / "product.yaml"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["flow"].pop("profile")
+        path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+
+    def test_verify_reads_the_profile_decision_from_the_index(self) -> None:
+        hw = self.root / "hw"
+        write_test_decision(hw, "DR-007", status="proposed")
+        self.git("add", "hw")
+        write_test_decision(hw, "DR-007", status="accepted")  # the work tree approves; the index does not
+        result = self.verify()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("flow/profile/decision", result.stderr)
+        self.assertIn("has status proposed", result.stderr)
+
+    def test_verify_judges_the_profile_by_the_parts_of_the_index(self) -> None:
+        no_fdm = {"processes": {}, "asked": {"human_approval": "user", "fea": "user", "stack_up": "user",
+                                             "critique": "user", "storage_results_in_git": "user"}}
+        add_flow_profile(self.root / "hw", **no_fdm)
+        self.git("add", "hw")
+        self.git("commit", "-qm", "a profile that asks no FDM question")
+        record = json.loads((self.root / "hw/parts/PRT-0001/part.yaml").read_text(encoding="utf-8"))
+        self.add_part_record({**record, "process": "fdm"})
+        self.git("add", "hw")
+        self.add_part_record(record)  # the work tree part is not FDM; the staged one is
+        result = self.verify()
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("processes/fdm", result.stderr)
+        self.git("add", "hw")  # now the index holds the non-FDM part too
+        self.assertEqual(self.verify().returncode, 0)
+
+    def add_part_record(self, record: dict[str, Any]) -> None:
+        (self.root / "hw/parts/PRT-0001/part.yaml").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
+
+    def test_committed_verify_reads_the_profile_of_head_and_refuses_when_head_lacks_it(self) -> None:
+        self.without_profile()
+        self.git("add", "hw")
+        self.git("commit", "-qm", "a product without the project-start profile")
+        add_flow_profile(self.root / "hw")
+        self.git("add", "hw")
+        self.assertEqual(self.verify().returncode, 0, "the index holds a settled profile")
+        result = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("flow/profile: flow.profile is missing", result.stderr)
 
     def test_a_stamp_two_stages_behind_flow_stage_is_refused(self) -> None:
         self.provisional_gate("detail")

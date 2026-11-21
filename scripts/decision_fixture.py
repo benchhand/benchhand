@@ -9,6 +9,7 @@ Tests put this directory on sys.path (see modload.py). A call replaces the recor
 from __future__ import annotations
 
 import datetime
+import json
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,10 @@ def add_flow_profile(hw: Path, *, decision: str | None = None, status: str = "ac
     decision = decision or fixtures.PROFILE_DECISION
     write_test_decision(hw, decision, status=status)
     path = Path(hw) / "product.yaml"
-    product = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    text = path.read_text(encoding="utf-8")
+    product = yaml.safe_load(text) or {}
     product.setdefault("flow", {})["profile"] = fixtures.flow_profile(decision, **changes)
-    path.write_text(yaml.safe_dump(product, sort_keys=False), encoding="utf-8")
+    # a product written as JSON (a YAML flow mapping) stays JSON, for tests that read it back with json.loads
+    path.write_text(json.dumps(product, indent=1) + "\n" if text.lstrip().startswith("{")
+                    else yaml.safe_dump(product, sort_keys=False), encoding="utf-8")
     return str(decision)
