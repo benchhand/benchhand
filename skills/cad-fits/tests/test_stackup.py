@@ -924,7 +924,10 @@ class StackPacketTests(unittest.TestCase):
         self.assertEqual((row["obligation"], row["outcome"], row["level"], row["method"]),
                          (self.OBLIGATION, "fail", "process_planned", "1D worst-case tolerance stack"))
         self.assertEqual([f["code"] for f in packet["findings"]], ["stack.worst_case_violation"])
-        self.assertEqual(packet["dependencies"], {"stack_case": hashlib.sha256(self.case.read_bytes()).hexdigest()})
+        # The packet seals the calibration flag value, off here, beside the stack case.
+        self.assertEqual(packet["dependencies"], {
+            "stack_case": hashlib.sha256(self.case.read_bytes()).hexdigest(),
+            "flag_cad_calibration": hashlib.sha256(b"CAD_CALIBRATION=0").hexdigest()})
         analysis = self.hw / "analysis" / "v1" / "closing-gap"
         self.assertEqual(json.loads((analysis / "results.json").read_text(encoding="utf-8"))["id"], "STK-014")
         self.assertEqual(detail["analysis"], {"bundle": "hw/analysis/v1/closing-gap", "manifest_sha256": hashlib.sha256(
