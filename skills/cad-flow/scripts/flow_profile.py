@@ -346,6 +346,26 @@ def _restore(path: Path, original: str) -> None:
         raise ProfileError(f"cannot restore {path} after a failed record: {error}") from error
 
 
+def _require_settled(answers: Mapping[str, Any], accepted: list[str]) -> None:
+    """Every start question is answered or its default accepted, and none is both."""
+    options = {field: option for option, field, _parse, _metavar in OPTIONS}
+    if both := [options[field] for field in accepted if field in answers]:
+        raise ProfileError(f"{', '.join(both)} answered and also accepted as the default; give one")
+    if unasked := [option for field, option in options.items() if field not in answers and field not in accepted]:
+        raise ProfileError(f"ask the user {', '.join(unasked)} and answer it, or accept its default with --accept-default; "
+                           "nothing was recorded")
+
+
+def _require_free(decisions: Path, number: int) -> None:
+    """Decision `number` has no record yet: decisions are append-only."""
+    try:
+        taken = {item.number: item for item in decision_records.read_decisions(decisions)} if decisions.is_dir() else {}
+    except decision_records.DecisionRecordError as error:
+        raise ProfileError(str(error)) from error
+    if number in taken:
+        raise ProfileError(f"{decisions / taken[number].file_name} exists; decisions are append-only, so cite a new DR-###")
+
+
 def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = (),
            today: date | None = None) -> dict[str, Any]:
     """Write `answers` (profile field: value) and the defaults of the `accepted` fields as flow.profile citing
@@ -355,20 +375,10 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     accepted = list(accepted)
     if DECISION.fullmatch(decision) is None:
         raise ProfileError(f"--decision {decision!r} is not DR-###")
-    options = {field: option for option, field, _parse, _metavar in OPTIONS}
-    if both := [options[field] for field in accepted if field in answers]:
-        raise ProfileError(f"{', '.join(both)} answered and also accepted as the default; give one")
-    if unasked := [option for field, option in options.items() if field not in answers and field not in accepted]:
-        raise ProfileError(f"ask the user {', '.join(unasked)} and answer it, or accept its default with --accept-default; "
-                           "nothing was recorded")
+    _require_settled(answers, accepted)
     decisions = hw / "decisions"
     number = int(decision.removeprefix("DR-"))
-    try:
-        taken = {item.number: item for item in decision_records.read_decisions(decisions)} if decisions.is_dir() else {}
-    except decision_records.DecisionRecordError as error:
-        raise ProfileError(str(error)) from error
-    if number in taken:
-        raise ProfileError(f"{decisions / taken[number].file_name} exists; decisions are append-only, so cite a new DR-###")
+    _require_free(decisions, number)
     path = hw / "product.yaml"
     try:
         raw = path.read_bytes().decode("utf-8")
