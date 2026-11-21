@@ -113,6 +113,57 @@ def joined(*meshes: agreement.Mesh) -> agreement.Mesh:
                           np.concatenate([m.triangles + offset for m, offset in zip(meshes, offsets)]))
 
 
+def sample_oracle(mesh: agreement.Mesh) -> np.ndarray:
+    """What `_samples` must return, by a dict of cell tuples: the first of the vertices and triangle centers in each
+    cell of SAMPLE_CELLS along the longest side, in order of appearance, thinned by an even stride past MAX_SAMPLES."""
+    found = np.concatenate([mesh.points[np.unique(mesh.triangles)], mesh.points[mesh.triangles].mean(axis=1)])
+    low = found.min(axis=0)
+    span = float((found.max(axis=0) - low).max()) / agreement.SAMPLE_CELLS or 1.0
+    first: dict[tuple[int, ...], int] = {}
+    for i, cell in enumerate(np.floor((found - low) / span).astype(np.int64)):
+        first.setdefault(tuple(int(c) for c in cell), i)
+    chosen = sorted(first.values())
+    if len(chosen) > agreement.MAX_SAMPLES:
+        chosen = chosen[::-(-len(chosen) // agreement.MAX_SAMPLES)]
+    return found[chosen]
+
+
+class Samples(unittest.TestCase):
+    @given(st.lists(triangle(), min_size=1, max_size=60))
+    def test_the_samples_are_the_first_point_of_each_grid_cell(self, drawn: list[np.ndarray]) -> None:
+        mesh = mesh_of(np.stack(drawn))
+        np.testing.assert_array_equal(agreement._samples(mesh), sample_oracle(mesh))
+
+    def test_cells_apart_along_one_axis_only_each_keep_a_sample(self) -> None:
+        """Four small triangles a few cells apart along one axis (and a long edge fixing the grid size) share two of
+        the three cell indices, so a key that drops an axis merges them."""
+        for axis in range(3):
+            with self.subTest(axis=axis):
+                step = np.eye(3)[axis]
+                corners = [np.array([(0, 0, 0), (0.1, 0, 0), (0, 0.1, 0)]) + 10.0 * k * step for k in range(5)]
+                corners.append(np.array([(0, 0, 0), (0, 0, 0), (0, 0, 0)]) + 50.0 * step)
+                mesh = mesh_of(np.stack(corners))
+                got = agreement._samples(mesh)
+                np.testing.assert_array_equal(got, sample_oracle(mesh))
+                self.assertGreaterEqual(len(got), 6)
+
+    def test_the_samples_of_a_large_mesh_are_thinned_by_an_even_stride(self) -> None:
+        mesh = square(100.0, 60)  # 3,721 vertices and 7,200 centers fill every one of the 49 x 49 cells
+        np.testing.assert_array_equal(agreement._samples(mesh), sample_oracle(mesh))
+        self.assertLessEqual(len(agreement._samples(mesh)), agreement.MAX_SAMPLES)
+
+    def test_the_samples_of_far_and_degenerate_meshes_keep_every_cell(self) -> None:
+        """Coordinates near 1e19 and 1e300, one distant corner, and a single point repeated (zero extent)."""
+        for far in (4194303.0, 1e19, 1e300):
+            with self.subTest(far=far):
+                corners = np.array([(0, 0, 0), (0.75, 0, 0), (0, 0.75, 0), (0, 0, 0), (far, far, 0), (far, 0, far)],
+                                   dtype=float).reshape(-1, 3, 3)
+                mesh = mesh_of(corners)
+                np.testing.assert_array_equal(agreement._samples(mesh), sample_oracle(mesh))
+        point = mesh_of(np.ones((2, 3, 3)))
+        np.testing.assert_array_equal(agreement._samples(point), sample_oracle(point))
+
+
 class SurfaceIndex(unittest.TestCase):
     def test_a_triangle_spanning_billions_of_cells_leaves_a_mesh_agreeing_with_itself(self) -> None:
         """One triangle's grown box spans about 4e6 cells per axis, whose product overflows int64. It must still

@@ -294,6 +294,12 @@ def _triangle_sq(p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> 
     return np.where(inside, _dot(offset, offset), edges)
 
 
+def _cell_key(cells: np.ndarray, shape: np.ndarray) -> np.ndarray:
+    """One int64 per cell (n, 3), x fastest in a grid of `shape` cells: two cells of the grid share a key only if
+    they are one cell, while the product of the shape stays within int64."""
+    return cells[:, 0] + shape[0] * (cells[:, 1] + shape[1] * cells[:, 2])
+
+
 class _Surface:
     """A mesh's triangles in a uniform grid of cells, each triangle in every cell its reach-grown box touches, so a
     point needs only the triangles of its own cell. A cell is at least twice `reach` wide and as wide as the median
@@ -333,7 +339,7 @@ class _Surface:
         return np.clip(cells, -MAX_INDEX, MAX_INDEX).astype(np.int64)
 
     def _key(self, cells: np.ndarray) -> np.ndarray:
-        return cells[:, 0] + self.shape[0] * (cells[:, 1] + self.shape[1] * cells[:, 2])
+        return _cell_key(cells, self.shape)
 
     def _near(self, points: np.ndarray, point: np.ndarray, triangle: np.ndarray) -> np.ndarray:
         """Of the pairs (point, triangle): the points whose triangle's grown box holds them and lies within reach."""
@@ -385,8 +391,10 @@ def _samples(mesh: Mesh) -> np.ndarray:
     found = np.concatenate([mesh.points[used], mesh.points[mesh.triangles].mean(axis=1)])
     low = found.min(axis=0)
     span = float((found.max(axis=0) - low).max()) / SAMPLE_CELLS or 1.0
-    cells = np.floor((found - low) / span).astype(np.int64)
-    _, first = np.unique(cells, axis=0, return_index=True)
+    # Each index is in 0..SAMPLE_CELLS, so the key of an (SAMPLE_CELLS + 1)-cube grid is below 49**3: no overflow. The
+    # clip and nan_to_num only matter when the extent overflows to inf, and then they merge cells, never drop one.
+    cells = np.clip(np.nan_to_num(np.floor((found - low) / span)), 0, SAMPLE_CELLS).astype(np.int64)
+    _, first = np.unique(_cell_key(cells, np.full(3, SAMPLE_CELLS + 1)), return_index=True)
     chosen = np.sort(first)
     if len(chosen) > MAX_SAMPLES:
         chosen = chosen[::math.ceil(len(chosen) / MAX_SAMPLES)]
