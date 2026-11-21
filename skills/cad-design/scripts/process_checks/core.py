@@ -36,6 +36,11 @@ GUIDELINE_PROCESSES = frozenset({"fdm"})  # the processes the shipped guideline 
 # included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
 GUIDELINE_PASS_CLASSES = frozenset({"appearance_concept", "fit_assembly", "functional_demo"})
 
+class HandlerError(RuntimeError):
+    """A handler broke the packet contract: a failing finding linked to an obligation it did not fail, a stray outcome,
+    or a missing or misplaced not_assessed reason."""
+
+
 PASS, FAIL, UNKNOWN, NOT_APPLICABLE, NOT_ASSESSED = "pass", "fail", "unknown", "not_applicable", "not_assessed"
 OUTCOME_ORDER = (FAIL, UNKNOWN, NOT_ASSESSED, PASS)  # worst first: the order check, part and packet results take (D37)
 NOT_ASSESSED_REASONS = ("calibration_off", "no_capability_profile")  # why a check was not assessed (manufacturing.schema.json)
@@ -122,12 +127,12 @@ def combine(method: str, parts: Iterable[tuple[str, str]], findings: list[Draft]
             reason: str | None = None) -> Result:
     """A Result from sub-check (outcome, coverage) pairs: fail if any fails, else unknown if any is
     unknown, else not_assessed if any is, else pass; not_applicable sub-checks drop out, and all of them makes it
-    not_applicable. An outcome outside those five raises, so a stray value never counts as a pass. `reason` is
+    not_applicable. An outcome outside those five raises HandlerError, so a stray value never counts as a pass. `reason` is
     kept only when the result is not_assessed."""
     parts = list(parts)
     for o, _ in parts:
         if o not in (*OUTCOME_ORDER, NOT_APPLICABLE):
-            raise ValueError(f"combine: {o!r} is not a check outcome")
+            raise HandlerError(f"combine: {o!r} is not a check outcome")
     outcomes = {o for o, _ in parts if o != NOT_APPLICABLE}
     outcome = next((o for o in OUTCOME_ORDER if o in outcomes), NOT_APPLICABLE)
     coverage = "; ".join(c for _, c in parts if c) or "nothing to assess"

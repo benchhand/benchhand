@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import additive, machining, purchased, route, secondary, shaping, sheet
-from .core import (FAIL, IMPLICIT, MINIMUM, NOT_ASSESSED, NOT_ASSESSED_REASONS, PASS, UNKNOWN, Context, Draft, Geometry, Handler, Result, access_directions,
+from .core import (FAIL, IMPLICIT, MINIMUM, NOT_ASSESSED, NOT_ASSESSED_REASONS, PASS, UNKNOWN, Context, Draft, Geometry, Handler, HandlerError, Result, access_directions,
                    component_contexts, direction_key, guidelines, intent, policy, stable_id, text)
 
 PRODUCER = "cad-design form_check.py process_checks 1"
@@ -41,10 +41,6 @@ TABLE: Mapping[str, Mapping[str, Handler]] = {
 }
 ROUTE: Mapping[str, Handler] = {"route.consistency": route.consistency, "route.operation_plan": route.operation_plan,
                                 "optical.route": route.optical}
-
-
-class HandlerError(RuntimeError):
-    """A handler broke the packet contract: a failing finding linked to an obligation it did not fail."""
 
 
 class NotAssessable(ValueError):

@@ -1551,6 +1551,28 @@ def version_geometry(pc: Any, record: Any, folder: Path, label: str, manifest: d
     return found
 
 
+def packet_report(packet: dict[str, Any], bundle: Path, reused: bool) -> dict[str, Any]:
+    """The manufacturing section of the report: outcome counts, the open obligations (a fail or unknown) and, apart,
+    each not_assessed obligation with its reason."""
+    counts: dict[str, int] = {}
+    for outcome in packet["outcomes"]:
+        counts[outcome["outcome"]] = counts.get(outcome["outcome"], 0) + 1
+    return {
+        "status": packet["result"], "complete": packet["complete"], "bundle": str(bundle), "reused": reused,
+        "outcomes": dict(sorted(counts.items())),
+        "open": [{"obligation": o["obligation"], "outcome": o["outcome"]} for o in packet["outcomes"] if o["outcome"] in ("fail", "unknown")],
+        "not_assessed": [{"obligation": o["obligation"], "reason": o.get("reason")}
+                         for o in packet["outcomes"] if o["outcome"] == "not_assessed"],
+        "findings": [{key: f[key] for key in ("id", "code", "severity", "outcome", "subject")}
+                     for f in packet["findings"] if f["severity"] in ("critical", "major") and f["outcome"] in ("fail", "unknown")],
+    }
+
+
+def packet_code(blocking: bool, packet: dict[str, Any]) -> int:
+    """1 on a failing fidelity check or a packet that is not pass or not_assessed; a not-assessed packet is no defect."""
+    return 1 if blocking or packet["result"] not in ("pass", "not_assessed") else 0
+
+
 def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], int]:
     """The legacy fidelity checks on a built version's installed parts, then the process-dispatched
     manufacturing checks of its record snapshot and manufacturing outputs, published as the version's
@@ -1598,17 +1620,8 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
             (stage / "result.json").write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
             bundle = layout.publish(args.hw, "bundle.checks", params, stage, recipe=recipe, producer=pc.PRODUCER,
                                     status=packet["result"], replace=args.replace).path
-    counts: dict[str, int] = {}
-    for outcome in packet["outcomes"]:
-        counts[outcome["outcome"]] = counts.get(outcome["outcome"], 0) + 1
-    report["manufacturing"] = {
-        "status": packet["result"], "complete": packet["complete"], "bundle": str(bundle), "reused": reused is not None,
-        "outcomes": dict(sorted(counts.items())),
-        "open": [{"obligation": o["obligation"], "outcome": o["outcome"]} for o in packet["outcomes"] if o["outcome"] in ("fail", "unknown")],
-        "findings": [{key: f[key] for key in ("id", "code", "severity", "outcome", "subject")}
-                     for f in packet["findings"] if f["severity"] in ("critical", "major") and f["outcome"] in ("fail", "unknown")],
-    }
-    return report, 1 if blocking or packet["result"] != "pass" else 0
+    report["manufacturing"] = packet_report(packet, bundle, reused is not None)
+    return report, packet_code(blocking, packet)
 
 
 def main(argv: list[str] | None = None) -> int:
