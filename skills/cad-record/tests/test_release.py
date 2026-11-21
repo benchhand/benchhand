@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable
 from unittest import mock
 
+import jsonschema
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
@@ -695,6 +696,31 @@ class Documents(ReleaseCase):
         manifest = json.loads((hw / "releases" / "A" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual((manifest["released_at"], okh["release_date"]), ("2026-11-02T23:59:59Z", "2026-11-02"))
         self.guide(hw, "--rev", "A", "--date", "2026-11-02")  # build_guide.py refuses any date but the sealed one
+
+
+class SelectedBundleStatus(ReleaseCase):
+    """D37: a bundle whose producer assessed nothing (status not_assessed) is no refusal and no pass. No emitter
+    seals one yet, so the seam is a bundle published with that status and handed to select_bundle."""
+
+    def select(self, status: str) -> Any:
+        hw = self.project()
+        publish(hw, "analysis", "extra", {"results.json": '{"status": "x"}\n'}, status=status)
+        package = release.Release(hw, "A", "v1", "DR-005", "hw/releases/A")
+        release.select_bundle(package, "analysis", "extra", release.sha256(hw / "versions" / "v1" / "manifest.json"), "test")
+        return package
+
+    def test_a_not_assessed_bundle_is_selected_and_recorded_as_not_assessed(self) -> None:
+        package = self.select("not_assessed")
+        self.assertEqual((package.findings, package.checks), ([], {"analysis/extra": "not_assessed"}))
+        self.assertEqual([b["path"] for b in package.bundles], ["hw/analysis/v1/extra"])
+
+    def test_a_failing_bundle_is_still_refused(self) -> None:
+        package = self.select("fail")
+        self.assertEqual(([f["code"] for f in package.findings], package.checks), (["release.failed"], {}))
+
+    def test_the_release_manifest_schema_accepts_a_not_assessed_check(self) -> None:
+        schema = json.loads((SKILL / "schemas" / "release-manifest.schema.json").read_text(encoding="utf-8"))
+        jsonschema.validate({"analysis/extra": "not_assessed"}, {"$ref": "#/$defs/checks", "$defs": schema["$defs"]})
 
 
 class Refusal(ReleaseCase):
