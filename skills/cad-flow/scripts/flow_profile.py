@@ -194,7 +194,8 @@ def check(hw: Path, stage: str | None = None) -> tuple[str, list[Any]]:
     """(the stage checked, what blocks at it) for the work tree `hw`. The cited decision approves when
     cad-record's reader finds it accepted. Raises ProfileError when product.yaml cannot be read."""
     approval = functools.partial(load_validate().approval_problem, Path(hw))
-    return gate.gate(read_product(hw), read_parts(hw), approval, stage)
+    checked, found = gate.gate(read_product(hw), read_parts(hw), approval, stage)
+    return checked, list(found)
 
 
 # --- record -------------------------------------------------------------------------------------------------------
