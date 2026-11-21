@@ -1061,6 +1061,9 @@ def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, _Unu
 # What clears each reason the guideline resolver gives for an unknown limit, keyed by a phrase of the reason.
 _RESOLVER_REMEDIES = (
     ("scope fact is unknown", "record the scope fact the reason names on the material or capability profile, then rerun"),
+    ("states no nozzle diameter", "record the nozzle diameter on the capability profile, then rerun"),
+    ("neither a line width nor a nozzle diameter",
+     "record the line width or the nozzle diameter on the capability profile, then rerun"),
     ("share no value", "change one of the named guideline limits so the equally specific sets share a value, then rerun"),
     ("share no size", "change the named discrete set or range so that they share a size, then rerun"),
     ("cannot be stated", "state the sliding clearance with limits one operator can express (one bound or a closed range), "

@@ -647,7 +647,7 @@ class ClearanceTests(unittest.TestCase):
             "a relative limit without a nozzle diameter": (no_nozzle, clearance_catalog(relative("nozzle_diameter")), True,
                                                            "states no nozzle diameter", "record the nozzle diameter"),
             "a relative limit without a line width": (no_nozzle, clearance_catalog(relative("line_width")), True,
-                                                      "neither a line width nor a nozzle diameter", "record the line width"),
+                                                      "neither a line width nor a nozzle diameter", "record the line width or the nozzle diameter"),
             "an unsupported operator": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "~")), True,
                                         "operator ~ is not supported", fallback),
             "an extends parent that is not a known set": (clearance_documents(), extending_catalog("fdm.nope"), True,
