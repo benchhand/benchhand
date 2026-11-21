@@ -1945,7 +1945,7 @@ class OutcomeOrderTests(unittest.TestCase):
 
     def test_combine_refuses_an_outcome_it_does_not_know(self) -> None:
         for stray in ("no_limit", "Pass", "waived", ""):
-            with self.subTest(stray=stray), self.assertRaisesRegex(ValueError, "not a check outcome"):
+            with self.subTest(stray=stray), self.assertRaisesRegex(pc.HandlerError, "not a check outcome"):
                 self.combined("pass", stray)
 
     def test_combine_keeps_the_reason_only_on_a_not_assessed_result(self) -> None:
