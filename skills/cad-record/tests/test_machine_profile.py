@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import sys
 import tempfile
@@ -16,6 +17,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -151,6 +153,53 @@ class CheckTests(Case):
         found = self.messages()
         self.assertTrue(any(m.startswith("bench: guidelines") and "machine" in m for m in found), found)
 
+    def test_schema_failure_is_reported(self) -> None:
+        p = profile()
+        del p["title"]
+        self.put(p)
+        found = self.messages()
+        self.assertTrue(any("capabilities.yaml" in m and "title" in m for m in found), found)
+
+    def slicer_file(self, content: bytes = b"frozen slicer export") -> tuple[str, str]:
+        directory = self.hw / "manufacturing" / "sources"
+        directory.mkdir(parents=True)
+        (directory / "bench.3mf").write_bytes(content)
+        return "manufacturing/sources/bench.3mf", hashlib.sha256(content).hexdigest()
+
+    def max_speed(self, source: dict[str, Any]) -> dict[str, Any]:
+        p = profile()
+        p["parameters"]["max_speed"] = known(500, "mm_s", source)
+        return p
+
+    def test_user_max_speed_from_a_frozen_slicer_file_is_accepted(self) -> None:
+        artifact, digest = self.slicer_file()
+        self.put(self.max_speed({**user("slicer export"), "artifact": artifact, "sha256": digest}))
+        self.assertEqual(self.messages(), [])
+
+    def test_user_max_speed_without_a_frozen_file_is_refused(self) -> None:
+        self.put(self.max_speed(user("I read it off the screen")))
+        found = self.messages()
+        self.assertTrue(any(m.startswith("bench: parameters/max_speed") and "frozen" in m for m in found), found)
+
+    def test_user_max_speed_whose_file_changed_is_refused(self) -> None:
+        artifact, _ = self.slicer_file()
+        self.put(self.max_speed({**user("slicer export"), "artifact": artifact, "sha256": "0" * 64}))
+        found = self.messages()
+        self.assertTrue(any("manufacturing/sources/bench.3mf" in m and "sha256" in m for m in found), found)
+
+    def test_user_tool_max_speed_needs_a_frozen_file_too(self) -> None:
+        p = profile(tools=[{"id": "t1", "description": "hotend", "parameters": {"max_speed": known(500, "mm_s", user())}}])
+        self.put(p)
+        found = self.messages()
+        self.assertTrue(any(m.startswith("bench: tools/0/parameters/max_speed") for m in found), found)
+
+    def test_user_source_on_tool_nozzle_fields_is_accepted(self) -> None:
+        nozzle = {"status": "known", "value": "hardened steel", "basis": "user_declared", "sources": [user()]}
+        p = profile(tools=[{"id": "t1", "description": "hotend",
+                            "parameters": {"nozzle_diameter": known(0.6, "mm", user()), "nozzle_material": nozzle}}])
+        self.put(p)
+        self.assertEqual(self.messages(), [])
+
     def test_cli_exits_nonzero_and_names_problem(self) -> None:
         p = profile()
         p["envelope"]["y"] = known(200, "mm", {"kind": "estimate", "reference": "guess", "reason": "r"})
@@ -212,6 +261,56 @@ class WriteTests(Case):
         self.assertEqual(self.run_write(self.answers(profile(materials=[entry]))), 0)
         copied = yaml.safe_load((self.hw / "manufacturing" / "materials.yaml").read_text(encoding="utf-8"))["profiles"]
         self.assertEqual([m["title"] for m in copied], ["my edit"])
+
+    def approval(self, material: str, status: str = "approved") -> dict[str, Any]:
+        return {"material": material, "status": status, "operations": ["print"],
+                "source": {"kind": "decision", "reference": "owner decided it", "decision": "DR-001"}}
+
+    def materials_path(self) -> Path:
+        return self.hw / "manufacturing" / "materials.yaml"
+
+    def test_family_material_does_not_copy_a_grade_starter(self) -> None:
+        self.assertEqual(self.run_write(self.answers(profile(materials=[self.approval("petg")]))), 0)
+        self.assertFalse(self.materials_path().exists())
+
+    def test_forbidden_material_copies_no_starter(self) -> None:
+        self.assertEqual(self.run_write(self.answers(profile(materials=[self.approval("fdm_petg_polylite", "forbidden")]))), 0)
+        self.assertFalse(self.materials_path().exists())
+
+    def test_answers_wrapped_in_a_profile_key_is_an_operational_error(self) -> None:
+        self.assertEqual(self.run_write(self.answers({"profile": profile()})), 2)
+        self.assertFalse(self.path.exists())
+
+    def test_non_mapping_answers_exit_2_with_an_error_line(self) -> None:
+        path = self.hw.parent / "answers.yaml"
+        path.write_text("- not a profile\n", encoding="utf-8")
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = machine_profile.main(["write", str(self.hw), str(path)])
+        self.assertEqual(code, 2)
+        self.assertTrue(err.getvalue().startswith("error:"), err.getvalue())
+
+    def test_non_mapping_capabilities_file_exits_2_with_an_error_line(self) -> None:
+        self.path.write_text("- a list\n", encoding="utf-8")
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = machine_profile.main(["check", str(self.hw)])
+        self.assertEqual(code, 2)
+        self.assertTrue(err.getvalue().startswith("error:"), err.getvalue())
+
+    def test_non_mapping_profile_entry_exits_2_on_write(self) -> None:
+        self.path.write_text("profiles:\n  - just text\n", encoding="utf-8")
+        self.assertEqual(self.run_write(self.answers(profile())), 2)
+
+    def test_failed_replace_leaves_both_files_byte_identical(self) -> None:
+        self.put(profile(id="other"))
+        self.materials_path().write_text("profiles: []\n", encoding="utf-8")
+        before = (self.path.read_bytes(), self.materials_path().read_bytes())
+        answers = self.answers(profile(materials=[self.approval("fdm_petg_polylite")]))
+        with mock.patch.object(machine_profile.os, "replace", side_effect=OSError("disk full")):
+            self.assertEqual(self.run_write(answers), 2)
+        self.assertEqual((self.path.read_bytes(), self.materials_path().read_bytes()), before)
+        self.assertEqual(sorted(p.name for p in self.path.parent.iterdir()), ["capabilities.yaml", "materials.yaml"])
 
 
 if __name__ == "__main__":
