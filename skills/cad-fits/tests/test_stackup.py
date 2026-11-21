@@ -482,6 +482,17 @@ def clearance_catalog(*limits: dict, revision: int = 2, family_limits: dict[str,
     return GL.Catalog(sets)
 
 
+def extending_catalog(parent: str) -> object:
+    """A catalog whose fdm.child extends `parent`; `parent` is fdm.generic (revision 2) or not in the catalog."""
+    child = GL.Guideline("fdm.child", 1, "TST child", (parent,), False, {"process": "fdm"}, (clearance_limit(),),
+                         "manufacturing/guidelines/fdm.child.yaml", "shipped", GENERIC_SHA)
+    sets = {"fdm.child": child}
+    if parent == "fdm.generic":
+        sets[parent] = GL.Guideline(parent, 2, "TST generic", (), False, {"process": "fdm"}, (clearance_limit(),),
+                                    "manufacturing/guidelines/fdm.generic.yaml", "shipped", GENERIC_SHA)
+    return GL.Catalog(sets)
+
+
 def clearance_limit(value: float = 0.3, operator: str = ">=") -> dict:
     return {"characteristic": "sliding_clearance", "operator": operator, "quantity": {"value": value, "units": "mm"},
             "citations": [{"kind": "supplier", "reference": "TST clearance guide", "accessed": "2026-11-20"}]}
@@ -598,7 +609,19 @@ class ClearanceTests(unittest.TestCase):
         def one_of(*sizes: float) -> dict:
             return {**clearance_limit(), "operator": "one_of", "quantities": [{"value": size, "units": "mm"} for size in sizes]}
 
+        def relative(to: str) -> dict:
+            limit = {**clearance_limit(), "relative": {"relative_to": to, "factor": 1.0, "floor": {"value": 0.1, "units": "mm"}}}
+            del limit["quantity"]
+            return limit
+
+        def pin_generic_at_revision_1(documents: dict) -> None:
+            documents["manufacturing/capabilities.yaml"]["profiles"][0]["guidelines"] = ["fdm.generic@1"]
+
+        def no_nozzle(documents: dict) -> None:
+            documents["manufacturing/capabilities.yaml"]["profiles"][0]["parameters"].pop("nozzle_diameter")
+
         generic = clearance_catalog(clearance_limit())
+        fallback = "resolve the guideline problem the reason names"
         cases = {
             "no bound record": (clearance_documents(), generic, False, "no bound record", "bind the stack to a hardware record"),
             "no sliding part printed by fdm": (clearance_documents(pn="TST-0002"), generic, True, "no sliding part is printed by fdm",
@@ -621,6 +644,15 @@ class ClearanceTests(unittest.TestCase):
                                                  True, "share no value", "change one of the named guideline limits"),
             "a set and a range share no size": (family_tst_a, clearance_catalog(clearance_limit(1.0), family_limits={"tst_a": one_of(0.2, 0.3)}),
                                                 True, "share no size", "change the named discrete set or range"),
+            "a relative limit without a nozzle diameter": (no_nozzle, clearance_catalog(relative("nozzle_diameter")), True,
+                                                           "states no nozzle diameter", "record the nozzle diameter"),
+            "a relative limit without a line width": (no_nozzle, clearance_catalog(relative("line_width")), True,
+                                                      "neither a line width nor a nozzle diameter", "record the line width"),
+            "an unsupported operator": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "~")), True,
+                                        "operator ~ is not supported", fallback),
+            "an extends parent that is not a known set": (clearance_documents(), extending_catalog("fdm.nope"), True,
+                                                          "fdm.nope is not a known guideline set", fallback),
+            "a pin at another revision": (pin_generic_at_revision_1, extending_catalog("fdm.generic"), True, "is pinned at revision 1", fallback),
             "no operator can state the limit": (clearance_documents(), clearance_catalog(clearance_limit(0.3, ">"), clearance_limit(0.5, "<=")),
                                                 True, "cannot be stated", "state the sliding clearance with limits one operator"),
             "a maximum is no minimum": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<=")), True, "<=",
