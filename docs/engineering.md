@@ -77,7 +77,7 @@ Environment flags follow `CAD_REQUIRE_FREECAD` (`skills/cad-flow/scripts/preflig
 
 | Flag | Default | Owner | Effect | Removal condition |
 |---|---|---|---|---|
-| `CAD_FEA_METALS_NEAR_SUPPORT` | off | package A (FEA) | A metal profile that fails the elongation rule is shown ductile by its form (wrought, sheet or rod). Only the shipped profiles `al_6061_t6_hydro`, `al_6082_t6_hydro`, `steel_dc01_salzgitter` and `stainless_304_outokumpu_core` count as metals, because the profile schema has no metal field. Isotropy is still required. Each strength verdict the flag decides carries `form stand-in, flag on` in `material.ductility.reason` and in the row's uncertainty. A material that passes the elongation rule is not affected. | Delete the flag when benchhand-y87 adds sourced elongation data to the metal profiles. |
+| `CAD_FEA_METALS_NEAR_SUPPORT` | off | package A (FEA) | A metal profile that fails the elongation rule is shown ductile by its form (wrought, sheet or rod). Only the shipped profiles `al_6061_t6_hydro`, `al_6082_t6_hydro`, `steel_dc01_salzgitter` and `stainless_304_outokumpu_core` count as metals, because the profile schema has no metal field. Isotropy is still required. Each strength verdict the flag decides carries `form stand-in, flag on` in `material.ductility.reason` and in the row's uncertainty. A material that passes the elongation rule is not affected. | Delete the flag by 2026-12-31 or when benchhand-y87 adds sourced elongation data to the metal profiles, whichever is first. |
 
 ## Build, test and lint commands
 

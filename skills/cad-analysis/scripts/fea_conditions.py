@@ -71,7 +71,8 @@ ALLOWABLE_SERVICE = frozenset({"production", "safety_critical"})
 # A50mm, A2in) are not comparable with it, so they show nothing.
 DUCTILE_GAUGE = "5.65sqrtS0"
 DUCTILE_ELONGATION = 0.14
-# REMOVE WITH THE FLAG when benchhand-y87 adds sourced elongation data to the metal profiles.
+# REMOVE WITH THE FLAG by 2026-12-31 or when benchhand-y87 adds sourced elongation data to the metal profiles,
+# whichever is first.
 # CAD_FEA_METALS_NEAR_SUPPORT=1 turns it on. It is off by default, and only "1" counts, as for CAD_REQUIRE_FREECAD.
 # With it on, a metal profile that fails the elongation rule stands in as ductile by its form. The profile schema
 # has no metal field, so the metals are the shipped profile ids listed here. A material not listed stays unknown.
@@ -187,6 +188,7 @@ class Assessment:
     effective_isotropic: dict[str, Any] | None = None
     dependencies: dict[str, str] = field(default_factory=dict)  # semantic name -> sha256
     record_gaps: list[str] = field(default_factory=list)  # the problems cad-record finds in the documents read
+    metals_near_support: bool = False  # the flag value the verdict used, read once per job. The recipe seals it
 
     @property
     def sourced(self) -> bool:
@@ -210,7 +212,7 @@ class Assessment:
         Remove the flag entry with the flag (see METALS_NEAR_SUPPORT)."""
         return {"material": self.material, "binding": self.binding, "acceptance": self.criteria,
                 "mesh_convergence": self.convergence, "dependencies": self.dependencies,
-                **({"flags": {METALS_NEAR_SUPPORT: "1"}} if metals_near_support_on() else {})}
+                **({"flags": {METALS_NEAR_SUPPORT: "1"}} if self.metals_near_support else {})}
 
 
 def explicit(case: Mapping[str, Any], why: str) -> Assessment:
@@ -253,6 +255,7 @@ class _Assessor:
     def __init__(self, record: Any, documents: Mapping[str, Any], case: dict[str, Any], record_dir: Path, hw: Path,
                  version: str) -> None:
         self.mi = intent()
+        self.metals_near_support = metals_near_support_on()  # read once, for the verdict and the recipe
         self.record, self.documents, self.case = record, documents, case
         self.record_dir, self.hw, self.version = record_dir, hw, version
         self.problems: list[dict[str, str]] = []
@@ -328,7 +331,7 @@ class _Assessor:
                     if ob.family in ENGINEERING_FAMILIES and ob.subject.get("PN") == pn]
         return Assessment(material, self.gaps, self.version, subject, binding, expected, criteria, load_gaps, convergence,
                           anisotropy if anisotropy["model"] != "isotropic" else None, self.dependencies,
-                          [_record_gap(p) for p in self.checked])
+                          [_record_gap(p) for p in self.checked], self.metals_near_support)
 
     # -- inputs ----------------------------------------------------------------------------------------------
 
@@ -490,7 +493,7 @@ class _Assessor:
             gap = self.elongation_gap(profile, conditions, [p for p in entries if p.gauge == DUCTILE_GAUGE])
         if gap is None:
             return {"shown": True, "reason": None}
-        if (metals_near_support_on() and profile.id in FORM_STAND_IN_METALS
+        if (self.metals_near_support and profile.id in FORM_STAND_IN_METALS
                 and profile.form in FORM_STAND_IN_FORMS):
             return {"shown": True, "reason": FORM_STAND_IN, "stand_in": True}
         return {"shown": False, "reason": gap}

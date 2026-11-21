@@ -1573,6 +1573,21 @@ class VersionedPublicationTests(unittest.TestCase):
             status, report = self.call_with_metals_flag("1")
         self.assertEqual((status, report["reused"]), (0, True))
 
+    def test_the_recipe_seals_the_flag_value_the_verdict_used(self) -> None:
+        # The job reads the flag once, at assessment. The environment changes after the assessment and before the
+        # recipe exists (the snapshot hashes run between them), and the recipe still seals the value the verdict used.
+        real = fea_static._snapshot_record_hashes
+
+        def flip_then_hash(*args, **kwargs):
+            process_env.pop("CAD_FEA_METALS_NEAR_SUPPORT", None)
+            return real(*args, **kwargs)
+
+        with patch.dict(process_env, {"CAD_FEA_METALS_NEAR_SUPPORT": "1"}), \
+             patch("fea_static._snapshot_record_hashes", side_effect=flip_then_hash):
+            self.assertEqual(self.call()[0], 0)
+        manifest = json.loads((self.hw / "analysis" / "v1" / "cantilever" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["recipe"]["conditions"]["flags"], {"CAD_FEA_METALS_NEAR_SUPPORT": "1"})
+
     def test_changed_ccx_thread_counts_change_the_recipe(self) -> None:
         self.assertEqual(self.call()[0], 0)
         manifest = json.loads((self.hw / "analysis" / "v1" / "cantilever" / "manifest.json").read_text(encoding="utf-8"))
