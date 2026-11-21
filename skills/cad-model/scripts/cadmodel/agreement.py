@@ -410,6 +410,10 @@ def compare(glb: Mesh, step: Mesh, linear_mm: float) -> dict[str, Any]:
     if not len(glb.triangles) or not len(step.triangles):
         return {"status": "unknown", "tolerance_mm": reach,
                 "reason": f"the {'GLB mesh' if not len(glb.triangles) else 'STEP shape'} has no triangles to compare"}
+    for name, mesh in (("GLB mesh", glb), ("STEP shape", step)):
+        if not np.isfinite(mesh.points[mesh.triangles]).all():  # no cell index, and no distance, exists for these
+            return {"status": "unknown", "tolerance_mm": reach,
+                    "reason": f"the {name} has a nonfinite coordinate, so its distance cannot be measured"}
     glb_off, glb_count = _off(_samples(glb), _Surface(step, reach))
     step_off, step_count = _off(_samples(step), _Surface(glb, reach))
     ok = glb_count == 0 and step_count == 0
