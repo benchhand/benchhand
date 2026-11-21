@@ -29,6 +29,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 import re
 import sys
 from collections.abc import Iterable
@@ -70,6 +71,22 @@ ALLOWABLE_SERVICE = frozenset({"production", "safety_critical"})
 # A50mm, A2in) are not comparable with it, so they show nothing.
 DUCTILE_GAUGE = "5.65sqrtS0"
 DUCTILE_ELONGATION = 0.14
+# REMOVE WITH THE FLAG by 2026-12-31 or when benchhand-y87 adds sourced elongation data to the metal profiles,
+# whichever is first.
+# CAD_FEA_METALS_NEAR_SUPPORT=1 turns it on. It is off by default, and only "1" counts, as for CAD_REQUIRE_FREECAD.
+# With it on, a metal profile that fails the elongation rule stands in as ductile by its form. The profile schema
+# has no metal field, so the metals are the shipped profile ids listed here. A material not listed stays unknown.
+# Owner: package A (FEA). Registered in docs/engineering.md.
+METALS_NEAR_SUPPORT = "CAD_FEA_METALS_NEAR_SUPPORT"
+FORM_STAND_IN_METALS = frozenset({"al_6061_t6_hydro", "al_6082_t6_hydro", "steel_dc01_salzgitter",
+                                  "stainless_304_outokumpu_core"})
+FORM_STAND_IN_FORMS = frozenset({"wrought", "sheet", "rod"})  # the forms of the removed DUCTILE_FORMS
+FORM_STAND_IN = "form stand-in, flag on"
+
+
+def metals_near_support_on() -> bool:
+    """Whether CAD_FEA_METALS_NEAR_SUPPORT is on. Only the string "1" turns it on, as with CAD_REQUIRE_FREECAD."""
+    return os.environ.get(METALS_NEAR_SUPPORT) == "1"
 # Bases that may support service evidence; estimates, assumptions and bare user statements may not.
 SERVICE_BASES = frozenset({"measured", "supplier_typical", "allowable", "standard"})
 # The required checks a static isotropic solve can answer, all at simulation_supported.
@@ -171,6 +188,7 @@ class Assessment:
     effective_isotropic: dict[str, Any] | None = None
     dependencies: dict[str, str] = field(default_factory=dict)  # semantic name -> sha256
     record_gaps: list[str] = field(default_factory=list)  # the problems cad-record finds in the documents read
+    metals_near_support: bool = False  # the flag value the verdict used, read once per job. The recipe seals it
 
     @property
     def sourced(self) -> bool:
@@ -187,9 +205,14 @@ class Assessment:
         return gaps
 
     def recipe(self) -> dict[str, Any]:
-        """The recipe fields that bind a published bundle to this material, criterion and configuration."""
+        """The recipe fields that bind a published bundle to this material, criterion and configuration.
+
+        This method seals an environment flag that can change a verdict, so another setting never reuses a bundle.
+        It writes only an enabled flag: a case run without the flag keeps the recipe shape it had before the flag.
+        Remove the flag entry with the flag (see METALS_NEAR_SUPPORT)."""
         return {"material": self.material, "binding": self.binding, "acceptance": self.criteria,
-                "mesh_convergence": self.convergence, "dependencies": self.dependencies}
+                "mesh_convergence": self.convergence, "dependencies": self.dependencies,
+                **({"flags": {METALS_NEAR_SUPPORT: "1"}} if self.metals_near_support else {})}
 
 
 def explicit(case: Mapping[str, Any], why: str) -> Assessment:
@@ -232,6 +255,7 @@ class _Assessor:
     def __init__(self, record: Any, documents: Mapping[str, Any], case: dict[str, Any], record_dir: Path, hw: Path,
                  version: str) -> None:
         self.mi = intent()
+        self.metals_near_support = metals_near_support_on()  # read once, for the verdict and the recipe
         self.record, self.documents, self.case = record, documents, case
         self.record_dir, self.hw, self.version = record_dir, hw, version
         self.problems: list[dict[str, str]] = []
@@ -307,7 +331,7 @@ class _Assessor:
                     if ob.family in ENGINEERING_FAMILIES and ob.subject.get("PN") == pn]
         return Assessment(material, self.gaps, self.version, subject, binding, expected, criteria, load_gaps, convergence,
                           anisotropy if anisotropy["model"] != "isotropic" else None, self.dependencies,
-                          [_record_gap(p) for p in self.checked])
+                          [_record_gap(p) for p in self.checked], self.metals_near_support)
 
     # -- inputs ----------------------------------------------------------------------------------------------
 
@@ -467,7 +491,12 @@ class _Assessor:
         gap = gauge_gap(entries)
         if gap is None:
             gap = self.elongation_gap(profile, conditions, [p for p in entries if p.gauge == DUCTILE_GAUGE])
-        return {"shown": gap is None, "reason": gap}
+        if gap is None:
+            return {"shown": True, "reason": None}
+        if (self.metals_near_support and profile.id in FORM_STAND_IN_METALS
+                and profile.form in FORM_STAND_IN_FORMS):
+            return {"shown": True, "reason": FORM_STAND_IN, "stand_in": True}
+        return {"shown": False, "reason": gap}
 
     def elongation_gap(self, profile: Any, conditions: Mapping[str, Any], on_gauge: list[Any]) -> str | None:
         found = self.mi.resolve_property(replace(profile, properties=tuple(on_gauge)), "elongation_at_break",
@@ -1129,9 +1158,14 @@ def _stress_strength(obligation: Mapping[str, Any], result: Mapping[str, Any], a
         reason = why or ("the case's material resolves no positive finite yield strength" if used is None else
                          f"the yield safety factor {used:g} / {sigma:g} MPa is not a finite number")
         return _row(obligation, "unknown", a, subject, [reason, *gaps], None, units, STUDY_STRENGTH, criterion)
+    notes = ([f"{FORM_STAND_IN}: ductility rests on the form of metal profile {a.material['profile']['id']}, "
+              "not on a sourced elongation_at_break"]
+             if (a.material.get("ductility") or {}).get("stand_in")
+             and (result.get("stress_study") or {}).get("outcome") == fea_stress.SETTLED_AWAY_FROM_SUPPORT else [])
     if factor < criterion["value"]:
-        return _row(obligation, "fail", a, subject, gaps, factor, units, STUDY_STRENGTH, criterion)
-    return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, factor, units, STUDY_STRENGTH, criterion)
+        return _row(obligation, "fail", a, subject, gaps, factor, units, STUDY_STRENGTH, criterion, notes)
+    return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, factor, units, STUDY_STRENGTH,
+                criterion, notes)
 
 
 def gauge_gap(elongations: Iterable[Any]) -> str | None:
@@ -1223,10 +1257,12 @@ def _positive(value: Any) -> bool:
 
 def _row(obligation: Mapping[str, Any], outcome: str, a: Assessment, subject: Mapping[str, Any], reasons: list[str],
          measured: Any, units: str | None, what: str,
-         criterion: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any] | None]:
+         criterion: Mapping[str, Any] | None = None,
+         notes: Iterable[str] = ()) -> tuple[dict[str, Any], dict[str, Any] | None]:
     family = obligation["family"]
     uncertainty = "; ".join(reasons) if reasons else (
         "linear static idealisation; peak values depend on the mesh within the demonstrated convergence")
+    uncertainty = "; ".join([uncertainty, *notes])
     row: dict[str, Any] = {"obligation": obligation["id"], "outcome": outcome, "level": LEVEL, "method": METHOD,
                            "uncertainty": uncertainty,
                            "coverage": f"{what} of one static load case on {subject['PN']}; never fatigue, creep, wear, "
