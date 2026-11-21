@@ -699,6 +699,21 @@ def check_flow(product: dict[str, Any], path: str, hw: Path, part_records: dict[
                 findings.append(finding(path, f"flow/change/affected_parts: {pn} has no parts/{pn}/part.yaml"))
 
 
+def fea_case_ids(hw: Path) -> list[str]:
+    """The ids of the authored FEA cases, hw/analysis/cases/<ID>/case.yaml with a `step` (fea_static.load_case
+    requires one). A stack-up case (cad-fits stackup.py) sits in the same folder and is no FEA case; a case file
+    that does not parse is not one either, since the layout checks report it."""
+    found = []
+    for path in sorted((hw / "analysis" / "cases").glob("*/case.yaml")):
+        try:
+            case = yaml_loader.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, yaml.YAMLError):
+            continue
+        if isinstance(case, dict) and "step" in case:
+            found.append(path.parent.name)
+    return found
+
+
 def check_flow_profile(hw: Path, documents: Mapping[str, Any], valid: Mapping[str, bool],
                        part_records: Mapping[str, Any], findings: list[dict[str, Any]]) -> None:
     """flow.profile through flow_profile_gate: the missing, unasked or unapproved profile and a bare word YAML read
@@ -716,7 +731,7 @@ def check_flow_profile(hw: Path, documents: Mapping[str, Any], valid: Mapping[st
                                 action=item.action))
     if not valid.get("product.yaml"):
         return
-    cases = sorted(case.parent.name for case in (hw / "analysis" / "cases").glob("*/case.yaml"))
+    cases = fea_case_ids(hw)
     strict = stage_reached(product, profile_gate.BUILD_STAGE)
     for conflict in profile_gate.conflicts(product, documents.get("requirements.yaml") if valid.get("requirements.yaml") else None,
                                            documents.get("interfaces.yaml") if valid.get("interfaces.yaml") else None,

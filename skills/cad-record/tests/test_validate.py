@@ -991,6 +991,21 @@ class FlowProfileFindings(unittest.TestCase):
         self.edit_product("stage: layout\n  recheck_from: layout", "stage: specify\n  recheck_from: specify")
         self.assertEqual([item["severity"] for item in self.flow_findings() if item["code"] == "flow.conflict"], ["warning"])
 
+    def write_case(self, case: str, text: str) -> None:
+        folder = self.hw / "analysis" / "cases" / case
+        folder.mkdir(parents=True)
+        (folder / "case.yaml").write_text(text, encoding="utf-8")
+
+    def test_an_fea_case_conflicts_with_fea_off(self) -> None:
+        self.write_case("bracket_load", "step: bracket.step\nloads: []\n")
+        found = [item for item in self.flow_findings() if item["code"] == "flow.conflict"]
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("analysis case bracket_load", str(found[0]["message"]))
+
+    def test_a_stack_up_case_shares_the_folder_but_is_not_an_fea_case(self) -> None:
+        self.write_case("arm_stack", "contributors: []\n")
+        self.assertEqual([item for item in self.flow_findings() if item["code"] == "flow.conflict"], [])
+
     def make_first_interface_critical(self) -> None:
         path = self.hw / "interfaces.yaml"
         text = path.read_text(encoding="utf-8")
