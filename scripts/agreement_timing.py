@@ -30,13 +30,14 @@ import json
 import statistics
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "cad-model" / "scripts"))
-from cadmodel import agreement  # noqa: E402
+from cadmodel import agreement  # noqa: E402  (the import needs the sys.path entry above)
 
 SEED = 20260429
 MAJOR_MM, MINOR_MM = 45.0, 12.0
@@ -47,7 +48,7 @@ LINEAR_MM = 0.05       # the GLB deflection the exporter caps a large assembly a
 UNIT_MM = 1e-4         # coordinates are rounded to this grid
 
 
-def torus(grid: tuple[int, int], phase: tuple[float, float], noise: np.ndarray | None = None) -> agreement.Mesh:
+def torus(grid: tuple[int, int], phase: tuple[float, float], noise: np.random.Generator | None = None) -> agreement.Mesh:
     """A torus as a quad grid split into two triangles each, the seam shared by index."""
     nu, nv = grid
     u = (np.arange(nu) + phase[0]) * (2 * np.pi / nu)
@@ -84,14 +85,15 @@ def digest(*meshes: agreement.Mesh) -> str:
     return sha.hexdigest()
 
 
-def measure(runs: int, seed: int = SEED) -> dict[str, Any]:
+def measure(runs: int, seed: int = SEED, clock: Callable[[], float] = time.perf_counter) -> dict[str, Any]:
+    """Times `runs` calls of compare on the reference pair; `clock` is injectable for the test."""
     glb, step = reference_pair(seed)
     seconds = []
     verdict: dict[str, Any] = {}
     for _ in range(runs):
-        started = time.perf_counter()
+        started = clock()
         verdict = agreement.compare(glb, step, LINEAR_MM)
-        seconds.append(time.perf_counter() - started)
+        seconds.append(clock() - started)
     return {
         "seed": seed, "digest": digest(glb, step), "status": verdict["status"], "runs": runs,
         "glb_triangles": len(glb.triangles), "step_triangles": len(step.triangles),

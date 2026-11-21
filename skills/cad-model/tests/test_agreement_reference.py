@@ -20,6 +20,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
+PROBE = Path(__file__).resolve().parent / "fixtures" / "agreement_timing_probe.py"
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "agreement_timing.py"
 DIGEST = "a2575c0fcc3f21af8aa00007c25049d2715da12297c5747ec9cede1ee72b68f3"
 
@@ -45,6 +46,27 @@ class AgreementReferenceTests(unittest.TestCase):
 
     def test_compare_agrees_on_the_reference(self) -> None:
         self.assertEqual(self.result["status"], "pass")
+
+
+class MeasureTests(unittest.TestCase):
+    """`measure` with a fake clock that ticks 0, 1, 1, 3, 3, 6 s: three runs of 1, 2 and 3 s."""
+
+    probe: dict
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(PROBE)],
+                              capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        cls.probe = json.loads(proc.stdout.splitlines()[-1])
+
+    def test_it_runs_compare_as_often_as_asked(self) -> None:
+        self.assertEqual(self.probe["compare_calls"], 3)
+        self.assertEqual(self.probe["result"]["runs"], 3)
+
+    def test_it_reports_the_median_and_the_range_of_the_durations(self) -> None:
+        result = self.probe["result"]
+        self.assertEqual((result["median_s"], result["min_s"], result["max_s"]), (2.0, 1.0, 3.0))
 
 
 if __name__ == "__main__":
