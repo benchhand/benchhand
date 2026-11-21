@@ -19,8 +19,8 @@
 # schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
 # schema-sha256 3a70ff36a1ebb40d1485b7fa0008051dcdacfaa1d05651ac1694cf02f3ab6f83 skills/cad-record/schemas/manufacturing-guideline.schema.json
 # schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
-# schema-sha256 a4c5f14334712d8ccde92a2692cb5ee469418a16cef2eb94de2654a6be32c97d skills/cad-record/schemas/manufacturing-selection.schema.json
-# schema-sha256 0a0c8fe8f2a949444d88c191937f9060e6c80c2d683bb227f44b09623bc570fc skills/cad-record/schemas/manufacturing.schema.json
+# schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
+# schema-sha256 373d95bcca809d496fad780d25ae37088c76685d4bc68c3b2392106c395a15ce skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 # schema-sha256 7c8c783ae3e4cf6a511604f715645e7c727f1229b192a25e65e8d1277887893c skills/cad-record/schemas/part.schema.json
 # schema-sha256 c38806ef651cb7d034118630d8750a7a33bb26c87bbd459f7c6fefaf795b1a91 skills/cad-record/schemas/product.schema.json
@@ -304,6 +304,8 @@ __all__ = [
     "ManufacturingMoney",
     "ManufacturingMoneyFact",
     "ManufacturingMoneyFactOneOf0",
+    "ManufacturingNotAssessedReason",
+    "ManufacturingNotAssessedRule",
     "ManufacturingObligation",
     "ManufacturingObligationId",
     "ManufacturingObligationOutcome",
@@ -3766,7 +3768,13 @@ class ManufacturingObligation(TypedDict):
 # A check obligation's result; unknown is never a pass
 #
 # Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/outcome
-ManufacturingOutcome = Literal["pass", "fail", "unknown", "not_applicable"]
+ManufacturingOutcome = Literal["pass", "fail", "unknown", "not_applicable", "not_assessed"]
+
+
+# Why a check was not assessed: its calibration is off, or no capability profile exists for it
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/not_assessed_reason
+ManufacturingNotAssessedReason = Literal["calibration_off", "no_capability_profile"]
 
 
 class ManufacturingObligationOutcome(TypedDict):
@@ -3774,12 +3782,14 @@ class ManufacturingObligationOutcome(TypedDict):
 
     Not expressible as types (see the schema):
     - additionalProperties: false
+    - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
 
     Field notes:
     - coverage: what the method covered, and what it did not
     """
     obligation: Required[ManufacturingObligationId]
     outcome: Required[ManufacturingOutcome]
+    reason: NotRequired[ManufacturingNotAssessedReason]
     level: NotRequired[ManufacturingEvidenceLevel]
     method: Required[ManufacturingText]
     source: NotRequired[ManufacturingSource]
@@ -3875,6 +3885,7 @@ class ManufacturingFinding(TypedDict):
     Not expressible as types (see the schema):
     - additionalProperties: false
     - if {"properties":{"outcome":{"enum":["fail","unknown"]}}} then {"required":["remedy"]}
+    - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
 
     Field notes:
     - uncertainty: the uncertainty or the missing information
@@ -3888,6 +3899,7 @@ class ManufacturingFinding(TypedDict):
     subject: Required[ManufacturingSubject]
     severity: Required[ManufacturingSeverity]
     outcome: Required[ManufacturingOutcome]
+    reason: NotRequired[ManufacturingNotAssessedReason]
     measured: Required[ManufacturingQuantity | ManufacturingFindingMeasuredOneOf1 | ManufacturingFactUnknown]
     criterion: Required[ManufacturingCriterionOrUnknown]
     requirements: NotRequired[ManufacturingRequirementIds]
@@ -4608,6 +4620,15 @@ class ManufacturingMoneyFactOneOf0(TypedDict):
 ManufacturingMoneyFact = ManufacturingMoneyFactOneOf0 | ManufacturingFactUnknown | ManufacturingFactNotApplicable
 
 
+# A not_assessed outcome carries its reason; no other outcome does
+#
+# Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/not_assessed_rule
+#
+# Not expressible as types (see the schema):
+# - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+ManufacturingNotAssessedRule = Any
+
+
 # Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/preference_id
 #
 # Not expressible as types (see the schema):
@@ -4720,9 +4741,11 @@ class ManufacturingSelectionCandidateEvaluationsItems(TypedDict):
     Not expressible as types (see the schema):
     - additionalProperties: false
     - if {"properties":{"outcome":{"enum":["pass","fail"]}}} then {"required":["criterion","source"]}
+    - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
     """
     requirement: Required[ManufacturingRequirementId]
     outcome: Required[ManufacturingOutcome]
+    reason: NotRequired[ManufacturingNotAssessedReason]
     method: Required[ManufacturingText]
     criterion: NotRequired[ManufacturingCriterion]
     value: NotRequired[ManufacturingQuantity | ManufacturingText]
