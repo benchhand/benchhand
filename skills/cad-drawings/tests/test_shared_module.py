@@ -22,6 +22,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 import drawing_intent  # noqa: E402
+import shared_module  # noqa: E402
 
 # A module body that counts its runs, stalls until the second thread is about to load it, then until
 # that thread's call returns. A correct loader keeps the second thread waiting (the last wait times out
@@ -32,7 +33,7 @@ probe = sys._fits_probe
 probe["runs"].append(1)
 probe["started"].set()
 assert probe["second_ready"].wait(10), "the second thread never reached the loader"
-probe["second_returned"].wait(1)
+probe["second_returned"].wait(1)  # bounds the red case only: a thread blocked on the lock cannot signal, so the green case never depends on it
 READY = True
 """
 
@@ -64,6 +65,36 @@ class FitsLoadThreadTests(unittest.TestCase):
         self.assertEqual(len(probe["runs"]), 1, "the module body ran once")
         self.assertIs(modules[0], modules[1])
         self.assertTrue(getattr(modules[1], "READY", False), "the second thread got the finished module")
+
+
+FAILS_ONCE = """
+import sys
+probe = sys._fits_probe
+probe["runs"].append(1)
+if len(probe["runs"]) == 1:
+    PARTIAL = True
+    raise RuntimeError("first load fails")
+READY = True
+"""
+
+
+class FailedLoadTests(unittest.TestCase):
+    def test_retry_after_a_failed_load_runs_the_body_again(self) -> None:
+        name = "cad_shared_module_fails_once"
+        probe: dict[str, list[int]] = {"runs": []}
+        sys._fits_probe = probe  # type: ignore[attr-defined]
+        self.addCleanup(lambda: delattr(sys, "_fits_probe"))
+        self.addCleanup(sys.modules.pop, name, None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fails_once.py"
+            path.write_text(FAILS_ONCE, encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                shared_module.load_shared(name, path)
+            self.assertFalse(name in sys.modules, "a failed load left the half-built module behind")
+            module = shared_module.load_shared(name, path)
+        self.assertEqual(len(probe["runs"]), 2, "the second load ran the body again")
+        self.assertTrue(getattr(module, "READY", False))
+        self.assertFalse(hasattr(module, "PARTIAL"), "the retry got a fresh module, not the half-built one")
 
 
 if __name__ == "__main__":
