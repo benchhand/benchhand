@@ -159,6 +159,17 @@ class TypedDictOutput(FixtureTree):
         self.assertEqual(module.WidgetDims.__optional_keys__, {"h"})
 
 
+def run_pinned_mypy(cwd: Path, target: str) -> subprocess.CompletedProcess[str]:
+    """The way scripts/typecheck.py runs mypy: the repository config at the config's target version."""
+    pin = re.search(r"mypy==([0-9.]+)", (REPO / "scripts" / "typecheck.py").read_text(encoding="utf-8"))
+    assert pin is not None
+    return subprocess.run(
+        ["uv", "run", "--no-project", "--python", "3.12", "--with", f"mypy=={pin.group(1)}", "python", "-m", "mypy",
+         "--config-file", str(REPO / "mypy.ini"), target],
+        cwd=cwd, capture_output=True, text=True, check=False,
+    )
+
+
 def import_source(source: str, path: Path) -> typing.Any:
     path.write_text(source, encoding="utf-8")
     spec = importlib.util.spec_from_file_location(path.stem, path)
@@ -216,6 +227,13 @@ class OpenObjects(FixtureTree):
                 "closed": {"type": "object", "additionalProperties": False, "properties": {"a": {"type": "integer"}}},
                 "typed": {"type": "object", "additionalProperties": {"type": "number"}, "properties": {"a": {"type": "integer"}}},
                 "dashed": {"type": "object", "properties": {"x-y": {"type": "integer"}}},
+                "holder": {"type": "object", "additionalProperties": False, "properties": {
+                    "free": {"type": "object"},
+                    "maybe": {"type": ["object", "null"]},
+                    "rows": {"type": "array", "items": {"type": "object"}},
+                    "scores": {"type": "object", "additionalProperties": {"type": "number"}},
+                    "shut": {"type": "object", "additionalProperties": False},
+                }},
                 "base": {"type": "object", "properties": {"a": {"type": "integer"}}},
                 "child": {"allOf": [{"$ref": "#/$defs/base"}, {"type": "object", "unevaluatedProperties": False, "properties": {"b": {"type": "integer"}}}]},
             },
@@ -249,15 +267,20 @@ class OpenObjects(FixtureTree):
             "\n"
             'open_literal: BagOpen = {"type": "box", "size": 3, "radius": 1.5}\n'
             'closed_literal: BagClosed = {"a": 1}\n'
-            'closed_unknown: BagClosed = {"a": 1, "zzz": 2}\n',
+            'closed_unknown: BagClosed = {"a": 1, "zzz": 2}\n'
+            "\n"
+            "from collections.abc import Mapping\n"
+            "from typing import Any\n"
+            "from cad_api_bag import BagHolder\n"
+            "\n"
+            "def holder(m: Mapping[str, Any], scores: Mapping[str, float]) -> BagHolder:\n"
+            '    return {"free": m, "maybe": m, "rows": [m], "scores": scores, "shut": {}}\n'
+            "\n"
+            "def nullable(m: Mapping[str, Any]) -> BagHolder:\n"
+            '    return {"maybe": None, "rows": [m, m]}\n',
             encoding="utf-8",
         )
-        # The way scripts/typecheck.py runs mypy: the repository config at the config's target version.
-        result = subprocess.run(
-            ["uv", "run", "--no-project", "--python", "3.12", "--with", f"mypy=={pin.group(1)}", "python", "-m", "mypy",
-             "--config-file", str(REPO / "mypy.ini"), "consumer.py"],
-            cwd=self.root, capture_output=True, text=True, check=False,
-        )
+        result = run_pinned_mypy(self.root, "consumer.py")
         errors = [line for line in result.stdout.splitlines() if line.startswith("consumer.py:")]
         self.assertEqual(len(errors), 1, result.stdout + result.stderr)
         self.assertTrue(errors[0].startswith("consumer.py:5:"), errors[0])
@@ -276,6 +299,32 @@ class OpenObjects(FixtureTree):
         result = run_python(self.root, self.api(), "print(sorted(typing.get_type_hints(generated.BagClosed)), generated.BagOpen)", "3.11")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "['a'] collections.abc.Mapping[str, typing.Any]")
+
+
+class PropertylessOpenObjectsOnly(FixtureTree):
+    """No open object declares properties, so only the property-less maps can need the Mapping import."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_json(self.root, "skills/cad-record/schemas/maps.schema.json", {
+            "$id": BASE + "maps.schema.json",
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "free": {"type": ["object", "null"]},
+                "rows": {"type": "array", "items": {"type": "object"}},
+                "scores": {"type": "object", "additionalProperties": {"type": "number"}},
+            },
+        })
+
+    @unittest.skipUnless(shutil.which("uv"), "uv is needed to run the pinned mypy")
+    def test_the_module_imports_and_type_checks_with_only_propertyless_maps(self) -> None:
+        source = self.api()
+        self.assertNotIn(" = Mapping[str, Any]\n", source)  # no open object with declared properties
+        module = import_source(source, self.root / "cad_api_maps.py")
+        self.assertEqual(module.Maps.__required_keys__, set())
+        result = run_pinned_mypy(self.root, "cad_api_maps.py")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class RecursiveSchema(FixtureTree):
@@ -391,7 +440,7 @@ class ReviewRound1(FixtureTree):
         self.add("std", {"type": "object", "additionalProperties": False, "properties": {
             "standards": {"type": "object", "required": ["dimensioning"], "additionalProperties": {"type": "string"}},
         }})
-        self.assertIn("\n    standards: NotRequired[dict[str, str]]\n", self.api())
+        self.assertIn("\n    standards: NotRequired[Mapping[str, str]]\n", self.api())
         self.assert_in_both('required keys: ["dimensioning"]')
 
     def test_keyword_named_optional_field_stays_optional_on_python_311(self) -> None:

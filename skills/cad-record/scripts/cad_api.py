@@ -1158,7 +1158,7 @@ class Assembly(TypedDict):
     """
     operations: NotRequired[list[AssemblyAssemblyOperation] | ManufacturingFactUnknown]
     occurrences: NotRequired[list[AssemblyOccurrencesItems]]
-    profiles: NotRequired[dict[str, AssemblyProfile]]
+    profiles: NotRequired[Mapping[str, AssemblyProfile]]
     mechanisms: NotRequired[list[AssemblyMechanism]]
     subassemblies: Required[list[AssemblySubassembliesItems]]
     joints: Required[list[AssemblyJointsItems]]
@@ -1252,13 +1252,13 @@ class BundleManifest(TypedDict):
     schema_version: Required[Literal[1]]
     layout: Required[str]
     path: Required[str]
-    params: Required[dict[str, str]]
+    params: Required[Mapping[str, str]]
     version_manifest_sha256: Required[BundleManifestSha256 | None]
     producer: Required[str]
     status: NotRequired[str]
-    recipe: Required[dict[str, Any]]
+    recipe: Required[Mapping[str, Any]]
     recipe_sha256: Required[BundleManifestSha256]
-    files: Required[dict[str, BundleManifestSha256]]
+    files: Required[Mapping[str, BundleManifestSha256]]
     replaces: Required[BundleManifestReplacesOneOf1 | None]
 
 
@@ -1406,7 +1406,7 @@ class ConceptSceneVariant(TypedDict):
     id: Required[ConceptSceneId]
     label: Required[str]
     summary: NotRequired[str]
-    params: NotRequired[dict[str, float | str | bool]]
+    params: NotRequired[Mapping[str, float | str | bool]]
     root: Required[ConceptSceneGroup]
     joints: NotRequired[list[ConceptSceneJoint]]
 
@@ -1932,10 +1932,10 @@ class DrawingPartDrawing(TypedDict):
     """
     type: Required[Literal["detail", "vendor_specification", "source_control"]]
     tolerance_policy: NotRequired[DrawingPolicyName]
-    datum_features: NotRequired[dict[str, DrawingPartDrawingDatumFeaturesAdditionalProperties]]
+    datum_features: NotRequired[Mapping[str, DrawingPartDrawingDatumFeaturesAdditionalProperties]]
     coordinate_frame: NotRequired[DrawingPartDrawingCoordinateFrame]
     views: NotRequired[list[DrawingView]]
-    features: NotRequired[dict[str, DrawingFeatureIntent]]
+    features: NotRequired[Mapping[str, DrawingFeatureIntent]]
     dimensions: NotRequired[list[DrawingDimensionRequest]]
     geometric_tolerances: NotRequired[list[DrawingGeometricTolerance]]
     edges: NotRequired[DrawingPartDrawingEdges]
@@ -2105,9 +2105,9 @@ class DrawingProductDrawing(TypedDict):
     """
     definition: Required[Literal["model_and_drawing"]]
     projection: Required[Literal["first_angle", "third_angle"]]
-    standards: Required[dict[str, str]]
+    standards: Required[Mapping[str, str]]
     default_sheet: Required[DrawingProductDrawingDefaultSheet]
-    tolerance_policies: Required[dict[str, DrawingTolerancePolicy]]
+    tolerance_policies: Required[Mapping[str, DrawingTolerancePolicy]]
     general_tolerance_policy: Required[DrawingPolicyName]
 
 
@@ -2134,7 +2134,7 @@ class EvidenceRunStep(TypedDict):
     argv: Required[list[str] | None]
     exit: Required[int | None]
     status: Required[Literal["pass", "fail", "no_result", "skipped", "stopped"]]
-    result: Required[dict[str, Any] | None]
+    result: Required[Mapping[str, Any] | None]
     seconds: Required[float | None]
 
 
@@ -2168,9 +2168,9 @@ class EvidenceRun(TypedDict):
     record_sha256: Required[EvidenceRunSha256OrNull]
     steps: Required[list[EvidenceRunStep]]
     stopped_at: Required[str | None]
-    packet: Required[dict[str, Any] | None]
-    findings: NotRequired[list[dict[str, Any]]]
-    strays: NotRequired[list[dict[str, Any]]]
+    packet: Required[Mapping[str, Any] | None]
+    findings: NotRequired[list[Mapping[str, Any]]]
+    strays: NotRequired[list[Mapping[str, Any]]]
     stop_commands: NotRequired[list[str]]
 
 
@@ -2352,7 +2352,7 @@ class HandoffVariant(TypedDict):
     id: Required[HandoffId]
     label: Required[str]
     summary: NotRequired[str]
-    params: Required[dict[str, float | str | bool]]
+    params: Required[Mapping[str, float | str | bool]]
 
 
 # Source: skills/cad-concept/assets/schemas/handoff.schema.json#/$defs/vec3
@@ -2833,7 +2833,7 @@ class LayoutTokensAdditionalProperties(TypedDict):
 # Not expressible as types (see the schema):
 # - minProperties: 1
 # - additionalProperties.minLength: 1
-LayoutGlossary = dict[str, str]
+LayoutGlossary = Mapping[str, str]
 
 
 class LayoutLegend(TypedDict):
@@ -2986,7 +2986,7 @@ LayoutClass = TypedDict(
         "class": Required[str],
         "suffixes": Required[list[str]],
         "canonical": Required[str],
-        "file_by_suffix": NotRequired[dict[str, str]],
+        "file_by_suffix": NotRequired[Mapping[str, str]],
         "message": Required[str],
         "action": Required[str],
     },
@@ -3061,8 +3061,8 @@ class LayoutManufacturing(TypedDict):
     - same_state_volume_rel_tolerance: default 1e-09; maximum: 0.1; exclusiveMinimum: 0
     """
     custom_made: Required[list[LayoutManufacturingCustomMadeItems]]
-    outputs: Required[dict[str, LayoutOutputFiles]]
-    formats: Required[dict[str, str]]
+    outputs: Required[Mapping[str, LayoutOutputFiles]]
+    formats: Required[Mapping[str, str]]
     mesh: Required[LayoutManufacturingMesh]
     same_state_volume_rel_tolerance: Required[float]
 
@@ -3100,13 +3100,13 @@ class Layout(TypedDict):
     - storage: Which generated results git tracks, by the product.yaml answer `setting` names: ignored unless it is true, then tracked with Git LFS for `lfs_suffixes`
     """
     schema_version: Required[Literal[1]]
-    tokens: Required[dict[str, LayoutTokensAdditionalProperties]]
+    tokens: Required[Mapping[str, LayoutTokensAdditionalProperties]]
     legend: Required[LayoutLegend]
     entries: Required[list[LayoutEntry]]
     exceptions: Required[list[LayoutException]]
     rules: Required[list[LayoutRule]]
     classes: Required[list[LayoutClass]]
-    findings: Required[dict[str, LayoutFindingsAdditionalProperties]]
+    findings: Required[Mapping[str, LayoutFindingsAdditionalProperties]]
     manufacturing: Required[LayoutManufacturing]
     storage: Required[LayoutStorage]
 
@@ -3926,7 +3926,7 @@ class ManufacturingCheckResult(TypedDict):
     expected: Required[list[ManufacturingObligation]]
     outcomes: Required[list[ManufacturingObligationOutcome]]
     findings: Required[list[ManufacturingFinding]]
-    dependencies: Required[dict[str, ManufacturingSha256]]
+    dependencies: Required[Mapping[str, ManufacturingSha256]]
     complete: Required[bool]
     result: Required[ManufacturingOutcome]
 
@@ -4043,7 +4043,7 @@ class ManufacturingEvidenceEntry(TypedDict):
     criterion: NotRequired[ManufacturingCriterion]
     source: NotRequired[ManufacturingSource]
     configuration: NotRequired[ManufacturingEvidenceEntryConfiguration]
-    fingerprints: NotRequired[dict[str, ManufacturingSha256]]
+    fingerprints: NotRequired[Mapping[str, ManufacturingSha256]]
     artifacts: NotRequired[list[ManufacturingFileHash]]
     bundle: NotRequired[ManufacturingEvidenceEntryBundle]
     tool: NotRequired[ManufacturingText]
@@ -4917,7 +4917,7 @@ class MotionPlanSegmentsItems(TypedDict):
     """
     id: Required[str]
     title: NotRequired[str]
-    to: NotRequired[dict[str, float]]
+    to: NotRequired[Mapping[str, float]]
     easing: NotRequired[Literal["linear", "ease_in_out"]]
     camera: NotRequired[Literal["iso", "front", "side"]]
     hold_frames: NotRequired[int]
@@ -4948,7 +4948,7 @@ class MotionPlan(TypedDict):
     title: NotRequired[str]
     fps: NotRequired[int]
     max_step: NotRequired[MotionPlanMaxStep]
-    start: NotRequired[dict[str, float]]
+    start: NotRequired[Mapping[str, float]]
     segments: Required[list[MotionPlanSegmentsItems]]
     coverage: NotRequired[Literal["full", "partial"]]
     coverage_reason: NotRequired[str]
@@ -5816,7 +5816,7 @@ class ReleaseManifestFilesAdditionalProperties(TypedDict):
 # Not expressible as types (see the schema):
 # - minProperties: 1
 # - propertyNames: {"$ref":"#/$defs/package_path"}
-ReleaseManifestFiles = dict[str, ReleaseManifestFilesAdditionalProperties]
+ReleaseManifestFiles = Mapping[str, ReleaseManifestFilesAdditionalProperties]
 
 
 # A path inside the package directory
@@ -5844,7 +5844,7 @@ class ReleaseManifestV3ManufacturingAdditionalProperties(TypedDict):
     quantity: Required[int]
     files: Required[list[ReleaseManifestPackagePath]]
     route: Required[list[ManufacturingRouteKind]]
-    components: NotRequired[dict[str, list[ReleaseManifestPackagePath]]]
+    components: NotRequired[Mapping[str, list[ReleaseManifestPackagePath]]]
 
 
 class ReleaseManifestBundlesItems(TypedDict):
@@ -5872,7 +5872,7 @@ ReleaseManifestBundles = list[ReleaseManifestBundlesItems]
 
 
 # Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/checks
-ReleaseManifestChecks = dict[str, Literal["pass", "fail", "waived"]]
+ReleaseManifestChecks = Mapping[str, Literal["pass", "fail", "waived"]]
 
 
 class ReleaseManifestV3AcceptanceScope(TypedDict):
@@ -5905,9 +5905,9 @@ class ReleaseManifestV3Acceptance(TypedDict):
     - open_obligations: uniqueItems: true
     """
     evidence_sha256: Required[ReleaseManifestSha256]
-    inventory: Required[dict[str, ReleaseManifestSha256]]
+    inventory: Required[Mapping[str, ReleaseManifestSha256]]
     scope: Required[ReleaseManifestV3AcceptanceScope]
-    claims: Required[dict[str, list[ManufacturingEvidenceLevel]]]
+    claims: Required[Mapping[str, list[ManufacturingEvidenceLevel]]]
     waivers: Required[list[ManufacturingWaiver]]
     open_obligations: Required[list[ManufacturingObligationId]]
 
@@ -5932,7 +5932,7 @@ class ReleaseManifestV3(TypedDict):
     frozen: Required[ReleaseManifestV3Frozen]
     approval: Required[ProductDecision]
     files: Required[ReleaseManifestFiles]
-    manufacturing: Required[dict[str, ReleaseManifestV3ManufacturingAdditionalProperties]]
+    manufacturing: Required[Mapping[str, ReleaseManifestV3ManufacturingAdditionalProperties]]
     bundles: Required[ReleaseManifestBundles]
     checks: Required[ReleaseManifestChecks]
     acceptance: Required[ReleaseManifestV3Acceptance]

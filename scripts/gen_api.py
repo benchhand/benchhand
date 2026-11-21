@@ -265,7 +265,9 @@ class Walker:
         if kind == "object":
             extra = node.get("additionalProperties")
             value = self.expr(schema, f"{pointer}/additionalProperties", extra) if isinstance(extra, dict) else "Any"
-            return f"dict[str, {value}]"
+            # An object that allows other keys is read-only like the open objects with declared properties.
+            closed = node.get("additionalProperties") is False or node.get("unevaluatedProperties") is False
+            return f"{'dict' if closed else 'Mapping'}[str, {value}]"
         return SCALARS.get(kind, "Any") if isinstance(kind, str) else "Any"
 
     def inline_array(self, schema: Schema, pointer: str, node: dict[str, Any]) -> str:
@@ -558,7 +560,7 @@ def render_api(types: list[TypeDef], schemas: list[Schema]) -> str:
         "validate with them (schema_registry.py) and use these types for editor and type-checker help.",
         '"""',
         "",
-        *["from collections.abc import Mapping"] * any(t.open for t in types),
+        *["from collections.abc import Mapping"] * ("Mapping[" in text),
         f"from typing import {', '.join(sorted(imports))}",
         "",
         "__all__ = [",

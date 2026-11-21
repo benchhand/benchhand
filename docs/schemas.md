@@ -50,7 +50,7 @@ Source: schema root
 | --- | --- | --- | --- | --- |
 | `operations` | `list[AssemblyAssemblyOperation] \| ManufacturingFactUnknown` | no |  | Record version 2 installation, closure, fastening, adjustment, inspection and service operations, independent of drawings; unknown until recorded |
 | `occurrences` | `list[AssemblyOccurrencesItems]` | no |  | Explicit placements of part definitions; a PN listed in a subassembly's parts is one implicit occurrence at the identity placement instead |
-| `profiles` | `dict[str, AssemblyProfile]` | no |  | Reusable periodic tables a periodic_table coupling evaluates, by name |
+| `profiles` | `Mapping[str, AssemblyProfile]` | no |  | Reusable periodic tables a periodic_table coupling evaluates, by name |
 | `mechanisms` | `list[AssemblyMechanism]` | no |  | Shared mechanism parameters whose outputs several slider_crank couplings follow |
 | `subassemblies` | `list[AssemblySubassembliesItems]` | yes |  |  |
 | `joints` | `list[AssemblyJointsItems]` | yes |  |  |
@@ -628,13 +628,13 @@ manifest.json of a bundle that cad-record layout.py publish() sealed: what it is
 | `schema_version` | `Literal[1]` | yes |  |  |
 | `layout` | `str` | yes |  | the layout.json entry id |
 | `path` | `str` | yes |  | the bundle directory, project-relative |
-| `params` | `dict[str, str]` | yes |  | the path template's tokens, such as V and S |
+| `params` | `Mapping[str, str]` | yes |  | the path template's tokens, such as V and S |
 | `version_manifest_sha256` | `BundleManifestSha256 \| None` | yes |  | sha256 of hw/versions/<V>/manifest.json, or null for a bundle bound to no version |
 | `producer` | `str` | yes |  | the writing tool and its version |
 | `status` | `str` | no |  | the producer's verdict, such as pass, warn or fail |
-| `recipe` | `dict[str, Any]` | yes |  | the producer's normalized inputs and options; no wall time, ports, absolute paths or random ids |
+| `recipe` | `Mapping[str, Any]` | yes |  | the producer's normalized inputs and options; no wall time, ports, absolute paths or random ids |
 | `recipe_sha256` | `BundleManifestSha256` | yes |  | sha256 of the recipe as canonical JSON (sorted keys, no whitespace) |
-| `files` | `dict[str, BundleManifestSha256]` | yes |  | every file in the bundle but manifest.json, by bundle-relative path |
+| `files` | `Mapping[str, BundleManifestSha256]` | yes |  | every file in the bundle but manifest.json, by bundle-relative path |
 | `replaces` | `BundleManifestReplacesOneOf1 \| None` | yes |  | the bundle this one superseded with --replace, retained under .cad-work/replaced/ |
 
 Constraints not expressed by the type:
@@ -922,10 +922,10 @@ Source: `/$defs/part_drawing`
 | --- | --- | --- | --- | --- |
 | `type` | `Literal["detail", "vendor_specification", "source_control"]` | yes |  |  |
 | `tolerance_policy` | `DrawingPolicyName` | no |  |  |
-| `datum_features` | `dict[str, DrawingPartDrawingDatumFeaturesAdditionalProperties]` | no |  |  |
+| `datum_features` | `Mapping[str, DrawingPartDrawingDatumFeaturesAdditionalProperties]` | no |  |  |
 | `coordinate_frame` | `DrawingPartDrawingCoordinateFrame` | no |  |  |
 | `views` | `list[DrawingView]` | no |  |  |
-| `features` | `dict[str, DrawingFeatureIntent]` | no |  |  |
+| `features` | `Mapping[str, DrawingFeatureIntent]` | no |  |  |
 | `dimensions` | `list[DrawingDimensionRequest]` | no |  |  |
 | `geometric_tolerances` | `list[DrawingGeometricTolerance]` | no |  |  |
 | `edges` | `DrawingPartDrawingEdges` | no |  | the general indication of the edges of undefined shape (ISO 13715:2017 §4.5.4); a detail drawing needs it |
@@ -1192,9 +1192,9 @@ Source: `/$defs/product_drawing`
 | --- | --- | --- | --- | --- |
 | `definition` | `Literal["model_and_drawing"]` | yes |  |  |
 | `projection` | `Literal["first_angle", "third_angle"]` | yes |  |  |
-| `standards` | `dict[str, str]` | yes |  |  |
+| `standards` | `Mapping[str, str]` | yes |  |  |
 | `default_sheet` | `DrawingProductDrawingDefaultSheet` | yes |  |  |
-| `tolerance_policies` | `dict[str, DrawingTolerancePolicy]` | yes |  |  |
+| `tolerance_policies` | `Mapping[str, DrawingTolerancePolicy]` | yes |  |  |
 | `general_tolerance_policy` | `DrawingPolicyName` | yes |  |  |
 
 Constraints not expressed by the type:
@@ -1462,9 +1462,9 @@ One evidence run of a built version: the producer steps the scope ran, each with
 | `record_sha256` | `EvidenceRunSha256OrNull` | yes |  | the record inputs digest when the run started (the packet records its own) |
 | `steps` | `list[EvidenceRunStep]` | yes |  |  |
 | `stopped_at` | `str \| None` | yes |  | the step whose result stopped the run |
-| `packet` | `dict[str, Any] \| None` | yes |  | the evidence packet evidence.py check prints for the same inputs |
-| `findings` | `list[dict[str, Any]]` | no |  | why the run was refused |
-| `strays` | `list[dict[str, Any]]` | no |  | recorded runs that ended and left processes behind, or cannot be verified (process_lifecycle strays) |
+| `packet` | `Mapping[str, Any] \| None` | yes |  | the evidence packet evidence.py check prints for the same inputs |
+| `findings` | `list[Mapping[str, Any]]` | no |  | why the run was refused |
+| `strays` | `list[Mapping[str, Any]]` | no |  | recorded runs that ended and left processes behind, or cannot be verified (process_lifecycle strays) |
 | `stop_commands` | `list[str]` | no |  | the commands that stop the strays |
 
 Constraints not expressed by the type:
@@ -1491,7 +1491,7 @@ Source: `/$defs/step`
 | `argv` | `list[str] \| None` | yes |  | the producer command; null for the in-process validator |
 | `exit` | `int \| None` | yes |  | the exit status; null for a step that did not run |
 | `status` | `Literal["pass", "fail", "no_result", "skipped", "stopped"]` | yes |  |  |
-| `result` | `dict[str, Any] \| None` | yes |  | what the step reported: the validator's blocking findings, a producer's stdout file and status, why a step was skipped or could not start |
+| `result` | `Mapping[str, Any] \| None` | yes |  | what the step reported: the validator's blocking findings, a producer's stdout file and status, why a step was skipped or could not start |
 | `seconds` | `float \| None` | yes |  |  |
 
 Constraints not expressed by the type:
@@ -1957,13 +1957,13 @@ Source: schema root
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `schema_version` | `Literal[1]` | yes |  |  |
-| `tokens` | `dict[str, LayoutTokensAdditionalProperties]` | yes |  | Placeholders a path template may use as {TOKEN}; ** spans one or more names (none when it starts a template's middle) |
+| `tokens` | `Mapping[str, LayoutTokensAdditionalProperties]` | yes |  | Placeholders a path template may use as {TOKEN}; ** spans one or more names (none when it starts a template's middle) |
 | `legend` | `LayoutLegend` | yes |  |  |
 | `entries` | `list[LayoutEntry]` | yes |  |  |
 | `exceptions` | `list[LayoutException]` | yes |  |  |
 | `rules` | `list[LayoutRule]` | yes |  |  |
 | `classes` | `list[LayoutClass]` | yes |  | Stray classes by file suffix; the last class, with no suffixes, takes every other file |
-| `findings` | `dict[str, LayoutFindingsAdditionalProperties]` | yes |  | Every finding code the layout check emits; message and action are templates for codes no rule, class or exception words |
+| `findings` | `Mapping[str, LayoutFindingsAdditionalProperties]` | yes |  | Every finding code the layout check emits; message and action are templates for codes no rule, class or exception words |
 | `manufacturing` | `LayoutManufacturing` | yes |  |  |
 | `storage` | `LayoutStorage` | yes |  | Which generated results git tracks, by the product.yaml answer `setting` names: ignored unless it is true, then tracked with Git LFS for `lfs_suffixes` |
 
@@ -1986,7 +1986,7 @@ Source: `/$defs/class`
 | `class` | `str` | yes |  |  |
 | `suffixes` | `list[str]` | yes |  |  |
 | `canonical` | `str` | yes |  |  |
-| `file_by_suffix` | `dict[str, str]` | no |  |  |
+| `file_by_suffix` | `Mapping[str, str]` | no |  |  |
 | `message` | `str` | yes |  |  |
 | `action` | `str` | yes |  |  |
 
@@ -2088,7 +2088,7 @@ Constraints not expressed by the type:
 
 Source: `/$defs/glossary`
 
-Alias of `dict[str, str]`
+Alias of `Mapping[str, str]`
 
 Constraints not expressed by the type:
 
@@ -2125,8 +2125,8 @@ Source: `/properties/manufacturing`
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `custom_made` | `list[LayoutManufacturingCustomMadeItems]` | yes |  | A part is custom-made when any condition holds |
-| `outputs` | `dict[str, LayoutOutputFiles]` | yes |  | Output files per primary process that has an output contract; a process without an entry, such as other, has none, so its manufacturing coverage stays unknown |
-| `formats` | `dict[str, str]` | yes |  |  |
+| `outputs` | `Mapping[str, LayoutOutputFiles]` | yes |  | Output files per primary process that has an output contract; a process without an entry, such as other, has none, so its manufacturing coverage stays unknown |
+| `formats` | `Mapping[str, str]` | yes |  |  |
 | `mesh` | `LayoutManufacturingMesh` | yes |  |  |
 | `same_state_volume_rel_tolerance` | `float` | yes | `1e-09` |  |
 
@@ -3100,7 +3100,7 @@ One producer's required-check packet for one version: the obligations it was ask
 | `expected` | `list[ManufacturingObligation]` | yes |  |  |
 | `outcomes` | `list[ManufacturingObligationOutcome]` | yes |  |  |
 | `findings` | `list[ManufacturingFinding]` | yes |  |  |
-| `dependencies` | `dict[str, ManufacturingSha256]` | yes |  | sha256 of each input the producer read, by name, such as the part record, material and capability profiles and the geometry |
+| `dependencies` | `Mapping[str, ManufacturingSha256]` | yes |  | sha256 of each input the producer read, by name, such as the part record, material and capability profiles and the geometry |
 | `complete` | `bool` | yes |  | true only when every expected obligation has an outcome |
 | `result` | `ManufacturingOutcome` | yes |  | fail if any outcome fails, else unknown if any is unknown or the packet is incomplete, else pass (not_applicable outcomes aside) |
 
@@ -3149,7 +3149,7 @@ Source: `/$defs/entry`
 | `criterion` | `ManufacturingCriterion` | no |  |  |
 | `source` | `ManufacturingSource` | no |  |  |
 | `configuration` | `ManufacturingEvidenceEntryConfiguration` | no |  |  |
-| `fingerprints` | `dict[str, ManufacturingSha256]` | no |  | sha256 of each normalized dependency the evidence relied on, by domain; a changed fingerprint makes the evidence stale until an impact assessment carries it forward |
+| `fingerprints` | `Mapping[str, ManufacturingSha256]` | no |  | sha256 of each normalized dependency the evidence relied on, by domain; a changed fingerprint makes the evidence stale until an impact assessment carries it forward |
 | `artifacts` | `list[ManufacturingFileHash]` | no |  |  |
 | `bundle` | `ManufacturingEvidenceEntryBundle` | no |  |  |
 | `tool` | `ManufacturingText` | no |  |  |
@@ -4937,7 +4937,7 @@ A choreography over the record's independent joints, as cad-motion plan.py reads
 | `title` | `str` | no |  |  |
 | `fps` | `int` | no | `30` | Playback rate in frames per second; frames are spaced by max_step, not by time |
 | `max_step` | `MotionPlanMaxStep` | no | `{"deg":5,"mm":1}` | The largest independent-joint change between consecutive frames: deg for revolute joints, mm for prismatic ones. A step near the joint's range skips collisions |
-| `start` | `dict[str, float]` | no |  |  |
+| `start` | `Mapping[str, float]` | no |  |  |
 | `segments` | `list[MotionPlanSegmentsItems]` | yes |  |  |
 | `coverage` | `Literal["full", "partial"]` | no | `"full"` |  |
 | `coverage_reason` | `str` | no |  |  |
@@ -4982,7 +4982,7 @@ Source: `/properties/segments/items`
 | --- | --- | --- | --- | --- |
 | `id` | `str` | yes |  |  |
 | `title` | `str` | no |  |  |
-| `to` | `dict[str, float]` | no |  |  |
+| `to` | `Mapping[str, float]` | no |  |  |
 | `easing` | `Literal["linear", "ease_in_out"]` | no | `"linear"` |  |
 | `camera` | `Literal["iso", "front", "side"]` | no | `"iso"` |  |
 | `hold_frames` | `int` | no |  |  |
@@ -6004,7 +6004,7 @@ Constraints not expressed by the type:
 
 Source: `/$defs/checks`
 
-Alias of `dict[str, Literal["pass", "fail", "waived"]]`
+Alias of `Mapping[str, Literal["pass", "fail", "waived"]]`
 
 ### ReleaseManifestFiles
 
@@ -6012,7 +6012,7 @@ Source: `/$defs/files`
 
 Every package file but manifest.json, keyed by its path in the package, with its sha256 and the immutable original it copies
 
-Alias of `dict[str, ReleaseManifestFilesAdditionalProperties]`
+Alias of `Mapping[str, ReleaseManifestFilesAdditionalProperties]`
 
 Constraints not expressed by the type:
 
@@ -6089,7 +6089,7 @@ Source: `/$defs/v3`
 | `frozen` | `ReleaseManifestV3Frozen` | yes |  |  |
 | `approval` | `ProductDecision` | yes |  | the decision record approving this release |
 | `files` | `ReleaseManifestFiles` | yes |  |  |
-| `manufacturing` | `dict[str, ReleaseManifestV3ManufacturingAdditionalProperties]` | yes |  | Per custom-made PN of the frozen version: its process, assembled quantity, package files, the route kinds it was assessed for and its per-component files |
+| `manufacturing` | `Mapping[str, ReleaseManifestV3ManufacturingAdditionalProperties]` | yes |  | Per custom-made PN of the frozen version: its process, assembled quantity, package files, the route kinds it was assessed for and its per-component files |
 | `bundles` | `ReleaseManifestBundles` | yes |  |  |
 | `checks` | `ReleaseManifestChecks` | yes |  |  |
 | `acceptance` | `ReleaseManifestV3Acceptance` | yes |  | What the release is accepted for, sealed from its own package bytes: the canonical acceptance inventory and its digest (equal to frozen.evidence_sha256), the release scope, the evidence levels claimed per requirement, the approved waivers and any obligations left open within a permitted trial scope. Unknown is never a pass, and a waiver stays waived |
@@ -6109,9 +6109,9 @@ What the release is accepted for, sealed from its own package bytes: the canonic
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `evidence_sha256` | `ReleaseManifestSha256` | yes |  |  |
-| `inventory` | `dict[str, ReleaseManifestSha256]` | yes |  | hw-relative path to sha256 of every file the digest covers |
+| `inventory` | `Mapping[str, ReleaseManifestSha256]` | yes |  | hw-relative path to sha256 of every file the digest covers |
 | `scope` | `ReleaseManifestV3AcceptanceScope` | yes |  |  |
-| `claims` | `dict[str, list[ManufacturingEvidenceLevel]]` | yes |  | The evidence levels the release claims, per requirement |
+| `claims` | `Mapping[str, list[ManufacturingEvidenceLevel]]` | yes |  | The evidence levels the release claims, per requirement |
 | `waivers` | `list[ManufacturingWaiver]` | yes |  |  |
 | `open_obligations` | `list[ManufacturingObligationId]` | yes |  |  |
 
@@ -6165,7 +6165,7 @@ Source: `/$defs/v3/properties/manufacturing/additionalProperties`
 | `quantity` | `int` | yes |  |  |
 | `files` | `list[ReleaseManifestPackagePath]` | yes |  |  |
 | `route` | `list[ManufacturingRouteKind]` | yes |  |  |
-| `components` | `dict[str, list[ReleaseManifestPackagePath]]` | no |  |  |
+| `components` | `Mapping[str, list[ReleaseManifestPackagePath]]` | no |  |  |
 
 Constraints not expressed by the type:
 
@@ -6833,7 +6833,7 @@ Source: `/$defs/variant`
 | `id` | `ConceptSceneId` | yes |  |  |
 | `label` | `str` | yes |  |  |
 | `summary` | `str` | no |  |  |
-| `params` | `dict[str, float \| str \| bool]` | no |  | Named design parameters that distinguish this variant, e.g. reach_mm. Carried into the handoff. |
+| `params` | `Mapping[str, float \| str \| bool]` | no |  | Named design parameters that distinguish this variant, e.g. reach_mm. Carried into the handoff. |
 | `root` | `ConceptSceneGroup` | yes |  |  |
 | `joints` | `list[ConceptSceneJoint]` | no |  |  |
 
@@ -7020,7 +7020,7 @@ Source: `/properties/variant`
 | `id` | `HandoffId` | yes |  |  |
 | `label` | `str` | yes |  |  |
 | `summary` | `str` | no |  |  |
-| `params` | `dict[str, float \| str \| bool]` | yes |  |  |
+| `params` | `Mapping[str, float \| str \| bool]` | yes |  |  |
 
 Constraints not expressed by the type:
 
