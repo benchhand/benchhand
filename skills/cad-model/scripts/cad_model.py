@@ -4,7 +4,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["click==8.5.1", "cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy==2.5.5", "python-fcl==0.7.0.11"]
+# dependencies = ["click==8.5.1", "cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "trimesh==4.*", "numpy==2.5.5", "python-fcl==0.7.0.11", "referencing>=0.28.4"]
 # ///
 """Build, check, and diff versions of a hardware design from its part model scripts.
 

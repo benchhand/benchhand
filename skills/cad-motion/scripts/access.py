@@ -4,7 +4,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Assembly and service access on built geometry: the `assembly.access` check of every recorded
 assembly operation, beside the pure `assembly.order` check, as one required-check packet.

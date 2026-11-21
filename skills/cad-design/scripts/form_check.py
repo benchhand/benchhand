@@ -4,7 +4,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["cadquery-ocp-novtk==8.0.1.1.0", "jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Fidelity self-check over per-part STEP files (B-rep validity, form metrics, joint bores) and, for a built
 version, the process-dispatched manufacturing checks of every made component and route operation.

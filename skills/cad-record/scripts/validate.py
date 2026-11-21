@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 # /// script
-# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """Validate a CAD hardware design record and print a JSON findings report."""
 

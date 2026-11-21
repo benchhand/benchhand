@@ -11,12 +11,12 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from modload import PEP723_BLOCK
+
 ROOT = Path(__file__).resolve().parent.parent
 JOB_LIST = ROOT / "scripts" / "freecad_job_modules.txt"
-BLOCK = re.compile(r"^# /// script\n((?:#.*\n)+?)# ///$", re.MULTILINE)
 FLOOR = re.compile(r"""^#\s*requires-python\s*=\s*["']\s*(?:>=|==)\s*(\d+)\.(\d+)""", re.MULTILINE)
 MINIMUM = (3, 12)
-DEPENDENCIES = re.compile(r"^#\s*dependencies\s*=\s*\[([^\]]*)\]", re.MULTILINE)
 
 
 def job_modules() -> set[str]:
@@ -32,15 +32,9 @@ def tracked_python() -> list[str]:
 
 
 def floor_of(source: str) -> tuple[int, int] | None:
-    block = BLOCK.search(source)
+    block = PEP723_BLOCK.search(source)
     match = FLOOR.search(block.group(1)) if block else None
     return (int(match.group(1)), int(match.group(2))) if match else None
-
-
-def dependencies_of(source: str) -> list[str]:
-    block = BLOCK.search(source)
-    match = DEPENDENCIES.search(block.group(1)) if block else None
-    return re.findall(r"""["']([^"']+)["']""", match.group(1)) if match else []
 
 
 def below_minimum(sources: dict[str, str], exempt: frozenset[str] | set[str]) -> list[str]:
@@ -80,18 +74,6 @@ class FloorParsing(unittest.TestCase):
         self.assertEqual(
             below_minimum(sources, frozenset()), ["scripts/new_tool.py: requires-python floor is 3.11"]
         )
-
-
-class IntentScriptDependencies(unittest.TestCase):
-    def test_manufacturing_intent_declares_what_guideline_discovery_imports(self) -> None:
-        source = (ROOT / "skills" / "cad-record" / "scripts" / "manufacturing_intent.py").read_text(encoding="utf-8")
-        self.assertEqual(
-            sorted(dependencies_of(source)), ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
-        )
-
-    def test_reads_declared_dependencies(self) -> None:
-        source = '# /// script\n# dependencies = ["a>=1", "b"]\n# ///\n'
-        self.assertEqual(dependencies_of(source), ["a>=1", "b"])
 
 
 class HostScriptFloors(unittest.TestCase):
