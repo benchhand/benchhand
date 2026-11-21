@@ -70,7 +70,6 @@ Approved departures. The tracking IDs come from the bead ledger, which the repos
 | Hand-written shell lexing in `scripts/test_no_verify_guard.py` (a `shlex` based word splitter near line 134) | The plan to replace it, the reasons and the bead status are unverified (ledger only). | benchhand-ci0 |
 | `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | benchhand-76q |
 | FEA thresholds in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | Recorded as engineering judgment (decision U-2, 20 Nov). The user chose these values on 20 Nov 2026: `TOLERANCE` stays at 5% and `TORSION_FLOOR` stays at 0.1% of F x L. A section that misses a gate abstains, never a pass or a fail. Neither ASME VIII-2 Annex 5-A nor EN 13445-3 gives a number. | benchhand-2dq |
-| The wrought, sheet and rod form stands in for ductility in the strength-eligibility gate (`DUCTILE_FORMS` in `skills/cad-analysis/scripts/fea_conditions.py`) | The docstring in `fea_conditions.py` says the profile schema holds no ductility field. The stand-in stays until a sourced elongation field replaces it, in a later PR. | benchhand-2dq, benchhand-2dq.2 |
 
 ## Build, test and lint commands
 
