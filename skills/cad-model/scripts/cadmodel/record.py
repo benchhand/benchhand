@@ -50,6 +50,12 @@ def load_yaml_loader() -> Any:
     return _load("cad_record_yaml_loader", YAML_LOADER_SCRIPT)
 
 
+def load_validate() -> Any:
+    """cad-record `validate.py` under `cad_record_validate`: its `approval_problem` judges a decision, and it loads the
+    project-start profile gate (`flow_profile_gate.py`) that `run` consults."""
+    return _load("cad_record_validate", RECORD_SCRIPTS / "validate.py")
+
+
 def snapshot(hw: Path, pns: Iterable[str]) -> dict[str, bytes]:
     """The bytes of the record files a version is built from, keyed by their path below hw/: every file
     the cad-record layout's `version.record` entry names that exists (`snapshot_names`): the product,
