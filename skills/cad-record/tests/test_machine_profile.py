@@ -161,6 +161,7 @@ class CheckTests(Case):
         self.assertTrue(any("capabilities.yaml" in m and "title" in m for m in found), found)
 
     def slicer_file(self, content: bytes = b"frozen slicer export") -> tuple[str, str]:
+        (self.hw / "product.yaml").write_text("record_version: 2\n", encoding="utf-8")  # a v2 record checks artifacts
         directory = self.hw / "manufacturing" / "sources"
         directory.mkdir(parents=True)
         (directory / "bench.3mf").write_bytes(content)
@@ -263,8 +264,11 @@ class WriteTests(Case):
         self.assertEqual([m["title"] for m in copied], ["my edit"])
 
     def approval(self, material: str, status: str = "approved") -> dict[str, Any]:
-        return {"material": material, "status": status, "operations": ["print"],
-                "source": {"kind": "decision", "reference": "owner decided it", "decision": "DR-001"}}
+        entry = {"material": material, "status": status, "operations": ["print"],
+                 "source": {"kind": "decision", "reference": "owner decided it", "decision": "DR-001"}}
+        if status == "forbidden":
+            entry["reason"] = "the owner rules it out"
+        return entry
 
     def materials_path(self) -> Path:
         return self.hw / "manufacturing" / "materials.yaml"
