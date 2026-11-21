@@ -29,8 +29,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from .additive import hole_fits
-from .core import (FAIL, NOT_APPLICABLE, PASS, POLICY, UNKNOWN, Calibrated, Context, Draft, Result, combine, gated, length,
-                   policy, source_dict, text, unknown)
+from .core import (FAIL, NO_LIMIT, NOT_APPLICABLE, PASS, POLICY, UNKNOWN, Calibrated, Context, Draft, Result, combine, gated,
+                   judge_upper_bound, length, policy, source_dict, text, unknown)
 
 HALOGENATED = re.compile(r"(?<![a-z])(pvc|cpvc|polyvinyl[\s_-]*chloride|vinyl|pvb|polyvinyl[\s_-]*butyral|ptfe|teflon|"
                          r"fep|pvdf|chlorinated|fluoropolymer)(?![a-z])", re.IGNORECASE)
@@ -468,25 +468,11 @@ def thermal(ctx: Context) -> Result:
 
 def _within(ctx: Context, surface: Any, cal: Calibrated, prop: str, units: str, code: str, remedy: str, recheck: str,
             findings: list[Draft]) -> tuple[str, str]:
-    """The calibrated upper bound of `cal` against every `prop <=` or `prop <` criterion of `surface`: FAIL when the
-    calibration can exceed one, UNKNOWN when another criterion of `prop` has an operator this cannot judge; a surface
-    stating no criterion of `prop` has nothing stricter for the calibration to meet."""
-    limits, unsupported = ctx.split_criteria(surface, prop, ctx.mi.UPPER_BOUND_OPERATORS)
-    for item in limits:
-        limit_units = item.get("units") or units
-        worst = cal.bounds(limit_units)[1]
-        if ctx.mi.exceeds_upper_bound(worst, item["operator"], float(item["value"]), 1e-9):
-            findings.append(Draft(code, "major", FAIL, {"value": round(worst, 6) + 0.0, "units": limit_units},
-                                  {**item, "units": limit_units}, f"calibrated {cal.characteristic} against the criterion",
-                                  f"calibration {cal.calibration.id}",
-                                  f"the as-cut {surface.feature} can exceed its {prop.replace('_', ' ')} limit",
-                                  remedy=remedy, recheck=[recheck], feature=surface.feature))
-            return FAIL, f"{surface.feature} {prop}"
-    if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
-        return UNKNOWN, f"{surface.feature} {prop} criterion with operator {', '.join(unsupported)} is not judged against a calibrated upper bound"
-    if not limits:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
-        return UNKNOWN, f"{surface.feature} states no {prop} limit to judge the calibrated {cal.characteristic} against"
-    return PASS, f"{surface.feature} {prop} within calibration {cal.calibration.id}"
+    """`judge_upper_bound` for an as-cut surface; a surface stating no limit of `prop` is UNKNOWN, never a pass."""
+    outcome, reason = judge_upper_bound(ctx, surface, cal, prop, units, code=code, state="as-cut", remedy=remedy,
+                                        recheck=recheck, findings=findings)
+    # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+    return (UNKNOWN, reason) if outcome == NO_LIMIT else (outcome, reason)
 
 
 def nesting(ctx: Context) -> Result:

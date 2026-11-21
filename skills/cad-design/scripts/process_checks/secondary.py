@@ -14,8 +14,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .core import (FAIL, NOT_APPLICABLE, PASS, UNKNOWN, Context, Draft, Result, access_directions, combine, direction_key, dot,
-                   gated, length, policy, text, unknown)
+from .core import (FAIL, NO_LIMIT, NOT_APPLICABLE, PASS, UNKNOWN, Calibrated, Context, Draft, Result, access_directions, combine,
+                   direction_key, dot, gated, judge_upper_bound, length, policy, text, unknown)
 from .machining import tools
 
 CLEANUP_PURPOSES = frozenset({"stock", "finish", "support_removal"})
@@ -336,33 +336,23 @@ def coating_access(ctx: Context) -> Result:
     return combine(method, parts, findings)
 
 
-def _join_distortion_against_limits(ctx: Context, cal: Any, method: str) -> Result:
-    """The calibrated worst join distortion against every `join_distortion <=` or `<` criterion on a critical surface:
-    FAIL when it can exceed one, UNKNOWN when none is stated or another has an operator this cannot judge."""
+def _join_distortion_against_limits(ctx: Context, cal: Calibrated, method: str) -> Result:
+    """The calibrated worst join distortion against the `join_distortion` limit of every critical surface the join leaves
+    as made (a surface a later operation re-machines, or one not as manufactured, is not judged here). UNKNOWN when no
+    surface states a limit."""
     findings: list[Draft] = []
-    unsupported: list[str] = []
-    stated = False
+    parts: list[tuple[str, str]] = []
     for surface in ctx.surfaces():
-        limits, other = ctx.split_criteria(surface, "join_distortion", ctx.mi.UPPER_BOUND_OPERATORS)
-        unsupported += other
-        stated = stated or bool(limits)
-        for item in limits:
-            units = item.get("units") or "mm"
-            worst = cal.bounds(units)[1]
-            if ctx.mi.exceeds_upper_bound(worst, item["operator"], float(item["value"]), 1e-9):
-                findings.append(Draft("process.joining.distortion", "major", FAIL, {"value": round(worst, 6) + 0.0, "units": units},
-                                      {**item, "units": units}, "calibrated join distortion against the criterion",
-                                      f"calibration {cal.calibration.id}",
-                                      f"the joined {surface.feature} can exceed its join distortion limit",
-                                      remedy=f"machine {surface.feature} after joining, or relax the limit with the design owner",
-                                      recheck=["process.joining"], feature=surface.feature))
-                return Result(FAIL, method, f"{surface.feature} join_distortion", findings)
-    if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
-        return Result(UNKNOWN, method, f"join_distortion criterion with operator {', '.join(sorted(set(unsupported)))} "
-                                       "is not judged against a calibrated upper bound")
-    if not stated:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
-        return Result(UNKNOWN, method, f"calibrated ({cal.calibration.id}); no critical surface states a join_distortion limit")
-    return Result(PASS, method, f"calibrated ({cal.calibration.id}); within every stated join_distortion limit")
+        if surface.dimension_state != "as_manufactured" or any(surface.feature in ctx.targets(op) for op in ctx.after()):
+            continue
+        outcome, reason = judge_upper_bound(ctx, surface, cal, "join_distortion", "mm", code="process.joining.distortion",
+                                            state="joined", recheck="process.joining", findings=findings,
+                                            remedy=f"machine {surface.feature} after joining, or relax the limit with the design owner")
+        if outcome != NO_LIMIT:
+            parts.append((outcome, reason))
+    if not parts:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+        parts.append((UNKNOWN, f"calibrated ({cal.calibration.id}); no critical surface states a join_distortion limit"))
+    return combine(method, parts, findings)
 
 
 def joining_distortion(ctx: Context) -> Result:

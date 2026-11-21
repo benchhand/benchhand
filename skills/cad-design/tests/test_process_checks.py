@@ -1214,16 +1214,18 @@ class OtherRouteKindTests(Checks):
 
     JOIN = "process.joining.distortion@TST-0902/join"
 
-    def joined(self, criteria: list[dict[str, Any]] | None) -> Any:
-        """A laser-cut TST-0902 joined by an operation whose calibrated join distortion is 0.0..0.2 mm."""
+    def joined(self, criteria: list[dict[str, Any]] | None, *, state: str = "as_manufactured", then: list | None = None) -> Any:
+        """A laser-cut TST-0902 joined by an operation whose calibrated join distortion is 0.0..0.2 mm, then `then`."""
         distortion = calibration("join_study", "join_distortion", ACRYLIC, 0.0, 0.2)
         joiner = FX.capability_profile("tst_joiner", "joining", calibrations=[distortion], materials=[approval(ACRYLIC)])
+        mill = FX.capability_profile("tst_mill", "cnc", parameters={"axes": known(mm(3, units="count"))},
+                                     materials=[approval(ACRYLIC, operations=["machine"])])
         documents = FX.record(parts=[cut("TST-0902")], materials=materials(),
-                              capabilities=[laser_profile(ACRYLIC_APPROVAL, calibrations=[KERF]), joiner])
+                              capabilities=[laser_profile(ACRYLIC_APPROVAL, calibrations=[KERF]), joiner, mill])
         intent = documents["parts/TST-0902/part.yaml"]["intent"]
-        intent["route"].append(FX.operation("join", "joining", "tst_joiner"))
+        intent["route"] += [FX.operation("join", "joining", "tst_joiner"), *(then or [])]
         if criteria is not None:
-            intent["critical_surfaces"] = [surface("datum_a", "datum", criteria=criteria)]
+            intent["critical_surfaces"] = [surface("datum_a", "datum", state, criteria=criteria)]
         return self.assess(documents)
 
     def test_calibrated_join_distortion_with_no_stated_limit_is_unknown_never_pass(self) -> None:
@@ -1238,6 +1240,23 @@ class OtherRouteKindTests(Checks):
                 result = self.joined([FX.criterion("join_distortion", operator, limit, "mm")])
                 self.assertEqual(self.outcome(result, self.JOIN), outcome)
                 self.assertEqual(outcome == "fail", "process.joining.distortion" in self.codes(result))
+
+    def test_a_join_distortion_limit_in_other_units_is_converted_before_the_comparison(self) -> None:
+        for value, outcome in ((100, "fail"), (300, "pass")):
+            with self.subTest(limit_um=value):
+                result = self.joined([FX.criterion("join_distortion", "<=", value, "um")])
+                self.assertEqual(self.outcome(result, self.JOIN), outcome)
+                self.assertEqual(outcome == "fail", "process.joining.distortion" in self.codes(result))
+
+    def test_a_surface_the_join_does_not_leave_as_made_is_not_judged_against_its_join_distortion_limit(self) -> None:
+        limit = [FX.criterion("join_distortion", "<=", 0.1, "mm")]
+        remachined = FX.operation("machine", "cnc", "tst_mill", targets=[{"feature": "datum_a"}])
+        for name, kwargs in (("a later operation machines it", {"then": [remachined]}),
+                             ("it is not an as-manufactured dimension", {"state": "assembled"})):
+            with self.subTest(case=name):
+                result = self.joined(limit, **kwargs)
+                self.assertNotIn("process.joining.distortion", self.codes(result))
+                self.assertEqual(self.outcome(result, self.JOIN), "unknown")
 
     def test_calibrated_laser_flatness_must_meet_the_datum_flatness_limit(self) -> None:
         thermal = [calibration("flat_study", "flatness", ACRYLIC, 0.0, 0.3),
