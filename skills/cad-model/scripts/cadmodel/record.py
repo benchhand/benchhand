@@ -50,6 +50,14 @@ def load_yaml_loader() -> Any:
     return _load("cad_record_yaml_loader", YAML_LOADER_SCRIPT)
 
 
+def load_validate() -> Any:
+    """cad-record `validate.py` under `cad_record_validate`, loaded on first call. `run` consults it for the
+    project-start profile only, which never reaches an output byte. The path is built without the `.py` suffix on
+    purpose: cad-motion code_shas follows `<path>.py` expressions, and manufacture.py imports this module, so a
+    literal would put the validator and its data in the manufacturing output key."""
+    return _load("cad_record_validate", (RECORD_SCRIPTS / "validate").with_suffix(".py"))
+
+
 def snapshot(hw: Path, pns: Iterable[str]) -> dict[str, bytes]:
     """The bytes of the record files a version is built from, keyed by their path below hw/: every file
     the cad-record layout's `version.record` entry names that exists (`snapshot_names`): the product,

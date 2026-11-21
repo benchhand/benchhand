@@ -33,7 +33,6 @@ import platform
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
@@ -132,9 +131,8 @@ def require_profile(hw: Path, snapshot: record.Snapshot) -> None:
     """Refuse a build whose product has no settled project-start profile (cad-record flow_profile_gate, checked
     at L1 LAYOUT at the earliest, since a build is LAYOUT work). The product and parts come from the snapshot
     this version is built from; only the cited decision is read from hw/decisions/."""
-    # loaded here, not in cadmodel.record: manufacture.py imports record, and its output key covers the code it names
-    validate = record._load("cad_record_validate", record.RECORD_SCRIPTS / "validate.py")
-    gate = sys.modules["cad_record_flow_profile_gate"]
+    validate = record.load_validate()
+    gate = validate.profile_gate
     _stage, found = gate.gate(snapshot.documents.get("product.yaml"), snapshot.parts,
                               functools.partial(validate.approval_problem, hw), build=True)
     if found:

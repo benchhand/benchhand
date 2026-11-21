@@ -992,6 +992,21 @@ class FlowProfileFindings(unittest.TestCase):
         self.edit_product("stage: layout\n  recheck_from: layout", "stage: specify\n  recheck_from: specify")
         self.assertEqual([item["severity"] for item in self.flow_findings() if item["code"] == "flow.conflict"], ["warning"])
 
+    def test_the_safety_rule_is_an_error_before_layout_too(self) -> None:
+        self.edit_product("stage: layout\n  recheck_from: layout", "stage: specify\n  recheck_from: specify")
+        self.edit_product("service_class: {status: unknown, reason: not recorded before record version 2, question: Q-001}",
+                          "service_class: {status: known, value: safety_critical, basis: user_declared, "
+                          "sources: [{kind: user, reference: TST fixture, origin: TST fixture user}]}")
+        result, report = self.validate()
+        self.assertEqual([item["message"] for item in report["findings"] if item.get("code") != "flow.conflict"], [],
+                         "the record is schema-valid")
+        found = [item for item in report["findings"] if item.get("code") == "flow.conflict"]
+        # the lamp profile has fea off and critique light: the rule refuses each, as an error although SPECIFY is before LAYOUT
+        self.assertEqual([item["severity"] for item in found], ["error", "error"], found)
+        self.assertIn("safety_critical service refuses fea off", str(found[0]["message"]))
+        self.assertIn("safety_critical service refuses critique: light", str(found[1]["message"]))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
     def write_case(self, case: str, text: str) -> None:
         folder = self.hw / "analysis" / "cases" / case
         folder.mkdir(parents=True)
