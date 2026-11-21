@@ -71,7 +71,7 @@ CODES: Mapping[str, str] = types.MappingProxyType({
 
 # --- closed vocabularies ---------------------------------------------------------------------------------------
 EVIDENCE_LEVELS = ("cad_valid", "geometrically_manufacturable", "process_planned", "simulation_supported", "physically_validated")
-OUTCOMES = ("pass", "fail", "unknown", "not_applicable")
+OUTCOMES = ("pass", "fail", "unknown", "not_applicable", "not_assessed")
 SEVERITIES = ("critical", "major", "minor", "info")
 SERVICE_CLASSES = ("appearance_concept", "fit_assembly", "functional_demo", "working_prototype", "production", "safety_critical", "unknown")
 FUNCTIONS = ("structural", "cosmetic", "locating", "sliding", "rotating", "sealing", "spring", "thermal", "electrical", "optical", "other")

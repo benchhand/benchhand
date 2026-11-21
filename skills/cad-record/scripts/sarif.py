@@ -52,8 +52,9 @@ CODE_KEYS = ("code", "check", "id", "rule")
 PART_KEYS = ("part", "pn", "PN")
 LEVELS = {"critical": "error", "major": "error", "minor": "warning", "info": "note",
           "error": "error", "warning": "warning", "stage": "warning"}
-KINDS = {"fail": "fail", "unknown": "review", "pass": "pass", "not_applicable": "notApplicable"}
-QUIET_KINDS = frozenset({"pass", "notApplicable"})
+KINDS = {"fail": "fail", "unknown": "review", "pass": "pass", "not_applicable": "notApplicable",
+         "not_assessed": "informational"}  # nothing was assessed: no pass, no review, nothing blocks
+QUIET_KINDS = frozenset({"pass", "notApplicable", "informational"})
 PART_FILES = ("part.yaml", "model.py")
 PART_NUMBER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 

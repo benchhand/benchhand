@@ -860,7 +860,8 @@ def _packet_problems(packet: ProducerPacket, expected: Mapping[str, Any]) -> lis
     if data.get("complete") is True and not covered:
         problems.append("it claims complete but lacks outcomes for " + ", ".join(sorted(map(str, set(packet_expected) - set(ids)))))
     results = {o.get("outcome") for o in outcomes}
-    shown = "fail" if "fail" in results else ("unknown" if "unknown" in results or not covered else "pass")
+    shown = ("fail" if "fail" in results else "unknown" if "unknown" in results or not covered
+             else "not_assessed" if "not_assessed" in results else "pass")  # the order of process_checks combine
     if data.get("result") != shown:
         problems.append(f"its result {data.get('result')!r} is not what its outcomes show ({shown})")
     given = {o.get("obligation"): o.get("outcome") for o in outcomes}

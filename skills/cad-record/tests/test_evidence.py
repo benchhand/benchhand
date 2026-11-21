@@ -101,6 +101,47 @@ def codes(findings: Any, severity: str | None = None) -> set[str]:
     return {f.code for f in findings if severity is None or f.severity == severity}
 
 
+def not_assessed_packet(record: Any, *others: tuple[str, str], result: str = "not_assessed") -> Any:
+    """A producer packet whose every software obligation is not_assessed (calibration off) except the `others`
+    given as (obligation, outcome). No emitter writes one yet, so a fixture packet is the seam."""
+    data = acceptance.producer_packet(record)
+    given = dict(others)
+    for row in data["outcomes"]:
+        row["outcome"] = given.get(row["obligation"], "not_assessed")
+        if row["outcome"] == "not_assessed":
+            row["reason"] = "calibration_off"
+    data["result"] = result
+    return evidence.ProducerPacket("hw/checks/v1/tst", "b" * 64, data)
+
+
+class NotAssessedIsNoPass(unittest.TestCase):
+    """D37: a not_assessed packet is consistent, blocks nothing of its own and gives no obligation a pass."""
+
+    def setUp(self) -> None:
+        self.record = normalized(documents())
+
+    def test_a_packet_that_shows_not_assessed_is_consistent(self) -> None:
+        result = assess(self.record, not_assessed_packet(self.record, (READBACK, "pass")))
+        self.assertNotIn("packet.invalid", codes(result.findings))
+
+    def test_the_packet_result_must_follow_the_order_fail_unknown_not_assessed_pass(self) -> None:
+        cases = {"not_assessed": [(READBACK, "pass")], "unknown": [(READBACK, "unknown")], "fail": [(READBACK, "fail")]}
+        for shown, others in cases.items():
+            for stated in {"pass", "not_assessed", "unknown", "fail"} - {shown}:
+                with self.subTest(shown=shown, stated=stated):
+                    result = assess(self.record, not_assessed_packet(self.record, *others, result=stated))
+                    self.assertIn("packet.invalid", codes(result.findings))
+            with self.subTest(shown=shown):
+                result = assess(self.record, not_assessed_packet(self.record, *others, result=shown))
+                self.assertNotIn("packet.invalid", codes(result.findings))
+
+    def test_a_not_assessed_outcome_never_becomes_a_pass_for_its_obligation(self) -> None:
+        result = assess(self.record, not_assessed_packet(self.record))
+        self.assertNotIn("packet.invalid", codes(result.findings))
+        self.assertEqual((result.statuses[READBACK].result, result.statuses[STRENGTH].result), ("unknown", "unknown"))
+        self.assertEqual(result.statuses[READBACK].sources, ())
+
+
 class UnknownNeverPasses(unittest.TestCase):
     """Row 16: an untested, planned, uncalibrated or merely stated result is never a pass."""
 
