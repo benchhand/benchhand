@@ -83,6 +83,7 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
   - `validate.py` `check_flow_profile` reads the work tree. The `flow.profile` and `flow.profile_unquoted` findings are errors; a `flow.conflict` runs only on schema-valid documents, is an error from LAYOUT on and for the safety rule at any stage, and is a warning before LAYOUT. Only an authored FEA case (a `case.yaml` with `step`) counts as one that needs FEA; a stack-up case in the same folder does not.
   - `cad_model.py run` (`cadmodel/build.py` `require_profile`) reads the record snapshot it builds from, checks at LAYOUT at the earliest and exits 2 on a block.
   - `stamp.py --verify` (`require_profile`) checks before the `flow.recheck_from` early return, so a stage below the threshold is still checked once SPECIFY is due.
+- `validate.py` is listed in `GATE_ONLY` in `skills/cad-motion/scripts/code_shas.py`: a gate that decides refuse or allow, and changes no output, stays out of the manufacturing output key. `test_mfg_key_location` `OutputKeyInputTests` pins both sides: a validator edit leaves the key, an edit to `manufacturing_intent.py` changes it.
 - The commit check reads the index only: the product, the part records (`tree_parts`) and the decision records (`tree_decisions`) come from the staged tree, or from HEAD with `--committed`. A decision that is accepted in the work tree but proposed in the index does not pass. Do not add a work-tree read to it.
 
 ## Feature flags

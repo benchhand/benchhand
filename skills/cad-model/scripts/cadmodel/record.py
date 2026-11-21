@@ -52,10 +52,9 @@ def load_yaml_loader() -> Any:
 
 def load_validate() -> Any:
     """cad-record `validate.py` under `cad_record_validate`, loaded on first call. `run` consults it for the
-    project-start profile only, which never reaches an output byte. The path is built without the `.py` suffix on
-    purpose: cad-motion code_shas follows `<path>.py` expressions, and manufacture.py imports this module, so a
-    literal would put the validator and its data in the manufacturing output key."""
-    return _load("cad_record_validate", (RECORD_SCRIPTS / "validate").with_suffix(".py"))
+    project-start profile only: a gate that decides refuse or allow and changes no output byte. cad-motion
+    code_shas lists it in GATE_ONLY, so it stays out of the manufacturing output key."""
+    return _load("cad_record_validate", RECORD_SCRIPTS / "validate.py")
 
 
 def snapshot(hw: Path, pns: Iterable[str]) -> dict[str, bytes]:
