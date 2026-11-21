@@ -484,8 +484,8 @@ def _within(ctx: Context, surface: Any, cal: Calibrated, prop: str, units: str, 
             return FAIL, f"{surface.feature} {prop}"
     if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
         return UNKNOWN, f"{surface.feature} {prop} criterion with operator {', '.join(unsupported)} is not judged against a calibrated upper bound"
-    if not limits:
-        return PASS, f"{cal.characteristic} calibrated ({cal.calibration.id}); {surface.feature} states no {prop} limit"
+    if not limits:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+        return UNKNOWN, f"{surface.feature} states no {prop} limit to judge the calibrated {cal.characteristic} against"
     return PASS, f"{surface.feature} {prop} within calibration {cal.calibration.id}"
 
 

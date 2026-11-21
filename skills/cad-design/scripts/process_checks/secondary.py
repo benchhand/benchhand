@@ -340,6 +340,9 @@ def joining_distortion(ctx: Context) -> Result:
     method = "joining distortion against a calibration"
     cal = ctx.calibrated("join_distortion")
     if cal.known:
+        if not any(ctx.split_criteria(s, "join_distortion", ctx.mi.UPPER_BOUND_OPERATORS)[0] for s in ctx.surfaces()):
+            # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+            return Result(UNKNOWN, method, f"calibrated ({cal.calibration.id}); no critical surface states a join_distortion limit")
         return Result(PASS, method, f"calibrated ({cal.calibration.id})")
     draft = Draft("process.joining.distortion_uncalibrated", "minor", UNKNOWN, unknown("join distortion"),
                   cal.criterion("join_distortion"), "capability calibrations", "; ".join(cal.reasons),

@@ -1204,6 +1204,25 @@ class OtherRouteKindTests(Checks):
                 self.assertEqual(self.outcome(result, "process.waterjet.edge@TST-0902/form"), outcome)
                 self.assertEqual(outcome == "fail", "process.waterjet.edge_finish" in self.codes(result))
 
+    def test_a_calibrated_waterjet_edge_with_no_roughness_limit_is_unknown_never_pass(self) -> None:
+        edge = [surface("cut_edge", "seal")]
+        taper = calibration("taper_study", "taper", ALU, 0.0, 0.05)
+        finish = calibration("finish_study", "edge_finish", ALU, 1.6, 3.2, "um")
+        result = self.assess(shaped("waterjet", [taper, finish], critical=edge))
+        self.assertEqual(self.outcome(result, "process.waterjet.edge@TST-0902/form"), "unknown")
+        self.assertIn("states no surface_roughness limit", result.outcome("process.waterjet.edge@TST-0902/form")["coverage"])
+
+    def test_calibrated_join_distortion_with_no_stated_limit_is_unknown_never_pass(self) -> None:
+        distortion = calibration("join_study", "join_distortion", ACRYLIC, 0.0, 0.2)
+        joiner = FX.capability_profile("tst_joiner", "joining", calibrations=[distortion], materials=[approval(ACRYLIC)])
+        documents = FX.record(parts=[cut("TST-0902")], materials=materials(),
+                              capabilities=[laser_profile(ACRYLIC_APPROVAL, calibrations=[KERF]), joiner])
+        documents["parts/TST-0902/part.yaml"]["intent"]["route"].append(FX.operation("join", "joining", "tst_joiner"))
+        result = self.assess(documents)
+        obligation = "process.joining.distortion@TST-0902/join"
+        self.assertEqual(self.outcome(result, obligation), "unknown")
+        self.assertIn("no critical surface states a join_distortion limit", result.outcome(obligation)["coverage"])
+
     def test_calibrated_laser_flatness_must_meet_the_datum_flatness_limit(self) -> None:
         thermal = [calibration("flat_study", "flatness", ACRYLIC, 0.0, 0.3),
                    calibration("haz_study", "heat_affected_zone", ACRYLIC, 0.0, 0.2)]
