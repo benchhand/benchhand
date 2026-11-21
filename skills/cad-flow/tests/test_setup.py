@@ -338,10 +338,25 @@ class StorageTests(unittest.TestCase):
         self.assertIsNone(self.text(".gitattributes"))
         self.assertEqual(self.text(".gitignore"), TEMPLATE_IGNORE.read_text(encoding="utf-8"))
 
+    def test_a_recorded_answer_that_is_not_a_boolean_is_a_manual_step_not_tracking_rules(self) -> None:
+        for value in ('"true"', '"false"', "1"):
+            with self.subTest(value=value):
+                self.profile(value)
+                items = setup.storage_plan(self.root)
+                self.assertEqual([item.id for item in items], ["storage-manual"])
+                self.assertIn("must be true or false", items[0].command)
+                self.assertIsNone(self.text(".gitattributes"))
+
     def test_a_profile_without_an_asked_storage_answer_is_not_an_answer(self) -> None:
         self.profile("true", how=None)
         plan = setup.storage_plan(self.root)
         self.assertIn("is not answered yet", plan[0].command)
+
+    def test_a_profile_asking_other_questions_but_not_storage_is_not_an_answer(self) -> None:
+        (self.hw / "product.yaml").write_text(
+            "id: lamp\nflow:\n  profile:\n    decision: DR-001\n    storage_results_in_git: true\n"
+            "    asked:\n      human_approval: user\n", encoding="utf-8")
+        self.assertIn("is not answered yet", setup.storage_plan(self.root)[0].command)
 
     def test_the_profile_falls_back_to_the_storage_setting_when_it_has_no_answer(self) -> None:
         self.profile("false", how=None, legacy="true")
