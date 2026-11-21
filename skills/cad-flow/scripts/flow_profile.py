@@ -6,7 +6,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0"]
+# dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
 """The flow profile: the project-start questions, the record of their answers, and the check on it.
 
