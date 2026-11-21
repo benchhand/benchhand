@@ -81,6 +81,11 @@ FORM_STAND_IN_METALS = frozenset({"al_6061_t6_hydro", "al_6082_t6_hydro", "steel
                                   "stainless_304_outokumpu_core"})
 FORM_STAND_IN_FORMS = frozenset({"wrought", "sheet", "rod"})  # the forms of the removed DUCTILE_FORMS
 FORM_STAND_IN = "form stand-in, flag on"
+
+
+def metals_near_support_on() -> bool:
+    """Whether CAD_FEA_METALS_NEAR_SUPPORT is on. Only the string "1" turns it on, as with CAD_REQUIRE_FREECAD."""
+    return os.environ.get(METALS_NEAR_SUPPORT) == "1"
 # Bases that may support service evidence; estimates, assumptions and bare user statements may not.
 SERVICE_BASES = frozenset({"measured", "supplier_typical", "allowable", "standard"})
 # The required checks a static isotropic solve can answer, all at simulation_supported.
@@ -198,9 +203,14 @@ class Assessment:
         return gaps
 
     def recipe(self) -> dict[str, Any]:
-        """The recipe fields that bind a published bundle to this material, criterion and configuration."""
+        """The recipe fields that bind a published bundle to this material, criterion and configuration.
+
+        This method seals an environment flag that can change a verdict, so another setting never reuses a bundle.
+        It writes only an enabled flag: a case run without the flag keeps the recipe shape it had before the flag.
+        Remove the flag entry with the flag (see METALS_NEAR_SUPPORT)."""
         return {"material": self.material, "binding": self.binding, "acceptance": self.criteria,
-                "mesh_convergence": self.convergence, "dependencies": self.dependencies}
+                "mesh_convergence": self.convergence, "dependencies": self.dependencies,
+                **({"flags": {METALS_NEAR_SUPPORT: "1"}} if metals_near_support_on() else {})}
 
 
 def explicit(case: Mapping[str, Any], why: str) -> Assessment:
@@ -480,7 +490,7 @@ class _Assessor:
             gap = self.elongation_gap(profile, conditions, [p for p in entries if p.gauge == DUCTILE_GAUGE])
         if gap is None:
             return {"shown": True, "reason": None}
-        if (os.environ.get(METALS_NEAR_SUPPORT) == "1" and profile.id in FORM_STAND_IN_METALS
+        if (metals_near_support_on() and profile.id in FORM_STAND_IN_METALS
                 and profile.form in FORM_STAND_IN_FORMS):
             return {"shown": True, "reason": FORM_STAND_IN, "stand_in": True}
         return {"shown": False, "reason": gap}

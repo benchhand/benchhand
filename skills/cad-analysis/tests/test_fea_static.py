@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+from os import environ as process_env
 from pathlib import Path
 
 import importlib.util
@@ -1543,6 +1544,34 @@ class VersionedPublicationTests(unittest.TestCase):
             status, report = self.call()
         self.assertEqual(status, 2)
         self.assertIn("--replace", report["error"]["message"])
+
+    def call_with_metals_flag(self, value: str | None) -> tuple[int, dict]:
+        with patch.dict(process_env):
+            process_env.pop("CAD_FEA_METALS_NEAR_SUPPORT", None)
+            if value is not None:
+                process_env["CAD_FEA_METALS_NEAR_SUPPORT"] = value
+            return self.call()
+
+    def refused_after_flag_change(self, first: str | None, second: str | None) -> None:
+        # The fixture's alloy is not on the flag's metal list, so the flag leaves this verdict alone. The recipe still
+        # seals the flag's value, so the other setting refuses the bundle.
+        self.assertEqual(self.call_with_metals_flag(first)[0], 0)
+        with patch("fea_static.run_job", side_effect=AssertionError("the changed flag must not reuse")):
+            status, report = self.call_with_metals_flag(second)
+        self.assertEqual(status, 2)
+        self.assertIn("--replace", report["error"]["message"])
+
+    def test_turning_the_metals_near_support_flag_on_refuses_the_reuse_of_a_bundle(self) -> None:
+        self.refused_after_flag_change(None, "1")
+
+    def test_turning_the_metals_near_support_flag_off_refuses_the_reuse_of_a_bundle(self) -> None:
+        self.refused_after_flag_change("1", None)
+
+    def test_the_same_metals_near_support_flag_reuses_the_bundle(self) -> None:
+        self.assertEqual(self.call_with_metals_flag("1")[0], 0)
+        with patch("fea_static.run_job", side_effect=AssertionError("the same flag should reuse")):
+            status, report = self.call_with_metals_flag("1")
+        self.assertEqual((status, report["reused"]), (0, True))
 
     def test_changed_ccx_thread_counts_change_the_recipe(self) -> None:
         self.assertEqual(self.call()[0], 0)
