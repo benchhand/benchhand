@@ -90,6 +90,13 @@ class CheckTests(Case):
         found = self.messages()
         self.assertTrue(any(m.startswith("bench: envelope/y") and "estimate" in m for m in found), found)
 
+    def test_estimate_with_url_and_date_is_still_refused(self) -> None:
+        p = profile()
+        p["envelope"]["y"] = known(200, "mm", {**DATASHEET, "kind": "estimate", "reason": "read off a forum post"})
+        self.put(p)
+        found = self.messages()
+        self.assertTrue(any(m.startswith("bench: envelope/y") and "estimate" in m for m in found), found)
+
     def test_datasheet_without_access_date_is_refused(self) -> None:
         p = profile()
         p["envelope"]["z"] = known(200, "mm", {"kind": "supplier", "reference": "shop", "artifact": "a.pdf", "sha256": "0" * 64})
