@@ -115,7 +115,7 @@ Limits:
   - Without declared properties, it becomes `Mapping[str, V]`, where `V` comes from the `additionalProperties` schema (`inline_typed`, `gen_api.py:265-271`). `Assembly.profiles` is `Mapping[str, AssemblyProfile]`. `test_gen_api.py:443` expects `Mapping[str, str]` for a string value schema.
   - With unconstrained values, it becomes `Mapping[str, Any]` (same code).
 - The generator does not emit PEP 728 `extra_items`, because mypy ignores it. Only objects closed with `additionalProperties: false` or `unevaluatedProperties: false` can be a `TypedDict`.
-- A type cannot express the keywords in `NOTE_KEYS`, nor `if`/`then` and `dependentRequired`. The generator lists each one it finds in the docstring of `cad_api.py` and in `docs/schemas.md`. It drops none.
+- A type cannot express the keywords in `NOTE_KEYS`, nor `if`/`then` and `dependentRequired`. The generator lists most of them in the docstring of `cad_api.py` and in `docs/schemas.md`, but those notes are not a complete list. For example, `Walker.collect` ignores a later refinement that holds only a bound on an existing property (`gen_api.py:324-325`). The `schema-sha256` headers still make `--check` fail on an edit that the renderer does not show.
 - A `const` or `enum` with a float value cannot be a `Literal`. A `const` falls back to `Any`, and an `enum` falls back to the scalar type of its values.
 
 Tests are in `scripts/test_gen_api.py`. They run in the light batch (`unittest discover -s scripts`).
