@@ -72,9 +72,9 @@ ALLOWABLE_SERVICE = frozenset({"production", "safety_critical"})
 DUCTILE_GAUGE = "5.65sqrtS0"
 DUCTILE_ELONGATION = 0.14
 # REMOVE WITH THE FLAG when benchhand-y87 adds sourced elongation data to the metal profiles.
-# CAD_FEA_METALS_NEAR_SUPPORT=1 (off by default; only "1" turns it on, as CAD_REQUIRE_FREECAD does) lets a metal
-# profile that fails the elongation rule stand in as ductile by its form. The profile schema has no metal field, so
-# the metals are the shipped profile ids listed here. A material not listed stays unknown with the flag on.
+# CAD_FEA_METALS_NEAR_SUPPORT=1 turns it on. It is off by default, and only "1" counts, as for CAD_REQUIRE_FREECAD.
+# With it on, a metal profile that fails the elongation rule stands in as ductile by its form. The profile schema
+# has no metal field, so the metals are the shipped profile ids listed here. A material not listed stays unknown.
 # Owner: package A (FEA). Registered in docs/engineering.md.
 METALS_NEAR_SUPPORT = "CAD_FEA_METALS_NEAR_SUPPORT"
 FORM_STAND_IN_METALS = frozenset({"al_6061_t6_hydro", "al_6082_t6_hydro", "steel_dc01_salzgitter",
