@@ -39,6 +39,7 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
+# The imports below need scripts/ on sys.path first, so they cannot sit above the sys.path line (E402).
 import fea_conditions as conditions  # noqa: E402
 import fea_near_support as ns  # noqa: E402
 import fea_stress as fs  # noqa: E402
@@ -406,14 +407,15 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
 
     @staticmethod
     def ductile_alloy(elongation: float | None = 0.14, gauge: str | None = "5.65sqrtS0", *, orientation: str | None = None,
-                      base: dict[str, Any] | None = None) -> dict[str, Any]:
+                      base: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
         """The synthetic wrought alloy with an elongation_at_break of `elongation` (a ratio) on `gauge`, or with no
-        elongation entry at all when `elongation` is None. The default sits exactly on the EN 13445-2 4.1.4 limit."""
+        elongation entry at all when `elongation` is None. The default sits exactly on the EN 13445-2 4.1.4 limit.
+        `extra` goes to the property fixture (conditioning, temperature, basis)."""
         tests = conditions_tests
         profile = base or tests.alloy()
         if elongation is not None:
-            entry = tests.prop("elongation_at_break", elongation, "dimensionless",
-                               temperature=tests.fx.quantity(lower=10, upper=40, units="deg_C"),
+            extra = {"temperature": tests.fx.quantity(lower=10, upper=40, units="deg_C"), **extra}
+            entry = tests.prop("elongation_at_break", elongation, "dimensionless", **extra,
                                **({"orientation": tests.fx.known(orientation)} if orientation else {}))
             if gauge is not None:
                 entry["conditions"]["gauge"] = gauge
@@ -489,7 +491,7 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
             "a good value on the A50mm gauge": (0.30, "A50mm", "unknown", "A50mm"),
             "a good value on the 5d gauge": (0.30, "5d", "unknown", "5d"),
             "a good value with no gauge": (0.30, None, "unknown", "stated on no gauge"),
-            "no elongation entry": (None, None, "unknown", "records no elongation_at_break"),
+            "no elongation entry": (None, None, "unknown", "records no known elongation_at_break"),
         }
         for name, (value, gauge, outcome, why) in cases.items():
             with self.subTest(name):
@@ -515,6 +517,72 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         report = self.solve(beam_plan(beam_field(), (0.0,), LENGTH, LOAD), conditions_tests.documents(profiles=[profile]))
         self.assertEqual(self.row(report)[0]["outcome"], "pass")
 
+    def unknown_with(self, profile: dict[str, Any], reason: str, material: dict[str, Any] | None = None) -> None:
+        """The linearisation of this case gives 133.56 MPa, so only the ductility gate can hold it at unknown."""
+        self.fresh()
+        report = self.solve(beam_plan(beam_field(210.0), (0.0,), LENGTH, 210.0),
+                            conditions_tests.documents(profiles=[profile]), material)
+        self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
+        row, _ = self.row(report)
+        self.assertEqual(row["outcome"], "unknown", row)
+        self.assertFalse(report["material"]["ductility"]["shown"])
+        self.assertIn(reason, report["material"]["ductility"]["reason"])
+        self.assertIn(reason, row["uncertainty"])
+
+    def test_disagreeing_elongations_on_the_en_gauge_give_unknown(self) -> None:
+        # 0.20 and 0.30 both match the conditions: the resolver refuses differing values, so no minimum qualifies.
+        profile = self.ductile_alloy(0.30, base=self.ductile_alloy(0.20))
+        self.unknown_with(profile, "match with different values")
+
+    def test_an_elongation_that_is_not_service_evidence_does_not_show_ductility(self) -> None:
+        for basis in ("user_declared", "estimate"):
+            with self.subTest(basis):
+                self.unknown_with(self.ductile_alloy(0.30, basis=basis), f"is a {basis} value, not service evidence")
+
+    def test_an_elongation_citing_a_missing_source_artifact_does_not_show_ductility(self) -> None:
+        profile = self.ductile_alloy(0.30)
+        fx = conditions_tests.fx
+        profile["properties"][-1]["value"]["sources"] = [
+            fx.source("datasheet", "TST sheet", artifact="manufacturing/sources/missing.pdf", sha256=fx.sha256(b"x"),
+                      conditions="TST")]
+        self.unknown_with(profile, "manufacturing/sources/missing.pdf is not in the version's record snapshot")
+
+    def test_an_elongation_tested_under_other_conditions_is_not_used(self) -> None:
+        tested = conditions_tests.fx.quantity(lower=50, upper=80, units="deg_C")
+        cases = {
+            "conditioning": (self.ductile_alloy(0.30, conditioning="conditioned"), "tested conditioned, dry requested"),
+            "temperature": (self.ductile_alloy(0.30, temperature=tested), "tested at"),
+        }
+        for name, (profile, reason) in cases.items():
+            with self.subTest(name):
+                self.unknown_with(profile, reason)
+
+    def test_an_elongation_at_another_orientation_is_not_used(self) -> None:
+        # Every property has the XY orientation, so the material is isotropic and the case takes XY. The only elongation has Z.
+        tests = conditions_tests
+        tested = tests.fx.quantity(lower=10, upper=40, units="deg_C")
+        xy = {"temperature": tested, "orientation": tests.fx.known("XY")}
+        profile = tests.alloy(
+            tests.prop("youngs_modulus", 70000, "MPa", **xy), tests.prop("poisson_ratio", 0.33, "dimensionless", **xy),
+            tests.prop("density", 2700, "kg_m3", **xy), tests.prop("yield_strength", 250, "MPa", **xy))
+        self.ductile_alloy(0.30, orientation="Z", base=profile)
+        self.unknown_with(profile, "orientation Z, XY requested", {"conditions": {**tests.SERVICE, "orientation": "XY"}})
+
+    def test_an_interval_elongation_counts_at_its_lower_bound(self) -> None:
+        fx = conditions_tests.fx
+        cases = {"0.10 to 0.30": (0.10, 0.30, False), "0.14 to 0.30": (0.14, 0.30, True)}
+        for name, (lower, upper, ductile) in cases.items():
+            with self.subTest(name):
+                profile = self.ductile_alloy(0.20)
+                profile["properties"][-1]["value"]["value"] = fx.quantity(lower=lower, upper=upper, units="dimensionless")
+                if ductile:
+                    self.fresh()
+                    report = self.solve(beam_plan(beam_field(), (0.0,), LENGTH, LOAD),
+                                        conditions_tests.documents(profiles=[profile]))
+                    self.assertEqual(self.row(report)[0]["outcome"], "pass")
+                else:
+                    self.unknown_with(profile, "elongation_at_break 0.1 on the 5.65sqrtS0 gauge is below")
+
     def test_a_shipped_polymer_profile_shows_no_ductility(self) -> None:
         # No shipped polymer states an elongation gauge, so none can meet the EN 13445-2 threshold: PMMA and PC
         # sheet were eligible under the old form stand-in and are not now.
@@ -530,7 +598,7 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
                 checked.append(profile.id)
                 elongations = [p for p in profile.properties if p.name == "elongation_at_break"]
                 with self.subTest(profile.id):
-                    self.assertIsNotNone(conditions.ductility_gap(elongations))
+                    self.assertIsNotNone(conditions.gauge_gap(elongations))
         self.assertIn("sheet_pc_makrolon_gp_clear_099", checked)
         self.assertIn("fdm_petg_polylite", checked)
 
@@ -593,7 +661,7 @@ class ThroughTheStudy(stress_mode_tests.StressCase):
         self.assertEqual(report["stress_study"]["near_support"]["outcome"], "linearised")
         row, _ = self.row(report)
         self.assertEqual(row["outcome"], "unknown")
-        self.assertIn("records no elongation_at_break", row["uncertainty"])
+        self.assertIn("records no known elongation_at_break", row["uncertainty"])
 
     def test_a_sourced_yield_allowable_with_the_elongation_evidence_is_eligible(self) -> None:
         report = self.production(self.allowable_profile(elongation=0.20))

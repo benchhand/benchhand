@@ -459,22 +459,41 @@ class _Assessor:
     def ductility(self, profile: Any, conditions: Mapping[str, Any]) -> dict[str, Any]:
         """The ductility evidence of the profile under the case's conditions: `shown`, and the reason when it is not.
 
-        An elongation counts when its test used the case's conditioning and temperature and, when the case
-        states an orientation, at that orientation: the filters `resolve_property` applies."""
-        orientation = conditions["orientation"]
-        found = []
-        for p in profile.properties:
-            if p.name != "elongation_at_break" or p.conditioning != conditions["conditioning"]:
-                continue
-            tested = p.temperature.value if p.temperature.known else None
-            stated = p.orientation.value if p.orientation is not None and p.orientation.known else None
-            if not isinstance(tested, self.mi.Quantity) or not tested.contains(conditions["temperature"]):
-                continue
-            if orientation is not None and (not isinstance(stated, str) or stated.strip().lower() != orientation.strip().lower()):
-                continue
-            found.append(p)
-        gap = ductility_gap(found)
+        The entries on the EN gauge go through cad-record's `resolve_property`, so conditioning, temperature,
+        orientation and disagreeing values follow the rules of the solver properties. The resolved value then needs
+        a service basis and source artifacts that are in the record snapshot, as `properties` asks of the others.
+        Anything less proves no ductility. The verdict stays unknown with its own reason, and the solver never refuses the case."""
+        entries = [p for p in profile.properties if p.name == "elongation_at_break"]
+        gap = gauge_gap(entries)
+        if gap is None:
+            gap = self.elongation_gap(profile, conditions, [p for p in entries if p.gauge == DUCTILE_GAUGE])
         return {"shown": gap is None, "reason": gap}
+
+    def elongation_gap(self, profile: Any, conditions: Mapping[str, Any], on_gauge: list[Any]) -> str | None:
+        found = self.mi.resolve_property(replace(profile, properties=tuple(on_gauge)), "elongation_at_break",
+                                         orientation=conditions["orientation"], conditioning=conditions["conditioning"],
+                                         temperature=conditions["temperature"])
+        if not found.resolved:
+            return f"elongation_at_break is {found.status} on the {DUCTILE_GAUGE} gauge: {'; '.join(found.reasons)}"
+        if found.basis not in SERVICE_BASES:
+            return f"elongation_at_break is a {found.basis} value, not service evidence"
+        digests: dict[str, str] = {}
+        for source in found.sources:
+            if not source.artifact:
+                continue
+            path = self.record_dir / source.artifact
+            if not path.is_file():
+                return f"elongation_at_break source artifact {source.artifact} is not in the version's record snapshot"
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if source.sha256 and digest != source.sha256:
+                return f"elongation_at_break source artifact {source.artifact} does not match its recorded sha256"
+            digests[f"source_{digest[:16]}"] = digest
+        lowest = found.value.to("dimensionless").bounds[0]
+        if lowest < DUCTILE_ELONGATION:
+            return (f"elongation_at_break {lowest:g} on the {DUCTILE_GAUGE} gauge is below the {DUCTILE_ELONGATION:g} "
+                    "of EN 13445-2:2014 4.1.4")
+        self.dependencies.update(digests)
+        return None
 
     def properties(self, profile: Any, conditions: Mapping[str, Any], allowable: bool) -> tuple[list[dict[str, Any]], dict[str, float]]:
         rows, values = [], {}
@@ -1115,24 +1134,18 @@ def _stress_strength(obligation: Mapping[str, Any], result: Mapping[str, Any], a
     return _row(obligation, "pass" if not gaps else "unknown", a, subject, gaps, factor, units, STUDY_STRENGTH, criterion)
 
 
-def ductility_gap(elongations: Iterable[Any]) -> str | None:
-    """Why the `elongation_at_break` entries (cad-record `MaterialProperty`) do not show the material ductile, or None.
+def gauge_gap(elongations: Iterable[Any]) -> str | None:
+    """Why the `elongation_at_break` entries (cad-record `MaterialProperty`) hold nothing on the EN gauge, or None.
 
-    Ductile means at least one entry on the 5.65sqrtS0 gauge, and every entry on that gauge at 0.14 or more (the
-    lowest bound of an interval counts). A missing entry, a missing gauge, another gauge or a lower value shows
-    nothing, so the caller leaves the verdict unknown."""
+    A missing entry, a missing gauge or another gauge shows nothing: values on other gauges are not comparable with
+    the EN 13445-2:2014 4.1.4 limit, so the caller leaves the verdict unknown."""
     known = [p for p in elongations if p.value.known]
     if not known:
-        return "the profile records no elongation_at_break at the analysed conditions"
-    on_gauge = [p for p in known if p.gauge == DUCTILE_GAUGE]
-    if not on_gauge:
+        return "the profile records no known elongation_at_break"
+    if not any(p.gauge == DUCTILE_GAUGE for p in known):
         stated = sorted({p.gauge or "no gauge" for p in known})
         return (f"elongation_at_break is stated on {', '.join(stated)}, not on the {DUCTILE_GAUGE} gauge: values on "
                 "other gauges are not comparable with the EN 13445-2:2014 4.1.4 limit")
-    lowest = min(p.value.value.to("dimensionless").bounds[0] for p in on_gauge)
-    if lowest < DUCTILE_ELONGATION:
-        return (f"elongation_at_break {lowest:g} on the {DUCTILE_GAUGE} gauge is below the {DUCTILE_ELONGATION:g} "
-                "of EN 13445-2:2014 4.1.4")
     return None
 
 
@@ -1140,7 +1153,7 @@ def _near_support_barrier(a: Assessment) -> str | None:
     """Why the case's material cannot take a linearised strength check at first yield, or None when it can.
 
     Linearisation at first yield assumes an isotropic ductile material. Only the profile's own
-    elongation_at_break (`ductility_gap`) shows it ductile: the form says nothing about ductility, and neither does a yield
+    elongation_at_break (`Assessment.ductility`) shows it ductile: the form says nothing about ductility, and neither does a yield
     allowable, which is a statistical strength value and not a ductility one. So a sourced allowable without the
     elongation evidence stays unknown. Any effective isotropic model also stays unknown."""
     profile = a.material.get("profile") or {}
