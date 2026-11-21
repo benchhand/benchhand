@@ -137,6 +137,17 @@ class SurfaceIndex(unittest.TestCase):
         row = agreement.compare(mesh, mesh, 0.04)
         self.assertEqual((row["glb_points_off"], row["step_points_off"]), (expected, expected))
 
+    def test_a_mesh_with_a_nonfinite_coordinate_is_unknown_not_an_error(self) -> None:
+        """An infinite or NaN corner has no cell index. `compare` must not raise and must name the cause."""
+        small = [(0, 0, 0), (0.75, 0, 0), (0, 0.75, 0)]
+        for bad in (-np.inf, np.inf, np.nan):
+            with self.subTest(bad=bad):
+                corners = np.array(small * 3 + [(bad, 0, 0), (0, 0, 0), (1, 0, 0)], dtype=float)
+                mesh = agreement.Mesh(corners, np.arange(len(corners)).reshape(-1, 3))
+                row = agreement.compare(mesh, mesh, 0.04)
+                self.assertEqual(row["status"], "unknown")
+                self.assertIn("nonfinite", row["reason"])
+
     def measure_pairs(self, corners: np.ndarray, points: np.ndarray, reach: float) -> tuple[int, int, np.ndarray]:
         """(the largest array `within` builds, the pairs it measures, its answer). SEAM: `_Surface.within` takes
         the points directly (compare samples its own). A wrapper on numpy's `repeat`, `tile` and `arange`, which
