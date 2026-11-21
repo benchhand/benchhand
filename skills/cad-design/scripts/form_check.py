@@ -1600,7 +1600,7 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
     code = producer_code(pc)
     calibration = pc.guidelines().calibration_enabled()  # read once: the probe plan, the checks and the seal share it
     recipe = {"producer": pc.PRODUCER, "code_sha256": code, "probe_format": pc.PROBE_FORMAT, "on": today.isoformat(),
-              **pc.guidelines().calibration_recipe(calibration)}  # sealed only while on: another setting never reuses a bundle
+              **pc.guidelines().calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
     params = {"V": label, "S": PROCESS_SUBJECT}
     reused = None if args.out else layout.reusable(args.hw, "bundle.checks", params, recipe, replace=args.replace)
     if reused is not None:

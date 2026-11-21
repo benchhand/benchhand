@@ -16,6 +16,7 @@ import importlib.util
 import io
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -1058,6 +1059,23 @@ class StackupCliTests(unittest.TestCase):
                                    "--version", "v1"], capture_output=True, text=True, check=False, timeout=300)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertTrue((hw / "analysis" / "v1" / "pn-stack").is_dir())
+
+    def test_a_bundle_made_before_the_flag_is_refused_with_the_flag_off(self) -> None:
+        """A bundle sealed with no flag key (the recipe before the flag) may hold a calibrated clearance. The flag-off rerun
+        seals its own value, so it never reuses that bundle."""
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", closing_gap_documents())
+            case = write_case(hw, "closing-gap", fixture("closing_gap.yaml"))
+            snapshot_version(hw)
+            with unittest.mock.patch.object(stackup.GUIDELINES, "calibration_recipe", return_value={}), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main([str(case), "--hw", str(hw), "--version", "v1"])
+            with unittest.mock.patch.dict("os.environ"):
+                os.environ.pop(stackup.GUIDELINES.CALIBRATION_FLAG, None)
+                proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), str(case), "--hw", str(hw),
+                                       "--version", "v1"], capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(proc.returncode, 2, proc.stdout[-300:])
+            self.assertIn("--replace", proc.stderr)
 
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

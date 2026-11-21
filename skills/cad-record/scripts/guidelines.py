@@ -353,16 +353,15 @@ def calibration_enabled() -> bool:
 
 
 def calibration_recipe(enabled: bool) -> dict[str, dict[str, str]]:
-    """The recipe `flags` entry that seals an enabled flag, so a bundle made under another setting is never reused.
-    Empty while the flag is off: a job run without it keeps the recipe shape it had before the flag."""
-    return {"flags": {CALIBRATION_FLAG: "1"}} if enabled else {}
+    """The recipe `flags` entry that seals the flag value, on or off. A bundle made under the other setting, or before
+    the flag existed (no entry), is never reused: it may hold a calibrated result."""
+    return {"flags": {CALIBRATION_FLAG: "1" if enabled else "0"}}
 
 
 def calibration_dependencies(enabled: bool) -> dict[str, str]:
-    """The packet dependency that seals an enabled flag (a sha256 of `NAME=1`); empty while it is off."""
-    if not enabled:
-        return {}
-    return {"flag_" + CALIBRATION_FLAG.lower(): hashlib.sha256(f"{CALIBRATION_FLAG}=1".encode("ascii")).hexdigest()}
+    """The packet dependency that seals the flag value (a sha256 of `NAME=1` or `NAME=0`)."""
+    value = "1" if enabled else "0"
+    return {"flag_" + CALIBRATION_FLAG.lower(): hashlib.sha256(f"{CALIBRATION_FLAG}={value}".encode("ascii")).hexdigest()}
 
 
 def packet_key(ref: str) -> str:

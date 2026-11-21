@@ -1292,7 +1292,7 @@ def packet_dependencies(hw: Path, stack_path: Path, stack: Mapping[str, Any],
     that approves them."""
     found = {"stack_case": hashlib.sha256(stack_path.read_bytes()).hexdigest()}
     found.update(GUIDELINES.packet_dependencies(guidelines or {}))
-    found.update(GUIDELINES.calibration_dependencies(calibration))  # the flag is sealed only while on
+    found.update(GUIDELINES.calibration_dependencies(calibration))  # the flag value is sealed, on or off
     statistics = stack.get("statistics")
     decision = statistics.get("decision") if isinstance(statistics, Mapping) else None
     if isinstance(decision, str) and DECISION.match(decision):
@@ -1338,7 +1338,7 @@ def main(argv: list[str] | None = None) -> int:
             options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS, "intent_version": INTENT_VERSION, "case": case,
                                        "method": (stack.get("requirement") or {}).get("method", "worst_case")}
             recipe = {"source_yaml_sha256": hashlib.sha256(stack_path.read_bytes()).hexdigest(), "options": options,
-                      **GUIDELINES.calibration_recipe(calibration)}  # sealed only while on: another setting never reuses a bundle
+                      **GUIDELINES.calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
             reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
             if reused is not None:
                 result = json.loads((reused / "results.json").read_text(encoding="utf-8"))

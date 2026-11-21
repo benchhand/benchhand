@@ -2247,6 +2247,45 @@ class FormCheckPacketExitTests(unittest.TestCase):
         self.assertEqual(self.form_check.packet_code(True, self.packet("not_assessed")), 1)
 
 
+@unittest.skipUnless(UV and DEPS, "uv, pyyaml and jsonschema are required for the kernel build")
+class FlagSealDirectionTests(unittest.TestCase):
+    """The sealed flag value refuses reuse in both directions: a bundle made with the flag off is not reused with it on."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        mp = _projects()
+        cls.hw = mp.loose_project(Path(cls.tmp.name) / "project" / "hw", "cadquery", [[60.0, 10.0, 5.0, 2.0]],
+                                  parts_of=mp.components(), print_components=["body"])
+        built = subprocess.run(["uv", "run", "--quiet", "--script", str(CAD_MODEL), "run", str(cls.hw), "--label", "v1"],
+                               capture_output=True, text=True, check=False)
+        if built.returncode != 0:
+            raise AssertionError(f"cad_model run failed: {built.stdout[-2000:]}{built.stderr[-2000:]}")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def form_check(self, flag: bool) -> subprocess.CompletedProcess[str]:
+        command = ["uv", "run", "--quiet", "--script", str(FORM_CHECK), "--hw", str(self.hw), "--version", "v1",
+                   "--fidelity", "F2", "--on", TODAY.isoformat()]
+        with mock.patch.dict("os.environ"):
+            if flag:
+                os.environ[GL.CALIBRATION_FLAG] = "1"
+            else:
+                os.environ.pop(GL.CALIBRATION_FLAG, None)
+            return subprocess.run(command, capture_output=True, text=True, check=False)
+
+    def test_a_flag_off_bundle_is_reused_with_the_flag_off_and_refused_with_it_on(self) -> None:
+        first, again = self.form_check(False), self.form_check(False)
+        self.assertEqual(first.returncode, 1, first.stdout[-500:])
+        self.assertEqual(again.returncode, 1, again.stdout[-500:])
+        self.assertIn('"reused": true', again.stdout)
+        refused = self.form_check(True)
+        self.assertEqual(refused.returncode, 2, refused.stdout[-500:])
+        self.assertIn("another recipe", refused.stdout)
+
+
 # --- the calibration flag (CAD_CALIBRATION): off is the release behaviour --------------------------------------------
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
@@ -2327,16 +2366,17 @@ class CalibrationFlagTests(Checks):
             with self.subTest(value=value), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: value}):
                 self.assertEqual(pc.assess(record, {}, today=TODAY).calibration, expected)
 
-    def test_the_seal_names_the_flag_only_while_it_is_on(self) -> None:
+    def test_the_seal_names_the_flag_value_either_way(self) -> None:
         record = load(self, guided())
         on, off = (pc.assess(record, {}, today=TODAY, calibration=flag).packet({"version_manifest": "0" * 64})
                    for flag in (True, False))
         key = "flag_" + GL.CALIBRATION_FLAG.lower()
         self.assertIn(key, on["dependencies"])
-        self.assertNotIn(key, off["dependencies"])
+        self.assertIn(key, off["dependencies"])
+        self.assertNotEqual(on["dependencies"][key], off["dependencies"][key])
         self.assertEqual(packet_errors(on), [])
         self.assertEqual(GL.calibration_recipe(True), {"flags": {GL.CALIBRATION_FLAG: "1"}})
-        self.assertEqual(GL.calibration_recipe(False), {})
+        self.assertEqual(GL.calibration_recipe(False), {"flags": {GL.CALIBRATION_FLAG: "0"}})
 
 
 if __name__ == "__main__":
