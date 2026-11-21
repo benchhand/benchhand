@@ -582,16 +582,20 @@ class ClearanceTests(unittest.TestCase):
 
         generic = clearance_catalog(clearance_limit())
         cases = {
-            "no bound record": (clearance_documents(), generic, False, "no bound record"),
-            "no sliding part printed by fdm": (clearance_documents(pn="TST-0002"), generic, True, "no sliding part is printed by fdm"),
-            "no capability profile": (no_profile, generic, True, "capability profile"),
-            "material missing from the record": (no_material, generic, True, "tst_unrecorded_material"),
-            "no catalog": (clearance_documents(), None, True, "no guideline catalog"),
-            "the resolver finds no limit": (clearance_documents(), clearance_catalog(), True, "sliding_clearance"),
-            "a maximum is no minimum": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<=")), True, "<="),
-            "a pin that is not applied": (pinned, generic, True, "not applied"),
+            "no bound record": (clearance_documents(), generic, False, "no bound record", "bind the stack to a hardware record"),
+            "no sliding part printed by fdm": (clearance_documents(pn="TST-0002"), generic, True, "no sliding part is printed by fdm",
+                                               "record an fdm route operation for a sliding part"),
+            "no capability profile": (no_profile, generic, True, "capability profile", "name a capability profile"),
+            "material missing from the record": (no_material, generic, True, "tst_unrecorded_material",
+                                                 "add the material profile tst_unrecorded_material"),
+            "no catalog": (clearance_documents(), None, True, "no guideline catalog", "give the run a guideline catalog"),
+            "the resolver finds no limit": (clearance_documents(), clearance_catalog(), True, "sliding_clearance",
+                                            "record a guideline set that states a minimum sliding clearance"),
+            "a maximum is no minimum": (clearance_documents(), clearance_catalog(clearance_limit(0.3, "<=")), True, "<=",
+                                        "state the sliding clearance as a minimum"),
+            "a pin that is not applied": (pinned, generic, True, "not applied", "correct the guideline pin"),
         }
-        for label, (documents, catalog, bound, reason) in cases.items():
+        for label, (documents, catalog, bound, reason, remedy) in cases.items():
             with self.subTest(label):
                 if callable(documents):
                     base = clearance_documents()
@@ -602,6 +606,7 @@ class ClearanceTests(unittest.TestCase):
                 self.assertEqual(codes(result), ["stack.clearance_unknown"])
                 self.assertEqual(result["clearance"]["status"], "unknown")
                 self.assertIn(reason, result["findings"][0]["measured"]["reason"])
+                self.assertIn(remedy, result["findings"][0]["remedy"])
 
     def test_the_largest_minimum_across_the_sliding_parts_governs(self) -> None:
         catalog = clearance_catalog(clearance_limit(0.3), family_limits={"tst_b": clearance_limit(0.5)})
@@ -633,6 +638,9 @@ class ClearanceTests(unittest.TestCase):
         self.assertEqual(codes(result), ["stack.clearance_unknown", "stack.contributor_unknown"])
         self.assertEqual(result["clearance"]["status"], "unknown")
         self.assertIn("nominal gap is not established", result["clearance"]["reasons"][0])
+        remedy = next(f for f in result["findings"] if f["code"] == "stack.clearance_unknown")["remedy"]
+        self.assertIn("establish the unknown contributor", remedy)
+        self.assertNotIn("guideline", remedy)
 
     def test_a_sliding_part_with_an_unknown_route_makes_the_clearance_unknown(self) -> None:
         documents = two_sliding_documents()
@@ -641,6 +649,7 @@ class ClearanceTests(unittest.TestCase):
         result = self.run_stack(documents, clearance_stack("side", nominal_gap=0.4), catalog)
         self.assertEqual(codes(result), ["stack.clearance_unknown"])
         self.assertIn("TST-0005's route is unknown", result["clearance"]["reasons"][0])
+        self.assertIn("record the route of TST-0005", result["findings"][0]["remedy"])
 
     def test_a_calibrated_sliding_clearance_is_reported_as_not_judged_in_stackup(self) -> None:
         documents = clearance_documents()
@@ -650,6 +659,9 @@ class ClearanceTests(unittest.TestCase):
         self.assertEqual(codes(result), ["stack.clearance_unknown"])
         self.assertEqual(result["clearance"]["status"], "unknown")
         self.assertIn("calibration not judged in stackup", result["clearance"]["reasons"][0])
+        remedy = result["findings"][0]["remedy"]
+        self.assertIn("by hand", remedy)
+        self.assertNotIn("record a guideline set", remedy)
 
     def test_a_clearance_failure_keeps_the_statistical_governs_note_of_a_justified_stack(self) -> None:
         stack = IntentStackContractTests.justified(clearance_stack("side"))
@@ -660,8 +672,12 @@ class ClearanceTests(unittest.TestCase):
         self.assertEqual(codes(result), ["stack.clearance_below_minimum"])
         self.assertTrue(any("approved statistical interval governs" in text for text in result["limits"]))
 
-    def test_a_worst_case_stack_that_fails_on_clearance_alone_gains_no_statistical_note(self) -> None:
-        result = self.run_stack(clearance_documents(), clearance_stack("side"), clearance_catalog(clearance_limit()))
+    def test_a_justified_stack_whose_statistical_interval_also_misses_gains_no_statistical_note(self) -> None:
+        stack = IntentStackContractTests.justified(clearance_stack("side"))
+        stack["consequence"] = "performance"
+        stack["requirement"]["min"] = 0.15  # the statistics 0.1..0.3 miss it as well, so they accept nothing
+        result = self.run_stack(clearance_documents(method="justified_rss"), stack, clearance_catalog(clearance_limit()))
+        self.assertEqual((result["requirement"]["governing"], result["requirement"]["statistical_pass"]), ("justified_rss", False))
         self.assertEqual(result["outcome"], "fail")
         self.assertFalse(any("statistical interval governs" in text for text in result["limits"]))
 

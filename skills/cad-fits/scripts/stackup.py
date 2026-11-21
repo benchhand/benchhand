@@ -87,7 +87,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 SKILLS = Path(__file__).resolve().parents[2]
 LAYOUT_PATH = SKILLS / "cad-record" / "scripts" / "layout.py"
@@ -958,9 +958,8 @@ class _IntentStack:
         result = _clearance_result(self.clearance["per"], self.record, self.subject.get("interface"), self.catalog,
                                    self.on, nominal)
         if result.reason is not None:
-            self.unknown("stack.clearance_unknown", None, result.reason,
-                         "record the sliding parts, their FDM capability profile and material, and a guideline set that "
-                         "states a minimum sliding clearance, then rerun", inputs=["hw/interfaces.yaml"])
+            self.unknown("stack.clearance_unknown", None, result.reason, result.remedy or CLEARANCE_REMEDY,
+                         inputs=["hw/interfaces.yaml"])
         elif result.failed:
             row = result.row
             self.finding("stack.clearance_below_minimum", "clearance", severity=self.severity(), outcome="fail",
@@ -1015,11 +1014,22 @@ class _IntentStack:
                                     "tradeoffs": "assembly effort and a recorded adjustment procedure"}])
 
 
+CLEARANCE_REMEDY = ("record the sliding parts, their FDM capability profile and material, and a guideline set that "
+                    "states a minimum sliding clearance, then rerun")
+
+
+class _Unusable(NamedTuple):
+    """Why the clearance cannot be judged, and the step that clears exactly that reason."""
+    reason: str
+    remedy: str
+
+
 @dataclass(frozen=True)
 class _ClearanceResult:
     row: dict[str, Any]
     reason: str | None = None  # why the clearance is unknown
     failed: bool = False
+    remedy: str | None = None  # what clears that reason
 
 
 def _sliding_pns(record: Any, interface_id: str | None) -> list[str]:
@@ -1036,73 +1046,88 @@ def _fdm_operation(record: Any, pn: str) -> Any:
     return next((op for op in part.intent.route if op.kind == "fdm"), None)
 
 
-def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, str | None]:
+def _clearance_scope(record: Any, pn: str) -> tuple[tuple[Any, str] | None, _Unusable | None]:
     """((the PN's FDM route operation, its material profile id), None), or (None, why it has none). The material is
     checked here because the resolver would otherwise fall back to the generic set without it."""
     op = _fdm_operation(record, pn)
     if op is None:
-        return None, f"{pn} has no fdm route operation"
+        return None, _Unusable(f"{pn} has no fdm route operation", f"record an fdm route operation for {pn}, then rerun")
     if not isinstance(op.capability, str) or op.capability not in record.capabilities:
-        return None, f"{pn}'s {op.id} operation names no capability profile of the record"
+        return None, _Unusable(f"{pn}'s {op.id} operation names no capability profile of the record",
+                               f"name a capability profile of the record on {pn}'s {op.id} operation, then rerun")
     material = record.parts[pn].intent.material_profile
     if not isinstance(material, str):
-        return None, f"{pn}'s material profile is unknown"
+        return None, _Unusable(f"{pn}'s material profile is unknown", f"record the material profile of {pn}, then rerun")
     if material not in record.materials:
-        return None, f"{pn}'s material profile {material} is not in the record's materials"
+        return None, _Unusable(f"{pn}'s material profile {material} is not in the record's materials",
+                               f"add the material profile {material} to the record's materials, then rerun")
     return (op, material), None
 
 
 def _resolve_sliding(record: Any, pns: list[str], catalog: Any, on: date | None,
-                     digests: dict[str, str]) -> tuple[list[Any], str | None]:
+                     digests: dict[str, str]) -> tuple[list[Any], _Unusable | None]:
     """(each part's resolved sliding clearance, or [] and why one is unusable). `digests` collects the sets consulted."""
     resolutions = []
     for pn in pns:
         scope, why = _clearance_scope(record, pn)
         if scope is None:
-            return [], str(why)
+            return [], why
         op, material = scope
         resolved = GUIDELINES.resolve(record, op, CLEARANCE_CHARACTERISTIC, catalog=catalog, material=material, on=on)
         resolutions.append(resolved)
         context = GUIDELINES.context_for(record.capabilities[op.capability], record.materials[material])
         digests.update(GUIDELINES.applicable_digests(catalog, context))
         if resolved.status == "calibrated":
-            return [], f"{pn}: a calibrated {CLEARANCE_CHARACTERISTIC} limit exists, but calibration not judged in stackup yet"
+            return [], _Unusable(
+                f"{pn}: a calibrated {CLEARANCE_CHARACTERISTIC} limit exists, but calibration not judged in stackup yet",
+                "compare the nominal gap per side with the calibrated sliding clearance by hand and record the result; "
+                "this stack check does not judge a calibration")
         if resolved.status != "guideline":
-            return [], f"{pn}: " + "; ".join(resolved.reasons or (f"no guideline states {CLEARANCE_CHARACTERISTIC}",))
+            return [], _Unusable(f"{pn}: " + "; ".join(resolved.reasons or (f"no guideline states {CLEARANCE_CHARACTERISTIC}",)),
+                                 "record a guideline set that states a minimum sliding clearance for this printer "
+                                 "and material, then rerun")
         if resolved.operator not in MINIMUM_OPERATORS:
-            return [], f"{pn}: the {CLEARANCE_CHARACTERISTIC} limit is {resolved.operator}, not a minimum"
+            return [], _Unusable(f"{pn}: the {CLEARANCE_CHARACTERISTIC} limit is {resolved.operator}, not a minimum",
+                                 "state the sliding clearance as a minimum (>= or >) in the guideline set, then rerun")
         unapplied = [w for w in resolved.warnings if "not applied" in w or w.startswith("pinned ")]  # a pin that matched nothing
         if unapplied:
-            return [], f"{pn}: a guideline the profile pins is not applied: {'; '.join(unapplied)}"
+            return [], _Unusable(f"{pn}: a guideline the profile pins is not applied: {'; '.join(unapplied)}",
+                                 "correct the guideline pin on the capability profile to a set that applies, then rerun")
     return resolutions, None
 
 
-def _unreadable_route(record: Any, pns: list[str]) -> str | None:
+def _unreadable_route(record: Any, pns: list[str]) -> _Unusable | None:
     """Why a sliding part cannot be told apart as printed by fdm or not: it is no part of the record, or its route is unknown."""
     for pn in pns:
         part = record.parts.get(pn)
         if part is None:
-            return f"{pn} is not a part of the record"
+            return _Unusable(f"{pn} is not a part of the record", f"add {pn} to the record, then rerun")
         if _intent_module().is_fact(part.intent.route):
-            return f"{pn}'s route is unknown, so whether fdm prints it is unknown"
+            return _Unusable(f"{pn}'s route is unknown, so whether fdm prints it is unknown",
+                             f"record the route of {pn}, then rerun")
     return None
 
 
-def _clearance_inputs(record: Any, interface_id: str | None, catalog: Any) -> tuple[list[str], str | None]:
+def _clearance_inputs(record: Any, interface_id: str | None, catalog: Any) -> tuple[list[str], _Unusable | None]:
     """(the sliding parts printed by fdm, or [] and why the check cannot start)."""
     if record is None:
-        return [], "no bound record: the sliding parts, their printer and their material are unverified"
+        return [], _Unusable("no bound record: the sliding parts, their printer and their material are unverified",
+                             "bind the stack to a hardware record that holds the sliding parts, then rerun")
     if catalog is None:
-        return [], "no guideline catalog was given for this record"
+        return [], _Unusable("no guideline catalog was given for this record",
+                             "give the run a guideline catalog (the shipped sets or a project set), then rerun")
     pns = _sliding_pns(record, interface_id)
     if not pns:
-        return [], f"{interface_id or 'the stack subject'} records no surface with role sliding"
+        return [], _Unusable(f"{interface_id or 'the stack subject'} records no surface with role sliding",
+                             "record the sliding surfaces, with role sliding, on the interface in hw/interfaces.yaml, then rerun")
     unreadable = _unreadable_route(record, pns)
     if unreadable is not None:
         return [], unreadable
     printed = [pn for pn in pns if _fdm_operation(record, pn) is not None]
     if not printed:
-        return [], f"no sliding part is printed by fdm ({', '.join(pns)}): the guidelines cover fdm only"
+        return [], _Unusable(f"no sliding part is printed by fdm ({', '.join(pns)}): the guidelines cover fdm only",
+                             "record an fdm route operation for a sliding part, or drop the clearance check from this "
+                             "stack: the guidelines cover fdm only")
     return printed, None
 
 
@@ -1117,9 +1142,11 @@ def _clearance_result(per: str, record: Any, interface_id: str | None, catalog: 
         row["parts"] = printed
         resolutions, why = _resolve_sliding(record, printed, catalog, on, row["guidelines"])
         row["resolutions"] = GUIDELINES.trace_document(resolutions)["resolutions"]
-    if why is not None or nominal is None:
-        reason = why or "the nominal gap is not established: a contributor is unknown"
-        return _ClearanceResult(dict(row, reasons=[reason]), reason)
+    if why is None and nominal is None:
+        why = _Unusable("the nominal gap is not established: a contributor is unknown",
+                        "establish the unknown contributor so the nominal gap is known, then rerun")
+    if why is not None:
+        return _ClearanceResult(dict(row, reasons=[why.reason]), why.reason, remedy=why.remedy)
     binding = max(resolutions, key=lambda r: (float(r.value.to("mm").value), r.operator == ">"))  # equal values: the strict one
     minimum = float(binding.value.to("mm").value)
     per_side = nominal / (1 if per == "side" else 2)
