@@ -339,6 +339,8 @@ class RecheckHookTests(unittest.TestCase):
         ("manufacturing/capabilities.yaml", "profiles", 7),
         ("manufacturing/materials.yaml", "profiles", 7),
         ("manufacturing/selection.yaml", "candidates", 7),
+        ("manufacturing/evidence.yaml", "entries", 7),
+        ("manufacturing/findings.yaml", "dispositions", 7),
     )
 
     def test_a_staged_schema_invalid_document_refuses_the_advance_naming_it(self) -> None:
@@ -362,6 +364,33 @@ class RecheckHookTests(unittest.TestCase):
                     self.assertNotIn("Traceback", result.stderr, what)
                     self.assertIn(f"hw/{rel}", result.stderr, what)
                     self.assertIn(key, result.stderr, what)
+
+    def test_a_staged_empty_document_is_judged_by_its_schema(self) -> None:
+        """An empty file or a null loads as None, an empty mapping as {}. None never passes a schema; {} passes
+        only where the schema requires nothing. The refusal names the file; a passing one is not a schema refusal."""
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        packet = self.root / ".checks.json"
+        schemas = Path(__file__).resolve().parents[2] / "cad-record" / "schemas"
+        for rel in ("manufacturing/capabilities.yaml", "manufacturing/materials.yaml", "manufacturing/selection.yaml",
+                    "manufacturing/evidence.yaml", "manufacturing/findings.yaml"):
+            required = json.loads((schemas / f"manufacturing-{Path(rel).stem}.schema.json").read_text(encoding="utf-8")).get("required")
+            for text in ("", "null\n", "{}\n"):
+                with self.subTest(file=rel, text=text):
+                    path = self.root / "hw" / rel
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(text, encoding="utf-8")
+                    self.git("add", f"hw/{rel}")
+                    writer = self.run_python(STAMP, "--stage", "layout", "--checks", str(packet), "--passed", cwd=self.root)
+                    verified = self.verify()
+                    self.git("rm", "-q", "-f", "--", f"hw/{rel}")
+                    for what, result in (("writer", writer), ("verify", verified)):
+                        self.assertNotIn("Traceback", result.stderr, what)
+                        if text != "{}\n" or required:
+                            self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
+                            self.assertIn(f"hw/{rel} fails its schema", result.stderr, what)
+                        else:
+                            self.assertNotIn("fails its schema", result.stderr, what)
 
     def test_a_malformed_gate_value_is_a_refusal_naming_the_record(self) -> None:
         written: list[Path] = []

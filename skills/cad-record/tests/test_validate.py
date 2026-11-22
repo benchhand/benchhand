@@ -515,20 +515,44 @@ class ValidateProject(unittest.TestCase):
         ("manufacturing/capabilities.yaml", "profiles", 7),
         ("manufacturing/materials.yaml", "profiles", 7),
         ("manufacturing/selection.yaml", "candidates", 7),
+        ("manufacturing/evidence.yaml", "entries", 7),
+        ("manufacturing/findings.yaml", "dispositions", 7),
+        # nested keys that manufacturing_intent.py iterates (a "/" path; the document is skipped as a whole)
+        ("requirements.yaml", "requirements/0/acceptance", 7),
+        ("requirements.yaml", "requirements/0/subjects", 7),
+        ("requirements.yaml", "requirements/0/evidence_required", 7),
     )
 
-    def validate_with_key(self, rel: str, key: str, value: object) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
-        """validate.py on the example project with `key` of `rel` set to `value`; the file is restored after."""
+    # A manufacturing document with no content: an empty file, an explicit null, and an empty mapping. The result
+    # of each is what the schema says, not what a skipped read leaves behind.
+    EMPTY_DOCUMENTS = ("", "null\n", "{}\n")
+    MANUFACTURING_FILES = ("manufacturing/capabilities.yaml", "manufacturing/materials.yaml",
+                           "manufacturing/selection.yaml", "manufacturing/evidence.yaml", "manufacturing/findings.yaml")
+
+    def validate_with_text(self, rel: str, text: str) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+        """validate.py on the example project with `rel` holding `text`; the file is restored (or removed) after."""
         path = self.hw / rel
-        original = path.read_bytes()
-        self.addCleanup(path.write_bytes, original)
-        document = yaml.safe_load(original)
-        document[key] = value
-        path.write_text(yaml.safe_dump(document), encoding="utf-8")
+        original = path.read_bytes() if path.exists() else None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
         try:
             return self.validate()
         finally:
-            path.write_bytes(original)
+            if original is None:
+                path.unlink()
+            else:
+                path.write_bytes(original)
+
+    def validate_with_key(self, rel: str, key: str, value: object) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+        """validate.py on the example project with `key` ("a/0/b" reaches into lists) of `rel` set to `value`."""
+        path = self.hw / rel
+        document = yaml.safe_load(path.read_bytes()) if path.exists() else {}
+        *parents, last = key.split("/")
+        node = document
+        for part in parents:
+            node = node[int(part)] if isinstance(node, list) else node[part]
+        node[int(last) if isinstance(node, list) else last] = value
+        return self.validate_with_text(rel, yaml.safe_dump(document))
 
     def test_a_wrong_typed_record_key_is_a_finding_not_a_crash(self) -> None:
         for rel, key, value in self.WRONG_TYPE_KEYS:
@@ -538,6 +562,26 @@ class ValidateProject(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertTrue(any(str(item["path"]).endswith(rel) and key in str(item.get("message", ""))
                                     for item in report["findings"]), report["findings"])
+
+    def test_an_empty_manufacturing_document_gets_its_schema_finding(self) -> None:
+        """An empty file or a null loads as None and an empty mapping as {}. Each is validated against its schema
+        like any other value: None never is an object, and {} is one only when the schema requires nothing.
+        An invalid one is an error finding on that file and exit 1; a valid one has no schema finding."""
+        for rel in self.MANUFACTURING_FILES:
+            schema = json.loads((SKILL / "schemas" / f"manufacturing-{Path(rel).stem}.schema.json").read_text(encoding="utf-8"))
+            for text in self.EMPTY_DOCUMENTS:
+                with self.subTest(file=rel, text=text):
+                    invalid = text != "{}\n" or bool(schema.get("required"))
+                    result, report = self.validate_with_text(rel, text)
+                    self.assertNotIn("Traceback", result.stderr)
+                    found = [item for item in report["findings"] if str(item["path"]).split("#")[0].endswith(rel)
+                             and ("required property" in str(item["message"]) or "is not of type" in str(item["message"]))]
+                    if invalid:
+                        self.assertTrue(found, report["findings"])
+                        self.assertEqual({item["severity"] for item in found}, {"error"}, found)
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    else:
+                        self.assertEqual(found, [], "the schema allows it")
 
     def test_a_schema_invalid_document_stays_a_blocking_error(self) -> None:
         """The manufacturing-intent check reads a schema-invalid document as absent. That must not open the gate:
