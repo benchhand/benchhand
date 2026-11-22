@@ -255,6 +255,8 @@ class LampArmNotAssessedTests(unittest.TestCase):
     no_capability_profile. The printed parts' checks and the purchased parts' stay UNKNOWN: their gaps are the user's to fill."""
 
     UNPROFILED = ("process.cnc.", "process.drilling.", "process.reaming.", "process.coating.")
+    # a reamed bore with no allowance recorded misses whatever the machine can do: fail ranks ahead of not_assessed
+    ALLOWANCE_MISSING = ("process.reaming.allowance@LMP-0002/ream", "process.reaming.allowance@LMP-0003/ream")
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -268,16 +270,19 @@ class LampArmNotAssessedTests(unittest.TestCase):
     def test_off_every_process_check_without_a_profile_is_not_assessed_with_the_reason(self) -> None:
         rows = self.unprofiled(self.off)
         self.assertEqual(len(rows), 39)  # 5 milled or turned x 5 checks, 2 drilled x 2, 2 reamed x 2, 3 passivated x 2
-        self.assertEqual({(o["outcome"], o.get("reason")) for o in rows}, {("not_assessed", "no_capability_profile")})
+        missed = [o for o in rows if o["obligation"] in self.ALLOWANCE_MISSING]
+        self.assertEqual([(o["outcome"], o.get("reason")) for o in missed], [("fail", None)] * 2)
+        rest = [o for o in rows if o["obligation"] not in self.ALLOWANCE_MISSING]
+        self.assertEqual({(o["outcome"], o.get("reason")) for o in rest}, {("not_assessed", "no_capability_profile")})
 
     def test_on_the_same_checks_are_unknown(self) -> None:
         self.assertEqual({(o["outcome"], "reason" in o) for o in self.unprofiled(self.on)}, {("unknown", False)})
 
-    def test_off_the_printed_and_purchased_parts_keep_their_unknowns_and_the_packet_stays_unknown(self) -> None:
+    def test_off_the_printed_and_purchased_parts_keep_their_unknowns_and_a_missed_allowance_fails_the_packet(self) -> None:
         for family in ("orientation", "geometry", "support", "thermal_distortion"):
             self.assertEqual(self.off.outcome(f"process.fdm.{family}@{PRINTED[0]}/print")["outcome"], "unknown")
         self.assertEqual(self.off.outcome("purchase.rating@LMP-0008/buy")["outcome"], "unknown")
-        self.assertEqual(self.off.result, "unknown")
+        self.assertEqual(self.off.result, "fail")
         self.assertEqual(self.on.result, "unknown")
 
     def test_off_a_part_route_with_no_profile_is_not_assessed_where_nothing_else_is_open(self) -> None:

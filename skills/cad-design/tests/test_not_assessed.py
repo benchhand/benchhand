@@ -256,6 +256,18 @@ class MissingLimitEmitterTests(Assessed):
         self.assertEqual(self.row(on, T.SUPPORT)["outcome"], "unknown")
         self.assertEqual(on.by_code("process.fdm.support_uncalibrated"), [])
 
+    def test_off_a_resin_support_gap_asks_for_evidence_where_the_flag_on_asks_for_a_calibration(self) -> None:
+        """Resin is additive but outside the flag's process list: its remedy never names a printer calibration."""
+        documents = T.shaped("resin", [], material=T.POLYMER, supports={"strategy": "none"})
+        data = T.geometry("TST-0902", T.underside(0.0))
+        code = "process.resin.support_uncalibrated"
+        off = self.run_case(documents, data, False).by_code(code)
+        self.assertEqual(len(off), 1)
+        self.assertEqual(off[0]["remedy"], "record evidence of overhang_angle for this material and machine "
+                                           "(test pieces, a capability study or supplier evidence)")
+        on = self.run_case(documents, data, True).by_code(code)
+        self.assertEqual([f["remedy"] for f in on], [])  # flag on: the grade has no draft for a resin limit that is merely unknown
+
     def test_off_a_recorded_calibration_of_another_material_is_refused_and_stays_unknown(self) -> None:
         """A calibration that is on record but unusable is a fixable record problem, not a missing limit: it stays UNKNOWN."""
         stale = T.calibration("kerf_old", "kerf_deviation", T.ALU, -0.05, 0.03, thickness=T.mm(3))  # not for acrylic
@@ -307,6 +319,16 @@ class NoCapabilityProfileTests(Assessed):
         self.assertNotIn("calibration", gate[0]["remedy"])
         route = result.by_code("route.capability_unknown")
         self.assertEqual({(f["outcome"], f["reason"]) for f in route}, {("not_assessed", "no_capability_profile")})
+
+    def test_off_a_failing_access_check_stays_a_fail_when_the_operation_has_no_profile(self) -> None:
+        """fail ranks ahead of not_assessed: a 6 mm cutter cannot make the R2 pocket corners, whatever the machine's capability."""
+        unknown_capability = T.FX.unknown("no capability profile of the machine shop is recorded")
+        milled = T.milled(PN, [T.end_mill(6.0, 30.0)], workholding=True, capability=unknown_capability)
+        documents = T.FX.record(parts=[milled], capabilities=[], materials=T.materials())
+        result = self.run_case(documents, T.geometry(PN, T.POCKET), False)
+        self.assertEqual(self.row(result, f"process.cnc.access@{PN}/mill")["outcome"], "fail")
+        self.assertEqual(self.row(result, f"process.cnc.stock@{PN}/mill")["outcome"], "not_assessed")
+        self.assertTrue(result.by_code("process.cnc.capability_unknown"))
 
     def test_on_the_same_operation_is_unknown_with_no_reason(self) -> None:
         result = self.run_case(_unprofiled(), None, True)

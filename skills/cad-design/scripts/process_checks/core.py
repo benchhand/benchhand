@@ -715,7 +715,9 @@ class Context:
                 return UNKNOWN, noted
             draft = Draft(f"process.{kind}.{check}_uncalibrated", "minor", UNKNOWN, measured, limit.criterion(prop, units),
                           method, "; ".join(limit.reasons), f"{limit.characteristic} has no limit to judge the {check} by",
-                          remedy=self.remedy(f"calibrate {limit.characteristic} for this material and machine"),
+                          remedy=self.remedy(
+                              f"record evidence of {limit.characteristic} for this material and machine "
+                              "(test pieces, a capability study or supplier evidence)"),
                           recheck=[f"process.{kind}"], feature=feature)
             return self.gap(findings, limit, draft), noted
         findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
@@ -840,6 +842,17 @@ def gated(handler: Handler, kinds: tuple[str, ...] | None = None) -> Handler:
     """`handler` behind `capability_gate`: it runs only when the operation has a usable capability profile
     of its own kind (or of one of `kinds`)."""
     def run(ctx: Context) -> Result:
-        return ctx.capability_gate(kinds) or handler(ctx)
+        gate = ctx.capability_gate(kinds)
+        if gate is None:
+            return handler(ctx)
+        if gate.outcome != NOT_ASSESSED:
+            return gate
+        try:  # fail ranks ahead of not_assessed: a miss that needs no capability profile is still a miss
+            result = handler(ctx)
+        except LookupError:  # the handler reads the profile that is not there: nothing it could judge
+            return gate
+        if result.outcome != FAIL:
+            return gate
+        return Result(FAIL, result.method, result.coverage, [*gate.findings, *result.findings], result.uncertainty, result.source)
     run.__name__ = handler.__name__
     return run
