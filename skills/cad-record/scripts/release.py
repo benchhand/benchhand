@@ -434,7 +434,7 @@ def check_docs(release: Release) -> None:
 
 
 def check_acceptance(release: Release, frozen: Any) -> None:
-    """The intent acceptance of a record version 2 release, a domain apart from output integrity: the
+    """The intent acceptance of a record version 1 release, a domain apart from output integrity: the
     freeze's evidence_sha256 is the acceptance digest of the current inventory, and the evidence
     assessment of the frozen version passes the release gate of the use case's service class. The
     inventory is copied under acceptance/ and the scope, claims, waivers and open obligations become the

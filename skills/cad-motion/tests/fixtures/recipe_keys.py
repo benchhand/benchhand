@@ -6,7 +6,7 @@ Usage: python recipe_keys.py SKILLS_TREE
 Loads play.py, sweep.py, merge_sweeps.py and spot_check.py from SKILLS_TREE/cad-motion/scripts, so a test
 can copy the skills tree, edit one file of the copy and compare the keys.
 
-- play: a real publication. `play.main` checks a sealed version of a record version 2 project that has no
+- play: a real publication. `play.main` checks a sealed version of a record version 1 project that has no
   motion.play obligation (cad-record's TST record with its rotating functions made `other`), so no kernel
   runs. The key is the recipe_sha256 of the published bundle's manifest.
 - sweep, its equivalence and merge_sweeps: layout's recipe_sha256 of recipe_of, equivalence_of and

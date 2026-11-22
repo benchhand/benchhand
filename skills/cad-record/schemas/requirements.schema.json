@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://srobroek.com/cad/schemas/requirements.schema.json",
   "title": "CAD requirements record",
-  "description": "Requirements, preferences, assumptions and open questions, kept apart: a mandatory requirement is never downgraded into a preference or an assumption to pass, and an unknown with a filled-in reason is still unknown. Record version 2 carries all four lists; preferences, assumptions and open_questions may be empty.",
+  "description": "Requirements, preferences, assumptions and open questions, kept apart: a mandatory requirement is never downgraded into a preference or an assumption to pass, and an unknown with a filled-in reason is still unknown. Record version 1 carries all four lists; preferences, assumptions and open_questions may be empty.",
   "type": "object",
   "additionalProperties": false,
   "required": ["requirements"],

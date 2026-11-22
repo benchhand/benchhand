@@ -7,7 +7,7 @@
 """Realistic part fixtures for the static FEA: seven parts, each with a material profile, supports, a service load
 and a direction vector, built with the kernel cad-model uses and solved by fea_static.
 
-Every fixture is a versioned case in one record version 2 project. The solve needs FreeCAD 1.1.4 and `uv`
+Every fixture is a versioned case in one record version 1 project. The solve needs FreeCAD 1.1.4 and `uv`
 (it builds the STEP through cadquery); without them the specification tests still run. Benchmark and test data
 only: the sizes, loads and material numbers are typical of the part type, with synthetic datasheet sources.
 """
@@ -218,7 +218,7 @@ EXPECTED = {
 
 
 def documents() -> dict[str, Any]:
-    """The record version 2 documents of the project: seven parts, four sourced profiles, one load each."""
+    """The record version 1 documents of the project: seven parts, four sourced profiles, one load each."""
     loads = [{"id": f.load_id, "kind": "static", "magnitude": fx.known(fx.quantity(f.force_n, "N")),
               "direction": list(f.direction), "requirements": ["REQ-001"]} for f in FIXTURE_SET]
     use = fx.use_case("draft", service_class=fx.known("working_prototype"), loads=loads)

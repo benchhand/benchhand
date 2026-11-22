@@ -156,7 +156,7 @@
     },
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "frozen": {
-      "description": "The frozen configuration: the built version the design_freeze gate approved, its manifest sha256 and the approving decision. Once set, layout findings stay blocking at every stage. A record version 2 freeze also anchors evidence_sha256, the canonical digest of its acceptance inventory (verification, evidence and finding dispositions, relied-on bundle manifests and source bytes); a freeze without it is refused by a release until a new freeze records one.",
+      "description": "The frozen configuration: the built version the design_freeze gate approved, its manifest sha256 and the approving decision. Once set, layout findings stay blocking at every stage. A record version 1 freeze also anchors evidence_sha256, the canonical digest of its acceptance inventory (verification, evidence and finding dispositions, relied-on bundle manifests and source bytes); a freeze without it is refused by a release until a new freeze records one.",
       "type": "object", "additionalProperties": false,
       "required": ["version", "manifest_sha256", "decision"],
       "properties": {

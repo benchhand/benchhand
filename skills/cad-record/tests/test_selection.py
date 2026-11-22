@@ -587,7 +587,7 @@ class CommandLine(unittest.TestCase):
         hw = Path(temporary.name) / "hw"
         shutil.copytree(EXAMPLE, hw)
         product = hw / "product.yaml"
-        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 2", "record_version: 1"), encoding="utf-8")
+        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1", "record_version: 2"), encoding="utf-8")
         before = tree_digest(hw)
         result = self.run_cli(str(hw), "--json")
         self.assertEqual(result.returncode, 2, result.stderr)

@@ -47,7 +47,7 @@ def workspace() -> Iterator[Path]:
 
 
 def lamp(root: Path) -> Path:
-    """A fresh copy of the lamp-arm example (record version 2) in `root`/hw."""
+    """A fresh copy of the lamp-arm example (record version 1) in `root`/hw."""
     need()
     return Path(shutil.copytree(LAMP_HW, root / "hw"))
 

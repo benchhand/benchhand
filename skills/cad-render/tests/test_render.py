@@ -109,7 +109,7 @@ class OccurrenceInputSchema(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.hw = Path(temporary.name) / "hw"
-        self.folder = box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=2)
+        self.folder = box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=1)
 
     def rewrite(self, part_map: object, manifest: object) -> None:
         """Set each input's schema_version (None: absent) and reseal the manifest's file inventory."""
@@ -933,7 +933,7 @@ class VisibilityChecks(unittest.TestCase):
     def test_a_current_version_checks_its_own_requirements_snapshot_not_the_live_file(self) -> None:
         requirements(self.hw, FRONT)
         snapshot = (self.hw / "requirements.yaml").read_bytes()
-        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=2)
+        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=1)
         version = render.resolve_version(self.hw, "v2")
         requirements(self.hw, {**FRONT, "min_visible_fraction": 0.9}, text="Edited after v2 was built.")
         path, source = render.requirements_input(version)
@@ -942,16 +942,16 @@ class VisibilityChecks(unittest.TestCase):
         self.assertEqual((checks[0]["min_visible_fraction"], digest), (0.5, hashlib.sha256(snapshot).hexdigest()))
 
     def test_a_current_version_built_without_requirements_has_nothing_to_check(self) -> None:
-        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=2)
+        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=1)
         version = render.resolve_version(self.hw, "v2")
         requirements(self.hw, FRONT)  # written after v2 was built: not v2's requirements
         path, source = render.requirements_input(version)
         self.assertEqual(source, "version_snapshot")
         self.assertEqual(render.visibility_checks(path, self.by_pn, self.records), ([], None))
 
-    def test_a_version_that_names_no_record_version_2_is_refused_not_checked_against_the_live_file(self) -> None:
+    def test_a_version_that_names_no_record_version_1_is_refused_not_checked_against_the_live_file(self) -> None:
         requirements(self.hw, FRONT)  # the live hw/requirements.yaml must not stand in for a version with no snapshot
-        for label, record_version in (("no record_version", None), ("record_version 1", 1)):
+        for label, record_version in (("no record_version", None), ("record_version 2", 2)):
             with self.subTest(manifest=label):
                 self.version.manifest.pop("record_version", None)
                 if record_version is not None:
@@ -1133,8 +1133,8 @@ class BrowserRender(unittest.TestCase):
     def test_an_opaque_window_hides_the_target_and_a_transparent_one_shows_it(self) -> None:
         self.hw.mkdir(parents=True, exist_ok=True)
         requirements(self.hw, FRONT)  # before the builds: a version snapshots the requirements file present at build time
-        box_version.write(self.hw, "v1", BOXES, box_parts("opaque"), record_version=2)
-        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=2)
+        box_version.write(self.hw, "v1", BOXES, box_parts("opaque"), record_version=1)
+        box_version.write(self.hw, "v2", BOXES, box_parts("transparent"), record_version=1)
         reports = {}
         for label in ("v1", "v2"):
             code, summary = self.render("--version", label, "--views", "front",
@@ -1155,10 +1155,10 @@ class BrowserRender(unittest.TestCase):
 
     def test_an_unchanged_part_view_is_copied_and_a_changed_one_rendered(self) -> None:
         views = ("--views", "iso", PART_VIEW)
-        box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=2)
+        box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=1)
         code, first = self.render("--version", "v1", *views)
         self.assertEqual((code, first["reused"]), (0, {}))
-        box_version.write(self.hw, "v2", {**BOXES, OTHER: GROWN_OTHER}, box_parts(), record_version=2)
+        box_version.write(self.hw, "v2", {**BOXES, OTHER: GROWN_OTHER}, box_parts(), record_version=1)
         code, second = self.render("--version", "v2", *views)
         self.assertEqual((code, second["reused"]), (0, {PART_VIEW: "v1"}))
         self.assertEqual(sorted(name for name in second["view_wall_s"] if not name.endswith("_s")), ["iso"])
@@ -1166,7 +1166,7 @@ class BrowserRender(unittest.TestCase):
         self.assertNotEqual(Path(second["pngs"]["iso"]).read_bytes(), Path(first["pngs"]["iso"]).read_bytes())
         record = json.loads((Path(second["out_dir"]) / "render.json").read_text(encoding="utf-8"))["views"][PART_VIEW]
         self.assertEqual(record["reused"]["bundle"], "hw/renders/v1/assembly")
-        box_version.write(self.hw, "v3", {**BOXES, OTHER: GROWN_OTHER, TARGET: GROWN_TARGET}, box_parts(), record_version=2)
+        box_version.write(self.hw, "v3", {**BOXES, OTHER: GROWN_OTHER, TARGET: GROWN_TARGET}, box_parts(), record_version=1)
         code, third = self.render("--version", "v3", *views)
         self.assertEqual((code, third["reused"]), (0, {}))
         self.assertIn(PART_VIEW, third["view_wall_s"])

@@ -44,7 +44,7 @@ ROUTE: Mapping[str, Handler] = {"route.consistency": route.consistency, "route.o
 
 
 class NotAssessable(ValueError):
-    """The record cannot be assessed: it is not record version 2."""
+    """The record cannot be assessed: it is not record version 1."""
 
 
 def owned(obligation: Any) -> bool:
@@ -58,7 +58,7 @@ def expected(record: Any) -> tuple[Any, ...]:
     if record.version != intent().RECORD_VERSION:
         problem = intent().version_problem(dict(record.product))
         raise NotAssessable(f"{problem.message}; {problem.action}" if problem is not None
-                            else "the record is not record version 2")
+                            else "the record is not record version 1")
     return tuple(o for o in intent().required_checks(record) if owned(o))
 
 

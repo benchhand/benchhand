@@ -62,7 +62,7 @@ hw/analysis/cases/<case>/case.yaml (the bundle cad-record release.py requires fo
 `id` stays in results.json), else as hw/analysis/<V>/<id>/. An intent stack also binds the version's
 record snapshot: the interface's variation,
 its requirements, the parts, their route operations and inspections, and the capability profiles'
-calibrations. A bound intent stack whose record version 2 snapshot expects its obligation
+calibrations. A bound intent stack whose record version 1 snapshot expects its obligation
 (interface.stack@IF of a critical interface, feature.fit@PN#feature of a critical surface) also
 publishes that obligation's outcome, findings and governing results as its required-check packet at
 hw/checks/<V>/stack-<case, or id lowercased>/ (cad-record check_packet, beside the analysis bundle it cites), the one
@@ -1244,7 +1244,7 @@ def status_of(result: Mapping[str, Any]) -> str:
 
 def check_packet(result: Mapping[str, Any], record: Any,
                  dependencies: Mapping[str, str]) -> dict[str, Any] | None:
-    """The required-check packet of an intent stack bound to a record version 2 snapshot: the outcome of the
+    """The required-check packet of an intent stack bound to a record version 1 snapshot: the outcome of the
     interface.stack or feature.fit obligation it judges, as its governing method judged it (unknown stays
     unknown), and that obligation's findings. None for a missing record, or when the record expects
     no such obligation (an interface that is not critical, a feature that is not a critical surface)."""

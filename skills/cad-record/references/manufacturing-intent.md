@@ -1,6 +1,6 @@
 # Manufacturing-intent record
 
-The version-2 `hw/` record owns service, constraints, candidate selection, per-part route intent, capability and evidence. See `layout.md` for canonical paths and `layout-api.md` for path APIs. Schemas and `manufacturing_intent.py` own fields and interpretation. Missing facts remain unknown. They never mean zero, PASS or a default process/material.
+The `hw/` record owns service, constraints, candidate selection, per-part route intent, capability and evidence. See `layout.md` for canonical paths and `layout-api.md` for path APIs. Schemas and `manufacturing_intent.py` own fields and interpretation. Missing facts remain unknown. They never mean zero, PASS or a default process/material.
 
 ## Use case before selection
 
@@ -14,9 +14,9 @@ The starter catalog at `skills/cad-record/assets/manufacturing/material-profiles
 
 An optical requirement is a hard constraint. Opaque routes are ineligible. Consider a traceable purchased transparent part or identified transparent stock on a suitable evidenced route. Include identity/grade, optical grade, thickness, supplier evidence and interface criteria. Do not recommend see-through FDM or unidentified clear plastic.
 
-## Version-2 record contract
+## Record contract
 
-The one project version is `product.yaml: record_version: 2`; a missing or unknown version is refused. V2 requires `product.use_case`, requirements lists, per-part `intent`, interface functional contracts and top-level `assembly.operations` (which is the sole authority; v2 `drawing.operations` is rejected). A fact is known only with source and basis, or explicitly unknown/not applicable with a reason. Known estimates include uncertainty; assumed facts cite a bounded assumption; allowables include conditions and derivation. Supporting source files are hash-bound under `hw/manufacturing/sources/` or part sources. Process and material profiles have independent ids and remain separate from requirements.
+The one project version is `product.yaml: record_version: 1`; a missing or any other version is refused as `record.version_unsupported`. The record requires `product.use_case`, requirements lists, per-part `intent`, interface functional contracts and top-level `assembly.operations` (which is the sole authority; `drawing.operations` is rejected). A fact is known only with source and basis, or explicitly unknown/not applicable with a reason. Known estimates include uncertainty; assumed facts cite a bounded assumption; allowables include conditions and derivation. Supporting source files are hash-bound under `hw/manufacturing/sources/` or part sources. Process and material profiles have independent ids and remain separate from requirements.
 
 The use case records status/decision, service class, purpose/users, temperature and environment, loads, motion/duty/life, accuracy/finish/stability, failure consequences/severity/standards/supervision/authority, quantity/budget/lead time/maintenance/repair, actual capability/operator/outsourcing, release purpose/limits/exclusions, and evidence policy. Requirements retain acceptance criteria and may scope subjects, conditions, risk, evidence level and waiver policy. `preferences[]`, `assumptions[]` and `open_questions[]` are distinct; resolved questions need a resolution source or decision.
 

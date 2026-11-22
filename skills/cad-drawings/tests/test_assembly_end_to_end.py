@@ -122,7 +122,7 @@ def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path
         (folder / "part.yaml").write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
         (folder / "model.py").write_text(f'KERNEL = "cadquery"\nPARAMS = {{}}\n# {pn}\n', encoding="utf-8")
         built[pn] = {"model": f"parts/{pn}/model.py", "source_sha256": sha(folder / "model.py"), "step": f"parts/{pn}.step"}
-    # The record as current cad-record reads it: record version 2, every manufacturing-intent field unknown.
+    # The record as current cad-record reads it: record version 1, every manufacturing-intent field unknown.
     fx.upgrade_record(hw)
     add_flow_profile(hw)  # the project-start profile is due from SPECIFY on
     spec = {"definitions": {pn: {"name": f"{pn} {p['title']}", **p["shape"]} for pn, p in PARTS.items()},

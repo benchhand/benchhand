@@ -73,7 +73,7 @@ _UPGRADE_LOCK = threading.Lock()
 
 
 def upgrade(hw: Path) -> Path:
-    """Complete the hand-written project below `hw` as a record version 2 record (cad-model's project fixtures)."""
+    """Complete the hand-written project below `hw` as a record version 1 record (cad-model's project fixtures)."""
     name = "cad_model_manufacturing_projects"
     with _UPGRADE_LOCK:  # both kernels build in threads and the fixture modules register before they finish loading
         if name not in sys.modules:

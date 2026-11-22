@@ -639,7 +639,7 @@ class ValidatorLayout(TempProject):
 
     def setUp(self) -> None:
         super().setUp()
-        load("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py").migrated_copy(LAMP, self.hw)
+        load("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures" / "manufacturing_intent.py").record_copy(LAMP, self.hw)
 
     def set_flow(self, **flow: Any) -> None:
         path = self.hw / "product.yaml"
@@ -648,7 +648,7 @@ class ValidatorLayout(TempProject):
         path.write_text(yaml.safe_dump(product, sort_keys=False), encoding="utf-8")
 
     def freeze(self, stage: str) -> None:
-        """A record version 2 freeze of v1: its manifest and its acceptance digest (evidence.py digest)."""
+        """A record version 1 freeze of v1: its manifest and its acceptance digest (evidence.py digest)."""
         manifest = seal_version(self.hw, "v1") / "manifest.json"
         evidence = sys.modules["cad_record_evidence"]
         record = sys.modules["cad_record_manufacturing_intent"].load_record(self.hw)
@@ -720,7 +720,7 @@ class ValidatorLayout(TempProject):
 
     def test_symlink_escape_is_an_error_at_every_stage(self) -> None:
         outside = write(self.root / "outside.md")
-        (self.hw / "docs").mkdir(exist_ok=True)  # the migration note already lives there
+        (self.hw / "docs").mkdir(exist_ok=True)  # docs/ may already exist
         (self.hw / "docs" / "outside.md").symlink_to(outside)
         (self.hw / "docs" / "inside.md").symlink_to(self.hw / "bom.csv")
         (self.hw / "docs" / "escape").symlink_to(self.root, target_is_directory=True)

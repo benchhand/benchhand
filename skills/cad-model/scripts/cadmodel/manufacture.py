@@ -168,7 +168,7 @@ def _orientations(part: Any) -> list[tuple[str, Mapping[str, Any]]]:
 
 
 def _part_refusal(snapshot: Snapshot, pn: str, part: Any) -> str | None:
-    """The reason to refuse a record version 2 part before any plan: its part.yaml does not name it, or its intent.color is
+    """The reason to refuse a record version 1 part before any plan: its part.yaml does not name it, or its intent.color is
     invalid (an `intent.color_invalid` record problem). None when neither."""
     path = f"hw/parts/{pn}/part.yaml"
     if part is None:
@@ -650,7 +650,7 @@ def _threemf_files(target: Path, entry: Mapping[str, Any], record: Mapping[str, 
 def _placement(entry: Mapping[str, Any], placement: Mapping[str, Any], shape: Any,
                measures: _Measures) -> dict[str, Any]:
     """A proper transform. A part set on a bed touches it at Z 0 and, with an envelope, sits inside its
-    reserved extents (X and Y: margin to size - margin; Z: 0 to size - 2 margin); a record version 2
+    reserved extents (X and Y: margin to size - margin; Z: 0 to size - 2 margin); a record version 1
     part on a bed is complete only in its approved orientation. Any other part keeps its model frame."""
     transform = placement["transform"]
     proper = orientation.is_proper(tuple(tuple(row[:3]) for row in transform))  # type: ignore[arg-type]

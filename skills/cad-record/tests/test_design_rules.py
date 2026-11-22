@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 """Design rules: the clearance margin, retention and visibility bindings, through the record validator on
-a copy of the lamp example migrated to record version 2, and through design_rules.py's public functions."""
+a copy of the lamp example at record version 1, and through design_rules.py's public functions."""
 
 from __future__ import annotations
 
@@ -34,14 +34,14 @@ fx = load("cad_record_mi_fixtures", SKILL / "tests" / "fixtures" / "manufacturin
 
 
 class LampRecord(unittest.TestCase):
-    """A copy of the lamp example migrated to record version 2, edited one document at a time and
+    """A copy of the lamp example at record version 1, edited one document at a time and
     validated in process."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-record-rules-")
         self.addCleanup(temporary.cleanup)
         self.hw = Path(temporary.name) / "project" / "hw"
-        fx.migrated_copy(LAMP, self.hw)
+        fx.record_copy(LAMP, self.hw)
 
     def edit(self, name: str, change: Callable[[Any], None]) -> None:
         path = self.hw / name
@@ -262,7 +262,7 @@ class Schemas(LampRecord):
         for name, (change, location) in cases.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
                 self.hw = Path(tmp) / "project" / "hw"
-                fx.migrated_copy(LAMP, self.hw)
+                fx.record_copy(LAMP, self.hw)
                 change()
                 messages = [item["message"] for item in validate.blocking(self.findings())]
                 self.assertTrue(any(message.startswith(location) for message in messages), messages)

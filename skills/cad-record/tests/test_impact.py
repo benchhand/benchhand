@@ -961,7 +961,7 @@ class Cli(unittest.TestCase):
         self.build("v1")
         code, report = self.run_cli("--since-version", "v1")
         self.assertEqual((code, report["code"]), (2, "record.version_unsupported"))
-        self.assertIn("record version 2 only", report["message"])
+        self.assertIn("record version 1 only", report["message"])
 
 
 if __name__ == "__main__":

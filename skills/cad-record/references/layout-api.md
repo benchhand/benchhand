@@ -142,7 +142,7 @@ checks COMP against its grammar.
 as the `version.record` entry names them: product, requirements, interfaces, assembly, each
 `parts/<PN>/part.yaml`, `manufacturing/{capabilities,materials,selection}.yaml` and every regular file
 under `manufacturing/sources/`. It never lists the evidence or finding ledgers, the BOM or
-verification, and never follows a symlink. Record version 2 contracts are read through
+verification, and never follows a symlink. Record version 1 contracts are read through
 `scripts/manufacturing_intent.py`.
 
 ## Read the git storage rules

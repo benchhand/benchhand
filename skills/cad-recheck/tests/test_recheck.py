@@ -6,7 +6,7 @@
 
 """Integration tests for the staged CAD recheck stamp and its `--verify` check.
 
-The project is a small record version 2 record: a confirmed use case and one CNC part. A stamp needs the
+The project is a small record version 1 record: a confirmed use case and one CNC part. A stamp needs the
 evidence packet of the staged record (cad-record evidence.py); the tests build it from a synthetic
 producer packet, so they need no CAD kernel. Regression matrix row 13 (stamp refuses stale or missing
 expected checks) and the stamp boundary cases."""
@@ -105,7 +105,7 @@ class RecheckHookTests(unittest.TestCase):
             self.add_profile(stage)
             return
         flow = {"stage": stage, **({"recheck_from": threshold} if threshold else {})}
-        data = {"record_version": 2, "id": "test-project", "flow": flow,
+        data = {"record_version": 1, "id": "test-project", "flow": flow,
                 "use_case": acceptance.confirmed_use_case("appearance_concept")}
         product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
         self.add_profile(stage)
@@ -733,7 +733,7 @@ class RecheckHookTests(unittest.TestCase):
         """Stage a detail-stage product in the moved project and stamp it with --hw. Return the project."""
         project = self.move_project(subdirectory)
         (project / "hw" / "product.yaml").write_text(
-            json.dumps({"record_version": 2, "id": "test-project", "flow": {"stage": "detail", "recheck_from": "layout"},
+            json.dumps({"record_version": 1, "id": "test-project", "flow": {"stage": "detail", "recheck_from": "layout"},
                         "use_case": acceptance.confirmed_use_case("appearance_concept")}, indent=1) + "\n", encoding="utf-8")
         self.add_profile("detail", project)
         self.git("add", subdirectory)

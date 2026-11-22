@@ -51,7 +51,7 @@ layout = _load_module("cad_record_layout", Path(__file__).resolve().parent / "la
 emit = _load_module("cad_record_emit", Path(__file__).resolve().parent / "emit.py")
 # The MADR 4.0.0 decision records under hw/decisions/ (the one reader of DR-###-slug.md).
 decision_records = _load_module("cad_record_decision_records", Path(__file__).resolve().parent / "decision_records.py")
-# The record version 2 manufacturing intent (the one reader of use case, routes and profiles) and the
+# The record version 1 manufacturing intent (the one reader of use case, routes and profiles) and the
 # evidence model on it: waivers, typed verification and the acceptance digest.
 intent = _load_module("cad_record_manufacturing_intent", Path(__file__).resolve().parent / "manufacturing_intent.py")
 evidence = _load_module("cad_record_evidence", Path(__file__).resolve().parent / "evidence.py")
@@ -869,7 +869,7 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
 
 
 def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]]) -> None:
-    """A record version 2 freeze anchors its acceptance evidence: flow.frozen.evidence_sha256 is the
+    """A record version 1 freeze anchors its acceptance evidence: flow.frozen.evidence_sha256 is the
     acceptance digest (evidence.py) of the frozen version's inventory as it stands now. A changed ledger,
     verification table, relied-on bundle or source needs a new anchor approved by the user, or a change."""
     if record.version != intent.RECORD_VERSION:

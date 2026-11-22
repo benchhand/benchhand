@@ -18,7 +18,7 @@ are judged again on the sealed files (`manufacturing`, cadmodel.manufacture); `b
 non-blocking diagnostic, fits each additive part in the state and pose it is made in against a
 machine envelope: an envelope fit is never process feasibility.
 Declarations (fits, inserts, clearance requirements and their margins) come from the version's record snapshot.
-A version built from a record version 2 snapshot also gets its cad.readback required-check packet
+A version built from a record version 1 snapshot also gets its cad.readback required-check packet
 (B-rep validity, read-back, manufacturing state and component identity per made part and component, the GLB<->STEP
 agreement per made part and each declared heat-set dimension) published to hw/checks/<V>/cad/, where cad-record
 evidence.py reads it (`publish_readback`). An oracle row that abstains is an `unknown` outcome there, never a pass,
@@ -197,7 +197,7 @@ def brep_validity(parts: dict[str, Any], manifest: dict[str, Any]) -> dict[str, 
 
 
 def declared_solids(snapshot: Path) -> dict[str, int]:
-    """The solid count each record version 2 part of a version's record snapshot declares for its
+    """The solid count each record version 1 part of a version's record snapshot declares for its
     definition: the sum of its part.yaml `intent.components` multiplicities, unless it is made in a
     different state, whose components count that state's solids instead. A part declaring no
     components declares none."""
@@ -1026,7 +1026,7 @@ def _code_shas() -> Any:
 
 def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
                      checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> dict[str, Any] | None:
-    """Publish the cad.readback packet of a record version 2 version to hw/checks/<V>/cad/ (bundle.checks,
+    """Publish the cad.readback packet of a record version 1 version to hw/checks/<V>/cad/ (bundle.checks,
     the one place cad-record evidence.py reads producer packets) and return {bundle, reused, result,
     complete}; None for a version without a snapshot. `occurrences` maps each occurrence id to its PN. The packet is
     recomputed by every check and replaces the one an earlier check sealed when it differs, so a changed
@@ -1181,5 +1181,5 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                             "cleared": dict(counters.cleared), "reevaluations": counters.reevaluations}}
     packet = publish_readback(hw, label, folder, snapshot, checks, occurrence_pns)
     if packet is not None:
-        result["packet"] = packet  # the cad.readback required-check packet (record version 2)
+        result["packet"] = packet  # the cad.readback required-check packet (record version 1)
     return (1 if blocking else 0), result

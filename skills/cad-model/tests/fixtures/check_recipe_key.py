@@ -34,7 +34,7 @@ def main(argv: list[str]) -> dict[str, object]:
         hw, label, result = Path(argv[2]), argv[3], json.loads(Path(argv[4]).read_text(encoding="utf-8"))
         folder = hw / "versions" / label
         published = check.publish_readback(hw, label, folder, folder / "record", result["checks"], result["occurrences"])
-        assert published is not None, "a record version 2 version publishes a readback packet"
+        assert published is not None, "a record version 1 version publishes a readback packet"
         manifest = json.loads((hw / "checks" / label / "cad" / "manifest.json").read_text(encoding="utf-8"))
         return {"reused": published["reused"], "recipe_sha256": manifest["recipe_sha256"]}
     packet = {"producer": check.READBACK_PRODUCER, "complete": True, "outcomes": []}

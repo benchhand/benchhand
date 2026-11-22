@@ -13,7 +13,7 @@
 A stamp records the staged hw/ tree hash, the stage and the evidence packet `evidence.py check` wrote
 for it (cad-record), or the packet of an `evidence.py run` report (a run that stopped has none): its
 expected checks, each one's status and the digest of the record inputs it
-read. Only a record version 2 record stamps; a record of another version refuses at or after the
+read. Only a record version 1 record stamps; a record of another version refuses at or after the
 threshold. A packet that is not the assessment of the staged record, lacks an
 expected check or is partial never stamps; `--passed` stamps only a packet whose stage gate, recomputed
 here from its statuses and from the staged record's selection report (cad-record selection.py, with

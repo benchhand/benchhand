@@ -10,7 +10,7 @@
 # ///
 """Assess a design record's use case and compare its material, process and architecture candidates.
 
-Read-only: it reads a record version 2 hw/ and reports; it never writes the design record. A
+Read-only: it reads a record version 1 hw/ and reports; it never writes the design record. A
 selection becomes a decision only when the lead records it in hw/manufacturing/selection.yaml with an
 approving decision (status confirmed), through the existing approval gate.
 

@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any, Callable
 from unittest.mock import patch
 
+import yaml
+
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -71,23 +73,47 @@ class Vocabularies(unittest.TestCase):
 
 
 class Versions(unittest.TestCase):
-    def test_only_version_2_is_current_and_any_other_is_refused(self) -> None:
-        self.assertEqual(mi.record_version({"record_version": 2}), 2)
-        for product in ({}, {"record_version": 1}, {"record_version": 3}, {"record_version": True},
-                        {"record_version": "2"}, {"record_version": None}):
+    def test_only_version_1_is_current_and_any_other_is_refused(self) -> None:
+        self.assertEqual(mi.record_version({"record_version": 1}), 1)
+        for product in ({}, {"record_version": 2}, {"record_version": 3}, {"record_version": True},
+                        {"record_version": "1"}, {"record_version": None}):
             with self.subTest(product=product), self.assertRaises(mi.UnsupportedRecordVersion):
                 mi.record_version(product)
 
+    def test_a_product_of_record_version_2_or_with_none_is_refused_and_not_read(self) -> None:
+        for label, version in (("version 2", 2), ("no version", None)):
+            hw = fx.write_record(temp_hw(self), fx.tst_record())
+            product = hw / "product.yaml"
+            data = yaml.safe_load(product.read_text(encoding="utf-8"))
+            data.pop("record_version", None)
+            if version is not None:
+                data["record_version"] = version
+            product.write_text(yaml.safe_dump(data), encoding="utf-8")
+            record = mi.load_record(hw)
+            with self.subTest(label):
+                self.assertEqual(record.version, 0)
+                self.assertEqual([p.code for p in record.problems], ["record.version_unsupported"])
+                self.assertTrue(record.use_case.unknown)
+                self.assertEqual((dict(record.capabilities), dict(record.materials)), ({}, {}))
+
+    def test_a_product_of_record_version_1_is_read(self) -> None:
+        hw = fx.write_record(temp_hw(self), fx.tst_record())
+        product = hw / "product.yaml"
+        data = yaml.safe_load(product.read_text(encoding="utf-8"))
+        data["record_version"] = 1
+        product.write_text(yaml.safe_dump(data), encoding="utf-8")
+        record = mi.load_record(hw)
+        self.assertEqual((record.version, [p.code for p in record.problems]), (1, []))
+
     def test_version_problem_refuses_any_unknown_version_and_blocks(self) -> None:
-        for product in ({"id": "x"}, {"record_version": 1}, {"record_version": 7}):
+        for product in ({"id": "x"}, {"record_version": 2}, {"record_version": 7}):
             with self.subTest(product=product):
                 problem = mi.version_problem(product)
                 self.assertEqual((problem.code, problem.severity, problem.path, problem.pointer),
                                  ("record.version_unsupported", "error", "hw/product.yaml", "record_version"))
-        self.assertIsNone(mi.version_problem({"record_version": 2}))
+        self.assertIsNone(mi.version_problem({"record_version": 1}))
         self.assertEqual(mi.version_problem(None).code, "record.version_unsupported", "no product.yaml names no version")
         self.assertLessEqual({"record.version_unsupported", "record.incomplete"}, set(mi.CODES))
-        self.assertNotIn("record.migration_required", mi.CODES)
 
 
 class Quantities(unittest.TestCase):
@@ -120,7 +146,7 @@ class Normalization(unittest.TestCase):
         hw = fx.write_record(temp_hw(self), fx.tst_record())
         record, problems = mi.check_record(hw)
         self.assertEqual([p.finding() for p in problems], [])
-        self.assertEqual(record.version, 2)
+        self.assertEqual(record.version, 1)
         self.assertEqual({pn: p.sourcing for pn, p in record.parts.items()},
                          {"TST-0001": "make", "TST-0002": "made_to_drawing", "TST-0003": "catalogue", "TST-0004": "make"})
         bracket = record.parts["TST-0001"]
@@ -149,10 +175,10 @@ class Normalization(unittest.TestCase):
         self.assertEqual([p.gauge for p in found], ["5.65sqrtS0", None])
 
     def test_a_record_of_an_unsupported_version_reads_as_unknowns_and_one_problem(self) -> None:
-        for version in (1, 3):
+        for version in (2, 3):
             hw = fx.write_record(temp_hw(self), fx.tst_record())
             product = hw / "product.yaml"
-            product.write_text(product.read_text(encoding="utf-8").replace("record_version: 2", f"record_version: {version}"),
+            product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1", f"record_version: {version}"),
                                encoding="utf-8")
             record = mi.load_record(hw)
             with self.subTest(version=version):
@@ -720,7 +746,7 @@ class RequiredChecks(unittest.TestCase):
             path = hw / "parts" / pn / "part.yaml"
             lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
             start = next(i for i, line in enumerate(lines) if line.startswith("  route:"))
-            legacy = f"  route: {{status: unknown, reason: not recorded before record version 2, question: {question}}}\n"
+            legacy = f"  route: {{status: unknown, reason: not recorded, question: {question}}}\n"
             path.write_text("".join(lines[:start]) + legacy, encoding="utf-8")
         return hw
 

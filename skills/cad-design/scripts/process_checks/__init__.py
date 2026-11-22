@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Process-dispatched manufacturability checks for record version 2 parts (cad-design).
+"""Process-dispatched manufacturability checks for record version 1 parts (cad-design).
 
 Each made component of each part is judged per route operation by the handler of that operation's kind,
 against criteria from the operation's capability-profile calibrations for the component's material, and

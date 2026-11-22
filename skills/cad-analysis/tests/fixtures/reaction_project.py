@@ -45,7 +45,7 @@ LAYOUT = load_by_path("cad_record_layout", SKILLS / "cad-record" / "scripts" / "
 CHECK_PACKET = load_by_path("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
 INTENT = load_by_path("cad_record_manufacturing_intent", SKILLS / "cad-record" / "scripts" / "manufacturing_intent.py")
 
-# A versioned case takes its material from the part's profile in the version's record snapshot (record version 2).
+# A versioned case takes its material from the part's profile in the version's record snapshot (record version 1).
 CASE_TAIL = """part: TST-0101
 material: {conditions: {conditioning: dry, temperature: {value: 23, units: deg_C}}}
 fixed_faces: {plane: {axis: y, value: 50, tolerance: 0.000001}}
@@ -76,7 +76,7 @@ def packet(outcome: str) -> dict[str, Any]:
                            "method": "rigid statics of the modelled stop contact", "coverage": "one pivot at its limits"}
     if outcome == "unknown":
         row["uncertainty"] = "the reaction is not established"
-    return {"schema_version": 1, "record_version": 2, "producer": "cad-analysis stop_reaction.py",
+    return {"schema_version": 1, "record_version": 1, "producer": "cad-analysis stop_reaction.py",
             "scope": [{"interface": INTERFACE}],
             "expected": [{"id": obligation, "family": "engineering.stop_reaction", "subject": {"interface": INTERFACE},
                           "level": "simulation_supported", "stage": "layout", "basis": "test"}],
@@ -117,7 +117,7 @@ class Scenario:
         self.version = self.hw / "versions" / "v1"
         record = self.version / "record"
         record.mkdir(parents=True)
-        import test_fea_conditions as sourced  # the record version 2 fixture of the sourced-material tests
+        import test_fea_conditions as sourced  # the record version 1 fixture of the sourced-material tests
 
         documents = sourced.documents()
         sourced.fx.write_record(self.hw, documents)

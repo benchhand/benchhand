@@ -36,7 +36,7 @@ Run `validate.py` with the product at stage `parts`. Each `retention.*` finding'
 
 Transparency is a hard functional requirement in manufacturing selection, not a prose warning or an FDM exception. Opaque routes are ineligible. Consider only a traceably identified purchased transparent part or identified transparent stock made by an appropriate evidenced process; criteria include material identity/grade, optical grade, thickness, supplier evidence and interface compatibility. Unknown clear plastic is not a substitute; translucency is not transparent. See `manufacturing-intent.md` and `cad-flow/references/manufacturing-selection.md`.
 
-U7 removes legacy `feasibility.transparent_fdm`, `feasibility.transparency_claim` and prose-matcher `design_rules.transparency_claimed` behaviors. Their removal does not turn transparency into a PASS: the v2 record's selection hard constraint and `optical.route`/`optical.transmission` obligations are the authority. On a historical record, absence of an assessed selection is unknown, never retroactive certification.
+U7 removes legacy `feasibility.transparent_fdm`, `feasibility.transparency_claim` and prose-matcher `design_rules.transparency_claimed` behaviors. Their removal does not turn transparency into a PASS: the record's selection hard constraint and `optical.route`/`optical.transmission` obligations are the authority. On a historical record, absence of an assessed selection is unknown, never retroactive certification.
 
 ## Visibility bindings
 

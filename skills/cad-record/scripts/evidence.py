@@ -8,7 +8,7 @@
 # requires-python = ">=3.12,<3.15"
 # dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
-"""Evidence of a record version 2 design: what each expected check, requirement and part has shown,
+"""Evidence of a record version 1 design: what each expected check, requirement and part has shown,
 at which evidence level, against which configuration; the stage gates and the release service policy
 built on it; waivers; and the acceptance digest a freeze and a release anchor.
 
@@ -44,7 +44,7 @@ freeze or release with no material and process selection recorded blocks like an
 
 `check` prints the aggregate evidence packet cad-recheck stamps: exit 0 when the stage gate passes,
 1 when it blocks, 2 on a usage or infrastructure error. `digest` prints the acceptance inventory and
-its evidence_sha256, which a record version 2 freeze records in product.yaml flow.frozen and a
+its evidence_sha256, which a record version 1 freeze records in product.yaml flow.frozen and a
 release seals: exit 0, or 2 when the inventory cannot be formed.
 
 `run` produces the evidence a scope needs and then the same packet `check` prints
@@ -55,7 +55,7 @@ only while an obligation it covers (FAMILY_PRODUCERS) is stale or open and due a
 read in the fail-fast order, stopping the producers still running at the first blocking result;
 the full scope runs them one after another. Exit 0 when every step passes (and, in the full scope,
 the packet's gate passes); 1 when a step blocks, the gate of a full run blocks, the record is
-not record version 2 or the version is not built or is stale (refused: build it again); 2 on a
+not record version 1 or the version is not built or is stale (refused: build it again); 2 on a
 usage error, a stray run (its stop commands are listed) or a producer that gave no result (an exit
 status other than 0 and 1, or an exit 0 without a JSON report). `check` stays separate: it recomputes the
 packet without producers.
@@ -424,7 +424,7 @@ class Assessment:
             raise ValueError(f"unknown stage {stage!r}")
         if self.record.version != mi.RECORD_VERSION:
             problem = mi.version_problem(self.record.product)
-            message = problem.message if problem is not None else "the record is not record version 2"
+            message = problem.message if problem is not None else "the record is not record version 1"
             action = f"; {problem.action}" if problem is not None and problem.action else ""
             return (Finding("gate.record", "hw/product.yaml", message + action),)
         explore = STAGES.index(stage) < STAGES.index("layout")
@@ -878,7 +878,7 @@ def _packet_problems(packet: ProducerPacket, expected: Mapping[str, Any]) -> lis
     that contradicts itself (a claimed completeness or result its outcomes do not show)."""
     data = packet.data
     if not isinstance(data, Mapping) or data.get("schema_version") != 1 or data.get("record_version") != mi.RECORD_VERSION:
-        return ["not a record version 2 manufacturing check result (schema_version 1)"]
+        return ["not a record version 1 manufacturing check result (schema_version 1)"]
     problems = []
     outcomes = [o for o in data.get("outcomes") or () if isinstance(o, Mapping)]
     ids = [o.get("obligation") for o in outcomes]
@@ -1631,7 +1631,7 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
                   record_sha256=record_digest(record_inputs(hw)))
     if record.version != mi.RECORD_VERSION:
         problem = mi.version_problem(record.product)
-        message = problem.message if problem is not None else "the record is not record version 2"
+        message = problem.message if problem is not None else "the record is not record version 1"
         action = f"; {problem.action}" if problem is not None and problem.action else ""
         return 1, {**report, "findings": [Finding(mi.VERSION_UNSUPPORTED, "hw/product.yaml", message + action).as_dict()]}
     assessment, _ = build_assessment(hw, label, today)

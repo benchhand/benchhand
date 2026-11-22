@@ -140,7 +140,7 @@ class OrderTests(unittest.TestCase):
 
 
 def access_record(items: list[dict]) -> dict:
-    """A record version 2 project of the five fixture parts with `items` as its operations."""
+    """A record version 1 project of the five fixture parts with `items` as its operations."""
     parts = [fx.part(pn, TITLES[pn], process="cnc") for pn in PNS]
     interface = fx.interface("IF-001", "TST-0101", "TST-0102", "mounting",
                              limits={"press_fit": {"fit": "22 H7/p6", "pair": ["TST-0102", "TST-0101"]}})

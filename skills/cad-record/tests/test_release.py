@@ -151,14 +151,14 @@ def frozen_lamp(hw: Path, *, before_build: Callable[[Path], None] | None = None,
                 ledger: Callable[[Path, Any, list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
                 anchor: bool = True, packet: Callable[[dict[str, Any]], None] | None = None,
                 stated: dict[str, str] | None = None) -> None:
-    """The lamp example migrated to record version 2 and reconciled for release (released revisions, a
+    """The lamp example at record version 1 and reconciled for release (released revisions, a
     confirmed `service_class` use case and explicit routes, every software check of `label` passed by a
     sealed producer packet, verification passed with accepted ledger evidence), built as `label`, frozen at
     it with its acceptance digest (unless not `anchor`), every required bundle published, and DR-005
     approving it. Each `older` version is built first, with a check and a render bundle of its own;
     `ledger` may rewrite the accepted entries before the freeze, `packet` the producer packet before it is sealed and
     `stated` the verification.csv result of a requirement (default pass)."""
-    fx.migrated_copy(LAMP, hw)
+    fx.record_copy(LAMP, hw)
     for part in sorted((hw / "parts").glob("*/part.yaml")):
         edit_yaml(part, lambda data: data.update(rev="A"))
     edit_csv(hw / "bom.csv", lambda rows: [row.update(rev="A") for row in rows])
@@ -300,7 +300,7 @@ class Release(ReleaseCase):
         findings: list[dict[str, Any]] = []
         self.assertTrue(validate.validate_document(manifest, "release-manifest.schema.json", "manifest", findings), findings)
         self.assertEqual((manifest["schema_version"], manifest["record_version"], manifest["rev"], manifest["approval"],
-                          manifest["frozen"]["version"]), (3, 2, "A", "DR-005", "v1"))
+                          manifest["frozen"]["version"]), (3, 1, "A", "DR-005", "v1"))
         self.assertEqual(manifest["frozen"]["manifest_sha256"], sha(hw / "versions" / "v1" / "manifest.json"))
         self.assertEqual(layout.verify(package), [])
         for name, item in manifest["files"].items():
@@ -1349,7 +1349,7 @@ def open_selection(hw: Path) -> None:
 
 
 class Acceptance(ReleaseCase):
-    """The intent acceptance of a record version 2 release: anchor, evidence and service policy."""
+    """The intent acceptance of a record version 1 release: anchor, evidence and service policy."""
 
     def test_a_record_without_the_current_version_refuses(self) -> None:
         hw = self.project()

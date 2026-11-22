@@ -353,7 +353,7 @@ def _density(snapshot: record.Snapshot, reference: Any) -> tuple[dict[str, Any],
 
 def profile_mass(snapshot: record.Snapshot, pn: str, volume: float, centre: Iterable[float],
                  entry: Mapping[str, Any] | None) -> dict[str, Any]:
-    """A record version 2 part's mass and centre of mass from the density its material profiles resolve:
+    """A record version 1 part's mass and centre of mass from the density its material profiles resolve:
     the part's profile, or each component's when its manufacturing entry binds several. Any unresolved
     density leaves both unknown; an interval density gives mass bounds and no centre of mass; components
     of a different manufacturing state have no installed correspondence, so their centre of mass is unknown."""

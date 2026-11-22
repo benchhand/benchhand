@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Accepted-evidence fixtures for the evidence, impact, release and recheck tests: a confirmed use case,
-resolved questions, a release-ready intent for a migrated record, synthetic producer packets and ledger
+resolved questions, a release-ready intent for a current record, synthetic producer packets and ledger
 entries. Every value is synthetic test data: nothing here is a material, machine, supplier or test result.
 
 Load it by path (it loads the U1 fixture builder and cad-record's evidence module the same way):
@@ -84,7 +84,7 @@ def resolve_questions(requirements: dict[str, Any], decision: str = DECISION) ->
 
 
 def release_ready(hw: Path, service_class: str = "appearance_concept", **use: Any) -> None:
-    """Make a migrated record's manufacturing intent explicit and final-ready: a confirmed use case,
+    """Make a current record's manufacturing intent explicit and final-ready: a confirmed use case,
     resolved questions, each made part's functions, synthetic material profile (printed for an additive route,
     bulk stock otherwise) and route on a capability profile per process that approves it (service and critical
     surfaces not applicable), catalogue buys purchased, every interface non-critical."""
@@ -169,7 +169,7 @@ def producer_packet(record: Any, *, outcome: str = "pass", obligations: Any = No
     if not complete and outcomes:
         outcomes = outcomes[:-1]
     shown = "fail" if outcome == "fail" and outcomes else ("unknown" if outcome == "unknown" or not complete else "pass")
-    return {"schema_version": 1, "record_version": 2, "producer": "TST synthetic producer",
+    return {"schema_version": 1, "record_version": 1, "producer": "TST synthetic producer",
             "scope": [{"product": True}], "expected": [o.as_dict() for o in chosen], "outcomes": outcomes,
             "findings": list(findings), "dependencies": {}, "complete": complete, "result": shown}
 
@@ -253,7 +253,7 @@ def decision(hw: Path, ident: str, status: str = "accepted") -> None:
 
 
 def freeze_anchor(hw: Path, version: str) -> str:
-    """The acceptance digest of `version` as hw/ stands (what a record version 2 freeze records)."""
+    """The acceptance digest of `version` as hw/ stands (what a record version 1 freeze records)."""
     folder = layout.version_dir(hw, version)
     packets, problems = evidence.collect_packets(hw, version, sha((folder / layout.MANIFEST).read_bytes()))
     assert not problems, problems

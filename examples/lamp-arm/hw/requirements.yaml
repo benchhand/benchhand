@@ -133,7 +133,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-012
-    question: 'LMP-0001 (Base plate and pivot boss): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material PETG and process fdm; they stay declarations, not evidence. The material profile is answered by DR-005 (petg); the rest stays open.'
+    question: 'LMP-0001 (Base plate and pivot boss): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material PETG and process fdm; they stay declarations, not evidence. The material profile is answered by DR-005 (petg); the rest stays open.'
     subjects:
       - {PN: LMP-0001}
     owner: lead
@@ -141,7 +141,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-013
-    question: 'LMP-0002 (Lower link): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Aluminum 6061-T6 and process cnc; they stay declarations, not evidence.'
+    question: 'LMP-0002 (Lower link): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Aluminum 6061-T6 and process cnc; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0002}
     owner: lead
@@ -149,7 +149,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-014
-    question: 'LMP-0003 (Upper link): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Aluminum 6061-T6 and process cnc; they stay declarations, not evidence.'
+    question: 'LMP-0003 (Upper link): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Aluminum 6061-T6 and process cnc; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0003}
     owner: lead
@@ -157,7 +157,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-015
-    question: 'LMP-0004 (Lamp head housing): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material PETG and process fdm; they stay declarations, not evidence. The material profile is answered by DR-005 (petg); the rest stays open.'
+    question: 'LMP-0004 (Lamp head housing): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material PETG and process fdm; they stay declarations, not evidence. The material profile is answered by DR-005 (petg); the rest stays open.'
     subjects:
       - {PN: LMP-0004}
     owner: lead
@@ -165,7 +165,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-016
-    question: 'LMP-0005 (M5 x 30 shoulder pin): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Stainless steel A2 and process cnc; they stay declarations, not evidence.'
+    question: 'LMP-0005 (M5 x 30 shoulder pin): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Stainless steel A2 and process cnc; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0005}
     owner: lead
@@ -173,7 +173,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-017
-    question: 'LMP-0006 (M5 x 25 shoulder pin): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Stainless steel A2 and process cnc; they stay declarations, not evidence.'
+    question: 'LMP-0006 (M5 x 25 shoulder pin): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Stainless steel A2 and process cnc; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0006}
     owner: lead
@@ -181,7 +181,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-018
-    question: 'LMP-0007 (M5 x 20 shoulder pin): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Stainless steel A2 and process cnc; they stay declarations, not evidence.'
+    question: 'LMP-0007 (M5 x 20 shoulder pin): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Stainless steel A2 and process cnc; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0007}
     owner: lead
@@ -189,7 +189,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-019
-    question: 'LMP-0008 (Bushing SPIROL CMPL 4 X 8 EK CL8000): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Brass C36000 and process purchased; they stay declarations, not evidence.'
+    question: 'LMP-0008 (Bushing SPIROL CMPL 4 X 8 EK CL8000): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Brass C36000 and process purchased; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0008}
     owner: lead
@@ -197,7 +197,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-020
-    question: 'LMP-0009 (Bushing SPIROL CMPL 4 X 6 EK CL8100): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Brass C36000 and process purchased; they stay declarations, not evidence.'
+    question: 'LMP-0009 (Bushing SPIROL CMPL 4 X 6 EK CL8100): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Brass C36000 and process purchased; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0009}
     owner: lead
@@ -205,7 +205,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-021
-    question: 'LMP-0010 (Heat-set insert M10x1 x 12.7 OD 12.6): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Brass and process purchased; they stay declarations, not evidence.'
+    question: 'LMP-0010 (Heat-set insert M10x1 x 12.7 OD 12.6): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Brass and process purchased; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0010}
     owner: lead
@@ -213,7 +213,7 @@ open_questions:
     safety_relevant: true
     status: open
   - id: Q-022
-    question: 'LMP-0011 (Retaining ring DIN 471 - 5x0.6): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The legacy record declares material Spring steel C60S and process purchased; they stay declarations, not evidence.'
+    question: 'LMP-0011 (Retaining ring DIN 471 - 5x0.6): which functions does it serve, which loads and service conditions does it see, which material profile (family or exact grade) and which complete route (operations, capability, orientation, setups, supports, finishing and inspection) apply, and which surfaces are critical? The record declares material Spring steel C60S and process purchased; they stay declarations, not evidence.'
     subjects:
       - {PN: LMP-0011}
     owner: lead

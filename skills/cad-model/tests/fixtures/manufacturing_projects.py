@@ -1,4 +1,4 @@
-"""Record version 2 projects for cad-model's manufacturing-state tests, written with cad-record's shared
+"""Record version 1 projects for cad-model's manufacturing-state tests, written with cad-record's shared
 fixture builder (cad-record/tests/fixtures/manufacturing_intent.py, loaded by path).
 
 `loose_project` is one made part, TST-0001, built by fixtures/<kernel>/loose_components.py: a body and
@@ -60,7 +60,7 @@ def part_intent(material: str, route: Any = None) -> dict[str, Any]:
 
 
 def upgrade_project(hw: Path) -> Path:
-    """Complete a hand-written test project below `hw` as a record version 2 record, with a density-only
+    """Complete a hand-written test project below `hw` as a record version 1 record, with a density-only
     material profile for each material in DENSITIES."""
     fx = shared()
     fx.upgrade_record(hw)

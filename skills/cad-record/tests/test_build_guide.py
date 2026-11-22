@@ -53,9 +53,9 @@ class BuildGuide(unittest.TestCase):
         self.out = self.root / ".cad-work" / "docs"
 
     def copy_lamp_example(self) -> Path:
-        """The lamp example migrated to record version 2, which build_guide.py requires."""
+        """The lamp example at record version 1, which build_guide.py requires."""
         self.hw.rmdir()
-        return fx.migrated_copy(LAMP_EXAMPLE / "hw", self.hw)
+        return fx.record_copy(LAMP_EXAMPLE / "hw", self.hw)
 
     def make_version(self, hw: Path, version: str) -> None:
         version_dir = hw / "versions" / version
@@ -309,7 +309,7 @@ class BuildGuide(unittest.TestCase):
         hw = self.root / "minimal-hw"
         (hw / "parts" / "TST-0001").mkdir(parents=True)
         (hw / "versions" / "v1" / "parts").mkdir(parents=True)
-        (hw / "product.yaml").write_text("record_version: 2\nid: minimal\n", encoding="utf-8")
+        (hw / "product.yaml").write_text("record_version: 1\nid: minimal\n", encoding="utf-8")
         (hw / "parts" / "TST-0001" / "part.yaml").write_text(
             "PN: TST-0001\nrev: A\ntitle: Test part\nmaterial: steel\nprocess: cnc\nmake_buy: make\n",
             encoding="utf-8",
@@ -342,7 +342,7 @@ class BuildGuide(unittest.TestCase):
     def test_generic_empty_record_outputs_not_recorded_values(self) -> None:
         hw = self.root / "empty-hw"
         hw.mkdir()
-        (hw / "product.yaml").write_text("record_version: 2\n", encoding="utf-8")
+        (hw / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")
         (hw / "versions" / "v1").mkdir(parents=True)
         (hw / "versions" / "v1" / "manifest.json").write_text(
             json.dumps({"label": "v1", "parts": {}}), encoding="utf-8"
@@ -362,7 +362,7 @@ class BuildGuide(unittest.TestCase):
             (hw / "versions" / version).mkdir(parents=True)
             (hw / "versions" / version / "manifest.json").write_text(
                 json.dumps({"label": version, "parts": {}}), encoding="utf-8")
-        (hw / "product.yaml").write_text("record_version: 2\nid: released\n", encoding="utf-8")
+        (hw / "product.yaml").write_text("record_version: 1\nid: released\n", encoding="utf-8")
         for rev, version, released_at in (("A", "v3", "2026-10-01T00:00:00Z"), ("B", "v4", "2026-10-02T00:00:00Z")):
             (hw / "releases" / rev).mkdir(parents=True)
             (hw / "releases" / rev / "manifest.json").write_text(json.dumps({
@@ -404,7 +404,7 @@ class BuildGuide(unittest.TestCase):
     def test_missing_version_manifest_fails_without_output(self) -> None:
         hw = self.root / "missing-build"
         hw.mkdir()
-        (hw / "product.yaml").write_text("record_version: 2\n", encoding="utf-8")
+        (hw / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")
         (hw / "versions" / "v1").mkdir(parents=True)
         result = subprocess.run(
             ["uv", "run", "--script", str(SCRIPT), str(hw), "--version", "v1", "--out", str(self.out)],
@@ -419,7 +419,7 @@ class BuildGuide(unittest.TestCase):
         self.make_version(hw, "v1")
         path = hw / "product.yaml"
         original = yaml.safe_load(path.read_text(encoding="utf-8"))
-        for version in (1, 3, None):
+        for version in (2, 3, None):
             product = {**original, "record_version": version}
             if version is None:
                 del product["record_version"]

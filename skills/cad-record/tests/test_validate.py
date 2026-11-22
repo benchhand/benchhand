@@ -31,7 +31,7 @@ EXAMPLE = LAMP_EXAMPLE / "hw"
 VALIDATOR = SKILL / "scripts" / "validate.py"
 PLACEHOLDER_INTENT = "".join(f"  {name}: {{status: unknown, reason: not recorded yet}}\n" for name in (
     "functions", "material_profile", "service", "critical_surfaces", "route"))
-# The functional block a record version 2 interface needs, all unknown (without questions).
+# The functional block a record version 1 interface needs, all unknown (without questions).
 PLACEHOLDER_FUNCTIONAL = ("functional: {critical: {status: unknown, reason: not recorded yet}, "
                           "functions: {status: unknown, reason: not recorded yet}}")
 
@@ -54,15 +54,15 @@ def tree(root: Path) -> dict[str, bytes]:
 
 
 class ValidateProject(unittest.TestCase):
-    """The lamp example (record version 2), edited one fact at a time."""
+    """The lamp example (record version 1), edited one fact at a time."""
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="cad-record-test-")
         self.addCleanup(self.temporary.cleanup)
         self.project = Path(self.temporary.name) / "project"
         self.hw = self.project / "hw"
-        fx.migrated_copy(EXAMPLE, self.hw)
-        self.migrated_interfaces = (self.hw / "interfaces.yaml").read_bytes()
+        fx.record_copy(EXAMPLE, self.hw)
+        self.record_interfaces = (self.hw / "interfaces.yaml").read_bytes()
         self.part_path = self.hw / "parts" / "LMP-0001" / "part.yaml"
 
     def set_part(self, pn: str = "LMP-0001", rev: str = "X1") -> None:
@@ -342,7 +342,7 @@ class ValidateProject(unittest.TestCase):
         (release_dir / "bom.csv").write_bytes(content)
         digest = hashlib.sha256(content).hexdigest()
         (release_dir / "manifest.json").write_text(json.dumps({
-            "schema_version": 3, "record_version": 2, "product_id": "lamp-arm", "rev": rev,
+            "schema_version": 3, "record_version": 1, "product_id": "lamp-arm", "rev": rev,
             "released_at": "2026-10-26T00:00:00Z",
             "frozen": {"version": "v1", "manifest_sha256": "0" * 64, "decision": "DR-001", "evidence_sha256": "0" * 64},
             "approval": "DR-001",
@@ -359,7 +359,7 @@ class ValidateProject(unittest.TestCase):
         self.write_release("A", "A")
         result, report = self.validate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # A record version 2 verification pass is a summary of ledger evidence, not evidence: without
+        # A record version 1 verification pass is a summary of ledger evidence, not evidence: without
         # hw/manufacturing/evidence.yaml entries each pass row warns (an error from the design freeze on).
         with (self.hw / "verification.csv").open(newline="", encoding="utf-8") as stream:
             rows = list(csv.DictReader(stream))
@@ -609,7 +609,7 @@ class ValidateProject(unittest.TestCase):
                                         (-1.5, "clearance", "less than or equal to the minimum of 0"),
                                         (2.0, "mounting", "'clearance' was expected")):
             with self.subTest(minimum=minimum, kind=kind):
-                (self.hw / "interfaces.yaml").write_bytes(self.migrated_interfaces)
+                (self.hw / "interfaces.yaml").write_bytes(self.record_interfaces)
                 self.add_clearance("[LMP-0004, LMP-0001]", minimum, kind)
                 found = self.messages()
                 self.assertTrue(any(m.startswith("interfaces/5") and expected in m for m in found), found)
@@ -625,7 +625,7 @@ class ValidateProject(unittest.TestCase):
         self.add_clearance('["@ring-base", "@ring-base"]')
         self.assertTrue(any(m.startswith("interfaces/5/pair:") and "non-unique" in m for m in self.messages()))
         # A PN placed once and its @id name one occurrence: make @ring-head the one, part-local LMP-0010.
-        (self.hw / "interfaces.yaml").write_bytes(self.migrated_interfaces)
+        (self.hw / "interfaces.yaml").write_bytes(self.record_interfaces)
         self.edit_assembly("  - id: ring-head\n    PN: LMP-0011", "  - id: ring-head\n    PN: LMP-0010")
         self.edit_assembly("LMP-0009, LMP-0010]", "LMP-0009]")
         with (self.hw / "parts" / "LMP-0010" / "part.yaml").open("a", encoding="utf-8") as part:
@@ -820,13 +820,13 @@ class RecordVersion(unittest.TestCase):
         return result.returncode, result_payload(result.stdout)["findings"]
 
     def test_an_unsupported_record_version_is_named_not_guessed(self) -> None:
-        for version in ("record_version: 1", "record_version: 3", None):
+        for version in ("record_version: 2", "record_version: 3", None):
             with self.subTest(version=version):
                 shutil.rmtree(self.hw, ignore_errors=True)
-                fx.migrated_copy(EXAMPLE, self.hw)
+                fx.record_copy(EXAMPLE, self.hw)
                 product = self.hw / "product.yaml"
                 text = product.read_text(encoding="utf-8")
-                product.write_text(text.replace("record_version: 2\n", f"{version}\n" if version else ""), encoding="utf-8")
+                product.write_text(text.replace("record_version: 1\n", f"{version}\n" if version else ""), encoding="utf-8")
                 before = tree(self.hw)
                 code, findings = self.validate()
                 self.assertEqual(code, 1)
@@ -834,9 +834,9 @@ class RecordVersion(unittest.TestCase):
                 self.assertEqual(tree(self.hw), before, "reading a record rewrites nothing")
 
     def test_an_unsupported_record_version_still_reports_its_other_findings(self) -> None:
-        fx.migrated_copy(EXAMPLE, self.hw)
+        fx.record_copy(EXAMPLE, self.hw)
         product = self.hw / "product.yaml"
-        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 2", "record_version: 1"), encoding="utf-8")
+        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1", "record_version: 2"), encoding="utf-8")
         part = self.hw / "parts" / "LMP-0001" / "part.yaml"
         part.write_text(part.read_text(encoding="utf-8").replace("decisions: [DR-002, DR-004]", "decisions: [DR-999]"),
                         encoding="utf-8")
@@ -853,7 +853,7 @@ class LedgerEvidence(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-record-evidence-")
         self.addCleanup(temporary.cleanup)
         self.project = Path(temporary.name) / "project"
-        self.hw = fx.migrated_copy(EXAMPLE, self.project / "hw")
+        self.hw = fx.record_copy(EXAMPLE, self.project / "hw")
 
     def findings(self) -> list[dict[str, object]]:
         result = subprocess.run([sys.executable, str(VALIDATOR), str(self.project)], capture_output=True, text=True,
@@ -951,7 +951,7 @@ class FlowProfileFindings(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.project = Path(temporary.name) / "project"
         self.hw = self.project / "hw"
-        fx.migrated_copy(EXAMPLE, self.hw)
+        fx.record_copy(EXAMPLE, self.hw)
         self.product_path = self.hw / "product.yaml"
 
     def edit_product(self, old: str, new: str) -> None:
@@ -994,7 +994,7 @@ class FlowProfileFindings(unittest.TestCase):
 
     def test_the_safety_rule_is_an_error_before_layout_too(self) -> None:
         self.edit_product("stage: layout\n  recheck_from: layout", "stage: specify\n  recheck_from: specify")
-        self.edit_product("service_class: {status: unknown, reason: not recorded before record version 2, question: Q-001}",
+        self.edit_product("service_class: {status: unknown, reason: not recorded, question: Q-001}",
                           "service_class: {status: known, value: safety_critical, basis: user_declared, "
                           "sources: [{kind: user, reference: TST fixture, origin: TST fixture user}]}")
         result, report = self.validate()
@@ -1025,7 +1025,7 @@ class FlowProfileFindings(unittest.TestCase):
     def make_first_interface_critical(self) -> None:
         path = self.hw / "interfaces.yaml"
         text = path.read_text(encoding="utf-8")
-        old = "critical: {status: unknown, reason: not recorded before record version 2, question: Q-023}"
+        old = "critical: {status: unknown, reason: not recorded, question: Q-023}"
         fact = ('critical: {status: known, value: true, basis: user_declared, '
                 'sources: [{kind: user, reference: TST fixture, origin: TST fixture user}]}')
         self.assertEqual(text.count(old), 1)

@@ -38,10 +38,10 @@ drawing:
     - {kind: inspection, text: "Heat-set into the LMP-0001 bushing seat, flush with the boss top (DR-004)."}
   sheet: {sizes: [A4, A3], scale: auto}
 intent:
-  functions: {status: unknown, reason: not recorded before record version 2, question: Q-019}
-  material_profile: {status: unknown, reason: 'not recorded before record version 2; the legacy material Brass C36000 is a declaration, not a sourced grade', question: Q-019}
-  service: {status: unknown, reason: not recorded before record version 2, question: Q-019}
-  critical_surfaces: {status: unknown, reason: not recorded before record version 2, question: Q-019}
+  functions: {status: unknown, reason: not recorded, question: Q-019}
+  material_profile: {status: unknown, reason: 'not recorded; the material Brass C36000 is a declaration, not a sourced grade', question: Q-019}
+  service: {status: unknown, reason: not recorded, question: Q-019}
+  critical_surfaces: {status: unknown, reason: not recorded, question: Q-019}
   route:
     - id: buy
       kind: purchased

@@ -92,7 +92,7 @@ def write_project(root: Path, *, features: bool = True) -> tuple[Path, Path]:
     for name, document in documents.items():
         (hw / name).write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     (hw / "parts" / PN / "part.yaml").write_text(yaml.safe_dump(PART, sort_keys=False), encoding="utf-8")
-    fx.upgrade_record(hw)  # record version 2, every manufacturing-intent field unknown
+    fx.upgrade_record(hw)  # record version 1, every manufacturing-intent field unknown
     add_flow_profile(hw)  # the project-start profile is due from SPECIFY on
     model = b'KERNEL = "cadquery"\nPARAMS = {}\n'
     (hw / "parts" / PN / "model.py").write_bytes(model)

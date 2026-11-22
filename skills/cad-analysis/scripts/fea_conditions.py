@@ -5,7 +5,7 @@
 """Material conditions and evidence of a static FEA case: where E, nu, density and yield come from, and
 what a completed solve can support.
 
-A versioned case of a record version 2 project takes its material only from the analysed part's material
+A versioned case of a record version 1 project takes its material only from the analysed part's material
 profile (cad-record `manufacturing_intent.resolve_property`), under the conditions the case states: the
 conditioning, the temperature and, for orientation-dependent material, the orientation. Before any solve it
 refuses numeric case values (copied, unsourced properties), a part whose material is only a name, a family
@@ -238,19 +238,19 @@ def assess_version(case: dict[str, Any], *, record_dir: Path, hw: Path, version:
     """The material and evidence basis of a versioned case; Refused before the solve when it has none."""
     record, documents = read_record(record_dir)
     form = case["_material_form"]
-    if record.version != 2:
+    if record.version != intent().RECORD_VERSION:
         raise Refused([{"code": "record.version_unsupported",
                         "message": f"version {version}: the record snapshot's record_version is not supported"}])
     if form == "explicit":
         raise Refused([{"code": "material.inherited",
-                        "message": "a record version 2 case takes E, nu, density and yield only from the part's material "
+                        "message": "a record version 1 case takes E, nu, density and yield only from the part's material "
                                    "profile: numeric case values are copied, unsourced properties; replace them with "
                                    "material.conditions"}])
     return _Assessor(record, documents, case, record_dir, Path(hw), version).run()
 
 
 class _Assessor:
-    """One versioned record version 2 case: every refusal is collected, then raised together."""
+    """One versioned record version 1 case: every refusal is collected, then raised together."""
 
     def __init__(self, record: Any, documents: Mapping[str, Any], case: dict[str, Any], record_dir: Path, hw: Path,
                  version: str) -> None:
@@ -324,7 +324,7 @@ class _Assessor:
             "properties": properties,
         }
         self.case["material"] = {"name": material["name"], **values}
-        binding = {"version": self.version, "record_version": 2, **subject, "part_revision": part.raw.get("rev"),
+        binding = {"version": self.version, "record_version": 1, **subject, "part_revision": part.raw.get("rev"),
                    "material_profile": {"id": profile.id, "revision": profile.revision, "sha256": profile_sha},
                    "route": route["kinds"], "conditions": material["conditions"]}
         expected = [ob.as_dict() for ob in self.mi.required_checks(self.record)
@@ -369,7 +369,7 @@ class _Assessor:
             self.refuse("material.subject", f"occurrence {occurrence} is not an occurrence of version {self.version}'s "
                                             "assembly.yaml, so its part and material profile are unknown")
             return {}
-        self.refuse("material.subject", "a record version 2 case names its `part` or `occurrence`: the material profile "
+        self.refuse("material.subject", "a record version 1 case names its `part` or `occurrence`: the material profile "
                                         "is the analysed part's, never chosen by solid index or STEP content")
         return {}
 
@@ -1034,7 +1034,7 @@ def _digest(value: Any) -> str:
 # --- after the solve -------------------------------------------------------------------------------------------
 
 def report(result: dict[str, Any], assessment: Assessment, case: Mapping[str, Any]) -> dict[str, Any]:
-    """Add the material, evidence, mesh and (record version 2) engineering packet to a completed result.
+    """Add the material, evidence, mesh and (record version 1) engineering packet to a completed result.
 
     A stress result's mesh convergence is its own two-mesh study, which only the solve can show."""
     mode = case.get("_mode", fea_modes.DEFAULT)
@@ -1063,7 +1063,7 @@ def report(result: dict[str, Any], assessment: Assessment, case: Mapping[str, An
 def packet(result: Mapping[str, Any], a: Assessment, *, mode: str) -> dict[str, Any]:
     """The engineering.* check-result packet (manufacturing-check-result.schema.json) of one solve in `mode`."""
     if a.subject is None:
-        raise ValueError("only a record version 2 case, which names its analysed part, has an engineering packet")
+        raise ValueError("only a record version 1 case, which names its analysed part, has an engineering packet")
     subject = a.subject
     outcomes, findings = [], []
     for obligation in a.expected:
@@ -1074,7 +1074,7 @@ def packet(result: Mapping[str, Any], a: Assessment, *, mode: str) -> dict[str, 
     states = {row["outcome"] for row in outcomes}
     verdict = ("fail" if "fail" in states else "unknown" if "unknown" in states else
                "pass" if "pass" in states else "not_applicable")
-    return {"schema_version": 1, "record_version": 2, "producer": PRODUCER, "scope": [subject],
+    return {"schema_version": 1, "record_version": 1, "producer": PRODUCER, "scope": [subject],
             "expected": a.expected, "outcomes": outcomes, "findings": findings, "dependencies": dict(a.dependencies),
             "complete": len(outcomes) == len(a.expected), "result": verdict}
 

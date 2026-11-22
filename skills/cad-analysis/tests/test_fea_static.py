@@ -1309,7 +1309,7 @@ class LoadApplication(unittest.TestCase):
         self.assertIsNone(failure_checks.zero_result(0.0, 0.0, [("FaceForce0", 0.0)]))
 
 
-# A versioned case takes its material from the part's profile in the version's record snapshot (record version 2).
+# A versioned case takes its material from the part's profile in the version's record snapshot (record version 1).
 VERSIONED_TAIL = """part: TST-0101
 material: {conditions: {conditioning: dry, temperature: {value: 23, units: deg_C}}}
 fixed_faces: {plane: {axis: y, value: 50, tolerance: 0.000001}}
@@ -1332,7 +1332,7 @@ class VersionedPublicationTests(unittest.TestCase):
         self.step.write_bytes(b"STEP geometry")
         self.case = self.case_dir / "case.yaml"
         self.case.write_text("step: beam.step\n" + VERSIONED_TAIL, encoding="utf-8")
-        import test_fea_conditions as sourced  # the record version 2 fixture of the sourced-material tests
+        import test_fea_conditions as sourced  # the record version 1 fixture of the sourced-material tests
 
         documents = sourced.documents()
         sourced.fx.write_record(self.hw, documents)

@@ -16,7 +16,7 @@ Usage:
         [--fidelity ...] [--replace | --out .cad-work/PATH] [--on YYYY-MM-DD]
 
 --version runs the checks below on the version's installed parts (versions/<V>/parts, record from its
-record/ snapshot), then, for a record version 2 snapshot, process_checks: each obligation of
+record/ snapshot), then, for a record version 1 snapshot, process_checks: each obligation of
 manufacturing_intent.required_checks this producer owns (process.<kind>.*, purchase.*, route.*,
 optical.route; physically validated ones belong to the evidence ledger) gets one outcome, judged on the
 exported manufacturing component files (versions/<V>/manufacturing/<PN>[/components/<COMP>]) in their
@@ -24,7 +24,7 @@ export pose, against capability-profile calibrations, else the guideline sets th
 (graded by service class; process_checks). The packet
 (manufacturing-check-result.schema.json) is published as hw/checks/<V>/process/result.json (reused when
 the recipe matches; --replace for another), or written to --out instead. A snapshot of an unsupported record version is
-`not_assessed` with record.version_unsupported.
+`refused` with record.version_unsupported: nothing else of it is read.
 
 Parts: one STEP per part in DIR, named `<PN>.step` (cad-motion `--parts-dir`
 rules). Process comes from hw/parts/<PN>/part.yaml (`fdm`, `cnc`, `purchased`); a bought part
@@ -732,7 +732,7 @@ def bore_offset(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: 
     return best
 
 
-# --- manufacturing-state probe (process_checks facts, record version 2) -----------------------------------------
+# --- manufacturing-state probe (process_checks facts, record version 1) -----------------------------------------
 # One exported manufacturing component, in the frame it was exported in (bed: its approved additive pose,
 # build direction +Z; model: the native frame). process_checks/core.py Geometry documents every key.
 
@@ -1574,6 +1574,19 @@ def packet_code(blocking: bool, packet: dict[str, Any]) -> int:
     return 1 if blocking or packet["result"] not in ("pass", "not_assessed") else 0
 
 
+def unsupported_version_problem(pc: Any, files: dict[str, bytes], label: str) -> dict[str, Any] | None:
+    """The record.version_unsupported finding of a version's record snapshot, or None for a record version
+    Benchhand reads. A snapshot whose product.yaml does not parse is left to read_snapshot to refuse."""
+    import yaml
+
+    try:
+        product = yaml.safe_load(files.get("product.yaml", b"").decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError):
+        return None
+    problem = pc.intent().version_problem(product, f"hw/versions/{label}/record/product.yaml")
+    return problem.finding() if problem is not None else None
+
+
 def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], int]:
     """The legacy fidelity checks on a built version's installed parts, then the process-dispatched
     manufacturing checks of its record snapshot and manufacturing outputs, published as the version's
@@ -1583,17 +1596,16 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
     layout = load_layout()
     label, folder, record_dir = layout.built_version(args.hw, args.version)
     pc = load_process_checks()
-    record = model_record.read_snapshot(model_record.read_folder(record_dir)).intent
+    files = model_record.read_folder(record_dir)
+    unsupported = unsupported_version_problem(pc, files, label)
+    if unsupported is not None:  # nothing else of the snapshot is read
+        return {"version": label, "manufacturing": {"status": "refused", "problems": [unsupported]}}, 1
+    record = model_record.read_snapshot(files).intent
     catalog = pc.guidelines().discover(record_dir, snapshot=True)  # the version's own copies of the guideline sets
     legacy = argparse.Namespace(**{**vars(args), "hw": record_dir, "parts_dir": folder / "parts"})
     report = check(legacy, pose, record, catalog)
     report["version"] = label
     blocking = report["status"] == "fail"
-    if record.version != pc.intent().RECORD_VERSION:
-        problem = pc.intent().version_problem(dict(record.product), f"hw/versions/{label}/record/product.yaml")
-        report["manufacturing"] = {"status": "not_assessed", "record_version": record.version,
-                                   "problems": [problem.finding()] if problem is not None else []}
-        return report, 1
     today = args.on or date.today()
     manifest_path = folder / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

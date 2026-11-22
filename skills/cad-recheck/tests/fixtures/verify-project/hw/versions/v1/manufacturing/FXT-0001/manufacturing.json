@@ -41,7 +41,7 @@
   },
   "up": "+Z",
   "intent": {
-    "record_version": 2,
+    "record_version": 1,
     "material_profile": {
       "status": "unknown",
       "reason": "no material is chosen for the verify fixture"

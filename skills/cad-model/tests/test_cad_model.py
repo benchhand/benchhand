@@ -2115,7 +2115,7 @@ def snapshot_of(records: dict, product: dict | None = None):
     import yaml
 
     files = {f"parts/{pn}/part.yaml": yaml.safe_dump(data).encode() for pn, data in records.items()}
-    files["product.yaml"] = yaml.safe_dump(product or {"id": "test", "record_version": 2}).encode()
+    files["product.yaml"] = yaml.safe_dump(product or {"id": "test", "record_version": 1}).encode()
     return build.record.read_snapshot(files)
 
 
@@ -2174,7 +2174,7 @@ class ManufactureRuleTests(unittest.TestCase):
 
 
 def projects():
-    """fixtures/manufacturing_projects.py: record version 2 projects written with cad-record's fixture builder."""
+    """fixtures/manufacturing_projects.py: record version 1 projects written with cad-record's fixture builder."""
     name = "cad_model_manufacturing_projects"
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(name, FIXTURES / "manufacturing_projects.py")
@@ -2190,7 +2190,7 @@ TURNED_ROWS = ((1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
 
 
 class ManufacturingIntentRuleTests(unittest.TestCase):
-    """Record version 2 snapshots, manufacturing plans and their keys, export poses and profile mass on
+    """Record version 1 snapshots, manufacturing plans and their keys, export poses and profile mass on
     synthetic TST records; needs PyYAML, no OCP."""
 
     def setUp(self) -> None:
@@ -2221,7 +2221,7 @@ class ManufacturingIntentRuleTests(unittest.TestCase):
                                                 f"parts/{mp.PN}/part.yaml", "product.yaml", "requirements.yaml",
                                                 *shipped_copies(self.hw)]))
         self.assertEqual(files[mp.SOURCE], mp.SOURCE_BYTES)
-        self.assertEqual(build.record.read_snapshot(files).version, 2)
+        self.assertEqual(build.record.read_snapshot(files).version, 1)
 
     def test_the_outputs_key_covers_material_capability_route_orientation_and_source_inputs(self) -> None:
         mp = projects()
@@ -2310,7 +2310,7 @@ class ManufacturingIntentRuleTests(unittest.TestCase):
             write.assert_not_called()
 
     def test_declared_components_set_the_solid_count_check_expects(self) -> None:
-        """A record version 2 part made as installed declares its definition's solid count by its
+        """A record version 1 part made as installed declares its definition's solid count by its
         components' multiplicities, which replaces the previous version's count; --expect-solids still
         wins; a different state and a sole solid declare none."""
         import yaml
@@ -2351,7 +2351,7 @@ class ManufacturingIntentRuleTests(unittest.TestCase):
 
     def test_mass_comes_from_the_profile_density_and_a_missing_density_stays_unknown(self) -> None:
         mp = projects()
-        snapshot, *_ = self.plan(material="PETG")  # a legacy table name: a record version 2 part never reads the table
+        snapshot, *_ = self.plan(material="PETG")  # a legacy table name: a record version 1 part never reads the table
         mass = build.profile_mass(snapshot, mp.PN, 8000.0, (20.0, 10.0, 5.0), None)
         self.assertAlmostEqual(mass["mass_g"], 8000.0 * mp.DENSITY_G_CM3 / 1000.0, places=9)
         self.assertEqual((mass["density_g_cm3"], mass["centre_of_mass_mm"], mass["mass"]["source"]),
@@ -2427,7 +2427,7 @@ class ManufacturingIntentRuleTests(unittest.TestCase):
 class ProfileRefusalTests(unittest.TestCase):
     """`run` builds only on a settled project-start profile (flow.profile, cited decision accepted)."""
 
-    def project(self, root: Path, product: str = "record_version: 2\nid: gate\n") -> Path:
+    def project(self, root: Path, product: str = "record_version: 1\nid: gate\n") -> Path:
         hw = root / "hw"
         hw.mkdir()
         (hw / "product.yaml").write_text(product, encoding="utf-8")
@@ -2870,7 +2870,7 @@ class ManufacturingInvalidColorTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class ManufacturingColorTests(unittest.TestCase):
-    """A record version 2 part (CadQuery only) whose intent.color reaches part.3mf: v1 has no color, v2 sets
+    """A record version 1 part (CadQuery only) whose intent.color reaches part.3mf: v1 has no color, v2 sets
     #FF8000 and nothing else. The color remakes the manufacturing outputs and never the B-rep."""
 
     @classmethod
@@ -3088,7 +3088,7 @@ class ManufacturingStaleRecordTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class ManufacturingInputCacheTests(unittest.TestCase):
-    """A record version 2 part (CadQuery only): a material, orientation or process change remakes its
+    """A record version 1 part (CadQuery only): a material, orientation or process change remakes its
     manufacturing outputs and never its B-rep; the post-check ledgers change nothing. v5 changes the
     printed part to a laser cut that is reamed, coated and inspected (plan section 11 row 12, model part)."""
 
@@ -3138,7 +3138,7 @@ class ManufacturingInputCacheTests(unittest.TestCase):
 
     def test_the_version_snapshot_and_approved_pose_bind_its_evidence(self) -> None:
         manifest = self.manifest("v1")
-        self.assertEqual(manifest["record_version"], 2)
+        self.assertEqual(manifest["record_version"], 1)
         for name in ("requirements.yaml", "manufacturing/materials.yaml", projects().SOURCE):
             self.assertIn(f"record/{name}", manifest["record"])
         self.assertEqual((self.hw / "versions" / "v1" / "record" / projects().SOURCE).read_bytes(), projects().SOURCE_BYTES)
@@ -3253,7 +3253,7 @@ class ManufacturingInputCacheTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class UnsupportedRecordTests(unittest.TestCase):
-    """A record that is not version 2 is refused by `run` and `check`, and nothing is written."""
+    """A record that is not version 1 is refused by `run` and `check`, and nothing is written."""
 
     @staticmethod
     def with_version(path: Path, version: object) -> None:
@@ -3264,11 +3264,11 @@ class UnsupportedRecordTests(unittest.TestCase):
         path.chmod(0o644)  # a sealed version's record snapshot is read-only
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
-    def test_run_refuses_a_record_version_other_than_2_and_writes_nothing(self) -> None:
+    def test_run_refuses_a_record_version_other_than_1_and_writes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = two_part_project(Path(tmp), "cadquery")
             set_arm(hw, "cadquery")
-            for version in (1, 3, None):
+            for version in (2, 3, None):
                 self.with_version(hw / "product.yaml", version)
                 before = sorted(p.relative_to(hw).as_posix() for p in hw.rglob("*"))
                 with self.subTest(version=version):
@@ -3277,13 +3277,13 @@ class UnsupportedRecordTests(unittest.TestCase):
                     self.assertIn("record_version", proc.stderr)
                     self.assertEqual(sorted(p.relative_to(hw).as_posix() for p in hw.rglob("*")), before)
 
-    def test_check_refuses_a_version_whose_record_snapshot_is_not_version_2(self) -> None:
+    def test_check_refuses_a_version_whose_record_snapshot_is_not_version_1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = two_part_project(Path(tmp), "cadquery")
             set_arm(hw, "cadquery")
             proc, _, _ = cli("run", str(hw), "--label", "v1")
             self.assertEqual(proc.returncode, 0, proc.stdout[-2000:] + proc.stderr[-2000:])
-            for version in (1, 3, None):
+            for version in (2, 3, None):
                 self.with_version(hw / "versions" / "v1" / "record" / "product.yaml", version)
                 with self.subTest(version=version):
                     proc, _, _ = cli("check", "v1", "--hw", str(hw))

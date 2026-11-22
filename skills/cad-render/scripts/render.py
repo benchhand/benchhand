@@ -33,9 +33,9 @@ A custom view uses `dir-pX-mY-Z`, with signed decimal components encoded as p/m 
 
 Requirement visibility: every `visibility` binding of the selected version's requirements (read through
 cad-record design_rules.py) is checked on that version at its built (nominal) pose. A version built by
-this cad-model (its manifest names `record_version` 2) reads record/requirements.yaml from its own
+this cad-model (its manifest names `record_version` 1) reads record/requirements.yaml from its own
 record snapshot, so a later edit of hw/requirements.yaml never changes what it is checked against; a
-version whose manifest names no record version 2 is refused.
+version whose manifest names no record version 1 is refused.
 From the binding's view, framed on its window and target parts with every other part hidden, each target's
 visible fraction is the share of its own silhouette where it is the nearest surface; a part whose
 part.yaml declares `transparency: transparent` is see-through, opaque and translucent ones occlude. A
@@ -83,6 +83,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, cast
 from urllib.parse import unquote, urlsplit
+
+RECORD_VERSION = 1  # the one record version whose snapshot a version manifest may name (cad-record manufacturing_intent.RECORD_VERSION)
 
 HERE = Path(__file__).resolve()
 _parity_spec = importlib.util.spec_from_file_location("cad_render_parity_policy", HERE.parent / "parity_policy.py")
@@ -956,12 +958,12 @@ VISIBILITY_VIEWS = {"iso", "front", "side"}  # and dir-X-Y-Z; exploded, close-up
 def requirements_input(version: Version) -> tuple[Path, str]:
     """The requirements file a version's visibility is checked against, and where it comes from:
     `version_snapshot`, the version's own record/requirements.yaml. A version built from a record
-    snapshot (its manifest names `record_version` 2) snapshotted every record file present, so a
-    missing snapshot file means the project had none. A manifest that names no record version 2 is
+    snapshot (its manifest names `record_version` 1) snapshotted every record file present, so a
+    missing snapshot file means the project had none. A manifest that names no record version 1 is
     refused: today's hw/requirements.yaml never stands in for a version without a snapshot."""
     recorded = version.manifest.get("record_version")
-    if recorded != 2:
-        raise InfraError(f"{version.label}: its manifest names record_version {recorded!r}, not 2; "
+    if recorded != RECORD_VERSION:
+        raise InfraError(f"{version.label}: its manifest names record_version {recorded!r}, not {RECORD_VERSION}; "
                          "rebuild the version with cad-model to check its requirements")
     return version.record / "requirements.yaml", "version_snapshot"
 

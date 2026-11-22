@@ -8,7 +8,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
-"""Record version 2 manufacturing intent: the typed, immutable view of a design record's use case,
+"""Record version 1 manufacturing intent: the typed, immutable view of a design record's use case,
 classified statements, per-part intent, interface functions and capability, material and selection
 profiles, and the policy every other skill reads it through.
 
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
 
-RECORD_VERSION = 2
+RECORD_VERSION = 1
 
 # --- problem codes this module reports (validate.py maps them to report findings) -------------------------------
 VERSION_UNSUPPORTED = "record.version_unsupported"
@@ -52,8 +52,8 @@ INCOMPLETE = "record.incomplete"
 LOAD_DIRECTION_TOLERANCE = 1e-6
 COLOR_INVALID = "intent.color_invalid"
 CODES: Mapping[str, str] = types.MappingProxyType({
-    VERSION_UNSUPPORTED: "a record_version other than 2, or none: this Benchhand cannot read it",
-    INCOMPLETE: "a record version 2 record lacks a block or file version 2 requires",
+    VERSION_UNSUPPORTED: "a record_version other than 1, or none: this Benchhand cannot read it",
+    INCOMPLETE: "a record version 1 record lacks a block or file the record requires",
     "intent.schema": "a document violates its JSON schema",
     "intent.reference": "a reference names no question, assumption, requirement, interface, part, load, profile, operation, inspection, evidence, case or decision",
     "intent.duplicate": "an id is declared twice",
@@ -809,7 +809,7 @@ class Record:
 # --- record version --------------------------------------------------------------------------------------------
 
 def record_version(product: Mapping[str, Any]) -> int:
-    """2, the only record version; UnsupportedRecordVersion for any other or absent record_version."""
+    """1, the only record version; UnsupportedRecordVersion for any other or absent record_version."""
     version = product.get("record_version")
     if isinstance(version, bool) or version != RECORD_VERSION:
         raise UnsupportedRecordVersion(f"product.yaml record_version {version!r} is not supported; this Benchhand reads "
@@ -1505,26 +1505,26 @@ class _Reader:
         if requirements is not None:
             missing = [key for key in ("preferences", "assumptions", "open_questions") if key not in requirements]
             if missing:
-                self.problem(INCOMPLETE, "hw/requirements.yaml", "", f"record version 2 needs {', '.join(missing)} "
+                self.problem(INCOMPLETE, "hw/requirements.yaml", "", f"record version 1 needs {', '.join(missing)} "
                              "(empty lists when there are none)")
         for rel in sorted(self.documents):
             if re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and (part := self.doc(rel)) is not None and "intent" not in part:
-                self.problem(INCOMPLETE, f"hw/{rel}", "", "record version 2 needs intent; record unknowns explicitly")
+                self.problem(INCOMPLETE, f"hw/{rel}", "", "record version 1 needs intent; record unknowns explicitly")
         for index, item in enumerate((self.doc("interfaces.yaml") or {}).get("interfaces") or ()):
             if isinstance(item, Mapping) and "functional" not in item:
                 self.problem(INCOMPLETE, "hw/interfaces.yaml", f"interfaces/{index}",
-                             f"{item.get('id')}: record version 2 needs functional; record unknowns explicitly")
+                             f"{item.get('id')}: record version 1 needs functional; record unknowns explicitly")
         assembly = self.doc("assembly.yaml")
         if assembly is not None:
             if "operations" not in assembly:
-                self.problem(INCOMPLETE, "hw/assembly.yaml", "", "record version 2 needs operations, or an unknown with its reason")
+                self.problem(INCOMPLETE, "hw/assembly.yaml", "", "record version 1 needs operations, or an unknown with its reason")
             drawing = assembly.get("drawing")
             if isinstance(drawing, Mapping) and "operations" in drawing:
                 self.problem("intent.dual_authority", "hw/assembly.yaml", "drawing/operations",
-                             "record version 2 keeps installation operations in top-level operations only")
+                             "record version 1 keeps installation operations in top-level operations only")
         for rel in REQUIRED_DESIGN_FILES:
             if rel not in self.documents:
-                self.problem(INCOMPLETE, f"hw/{rel}", "", f"record version 2 needs hw/{rel}")
+                self.problem(INCOMPLETE, f"hw/{rel}", "", f"record version 1 needs hw/{rel}")
 
     def check_load_direction(self, load: Mapping[str, Any], path: str, pointer: str) -> tuple[float, float, float] | None:
         """A load's direction as floats, or None when it is not a unit vector. The schema reports a malformed
@@ -2355,7 +2355,7 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
     use_case = record.use_case
     blocking: list[str] = []
     if record.version != RECORD_VERSION:
-        blocking.append("the record is not record version 2")
+        blocking.append("the record is not record version 1")
     if use_case.status != "confirmed" or not use_case.decision:
         blocking.append("the use case is not confirmed by a decision")
     service = use_case.service_class.value if use_case.service_class.known else None

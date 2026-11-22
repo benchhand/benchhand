@@ -53,10 +53,10 @@ drawing:
     dimensions_apply: after_finish
   sheet: {sizes: [A4, A3], scale: auto}
 intent:
-  functions: {status: unknown, reason: not recorded before record version 2, question: Q-017}
-  material_profile: {status: unknown, reason: 'not recorded before record version 2; the legacy material Stainless steel A2 is a declaration, not a sourced grade', question: Q-017}
-  service: {status: unknown, reason: not recorded before record version 2, question: Q-017}
-  critical_surfaces: {status: unknown, reason: not recorded before record version 2, question: Q-017}
+  functions: {status: unknown, reason: not recorded, question: Q-017}
+  material_profile: {status: unknown, reason: 'not recorded; the material Stainless steel A2 is a declaration, not a sourced grade', question: Q-017}
+  service: {status: unknown, reason: not recorded, question: Q-017}
+  critical_surfaces: {status: unknown, reason: not recorded, question: Q-017}
   route:
     - id: turn
       kind: cnc

@@ -50,7 +50,7 @@ from cadmodel import build, mesh  # noqa: E402
 PARTS = {"TST-0001": ("Base block", "base", "block.py"), "TST-0002": ("Mounting plate", "plate", "plate.py"),
          "TST-0003": ("Heat-set insert", "insert", "insert.py")}
 DEFAULT = {"base": {}, "plate": {}, "insert": {}, "hole_d": 7.77}
-# Record version 2 documents. The project is a bare synthetic record: every manufacturing-intent field is an explicit
+# Record version 1 documents. The project is a bare synthetic record: every manufacturing-intent field is an explicit
 # unknown, because the oracles read the model and its exports, never the manufacturing intent.
 UNKNOWN = {"status": "unknown", "reason": "not recorded in the oracle corpus"}
 USE_CASE_GROUPS = {"environment": ("temperature", "heat_sources", "moisture", "chemicals", "uv", "corrosion"),
@@ -94,7 +94,7 @@ def product_record() -> dict[str, Any]:
     for group, names in USE_CASE_GROUPS.items():
         use_case[group] = {name: UNKNOWN for name in names} if names else UNKNOWN
     use_case["evidence_policy"] = UNKNOWN
-    return {"id": "oracles", "record_version": 2, "units": "mm", "regime": "iso", "general_tolerance": "ISO 2768-m",
+    return {"id": "oracles", "record_version": 1, "units": "mm", "regime": "iso", "general_tolerance": "ISO 2768-m",
             "flow": {"stage": "layout", "recheck_from": "layout"}, "use_case": use_case}
 
 

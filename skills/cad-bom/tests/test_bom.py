@@ -281,7 +281,7 @@ class StepRoundTripTests(unittest.TestCase):
             (hw / "verification.csv").write_text(
                 "requirement_id,method,criteria,result,evidence\nREQ-001,I,Fits,planned,\n", encoding="utf-8"
             )
-            # The record as current cad-record reads it: record version 2 with explicit unknowns.
+            # The record as current cad-record reads it: record version 1 with explicit unknowns.
             record_fixtures().upgrade_record(hw)
             add_flow_profile(hw)  # the project-start profile is due at LAYOUT
 

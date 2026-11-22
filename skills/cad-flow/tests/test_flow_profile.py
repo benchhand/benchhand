@@ -59,7 +59,7 @@ QUESTION_FIELDS = (
     "processes/fdm/pip_clearance_mm/xy", "processes/fdm/pip_clearance_mm/z")
 
 PRODUCT = """\
-record_version: 2
+record_version: 1
 id: tst-product
 # a comment the profile record keeps
 rigor: pro
@@ -130,7 +130,7 @@ class Record(unittest.TestCase):
                       for field in QUESTION_FIELDS}})
         data = yaml_loader.safe_load(self.product.read_text(encoding="utf-8"))
         self.assertEqual({k: v for k, v in data.items() if k != "flow"},
-                         {"record_version": 2, "id": "tst-product", "rigor": "pro", "units": "mm"})
+                         {"record_version": 1, "id": "tst-product", "rigor": "pro", "units": "mm"})
         self.assertEqual((data["flow"]["stage"], data["flow"]["recheck_from"]), ("intent", "intent"))
         self.assertIn("# a comment the profile record keeps\n", self.product.read_text(encoding="utf-8"))
 

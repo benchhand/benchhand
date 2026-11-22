@@ -7,7 +7,7 @@
   "required": ["subassemblies", "joints"],
   "properties": {
     "operations": {
-      "description": "Record version 2 installation, closure, fastening, adjustment, inspection and service operations, independent of drawings; unknown until recorded",
+      "description": "Record version 1 installation, closure, fastening, adjustment, inspection and service operations, independent of drawings; unknown until recorded",
       "oneOf": [{"type": "array", "items": {"$ref": "#/$defs/assembly_operation"}},
                 {"$ref": "manufacturing.schema.json#/$defs/fact_unknown"}]
     },

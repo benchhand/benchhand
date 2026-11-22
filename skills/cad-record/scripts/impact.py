@@ -8,7 +8,7 @@
 # requires-python = ">=3.12,<3.15"
 # dependencies = ["jsonschema>=4.23", "pyyaml>=6.0", "referencing>=0.28.4"]
 # ///
-"""Change impact over the manufacturing-intent dependency domains of a record version 2 design record.
+"""Change impact over the manufacturing-intent dependency domains of a record version 1 design record.
 
     uv run --script impact.py --hw HW --since-version vM [--version vN] [--out .cad-work/impact.json]
 
@@ -724,7 +724,7 @@ def main(argv: list[str] | None = None) -> int:
             (after_documents, after), after_geometry = read_inputs(hw), current_geometry(hw)
         if after.version != mi.RECORD_VERSION or before.version != mi.RECORD_VERSION:
             problem = mi.version_problem(after.product) or mi.version_problem(before.product)
-            message = problem.message if problem is not None else "the record is not record version 2"
+            message = problem.message if problem is not None else "the record is not record version 1"
             print(json.dumps({"status": "error", "code": mi.VERSION_UNSUPPORTED, "message": message,
                               "action": problem.action if problem is not None else None}, indent=2))
             return 2

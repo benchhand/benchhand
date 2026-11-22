@@ -67,7 +67,7 @@ class ScratchCase(unittest.TestCase):
         shutil.copytree(TEMPLATE, self.hw)
         part = self.hw / "parts" / "PRT-0001"
         part.mkdir(parents=True)
-        # The template is a record version 2 record: a part states its manufacturing intent, here all unknown.
+        # The template is a record version 1 record: a part states its manufacturing intent, here all unknown.
         intent = "".join(f"  {name}: {{status: unknown, reason: not recorded yet}}\n" for name in (
             "functions", "material_profile", "service", "critical_surfaces", "route"))
         (part / "part.yaml").write_text(
@@ -337,8 +337,8 @@ class InitAndDeliver(ScratchCase):
         run = next(argv for argv in calls if argv[1] == "run")
         self.assertEqual(run[run.index("--attach"):], ["--attach", "PRT-0002=PRT-0001", "--attach", "@foot-1=PRT-0001"])
 
-    def test_a_record_version_2_build_runs_the_process_checks_and_blocks_only_on_its_own_failures(self) -> None:
-        """form_check runs as --version on a record version 2 scratch version: the process packet's failed
+    def test_a_record_version_1_build_runs_the_process_checks_and_blocks_only_on_its_own_failures(self) -> None:
+        """form_check runs as --version on a record version 1 scratch version: the process packet's failed
         outcomes of the unit's own part block it, another part's failures and its own unknowns do not."""
         scratch_module = load_scratch()
         self.init("part-base_sub", "PRT-0001")
@@ -351,7 +351,7 @@ class InitAndDeliver(ScratchCase):
             if argv[1] == "run":
                 version = Path(argv[2]) / "versions" / argv[argv.index("--label") + 1]
                 version.mkdir(parents=True)
-                (version / "manifest.json").write_text('{"record_version": 2}\n', encoding="utf-8")
+                (version / "manifest.json").write_text('{"record_version": 1}\n', encoding="utf-8")
                 return 0, {"findings": []}
             if argv[1] == "check":
                 return 0, {"blocking_failures": [], "warnings": []}

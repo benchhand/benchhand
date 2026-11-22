@@ -1,16 +1,16 @@
 {
-  "tree_hash": "7a35ef29de39a0978168ac63131ede1dea0a97f9d8dc9f288e101fae81ce3ce1",
+  "tree_hash": "9b944acc3794297875f04c42313df30b9bde60ba86de3b4a4b00b4451b00b77a",
   "stage": "layout",
-  "record_sha256": "5700fe6513cfab0c1b9745af0dafd8e942610fd8f1f06cf2050d08e7f7bfb4ca",
+  "record_sha256": "846f672bb08339931736713caff589610fb45504d63b012d2162a2207149dccc",
   "expected_sha256": "91718b971f391db1b88d4d33926069abb74d3009f8dcee18fbbaba9b866dcd29",
   "version": "v1",
   "checks": {
     "kind": "cad-evidence-packet",
     "schema_version": 1,
-    "record_version": 2,
+    "record_version": 1,
     "version": "v1",
-    "version_manifest_sha256": "8dbf15c1b19eefb13a28916e81fd70eb2d7bf3d18b211b528be8c4311e66bc09",
-    "record_sha256": "5700fe6513cfab0c1b9745af0dafd8e942610fd8f1f06cf2050d08e7f7bfb4ca",
+    "version_manifest_sha256": "03c00957166451fd2febbfd9e5d2f56cef2658143d8999c9d6b1d64f05631be2",
+    "record_sha256": "846f672bb08339931736713caff589610fb45504d63b012d2162a2207149dccc",
     "expected_sha256": "91718b971f391db1b88d4d33926069abb74d3009f8dcee18fbbaba9b866dcd29",
     "stage": "layout",
     "expected": [

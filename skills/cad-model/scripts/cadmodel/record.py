@@ -41,7 +41,7 @@ def load_layout() -> Any:
 
 
 def load_intent() -> Any:
-    """cad-record `manufacturing_intent.py` under `cad_record_manufacturing_intent`: the record version 2 contract."""
+    """cad-record `manufacturing_intent.py` under `cad_record_manufacturing_intent`: the record version 1 contract."""
     return _load("cad_record_manufacturing_intent", INTENT_SCRIPT)
 
 

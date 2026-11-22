@@ -944,7 +944,7 @@ class StackPacketTests(unittest.TestCase):
         self.assertEqual((status, output["check_bundle"]), (1, self.PACKET))
         packet, detail = self.packet()
         self.assertEqual([o["id"] for o in packet["expected"]], [self.OBLIGATION])
-        self.assertEqual((packet["result"], packet["complete"], packet["record_version"]), ("fail", True, 2))
+        self.assertEqual((packet["result"], packet["complete"], packet["record_version"]), ("fail", True, 1))
         row = packet["outcomes"][0]
         self.assertEqual((row["obligation"], row["outcome"], row["level"], row["method"]),
                          (self.OBLIGATION, "fail", "process_planned", "1D worst-case tolerance stack"))
@@ -1057,9 +1057,9 @@ class StackupCliTests(unittest.TestCase):
                 "contributors": [{"id": "A", "category": "assembly", "nominal": 50.2, "tol": 0.05, "direction": 1, "source": source},
                                  {"id": "B", "category": "assembly", "nominal": 50.0, "tol": 0.05, "direction": -1, "source": source}]}
 
-    def test_a_snapshot_that_is_not_record_version_2_is_refused_and_nothing_is_published(self) -> None:
-        for label, change in (("absent", lambda text: text.replace("record_version: 2\n", "")),
-                              ("unknown", lambda text: text.replace("record_version: 2", "record_version: 3")),
+    def test_a_snapshot_that_is_not_record_version_1_is_refused_and_nothing_is_published(self) -> None:
+        for label, change in (("absent", lambda text: text.replace("record_version: 1\n", "")),
+                              ("unknown", lambda text: text.replace("record_version: 1", "record_version: 3")),
                               ("non-mapping", lambda text: "- not\n- a mapping\n")):
             with self.subTest(snapshot=label), tempfile.TemporaryDirectory() as directory:
                 hw = fx.write_record(Path(directory) / "project" / "hw", closing_gap_documents())
@@ -1078,7 +1078,7 @@ class StackupCliTests(unittest.TestCase):
                 self.assertFalse((hw / "analysis" / "v1").exists(), "no analysis bundle")
                 self.assertFalse((hw / "checks").exists(), "no check packet")
 
-    def test_the_same_pn_stack_passes_against_a_record_version_2_snapshot(self) -> None:
+    def test_the_same_pn_stack_passes_against_a_record_version_1_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             hw = fx.write_record(Path(directory) / "project" / "hw", closing_gap_documents())
             case = write_case(hw, "pn-stack", self.assembly_stack())

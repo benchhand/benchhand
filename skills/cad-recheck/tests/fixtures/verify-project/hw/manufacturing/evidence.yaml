@@ -20,7 +20,7 @@ entries:
       origin: Verify fixture brief
   configuration:
     version: v1
-    manifest_sha256: 8dbf15c1b19eefb13a28916e81fd70eb2d7bf3d18b211b528be8c4311e66bc09
+    manifest_sha256: 03c00957166451fd2febbfd9e5d2f56cef2658143d8999c9d6b1d64f05631be2
   artifacts:
   - path: hw/manufacturing/sources/block-bbox-v1.json
     sha256: 46c129209c729bb5dfa15cd1e30fa531475365fd775d601284f50c343b642c55

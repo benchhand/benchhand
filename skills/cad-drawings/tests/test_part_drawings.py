@@ -93,7 +93,7 @@ FINISHED_ROUTES = {
 
 
 def with_finished_route(text: str, route: str) -> str:
-    """A migrated part.yaml whose route is replaced by `route`, the rest unchanged."""
+    """A part.yaml whose route is replaced by `route`, the rest unchanged."""
     lines = text.splitlines(keepends=True)
     index = next(i for i, line in enumerate(lines) if line.startswith("  route:"))
     end = next((i for i in range(index + 1, len(lines)) if not lines[i].startswith("    ")), len(lines))
@@ -244,7 +244,7 @@ class PinDrawingGate(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.tmp = tempfile.TemporaryDirectory(prefix="cad-part-drawing-")
         cls.hw = Path(cls.tmp.name) / "hw"
-        cls.fx().migrated_copy(TEMPLATE, cls.hw)  # the example migrated to record version 2 (the current record)
+        cls.fx().record_copy(TEMPLATE, cls.hw)  # the example at record version 1 (the current record)
         for pn, route in FINISHED_ROUTES.items():
             part = cls.hw / "parts" / pn / "part.yaml"
             part.write_text(with_finished_route(part.read_text(encoding="utf-8"), route), encoding="utf-8")
@@ -254,7 +254,7 @@ class PinDrawingGate(unittest.TestCase):
 
     @staticmethod
     def fx() -> object:
-        """cad-record's manufacturing-intent fixture builder (migrated_copy)."""
+        """cad-record's manufacturing-intent fixture builder (record_copy)."""
         name = "cad_record_mi_fixtures"
         if name not in sys.modules:
             spec = importlib.util.spec_from_file_location(

@@ -154,7 +154,7 @@ def framed_documents(application: Any, occurrences: list[tuple[str, str, dict[st
 
 
 class SourcedFEACase(unittest.TestCase):
-    """A versioned case in a record version 2 project, solved by a stand-in FreeCAD job."""
+    """A versioned case in a record version 1 project, solved by a stand-in FreeCAD job."""
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -400,7 +400,7 @@ class QualifiedProfile(SourcedFEACase):
         self.validate_packet(report["engineering"])
 
     def test_the_engineering_packet_is_sealed_where_evidence_reads_producer_packets(self) -> None:
-        """The record version 2 packet is published beside its analysis bundle as hw/checks/<V>/fea-<case>/,
+        """The record version 1 packet is published beside its analysis bundle as hw/checks/<V>/fea-<case>/,
         bound to the version and citing the analysis bundle; cad-record evidence.py collects it (its one
         reader of producer packets) and a rerun of the same case reuses both bundles."""
         self.build(documents())

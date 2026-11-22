@@ -70,7 +70,7 @@ def finding(code: str, message: str, **where: Any) -> dict[str, Any]:
 
 
 def finished_state_findings(pn: str, part: Mapping[str, Any], feature: str, source: str) -> list[dict[str, Any]]:
-    """Record version 2: a drawn fit is the desired limit, never the precision of a process or a
+    """Record version 1: a drawn fit is the desired limit, never the precision of a process or a
     general-tolerance policy. The part's route must make the feature's finished state and inspect it
     there: the last route operation that targets the feature finishes it (after_finish), else it stays
     as manufactured, and an inspection of the feature in that state verifies the drawn limits."""

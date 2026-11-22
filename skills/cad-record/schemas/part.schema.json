@@ -64,7 +64,7 @@
   },
   "$defs": {
     "intent": {
-      "description": "Record version 2 manufacturing intent: what the part does, the qualified material profile, the service it sees, its critical surfaces and its complete ordered route. make_buy and procurement.mode stay the sourcing authority; manufacture stays the manufacturing-state authority. A sole solid is the implicit main component; a part with several solids lists components",
+      "description": "Record version 1 manufacturing intent: what the part does, the qualified material profile, the service it sees, its critical surfaces and its complete ordered route. make_buy and procurement.mode stay the sourcing authority; manufacture stays the manufacturing-state authority. A sole solid is the implicit main component; a part with several solids lists components",
       "type": "object", "additionalProperties": false,
       "required": ["functions", "material_profile", "service", "critical_surfaces", "route"],
       "properties": {

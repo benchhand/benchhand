@@ -60,7 +60,7 @@
       }
     },
     "functional": {
-      "description": "Record version 2 functional contract of an interface. Desired fit limits (limits), calibrated process precision (capability profiles) and inspected finished dimensions (acceptance) stay three distinct things; no tolerance is inferred from a fit name",
+      "description": "Record version 1 functional contract of an interface. Desired fit limits (limits), calibrated process precision (capability profiles) and inspected finished dimensions (acceptance) stay three distinct things; no tolerance is inferred from a fit name",
       "type": "object", "additionalProperties": false, "required": ["critical", "functions"],
       "properties": {
         "critical": {"$ref": "manufacturing.schema.json#/$defs/boolean_fact"},

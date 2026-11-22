@@ -2154,8 +2154,8 @@ class LooseComponentCoverageTests(Checks):
         cls.tmp.cleanup()
 
     @classmethod
-    def form_check(cls) -> tuple[int, dict[str, Any]]:
-        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FORM_CHECK), "--hw", str(cls.hw), "--version", "v1",
+    def form_check(cls, hw: Path | None = None) -> tuple[int, dict[str, Any]]:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FORM_CHECK), "--hw", str(hw or cls.hw), "--version", "v1",
                                "--fidelity", "F2", "--on", TODAY.isoformat()], capture_output=True, text=True, check=False)
         try:
             return proc.returncode, result_payload(proc.stdout)
@@ -2191,6 +2191,24 @@ class LooseComponentCoverageTests(Checks):
             self.assertEqual(row["sha256"], hashlib.sha256(written.read_bytes()).hexdigest())
         manifest = self.hw / "versions" / "v1" / "manifest.json"
         self.assertEqual(packet["dependencies"]["version_manifest"], hashlib.sha256(manifest.read_bytes()).hexdigest())
+
+    def test_a_version_of_an_unsupported_record_version_reports_the_problem_and_exits_1(self) -> None:
+        hw = Path(self.tmp.name) / "unsupported" / "hw"
+        shutil.copytree(self.hw, hw)
+        product = hw / "versions" / "v1" / "record" / "product.yaml"
+        product.chmod(0o644)  # a sealed version's record snapshot is read-only
+        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1", "record_version: 2"), encoding="utf-8")
+        version = hw / "versions" / "v1"  # reseal the manifest over the edited snapshot, so only the version is wrong
+        manifest = json.loads((version / "manifest.json").read_text(encoding="utf-8"))
+        manifest["files"][product.relative_to(version).as_posix()] = hashlib.sha256(product.read_bytes()).hexdigest()
+        (version / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        published = sorted(hw.joinpath("checks").rglob("*"))
+        code, report = self.form_check(hw)
+        self.assertEqual(code, 1, report)
+        made = report["manufacturing"]
+        self.assertEqual([p["code"] for p in made["problems"]], ["record.version_unsupported"])
+        self.assertEqual(made["status"], "refused")
+        self.assertEqual(sorted(hw.joinpath("checks").rglob("*")), published, "nothing is published for a record that is not read")
 
     def test_a_second_run_reuses_the_sealed_bundle(self) -> None:
         code, report = self.runs[1]

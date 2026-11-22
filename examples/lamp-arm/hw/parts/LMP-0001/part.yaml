@@ -63,10 +63,10 @@ drawing:
     interface_condition: post_processed
   sheet: {sizes: [A3, A2], scale: auto}
 intent:
-  functions: {status: unknown, reason: not recorded before record version 2, question: Q-012}
+  functions: {status: unknown, reason: not recorded, question: Q-012}
   material_profile: petg  # PETG family, decided by the user on 2026-11-18 (DR-005)
-  service: {status: unknown, reason: not recorded before record version 2, question: Q-012}
-  critical_surfaces: {status: unknown, reason: not recorded before record version 2, question: Q-012}
+  service: {status: unknown, reason: not recorded, question: Q-012}
+  critical_surfaces: {status: unknown, reason: not recorded, question: Q-012}
   route:
     - id: print
       kind: fdm

@@ -1,4 +1,4 @@
-"""Shared record version 2 fixtures for manufacturing-intent tests in every CAD skill.
+"""Shared record version 1 fixtures for manufacturing-intent tests in every CAD skill.
 
 Load it by path (it is not a test module) and build explicit synthetic TST records:
 
@@ -20,7 +20,6 @@ import importlib.util
 import shutil
 import sys
 import threading
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -173,7 +172,7 @@ def flow_profile(decision: str = PROFILE_DECISION, **changes: Any) -> dict[str, 
 
 
 def product(use: dict[str, Any] | None = None, stage: str = "parts", **extra: Any) -> dict[str, Any]:
-    data = {"record_version": 2, "id": "tst-product", "units": "mm", "regime": "iso",
+    data = {"record_version": 1, "id": "tst-product", "units": "mm", "regime": "iso",
             "general_tolerance": "ISO 2768-m", "flow": {"stage": stage, "recheck_from": stage},
             "use_case": use if use is not None else use_case()}
     data.update(extra)
@@ -288,7 +287,7 @@ def record(*, parts: list[dict[str, Any]] | None = None, interfaces: list[dict[s
            operations: Any = None, capabilities: list[dict[str, Any]] | None = None,
            materials: list[dict[str, Any]] | None = None, selection: dict[str, Any] | None = None,
            decisions: tuple[str, ...] = ("DR-001",), sources: dict[str, bytes] | None = None) -> dict[str, Any]:
-    """A record version 2 record as {path below hw/: document}; write_record writes it."""
+    """A record version 1 record as {path below hw/: document}; write_record writes it."""
     parts = parts if parts is not None else [part("TST-0001")]
     documents: dict[str, Any] = {
         "product.yaml": product_data if product_data is not None else product(),
@@ -320,11 +319,11 @@ def with_subject_occurrences(documents: dict[str, Any], subject: dict[str, Any])
 
 
 def current_documents(documents: dict[str, Any]) -> dict[str, Any]:
-    """A hand-written test fixture without the record version 2 blocks ({path below hw/: document}) as record version 2:
+    """A hand-written test fixture without the record version 1 blocks ({path below hw/: document}) as record version 1:
     every manufacturing-intent field an explicit unknown, drawing.operations moved to operations.
     For fixtures about other record contracts, which read the same in both versions."""
     out = copy.deepcopy(documents)
-    out["product.yaml"] = {**out["product.yaml"], "record_version": 2}
+    out["product.yaml"] = {**out["product.yaml"], "record_version": 1}
     out["product.yaml"].setdefault("use_case", use_case())
     reqs = out.setdefault("requirements.yaml", {"requirements": [requirement()]})
     reqs.setdefault("preferences", [])
@@ -347,7 +346,7 @@ def current_documents(documents: dict[str, Any]) -> dict[str, Any]:
 
 
 def upgrade_record(hw: Path) -> Path:
-    """Rewrite the hand-written test fixture below `hw` as record version 2 (current_documents)."""
+    """Rewrite the hand-written test fixture below `hw` as record version 1 (current_documents)."""
     hw = Path(hw)
     names = ["product.yaml", "requirements.yaml", "interfaces.yaml", "assembly.yaml",
              *(p.relative_to(hw).as_posix() for p in sorted(hw.glob("parts/*/part.yaml")))]
@@ -468,8 +467,8 @@ def tst_record() -> dict[str, Any]:
     )
 
 
-def migrated_copy(src_hw: Path, dst_hw: Path, today: date | None = None) -> Path:
-    """Copy the record at `src_hw` to `dst_hw` unchanged (the examples are record version 2), as a test fixture
-    for code that reads current records. The name and the unused date parameter stay for tests written when this migrated."""
+def record_copy(src_hw: Path, dst_hw: Path) -> Path:
+    """Copy the record at `src_hw` to `dst_hw` unchanged (the examples are record version 1), as a test fixture
+    for code that reads current records."""
     shutil.copytree(src_hw, dst_hw)
     return dst_hw

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "record_version": 2,
+  "record_version": 1,
   "label": "v1",
   "number": 1,
   "product_id": "verify-fixture",
@@ -188,7 +188,7 @@
       },
       "up": "+Z",
       "intent": {
-        "record_version": 2,
+        "record_version": 1,
         "material_profile": {
           "status": "unknown",
           "reason": "no material is chosen for the verify fixture"
@@ -346,7 +346,7 @@
       },
       "files": {
         "part.step": "85a5056a80104fef66c0db07fc5eb66428cc584f1381c20e2725ef66750382e2",
-        "manufacturing.json": "7f4ff9c96b57910be4a6c0fb542753fb06ea522ada88a047d810dcf80909c773"
+        "manufacturing.json": "6eda8842b3fc8e7f713d7e1be6a81874f277765382bd51973b56c999e3b5f87a"
       },
       "status": "pass",
       "complete": true,
@@ -356,7 +356,7 @@
   "files": {
     "assembly.glb": "982f4a5d54145e166a60c75f682794b230b418bcf46b021b70d406b47e5d282c",
     "assembly.step": "05d56f90724498cf89742d68697107fd416b43bc694222026641e75c490b4783",
-    "manufacturing/FXT-0001/manufacturing.json": "7f4ff9c96b57910be4a6c0fb542753fb06ea522ada88a047d810dcf80909c773",
+    "manufacturing/FXT-0001/manufacturing.json": "6eda8842b3fc8e7f713d7e1be6a81874f277765382bd51973b56c999e3b5f87a",
     "manufacturing/FXT-0001/part.step": "85a5056a80104fef66c0db07fc5eb66428cc584f1381c20e2725ef66750382e2",
     "metrics.json": "40618a9c6db7f214d27676403594061366303d1301c0566e12c90c1f3dfedf51",
     "part-map.json": "8b50730b0be2ff13a5897e1e2203d17b587c9f862a383d99c199534c8a0b3ccb",
@@ -368,7 +368,7 @@
     "record/manufacturing/selection.yaml": "9a13fca2b49d05743eb8e9fbdff9dee6bff2348342121619cd4cd75af3ae4311",
     "record/manufacturing/sources/block-bbox-v1.json": "46c129209c729bb5dfa15cd1e30fa531475365fd775d601284f50c343b642c55",
     "record/parts/FXT-0001/part.yaml": "2d45448ab64e8bb40b85c3686e80c616a90ef60b3c5689a919dfa06b1b6b38eb",
-    "record/product.yaml": "8faa033dc118ef79bd909123e5e85cb7892f94c73bc80387537a28416a04abbb",
+    "record/product.yaml": "406775c6dd1176b4f55d7315aeb0d6099da77d1da79ab7082465c6fa55b71d54",
     "record/requirements.yaml": "eee45ecb0d6b9f1fd4e1ca274962db3442ade2098dc7a2d70f4f2c6517c6d0ff"
   }
 }

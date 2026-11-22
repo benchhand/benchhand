@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Record version 2 schema contracts: shared facts, sources, quantities and subjects, the use case,
+"""Record version 1 schema contracts: shared facts, sources, quantities and subjects, the use case,
 classified statements, part intent, interface functions, assembly operations, capability, material,
 selection, finding, evidence and check-result documents, release manifest v3, and the shipped template
 and capability templates. Every case names the rule it proves."""
@@ -246,13 +246,13 @@ class RecordDocuments(SchemaCase):
             return edit
 
         self.assert_cases("product.schema.json", fx.product(), {
-            "version 2 needs a use case": (drop("use_case"), False),
+            "the record needs a use case": (drop("use_case"), False),
             "no version is refused": (drop("record_version"), False),
-            "a version 1 product (neither record_version nor use_case) is refused": (
+            "a product with neither record_version nor use_case is refused": (
                 lambda d: (d.pop("record_version"), d.pop("use_case")), False),
-            "explicit version 1 is not a version": (lambda d: d.update(record_version=1), False),
+            "version 2 is unsupported": (lambda d: d.update(record_version=2), False),
             "version 3 is unsupported": (lambda d: d.update(record_version=3), False),
-            "a version 2 freeze anchors evidence": (frozen(True), True),
+            "a freeze anchors evidence": (frozen(True), True),
             "a freeze without an evidence anchor is readable": (frozen(False), True),
             "use case missing a question area": (lambda d: d["use_case"].pop("loads"), False),
             "confirmed needs a decision": (lambda d: d["use_case"].update(status="confirmed"), False),
@@ -533,19 +533,19 @@ class RecordDocuments(SchemaCase):
         })
         obligation = {"id": "process.fdm.support@TST-0001/print", "family": "process.fdm.support",
                       "subject": {"PN": "TST-0001", "operation": "print"}, "level": "process_planned", "stage": "detail", "basis": "fdm"}
-        result = {"schema_version": 1, "record_version": 2, "producer": "TST 1", "scope": [{"PN": "TST-0001"}],
+        result = {"schema_version": 1, "record_version": 1, "producer": "TST 1", "scope": [{"PN": "TST-0001"}],
                   "expected": [obligation], "outcomes": [{"obligation": obligation["id"], "outcome": "unknown", "method": "none",
                                                           "coverage": "no calibrated profile"}],
                   "findings": [], "dependencies": {"part": "a" * 64}, "complete": True, "result": "unknown"}
         self.assert_cases("manufacturing-check-result.schema.json", result, {
             "completeness required": (lambda d: d.pop("complete"), False),
             "outcome invented": (lambda d: d["outcomes"][0].update(outcome="ok"), False),
-            "record version 1": (lambda d: d.update(record_version=1), False),
+            "record version 2": (lambda d: d.update(record_version=2), False),
         })
 
     def test_release_manifest_v3_only(self) -> None:
         frozen = {"version": "v1", "manifest_sha256": "a" * 64, "decision": "DR-001", "evidence_sha256": "b" * 64}
-        v3 = {"schema_version": 3, "record_version": 2, "product_id": "tst", "rev": "A", "released_at": "2026-01-01T00:00:00Z",
+        v3 = {"schema_version": 3, "record_version": 1, "product_id": "tst", "rev": "A", "released_at": "2026-01-01T00:00:00Z",
               "frozen": frozen, "approval": "DR-002", "files": {"bom.csv": {"sha256": "c" * 64, "original": "hw/bom.csv"}},
               "manufacturing": {"TST-0001": {"process": "fdm", "quantity": 1, "files": ["manufacturing/TST-0001/part.step"],
                                              "route": ["fdm", "reaming"],
@@ -576,12 +576,12 @@ class RecordDocuments(SchemaCase):
                 self.assertTrue(errors("release-manifest.schema.json", older), f"a {label} release manifest is refused")
 
 class ShippedAssets(SchemaCase):
-    def test_the_template_is_record_version_2_with_nothing_chosen(self) -> None:
+    def test_the_template_is_record_version_1_with_nothing_chosen(self) -> None:
         documents, problems = intent.read_documents(TEMPLATE)
         self.assertEqual(problems, [])
         self.assertEqual(intent.schema_problems(documents), [])
         product = documents["product.yaml"]
-        self.assertEqual(product["record_version"], 2)
+        self.assertEqual(product["record_version"], 1)
         self.assertNotIn("build_volume", product)
         self.assertNotIn("manufacturing", product)
         # never a defaulted tolerance: unknown until the user answers the GROUND question it names

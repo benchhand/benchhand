@@ -10,7 +10,7 @@
 skills tree in different folders must give the same key, so a version built by the second copy reuses
 the outputs the first one stored. An edit to a module the manufacturing code loads, or to a data file it
 declares (OUTPUT_DATA), must still change the key. Each test runs the CLI of a copied skills tree on one
-record version 2 project (CadQuery).
+record version 1 project (CadQuery).
 """
 
 from __future__ import annotations

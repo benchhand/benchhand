@@ -1147,10 +1147,10 @@ class EvidenceRun(BuiltRecord):
         self.assertEqual((code, report["status"], self.spawned), (1, "refused", []))
         self.assertIn("stale: build the version again", report["findings"][0]["message"])
 
-    def test_a_record_version_other_than_2_is_refused_and_runs_nothing(self) -> None:
+    def test_a_record_version_other_than_1_is_refused_and_runs_nothing(self) -> None:
         product = self.hw / "product.yaml"
         original = yaml.safe_load(product.read_text(encoding="utf-8"))
-        for version in (1, 3, None):
+        for version in (2, 3, None):
             with self.subTest(record_version=version):
                 data = {key: value for key, value in original.items() if key != "record_version"}
                 if version is not None:

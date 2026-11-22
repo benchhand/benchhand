@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://srobroek.com/cad/schemas/release-manifest.schema.json",
   "title": "CAD release manifest",
-  "description": "Written by release.py: a package of byte copies under hw/releases/<rev>/ (schema_version 3) with the record version 2 acceptance anchor: the frozen evidence digest, its inventory, the release scope, claims and waivers.",
+  "description": "Written by release.py: a package of byte copies under hw/releases/<rev>/ (schema_version 3) with the record version 1 acceptance anchor: the frozen evidence digest, its inventory, the release scope, claims and waivers.",
   "$ref": "#/$defs/v3",
   "$defs": {
     "product_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},

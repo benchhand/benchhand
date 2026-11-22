@@ -49,7 +49,7 @@ def mm(value: float, units: str = "mm") -> dict:
 
 
 def documents(play_block: dict | None, *, rotating: tuple[str, ...] = (), **functional) -> dict:
-    """A record version 2 project of the fixture parts: IF-001 a critical rotating pivot with `play_block`;
+    """A record version 1 project of the fixture parts: IF-001 a critical rotating pivot with `play_block`;
     the `rotating` parts declare that function themselves."""
     block = {"critical": fx.known(True), "functions": [{"function": "rotating"}], **functional}
     if play_block is not None:

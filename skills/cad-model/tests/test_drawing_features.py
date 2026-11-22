@@ -209,7 +209,7 @@ def set_model(hw: Path, pn: str, kernel: str, fixture: str, title: str, params: 
 
 
 def upgrade(hw: Path) -> Path:
-    """Complete the hand-written project below `hw` as a record version 2 record (cad-model's project fixtures)."""
+    """Complete the hand-written project below `hw` as a record version 1 record (cad-model's project fixtures)."""
     name = "cad_model_manufacturing_projects"
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(name, FIXTURES / "manufacturing_projects.py")
