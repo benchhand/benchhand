@@ -5,7 +5,8 @@
 """Decision records in the MADR 4.0.0 layout: `DR-###-slug.md`, with a generated `index.md` beside them.
 
 A record is a Markdown file with YAML front matter (`status` and `date`, and optional `decision-makers`,
-`consulted` and `informed`) and the MADR sections: the `# title`, `## Context and Problem Statement`,
+`consulted` and `informed`, `superseded-by`, and `gate: {from: <stage>, to: <stage>}`, which marks the record as the
+gate decision of that stage advance) and the MADR sections: the `# title`, `## Context and Problem Statement`,
 `## Decision Drivers`, `## Considered Options`, `## Decision Outcome` (`Chosen option: "X", because Y.`
 with `### Consequences` and `### Confirmation`), `## Pros and Cons of the Options` and `## More Information`.
 MADR 4.0.0: https://adr.github.io/madr/
@@ -21,6 +22,7 @@ Load it by path and register it in `sys.modules` as `cad_record_decision_records
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import re
 import tempfile
@@ -38,7 +40,8 @@ STATUSES = ("proposed", "rejected", "accepted", "deprecated")
 DR_ID = re.compile(r"DR-[0-9]{3}")
 FILE_NAME = re.compile(r"DR-([0-9]{3})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md")
 CHOSEN = re.compile(r'Chosen option: "(.+)", because (.+)\.', re.DOTALL)
-FRONT_KEYS = {"status", "date", "decision-makers", "consulted", "informed", "superseded-by"}
+FRONT_KEYS = {"status", "date", "decision-makers", "consulted", "informed", "superseded-by", "gate"}
+STAGE_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "product.schema.json"
 EXPECTED = "DR-###-slug.md with MADR 4.0.0 YAML front matter"
 CONTEXT, DRIVERS, OPTIONS, OUTCOME, PROS_CONS, MORE = (
     "Context and Problem Statement", "Decision Drivers", "Considered Options", "Decision Outcome",
@@ -73,6 +76,7 @@ class DecisionRecord:
     pros_and_cons: str | None = None
     more_information: str | None = None
     superseded_by: tuple[str, ...] = ()
+    gate: tuple[str, str] | None = None
 
     @property
     def id(self) -> str:
@@ -132,10 +136,28 @@ def _check_supersession(record: DecisionRecord) -> None:
         raise DecisionRecordError("superseded-by names a record twice")
 
 
+def _stages() -> tuple[str, ...]:
+    """The workflow stages, as product.schema.json defines them (the schema stays their one source)."""
+    schema = json.loads(STAGE_SCHEMA.read_text(encoding="utf-8"))
+    return tuple(schema["$defs"]["stage"]["enum"])
+
+
+def _check_gate(record: DecisionRecord) -> None:
+    """`gate` is None or the (from, to) pair of known workflow stages that this record approves the advance between."""
+    if record.gate is None:
+        return
+    stages = _stages()
+    if not (isinstance(record.gate, tuple) and len(record.gate) == 2
+            and all(isinstance(stage, str) and stage in stages for stage in record.gate)):
+        raise DecisionRecordError(
+            f"gate {_shown(record.gate)} must be a (from, to) pair of stages, each one of {', '.join(stages)}")
+
+
 def _check(record: DecisionRecord) -> None:
     """The invariants of a record, for both reading and writing."""
     _check_identity(record)
     _check_supersession(record)
+    _check_gate(record)
     _check_list("decision-makers", record.decision_makers, required=False)
     _check_list("consulted", record.consulted, required=False)
     _check_list("informed", record.informed, required=False)
@@ -298,6 +320,17 @@ def _names(front: dict[str, Any], key: str) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _gate(front: dict[str, Any]) -> tuple[str, str] | None:
+    """The `gate: {from: <stage>, to: <stage>}` front matter as (from, to); None when the key is absent."""
+    if "gate" not in front:
+        return None
+    value = front["gate"]
+    if not isinstance(value, dict) or set(value) != {"from", "to"}:
+        raise DecisionRecordError("gate must be a mapping with exactly the keys from and to, as in "
+                                  "`gate: {from: layout, to: parts}`")
+    return (value["from"], value["to"])
+
+
 def parse_record(number: int, slug: str, text: str) -> DecisionRecord:
     """The record in `text`. Raises DecisionRecordError off the MADR 4.0.0 layout."""
     front, body = _front(text)
@@ -311,7 +344,8 @@ def parse_record(number: int, slug: str, text: str) -> DecisionRecord:
     record = DecisionRecord(
         number=number, slug=slug, title=title, status=front["status"], date=front["date"],
         decision_makers=_names(front, "decision-makers"), consulted=_names(front, "consulted"),
-        informed=_names(front, "informed"), superseded_by=_names(front, "superseded-by"), context=sections[CONTEXT],
+        informed=_names(front, "informed"), superseded_by=_names(front, "superseded-by"), gate=_gate(front),
+        context=sections[CONTEXT],
         drivers=_bullets(DRIVERS, sections[DRIVERS]) if DRIVERS in sections else (),
         options=_bullets(OPTIONS, sections[OPTIONS]), chosen=match.group(1), justification=match.group(2),
         consequences=parts.get(CONSEQUENCES), confirmation=parts.get(CONFIRMATION),
@@ -387,6 +421,8 @@ def render(record: DecisionRecord) -> str:
         front["informed"] = list(record.informed)
     if record.superseded_by:
         front["superseded-by"] = list(record.superseded_by)
+    if record.gate:
+        front["gate"] = {"from": record.gate[0], "to": record.gate[1]}
     dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=10**6)
     blocks = [f"# {record.title}\n", _section(CONTEXT, record.context)]
     if record.drivers:
@@ -436,7 +472,7 @@ def write_decision(directory: Path, *, title: str, status: str, date: datetime.d
                    drivers: tuple[str, ...] = (), consequences: str | None = None,
                    confirmation: str | None = None, pros_and_cons: str | None = None,
                    more_information: str | None = None, superseded_by: tuple[str, ...] = (),
-                   number: int | None = None) -> Path:
+                   gate: tuple[str, str] | None = None, number: int | None = None) -> Path:
     """Write `DR-###-slug.md` into `directory`, regenerate its index and return the record's path.
 
     The number is the next free one unless `number` names a free one. The function renders the input and
@@ -452,7 +488,7 @@ def write_decision(directory: Path, *, title: str, status: str, date: datetime.d
         decision_makers=decision_makers, consulted=consulted, informed=informed, context=context,
         drivers=drivers, options=options, chosen=chosen, justification=justification,
         consequences=consequences, confirmation=confirmation, pros_and_cons=pros_and_cons,
-        more_information=more_information, superseded_by=superseded_by)
+        more_information=more_information, superseded_by=superseded_by, gate=gate)
     _check(record)
     for ident in superseded_by:
         if not any(r.id == ident for r in existing):
