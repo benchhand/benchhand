@@ -858,7 +858,7 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any], valid: Ma
         path = hw / rel
         if rel.startswith("manufacturing/") and "*" not in rel and path.is_file():  # the guideline wildcard is read below
             data = load_yaml(path, findings)
-            if data is not None and validate_document(data, schema, str(path), findings):
+            if validate_document(data, schema, str(path), findings):  # None (an empty file) is checked too
                 parsed[rel] = data
     record = intent.normalize_record(parsed, hw=hw)
     findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems)
