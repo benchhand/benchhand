@@ -769,6 +769,12 @@ class NotAssessedRelease(ReleaseCase):
         manifest = json.loads((hw / "releases" / "A" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["checks"]["acceptance"], "pass")
 
+    def test_a_row_stating_not_assessed_over_evidence_that_passes_is_refused(self) -> None:
+        hw = self.project(stated={self.REQ: "not_assessed"})
+        code, report = self.release(hw)
+        self.assertEqual((code, report["status"]), (1, "refused"))
+        self.assertTrue(any("evidence.csv_unsupported" in item["message"] for item in report["findings"]), report["findings"])
+
     def test_a_row_stating_pass_over_not_assessed_evidence_is_refused(self) -> None:
         hw = self.project_with_not_assessed("pass")
         code, report = self.release(hw)
