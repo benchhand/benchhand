@@ -501,6 +501,38 @@ class ValidateProject(unittest.TestCase):
         self.assertLess(len(message), 1000, "a diagnostic stays bounded")
         return message
 
+    # Every record key that the validator and manufacturing_intent.py read as a list or a mapping, set to a
+    # value of the wrong type. A key is listed when the unguarded code crashed on it (the sweep found these).
+    WRONG_TYPE_KEYS = (
+        ("requirements.yaml", "requirements", 7),
+        ("requirements.yaml", "preferences", 7),
+        ("requirements.yaml", "assumptions", 7),
+        ("requirements.yaml", "open_questions", 7),
+        ("interfaces.yaml", "interfaces", 7),
+        ("interfaces.yaml", "interfaces", "text"),
+        ("interfaces.yaml", "interfaces", [1, 2]),
+        ("assembly.yaml", "operations", [1, 2]),
+        ("manufacturing/capabilities.yaml", "profiles", 7),
+        ("manufacturing/materials.yaml", "profiles", 7),
+        ("manufacturing/selection.yaml", "candidates", 7),
+    )
+
+    def test_a_wrong_typed_record_key_is_a_finding_not_a_crash(self) -> None:
+        for rel, key, value in self.WRONG_TYPE_KEYS:
+            with self.subTest(file=rel, key=key, value=value):
+                path = self.hw / rel
+                original = path.read_bytes()
+                self.addCleanup(path.write_bytes, original)
+                document = yaml.safe_load(original)
+                document[key] = value
+                path.write_text(yaml.safe_dump(document), encoding="utf-8")
+                result, report = self.validate()
+                path.write_bytes(original)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertTrue(any(str(item["path"]).endswith(rel) and key in str(item.get("message", ""))
+                                    for item in report["findings"]), report["findings"])
+
     def test_a_malformed_tagged_boolean_or_timestamp_is_a_finding_not_a_crash(self) -> None:
         for front in ("status: !!bool maybe", "status: accepted\nx: !!timestamp not-a-time"):
             with self.subTest(front):
