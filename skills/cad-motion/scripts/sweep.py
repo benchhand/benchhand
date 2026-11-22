@@ -1631,7 +1631,7 @@ def main(argv: list[str] | None = None) -> int:
             if guard is not None:
                 guard.release()
     except pose.unsupported_record() as error:
-        return pose.refused("sweep", error)
+        return int(pose.refused("sweep", error))
     except (pose.MotionError, OSError, pose.LAYOUT.LayoutError, pose.LAYOUT.PublishConflict) as error:
         print(f"sweep: {error}", file=sys.stderr)
         return 2

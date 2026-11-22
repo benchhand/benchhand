@@ -670,7 +670,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"play: {status}", file=sys.stderr)
         return 0 if status in ("pass", "not_assessed") else 1  # D37: a packet that assessed nothing blocks nothing
     except intent_module.UnsupportedRecordVersion as error:
-        return pose.refused("play", error)
+        return int(pose.refused("play", error))
     except (check_packet.PacketError, pose.MotionError, LAYOUT.LayoutError, intent_module.IntentError) as error:
         print(f"play: {error}", file=sys.stderr)
         return 2

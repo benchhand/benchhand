@@ -291,6 +291,20 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
+def report(result: dict[str, Any], out: Path, version: str | None) -> int:
+    """Print the roll-up as JSON and its gaps on stderr; exit 1 when a part is missing, unmatched or unidentified."""
+    failed = bool(result["missing_part_yaml"] or result["missing_in_step"] or result["unidentified"])
+    summary = {"status": "fail" if failed else "pass", "bom_csv": str(out), **result}
+    if version:
+        summary["reconciled_against"] = version
+    json.dump(summary, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    for key in ("missing_part_yaml", "missing_in_step", "unidentified"):
+        if result[key]:
+            print(f"bom: {key}: {', '.join(result[key])}", file=sys.stderr)
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="EBOM roll-up from a STEP AP242 assembly")
     parser.add_argument("step", type=Path, help="STEP AP242 assembly file")
@@ -326,16 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     except (BomError, OSError) as error:
         print(f"bom: {error}", file=sys.stderr)
         return 2
-    failed = bool(result["missing_part_yaml"] or result["missing_in_step"] or result["unidentified"])
-    summary = {"status": "fail" if failed else "pass", "bom_csv": str(out), **result}
-    if version:
-        summary["reconciled_against"] = version
-    json.dump(summary, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    for key in ("missing_part_yaml", "missing_in_step", "unidentified"):
-        if result[key]:
-            print(f"bom: {key}: {', '.join(result[key])}", file=sys.stderr)
-    return 1 if failed else 0
+    return report(result, out, version)
 
 
 

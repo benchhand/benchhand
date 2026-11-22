@@ -584,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"stop_reaction: {status}", file=sys.stderr)
         return 0 if status in ("pass", "not_assessed") else 1  # D37: a packet that assessed nothing blocks nothing
     except intent.UnsupportedRecordVersion as error:
-        return pose.refused("stop_reaction", error)
+        return int(pose.refused("stop_reaction", error))
     except (check_packet.PacketError, pose.MotionError, LAYOUT.LayoutError, intent.IntentError) as error:
         print(f"stop_reaction: {error}", file=sys.stderr)
         return 2

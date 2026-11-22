@@ -1450,6 +1450,13 @@ def placements_report(chain: Chain, transforms: Mapping[str, Rigid]) -> dict[str
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _pose(argv)
+    except unsupported_record() as error:
+        return refused("pose", error)
+
+
+def _pose(argv: list[str] | None) -> int:
     parser = argparse.ArgumentParser(description="Pose an assembly and write the posed STEP AP242")
     add_geometry_arguments(parser)
     parser.add_argument("--set", action="append", default=[], metavar="J-###=VALUE",
@@ -1508,8 +1515,6 @@ def main(argv: list[str] | None = None) -> int:
             transforms = write_posed(args.out, record_hw, chain, definitions, values)
             result["placements"] = placements_report(chain, transforms)
             result["out"] = str(args.out)
-    except unsupported_record() as error:
-        return refused("pose", error)
     except (MotionError, OSError, LAYOUT.LayoutError, LAYOUT.PublishConflict) as error:
         print(f"pose: {error}", file=sys.stderr)
         return 2
