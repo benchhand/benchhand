@@ -213,10 +213,11 @@ def setup(ctx: Context) -> Result:
     parsed, bad = sides(ctx)
     axes = ctx.profile.parameters.get("axes") if ctx.profile is not None else None
     count = axes.value.value if axes is not None and axes.known and hasattr(axes.value, "value") else None
+    axes_sources = axes.sources if axes is not None else ()
     if count is not None and count < 4 and len({key for key, _ in parsed}) > 1:
         findings.append(Draft("process.cnc.setup_count", "minor", FAIL, {"value": len(parsed), "units": "count"},
                               {"property": "access_sides_per_setup", "operator": "<=", "value": 1, "units": "count",
-                               "source": source_dict(axes.sources[0]) if axes.sources else dict(POLICY)},
+                               "source": source_dict(axes_sources[0]) if axes_sources else dict(POLICY)},
                               "capability axes against the operation's access sides", "record content",
                               f"a {int(count)}-axis machine reaches one side per setup; this operation names {len(parsed)}",
                               remedy="record one operation per setup, with its datum transfer", recheck=["process.cnc.setup"]))
