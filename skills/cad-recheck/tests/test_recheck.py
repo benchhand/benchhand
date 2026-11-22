@@ -301,14 +301,16 @@ class RecheckHookTests(unittest.TestCase):
                 self.assertIn("gate: {from: layout, to: parts}", result.stderr)
 
     def test_a_malformed_gate_value_is_a_refusal_naming_the_record(self) -> None:
+        written: list[Path] = []
         for what, value in (("a scalar", "layout"), ("a list", "[layout, parts]"), ("no to", "{from: layout}"),
                             ("an unknown stage", "{from: layout, to: nowhere}"),
                             ("an extra key", "{from: layout, to: parts, via: x}"), ("a number", "{from: 3, to: parts}")):
             with self.subTest(what):
-                for old in (self.root / "hw" / "decisions").glob("DR-001-*.md"):
-                    old.unlink()  # the previous case's malformed record would make the fixture's own writes refuse
+                if written:
+                    written.pop().unlink()  # the previous case's malformed record would make the fixture refuse
                 self.provisional_gate("parts", decision="accepted", gate=None)
                 path = decision_path(self.root / "hw", "DR-001")
+                written.append(path)
                 text = path.read_text(encoding="utf-8").replace("\n---\n", f"\ngate: {value}\n---\n", 1)
                 path.write_text(text, encoding="utf-8")
                 self.git("add", "hw")

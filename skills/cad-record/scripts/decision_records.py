@@ -410,8 +410,8 @@ def _section(heading: str, content: str, level: int = 2) -> str:
     return f"{'#' * level} {heading}\n\n{content}\n"
 
 
-def render(record: DecisionRecord) -> str:
-    """The file text of `record`."""
+def _front_matter(record: DecisionRecord) -> dict[str, Any]:
+    """The YAML front matter of `record`, with only the optional keys it sets."""
     front: dict[str, Any] = {"status": record.status, "date": record.date}
     if record.decision_makers:
         front["decision-makers"] = list(record.decision_makers)
@@ -423,6 +423,12 @@ def render(record: DecisionRecord) -> str:
         front["superseded-by"] = list(record.superseded_by)
     if record.gate:
         front["gate"] = {"from": record.gate[0], "to": record.gate[1]}
+    return front
+
+
+def render(record: DecisionRecord) -> str:
+    """The file text of `record`."""
+    front = _front_matter(record)
     dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=10**6)
     blocks = [f"# {record.title}\n", _section(CONTEXT, record.context)]
     if record.drivers:
