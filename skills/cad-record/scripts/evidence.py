@@ -541,33 +541,36 @@ def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str,
             if not in_release_scope(obligation, service_class):
                 continue
             if result == "waived":
-                if service_class == "safety_critical":
-                    findings.append(Finding("release.waiver_forbidden", path,
-                                            f"{ident} is waived; a safety-critical release takes no waiver", obligation=ident))
-                elif obligation["level"] == PHYSICAL and not SERVICE_POLICY.get(service_class or "", SERVICE_POLICY["production"]).trial:
-                    findings.append(Finding("release.trial_not_permitted", path,
-                                            f"{ident} is waived untested: a {service_class} release is never an "
-                                            "unvalidated trial", obligation=ident))
+                findings.extend(_waiver_findings(obligation, path, service_class))
                 continue
             if result in RESOLVED:
-                continue
-            if result == "not_assessed":
-                findings.append(_not_assessed_finding(obligation, path, stage))
                 continue
         else:
             due = stage == "design_freeze" or STAGES.index(obligation["stage"]) <= index or result == "fail"
             if not due or result in RESOLVED:
                 continue
-            if result == "not_assessed":
-                findings.append(_not_assessed_finding(obligation, path, stage))
-                continue
             if result == "planned" and obligation["level"] == PHYSICAL:
                 continue  # a physical test may stay planned until the release
+        if result == "not_assessed":
+            findings.append(_not_assessed_finding(obligation, path, stage))
+            continue
         code = {"fail": "gate.fail", "stale": "gate.stale"}.get(result, "gate.unresolved")
         severity = "error" if (not explore or result == "fail") else "warning"
         findings.append(Finding(code, path, f"{ident} is {result} at stage {stage} ({obligation.get('basis', '')})",
                                 severity, ident))
     return findings
+
+
+def _waiver_findings(obligation: Mapping[str, Any], path: str, service_class: str | None) -> list[Finding]:
+    """What a waived obligation costs a release of `service_class`: nothing, unless the class forbids the waiver."""
+    ident = obligation["id"]
+    if service_class == "safety_critical":
+        return [Finding("release.waiver_forbidden", path,
+                        f"{ident} is waived; a safety-critical release takes no waiver", obligation=ident)]
+    if obligation["level"] == PHYSICAL and not SERVICE_POLICY.get(service_class or "", SERVICE_POLICY["production"]).trial:
+        return [Finding("release.trial_not_permitted", path,
+                        f"{ident} is waived untested: a {service_class} release is never an unvalidated trial", obligation=ident)]
+    return []
 
 
 def _not_assessed_finding(obligation: Mapping[str, Any], path: str, stage: str) -> Finding:
