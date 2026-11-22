@@ -322,6 +322,44 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.refused_gate(self.verify())
 
+    # Record documents that fail their schema by one wrong-typed key. normalize_record iterates or indexes
+    # each of these keys by the shape the schema promises, so it must never see them.
+    SCHEMA_INVALID = (
+        ("requirements.yaml", "requirements", 7),
+        ("requirements.yaml", "preferences", 7),
+        ("requirements.yaml", "assumptions", 7),
+        ("requirements.yaml", "open_questions", 7),
+        ("interfaces.yaml", "interfaces", 7),
+        ("interfaces.yaml", "interfaces", "text"),
+        ("interfaces.yaml", "interfaces", [1, 2]),
+        ("assembly.yaml", "operations", [1, 2]),
+        ("manufacturing/capabilities.yaml", "profiles", 7),
+        ("manufacturing/materials.yaml", "profiles", 7),
+        ("manufacturing/selection.yaml", "candidates", 7),
+    )
+
+    def test_a_staged_schema_invalid_document_refuses_the_advance_naming_it(self) -> None:
+        """An advance that would pass is refused, by the stamp writer and by `--verify`, when a staged record
+        document fails its schema: exit 2, the file and the key on stderr, no traceback."""
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0, "the project advances before the invalid document is staged")
+        packet = self.root / ".checks.json"  # built from the clean record, as the writer would take it
+        for rel, key, value in self.SCHEMA_INVALID:
+            with self.subTest(file=rel, key=key, value=value):
+                path = self.root / "hw" / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({key: value}), encoding="utf-8")
+                self.git("add", f"hw/{rel}")
+                writer = self.run_python(STAMP, "--stage", "layout", "--checks", str(packet), "--passed", cwd=self.root)
+                verified = self.verify()
+                self.git("rm", "-q", "-f", "--", f"hw/{rel}")
+                for what, result in (("writer", writer), ("verify", verified)):
+                    self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
+                    self.assertNotIn("Traceback", result.stderr, what)
+                    self.assertIn(f"hw/{rel}", result.stderr, what)
+                    self.assertIn(key, result.stderr, what)
+
     def test_a_malformed_gate_value_is_a_refusal_naming_the_record(self) -> None:
         written: list[Path] = []
         for what, value in (("a scalar", "layout"), ("a list", "[layout, parts]"), ("no to", "{from: layout}"),
