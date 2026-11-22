@@ -55,9 +55,9 @@ without calibrated capability, inspection or supplier evidence, limits taken fro
 or general-tolerance label, or a record that disagrees with the stack make the outcome unknown,
 never a pass. With the calibration flag off, a manufacture contributor that cites a capability with no calibration
 on record is not assessed (D36, D37): the finding and the outcome are not_assessed with the reason calibration_off,
-never a pass; a stack that also fails, or has another unknown contributor, stays fail or unknown. The tool holds no
-generic limit for such a deviation, and the user's own process gives it. A zero-width contributor (a perfect dimension), a feature counted twice or in two
-states, and a coating added on top of post-finish limits are refused. A justified RSS needs stable,
+never a pass; a stack with another unknown contributor stays unknown. The tool holds no generic limit for such a
+deviation, and the user's own process gives it. A zero-width contributor (a perfect dimension), a feature counted twice or
+in two states, and a coating added on top of post-finish limits are refused. A justified RSS needs stable,
 centred, sourced distributions, an independence statement or a positive semidefinite correlation
 set, a coverage factor and an approved decision; it never governs a worst-case-governed consequence.
 With --hw and --version the result publishes as hw/analysis/<V>/<case>/ when the stack is the analysis case
@@ -945,11 +945,11 @@ class _IntentStack:
         clearance = self.check_clearance(nominal if complete else None)
         if self.unknown_reasons:
             outcome = "unknown"
+        elif self.unassessed_reasons:
+            outcome = "not_assessed"  # as an unknown contributor does, an unassessed one leaves the stack unjudged: no fail either
         else:
             passed = wc_pass if governing == "worst_case" else stat_pass
             outcome = "pass" if passed else "fail"
-            if outcome == "pass" and self.unassessed_reasons:
-                outcome = "not_assessed"  # fail > unknown > not_assessed > pass (D37)
         if outcome == "fail":
             self.violation(nominal, nominal_pass, worst, statistical, governing)
         elif complete and wc_pass is False and governing == "justified_rss":

@@ -477,12 +477,16 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.state_mismatch"])
 
-    def test_off_an_fdm_capability_contributor_stays_unknown_and_names_the_missing_guideline(self) -> None:
+    def test_off_an_fdm_capability_contributor_is_not_assessed_and_names_the_missing_guideline(self) -> None:
         documents = tab_slot_documents("fdm")
         result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
-        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(result["outcome"], "not_assessed")
         self.assertEqual(codes(result), ["stack.capability_unresolved"])
         found = result["findings"][0]
+        self.assertEqual((found["outcome"], found["reason"]), ("not_assessed", "calibration_off"))
+        self.assertIn("does not assess them", found["consequence"])
+        row = result["obligations"][0]
+        self.assertEqual((row["outcome"], row["reason"]), ("not_assessed", "calibration_off"))
         self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["consequence"] + found["uncertainty"])
         self.assertEqual(found["remedy"], "for a tighter limit, print a test coupon on the target printer")
 
@@ -490,7 +494,7 @@ class IntentStackContractTests(unittest.TestCase):
         documents = tab_slot_documents()
         documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibrations"] = []
         result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
-        self.assertEqual(codes(result), ["stack.capability_unresolved"])
+        self.assertEqual((result["outcome"], codes(result)), ("not_assessed", ["stack.capability_unresolved"]))
         remedy = result["findings"][0]["remedy"]
         self.assertEqual(remedy, "record evidence of the capability for this material and scope "
                                  "(test pieces, a capability study or supplier evidence)")
@@ -503,6 +507,20 @@ class IntentStackContractTests(unittest.TestCase):
         result = self.bound(documents, fixture("laser_tab_slot.yaml"), "tab-slot")
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.capability_unresolved"])
+        self.assertNotIn("reason", result["findings"][0])
+        self.assertNotIn("reason", result["obligations"][0])
+
+    def test_off_a_not_assessed_contributor_beside_an_unknown_one_leaves_the_stack_unknown(self) -> None:
+        """fail > unknown > not_assessed: a contributor with no recorded limit is a gap in the record, not the user's own process."""
+        documents = tab_slot_documents("fdm")
+        stack = fixture("laser_tab_slot.yaml")
+        coat = contributor(stack, "CT")
+        for key in ("direction", "nominal", "tol_plus", "tol_minus", "source"):
+            coat.pop(key)
+        coat.update(status="unknown", reason="the coating is not chosen yet")
+        result = self.bound_with(documents, stack, "tab-slot", calibration=False)
+        self.assertEqual({f["outcome"] for f in result["findings"]}, {"not_assessed", "unknown"}, codes(result))
+        self.assertEqual(result["outcome"], "unknown")
 
 
 GL = stackup.GUIDELINES
@@ -965,6 +983,21 @@ class StackPacketTests(unittest.TestCase):
         status, again = self.run_stack()
         self.assertEqual((status, again["reused"], again["check_bundle"]), (1, True, self.PACKET))
         self.assertEqual((self.hw.parent / self.PACKET / "manifest.json").read_bytes(), sealed)
+
+    def test_a_not_assessed_stack_exits_0_and_is_published_not_assessed_never_pass(self) -> None:
+        fx.write_record(self.hw, tab_slot_documents("fdm"))
+        self.case = write_case(self.hw, "tab-slot", fixture("laser_tab_slot.yaml"))
+        snapshot_version(self.hw)
+        with unittest.mock.patch.dict("os.environ"):
+            os.environ.pop(GL.CALIBRATION_FLAG, None)
+            status, output = self.run_stack()
+        self.assertEqual((status, output["outcome"], output["status"]), (0, "not_assessed", "not_assessed"))
+        bundle = self.hw.parent / "hw" / "checks" / "v1" / "stack-tab-slot"
+        packet = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
+        self.assertEqual([error.message for error in check_result_validator().iter_errors(packet)], [])
+        row = packet["outcomes"][0]
+        self.assertEqual((packet["result"], row["outcome"], row["reason"]), ("not_assessed", "not_assessed", "calibration_off"))
+        self.assertEqual([(f["outcome"], f["reason"]) for f in packet["findings"]], [("not_assessed", "calibration_off")])
 
     def test_an_unknown_contributor_is_published_unknown_never_pass(self) -> None:
         stack = fixture("closing_gap.yaml")

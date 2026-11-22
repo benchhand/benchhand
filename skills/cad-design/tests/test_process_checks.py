@@ -1989,32 +1989,18 @@ class OutcomeOrderTests(unittest.TestCase):
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
-class NotAssessedSerializationTests(Checks):
-    """A not_assessed result carries its reason onto the serialized outcome and finding, where the schema requires it."""
+class NotAssessedContractTests(Checks):
+    """The dispatcher refuses a handler result that breaks the not_assessed contract: no emitter produces such a result, so a
+    fake handler stands in. (The reason reaching a real outcome, finding and packet is test_not_assessed.py's.)"""
 
     def assess_with(self, result: Any) -> Any:
         with mock.patch.object(pc.dispatch, "_result", return_value=result):
             return pc.assess(load(self, FX.tst_record()), {}, today=TODAY)
 
-    def not_assessed(self, reason: str | None) -> Any:
-        core = pc.core
-        draft = core.Draft("process.fdm.overhang", "info", "not_assessed", core.text("not measured"),
-                           core.policy("overhang_angle", "equals", "a calibrated limit"), "calibration check",
-                           "calibration is off", "the overhang is not assessed", reason=reason)
-        return core.Result("not_assessed", "calibration check", "nothing assessed", [draft], reason=reason)
-
-    def test_the_reason_reaches_the_outcome_the_finding_and_a_valid_packet(self) -> None:
-        assessed = self.assess_with(self.not_assessed("calibration_off"))
-        self.assertEqual({o["outcome"] for o in assessed.outcomes}, {"not_assessed"})
-        self.assertEqual({o["reason"] for o in assessed.outcomes}, {"calibration_off"})
-        self.assertTrue(assessed.findings)
-        self.assertEqual({(f["outcome"], f["reason"]) for f in assessed.findings}, {("not_assessed", "calibration_off")})
-        packet = assessed.packet({"version_manifest": "0" * 64})
-        self.assertEqual((packet["result"], packet_errors(packet)), ("not_assessed", []))
-
     def test_a_not_assessed_result_without_a_reason_is_a_handler_error(self) -> None:
+        result = pc.core.Result("not_assessed", "calibration check", "nothing assessed")
         with self.assertRaisesRegex(pc.HandlerError, "needs a reason"):
-            self.assess_with(self.not_assessed(None))
+            self.assess_with(result)
 
     def test_a_reason_on_another_outcome_is_a_handler_error(self) -> None:
         result = pc.core.Result("unknown", "m", "c", reason="calibration_off")

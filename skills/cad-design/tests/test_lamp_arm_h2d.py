@@ -54,7 +54,7 @@ def load(hw: Path) -> Any:
 
 
 def assess(record: Any, geometry: dict | None = None) -> Any:
-    return pc.assess(record, geometry or {}, today=TODAY)
+    return pc.assess(record, geometry or {}, today=TODAY, calibration=False)  # the release behaviour; the flag tests pass their own
 
 
 def codes(result: Any, obligation: str) -> list[str]:
@@ -201,10 +201,11 @@ class H2dEnvelopeTests(unittest.TestCase):
                 found = [f for f in result.by_code("process.fdm.envelope") if f.get("obligation") == obligation]
                 self.assertEqual(found[0]["criterion"]["value"], 325.0)
 
-    def test_the_unpublished_bed_contact_minimum_stays_unknown_as_uncalibrated(self) -> None:
+    def test_the_unpublished_bed_contact_minimum_is_not_assessed_as_uncalibrated(self) -> None:
         result = self.orient(PRINTED[0], (50.0, 50.0, 50.0))
         obligation = f"process.fdm.orientation@{PRINTED[0]}/print"
-        self.assertEqual(result.outcome(obligation)["outcome"], "unknown")
+        row = result.outcome(obligation)
+        self.assertEqual((row["outcome"], row["reason"]), ("not_assessed", "calibration_off"))
         self.assertIn("process.fdm.contact_area_uncalibrated", codes(result, obligation))
         self.assertNotIn("process.fdm.capability_unknown", codes(result, obligation))
 
@@ -245,6 +246,43 @@ class H2dCalibrationFlagTests(unittest.TestCase):
         self.assertTrue(found)
         self.assertIn("no guideline value covers min_bed_contact_area", found[0]["uncertainty"])
         self.assertEqual(found[0]["remedy"], "for a tighter limit, print a test coupon on the target printer")
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class LampArmNotAssessedTests(unittest.TestCase):
+    """The lamp-arm's CNC, turning, drilling, reaming and passivating operations record no capability profile, and the tool
+    holds no generic limits for those processes: with the flag off their process checks are not assessed with the reason
+    no_capability_profile. The printed parts' checks and the purchased parts' stay UNKNOWN: their gaps are the user's to fill."""
+
+    UNPROFILED = ("process.cnc.", "process.drilling.", "process.reaming.", "process.coating.")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        record = load(HW)
+        cls.off = pc.assess(record, {}, today=TODAY, calibration=False)
+        cls.on = pc.assess(record, {}, today=TODAY, calibration=True)
+
+    def unprofiled(self, result: Any) -> list[dict[str, Any]]:
+        return [o for o in result.outcomes if o["obligation"].startswith(self.UNPROFILED)]
+
+    def test_off_every_process_check_without_a_profile_is_not_assessed_with_the_reason(self) -> None:
+        rows = self.unprofiled(self.off)
+        self.assertEqual(len(rows), 39)  # 5 milled or turned x 5 checks, 2 drilled x 2, 2 reamed x 2, 3 passivated x 2
+        self.assertEqual({(o["outcome"], o.get("reason")) for o in rows}, {("not_assessed", "no_capability_profile")})
+
+    def test_on_the_same_checks_are_unknown(self) -> None:
+        self.assertEqual({(o["outcome"], "reason" in o) for o in self.unprofiled(self.on)}, {("unknown", False)})
+
+    def test_off_the_printed_and_purchased_parts_keep_their_unknowns_and_the_packet_stays_unknown(self) -> None:
+        for family in ("orientation", "geometry", "support", "thermal_distortion"):
+            self.assertEqual(self.off.outcome(f"process.fdm.{family}@{PRINTED[0]}/print")["outcome"], "unknown")
+        self.assertEqual(self.off.outcome("purchase.rating@LMP-0008/buy")["outcome"], "unknown")
+        self.assertEqual(self.off.result, "unknown")
+        self.assertEqual(self.on.result, "unknown")
+
+    def test_off_a_part_route_with_no_profile_is_not_assessed_where_nothing_else_is_open(self) -> None:
+        self.assertEqual(self.off.outcome(f"route.consistency@{PRINTED[0]}")["outcome"], "not_assessed")
+        self.assertEqual(self.on.outcome(f"route.consistency@{PRINTED[0]}")["outcome"], "unknown")
 
 
 if __name__ == "__main__":
