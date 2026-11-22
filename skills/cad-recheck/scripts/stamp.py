@@ -270,7 +270,12 @@ class Staged:
 
 
 def staged_record(root: Path, committed: bool = False) -> Staged:
-    """The normalized record of the staged index and the digests of its record and selection inputs."""
+    """The normalized record of the staged index and the digests of its record and selection inputs.
+
+    A document that fails its schema is refused here, before the normalization reads it by the shape its schema
+    promises (the validator does the same: manufacturing_intent never sees an invalid document). A record of an
+    unsupported version is not checked: the schemas are the current version's, and `require_current_version`
+    refuses it by name."""
     files = staged_inputs(root, committed)
     documents = {}
     for rel, data in files.items():
@@ -280,6 +285,13 @@ def staged_record(root: Path, committed: bool = False) -> Staged:
             documents[rel] = yaml_loader.safe_load(data.decode("utf-8"))
         except (UnicodeError, yaml.YAMLError) as error:
             raise RuntimeError(f"cannot parse staged hw/{rel}: {error}") from error
+    if intent.version_problem(documents.get("product.yaml")) is None:
+        for rel, document in documents.items():
+            invalid: list[dict[str, str]] = []
+            if not validate.validate_document(document, intent.schema_for(rel) or "", f"hw/{rel}", invalid):
+                shown = "; ".join(item["message"] for item in invalid[:5])
+                more = f" (and {len(invalid) - 5} more)" if len(invalid) > 5 else ""
+                raise RuntimeError(f"staged {invalid[0]['path']} fails its schema: {shown}{more}")
     return Staged(intent.with_guideline_files(intent.normalize_record(documents), files), evidence.record_digest(files),
                   evidence.selection.input_digest(documents))
 

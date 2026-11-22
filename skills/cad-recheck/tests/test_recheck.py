@@ -47,6 +47,9 @@ LAYOUT_GATE = ("layout", "parts")  # the `gate:` front matter of the decision th
 LAYOUT_MANIFEST = '{"label":"v1","files":{}}\n'
 LAYOUT_BUILD = ("v1", hashlib.sha256(LAYOUT_MANIFEST.encode()).hexdigest())
 STAMP_TIME = "2026-11-19T10:00:00Z"
+# The product.yaml keys that stay the same in every fixture project; stamp.py refuses a staged document that fails its schema.
+SCHEMA_VALID_PRODUCT = {"record_version": 2, "id": "test-project", "units": "mm", "regime": "iso",
+                        "general_tolerance": {"status": "unknown", "reason": "not recorded yet", "question": "Q-013"}}
 LEGACY_PRODUCT = "id: test-project\nflow:\n  stage: {stage}\n  recheck_from: {threshold}\n"
 
 
@@ -110,13 +113,13 @@ class RecheckHookTests(unittest.TestCase):
             self.add_profile(stage)
             return
         flow = {"stage": stage, **({"recheck_from": threshold} if threshold else {})}
-        data = {"record_version": 2, "id": "test-project", "flow": flow,
-                "use_case": acceptance.confirmed_use_case("appearance_concept")}
+        data = {**SCHEMA_VALID_PRODUCT, "flow": flow, "use_case": acceptance.confirmed_use_case("appearance_concept")}
         product.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
         self.add_profile(stage)
         assembly = self.root / "hw" / "assembly.yaml"
         if not assembly.exists():
-            assembly.write_text("operations: []\n", encoding="utf-8")
+            assembly.write_text("operations: []\nsubassemblies:\n  - {id: main, title: Main, parts: [PRT-0001]}\njoints: []\n",
+                                encoding="utf-8")
 
     def add_profile(self, stage: str, project: Path | None = None) -> None:
         """The project-start profile, due from SPECIFY on, in the product of `project` (default: the repository)."""
@@ -929,7 +932,7 @@ class RecheckHookTests(unittest.TestCase):
         """Stage a detail-stage product in the moved project and stamp it with --hw. Return the project."""
         project = self.move_project(subdirectory)
         (project / "hw" / "product.yaml").write_text(
-            json.dumps({"record_version": 2, "id": "test-project", "flow": {"stage": "detail", "recheck_from": "layout"},
+            json.dumps({**SCHEMA_VALID_PRODUCT, "flow": {"stage": "detail", "recheck_from": "layout"},
                         "use_case": acceptance.confirmed_use_case("appearance_concept")}, indent=1) + "\n", encoding="utf-8")
         self.add_profile("detail", project)
         self.git("add", subdirectory)
