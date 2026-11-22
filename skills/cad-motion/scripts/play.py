@@ -668,7 +668,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         if status != "pass":
             print(f"play: {status}", file=sys.stderr)
-        return 0 if status == "pass" else 1
+        return 0 if status in ("pass", "not_assessed") else 1  # D37: a packet that assessed nothing blocks nothing
     except (check_packet.PacketError, pose.MotionError, LAYOUT.LayoutError, intent_module.IntentError) as error:
         print(f"play: {error}", file=sys.stderr)
         return 2
