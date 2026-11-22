@@ -1172,7 +1172,6 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
                 findings.append(finding(str(hw / "bom.csv"), f"BOM quantity of {pn} is {totals[pn]}, but assembly.yaml "
                                         f"places it {count} times ({', '.join(o.ref for o in placed)})"))
 
-    requirements = documents.get("requirements.yaml")
     verification = read_csv(hw / "verification.csv", CSV_COLUMNS["verification.csv"], findings)
     seen_requirement_ids: set[str] = set()
     for index, row in enumerate(verification, start=2):
@@ -1183,6 +1182,7 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
             findings.append(finding(row_path, f"duplicate verification for {req_id}"))
         seen_requirement_ids.add(req_id)
     if valid.get("requirements.yaml"):
+        requirements = documents["requirements.yaml"]
         known: set[Any] = {item.get("id") for item in requirements.get("requirements", []) if isinstance(item, dict)}
         for req_id in sorted(known - seen_requirement_ids):
             findings.append(finding(str(hw / "verification.csv"), f"requirement {req_id} has no verification row"))
