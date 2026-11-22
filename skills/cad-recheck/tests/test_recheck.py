@@ -182,7 +182,7 @@ class RecheckHookTests(unittest.TestCase):
 
     def test_missing_recheck_threshold_is_refused(self) -> None:
         product = self.root / "hw" / "product.yaml"
-        product.write_text("id: test-project\nflow:\n  stage: release\n", encoding="utf-8")
+        product.write_text("record_version: 1\nid: test-project\nflow:\n  stage: release\n", encoding="utf-8")
         self.git("add", "hw/product.yaml")
         result = self.verify()
         self.assertNotEqual(result.returncode, 0)
@@ -567,7 +567,7 @@ class RecheckHookTests(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         product_path.parent.mkdir(parents=True, exist_ok=True)
         frozen_product = {
-            "id": "test-project", "units": "mm", "regime": "iso",
+            "record_version": 1, "id": "test-project", "units": "mm", "regime": "iso",
             "general_tolerance": "ISO 2768-m",
             "flow": {"stage": "specify", "recheck_from": "release", "frozen": {
                 "version": "v1", "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
