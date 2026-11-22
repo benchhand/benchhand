@@ -989,8 +989,10 @@ class _IntentStack:
         return result
 
     def judged_outcome(self, passed: bool | None) -> str:
-        """unknown with an unknown contributor, else not_assessed with an unassessed one (as an unknown contributor does, it
-        leaves the stack unjudged: no fail either), else pass or fail by `passed`."""
+        """fail when the declared limits already miss the requirement (fail ranks ahead of not_assessed: a missing calibration
+        never hides a miss), else unknown with an unknown contributor, else not_assessed with an unassessed one, else pass."""
+        if passed is False:
+            return "fail"
         if self.unknown_reasons:
             return "unknown"
         if self.unassessed_reasons:
