@@ -877,7 +877,7 @@ def _packet_problems(packet: ProducerPacket, expected: Mapping[str, Any]) -> lis
     """Why a producer packet cannot be counted: not a check-result packet, or a packet
     that contradicts itself (a claimed completeness or result its outcomes do not show)."""
     data = packet.data
-    if not isinstance(data, Mapping) or data.get("schema_version") != 1 or data.get("record_version") != mi.RECORD_VERSION:
+    if not isinstance(data, Mapping) or data.get("schema_version") != 1 or not mi.is_supported_version(data.get("record_version")):
         return ["not a record version 1 manufacturing check result (schema_version 1)"]
     problems = []
     outcomes = [o for o in data.get("outcomes") or () if isinstance(o, Mapping)]

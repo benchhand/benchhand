@@ -472,6 +472,16 @@ class Pruning(ReleaseCase):
         self.assertEqual(list((hw.parent / ".cad-work").glob("prune-*")), [])
         self.assertEqual(validate.blocking(validate.validate_project(hw)), [], "no surviving reference broke")
 
+    def test_a_product_of_another_record_version_is_not_planned_for_pruning(self) -> None:
+        for label, text in (("version 2", "record_version: 2"), ("true", "record_version: true")):
+            hw = self.released()
+            product = hw / "product.yaml"
+            product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1", text), encoding="utf-8")
+            before = tree(hw)
+            with self.subTest(label), self.assertRaisesRegex(layout.LayoutError, "record.version_unsupported"):
+                prune.plan(hw, "A", "v3")
+            self.assertEqual(tree(hw), before)
+
     def test_yes_refuses_a_digest_that_a_fresh_plan_no_longer_has(self) -> None:
         hw = self.released()
         digest = prune.plan(hw, "A", "v3")["digest"]

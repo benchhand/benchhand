@@ -58,6 +58,19 @@ if "cad_record_emit" not in sys.modules:
     _SPEC.loader.exec_module(sys.modules["cad_record_emit"])
 emit = sys.modules["cad_record_emit"]
 
+
+def _intent() -> Any:
+    """manufacturing_intent.py beside prune.py under the name every CAD skill shares; loaded when a prune is planned."""
+    if "cad_record_manufacturing_intent" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("cad_record_manufacturing_intent",
+                                                      Path(__file__).resolve().parent / "manufacturing_intent.py")
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load manufacturing_intent.py beside prune.py")
+        sys.modules["cad_record_manufacturing_intent"] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules["cad_record_manufacturing_intent"])
+    return sys.modules["cad_record_manufacturing_intent"]
+
+
 JOURNAL = "journal.json"
 LEDGERS = ("manufacturing/evidence.yaml", "manufacturing/findings.yaml")  # accepted evidence, never pruned blind
 RELEASE_MANIFEST_VERSIONS = (3,)
@@ -119,6 +132,8 @@ def milestones(hw: Path) -> dict[str, list[str]]:
         product = yaml_loader.safe_load((hw / "product.yaml").read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise layout.LayoutError(f"cannot read hw/product.yaml before pruning: {error}") from error
+    if (problem := _intent().version_problem(product if isinstance(product, dict) else None)) is not None:
+        raise layout.LayoutError(f"{problem.code}: {problem.message}. Nothing is pruned.")
     flow = product.get("flow") if isinstance(product, dict) else None
     flow = flow if isinstance(flow, dict) else {}
     for key, field, why in (("frozen", "version", "frozen in product.yaml flow.frozen"),

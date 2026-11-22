@@ -226,6 +226,8 @@ def storage_answer(hw: Path) -> bool | None:
         product = _load_yaml_loader().safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise ValueError(f"{path} is not valid YAML: {error}") from error
+    if (problem := _load_flow_profile().intent.version_problem(product if isinstance(product, dict) else None, str(path))) is not None:
+        raise ValueError(f"{problem.code}: {problem.message}. {problem.action or ''}".strip())
     storage = product.get("storage") if isinstance(product, dict) else None
     answer = storage.get("results_in_git") if isinstance(storage, dict) else None
     if answer is not None and not isinstance(answer, bool):

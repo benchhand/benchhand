@@ -951,7 +951,8 @@ class VisibilityChecks(unittest.TestCase):
 
     def test_a_version_that_names_no_record_version_1_is_refused_not_checked_against_the_live_file(self) -> None:
         requirements(self.hw, FRONT)  # the live hw/requirements.yaml must not stand in for a version with no snapshot
-        for label, record_version in (("no record_version", None), ("record_version 2", 2)):
+        for label, record_version in (("no record_version", None), ("record_version 2", 2), ("a boolean", True),
+                                      ("a float", 1.0), ("a string", "1")):
             with self.subTest(manifest=label):
                 self.version.manifest.pop("record_version", None)
                 if record_version is not None:

@@ -564,6 +564,15 @@ class ProducerPackets(unittest.TestCase):
                 self.assertFalse(result.complete)
                 self.assertEqual(result.statuses[READBACK].result, "unknown")
 
+    def test_a_packet_of_another_record_version_or_of_no_integer_version_is_refused(self) -> None:
+        for label, version in (("version 2", 2), ("true", True), ("a float", 1.0), ("a string", "1"), ("none", None)):
+            data = acceptance.producer_packet(self.record)
+            data["record_version"] = version
+            with self.subTest(label):
+                result = assess(self.record, evidence.ProducerPacket("hw/checks/v1/tst", "b" * 64, data))
+                self.assertIn("packet.invalid", codes(result.findings))
+                self.assertFalse(result.complete)
+
     def test_a_partial_packet_counts_what_it_covers_and_makes_the_assessment_partial(self) -> None:
         result = assess(self.record, packet(self.record, complete=False))
         self.assertFalse(result.complete)

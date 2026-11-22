@@ -633,6 +633,18 @@ class RecheckHookTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("record.version_unsupported", result.stderr)
 
+    def test_a_record_of_another_version_is_refused_even_below_the_recheck_threshold(self) -> None:
+        for label, version in (("version 2", "2"), ("true", "true"), ("none", None)):
+            self.write_product("specify", "layout")  # below the threshold: no stamp is due, so nothing else is checked
+            product = self.root / "hw" / "product.yaml"
+            text = product.read_text(encoding="utf-8")
+            product.write_text(text.replace('"record_version": 1,', f'"record_version": {version},' if version else ""), encoding="utf-8")
+            self.git("add", "hw/product.yaml")
+            result = self.verify()
+            with self.subTest(label):
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("record.version_unsupported", result.stderr)
+
     def test_a_due_unknown_check_cannot_be_stamped_passed(self) -> None:
         self.stage_product("detail")
         self.stamp_refused(self.evidence_packet("detail", outcome="unknown"), "--passed contradicts the evidence packet")

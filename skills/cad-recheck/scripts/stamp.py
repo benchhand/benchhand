@@ -190,8 +190,10 @@ def staged_record(root: Path, committed: bool = False) -> Staged:
                   evidence.selection.input_digest(documents))
 
 
-def require_current_version(record: Any) -> None:
-    problem = intent.version_problem(record.product)
+def require_current_version(product: Any) -> None:
+    """Refuse a product.yaml that does not name the one record version. The first check of every stamp command:
+    nothing else of a rejected record is read, and no early success applies to it."""
+    problem = intent.version_problem(product if isinstance(product, dict) else None)
     if problem is not None:
         raise RuntimeError(f"{problem.code}: {problem.message}. {problem.action or ''}".strip())
 
@@ -352,11 +354,12 @@ def require_complete(checks: Any, path: Path) -> None:
 def record(stage: str, checks_path: Path, passed: bool, root: Path) -> dict[str, Any]:
     if stage not in validate.stages():
         raise RuntimeError(f"unknown stage {stage!r}; expected one of: {', '.join(validate.stages())}")
-    require_clean_layout(root, staged_product(root, stage))
+    product = staged_product(root, stage)
+    require_current_version(product)
+    require_clean_layout(root, product)
     checks = load_checks(checks_path)
     require_complete(checks, checks_path)
     staged = staged_record(root)
-    require_current_version(staged.record)
     blocking = require_evidence(checks, staged, stage)
     if passed and blocking:
         raise RuntimeError(f"--passed contradicts the evidence packet: {len(blocking)} blocking finding(s) at {stage}: "
@@ -430,6 +433,7 @@ def main() -> int:
                 product = yaml_loader.safe_load(product_data)
             except yaml.YAMLError as error:
                 raise RuntimeError(f"cannot parse staged hw/product.yaml: {error}") from error
+            require_current_version(product)
             if not isinstance(product, dict):
                 raise RuntimeError("staged hw/product.yaml must be a mapping")
             flow = product.get("flow")
@@ -449,7 +453,6 @@ def main() -> int:
                 print(json.dumps({"passed": True, "required": False, "stage": current_stage}))
                 return 0
             staged = staged_record(root, committed)
-            require_current_version(staged.record)
             try:
                 record_data = json.loads(tree_blob(root, "hw/.cad/recheck.json", committed).decode("utf-8"))
             except (RuntimeError, UnicodeError, json.JSONDecodeError) as error:

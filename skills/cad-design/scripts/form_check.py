@@ -23,8 +23,8 @@ exported manufacturing component files (versions/<V>/manufacturing/<PN>[/compone
 export pose, against capability-profile calibrations, else the guideline sets the version's record/ holds
 (graded by service class; process_checks). The packet
 (manufacturing-check-result.schema.json) is published as hw/checks/<V>/process/result.json (reused when
-the recipe matches; --replace for another), or written to --out instead. A snapshot of an unsupported record version is
-`refused` with record.version_unsupported: nothing else of it is read.
+the recipe matches; --replace for another), or written to --out instead. A snapshot of an unsupported record version, and a --parts-dir
+run on a project of one, is `refused` with record.version_unsupported: nothing else of it is read.
 
 Parts: one STEP per part in DIR, named `<PN>.step` (cad-motion `--parts-dir`
 rules). Process comes from hw/parts/<PN>/part.yaml (`fdm`, `cnc`, `purchased`); a bought part
@@ -1579,12 +1579,22 @@ def unsupported_version_problem(pc: Any, files: dict[str, bytes], label: str) ->
     Benchhand reads. A snapshot whose product.yaml does not parse is left to read_snapshot to refuse."""
     import yaml
 
+    loader = load_yaml_loader()  # the one YAML reader of the CAD scripts
     try:
-        product = yaml.safe_load(files.get("product.yaml", b"").decode("utf-8"))
+        product = loader.safe_load(files.get("product.yaml", b"").decode("utf-8"))
     except (UnicodeDecodeError, yaml.YAMLError):
         return None
-    problem = pc.intent().version_problem(product, f"hw/versions/{label}/record/product.yaml")
+    problem = pc.intent().version_problem(product if isinstance(product, dict) else None,
+                                          f"hw/versions/{label}/record/product.yaml")
     return problem.finding() if problem is not None else None
+
+
+def refused_report(problems: list[dict[str, Any]], label: str | None = None) -> dict[str, Any]:
+    """The report of a record that is not read: its problems and no check, whatever the options asked."""
+    report: dict[str, Any] = {"manufacturing": {"status": "refused", "problems": problems}}
+    if label is not None:
+        report["version"] = label
+    return report
 
 
 def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], int]:
@@ -1599,7 +1609,7 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
     files = model_record.read_folder(record_dir)
     unsupported = unsupported_version_problem(pc, files, label)
     if unsupported is not None:  # nothing else of the snapshot is read
-        return {"version": label, "manufacturing": {"status": "refused", "problems": [unsupported]}}, 1
+        return refused_report([unsupported], label), 1
     record = model_record.read_snapshot(files).intent
     catalog = pc.guidelines().discover(record_dir, snapshot=True)  # the version's own copies of the guideline sets
     legacy = argparse.Namespace(**{**vars(args), "hw": record_dir, "parts_dir": folder / "parts"})
@@ -1668,8 +1678,13 @@ def main(argv: list[str] | None = None) -> int:
         with pose.stdout_to_stderr():
             if args.version is None:
                 pc = load_process_checks()
-                report = check(args, pose, pc.intent().load_record(args.hw), pc.guidelines().discover(args.hw))
-                code = 1 if report["status"] == "fail" else 0
+                record = pc.intent().load_record(args.hw)
+                if record.version != pc.intent().RECORD_VERSION:  # no diagnostic runs on a record that is not read
+                    report, code = refused_report([p.finding() for p in record.problems
+                                                   if p.code == pc.intent().VERSION_UNSUPPORTED]), 1
+                else:
+                    report = check(args, pose, record, pc.guidelines().discover(args.hw))
+                    code = 1 if report["status"] == "fail" else 0
             else:
                 report, code = check_version(args, pose)
     except (pose.MotionError, RecordError) as error:

@@ -23,6 +23,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -72,6 +73,7 @@ def build_parts(root: Path, parts: dict[str, tuple[str, str]]) -> tuple[Path, Pa
     (hw / "parts").mkdir(parents=True)
     models.mkdir()
     (hw / "assembly.yaml").write_text("joints: []\n", encoding="utf-8")
+    (hw / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")
     for pn, (record, expression) in parts.items():
         (hw / "parts" / pn).mkdir()
         (hw / "parts" / pn / "part.yaml").write_text(f"PN: {pn}\n{record}", encoding="utf-8")
@@ -212,12 +214,12 @@ class BlockShapeTests(unittest.TestCase):
     def test_non_solid_block_is_exempt_and_wall_override_applies(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw, parts_dir = build_parts(Path(tmp), box_part(1.1, "frame"))
-            (hw / "product.yaml").write_text("id: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1.0}\n", encoding="utf-8")
+            (hw / "product.yaml").write_text("record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1.0}\n", encoding="utf-8")
             code, report = form_check(parts_dir, "F2", hw)
             self.assertEqual(code, 0, report["findings"])
             self.assertEqual(report["parts"]["TST-0301"]["form_class"], "frame")
             self.assertEqual(report["parts"]["TST-0301"]["min_wall"]["thickness_mm"], 1.1)
-            (hw / "product.yaml").write_text("id: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1.15}\n", encoding="utf-8")
+            (hw / "product.yaml").write_text("record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1.15}\n", encoding="utf-8")
             code, report = form_check(parts_dir, "F2", hw)
             wall = next(f for f in report["findings"] if f["check"] == "min_wall")
             self.assertEqual((code, wall["part"], wall["min_mm"], wall["thickness_mm"], wall["blocking"]),
@@ -290,7 +292,7 @@ class WallScanTests(unittest.TestCase):
         hw, parts_dir = build_parts(Path(cls.tmp.name), WALL_PARTS)
         # These parts name no capability profile, so their resolved fdm minimum is unknown. The scan is tested at the
         # 1.2 mm a 0.4 mm nozzle resolves to, given here as the project's minimum.
-        (hw / "product.yaml").write_text("id: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1.2}\n", encoding="utf-8")
+        (hw / "product.yaml").write_text("record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1.2}\n", encoding="utf-8")
         cls.code, cls.report = form_check(parts_dir, "F2", hw)
 
     @classmethod
@@ -393,18 +395,49 @@ class WallOverrideTests(unittest.TestCase):
             hw, parts_dir = build_parts(Path(tmp), {"TST-0421": ("process: cnc\nmake_buy: make\nform_class: plate\n",
                                                                  PLATE_08)})
             product = hw / "product.yaml"
-            product.write_text("id: fixture\nmanufacturing:\n  min_wall_mm: {cnc: 1.0}\n", encoding="utf-8")
+            product.write_text("record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {cnc: 1.0}\n", encoding="utf-8")
             code, report = form_check(parts_dir, "F2", hw)
             self.assertEqual((code, [(f["check"], f["thickness_mm"], f["min_mm"], f["blocking"]) for f in report["findings"]]),
                              (0, [("min_wall", 0.8, 1.0, False)]))
-            product.write_text("id: fixture\nmanufacturing:\n  min_wall_mm: {cnc: 0.5}\n", encoding="utf-8")
+            product.write_text("record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {cnc: 0.5}\n", encoding="utf-8")
             code, report = form_check(parts_dir, "F2", hw)
             wall = report["parts"]["TST-0421"]["min_wall"]
             self.assertEqual((code, report["findings"], wall["required_mm"], wall["thickness_mm"]), (0, [], 0.5, 0.8))
-            product.write_text("id: fixture\nmanufacturing:\n  min_wall_mm: {cnc: 0}\n", encoding="utf-8")
+            product.write_text("record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {cnc: 0}\n", encoding="utf-8")
             code, report = form_check(parts_dir, "F2", hw)
             self.assertEqual((code, report["status"]), (2, "error"))
             self.assertIn("manufacturing.min_wall_mm.cnc", report["error"])
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required to run form_check")
+class UnsupportedRecordTests(unittest.TestCase):
+    """A record of another version is refused before any diagnostic runs, with the problem and exit 1."""
+
+    def test_parts_dir_refuses_a_record_of_another_version_and_checks_nothing(self) -> None:
+        for label, line in (("version 2", "record_version: 2\n"), ("true", "record_version: true\n"), ("none", "")):
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                hw = Path(tmp) / "hw"
+                shutil.copytree(TEMPLATE_HW, hw)
+                product = hw / "product.yaml"
+                product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1\n", line), encoding="utf-8")
+                parts_dir = Path(tmp) / "parts"
+                parts_dir.mkdir()
+                code, report = form_check(parts_dir, "F2", hw)
+                self.assertEqual(code, 1, report)
+                self.assertEqual([p["code"] for p in report["manufacturing"]["problems"]], ["record.version_unsupported"])
+                self.assertNotIn("parts", report, "no part was diagnosed")
+
+    def test_a_snapshot_product_is_read_through_the_shared_yaml_loader(self) -> None:
+        class Loader:
+            @staticmethod
+            def safe_load(text: str) -> dict[str, int]:
+                return {"record_version": 2}  # whatever the bytes say, the shared reader's answer counts
+
+        problem = None
+        with mock.patch.object(FORM_CHECK, "load_yaml_loader", return_value=Loader):
+            problem = FORM_CHECK.unsupported_version_problem(FORM_CHECK.load_process_checks(),
+                                                             {"product.yaml": b"record_version: 1\n"}, "v1")
+        self.assertEqual(problem["code"], "record.version_unsupported")
 
 
 @unittest.skipUnless(importlib.util.find_spec("yaml"), "pyyaml is required to read product.yaml")
@@ -419,15 +452,15 @@ class WallThresholdTests(unittest.TestCase):
 
     def test_only_written_overrides_apply(self) -> None:
         self.assertEqual(self.thresholds("id: fixture\n"), {})
-        self.assertEqual(self.thresholds("id: fixture\nmanufacturing:\n  processes: [fdm]\n"), {})
-        self.assertEqual(self.thresholds("id: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1, cnc: 0.8}\n"),
+        self.assertEqual(self.thresholds("record_version: 1\nid: fixture\nmanufacturing:\n  processes: [fdm]\n"), {})
+        self.assertEqual(self.thresholds("record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {fdm: 1, cnc: 0.8}\n"),
                          {"fdm": 1.0, "cnc": 0.8})
 
     def test_invalid_overrides_are_rejected(self) -> None:
         for value in ("{fdm: 0}", "{fdm: -1.2}", "{fdm: '1.2'}", "{fdm: true}", "{fdm: .nan}", "{cnc: .inf}",
                       "{cnc: null}", "{purchased: 1.0}", "{FDM: 1.2}", "{}", "1.2", "[1.2]", "null"):
             with self.subTest(min_wall_mm=value), self.assertRaisesRegex(FORM_CHECK.RecordError, "min_wall_mm"):
-                self.thresholds(f"id: fixture\nmanufacturing:\n  min_wall_mm: {value}\n")
+                self.thresholds(f"record_version: 1\nid: fixture\nmanufacturing:\n  min_wall_mm: {value}\n")
 
     def test_overridable_processes_are_the_product_schema_keys(self) -> None:
         schema = json.loads((SKILL.parent / "cad-record" / "schemas" / "product.schema.json").read_text(encoding="utf-8"))

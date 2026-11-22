@@ -233,7 +233,7 @@ class StorageTests(unittest.TestCase):
 
     def answer(self, value: str | None) -> None:
         storage = "" if value is None else f"storage:\n  results_in_git: {value}\n"
-        (self.hw / "product.yaml").write_text(f"id: lamp\n{storage}", encoding="utf-8")
+        (self.hw / "product.yaml").write_text(f"record_version: 1\nid: lamp\n{storage}", encoding="utf-8")
 
     def apply(self) -> list[str]:
         items = setup.storage_plan(self.root)
@@ -249,6 +249,15 @@ class StorageTests(unittest.TestCase):
     def git(self, *args: str) -> None:
         subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True,
                        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+
+    def test_a_product_of_another_record_version_plans_no_storage_rules(self) -> None:
+        for label, line in (("version 2", "record_version: 2\n"), ("true", "record_version: true\n"), ("none", "")):
+            with self.subTest(label):
+                (self.hw / "product.yaml").write_text(f"{line}id: lamp\nstorage:\n  results_in_git: true\n", encoding="utf-8")
+                [item] = setup.storage_plan(self.root)
+                self.assertEqual(item.id, "storage-manual")
+                self.assertIn("record.version_unsupported", item.command)
+                self.assertFalse((self.hw / ".gitignore").exists())
 
     def test_an_unasked_or_declined_answer_ignores_results_like_the_template(self) -> None:
         for value in (None, "false"):
@@ -323,7 +332,7 @@ class StorageTests(unittest.TestCase):
         asked = f"    asked:\n      storage_results_in_git: {how}\n" if how else ""
         profile = f"flow:\n  profile:\n    decision: DR-001\n    storage_results_in_git: {value}\n{asked}"
         storage = "" if legacy is None else f"storage:\n  results_in_git: {legacy}\n"
-        (self.hw / "product.yaml").write_text(f"id: lamp\n{profile}{storage}", encoding="utf-8")
+        (self.hw / "product.yaml").write_text(f"record_version: 1\nid: lamp\n{profile}{storage}", encoding="utf-8")
 
     def test_a_recorded_profile_answer_sets_the_rules_without_a_storage_setting(self) -> None:
         self.profile("true", "user")
@@ -354,7 +363,7 @@ class StorageTests(unittest.TestCase):
 
     def test_a_profile_asking_other_questions_but_not_storage_is_not_an_answer(self) -> None:
         (self.hw / "product.yaml").write_text(
-            "id: lamp\nflow:\n  profile:\n    decision: DR-001\n    storage_results_in_git: true\n"
+            "record_version: 1\nid: lamp\nflow:\n  profile:\n    decision: DR-001\n    storage_results_in_git: true\n"
             "    asked:\n      human_approval: user\n", encoding="utf-8")
         self.assertIn("is not answered yet", setup.storage_plan(self.root)[0].command)
 

@@ -68,6 +68,7 @@ def _load_module(name: str, path: Path) -> Any:
 yaml_loader = _load_module("cad_record_yaml_loader", CAD_RECORD_SCRIPTS / "yaml_loader.py")
 decision_records = _load_module("cad_record_decision_records", CAD_RECORD_SCRIPTS / "decision_records.py")
 gate = _load_module("cad_record_flow_profile_gate", CAD_RECORD_SCRIPTS / "flow_profile_gate.py")
+intent = _load_module("cad_record_manufacturing_intent", CAD_RECORD_SCRIPTS / "manufacturing_intent.py")
 
 
 def load_validate() -> Any:
@@ -171,11 +172,16 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 # --- reading ------------------------------------------------------------------------------------------------------
 
 def read_product(hw: Path) -> Any:
+    """The parsed product.yaml of `hw`, once it names the one record version. Every command reads the product
+    through here, so a record of another version is refused before anything of it is checked or written."""
     path = Path(hw) / "product.yaml"
     try:
-        return yaml_loader.safe_load(path.read_text(encoding="utf-8"))
+        product = yaml_loader.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
         raise ProfileError(f"cannot read {path}: {error}") from error
+    if (problem := intent.version_problem(product if isinstance(product, Mapping) else None, str(path))) is not None:
+        raise ProfileError(f"{problem.code}: {problem.message}. {problem.action or ''}".strip())
+    return product
 
 
 def read_parts(hw: Path) -> dict[str, Any]:
@@ -372,6 +378,7 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     `decision`, then the decision record. Raises ProfileError, having written nothing, for an existing
     decision, a start question neither answered nor accepted, or a product.yaml it cannot edit."""
     hw = Path(hw)
+    product = read_product(hw)  # first: a record of another version is refused before anything else is read or written
     accepted = list(accepted)
     if DECISION.fullmatch(decision) is None:
         raise ProfileError(f"--decision {decision!r} is not DR-###")
@@ -386,7 +393,6 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         raise ProfileError(f"cannot read {path}: {error}") from error
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
-    product = read_product(hw)
     if not isinstance(product, Mapping) or not isinstance(product.get("flow", {}), Mapping):
         raise ProfileError(f"{path} is not a mapping with a flow mapping")
     profile = answered_profile(decision, answers, accepted)

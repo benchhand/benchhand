@@ -808,10 +808,16 @@ class Record:
 
 # --- record version --------------------------------------------------------------------------------------------
 
+def is_supported_version(value: object) -> bool:
+    """Whether `value`, read from a document, names the one record version: the integer 1. A bool, a float and a
+    string are never a version (`True == 1` and `1.0 == 1` in Python), so every reader of a recorded version calls this."""
+    return type(value) is int and value == RECORD_VERSION
+
+
 def record_version(product: Mapping[str, Any]) -> int:
     """1, the only record version; UnsupportedRecordVersion for any other or absent record_version."""
     version = product.get("record_version")
-    if isinstance(version, bool) or version != RECORD_VERSION:
+    if not is_supported_version(version):
         raise UnsupportedRecordVersion(f"product.yaml record_version {version!r} is not supported; this Benchhand reads "
                                        f"record version {RECORD_VERSION} only")
     return RECORD_VERSION
@@ -1454,12 +1460,12 @@ class _Reader:
     def record(self) -> Record:
         product_rel = "product.yaml"
         product = self.doc(product_rel) or {}
-        for rel, data in self.documents.items():
-            self.numbers(data, f"hw/{rel}", "")
         problem = version_problem(product)
-        if problem is not None:
+        if problem is not None:  # the version comes first: nothing else of a rejected record is read
             self.problems.append(problem)
             return self.unsupported(product)
+        for rel, data in self.documents.items():
+            self.numbers(data, f"hw/{rel}", "")
         self.completeness()
         use_case = self.use_case(product.get("use_case"), f"hw/{product_rel}")
         requirements, preferences, assumptions, questions = self.statements()
@@ -1479,26 +1485,14 @@ class _Reader:
                       freeze(self.doc("assembly.yaml")))
 
     def unsupported(self, product: Mapping[str, Any]) -> Record:
-        """A record of an unsupported version: every manufacturing-intent field unknown, never defaulted."""
+        """The record of an unsupported version: every manufacturing-intent field unknown, never defaulted, and no
+        part, interface, requirement or other field of the rejected documents. Only its `record_version` stays."""
         reason = "the record version is not supported"
-        parts = {}
-        for rel in sorted(self.documents):
-            match = re.fullmatch(r"parts/([^/]+)/part\.yaml", rel)
-            data = self.doc(rel)
-            pn = data.get("PN") if data is not None else None
-            if match and data is not None and isinstance(pn, str):
-                parts[pn] = self.part_fields(pn, data, PartIntent.unknown(reason))
-        interfaces = {}
-        for item in (self.doc("interfaces.yaml") or {}).get("interfaces") or ():
-            if isinstance(item, Mapping) and isinstance(item.get("id"), str):
-                interfaces[item["id"]] = Interface(item["id"], item.get("type"), InterfaceFunctional.unknown(reason), freeze(item))
-        operations: tuple[Mapping[str, Any], ...] | Fact = Fact.unknown_because(reason)
-        requirements = self.requirements_only()
-        return Record(0, freeze(product), UseCase.unknown(reason), requirements, types.MappingProxyType({}),
-                      types.MappingProxyType({}), types.MappingProxyType({}), types.MappingProxyType(parts),
-                      types.MappingProxyType(interfaces), operations, types.MappingProxyType({}), types.MappingProxyType({}),
-                      Selection("not_assessed", types.MappingProxyType({}), None, types.MappingProxyType({})), (), (),
-                      types.MappingProxyType({}), tuple(self.problems))
+        empty: Mapping[str, Any] = types.MappingProxyType({})
+        shown = {"record_version": product["record_version"]} if "record_version" in product else {}
+        return Record(0, freeze(shown), UseCase.unknown(reason), empty, empty, empty, empty, empty, empty,
+                      Fact.unknown_because(reason), empty, empty,
+                      Selection("not_assessed", empty, None, empty), (), (), empty, tuple(self.problems))
 
     def completeness(self) -> None:
         requirements = self.doc("requirements.yaml")

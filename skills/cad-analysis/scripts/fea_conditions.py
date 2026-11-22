@@ -324,7 +324,7 @@ class _Assessor:
             "properties": properties,
         }
         self.case["material"] = {"name": material["name"], **values}
-        binding = {"version": self.version, "record_version": 1, **subject, "part_revision": part.raw.get("rev"),
+        binding = {"version": self.version, "record_version": intent().RECORD_VERSION, **subject, "part_revision": part.raw.get("rev"),
                    "material_profile": {"id": profile.id, "revision": profile.revision, "sha256": profile_sha},
                    "route": route["kinds"], "conditions": material["conditions"]}
         expected = [ob.as_dict() for ob in self.mi.required_checks(self.record)
@@ -1074,7 +1074,7 @@ def packet(result: Mapping[str, Any], a: Assessment, *, mode: str) -> dict[str, 
     states = {row["outcome"] for row in outcomes}
     verdict = ("fail" if "fail" in states else "unknown" if "unknown" in states else
                "pass" if "pass" in states else "not_applicable")
-    return {"schema_version": 1, "record_version": 1, "producer": PRODUCER, "scope": [subject],
+    return {"schema_version": 1, "record_version": intent().RECORD_VERSION, "producer": PRODUCER, "scope": [subject],
             "expected": a.expected, "outcomes": outcomes, "findings": findings, "dependencies": dict(a.dependencies),
             "complete": len(outcomes) == len(a.expected), "result": verdict}
 

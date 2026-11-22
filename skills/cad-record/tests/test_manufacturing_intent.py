@@ -76,9 +76,15 @@ class Versions(unittest.TestCase):
     def test_only_version_1_is_current_and_any_other_is_refused(self) -> None:
         self.assertEqual(mi.record_version({"record_version": 1}), 1)
         for product in ({}, {"record_version": 2}, {"record_version": 3}, {"record_version": True},
-                        {"record_version": "1"}, {"record_version": None}):
+                        {"record_version": "1"}, {"record_version": None}, {"record_version": 1.0}):
             with self.subTest(product=product), self.assertRaises(mi.UnsupportedRecordVersion):
                 mi.record_version(product)
+
+    def test_the_shared_version_check_accepts_the_integer_1_and_nothing_else(self) -> None:
+        self.assertTrue(mi.is_supported_version(1))
+        for value in (True, False, 1.0, "1", None, 0, 2, [1]):
+            with self.subTest(value=value):
+                self.assertFalse(mi.is_supported_version(value))
 
     def test_a_product_of_record_version_2_or_with_none_is_refused_and_not_read(self) -> None:
         for label, version in (("version 2", 2), ("no version", None)):
@@ -95,6 +101,9 @@ class Versions(unittest.TestCase):
                 self.assertEqual([p.code for p in record.problems], ["record.version_unsupported"])
                 self.assertTrue(record.use_case.unknown)
                 self.assertEqual((dict(record.capabilities), dict(record.materials)), ({}, {}))
+                self.assertEqual((dict(record.parts), dict(record.interfaces), dict(record.requirements)), ({}, {}, {}),
+                                 "nothing of a rejected record's documents is read")
+                self.assertLessEqual(set(record.product), {"record_version"}, "no other field of its product is kept")
 
     def test_a_product_of_record_version_1_is_read(self) -> None:
         hw = fx.write_record(temp_hw(self), fx.tst_record())

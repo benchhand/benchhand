@@ -84,8 +84,6 @@ from pathlib import Path
 from typing import Any, Callable, cast
 from urllib.parse import unquote, urlsplit
 
-RECORD_VERSION = 1  # the one record version whose snapshot a version manifest may name (cad-record manufacturing_intent.RECORD_VERSION)
-
 HERE = Path(__file__).resolve()
 _parity_spec = importlib.util.spec_from_file_location("cad_render_parity_policy", HERE.parent / "parity_policy.py")
 if _parity_spec is None or _parity_spec.loader is None:
@@ -99,6 +97,7 @@ VERSIONS_PY = HERE.parent / "versions.py"  # occurrence normalization only; path
 LAYOUT_PY = SKILL.parent / "cad-record" / "scripts" / "layout.py"
 DESIGN_RULES_PY = SKILL.parent / "cad-record" / "scripts" / "design_rules.py"
 YAML_LOADER_PY = SKILL.parent / "cad-record" / "scripts" / "yaml_loader.py"
+INTENT_PY = SKILL.parent / "cad-record" / "scripts" / "manufacturing_intent.py"
 CONCEPT_SERVE = SKILL.parent / "cad-concept" / "scripts" / "serve.py"
 # The page chrome tokens (status line) are cad-concept's; renderer/tokens.css holds the scene's.
 CONCEPT_TOKENS = SKILL.parent / "cad-concept" / "assets" / "viewer" / "tokens.css"
@@ -961,9 +960,10 @@ def requirements_input(version: Version) -> tuple[Path, str]:
     snapshot (its manifest names `record_version` 1) snapshotted every record file present, so a
     missing snapshot file means the project had none. A manifest that names no record version 1 is
     refused: today's hw/requirements.yaml never stands in for a version without a snapshot."""
+    intent = _load_record_module("cad_record_manufacturing_intent", INTENT_PY)
     recorded = version.manifest.get("record_version")
-    if recorded != RECORD_VERSION:
-        raise InfraError(f"{version.label}: its manifest names record_version {recorded!r}, not {RECORD_VERSION}; "
+    if not intent.is_supported_version(recorded):
+        raise InfraError(f"{version.label}: its manifest names record_version {recorded!r}, not {intent.RECORD_VERSION}; "
                          "rebuild the version with cad-model to check its requirements")
     return version.record / "requirements.yaml", "version_snapshot"
 
