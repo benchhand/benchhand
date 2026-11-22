@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import types
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -101,6 +101,7 @@ class Assessment:
     guideline_digests: Mapping[str, str] = types.MappingProxyType({})  # id@revision -> sha256 the limits can come from
     resolutions: tuple[Any, ...] = ()  # guidelines.Resolved of every guideline limit looked up (the trace's rows)
     traced: frozenset[str] = frozenset()  # ids of the findings of obligations that consulted a guideline
+    calibration: bool = False  # the calibration flag this assessment ran under; the packet seals it either way
 
     @property
     def complete(self) -> bool:
@@ -136,7 +137,8 @@ class Assessment:
         (a file_hash row of the resolution trace) is cited in method.evidence of every finding of an obligation that
         consulted a guideline."""
         findings = [self._cited(f, trace) for f in self.findings]
-        dependencies = {**dependencies, **guidelines().packet_dependencies(self.guideline_digests)}
+        dependencies = {**dependencies, **guidelines().packet_dependencies(self.guideline_digests),
+                        **guidelines().calibration_dependencies(self.calibration)}
         pns = sorted({o.subject["PN"] for o in self.expected if o.subject.get("PN")})
         return {"schema_version": 1, "record_version": intent().RECORD_VERSION, "producer": PRODUCER,
                 "scope": scope or ([{"PN": pn} for pn in pns] or [{"product": True}]),
@@ -153,11 +155,13 @@ def _operation(record: Any, pn: str, ident: str | None) -> Any | None:
 
 
 def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = None, *, today: date | None = None,
-           catalog: Any = None) -> Assessment:
+           catalog: Any = None, calibration: bool | None = None) -> Assessment:
     """One outcome per expected obligation, from the record and the measured component geometry
     (keyed (PN, component); the sole solid is `main`). Without geometry every geometric check is UNKNOWN. `catalog`
     (cad-record guidelines.discover) gives the guideline limits where no calibration holds; without it only
-    calibrations count."""
+    calibrations count. `calibration` is the flag value (guidelines.calibration_enabled, read here once when None): with it
+    off, a recorded FDM calibration is ignored, an info finding says so, and a guideline pass is a pass in every class."""
+    calibration = guidelines().calibration_enabled() if calibration is None else calibration
     obligations = expected(record)
     geometry = dict(geometry or {})
     today = today or date.today()
@@ -166,12 +170,15 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
     resolutions: list[Any] = []  # shared by every Context: the trace's rows
     traced: set[str] = set()
     refused_reported = False
+    last_off: tuple[Context, Any] | None = None  # the last obligation of an FDM operation run with the flag off
+    ignored: list[Any] = []  # recorded FDM calibrations skipped with the flag off (shared by every Context)
     for obligation in obligations:
         subject = obligation.subject
         pn = subject["PN"]
         component = subject.get("component") or IMPLICIT
         op = _operation(record, pn, subject.get("operation"))
-        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry, catalog, resolutions)
+        ctx = Context(record, pn, component, op, geometry.get((pn, component)), today, geometry, catalog, resolutions,
+                      calibration=calibration, ignored=ignored)
         scope = ctx.guideline_context()
         if scope is not None:
             digests.update(guidelines().applicable_digests(catalog, scope))
@@ -179,6 +186,8 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
         if scope is not None and catalog.refused and not refused_reported:
             refused_reported = True  # once per assessment, on the first obligation that could use a guideline
             result.findings.append(_refused(catalog.refused))
+        if ctx.calibration_off():
+            last_off = (ctx, obligation)
         drafted = _findings(ctx, obligation, result, geometry.get((pn, component)))
         for item in drafted:
             if item.get("obligation") == obligation.id and item["outcome"] == FAIL and result.outcome != FAIL:
@@ -188,8 +197,11 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
             traced.update(f["id"] for f in drafted)
         row = _row(obligation, result, drafted)
         outcomes.append(intent().thaw(row))
+    if ignored and last_off is not None:  # once, after the loop: every recorded calibration the off flag skipped
+        ctx, obligation = last_off
+        findings += _findings(ctx, obligation, Result(PASS, "calibration flag", "none", [_calibration_off(ignored)]), None)
     return Assessment(obligations, tuple(outcomes), tuple(findings), types.MappingProxyType(dict(sorted(digests.items()))),
-                      tuple(resolutions), frozenset(traced))
+                      tuple(resolutions), frozenset(traced), calibration)
 
 
 def _result(ctx: Context, obligation: Any) -> Result:
@@ -233,6 +245,15 @@ def _refused(refused: Any) -> Draft:
                  remedy="fix or remove the refused guideline files, then recheck", recheck=["process"], link=False)
 
 
+def _calibration_off(ignored: Sequence[Any]) -> Draft:
+    """Recorded FDM calibrations that the off flag skipped: generic guideline values govern instead."""
+    names = ", ".join(sorted(str(i) for i in ignored))
+    return Draft("process.fdm.calibration_off", "info", PASS, text(f"recorded calibrations ignored: {names}"),
+                 policy("printer_calibration", "equals", "off", note="generic guideline values govern"),
+                 "calibration flag", "none", "the limits come from the generic guideline values, not from this printer's calibration",
+                 remedy=guidelines().COUPON_REMEDY, recheck=["process.fdm"], link=False)
+
+
 def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry | None) -> list[dict[str, Any]]:
     mi = intent()
     seen: dict[tuple[str, str | None], int] = {}
@@ -273,15 +294,17 @@ def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry 
     return out
 
 
-def probe_plan(record: Any, pn: str, component: str, *, today: date | None = None, catalog: Any = None) -> dict[str, Any]:
+def probe_plan(record: Any, pn: str, component: str, *, today: date | None = None, catalog: Any = None,
+               calibration: bool | None = None) -> dict[str, Any]:
     """What form_check must measure on one component before the handlers run: the ray directions
     (access sides and pull senses, keyed as the handlers read them) and the wall threshold that the
     limits of its operations name: a calibration, else a guideline value from `catalog` (None: no wall
-    limit, so no scan)."""
+    limit, so no scan). `calibration` is the flag value, as for `assess`."""
     today = today or date.today()
+    calibration = guidelines().calibration_enabled() if calibration is None else calibration
     directions: dict[str, list[float]] = {}
     walls: list[float] = []
-    for ctx in component_contexts(record, pn, component, catalog, today):
+    for ctx in component_contexts(record, pn, component, catalog, today, calibration):
         op = ctx.operation
         parsed, _ = access_directions(((op.setup or {}).get("access") or {}).get("sides") or ())
         for _, vector in parsed:

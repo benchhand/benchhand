@@ -30,8 +30,6 @@ ASSEMBLY_DATA_MODULE = "cad_record_assembly_data"  # the shared name cad-motion 
 GUIDELINES_PATH = INTENT_PATH.with_name("guidelines.py")
 GUIDELINES_MODULE = "cad_record_guidelines"  # the shared name manufacturing_intent loads it under
 
-GUIDELINE_PROCESSES = frozenset({"fdm"})  # the processes the shipped guideline sets cover (resin and the rest have none)
-
 # The service classes whose checks take a guideline value as a pass (the user's rule). Every other class, unknown
 # included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
 GUIDELINE_PASS_CLASSES = frozenset({"appearance_concept", "fit_assembly", "functional_demo"})
@@ -379,13 +377,14 @@ def component_ids(part: Any) -> list[str]:
     return [c.id for c in part.intent.components] or [IMPLICIT]
 
 
-def component_contexts(record: Any, pn: str, component: str, catalog: Any, today: date) -> list[Context]:
+def component_contexts(record: Any, pn: str, component: str, catalog: Any, today: date,
+                       calibration: bool = True) -> list[Context]:
     """The context of every route operation that acts on `component` of part `pn`, in route order: the operations
     a component-wide scan (probe_plan) reads. A part the record does not hold has none."""
     part = record.parts.get(pn)
     if part is None or intent().is_fact(part.intent.route):
         return []
-    return [Context(record, pn, component, op, None, today, catalog=catalog)
+    return [Context(record, pn, component, op, None, today, catalog=catalog, calibration=calibration)
             for op in part.intent.route if not op.components or component in op.components]
 
 
@@ -453,6 +452,8 @@ class Context:
     catalog: Any = None  # cad-record guidelines.Catalog; None: no guideline set is consulted, so only calibrations count
     resolutions: list[Any] = field(default_factory=list, compare=False)  # guidelines.Resolved of every limit looked up (shared)
     consulted: list[Any] = field(default_factory=list, compare=False)  # the same, for this obligation alone
+    calibration: bool = True  # the calibration flag, read once per assessment (assess); off ignores FDM calibrations
+    ignored: list[Any] = field(default_factory=list, compare=False)  # recorded FDM calibrations skipped with it off (shared)
 
     # record views ---------------------------------------------------------------------------------------------
     @property
@@ -609,15 +610,35 @@ class Context:
             return Calibrated("unknown", characteristic, None, (f"{self.label}: the material profile is unknown",))
         found = self.mi.capability_limit(profile, characteristic, material=material, on=self.today,
                                          orientation=orientation, feature=feature, tool=tool)
+        if self.calibration_off(profile):
+            if found.status == "calibrated" and found.calibration.id not in self.ignored:
+                self.ignored.append(found.calibration.id)
+            return Calibrated("unknown", characteristic, None,
+                              (f"{self.label}: printer calibration is off, and no guideline value covers {characteristic}",))
         if found.status == "calibrated":
             return Calibrated("calibrated", characteristic, found.calibration.limits, (), found.calibration)
         return Calibrated(found.status, characteristic, None, tuple(found.reasons))
 
+    def calibration_off(self, profile: Any | None = None) -> bool:
+        """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""
+        profile = profile or self.profile
+        process = profile.process if profile is not None else (self.op.kind if self.op is not None else None)
+        return not self.calibration and process in guidelines().GUIDELINE_PROCESSES
+
+    def remedy(self, text: str, fix: str | None = None) -> str:
+        """`text` (the remedy that asks for a calibration) while calibration counts. With the flag off for an FDM
+        operation: `fix`, the real remedy without the calibration clause, then the coupon text; the coupon text alone
+        when there is no other fix."""
+        if not self.calibration_off():
+            return text
+        coupon = guidelines().COUPON_REMEDY
+        return f"{fix}; {coupon}" if fix else coupon
+
     def guideline_context(self) -> Any | None:
         """The guideline scope (guidelines.Context) of this operation's capability profile and material, or None
-        without a catalog, a profile or a process in GUIDELINE_PROCESSES."""
+        without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES."""
         profile = self.profile
-        if self.catalog is None or profile is None or profile.process not in GUIDELINE_PROCESSES:
+        if self.catalog is None or profile is None or profile.process not in guidelines().GUIDELINE_PROCESSES:
             return None
         material_id = self.stock_material_id()
         return guidelines().context_for(profile, self.record.materials.get(material_id) if material_id else None)
@@ -647,7 +668,8 @@ class Context:
         of GUIDELINE_PASS_CLASSES. A guideline value in another class is unknown, with a finding a calibration or an
         approved waiver settles. An unknown limit is unknown too (its callers report why)."""
         service = self.service_class
-        if limit.status == "calibrated" or (limit.status == "guideline" and service in GUIDELINE_PASS_CLASSES):
+        if limit.status == "calibrated" or (limit.status == "guideline" and (service in GUIDELINE_PASS_CLASSES
+                                                                             or self.calibration_off())):
             return PASS, coverage
         if limit.status == "unknown":
             return UNKNOWN, _noted(coverage, "limit unknown")
@@ -673,7 +695,8 @@ class Context:
                           unknown(f"no capability profile names what {self.label} can do"),
                           method, f"the capability of {self.label} is unknown: {reason}",
                           "no check of this operation can use calibrated criteria",
-                          remedy="record the capability profile of the actual machine, operator or supplier, with its calibrations",
+                          remedy="record the capability profile of the actual machine, operator or supplier"
+                                 + ("" if self.calibration_off() else ", with its calibrations"),
                           recheck=[f"process.{op.kind}"], earliest_stage="parts")
             if op.provider == "outsourced":
                 draft.consequence += "; outsourcing is no exemption: the supplier's capability and inspection are required"
