@@ -256,7 +256,7 @@ class MissingLimitEmitterTests(Assessed):
         self.assertEqual(self.row(on, T.SUPPORT)["outcome"], "unknown")
         self.assertEqual(on.by_code("process.fdm.support_uncalibrated"), [])
 
-    def test_off_a_resin_support_gap_asks_for_evidence_where_the_flag_on_asks_for_a_calibration(self) -> None:
+    def test_off_a_resin_support_gap_asks_for_evidence_and_the_flag_on_has_no_such_finding(self) -> None:
         """Resin is additive but outside the flag's process list: its remedy never names a printer calibration."""
         documents = T.shaped("resin", [], material=T.POLYMER, supports={"strategy": "none"})
         data = T.geometry("TST-0902", T.underside(0.0))
