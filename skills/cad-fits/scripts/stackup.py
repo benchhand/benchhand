@@ -773,18 +773,7 @@ class _IntentStack:
             return
         resolution = intent.capability_limit(profile, capability["characteristic"], material=material, on=self.on,
                                              feature=None)
-        if resolution.status == "unknown" and not self.calibration:  # no calibration is on record, and none is asked for
-            self.unassessed("stack.capability_unresolved", item,
-                            f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}: "
-                            + "; ".join(resolution.reasons), "record evidence of the capability for this material and scope "
-                                                              "(test pieces, a capability study or supplier evidence)")
-            return
-        if resolution.status != "calibrated":
-            self.unknown("stack.capability_unresolved", item,
-                         f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}: "
-                         + "; ".join(resolution.reasons), "calibrate the capability for this material and scope" if self.calibration
-                         else "record evidence of the capability for this material and scope "
-                              "(test pieces, a capability study or supplier evidence)")
+        if self.unresolved_capability(item, profile_id, capability["characteristic"], resolution):
             return
         calibration = resolution.calibration
         limits = calibration.limits
@@ -797,6 +786,20 @@ class _IntentStack:
                              f"{item.id}'s limits -{item.minus}/+{item.plus} mm are tighter than calibration "
                              f"{calibration.id}'s demonstrated deviation {low}..{high} mm",
                              "use the demonstrated limits, or a finishing operation and inspection that achieve them")
+
+    def unresolved_capability(self, item: _Contributor, profile_id: str, characteristic: str, resolution: Any) -> bool:
+        """Report a capability that gave no calibration for the contributor, and say whether it did not. With the flag off and
+        no calibration on record it is not assessed (D36, D37); a refused or expired calibration, or the flag on, is unknown."""
+        if resolution.status == "calibrated":
+            return False
+        reason = f"{item.id}: {profile_id} {characteristic} is {resolution.status}: " + "; ".join(resolution.reasons)
+        if self.calibration:
+            self.unknown("stack.capability_unresolved", item, reason, "calibrate the capability for this material and scope")
+        else:
+            report = self.unassessed if resolution.status == "unknown" else self.unknown
+            report("stack.capability_unresolved", item, reason, "record evidence of the capability for this material and scope "
+                                                                 "(test pieces, a capability study or supplier evidence)")
+        return True
 
     # ---------------------------------------------------------------- statistics
 
@@ -943,13 +946,7 @@ class _IntentStack:
         stat_pass = (_verdict(statistical["min"], statistical["max"], self.req_min, self.req_max)
                      if statistical["status"] == "justified" else None)
         clearance = self.check_clearance(nominal if complete else None)
-        if self.unknown_reasons:
-            outcome = "unknown"
-        elif self.unassessed_reasons:
-            outcome = "not_assessed"  # as an unknown contributor does, an unassessed one leaves the stack unjudged: no fail either
-        else:
-            passed = wc_pass if governing == "worst_case" else stat_pass
-            outcome = "pass" if passed else "fail"
+        outcome = self.judged_outcome(wc_pass if governing == "worst_case" else stat_pass)
         if outcome == "fail":
             self.violation(nominal, nominal_pass, worst, statistical, governing)
         elif complete and wc_pass is False and governing == "justified_rss":
@@ -990,6 +987,15 @@ class _IntentStack:
         if clearance is not None:
             result["clearance"] = clearance.row
         return result
+
+    def judged_outcome(self, passed: bool | None) -> str:
+        """unknown with an unknown contributor, else not_assessed with an unassessed one (as an unknown contributor does, it
+        leaves the stack unjudged: no fail either), else pass or fail by `passed`."""
+        if self.unknown_reasons:
+            return "unknown"
+        if self.unassessed_reasons:
+            return "not_assessed"
+        return "pass" if passed else "fail"
 
     def check_clearance(self, nominal: float | None) -> _ClearanceResult | None:
         """The stack's sliding-clearance check, or None when the stack asks for none. It is no contributor: the gap
