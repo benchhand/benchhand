@@ -57,7 +57,7 @@ NOT_AN_INSTRUCTION = re.compile(
 
 
 def logical_lines(path: Path) -> list[tuple[int, str]]:
-    """(line number, text) pairs. A YAML file contributes only its comments, each run of them joined as one paragraph."""
+    """(line number, text) pairs. A YAML file contributes its comments (each run joined as one paragraph) and its list items, the note strings."""
     lines = path.read_text(encoding="utf-8").splitlines()
     if path.suffix not in (".yaml", ".yml"):
         return list(enumerate(lines, 1))
@@ -65,6 +65,10 @@ def logical_lines(path: Path) -> list[tuple[int, str]]:
     run = False
     for number, line in enumerate(lines, 1):
         text = line.strip()
+        if text.startswith("- "):
+            paragraphs.append((number, text[2:].strip("'\" ")))
+            run = False
+            continue
         if not text.startswith("#"):
             run = False
             continue
@@ -120,6 +124,16 @@ class CalibrationDocsTests(unittest.TestCase):
                 encoding="utf-8")
             found = unconditional(page)
         self.assertEqual([f.split(":")[1] for f in found], ["1", "2", "3", "4"], found)
+
+    def test_yaml_note_strings_are_scanned_and_keys_are_not(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            page = Path(directory) / "caps.yaml"
+            page.write_text(
+                "calibrations: []\nguidance:\n  - Calibrate walls per filament.\n  - 'Record it; calibrate it.'\n"
+                "  - When `CAD_CALIBRATION=1`, calibrate walls.\n",
+                encoding="utf-8")
+            found = unconditional(page)
+        self.assertEqual([f.split(":")[1] for f in found], ["3", "4"], found)
 
     def test_every_skill_page_and_example_comment_is_scanned(self) -> None:
         shown = {_shown(p) for p in scanned_files()}
