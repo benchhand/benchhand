@@ -173,6 +173,18 @@ class NotAssessedIsNoPass(unittest.TestCase):
         self.assertIn("(REQ-001)", text)
         self.assertIn("not assessed, not a pass: REQ-002", text)
 
+    def test_the_recommendation_reason_names_them_too(self) -> None:
+        from types import SimpleNamespace
+
+        evaluations = [selection.Evaluation(n, True, o, {"PN": "TST-0001"}, "m") for n, o in
+                       (("REQ-001", "pass"), ("REQ-002", "not_assessed"))]
+        primary = selection._Assessed(SimpleNamespace(raw={}, parts=(), id="C1"), evaluations, status=selection.FEASIBLE)
+        requirements = {name: SimpleNamespace(evidence_required=()) for name in ("REQ-001", "REQ-002")}
+        assessor = SimpleNamespace(record=SimpleNamespace(requirements=requirements))
+        proposal = selection._recommendation(assessor, [primary], primary, None, None, False, [], {"optical": [], "prototype": None, "change_triggers": []})
+        text = json.dumps(proposal)
+        self.assertIn("meets every mandatory constraint it was assessed against: REQ-001; not assessed, not a pass: REQ-002", text)
+
     def test_a_candidate_with_nothing_not_assessed_reads_as_before(self) -> None:
         self.assertEqual(self.suitability(("REQ-001", "pass")),
                          "feasible: every mandatory constraint assessed passes (REQ-001)")

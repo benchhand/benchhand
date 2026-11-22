@@ -27,7 +27,9 @@ schemas/manufacturing-check-result.schema.json; the one place every producer pub
 and a stack-up beside their analysis bundle) and the accepted ledger hw/manufacturing/evidence.yaml. An
 obligation no producer checks (physical tests, interface fit and acceptance, contact, function, the
 creep, fatigue and impact checks) stays unknown until accepted ledger evidence shows it; it is never
-passed by default. Unknown, planned and untested never become pass; stale evidence (another version
+passed by default. A producer outcome not_assessed (D37: calibration off, or no capability profile) gives the
+obligation the status not_assessed with the producer's reason: open and listed in the release, blocking no gate,
+never a pass. Unknown, planned and untested never become pass; stale evidence (another version
 without an approving impact decision, or a changed dependency fingerprint) counts as nothing; a waiver
 stays waived, needs an approved decision, its exact subject and an unexpired scope, and never overrides a
 governing safety or regulatory requirement or a geometry-integrity failure. A software producer never
@@ -109,9 +111,11 @@ STAGES = mi.STAGES
 LEVELS = mi.EVIDENCE_LEVELS
 PHYSICAL = "physically_validated"
 # An obligation's status. Resolved: pass, waived (an approved, scoped waiver; never a pass) and not_applicable.
-RESULTS = ("pass", "fail", "waived", "not_applicable", "stale", "planned", "unknown")
+# not_assessed (D37: calibration off, or no capability profile) is not resolved and never a pass, yet blocks no gate:
+# the obligation stays open and visible, with the reason the producer gave.
+RESULTS = ("pass", "fail", "waived", "not_applicable", "not_assessed", "stale", "planned", "unknown")
 RESOLVED = frozenset({"pass", "waived", "not_applicable"})
-_WORST_FIRST = ("fail", "stale", "unknown", "planned", "waived", "pass", "not_applicable")
+_WORST_FIRST = ("fail", "stale", "unknown", "planned", "not_assessed", "waived", "pass", "not_applicable")
 PACKET_KIND = "cad-evidence-packet"
 PACKET_SCHEMA_VERSION = 1
 INVENTORY_SCHEMA = "cad-acceptance-inventory/1"
@@ -256,12 +260,19 @@ def _worst(results: Iterable[str]) -> str | None:
 
 def _best(results: Sequence[str], waived: bool) -> str:
     """The status of one obligation from all its evidence: a current fail stands unless a valid waiver
-    covers it (waived, never pass); a current pass outranks waivers, stale, planned and unknown evidence."""
+    covers it (waived, never pass); a current pass outranks waivers, stale, planned and unknown evidence.
+    not_assessed ranks below pass, waived and not_applicable and above stale, planned and no evidence; an
+    explicit unknown outcome beside it keeps the obligation unknown, since something was assessed and left open."""
     found = set(results)
     if "fail" in found:
         return "waived" if waived else "fail"
-    for result in ("pass", "waived", "not_applicable", "stale", "planned"):
+    for result in ("pass", "waived", "not_applicable"):
         if result in found or (result == "waived" and waived):
+            return result
+    if "not_assessed" in found:
+        return "unknown" if "unknown" in found else "not_assessed"
+    for result in ("stale", "planned"):
+        if result in found:
             return result
     return "unknown"
 
@@ -540,9 +551,15 @@ def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str,
                 continue
             if result in RESOLVED:
                 continue
+            if result == "not_assessed":
+                findings.append(_not_assessed_finding(obligation, path, stage))
+                continue
         else:
             due = stage == "design_freeze" or STAGES.index(obligation["stage"]) <= index or result == "fail"
             if not due or result in RESOLVED:
+                continue
+            if result == "not_assessed":
+                findings.append(_not_assessed_finding(obligation, path, stage))
                 continue
             if result == "planned" and obligation["level"] == PHYSICAL:
                 continue  # a physical test may stay planned until the release
@@ -551,6 +568,13 @@ def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str,
         findings.append(Finding(code, path, f"{ident} is {result} at stage {stage} ({obligation.get('basis', '')})",
                                 severity, ident))
     return findings
+
+
+def _not_assessed_finding(obligation: Mapping[str, Any], path: str, stage: str) -> Finding:
+    """An obligation no producer assessed (D37): shown at the gate, never an error and never resolved."""
+    ident = obligation["id"]
+    return Finding("gate.not_assessed", path, f"{ident} is not assessed at stage {stage}: it blocks nothing and is no pass",
+                   "info", ident)
 
 
 SELECTION_PATH = "hw/manufacturing/selection.yaml"
@@ -757,6 +781,8 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
                 continue
             if result in ("pass", "fail", "not_applicable", "unknown"):
                 candidates[ident].append((result, packet.bundle, outcome.get("method") or ""))
+            elif result == "not_assessed":
+                candidates[ident].append((result, packet.bundle, outcome.get("reason") or ""))
 
     # ledger entries
     entry_results: dict[str, str] = {}
@@ -1341,7 +1367,7 @@ def packet_blocking(data: Mapping[str, Any], *, record: Any, stage: str, selecti
              if f.severity == "error"]
     found += [f"{f.code}: {f.message}" for f in selection_gate(selection.assess(record, input_sha256=selection_sha256), stage)
               if f.severity == "error"]
-    recomputed = _OBLIGATION_GATE_CODES | {"gate.selection"}
+    recomputed = _OBLIGATION_GATE_CODES | {"gate.selection", "gate.not_assessed"}
     found += [f"{item.get('code')}: {item.get('message')}" for item in ((data.get("gate") or {}).get("findings") or ())
               if isinstance(item, Mapping) and item.get("severity") == "error" and item.get("code") not in recomputed]
     return found
@@ -1404,11 +1430,12 @@ def _due(obligation: Any, stage: str) -> bool:
 
 def stale_producers(assessment: Assessment, stage: str) -> set[str]:
     """The producers of every obligation due at `stage` that is not resolved (stale, failed, unknown or
-    not started). A physical validation does not count, since no producer can show it."""
+    not started). A physical validation does not count, since no producer can show it, and a not_assessed
+    one does not either: running its producer again assesses nothing until the calibration is on."""
     found: set[str] = set()
     for obligation in assessment.expected:
         if obligation.level != PHYSICAL and _due(obligation, stage) \
-                and assessment.statuses[obligation.id].result not in RESOLVED:
+                and assessment.statuses[obligation.id].result not in RESOLVED | {"not_assessed"}:
             found.update(producers_of(obligation.family))
     return found
 

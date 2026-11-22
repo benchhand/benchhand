@@ -358,7 +358,7 @@ def select_bundle(release: Release, kind: str, subject: str, version_sha: str, w
         return
     status = manifest.get("status")
     if status not in ("pass", NOT_ASSESSED):  # a producer that assessed nothing blocks nothing, and is never recorded as a pass
-        release.refuse(rel, "failed", f"{rel} records status {status!r}, not pass")
+        release.refuse(rel, "failed", f"{rel} records status {status!r}, not pass or not_assessed")
         return
     manifest_sha = sha256(directory / MANIFEST)
     release.bundles.append({"layout": f"bundle.{kind}", "path": rel, "manifest_sha256": manifest_sha})

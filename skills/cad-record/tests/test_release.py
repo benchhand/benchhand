@@ -717,6 +717,7 @@ class SelectedBundleStatus(ReleaseCase):
     def test_a_failing_bundle_is_still_refused(self) -> None:
         package = self.select("fail")
         self.assertEqual(([f["code"] for f in package.findings], package.checks), (["release.failed"], {}))
+        self.assertIn("records status 'fail', not pass or not_assessed", package.findings[0]["message"])
 
     def test_the_release_manifest_schema_accepts_a_not_assessed_check(self) -> None:
         schema = json.loads((SKILL / "schemas" / "release-manifest.schema.json").read_text(encoding="utf-8"))

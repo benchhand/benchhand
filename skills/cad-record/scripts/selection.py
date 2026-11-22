@@ -513,6 +513,12 @@ def _ends(interface: Any) -> tuple[str, ...]:
 
 # --- the assessment --------------------------------------------------------------------------------------------
 
+def _not_assessed_note(assessed: _Assessed) -> str:
+    """D37: the mandatory constraints no producer assessed block nothing, but are named and never counted as passes."""
+    unassessed = sorted({e.constraint for e in assessed.mandatory("not_assessed")})
+    return f"; not assessed, not a pass: {', '.join(unassessed)}" if unassessed else ""
+
+
 @dataclass
 class _Assessed:
     candidate: Candidate
@@ -1046,9 +1052,7 @@ class _Assessor:
         if assessed.status == CONDITIONAL:
             return "conditional: " + " | ".join(describe(e) for e in assessed.mandatory("unknown"))
         passed = sorted({e.constraint for e in assessed.evaluations if e.mandatory and e.outcome == "pass"})
-        text = f"feasible: every mandatory constraint assessed passes ({', '.join(passed) or 'none applies'})"
-        unassessed = sorted({e.constraint for e in assessed.mandatory("not_assessed")})  # D37: blocks nothing, is no pass
-        return text + (f"; not assessed, not a pass: {', '.join(unassessed)}" if unassessed else "")
+        return f"feasible: every mandatory constraint assessed passes ({', '.join(passed) or 'none applies'})" + _not_assessed_note(assessed)
 
     def properties(self, candidate: Candidate, group: str) -> str:
         names = dict(PROPERTY_GROUPS)[group]
@@ -1512,7 +1516,8 @@ def _recommendation(assessor: _Assessor, ordered: list[_Assessed], primary: _Ass
     reasons = []
     if primary.status == FEASIBLE:
         passed = sorted({e.constraint for e in primary.evaluations if e.mandatory and e.outcome == "pass"})
-        reasons.append(f"{primary.id} meets every mandatory constraint it was assessed against: {', '.join(passed) or 'none applies'}")
+        reasons.append(f"{primary.id} meets every mandatory constraint it was assessed against: {', '.join(passed) or 'none applies'}"
+                       + _not_assessed_note(primary))
     else:
         reasons.append(f"no candidate is feasible yet; {primary.id} is the best-ranked conditional candidate")
     if primary.score is not None:
