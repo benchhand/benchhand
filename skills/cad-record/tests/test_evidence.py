@@ -56,6 +56,8 @@ STRENGTH = "engineering.strength@TST-0001"
 READBACK = "cad.readback@TST-0001"
 INSPECTION = "feature.inspection@TST-0001#pivot_bore"
 TRIAL = "process.fdm.trial@TST-0001/print"
+STACK = "interface.stack@IF-001"
+COUPON = "process.laser.fit_coupon@TST-0004/cut"
 SUPPORT = "process.fdm.support@TST-0001/print"
 SIMULATION = "requirement.simulation_supported@REQ-001"
 EXPORT_3MF = "export.3mf@TST-0001"
@@ -735,6 +737,42 @@ class NotAssessedIsNoPhysicalTest(unittest.TestCase):
         result, policy = self.released(tested)
         self.assertEqual(result.statuses[TRIAL].result, "pass")
         self.assertNotIn(TRIAL, {f.obligation for f in policy.blocking})
+
+
+class NotAssessedStackIsNoFitCouponTest(unittest.TestCase):
+    """D41: a stack-up with its limits unassessed (calibration off) is not_assessed and lists a physically_validated fit coupon
+    among its required evidence (cad-fits `require_coupon`). Neither the stack's not_assessed nor a row that repeats it for the
+    coupon is that test: a production release stays blocked until the coupon is recorded."""
+
+    def released(self, *entries_for: Any) -> tuple[Any, Any]:
+        docs = documents("production")
+        base = normalized(docs)
+        data = acceptance.producer_packet(base)
+        for row in data["outcomes"]:
+            if row["obligation"] == STACK:
+                row.update(outcome="not_assessed", reason="calibration_off")
+        coupon = next(o for o in mi.required_checks(base) if o.id == COUPON)
+        data["expected"].append(coupon.as_dict())
+        data["outcomes"].append({"obligation": COUPON, "outcome": "not_assessed", "reason": "calibration_off", "method": "none",
+                                 "coverage": "none"})
+        data["result"] = "not_assessed"
+        record = normalized(docs, [make(base) for make in entries_for])
+        result = assess(record, evidence.ProducerPacket("hw/checks/v1/stack", "d" * 64, data))
+        return result, result.release()
+
+    def test_without_a_recorded_coupon_the_release_is_blocked_by_the_coupon_and_not_by_the_stack(self) -> None:
+        result, policy = self.released()
+        self.assertEqual((result.statuses[STACK].result, result.statuses[COUPON].result), ("not_assessed", "unknown"))
+        blocking = {f.obligation for f in policy.blocking}
+        self.assertIn(COUPON, blocking)
+        self.assertNotIn(STACK, blocking)
+
+    def test_once_the_coupon_is_recorded_the_release_passes_it(self) -> None:
+        coupon = lambda base: acceptance.entry(base, "EV-003", {"PN": "TST-0004", "operation": "cut"},  # noqa: E731
+                                               "physically_validated", obligation=COUPON, version="v1", manifest_sha256=V1)
+        result, policy = self.released(coupon)
+        self.assertEqual(result.statuses[COUPON].result, "pass")
+        self.assertNotIn(COUPON, {f.obligation for f in policy.blocking})
 
 
 class ReleasePolicy(unittest.TestCase):
