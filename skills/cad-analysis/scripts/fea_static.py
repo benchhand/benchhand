@@ -860,6 +860,7 @@ def main(argv: list[str] | None = None) -> int:
         case = load_case(case_path)
         if args.hw:
             version, version_dir, record_dir = LAYOUT.built_version(args.hw, args.version)
+            LAYOUT.require_supported_record(record_dir)  # before the case, the reactions or the part record are read
             case_id = args.case_id or case_path.parent.name
             if not case_id or case_id == "analysis":
                 raise CaseError("--case-id is required when the case file is not under hw/analysis/cases/<id>/")
@@ -965,6 +966,9 @@ def main(argv: list[str] | None = None) -> int:
             if status != 2:
                 conditions.report(result, assessment, case)
                 (output or default_result_path(case_path)).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    except conditions.intent().UnsupportedRecordVersion as exc:
+        print(json.dumps(error(str(exc), code="record.version_unsupported")))
+        return 1
     except reactions.ReactionRefused as exc:
         print(json.dumps(error(str(exc), code=exc.code)))
         return 2

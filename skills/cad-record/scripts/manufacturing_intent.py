@@ -856,25 +856,54 @@ def _sibling(name: str, filename: str) -> Any:
     return sys.modules[name]
 
 
-def read_documents(hw: Path) -> tuple[dict[str, Any], list[Problem]]:
-    """Every record document below `hw` by its path below hw/ (DOCUMENT_SCHEMAS), parsed with PyYAML,
-    and a problem for each one that does not parse. Absent files are absent."""
+def _read_document(loader: Any, path: Path, rel: str, documents: dict[str, Any], problems: list[Problem]) -> None:
     import yaml  # noqa: PLC0415 - optional dependency, needed only to read files
 
-    loader = _sibling("cad_record_yaml_loader", "yaml_loader.py")
-    hw = Path(hw)
+    try:
+        documents[rel] = loader.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+        problems.append(Problem("intent.schema", f"hw/{rel}", "", f"cannot read YAML: {error}"))
+
+
+def _read_product(loader: Any, hw: Path) -> tuple[dict[str, Any], list[Problem], Problem | None]:
+    """({product.yaml: its document}, the problems of reading it, record.version_unsupported or None)."""
     documents: dict[str, Any] = {}
     problems: list[Problem] = []
+    product = hw / "product.yaml"
+    if product.is_file():
+        _read_document(loader, product, "product.yaml", documents, problems)
+    return documents, problems, version_problem(documents.get("product.yaml"), str(product))
+
+
+def read_documents(hw: Path, *, allow_unsupported: bool = False) -> tuple[dict[str, Any], list[Problem]]:
+    """Every record document below `hw` by its path below hw/ (DOCUMENT_SCHEMAS), parsed with the shared YAML
+    reader, and a problem for each one that does not parse. Absent files are absent.
+
+    This is the one gate of the record readers: product.yaml is read first, and a record whose record_version is
+    not the one supported raises UnsupportedRecordVersion before any other document is opened. A caller that must
+    report the refusal itself passes `allow_unsupported=True` and gets product.yaml alone: nothing else of a
+    rejected record is ever returned."""
+    loader = _sibling("cad_record_yaml_loader", "yaml_loader.py")
+    hw = Path(hw)
+    documents, problems, refusal = _read_product(loader, hw)
+    if refusal is not None:
+        if not allow_unsupported:
+            raise UnsupportedRecordVersion(f"{refusal.code}: {refusal.message}. {refusal.action}")
+        return documents, problems
     for pattern, _schema in DOCUMENT_SCHEMAS:
         for path in sorted(hw.glob(pattern)):
-            if not path.is_file():
-                continue
             rel = path.relative_to(hw).as_posix()
-            try:
-                documents[rel] = loader.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
-                problems.append(Problem("intent.schema", f"hw/{rel}", "", f"cannot read YAML: {error}"))
+            if path.is_file() and rel not in documents:
+                _read_document(loader, path, rel, documents, problems)
     return documents, problems
+
+
+def require_supported(hw: Path) -> None:
+    """UnsupportedRecordVersion unless the record at `hw` names the supported record_version. Reads product.yaml
+    alone: the check for a reader that opens record files itself and must refuse before it opens one."""
+    refusal = _read_product(_sibling("cad_record_yaml_loader", "yaml_loader.py"), Path(hw))[2]
+    if refusal is not None:
+        raise UnsupportedRecordVersion(f"{refusal.code}: {refusal.message}. {refusal.action}")
 
 
 def schema_for(rel: str) -> str | None:
@@ -1222,18 +1251,24 @@ def check_documents(documents: Mapping[str, Any], paths: Iterable[str]) -> list[
     return [problem for problem in problems if problem.path in wanted]
 
 
-def load_record(hw: Path, *, snapshot: bool = False) -> Record:
+def load_record(hw: Path, *, snapshot: bool = False, allow_unsupported: bool = False) -> Record:
     """The normalized record at `hw`, with the problems of reading and checking it (schema aside). With `snapshot`, `hw`
-    is a version's record/ folder: the guideline sets are read from its own copies only (see `with_guidelines`)."""
-    documents, problems = read_documents(hw)
+    is a version's record/ folder: the guideline sets are read from its own copies only (see `with_guidelines`).
+    A record of an unsupported version raises UnsupportedRecordVersion (see `read_documents`); with
+    `allow_unsupported` it is the empty record that carries the record.version_unsupported problem."""
+    documents, problems = read_documents(hw, allow_unsupported=allow_unsupported)
     record = normalize_record(documents, hw=hw)
+    if record.version != RECORD_VERSION:  # nothing of a rejected record is read, guideline sets included
+        return _with_problems(record, problems + list(record.problems))
     return with_guidelines(_with_problems(record, problems + list(record.problems)), hw, snapshot=snapshot)
 
 
-def check_record(hw: Path, *, snapshot: bool = False) -> tuple[Record, list[Problem]]:
+def check_record(hw: Path, *, snapshot: bool = False, allow_unsupported: bool = False) -> tuple[Record, list[Problem]]:
     """load_record plus schema_problems and plausibility_problems: everything this contract reports about the record at `hw`."""
-    documents, problems = read_documents(hw)
+    documents, problems = read_documents(hw, allow_unsupported=allow_unsupported)
     record = normalize_record(documents, hw=hw)
+    if record.version != RECORD_VERSION:
+        return record, problems + list(record.problems)
     record = with_guidelines(_with_problems(record, list(record.problems)), hw, snapshot=snapshot)
     return record, problems + schema_problems(documents) + plausibility_problems(documents) + list(record.problems)
 

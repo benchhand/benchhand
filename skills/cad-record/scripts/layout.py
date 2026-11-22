@@ -957,6 +957,46 @@ def built_version(hw: Path, requested: str) -> tuple[str, Path, Path]:
     return label, folder, record
 
 
+def require_supported_record(record: Path) -> None:
+    """manufacturing_intent.UnsupportedRecordVersion unless the record at `record` (hw/ or a version's record/
+    snapshot) names the supported record_version. The gate for a script that opens record files itself: call it
+    before the first read, reuse or write. It reads product.yaml alone."""
+    _intent().require_supported(record)
+
+
+def record_refusal(record: Path) -> str | None:
+    """The refusal of the record at `record` as text, or None for a record of the supported version: the form of
+    require_supported_record for a command that reports the refusal and exits 1."""
+    module = _intent()
+    try:
+        module.require_supported(record)
+    except module.UnsupportedRecordVersion as error:
+        return str(error)
+    return None
+
+
+def unsupported_record_error() -> type[Exception]:
+    """The exception class require_supported_record raises (manufacturing_intent.UnsupportedRecordVersion)."""
+    error: type[Exception] = _intent().UnsupportedRecordVersion
+    return error
+
+
+def _intent() -> Any:
+    """manufacturing_intent.py beside this module, loaded once under the name every CAD skill shares."""
+    import importlib.util
+
+    name = "cad_record_manufacturing_intent"
+    module = sys.modules.get(name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name("manufacturing_intent.py"))
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load manufacturing_intent.py beside layout.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module  # dataclasses look the module up here
+        spec.loader.exec_module(module)
+    return module
+
+
 def scratch_path(hw: Path, path: Path | str, option: str) -> Path:
     """`path` resolved, when it lies under the project's .cad-work/; an explicit output override
     anywhere else is a LayoutError naming `option`."""

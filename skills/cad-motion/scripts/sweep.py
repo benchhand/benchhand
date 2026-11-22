@@ -1614,7 +1614,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         version, record_hw, version_dir = None, args.hw, None
         if args.version:
-            version, version_dir, record_hw = pose.LAYOUT.built_version(args.hw, args.version)
+            version, version_dir, record_hw = pose.built_record(args.hw, args.version)
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
             pose.LAYOUT.resolve(args.hw, "bundle.motion", V=version, S=args.case)
         else:
@@ -1629,6 +1629,8 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             if guard is not None:
                 guard.release()
+    except pose.unsupported_record() as error:
+        return pose.refused("sweep", error)
     except (pose.MotionError, OSError, pose.LAYOUT.LayoutError, pose.LAYOUT.PublishConflict) as error:
         print(f"sweep: {error}", file=sys.stderr)
         return 2

@@ -146,6 +146,10 @@ def main(argv: list[str] | None = None) -> int:
                           "errors": [f"cad/examples/lamp-arm example is missing: expected {DEFAULT_HW}"]}))
         return 2
     hw = args.hw or DEFAULT_HW
+    if (refusal := cadmodel_record.load_layout().record_refusal(hw)) is not None:  # before a part record is read
+        print(json.dumps({"kernel": args.kernel, "parts": {},
+                          "errors": [f"record.version_unsupported: {refusal}"]}))
+        return 1
     models = args.models or (CADQUERY_PARTS if args.kernel == "cadquery" else REFERENCE / args.kernel)
     if not models.is_dir():
         print(json.dumps({"kernel": args.kernel, "parts": {}, "errors": [f"models directory not found: {models}"]}))

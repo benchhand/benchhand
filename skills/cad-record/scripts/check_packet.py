@@ -68,8 +68,25 @@ def _validator() -> Any:
     return sys.modules["cad_record_schema_registry"].ref_validator(SCHEMAS, SCHEMA_ID)
 
 
+def _intent() -> Any:
+    """manufacturing_intent.py beside this module, under the name every CAD skill shares."""
+    name = "cad_record_manufacturing_intent"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, SCRIPTS / "manufacturing_intent.py")
+        if spec is None or spec.loader is None:
+            raise ImportError(f"manufacturing_intent.py not found in {SCRIPTS}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module  # dataclasses look the module up here
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
 def validate(packet: Mapping[str, Any]) -> None:
-    """Raise PacketError naming each way `packet` breaks manufacturing-check-result.schema.json."""
+    """Raise PacketError naming each way `packet` breaks manufacturing-check-result.schema.json, and for a
+    record_version that is not the integer 1 (JSON Schema's const 1 also accepts 1.0)."""
+    if not _intent().is_supported_version(packet.get("record_version")):
+        raise PacketError(f"packet record_version {packet.get('record_version')!r} is not the supported record version "
+                          f"{_intent().RECORD_VERSION} (manufacturing-check-result.schema.json: record_version)")
     errors = sorted(_validator().iter_errors(packet), key=lambda e: [str(p) for p in e.absolute_path])
     if errors:
         problems = "; ".join(f"{'/'.join(str(p) for p in e.absolute_path) or '(root)'}: {e.message[:200]}"
@@ -95,8 +112,8 @@ def emit(layout: Any, hw: Path, version: str | None, subject: str, producer: str
         return output, status
     if out is not None:
         raise PacketError("--out is only for an unversioned run")
-    if packet["record_version"] != record_version:
-        raise PacketError(f"record version {packet['record_version']}: only record version {record_version} packets are published ({subject})")
+    if not _intent().is_supported_version(packet["record_version"]) or packet["record_version"] != record_version:
+        raise PacketError(f"record_version {packet['record_version']!r}: only record version {record_version} packets are published ({subject})")
     validate(packet)
     params = {"V": version, "S": subject}
     reused = layout.reusable(hw, "bundle.checks", params, recipe, replace=replace)

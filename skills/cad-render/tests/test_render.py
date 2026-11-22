@@ -949,16 +949,28 @@ class VisibilityChecks(unittest.TestCase):
         self.assertEqual(source, "version_snapshot")
         self.assertEqual(render.visibility_checks(path, self.by_pn, self.records), ([], None))
 
-    def test_a_version_that_names_no_record_version_1_is_refused_not_checked_against_the_live_file(self) -> None:
+    def refused_manifest(self, record_version: object) -> None:
         requirements(self.hw, FRONT)  # the live hw/requirements.yaml must not stand in for a version with no snapshot
-        for label, record_version in (("no record_version", None), ("record_version 2", 2), ("a boolean", True),
-                                      ("a float", 1.0), ("a string", "1")):
-            with self.subTest(manifest=label):
-                self.version.manifest.pop("record_version", None)
-                if record_version is not None:
-                    self.version.manifest["record_version"] = record_version
-                with self.assertRaisesRegex(render.InfraError, "record_version"):
-                    render.requirements_input(self.version)
+        self.version.manifest.pop("record_version", None)
+        if record_version is not None:
+            self.version.manifest["record_version"] = record_version
+        with self.assertRaisesRegex(render.InfraError, "record_version"):
+            render.requirements_input(self.version)
+
+    def test_a_manifest_with_no_record_version_is_refused_not_checked_against_the_live_file(self) -> None:
+        self.refused_manifest(None)
+
+    def test_a_manifest_of_record_version_2_is_refused(self) -> None:
+        self.refused_manifest(2)
+
+    def test_a_manifest_whose_record_version_is_true_is_refused(self) -> None:
+        self.refused_manifest(True)
+
+    def test_a_manifest_whose_record_version_is_the_float_1_0_is_refused(self) -> None:
+        self.refused_manifest(1.0)
+
+    def test_a_manifest_whose_record_version_is_the_string_1_is_refused(self) -> None:
+        self.refused_manifest("1")
 
 
 class VisibilityGrade(unittest.TestCase):

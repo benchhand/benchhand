@@ -141,6 +141,7 @@ def load(chain: Any, hw: Path, layout: Any, case: str = DEFAULT_CASE) -> dict[st
     """The validated, effective plan of a case: the generated default, or hw/motion/cases/<case>/plan.yaml."""
     if not CASE_ID.match(case):
         raise PlanError([f"case must match {CASE_ID.pattern}, got {case!r}"])
+    layout.require_supported_record(hw)  # a plan of a record of another version is not read
     authored = case_path(hw, case, layout)
     if case != DEFAULT_CASE:
         return prepare(chain, read_plan(authored), case)

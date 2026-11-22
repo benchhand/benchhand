@@ -601,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         version, record_hw = None, args.hw
         if args.version:
-            version, version_dir, record_hw = LAYOUT.built_version(args.hw, args.version)
+            version, version_dir, record_hw = pose.built_record(args.hw, args.version)
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
         result, detail = assess(args, version, record_hw)
         recipe = {"options": {"step_mm": args.step_mm, "min_step_mm": args.min_step_mm, "attach": list(args.attach)},
@@ -615,6 +615,8 @@ def main(argv: list[str] | None = None) -> int:
         if status != "pass":
             print(f"access: {status}", file=sys.stderr)
         return 0 if status in ("pass", "not_assessed") else 1  # D37: a packet that assessed nothing blocks nothing
+    except intent_module.UnsupportedRecordVersion as error:
+        return pose.refused("access", error)
     except (AccessError, check_packet.PacketError, pose.MotionError, LAYOUT.LayoutError, intent_module.IntentError) as error:
         print(f"access: {error}", file=sys.stderr)
         return 2

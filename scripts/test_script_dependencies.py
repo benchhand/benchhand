@@ -38,11 +38,14 @@ PROVIDERS = {
 # - runner.py (in the kernel's environment) calls record.load_layout only (runner.py:111), and the cadmodel
 #   package loads pose.py for its geometry rules (occ.py:18), while pose.py loads yaml_loader.py only to read an
 #   assembly. The first element of a pair is a path prefix;
+# - layout.py loads manufacturing_intent.py only inside the version gate (require_supported_record), which
+#   imports the YAML reader and nothing of jsonschema; a caller of the gate parses the record, so it has PyYAML;
 # - review_render.py calls record.load_yaml_loader only (review_render.py:126) and runs build_reference.py as a
 #   tool (review_render.py:118).
 OPTIONAL_LOADS = frozenset(
     {
         ("cad-record/scripts/emit.py", "sarif"),
+        ("cad-record/scripts/layout.py", "manufacturing_intent"),
         ("cad-flow/scripts/scratch.py", "form_check"),
         ("cad-flow/scripts/scratch.py", "cad_model"),
         ("cad-motion/scripts/motion.py", "render"),

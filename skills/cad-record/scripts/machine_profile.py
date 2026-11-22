@@ -163,7 +163,7 @@ def documents_problems(documents: Mapping[str, Any], hw: Path) -> list[str]:
 
 def _read(hw: Path) -> dict[str, Any]:
     """The record documents at `hw`; ValueError when one cannot be read or capabilities.yaml has the wrong shape."""
-    documents, problems = intent.read_documents(hw)
+    documents, problems = intent.read_documents(hw, allow_unsupported=True)  # the check reports the refusal
     if problems:
         raise ValueError("; ".join(problem.message for problem in problems))
     capabilities = documents.get(CAPABILITIES)

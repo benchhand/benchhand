@@ -153,6 +153,13 @@ LAYOUT = _load_module("cad_record_layout", Path(__file__).resolve().parents[2] /
 # cad-record's occurrence normalizer, the one reader of assembly.yaml occurrences, and the coupling laws.
 assembly_data = _load_module("cad_record_assembly_data", ASSEMBLY_DATA_PATH)
 coupling = _load_module("cad_motion_coupling", COUPLING_PATH)
+
+
+def unsupported_record() -> type[Exception]:
+    """The error of a record of another record_version. Every reader of the record refuses one, and every entry
+    point turns it into exit 1: a refused record is not an input fault. Resolved when an error is being handled."""
+    return LAYOUT.unsupported_record_error()  # type: ignore[no-any-return]
+
 YAML_LOADER_PATH = ASSEMBLY_DATA_PATH.with_name("yaml_loader.py")
 
 
@@ -437,6 +444,7 @@ def _part_records(hw: Path) -> dict[str, dict[str, Any]]:
     """Read the selected record's part metadata, keyed by part number directory."""
     import yaml
 
+    LAYOUT.require_supported_record(hw)
     records = {}
     for record in sorted((hw / "parts").glob("*/part.yaml")):
         try:
@@ -451,6 +459,7 @@ def load_assembly(hw: Path, record_hw: Path | None = None) -> Assembly:
     import yaml
 
     record_hw = record_hw or hw
+    LAYOUT.require_supported_record(record_hw)
     path = record_hw / "assembly.yaml"
     try:
         data = yaml_loader().safe_load(path.read_text(encoding="utf-8"))
@@ -1366,6 +1375,20 @@ def add_geometry_arguments(parser: argparse.ArgumentParser) -> None:
                         help="rigidly attach an occurrence without a joint (a PN or @id) to a parent (repeatable)")
 
 
+def built_record(hw: Path, requested: str) -> tuple[str, Path, Path]:
+    """layout.built_version, for a record of the supported version only: UnsupportedRecord otherwise, before the
+    caller reuses a bundle, reads the record or writes anything."""
+    label, folder, record = LAYOUT.built_version(hw, requested)
+    LAYOUT.require_supported_record(record)
+    return label, folder, record
+
+
+def refused(tool: str, error: Exception) -> int:
+    """Report a refused record on stderr and return exit 1."""
+    print(f"{tool}: {error}", file=sys.stderr)
+    return 1
+
+
 def version_parts_dir(hw: Path, version: str, version_folder: Path | None = None) -> Path:
     """The verified zero-pose per-part STEP folder of a built cad-model version."""
     if version_folder is None:
@@ -1438,7 +1461,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         version, record_hw, version_dir = None, args.hw, None
         if args.version:
-            version, version_dir, record_hw = LAYOUT.built_version(args.hw, args.version)
+            version, version_dir, record_hw = built_record(args.hw, args.version)
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
             if args.out is not None:
                 raise MotionError("--out is only allowed for scratch inputs; versioned pose publishes to hw/motion")
@@ -1485,6 +1508,8 @@ def main(argv: list[str] | None = None) -> int:
             transforms = write_posed(args.out, record_hw, chain, definitions, values)
             result["placements"] = placements_report(chain, transforms)
             result["out"] = str(args.out)
+    except unsupported_record() as error:
+        return refused("pose", error)
     except (MotionError, OSError, LAYOUT.LayoutError, LAYOUT.PublishConflict) as error:
         print(f"pose: {error}", file=sys.stderr)
         return 2

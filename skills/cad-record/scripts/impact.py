@@ -674,9 +674,9 @@ LEDGERS = ("manufacturing/evidence.yaml", "manufacturing/findings.yaml")
 def read_inputs(directory: Path, ledgers_from: Path | None = None) -> tuple[dict[str, Any], Any]:
     """The parsed record documents below `directory` (hw/ or a version's record/ snapshot) and their
     normalized record. A snapshot holds no ledgers, so `ledgers_from` (hw/) supplies them."""
-    documents, _ = mi.read_documents(directory)
+    documents, _ = mi.read_documents(directory, allow_unsupported=True)  # evidence, impact and release report the refusal
     if ledgers_from is not None:
-        current, _ = mi.read_documents(ledgers_from)
+        current, _ = mi.read_documents(ledgers_from, allow_unsupported=True)
         documents = {rel: data for rel, data in documents.items() if rel not in LEDGERS}
         documents.update({rel: current[rel] for rel in LEDGERS if rel in current})
     return documents, mi.with_guidelines(mi.normalize_record(documents), directory, snapshot=ledgers_from is not None)

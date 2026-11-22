@@ -641,6 +641,23 @@ class PacketFiles(unittest.TestCase):
         self.assertEqual([(f.code, f.path, f.message) for f in findings],
                          [("packet.invalid", "hw/checks/v1/other", "hw/checks/v1/other: stale: it is bound to another build of v1")])
 
+    def refused_version(self, version: Any) -> None:
+        packet = {**acceptance.producer_packet(self.record), "record_version": version}
+        with self.assertRaisesRegex(check_packet.PacketError, "record_version"):
+            check_packet.emit(acceptance.layout, self.hw, "v1", "tst", "tst", packet, {}, "tst.json", {}, out=None,
+                              replace=False, record_version=mi.RECORD_VERSION)
+        self.assertFalse((self.hw / "checks").exists(), "nothing is published")
+
+    def test_emit_refuses_a_packet_whose_record_version_is_the_float_1_0(self) -> None:
+        self.refused_version(1.0)
+
+    def test_emit_refuses_a_packet_whose_record_version_is_true(self) -> None:
+        self.refused_version(True)
+
+    def test_validate_refuses_a_packet_whose_record_version_is_the_float_1_0(self) -> None:
+        with self.assertRaisesRegex(check_packet.PacketError, "record_version"):
+            check_packet.validate({**acceptance.producer_packet(self.record), "record_version": 1.0})
+
     def test_emit_refuses_a_packet_that_breaks_its_schema_and_writes_nothing(self) -> None:
         good = acceptance.producer_packet(self.record)
         check_packet.validate(good)
@@ -1156,19 +1173,61 @@ class EvidenceRun(BuiltRecord):
         self.assertEqual((code, report["status"], self.spawned), (1, "refused", []))
         self.assertIn("stale: build the version again", report["findings"][0]["message"])
 
-    def test_a_record_version_other_than_1_is_refused_and_runs_nothing(self) -> None:
+    def refused_and_runs_nothing(self, version: int | None) -> None:
         product = self.hw / "product.yaml"
-        original = yaml.safe_load(product.read_text(encoding="utf-8"))
-        for version in (2, 3, None):
-            with self.subTest(record_version=version):
-                data = {key: value for key, value in original.items() if key != "record_version"}
-                if version is not None:
-                    data["record_version"] = version
-                product.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-                code, report = self.run_scope("commit", "parts")
-                self.assertEqual((code, report["status"], report["steps"], report["packet"], self.spawned),
-                                 (1, "refused", [], None, []))
-                self.assertEqual([f["code"] for f in report["findings"]], ["record.version_unsupported"])
+        data = {key: value for key, value in yaml.safe_load(product.read_text(encoding="utf-8")).items()
+                if key != "record_version"}
+        if version is not None:
+            data["record_version"] = version
+        product.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        code, report = self.run_scope("commit", "parts")
+        self.assertEqual((code, report["status"], report["steps"], report["packet"], self.spawned),
+                         (1, "refused", [], None, []))
+        self.assertEqual([f["code"] for f in report["findings"]], ["record.version_unsupported"])
+
+    def test_a_record_of_version_2_is_refused_and_runs_nothing(self) -> None:
+        self.refused_and_runs_nothing(2)
+
+    def test_a_record_of_version_3_is_refused_and_runs_nothing(self) -> None:
+        self.refused_and_runs_nothing(3)
+
+    def test_a_record_with_no_version_is_refused_and_runs_nothing(self) -> None:
+        self.refused_and_runs_nothing(None)
+
+    def refused_without_stage(self, version: Any) -> None:
+        product = self.hw / "product.yaml"
+        data = {key: value for key, value in yaml.safe_load(product.read_text(encoding="utf-8")).items()
+                if key != "record_version"}
+        if version is not None:
+            data["record_version"] = version
+        product.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    def test_run_without_a_stage_on_a_record_of_version_2_reports_the_version_not_a_stage(self) -> None:
+        self.refused_without_stage(2)
+        code, report = evidence.run(self.hw, "v1", "commit", spawn=self.spawn, strays=list)
+        self.assertEqual((code, report["status"], self.spawned), (1, "refused", []))
+        self.assertEqual([f["code"] for f in report["findings"]], ["record.version_unsupported"])
+
+    def test_run_without_a_stage_on_a_record_with_no_version_reports_the_version_not_a_stage(self) -> None:
+        self.refused_without_stage(None)
+        code, report = evidence.run(self.hw, "v1", "commit", spawn=self.spawn, strays=list)
+        self.assertEqual((code, [f["code"] for f in report["findings"]]), (1, ["record.version_unsupported"]))
+
+    def test_the_run_command_without_a_stage_on_a_record_of_version_2_exits_1_with_the_version(self) -> None:
+        self.refused_without_stage(2)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = evidence.main(["run", "--hw", str(self.hw), "--version", "v1", "--scope", "commit"])
+        self.assertEqual(code, 1)
+        self.assertIn("record.version_unsupported", out.getvalue())
+
+    def test_the_check_command_without_a_stage_on_a_record_of_version_2_exits_1_with_the_version(self) -> None:
+        self.refused_without_stage(2)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = evidence.main(["check", "--hw", str(self.hw), "--version", "v1"])
+        self.assertEqual(code, 1)
+        self.assertIn("record.version_unsupported", out.getvalue())
 
     def test_a_full_run_whose_steps_pass_fails_when_the_packet_gate_blocks(self) -> None:
         code, report = self.run_scope("full", "parts")  # nothing shows the obligations due at parts

@@ -122,6 +122,17 @@ def clearance_margins(product: Any, interfaces: Any) -> ClearanceMargins:
     return ClearanceMargins(default, MappingProxyType(by_interface))
 
 
+def _layout() -> Any:
+    """layout.py beside this module, under the name every CAD skill shares."""
+    if "cad_record_layout" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("cad_record_layout", Path(__file__).resolve().with_name("layout.py"))
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load layout.py beside design_rules.py")
+        sys.modules["cad_record_layout"] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules["cad_record_layout"])
+    return sys.modules["cad_record_layout"]
+
+
 def _read_yaml(path: Path) -> Any:
     if not path.is_file():
         return None
@@ -133,7 +144,9 @@ def _read_yaml(path: Path) -> Any:
 
 def load_clearance_margins(record_dir: Path) -> ClearanceMargins:
     """`clearance_margins` of `record_dir`'s product.yaml and interfaces.yaml: hw/, or the `record/`
-    snapshot of the version being checked."""
+    snapshot of the version being checked. UnsupportedRecordVersion for a record of another version: its margin is
+    never read."""
+    _layout().require_supported_record(record_dir)
     return clearance_margins(_read_yaml(record_dir / "product.yaml"), _read_yaml(record_dir / "interfaces.yaml"))
 
 

@@ -23,7 +23,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -426,18 +425,6 @@ class UnsupportedRecordTests(unittest.TestCase):
                 self.assertEqual(code, 1, report)
                 self.assertEqual([p["code"] for p in report["manufacturing"]["problems"]], ["record.version_unsupported"])
                 self.assertNotIn("parts", report, "no part was diagnosed")
-
-    def test_a_snapshot_product_is_read_through_the_shared_yaml_loader(self) -> None:
-        class Loader:
-            @staticmethod
-            def safe_load(text: str) -> dict[str, int]:
-                return {"record_version": 2}  # whatever the bytes say, the shared reader's answer counts
-
-        problem = None
-        with mock.patch.object(FORM_CHECK, "load_yaml_loader", return_value=Loader):
-            problem = FORM_CHECK.unsupported_version_problem(FORM_CHECK.load_process_checks(),
-                                                             {"product.yaml": b"record_version: 1\n"}, "v1")
-        self.assertEqual(problem["code"], "record.version_unsupported")
 
 
 @unittest.skipUnless(importlib.util.find_spec("yaml"), "pyyaml is required to read product.yaml")

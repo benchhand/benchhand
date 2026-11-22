@@ -1604,6 +1604,14 @@ def _validate_step(hw: Path) -> tuple[int, dict[str, Any]]:
     return (1 if blocking else 0), {"blocking": len(blocking), "findings": [dict(item) for item in blocking[:20]]}
 
 
+def _version_finding(record: Any) -> Finding:
+    """record.version_unsupported, for a record the readers refused."""
+    problem = mi.version_problem(record.product)
+    message = problem.message if problem is not None else "the record is not record version 1"
+    action = f"; {problem.action}" if problem is not None and problem.action else ""
+    return Finding(mi.VERSION_UNSUPPORTED, "hw/product.yaml", message + action)
+
+
 def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_version: str | None = None,
         spawn: Callable[[Any], Any] | None = None, strays: Callable[[], Sequence[Mapping[str, Any]]] | None = None,
         today: date | None = None) -> tuple[int, dict[str, Any]]:
@@ -1621,6 +1629,8 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
         return 1, {**report, "findings": [Finding("run.not_built", "hw/versions", f"{error}; the version is not built or is "
                                                   "stale: build the version again (cad-model run)").as_dict()]}
     _, record = impact.read_inputs(hw)
+    if record.version != mi.RECORD_VERSION:  # first: the stage is read from the record, which a refused one has none of
+        return 1, {**report, "version": label, "findings": [_version_finding(record).as_dict()]}
     if scope == "full" and stage is None:
         # A provisional approval moves flow.stage past the gate that this check belongs to.
         raise ValueError("the full scope needs --stage, the stage of the gate it checks: flow.stage may be past it")
@@ -1629,11 +1639,6 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
         raise ValueError(f"product.yaml flow.stage {stage!r} is not a stage; pass --stage")
     report.update(stage=stage, version=label, version_manifest_sha256=_sha256(folder / layout.MANIFEST),
                   record_sha256=record_digest(record_inputs(hw)))
-    if record.version != mi.RECORD_VERSION:
-        problem = mi.version_problem(record.product)
-        message = problem.message if problem is not None else "the record is not record version 1"
-        action = f"; {problem.action}" if problem is not None and problem.action else ""
-        return 1, {**report, "findings": [Finding(mi.VERSION_UNSUPPORTED, "hw/product.yaml", message + action).as_dict()]}
     assessment, _ = build_assessment(hw, label, today)
     work = run_plan(hw, label, scope, stage, assessment, since_version=since_version)
     outcome = _fail_fast().execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),
@@ -1747,6 +1752,9 @@ def main(argv: list[str] | None = None) -> int:
             print(text)
             return code
         assessment, packets = build_assessment(hw, args.version)
+        if assessment.record.version != mi.RECORD_VERSION:  # before a stage is read from the record
+            print(json.dumps({"status": "refused", "findings": [_version_finding(assessment.record).as_dict()]}, indent=2))
+            return 1
         if args.command == "digest":
             inventory, evidence_sha256 = version_acceptance(hw, str(assessment.version), assessment.record, packets)
             print(json.dumps({"version": assessment.version, "evidence_sha256": evidence_sha256,

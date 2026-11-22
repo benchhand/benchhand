@@ -25,6 +25,10 @@ class RecordError(ValueError):
     """A record snapshot that cad-model cannot read: unparseable YAML or an unsupported record version."""
 
 
+class UnsupportedRecord(RecordError):
+    """A record snapshot whose record_version Benchhand does not read (record.version_unsupported)."""
+
+
 def _load(name: str, path: Path) -> Any:
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(name, path)
@@ -85,7 +89,13 @@ def write_snapshot(folder: Path, files: Mapping[str, bytes]) -> dict[str, str]:
 
 
 def read_folder(folder: Path) -> dict[str, bytes]:
-    """The files of a written snapshot folder (a version's record/), keyed by their path below it."""
+    """The files of a written snapshot folder (a version's record/), keyed by their path below it. A folder whose
+    product.yaml names no supported record_version raises UnsupportedRecord before any other file is read."""
+    intent = load_intent()
+    try:
+        intent.require_supported(folder)
+    except intent.UnsupportedRecordVersion as error:
+        raise UnsupportedRecord(f"hw/product.yaml: {error}") from error
     return {path.relative_to(folder).as_posix(): path.read_bytes()
             for path in sorted(folder.rglob("*")) if path.is_file() and not path.is_symlink()}
 
@@ -135,5 +145,5 @@ def read_snapshot(files: Mapping[str, bytes]) -> Snapshot:
     try:
         intent.record_version(product if isinstance(product, Mapping) else {})
     except intent.UnsupportedRecordVersion as error:
-        raise RecordError(f"hw/product.yaml: {error}") from error
+        raise UnsupportedRecord(f"hw/product.yaml: {error}") from error
     return Snapshot(files, parsed, intent.with_guideline_files(intent.normalize_record(parsed), files, snapshot=True))

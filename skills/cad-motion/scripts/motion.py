@@ -114,7 +114,7 @@ class Context:
 
     def __init__(self, hw: Path, requested: str) -> None:
         self.hw = Path(hw)
-        self.version, self.folder, self.record = LAYOUT.built_version(self.hw, requested)
+        self.version, self.folder, self.record = pose.built_record(self.hw, requested)
         self.manifest = json.loads((self.folder / "manifest.json").read_text(encoding="utf-8"))
         assembly = pose.load_assembly(self.hw, self.record)
         self.attach = list(self.manifest.get("attach") or [])
@@ -557,6 +557,9 @@ def main(argv: list[str] | None = None) -> int:
         return command_plan(args) if args.command == "plan" else command_render(args)
     except Failed as failure:
         _emit(failure.report, args.hw, args.command, 1, args.json)
+        return 1
+    except pose.unsupported_record() as error:
+        _emit({"status": "refused", "error": str(error)}, None, args.command, 1, args.json)
         return 1
     except plan.PlanError as error:
         _emit({"status": "error", "problems": error.problems}, None, args.command, 2, args.json)

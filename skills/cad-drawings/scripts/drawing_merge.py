@@ -106,10 +106,13 @@ def _write(path: Path, text: str) -> None:
 def merge(hw: Path, version_dir: Path, pn: str, draft: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
     """Merge ``draft``'s drawing block into ``pn``'s part.yaml, or refuse and leave it unchanged."""
     record_path = hw / "parts" / pn / "part.yaml"
+    refusal = drawing_contract.layout_api().record_refusal(hw)  # a record of another version is neither read nor edited
 
     def report(status: str, findings: list[dict[str, Any]], code: int, **extra: Any) -> tuple[dict[str, Any], int]:
         return {"status": status, "part": pn, "part_yaml": str(record_path), "findings": findings, **extra}, code
 
+    if refusal is not None:
+        return report("refused", [{"code": "record.version_unsupported", "message": refusal}], 1)
     block = draft.get("drawing")
     if draft.get("part") != pn or not isinstance(block, Mapping):
         return report("error", [{"code": "invalid_input", "message": f"the draft is not a drawing draft for {pn}"}], 2)

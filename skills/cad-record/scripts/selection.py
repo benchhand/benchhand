@@ -1737,7 +1737,7 @@ def _recorded_findings(findings: _Findings, report: Mapping[str, Any]) -> None:
 def assess_hw(hw: Path) -> dict[str, Any]:
     """Read, normalize and schema-check the record at `hw`, then assess it (see `assess`)."""
     hw = Path(hw)
-    documents, problems = mi.read_documents(hw)
+    documents, problems = mi.read_documents(hw, allow_unsupported=True)  # the assessment reports the refusal
     record = mi.normalize_record(documents, hw=hw)
     problems = [*problems, *mi.schema_problems(documents), *record.problems]
     return assess(record, problems=problems, input_sha256=input_digest(documents))

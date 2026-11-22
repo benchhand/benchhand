@@ -736,7 +736,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         version, record_hw, version_dir = None, args.hw, None
         if args.version:
-            version, version_dir, record_hw = pose.LAYOUT.built_version(args.hw, args.version)
+            version, version_dir, record_hw = pose.built_record(args.hw, args.version)
             args.version, args.version_dir, args.record_hw = version, version_dir, record_hw
             if args.frames is None and not args.smoke:
                 pose.LAYOUT.resolve(args.hw, "bundle.motion", V=version, S=args.case)
@@ -846,6 +846,8 @@ def main(argv: list[str] | None = None) -> int:
             temporary.cleanup()
         print(json.dumps(summary, indent=2))
         return 1 if failed else 0
+    except pose.unsupported_record() as error:
+        return pose.refused("freecad_assembly", error)
     except (pose.MotionError, OSError, pose.LAYOUT.LayoutError, pose.LAYOUT.PublishConflict) as error:
         print(f"freecad_assembly: {error}", file=sys.stderr)
         return 2

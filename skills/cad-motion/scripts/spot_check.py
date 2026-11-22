@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     sweep = _load("cad_motion_sweep", HERE / "sweep.py")
     started = time.monotonic()
     try:
-        version, version_dir, record_hw = pose.LAYOUT.built_version(args.hw, args.version)
+        version, version_dir, record_hw = pose.built_record(args.hw, args.version)
         bundle = args.result
         if reason := pose.LAYOUT.stale(bundle):
             raise pose.MotionError(f"{bundle}: {reason}; run the sweep again")
@@ -218,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
                           **audit_provenance(provenance, rule),
                           "seconds": round(time.monotonic() - started, 2)}, indent=2))
         return {"pass": 0, "fail": 1}.get(status, 2)
+    except pose.unsupported_record() as error:
+        return pose.refused("spot_check", error)
     except (pose.MotionError, OSError, pose.LAYOUT.LayoutError) as error:
         print(f"spot_check: {error}", file=sys.stderr)
         return 2

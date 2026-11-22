@@ -236,11 +236,11 @@ def read_record(record_dir: Path) -> tuple[Any, dict[str, Any]]:
 
 def assess_version(case: dict[str, Any], *, record_dir: Path, hw: Path, version: str) -> Assessment:
     """The material and evidence basis of a versioned case; Refused before the solve when it has none."""
-    record, documents = read_record(record_dir)
+    try:
+        record, documents = read_record(record_dir)  # UnsupportedRecordVersion for a record of another version
+    except intent().UnsupportedRecordVersion as error:
+        raise Refused([{"code": "record.version_unsupported", "message": f"version {version}: {error}"}]) from error
     form = case["_material_form"]
-    if record.version != intent().RECORD_VERSION:
-        raise Refused([{"code": "record.version_unsupported",
-                        "message": f"version {version}: the record snapshot's record_version is not supported"}])
     if form == "explicit":
         raise Refused([{"code": "material.inherited",
                         "message": "a record version 1 case takes E, nu, density and yield only from the part's material "

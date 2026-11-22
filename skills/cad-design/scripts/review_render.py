@@ -262,6 +262,9 @@ def main(argv: list[str] | None = None) -> int:
     if not BASE_MODEL.is_file():
         print(json.dumps({"error": f"cad/examples/lamp-arm base model is missing: expected {BASE_MODEL}"}))
         return 2
+    if (refusal := cadmodel_record.load_layout().record_refusal(args.hw)) is not None:  # before a part record is read
+        print(json.dumps({"error": f"record.version_unsupported: {refusal}"}))
+        return 1
     args.out.mkdir(parents=True, exist_ok=True)
     try:
         report = render(args)

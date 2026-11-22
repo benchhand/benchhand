@@ -1574,19 +1574,9 @@ def packet_code(blocking: bool, packet: dict[str, Any]) -> int:
     return 1 if blocking or packet["result"] not in ("pass", "not_assessed") else 0
 
 
-def unsupported_version_problem(pc: Any, files: dict[str, bytes], label: str) -> dict[str, Any] | None:
-    """The record.version_unsupported finding of a version's record snapshot, or None for a record version
-    Benchhand reads. A snapshot whose product.yaml does not parse is left to read_snapshot to refuse."""
-    import yaml
-
-    loader = load_yaml_loader()  # the one YAML reader of the CAD scripts
-    try:
-        product = loader.safe_load(files.get("product.yaml", b"").decode("utf-8"))
-    except (UnicodeDecodeError, yaml.YAMLError):
-        return None
-    problem = pc.intent().version_problem(product if isinstance(product, dict) else None,
-                                          f"hw/versions/{label}/record/product.yaml")
-    return problem.finding() if problem is not None else None
+def unsupported_finding(error: Exception) -> dict[str, Any]:
+    """The record.version_unsupported finding of a refused record."""
+    return {"code": "record.version_unsupported", "severity": "error", "message": str(error)}
 
 
 def refused_report(problems: list[dict[str, Any]], label: str | None = None) -> dict[str, Any]:
@@ -1606,11 +1596,10 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
     layout = load_layout()
     label, folder, record_dir = layout.built_version(args.hw, args.version)
     pc = load_process_checks()
-    files = model_record.read_folder(record_dir)
-    unsupported = unsupported_version_problem(pc, files, label)
-    if unsupported is not None:  # nothing else of the snapshot is read
-        return refused_report([unsupported], label), 1
-    record = model_record.read_snapshot(files).intent
+    try:  # the shared readers refuse a version they do not read before they return a file of it
+        record = model_record.read_snapshot(model_record.read_folder(record_dir)).intent
+    except model_record.UnsupportedRecord as error:
+        return refused_report([unsupported_finding(error)], label), 1
     catalog = pc.guidelines().discover(record_dir, snapshot=True)  # the version's own copies of the guideline sets
     legacy = argparse.Namespace(**{**vars(args), "hw": record_dir, "parts_dir": folder / "parts"})
     report = check(legacy, pose, record, catalog)
@@ -1678,10 +1667,10 @@ def main(argv: list[str] | None = None) -> int:
         with pose.stdout_to_stderr():
             if args.version is None:
                 pc = load_process_checks()
-                record = pc.intent().load_record(args.hw)
-                if record.version != pc.intent().RECORD_VERSION:  # no diagnostic runs on a record that is not read
-                    report, code = refused_report([p.finding() for p in record.problems
-                                                   if p.code == pc.intent().VERSION_UNSUPPORTED]), 1
+                try:  # no diagnostic runs on a record that is not read
+                    record = pc.intent().load_record(args.hw)
+                except pc.intent().UnsupportedRecordVersion as error:
+                    report, code = refused_report([unsupported_finding(error)]), 1
                 else:
                     report = check(args, pose, record, pc.guidelines().discover(args.hw))
                     code = 1 if report["status"] == "fail" else 0

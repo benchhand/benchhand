@@ -116,19 +116,26 @@ class Record(unittest.TestCase):
     def refuse_version(self, text: str) -> None:
         self.product.write_text(PRODUCT.replace("record_version: 1\n", text), encoding="utf-8")
 
-    def test_record_and_check_refuse_a_product_of_another_record_version_and_write_nothing(self) -> None:
-        for label, line in (("version 2", "record_version: 2\n"), ("true", "record_version: true\n"), ("none", "")):
-            self.refuse_version(line)
-            before = self.product.read_bytes()
-            with self.subTest(label):
-                recorded = self.record("DR-001", "--human-approval", "key")
-                self.assertEqual(recorded.returncode, 2, recorded.stdout)
-                self.assertIn("record.version_unsupported", recorded.stderr)
-                self.assertEqual(self.product.read_bytes(), before)
-                self.assertFalse((self.hw / "decisions").exists())
-                checked = run("check", "--hw", str(self.hw))
-                self.assertEqual(checked.returncode, 2, checked.stdout)
-                self.assertIn("record.version_unsupported", checked.stderr)
+    def refuses_and_writes_nothing(self, line: str) -> None:
+        self.refuse_version(line)
+        before = self.product.read_bytes()
+        recorded = self.record("DR-001", "--human-approval", "key")
+        self.assertEqual(recorded.returncode, 2, recorded.stdout)
+        self.assertIn("record.version_unsupported", recorded.stderr)
+        self.assertEqual(self.product.read_bytes(), before)
+        self.assertFalse((self.hw / "decisions").exists())
+        checked = run("check", "--hw", str(self.hw))
+        self.assertEqual(checked.returncode, 2, checked.stdout)
+        self.assertIn("record.version_unsupported", checked.stderr)
+
+    def test_record_and_check_refuse_a_product_of_record_version_2_and_write_nothing(self) -> None:
+        self.refuses_and_writes_nothing("record_version: 2\n")
+
+    def test_record_and_check_refuse_a_product_of_record_version_true_and_write_nothing(self) -> None:
+        self.refuses_and_writes_nothing("record_version: true\n")
+
+    def test_record_and_check_refuse_a_product_with_no_record_version_and_write_nothing(self) -> None:
+        self.refuses_and_writes_nothing("")
 
     def test_record_writes_the_answers_the_defaults_accepted_and_who_gave_each(self) -> None:
         result = self.record("DR-001", "--human-approval", "key", "--fea", "fast:5", "--stack-up", "off", "--critique", "light",

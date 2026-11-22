@@ -196,6 +196,7 @@ def load_parts(hw: Path, record_hw: Path | None = None) -> dict[str, dict[str, A
     """Return part.yaml mappings keyed by their parts/<PN> directory name."""
     import yaml
 
+    LAYOUT.require_supported_record(record_hw or hw)
     loader = yaml_loader()
     parts: dict[str, dict[str, Any]] = {}
     root = (record_hw or hw) / "parts"
@@ -316,6 +317,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.step.is_file():
         print(f"bom: STEP file not found: {args.step}", file=sys.stderr)
         return 2
+    if (refusal := LAYOUT.record_refusal(record_hw)) is not None:  # before a part record is opened
+        print(f"bom: {refusal}", file=sys.stderr)
+        return 1
     try:
         result = roll_up(read_step_tree(args.step), load_parts(args.hw, record_hw))
         write_csv(out, result["rows"])

@@ -2223,6 +2223,14 @@ class ManufacturingIntentRuleTests(unittest.TestCase):
         self.assertEqual(files[mp.SOURCE], mp.SOURCE_BYTES)
         self.assertEqual(build.record.read_snapshot(files).version, 1)
 
+    def test_read_folder_refuses_a_record_of_another_version_before_it_reads_a_part(self) -> None:
+        projects().loose_project(self.hw, "cadquery", [])
+        product = self.hw / "product.yaml"
+        product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1", "record_version: 2"),
+                           encoding="utf-8")
+        with self.assertRaisesRegex(build.record.RecordError, "record.version_unsupported"):
+            build.record.read_folder(self.hw)
+
     def test_the_outputs_key_covers_material_capability_route_orientation_and_source_inputs(self) -> None:
         mp = projects()
         base = self.plan()[1][mp.PN].intent["inputs_sha256"]

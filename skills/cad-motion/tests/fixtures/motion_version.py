@@ -109,13 +109,20 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def write(hw: Path, pose: Any, j3_limit: float = 30.0) -> Path:
-    """Write the record and sealed v1, with an attached built PN that has no assembly occurrence."""
+def product_text(record_version: Any) -> str:
+    """The product.yaml of the fixture; `record_version` None writes none."""
+    return "id: motion-arm\n" if record_version is None else f"record_version: {record_version}\nid: motion-arm\n"
+
+
+def write(hw: Path, pose: Any, j3_limit: float = 30.0, record_version: Any = 1) -> Path:
+    """Write the record and sealed v1, with an attached built PN that has no assembly occurrence.
+    `record_version` is what product.yaml, and so the sealed snapshot, names: the assembly is read first
+    under version 1, since no reader opens a record of another version."""
     import yaml
 
     hw.mkdir(parents=True, exist_ok=True)
     attach = ["TST-0005=TST-0001"]
-    (hw / "product.yaml").write_text("id: motion-arm\n", encoding="utf-8")
+    (hw / "product.yaml").write_text(product_text(1), encoding="utf-8")
     (hw / "interfaces.yaml").write_text("interfaces: []\n", encoding="utf-8")
     (hw / "assembly.yaml").write_text(yaml.safe_dump(assembly(j3_limit), sort_keys=False), encoding="utf-8")
     for pn, title in TITLES.items():
@@ -128,6 +135,7 @@ def write(hw: Path, pose: Any, j3_limit: float = 30.0) -> Path:
     chain = pose.build_chain(joints, loaded.occurrences, couplings=loaded.couplings)
     values = chain.complete({})
     placed, moved = chain.transforms(values), chain.motions(values)
+    (hw / "product.yaml").write_text(product_text(record_version), encoding="utf-8")
     folder = hw / "versions" / "v1"
     (folder / "record" / "parts").mkdir(parents=True)
     for name in ("product.yaml", "interfaces.yaml", "assembly.yaml"):

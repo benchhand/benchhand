@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     started = time.monotonic()
     try:
-        version, version_dir, record_hw = pose.LAYOUT.built_version(args.hw, args.version)
+        version, version_dir, record_hw = pose.built_record(args.hw, args.version)
         inputs = [read_input(bundle) for bundle in args.inputs]
         check_inputs(inputs, version_dir)
         provenance = inputs[0].provenance
@@ -165,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             if guard is not None:
                 guard.release()
+    except pose.unsupported_record() as error:  # before the ValueError clause: it is one
+        return pose.refused("merge_sweeps", error)
     except ValueError as error:  # combine_statistics and continuous.merge refuse mismatched inputs
         print(f"merge_sweeps: {error}", file=sys.stderr)
         return 2

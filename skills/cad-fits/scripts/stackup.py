@@ -1282,7 +1282,12 @@ def publish_check(hw: Path, version: str, subject: str, result: Mapping[str, Any
 def load_inputs(record_dir: Path, *, snapshot: bool) -> tuple[Any, Any]:
     """The record at `record_dir` and the guideline catalog read from the same place: with `snapshot`, a built
     version's record/ and its own copies of the sets, never the live install."""
-    return _intent_module().load_record(record_dir, snapshot=snapshot), GUIDELINES.discover(record_dir, snapshot=snapshot)
+    intent = _intent_module()
+    try:
+        record = intent.load_record(record_dir, snapshot=snapshot)
+    except intent.UnsupportedRecordVersion as error:
+        raise StackError(str(error)) from error
+    return record, GUIDELINES.discover(record_dir, snapshot=snapshot)
 
 
 def packet_dependencies(hw: Path, stack_path: Path, stack: Mapping[str, Any],

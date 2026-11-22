@@ -154,7 +154,7 @@ def version_state(hw: Path, label: str) -> VersionState:
     files and its record snapshot. MotionError when it is not built, fails its manifest or
     predates occurrence records."""
     try:
-        label, folder, record = pose.LAYOUT.built_version(hw, label)
+        label, folder, record = pose.built_record(hw, label)
     except pose.LAYOUT.LayoutError as error:
         raise MotionError(f"version {label}: {error}") from error
     path = folder / "manifest.json"

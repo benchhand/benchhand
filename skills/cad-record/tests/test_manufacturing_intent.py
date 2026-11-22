@@ -95,7 +95,7 @@ class Versions(unittest.TestCase):
             if version is not None:
                 data["record_version"] = version
             product.write_text(yaml.safe_dump(data), encoding="utf-8")
-            record = mi.load_record(hw)
+            record = mi.load_record(hw, allow_unsupported=True)
             with self.subTest(label):
                 self.assertEqual(record.version, 0)
                 self.assertEqual([p.code for p in record.problems], ["record.version_unsupported"])
@@ -123,6 +123,67 @@ class Versions(unittest.TestCase):
         self.assertIsNone(mi.version_problem({"record_version": 1}))
         self.assertEqual(mi.version_problem(None).code, "record.version_unsupported", "no product.yaml names no version")
         self.assertLessEqual({"record.version_unsupported", "record.incomplete"}, set(mi.CODES))
+
+
+def record_of_version(test: unittest.TestCase, version: Any) -> Path:
+    """A complete record whose product.yaml names `version` (None: no record_version at all); one folder per call."""
+    hw = fx.write_record(temp_hw(test), fx.tst_record())
+    product = hw / "product.yaml"
+    data = yaml.safe_load(product.read_text(encoding="utf-8"))
+    data.pop("record_version", None)
+    if version is not None:
+        data["record_version"] = version
+    product.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return hw
+
+
+class VersionGate(unittest.TestCase):
+    """The shared record readers refuse an unsupported record_version; one test and one folder per case."""
+
+    def test_read_documents_refuses_a_record_of_version_2(self) -> None:
+        with self.assertRaisesRegex(mi.UnsupportedRecordVersion, "record.version_unsupported"):
+            mi.read_documents(record_of_version(self, 2))
+
+    def test_read_documents_refuses_a_record_with_no_version(self) -> None:
+        with self.assertRaises(mi.UnsupportedRecordVersion):
+            mi.read_documents(record_of_version(self, None))
+
+    def test_read_documents_refuses_a_boolean_version(self) -> None:
+        with self.assertRaises(mi.UnsupportedRecordVersion):
+            mi.read_documents(record_of_version(self, True))
+
+    def test_read_documents_refuses_a_float_version(self) -> None:
+        with self.assertRaises(mi.UnsupportedRecordVersion):
+            mi.read_documents(record_of_version(self, 1.0))
+
+    def test_load_record_refuses_a_record_of_version_2(self) -> None:
+        with self.assertRaises(mi.UnsupportedRecordVersion):
+            mi.load_record(record_of_version(self, 2))
+
+    def test_check_record_refuses_a_record_of_version_2(self) -> None:
+        with self.assertRaises(mi.UnsupportedRecordVersion):
+            mi.check_record(record_of_version(self, 2))
+
+    def test_require_supported_refuses_a_record_of_version_2(self) -> None:
+        with self.assertRaises(mi.UnsupportedRecordVersion):
+            mi.require_supported(record_of_version(self, 2))
+
+    def test_require_supported_refuses_a_folder_without_a_product(self) -> None:
+        with self.assertRaises(mi.UnsupportedRecordVersion):
+            mi.require_supported(temp_hw(self))
+
+    def test_require_supported_accepts_a_record_of_version_1(self) -> None:
+        self.assertIsNone(mi.require_supported(record_of_version(self, 1)))
+
+    def test_the_opt_in_reads_the_product_and_no_other_document(self) -> None:
+        documents, _ = mi.read_documents(record_of_version(self, 2), allow_unsupported=True)
+        self.assertEqual(set(documents), {"product.yaml"})
+
+    def test_a_current_record_is_read_whole_by_default(self) -> None:
+        documents, problems = mi.read_documents(record_of_version(self, 1))
+        self.assertIn("product.yaml", documents)
+        self.assertTrue(any(rel.startswith("parts/") for rel in documents), sorted(documents))
+        self.assertEqual(problems, [])
 
 
 class Quantities(unittest.TestCase):
@@ -189,7 +250,7 @@ class Normalization(unittest.TestCase):
             product = hw / "product.yaml"
             product.write_text(product.read_text(encoding="utf-8").replace("record_version: 1", f"record_version: {version}"),
                                encoding="utf-8")
-            record = mi.load_record(hw)
+            record = mi.load_record(hw, allow_unsupported=True)
             with self.subTest(version=version):
                 self.assertEqual(record.version, 0)
                 self.assertEqual([p.code for p in record.problems], ["record.version_unsupported"])

@@ -71,10 +71,26 @@ def _yaml_loader() -> Any:
     return module
 
 
+def _require_supported(record: Path) -> None:
+    """The record version gate (cad-record layout.require_supported_record), before a record file is opened."""
+    name = "cad_record_layout"
+    module = sys.modules.get(name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(name, YAML_LOADER_SCRIPT.with_name("layout.py"))
+        if spec is None or spec.loader is None:
+            raise PolicyError("cannot load cad-record layout.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    module.require_supported_record(record)
+
+
 def read_interfaces(hw: Path) -> list[Any]:
-    """The interfaces list of hw/interfaces.yaml; empty when the file is absent."""
+    """The interfaces list of hw/interfaces.yaml; empty when the file is absent. UnsupportedRecordVersion for a
+    record of another version, before the file is opened."""
     import yaml
 
+    _require_supported(hw)
     path = hw / "interfaces.yaml"
     try:
         document = _yaml_loader().safe_load(path.read_text(encoding="utf-8"))
