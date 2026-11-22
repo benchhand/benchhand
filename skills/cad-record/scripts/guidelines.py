@@ -79,7 +79,8 @@ SCOPE_FACTS = ("material_family", "filler", "shore", "nozzle_material")
 LOWER_OPERATORS = (">=", ">")  # one-sided limits, read as manufacturing_intent.LOWER_BOUND_OPERATORS and UPPER_BOUND_OPERATORS
 UPPER_OPERATORS = ("<=", "<")
 
-# REMOVE WITH THE FLAG when calibration is released (dp2). Owner: Package E. Registered in docs/engineering.md.
+# Flag CAD_CALIBRATION: remove when calibration is released (`dp2` and the non-FDM equivalents); review 2026-12-31.
+# Owner: Package E. Registered in docs/engineering.md.
 # While it is off (the release behaviour) a recorded printer calibration is ignored and generic guideline values
 # govern. Only the string "1" turns it on, as for CAD_REQUIRE_FREECAD. The name lives in this one constant; every
 # check, recipe and seal reads it through the functions below, never from the process environment directly.
