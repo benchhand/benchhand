@@ -7,8 +7,10 @@
 # /// script
 # requires-python = ">=3.12,<3.15"
 # dependencies = [
+#     "jsonschema>=4.23",
 #     "playwright==1.65.2",
 #     "pyyaml>=6.0",
+#     "referencing>=0.28.4",
 # ]
 # ///
 """Render verified cad-model versions to product PNG bundles via the static three.js PBR page.

@@ -19,7 +19,7 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 | trimesh, python-fcl | `trimesh==4.*`, `python-fcl==0.7.0.11` | PEP 723 headers |
 | jsonschema | `>=4.23` in script headers, `skills/cad-flow/scripts/setup.py` among them: it loads `flow_profile.py`, whose cad-record gate module imports it. Test pin `4.26.0`. | `harness/test-requirements.txt`, `skills/cad-flow/scripts/setup.py` header |
 | PyYAML | `>=6.0` in script headers. Test pin `6.0.3`. | `harness/test-requirements.txt` |
-| referencing | `>=0.28.4` in 25 script headers, `skills/cad-flow/scripts/setup.py` among them (same reason as `jsonschema`). No test pin: `jsonschema` installs it. Scripts import it directly, so they declare it. | PEP 723 headers, `scripts/test_script_dependencies.py` |
+| referencing | `>=0.28.4` in 26 script headers, `skills/cad-flow/scripts/setup.py` among them (same reason as `jsonschema`). No test pin: `jsonschema` installs it. Scripts import it directly, so they declare it. | PEP 723 headers, `scripts/test_script_dependencies.py` |
 | Playwright | `playwright==1.65.2`, with Chromium | `skills/cad-render` and `skills/cad-viewer` headers, `README.md` |
 | Test-only pins | `defusedxml==0.7.1`, `hypothesis==6.170.15`, `click==8.5.1` | `harness/test-requirements.txt` |
 | mypy, click for the type check | `mypy==2.4.1`, `click==8.5.1`, locked in `scripts/typecheck.py.lock` | `scripts/typecheck.py` header |
