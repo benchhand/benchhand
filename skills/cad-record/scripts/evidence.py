@@ -241,6 +241,7 @@ class ReleaseAssessment:
     open_obligations: tuple[str, ...]
     trial: bool
     findings: tuple[Finding, ...]
+    not_assessed: tuple[str, ...] = ()  # the in-scope obligations no tool assessed: open, blocking nothing, never a pass
 
     @property
     def blocking(self) -> tuple[Finding, ...]:
@@ -472,12 +473,14 @@ class Assessment:
             findings.extend(Finding("release.scope", "hw/product.yaml", problem) for problem in problems)
         policy = SERVICE_POLICY.get(service or "", None)
         results = self.results()
-        trial, waivers, still_open = False, [], []
+        trial, waivers, still_open, unassessed = False, [], [], []
         for obligation in self.expected:
             status = self.statuses[obligation.id]
             in_scope = policy is not None and in_release_scope(obligation.as_dict(), service)
             if status.result != "pass" and status.result != "not_applicable":
                 still_open.append(obligation.id)
+            if in_scope and status.result == "not_assessed":
+                unassessed.append(obligation.id)
             if status.result == "waived" and in_scope:
                 waivers.append(impact.plain(status.waiver) if status.waiver is not None else {})
                 if obligation.level == PHYSICAL:
@@ -490,7 +493,8 @@ class Assessment:
             claims[req_id] = levels
         if scope is not None:
             scope = {**scope, "trial": trial}
-        return ReleaseAssessment(service, scope, claims, tuple(waivers), tuple(still_open), trial, tuple(findings))
+        return ReleaseAssessment(service, scope, claims, tuple(waivers), tuple(still_open), trial, tuple(findings),
+                                 tuple(unassessed))
 
     def packet(self, stage: str, record_sha256: str) -> dict[str, Any]:
         """The aggregate evidence packet (`evidence.py check`, stamped by cad-recheck)."""
@@ -1067,7 +1071,8 @@ def _verification(record: Any, rows: Sequence[Mapping[str, str]], facets: Mappin
     """The typed verification rows: each verification.csv row with its method, criterion and stated
     result, the result its evidence shows (the worst required facet; unknown without evidence) and the
     ledger entries it rests on, with what each is tied to. A stated pass or waiver without that
-    evidence is an evidence.csv_unsupported finding."""
+    evidence is an evidence.csv_unsupported finding, and so is a stated not_assessed that the evidence
+    does not show as not_assessed (D37: it is never accepted as a pass)."""
     typed = []
     for index, row in enumerate(rows, start=2):
         req = row.get("requirement_id") or ""
@@ -1083,7 +1088,8 @@ def _verification(record: Any, rows: Sequence[Mapping[str, str]], facets: Mappin
                                  "version": configuration.get("version"), "part_rev": configuration.get("part_rev"),
                                  "tied_to": sorted(entry.get("fingerprints") or {})})
         stated = (row.get("result") or "").strip()
-        if stated == "pass" and shown != "pass" or stated == "waived" and shown not in ("pass", "waived"):
+        if (stated == "pass" and shown != "pass" or stated == "waived" and shown not in ("pass", "waived")
+                or stated == "not_assessed" and shown != "not_assessed"):
             findings.append(Finding("evidence.csv_unsupported", f"hw/verification.csv:{index}",
                                     f"{req} states {stated} but its accepted evidence shows {shown}: record current "
                                     "evidence in hw/manufacturing/evidence.yaml (a CSV result alone is not evidence)"))

@@ -28,7 +28,7 @@
 # schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
 # schema-sha256 3f66dcd1ef22b8b40aa94f0c95919cf0f90b6b848bb0e36bffb772fa506292c1 skills/cad-record/schemas/stackup.schema.json
 # schema-sha256 60c50ec2df3452d6896b33d1d2c344b7ada20e0df00ce56a800c520b9e34571f skills/cad-record/schemas/tool-settings.schema.json
-# schema-sha256 c363591bfab50f264b92a38aa36be5d3999cfd54451264a96115de36edc624e4 skills/cad-record/schemas/verification-row.schema.json
+# schema-sha256 f003a68b4ecf2e68ace4112d4a5636e44f6387d2915ba94cdc4969ddc8230037 skills/cad-record/schemas/verification-row.schema.json
 """Typed shapes of the CAD record and concept JSON Schemas.
 
 Standard library only and Python 3.11 compatible, so FreeCAD job code can import it. Each schema
@@ -6499,5 +6499,5 @@ class VerificationRow(TypedDict):
     requirement_id: Required[str]
     method: Required[Literal["I", "A", "D", "T"]]
     criteria: Required[str]
-    result: Required[Literal["planned", "pass", "fail", "waived"]]
+    result: Required[Literal["planned", "pass", "fail", "waived", "not_assessed"]]
     evidence: Required[str]

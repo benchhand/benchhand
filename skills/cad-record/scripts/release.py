@@ -470,7 +470,7 @@ def check_acceptance(release: Release, frozen: Any) -> None:
                           "open_obligations": list(policy.open_obligations)}
     for path, sha in inventory.items():
         release.copy(f"acceptance/{path.removeprefix('hw/')}", path, sha)
-    release.checks["acceptance"] = "waived" if policy.trial else "pass"
+    release.checks["acceptance"] = "waived" if policy.trial else NOT_ASSESSED if policy.not_assessed else "pass"
 
 
 def project_findings(hw: Path, target_rel: str, repaired_on: date | None) -> list[dict[str, Any]]:
