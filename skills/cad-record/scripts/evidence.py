@@ -773,6 +773,8 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
                                         f"{obligation.level}", "warning", ident))
                 continue
             result = outcome.get("outcome")
+            if obligation.level == PHYSICAL and result == "not_assessed":
+                continue  # D37 covers the tool's own checks, not a test the user must perform: it never stands in for one
             if obligation.level == PHYSICAL and result == "pass":
                 findings.append(Finding("evidence.physical_claim", packet.bundle,
                                         f"{packet.bundle}: a producer cannot physically validate {ident}; record the test "

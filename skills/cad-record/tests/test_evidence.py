@@ -698,6 +698,45 @@ class ProgressiveGates(unittest.TestCase):
         self.assertIn("record_version None is not supported", gate[0].message)
 
 
+class NotAssessedIsNoPhysicalTest(unittest.TestCase):
+    """D37 covers the tool's own checks, not a test the record requires the user to perform: a producer's not_assessed on a
+    physically_validated obligation never stands in for it."""
+
+    def released(self, *entries_for: Any) -> tuple[Any, Any]:
+        docs = documents("production")
+        base = normalized(docs)
+        trial = next(o for o in mi.required_checks(base) if o.id == TRIAL)
+        data = acceptance.producer_packet(base)
+        data["expected"].append(trial.as_dict())
+        data["outcomes"].append({"obligation": TRIAL, "outcome": "not_assessed", "reason": "calibration_off", "method": "none",
+                                 "coverage": "none"})
+        data["result"] = "not_assessed"
+        record = normalized(docs, [make(base) for make in entries_for])
+        result = assess(record, evidence.ProducerPacket("hw/checks/v1/trial", "d" * 64, data))
+        return result, result.release()
+
+    def test_without_a_recorded_test_the_obligation_is_unknown_and_blocks_a_production_release(self) -> None:
+        result, policy = self.released()
+        self.assertEqual(result.statuses[TRIAL].result, "unknown")
+        self.assertEqual({(f.code, f.severity) for f in policy.findings if f.obligation == TRIAL}, {("gate.unresolved", "error")})
+        self.assertIn(TRIAL, {f.obligation for f in policy.blocking})
+        self.assertNotIn("evidence.physical_claim", codes(result.findings), "the tool claimed no test")
+
+    def test_a_planned_test_outranks_the_producers_not_assessed(self) -> None:
+        planned = lambda base: acceptance.entry(base, "EV-003", {"PN": "TST-0001", "operation": "print"},  # noqa: E731
+                                                "physically_validated", "planned", obligation=TRIAL)
+        result, policy = self.released(planned)
+        self.assertEqual(result.statuses[TRIAL].result, "planned")
+        self.assertIn(TRIAL, {f.obligation for f in policy.blocking})
+
+    def test_once_the_test_is_recorded_the_release_passes_it(self) -> None:
+        tested = lambda base: acceptance.entry(base, "EV-003", {"PN": "TST-0001", "operation": "print"},  # noqa: E731
+                                               "physically_validated", obligation=TRIAL, version="v1", manifest_sha256=V1)
+        result, policy = self.released(tested)
+        self.assertEqual(result.statuses[TRIAL].result, "pass")
+        self.assertNotIn(TRIAL, {f.obligation for f in policy.blocking})
+
+
 class ReleasePolicy(unittest.TestCase):
     def released(self, service_class: str | None, *entries_for: Any) -> Any:
         docs = documents(service_class)
