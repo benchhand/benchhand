@@ -34,6 +34,7 @@ with pose.stdout_to_stderr():
     for pn, (x, y, z) in cubes.items():
         shape = BRepPrimAPI_MakeBox(gp_Pnt(x, y, z), gp_Pnt(x + 10, y + 10, z + 10)).Shape()
         pose.write_part_step(folder / f"{pn}.step", pose.Part(pn, f"{pn} Cube", shape))
+    (folder / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
     parts = pose.load_definitions(folder, folder)
 real = pose.interference
 mesh, _ = check.mesh_bounds({pn: part.shape for pn, part in parts.items()})

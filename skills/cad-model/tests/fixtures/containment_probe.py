@@ -45,6 +45,7 @@ shapes = {"TST-0301": compound(box(0, 0, 0, 10, 10, 10), box(20, 0, 0, 21, 1, 1)
 with pose.stdout_to_stderr():
     for pn, shape in shapes.items():
         pose.write_part_step(folder / f"{pn}.step", pose.Part(pn, f"{pn} Probe", shape))
+    (folder / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
     parts = pose.load_definitions(folder, folder)
 report = {"shape_types": {pn: part.shape.ShapeType().name for pn, part in sorted(parts.items())}}
 at = pose.Rigid.identity()

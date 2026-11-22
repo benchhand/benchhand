@@ -467,6 +467,7 @@ class PairRequirementTests(unittest.TestCase):
         self.assertEqual(self.policy.fitted_pairs(fits), {("TST-0201", "arm-a"), ("TST-0201", "arm-b"), ("arm-a", "arm-b")})
         with tempfile.TemporaryDirectory() as directory:
             record = Path(directory)
+            (record / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
             (record / "interfaces.yaml").write_text(yaml.safe_dump({"interfaces": interfaces}), encoding="utf-8")
             allowed, fitted, _clearances = sweep.declared_policy(record, assembly)
         self.assertEqual(allowed, {("TST-0201", "arm-b")})

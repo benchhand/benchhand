@@ -34,5 +34,6 @@ pose = load_pose()
 folder = Path(sys.argv[1])
 for pn, title, shape in (("TST-0001", "Drilled plate", drilled), ("TST-0002", "Bossed plate", bossed)):
     pose.write_part_step(folder / f"{pn}.step", pose.Part(pn, f"{pn} {title}", shape))
+(folder / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
 parts = pose.load_definitions(folder, folder)
 print(json.dumps({pn: holes.holes(part.shape) for pn, part in sorted(parts.items())}))
