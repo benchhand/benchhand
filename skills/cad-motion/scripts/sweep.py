@@ -244,9 +244,10 @@ DEFAULT_BAND_MM = 2.0  # fast mode: how far beyond its clearing threshold a requ
 REEVALUATE_STEP = 0.1  # deg or mm: how far a suspect's re-evaluations move every independent joint
 # The data files that decide a sweep's verdict, hashed with its code (producer_hashes): the ISO 286 tables
 # (fits.py:39, read at fits.py:51 through pair_policy), the bundle layout (layout.py:34, read at layout.py:325) and
-# the manufacturing schema layout.py reads at :1045.
+# the schemas and guideline sets that manufacturing_intent.py reads, which the record version gate reaches.
 VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
-                SKILLS / "cad-record" / "schemas" / "manufacturing.schema.json")
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas",
+                SKILLS / "cad-record" / "assets" / "manufacturing" / "guidelines")
 
 
 def claim_run(hw: Path, scope: str) -> Any:
