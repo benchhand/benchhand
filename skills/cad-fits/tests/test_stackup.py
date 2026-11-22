@@ -486,6 +486,17 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["consequence"] + found["uncertainty"])
         self.assertEqual(found["remedy"], "for a tighter limit, print a test coupon on the target printer")
 
+    def test_off_a_non_fdm_unresolved_capability_keeps_its_real_fix_without_printer_wording(self) -> None:
+        documents = tab_slot_documents()
+        documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibrations"] = []
+        result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
+        self.assertEqual(codes(result), ["stack.capability_unresolved"])
+        remedy = result["findings"][0]["remedy"]
+        self.assertEqual(remedy, "record evidence of the capability for this material and scope "
+                                 "(test pieces, a capability study or supplier evidence)")
+        for word in ("printer", "coupon"):
+            self.assertNotIn(word, remedy)
+
     def test_an_uncalibrated_capability_stays_unknown(self) -> None:
         documents = tab_slot_documents()
         documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibrations"] = []

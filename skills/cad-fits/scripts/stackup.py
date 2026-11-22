@@ -759,7 +759,8 @@ class _IntentStack:
             self.unknown("stack.capability_unresolved", item,
                          f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}: "
                          + "; ".join(resolution.reasons), "calibrate the capability for this material and scope" if self.calibration
-                         else GUIDELINES.COUPON_REMEDY)
+                         else "record evidence of the capability for this material and scope "
+                              "(test pieces, a capability study or supplier evidence)")
             return
         calibration = resolution.calibration
         limits = calibration.limits
