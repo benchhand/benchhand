@@ -1022,8 +1022,9 @@ class StackPacketTests(unittest.TestCase):
         with unittest.mock.patch.dict("os.environ"):
             os.environ.pop(GL.CALIBRATION_FLAG, None)
             status, output = self.run_stack()
-        self.assertEqual((status, output["outcome"]), (1, "fail"))
-        packet, _ = self.packet()
+        self.assertEqual((status, output["outcome"], output["status"]), (1, "fail", "fail"))
+        bundle = self.hw.parent / "hw" / "checks" / "v1" / "stack-tab-slot"
+        packet = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
         self.assertEqual((packet["result"], packet["outcomes"][0]["outcome"]), ("fail", "fail"))
 
     def test_an_unknown_contributor_is_published_unknown_never_pass(self) -> None:
