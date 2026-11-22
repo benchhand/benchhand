@@ -288,7 +288,6 @@ class RecheckHookTests(unittest.TestCase):
         for what, title, gate in (
                 ("the flow profile", "Flow profile", None),
                 ("an unrelated decision", "Choose the bolt grade", None),
-                ("a title that names the gate, without the key", "Gate layout to parts", None),
                 ("another transition", "Gate", ("parts", "detail")),
                 ("the reverse transition", "Gate", ("parts", "layout")),
                 ("the right start, another end", "Gate", ("layout", "detail")),
@@ -299,6 +298,11 @@ class RecheckHookTests(unittest.TestCase):
                 result = self.verify()
                 self.refused_gate(result)
                 self.assertIn("gate: {from: layout, to: parts}", result.stderr)
+
+    def test_a_title_that_names_the_gate_does_not_pass_it_without_the_gate_key(self) -> None:
+        self.provisional_gate("parts", decision="accepted", title="Gate layout to parts", gate=None)
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.refused_gate(self.verify())
 
     def test_a_malformed_gate_value_is_a_refusal_naming_the_record(self) -> None:
         written: list[Path] = []
