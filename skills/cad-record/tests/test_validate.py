@@ -517,21 +517,42 @@ class ValidateProject(unittest.TestCase):
         ("manufacturing/selection.yaml", "candidates", 7),
     )
 
+    def validate_with_key(self, rel: str, key: str, value: object) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+        """validate.py on the example project with `key` of `rel` set to `value`; the file is restored after."""
+        path = self.hw / rel
+        original = path.read_bytes()
+        self.addCleanup(path.write_bytes, original)
+        document = yaml.safe_load(original)
+        document[key] = value
+        path.write_text(yaml.safe_dump(document), encoding="utf-8")
+        try:
+            return self.validate()
+        finally:
+            path.write_bytes(original)
+
     def test_a_wrong_typed_record_key_is_a_finding_not_a_crash(self) -> None:
         for rel, key, value in self.WRONG_TYPE_KEYS:
             with self.subTest(file=rel, key=key, value=value):
-                path = self.hw / rel
-                original = path.read_bytes()
-                self.addCleanup(path.write_bytes, original)
-                document = yaml.safe_load(original)
-                document[key] = value
-                path.write_text(yaml.safe_dump(document), encoding="utf-8")
-                result, report = self.validate()
-                path.write_bytes(original)
+                result, report = self.validate_with_key(rel, key, value)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertTrue(any(str(item["path"]).endswith(rel) and key in str(item.get("message", ""))
                                     for item in report["findings"]), report["findings"])
+
+    def test_a_schema_invalid_document_stays_a_blocking_error(self) -> None:
+        """The manufacturing-intent check reads a schema-invalid document as absent. That must not open the gate:
+        the document's own schema finding is an error (validate exits 1 on it, and so do the other callers
+        that decide through blocking(): the stage advance and the drawing contract)."""
+        clean, _ = self.validate()
+        self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+        for rel, key, value in self.WRONG_TYPE_KEYS:
+            with self.subTest(file=rel, key=key, value=value):
+                result, report = self.validate_with_key(rel, key, value)
+                schema_findings = [item for item in report["findings"]
+                                   if str(item["path"]).endswith(rel) and str(item.get("message", "")).startswith(key)]
+                self.assertTrue(schema_findings, report["findings"])
+                self.assertEqual({item["severity"] for item in schema_findings}, {"error"}, schema_findings)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
     def test_a_malformed_tagged_boolean_or_timestamp_is_a_finding_not_a_crash(self) -> None:
         for front in ("status: !!bool maybe", "status: accepted\nx: !!timestamp not-a-time"):
