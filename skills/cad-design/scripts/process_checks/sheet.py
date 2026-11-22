@@ -608,7 +608,8 @@ def sequence(ctx: Context) -> Result:
 
 def distortion(ctx: Context) -> Result:
     method = "sheet forming springback and flat-pattern evidence"
-    findings, parts = [], []
+    findings: list[Draft] = []
+    parts: list[tuple[str, str]] = []
     for name in ("springback", "bend_allowance"):
         cal = ctx.calibrated(name)
         if cal.known:

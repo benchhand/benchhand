@@ -18,7 +18,10 @@ Policy this package applies (a plugin rule, not a product fact):
   (cad-record guidelines.py, given as `assess(catalog=)`). A guideline fail fails; a guideline pass counts only
   for GUIDELINE_PASS_CLASSES and is UNKNOWN for every other service class until calibrated or waived.
   While the calibration flag is off (guidelines.CALIBRATION_FLAG, the release behaviour) a recorded FDM calibration is
-  ignored and a guideline pass counts in every service class.
+  ignored and a guideline pass counts in every service class. With it off, a check that needs a calibration and has no
+  limit is NOT_ASSESSED with the reason calibration_off (Context.gap), and a check of a non-FDM operation with no capability
+  profile is NOT_ASSESSED with the reason no_capability_profile (Context.unprofiled): the tool holds no generic limit for
+  either, and the user's own process gives it (D36, D37). A limit the user has not stated stays UNKNOWN.
   block_like and build-volume fit stay form_check diagnostics.
 - Supports: on reachable non-critical surfaces they are accepted; an overhang beyond the unsupported limit
   is a planning finding when a support or bridge plan covers it; unplanned contact on a precision or running
