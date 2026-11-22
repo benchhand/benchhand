@@ -68,6 +68,9 @@ PIN_PROCUREMENT = (
 
 
 def write_parts(hw: Path, parts: dict[str, str]) -> None:
+    product = hw / "product.yaml"
+    if not product.exists():  # the record this version reads; bom.py refuses a record without it
+        product.write_text("record_version: 1\n", encoding="utf-8")
     for pn, text in parts.items():
         folder = hw / "parts" / pn
         folder.mkdir(parents=True)
