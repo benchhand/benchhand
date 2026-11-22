@@ -22,9 +22,10 @@ Load it by path and register it in `sys.modules` as `cad_record_decision_records
 from __future__ import annotations
 
 import datetime
-import json
+import importlib.util
 import os
 import re
+import sys
 import tempfile
 import unicodedata
 from collections.abc import Hashable, Iterable, Sequence
@@ -41,7 +42,6 @@ DR_ID = re.compile(r"DR-[0-9]{3}")
 FILE_NAME = re.compile(r"DR-([0-9]{3})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md")
 CHOSEN = re.compile(r'Chosen option: "(.+)", because (.+)\.', re.DOTALL)
 FRONT_KEYS = {"status", "date", "decision-makers", "consulted", "informed", "superseded-by", "gate"}
-STAGE_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "product.schema.json"
 EXPECTED = "DR-###-slug.md with MADR 4.0.0 YAML front matter"
 CONTEXT, DRIVERS, OPTIONS, OUTCOME, PROS_CONS, MORE = (
     "Context and Problem Statement", "Decision Drivers", "Considered Options", "Decision Outcome",
@@ -50,6 +50,19 @@ SECTIONS = (CONTEXT, DRIVERS, OPTIONS, OUTCOME, PROS_CONS, MORE)
 CONSEQUENCES, CONFIRMATION = "Consequences", "Confirmation"
 HEADING = re.compile(r"(#{1,6}) +(\S.*?) *")
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
+
+
+def _stage_list() -> tuple[str, ...]:
+    """The workflow stages, from the one reader of product.schema.json (stages.py beside this module)."""
+    if "cad_record_stages" not in sys.modules:
+        path = Path(__file__).resolve().parent / "stages.py"
+        spec = importlib.util.spec_from_file_location("cad_record_stages", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{path.name} not found at {path}")
+        sys.modules["cad_record_stages"] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules["cad_record_stages"])
+    stages: tuple[str, ...] = sys.modules["cad_record_stages"].stages()
+    return stages
 
 
 class DecisionRecordError(ValueError):
@@ -136,21 +149,17 @@ def _check_supersession(record: DecisionRecord) -> None:
         raise DecisionRecordError("superseded-by names a record twice")
 
 
-def _stages() -> tuple[str, ...]:
-    """The workflow stages, as product.schema.json defines them (the schema stays their one source)."""
-    schema = json.loads(STAGE_SCHEMA.read_text(encoding="utf-8"))
-    return tuple(schema["$defs"]["stage"]["enum"])
-
-
 def _check_gate(record: DecisionRecord) -> None:
     """`gate` is None or the (from, to) pair of known workflow stages that this record approves the advance between."""
     if record.gate is None:
         return
-    stages = _stages()
+    known = _stage_list()
     if not (isinstance(record.gate, tuple) and len(record.gate) == 2
-            and all(isinstance(stage, str) and stage in stages for stage in record.gate)):
+            and all(isinstance(stage, str) and stage in known for stage in record.gate)):
         raise DecisionRecordError(
-            f"gate {_shown(record.gate)} must be a (from, to) pair of stages, each one of {', '.join(stages)}")
+            f"gate {_shown(record.gate)} must be a (from, to) pair of stages, each one of {', '.join(known)}")
+    if record.gate[0] == record.gate[1]:
+        raise DecisionRecordError(f"gate {_shown(record.gate)} must advance between two different stages")
 
 
 def _check(record: DecisionRecord) -> None:

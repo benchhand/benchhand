@@ -181,13 +181,14 @@ class WriteTests(Base):
         for label, value in (("a scalar", "layout"), ("a list", "[layout, parts]"), ("without to", "{from: layout}"),
                              ("an unknown stage", "{from: layout, to: nowhere}"),
                              ("an extra key", "{from: layout, to: parts, via: x}"),
-                             ("a number", "{from: 3, to: parts}"), ("a null", "null")):
+                             ("a number", "{from: 3, to: parts}"), ("a null", "null"),
+                             ("equal ends", "{from: layout, to: layout}")):
             path = self.put("DR-001-gate.md", document(f"status: accepted\ndate: 2026-10-26\ngate: {value}\n"))
             with self.subTest(label), self.assertRaisesRegex(dr.DecisionRecordError, r"DR-001-gate\.md.*gate"):
                 dr.read_decision(path)
 
     def test_writing_a_gate_with_an_unknown_stage_is_refused_and_leaves_the_directory(self) -> None:
-        for gate in (("layout", "nowhere"), ("nowhere", "parts")):
+        for gate in (("layout", "nowhere"), ("nowhere", "parts"), ("layout", "layout")):
             with self.subTest(gate), self.assertRaisesRegex(dr.DecisionRecordError, "gate"):
                 dr.write_decision(self.dir, **MINIMAL, gate=gate)
         self.assertEqual(list(self.dir.iterdir()), [])

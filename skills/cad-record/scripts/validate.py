@@ -58,6 +58,8 @@ evidence = _load_module("cad_record_evidence", Path(__file__).resolve().parent /
 # The one YAML reader (libyaml when PyYAML has it) and the bundled schemas' shared registry and validators.
 yaml_loader = _load_module("cad_record_yaml_loader", Path(__file__).resolve().parent / "yaml_loader.py")
 schema_registry = _load_module("cad_record_schema_registry", Path(__file__).resolve().parent / "schema_registry.py")
+# The workflow stages, the one reader of product.schema.json's stage list (decision_records.py reads it too).
+stage_list = _load_module("cad_record_stages", Path(__file__).resolve().parent / "stages.py")
 # The gate on product.yaml flow.profile, the user's project-start answers (pure in the parsed record).
 profile_gate = _load_module("cad_record_flow_profile_gate", Path(__file__).resolve().parent / "flow_profile_gate.py")
 # cad-motion's pose.py and plan.py, loaded only for a record with authored motion cases.
@@ -744,8 +746,7 @@ def check_flow_profile(hw: Path, documents: Mapping[str, Any], valid: Mapping[st
 @functools.cache
 def stages() -> tuple[str, ...]:
     """The workflow stages in order, as product.schema.json defines them."""
-    schema = json.loads((SCHEMAS / "product.schema.json").read_text(encoding="utf-8"))
-    return tuple(schema["$defs"]["stage"]["enum"])
+    return stage_list.stages()
 
 
 def layout_strict(product: Any, hw: Path) -> bool:
