@@ -746,7 +746,8 @@ def check_flow_profile(hw: Path, documents: Mapping[str, Any], valid: Mapping[st
 @functools.cache
 def stages() -> tuple[str, ...]:
     """The workflow stages in order, as product.schema.json defines them."""
-    return stage_list.stages()
+    ordered: tuple[str, ...] = stage_list.stages()
+    return ordered
 
 
 def layout_strict(product: Any, hw: Path) -> bool:
