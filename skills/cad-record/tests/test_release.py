@@ -980,7 +980,7 @@ class Refusal(ReleaseCase):
         before = tree(hw)
         code, report = self.release(hw)
         self.assertEqual(code, 1)
-        self.assertIn("release verification result must be pass or waived", json.dumps(report["findings"]))
+        self.assertIn("release verification result must be pass, waived or not_assessed", json.dumps(report["findings"]))
         self.assertEqual(tree(hw), before)
         hw = self.project()
         edit_csv(hw / "verification.csv", lambda rows: rows[1].update(evidence="hw/motion/v1/elbow-limits"))
