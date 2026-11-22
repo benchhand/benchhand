@@ -54,6 +54,14 @@ def fixture(name: str) -> dict:
     return yaml.safe_load((FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def passing_tab_slot() -> dict:
+    """The tab-and-slot stack with a requirement its declared worst case -0.15..+0.20 mm meets, so that only a missing
+    calibration can leave it open."""
+    stack = fixture("laser_tab_slot.yaml")
+    stack["requirement"]["min"] = -0.2
+    return stack
+
+
 def contributor(stack: dict, ident: str) -> dict:
     return next(c for c in stack["contributors"] if c["id"] == ident)
 
@@ -479,7 +487,7 @@ class IntentStackContractTests(unittest.TestCase):
 
     def test_off_an_fdm_capability_contributor_is_not_assessed_and_names_the_missing_guideline(self) -> None:
         documents = tab_slot_documents("fdm")
-        result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
+        result = self.bound_with(documents, passing_tab_slot(), "tab-slot", calibration=False)
         self.assertEqual(result["outcome"], "not_assessed")
         self.assertEqual(codes(result), ["stack.capability_unresolved"])
         found = result["findings"][0]
@@ -490,10 +498,18 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["consequence"] + found["uncertainty"])
         self.assertEqual(found["remedy"], "for a tighter limit, print a test coupon on the target printer")
 
+    def test_off_a_declared_worst_case_that_fails_is_a_fail_beside_an_unassessed_contributor(self) -> None:
+        """fail ranks ahead of not_assessed: the declared limits -0.15..+0.20 mm miss the 0 mm minimum whatever the calibration."""
+        result = self.bound_with(tab_slot_documents("fdm"), fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
+        self.assertEqual(result["outcome"], "fail")
+        self.assertEqual(result["obligations"][0]["outcome"], "fail")
+        self.assertNotIn("reason", result["obligations"][0])
+        self.assertEqual(sorted(codes(result)), ["stack.capability_unresolved", "stack.worst_case_violation"])
+
     def test_off_a_non_fdm_unresolved_capability_keeps_its_real_fix_without_printer_wording(self) -> None:
         documents = tab_slot_documents()
         documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibrations"] = []
-        result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
+        result = self.bound_with(documents, passing_tab_slot(), "tab-slot", calibration=False)
         self.assertEqual((result["outcome"], codes(result)), ("not_assessed", ["stack.capability_unresolved"]))
         remedy = result["findings"][0]["remedy"]
         self.assertEqual(remedy, "record evidence of the capability for this material and scope "
@@ -986,7 +1002,7 @@ class StackPacketTests(unittest.TestCase):
 
     def test_a_not_assessed_stack_exits_0_and_is_published_not_assessed_never_pass(self) -> None:
         fx.write_record(self.hw, tab_slot_documents("fdm"))
-        self.case = write_case(self.hw, "tab-slot", fixture("laser_tab_slot.yaml"))
+        self.case = write_case(self.hw, "tab-slot", passing_tab_slot())
         snapshot_version(self.hw)
         with unittest.mock.patch.dict("os.environ"):
             os.environ.pop(GL.CALIBRATION_FLAG, None)
@@ -998,6 +1014,17 @@ class StackPacketTests(unittest.TestCase):
         row = packet["outcomes"][0]
         self.assertEqual((packet["result"], row["outcome"], row["reason"]), ("not_assessed", "not_assessed", "calibration_off"))
         self.assertEqual([(f["outcome"], f["reason"]) for f in packet["findings"]], [("not_assessed", "calibration_off")])
+
+    def test_a_failing_stack_with_an_unassessed_contributor_exits_1_and_is_published_fail(self) -> None:
+        fx.write_record(self.hw, tab_slot_documents("fdm"))
+        self.case = write_case(self.hw, "tab-slot", fixture("laser_tab_slot.yaml"))
+        snapshot_version(self.hw)
+        with unittest.mock.patch.dict("os.environ"):
+            os.environ.pop(GL.CALIBRATION_FLAG, None)
+            status, output = self.run_stack()
+        self.assertEqual((status, output["outcome"]), (1, "fail"))
+        packet, _ = self.packet()
+        self.assertEqual((packet["result"], packet["outcomes"][0]["outcome"]), ("fail", "fail"))
 
     def test_an_unknown_contributor_is_published_unknown_never_pass(self) -> None:
         stack = fixture("closing_gap.yaml")
