@@ -14,8 +14,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .core import (FAIL, NO_LIMIT, NOT_APPLICABLE, PASS, UNKNOWN, Calibrated, Context, Draft, Result, access_directions, combine,
-                   direction_key, dot, gated, judge_upper_bound, length, policy, text, unknown)
+from .core import (FAIL, NO_LIMIT, NOT_APPLICABLE, NOT_ASSESSED, NOT_ASSESSED_NOTE, PASS, UNKNOWN, Calibrated, Context, Draft,
+                   Result, access_directions, combine, direction_key, dot, gated, judge_upper_bound, length, policy, text, unknown)
 from .machining import tools
 
 CLEANUP_PURPOSES = frozenset({"stock", "finish", "support_removal"})
@@ -350,7 +350,7 @@ def _join_distortion_against_limits(ctx: Context, cal: Calibrated, method: str) 
                                             remedy=f"machine {surface.feature} after joining, or relax the limit with the design owner")
         if outcome != NO_LIMIT:
             parts.append((outcome, reason))
-    if not parts:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+    if not parts:  # the surfaces state no limit: a gap in the record that no calibration or flag fills, so UNKNOWN either way
         parts.append((UNKNOWN, f"calibrated ({cal.calibration.id}); no critical surface states a join_distortion limit"))
     return combine(method, parts, findings)
 
@@ -360,11 +360,12 @@ def joining_distortion(ctx: Context) -> Result:
     cal = ctx.calibrated("join_distortion")
     if cal.known:
         return _join_distortion_against_limits(ctx, cal, method)
-    draft = Draft("process.joining.distortion_uncalibrated", "minor", UNKNOWN, unknown("join distortion"),
+    findings: list[Draft] = []
+    outcome = ctx.gap(findings, cal, Draft("process.joining.distortion_uncalibrated", "minor", UNKNOWN, unknown("join distortion"),
                   cal.criterion("join_distortion"), "capability calibrations", "; ".join(cal.reasons),
                   "the distortion the join leaves on aligned features is unknown",
-                  remedy="calibrate join distortion with test joints, or machine after joining", recheck=["process.joining"])
-    return Result(UNKNOWN, method, "join distortion unknown", [draft])
+                  remedy="calibrate join distortion with test joints, or machine after joining", recheck=["process.joining"]))
+    return combine(method, [(outcome, "join distortion unknown")], findings)
 
 
 def inspection_access(ctx: Context) -> Result:
@@ -404,21 +405,23 @@ def inspection_capability(ctx: Context) -> Result:
         capability = item.get("capability") or (ctx.operation.capability if isinstance(ctx.operation.capability, str) else None)
         profile = ctx.record.capabilities.get(capability) if capability else None
         if profile is None or profile.process != "inspection":
-            findings.append(Draft("process.inspection.capability_unknown", "major", UNKNOWN, text(f"{item.get('id')}: {capability}"),
+            outcome, why = ctx.unprofiled() if profile is None else (UNKNOWN, None)
+            findings.append(Draft("process.inspection.capability_unknown", "major", outcome, text(f"{item.get('id')}: {capability}"),
                                   unknown("an inspection capability profile with a calibrated measurement"),
                                   "inspection entry and capability profiles", "not recorded",
-                                  f"the measurement {item.get('id')} relies on is not shown capable", feature=item.get("feature"),
+                                  f"the measurement {item.get('id')} relies on is not shown capable"
+                                  + (f"; {NOT_ASSESSED_NOTE}" if outcome == NOT_ASSESSED else ""), feature=item.get("feature"),
                                   remedy="name an inspection capability profile with a calibrated measurement uncertainty",
-                                  recheck=["process.inspection.capability"]))
-            parts.append((UNKNOWN, f"{item.get('id')} capability unknown"))
+                                  recheck=["process.inspection.capability"], reason=why))
+            parts.append((outcome, f"{item.get('id')} capability unknown"))
             continue
         cal = ctx.calibrated("measurement_uncertainty", profile=profile)
         if not cal.known:
-            findings.append(Draft("process.inspection.uncertainty_unknown", "minor", UNKNOWN, unknown("measurement uncertainty"),
+            outcome = ctx.gap(findings, cal, Draft("process.inspection.uncertainty_unknown", "minor", UNKNOWN, unknown("measurement uncertainty"),
                                   cal.criterion("measurement_uncertainty"), "capability calibrations", "; ".join(cal.reasons),
                                   f"the uncertainty of {item.get('id')} is unknown", remedy="calibrate the instrument for this feature",
                                   recheck=["process.inspection.capability"], feature=item.get("feature")))
-            parts.append((UNKNOWN, f"{item.get('id')} uncertainty unknown"))
+            parts.append((outcome, f"{item.get('id')} uncertainty unknown"))
         else:
             parts.append((PASS, f"{item.get('id')} calibrated ({cal.calibration.id})"))
     if not parts:

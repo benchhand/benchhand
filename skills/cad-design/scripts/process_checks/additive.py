@@ -30,7 +30,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from .core import (FAIL, MAXIMUM, MINIMUM, NOT_APPLICABLE, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Limit, Result,
-                   angle, combine, gated, length, policy, source_dict, text, unknown)
+                   angle, combine, gated, length, policy, source_dict, text, unknown, worst_of)
 
 FINISHING_KINDS = frozenset({"reaming", "finishing", "cnc", "drilling"})  # operations that can restore a surface
 EXEMPT_CLASSES = frozenset({"tooth_tip", "flank", "chamfer", "fillet", "decorative", "text", "emboss", "tip", "knurl"})
@@ -146,15 +146,14 @@ def _outside_hull(point: Any, hull: Any) -> bool:
 def _contact_area(ctx: Context, g: Geometry, contact: float, findings: list[Draft]) -> tuple[str, str]:
     """The bed contact area against the calibrated minimum (`min_bed_contact_area`, mm2: area >= upper)."""
     kind = _k(ctx)
-    # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
     cal = ctx.calibrated("min_bed_contact_area")
     measured = {"value": round(contact, 6), "units": "mm2"}
     if not cal.known:
-        findings.append(Draft(f"process.{kind}.contact_area_uncalibrated", "minor", UNKNOWN, measured,
+        outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.contact_area_uncalibrated", "minor", UNKNOWN, measured,
                               cal.criterion("bed_contact_area", ">="), g.method("planar faces at the lowest z"),
                               "; ".join(cal.reasons), "whether the first layer holds the part to the bed is unassessed",
                               remedy=ctx.remedy("calibrate the smallest reliable bed contact area"), recheck=[f"process.{kind}.orientation"]))
-        return UNKNOWN, "bed contact area not calibrated"
+        return outcome, "bed contact area not calibrated"
     need = cal.bounds("mm2")[1]
     if contact >= need - 1e-9:
         return PASS, f"first-layer contact {contact:.3g} mm2 >= {need:g} mm2"
@@ -283,7 +282,7 @@ def support(ctx: Context) -> Result:
             if feats & contacts:
                 planned.append((face, reason))
                 continue
-            findings.append(Draft(f"process.{kind}.overhang_uncalibrated", "minor", UNKNOWN,
+            outcome = ctx.gap(findings, bridge if _is_spanned(down) else overhang, Draft(f"process.{kind}.overhang_uncalibrated", "minor", UNKNOWN,
                                   angle(down.get("max_angle_deg") or 0.0), limit,
                                   g.method("sampled down-facing normals"),
                                   "; ".join(overhang.reasons + bridge.reasons) or "not calibrated",
@@ -291,12 +290,12 @@ def support(ctx: Context) -> Result:
                                   remedy=ctx.remedy("calibrate the unsupported overhang angle and bridge span for this material and machine, "
                                                     "or plan supports on this surface", "plan supports on this surface"),
                                   recheck=[f"process.{kind}.support"], earliest_stage="detail", feature=_one(feats)))
-            parts.append((UNKNOWN, f"face {face.get('id')} overhang not calibrated"))
+            parts.append((outcome, f"face {face.get('id')} overhang not calibrated"))
             continue
         if reason == "undecided" and not covered:
             for feature in sorted(set(hit + start_hit) - reported):
                 reported.add(feature)
-                findings.append(Draft(f"process.{kind}.support_on_critical_unknown", "major", UNKNOWN,
+                outcome = ctx.gap(findings, bridge if _is_spanned(down) else overhang, Draft(f"process.{kind}.support_on_critical_unknown", "major", UNKNOWN,
                                       angle(down.get("max_angle_deg") or 0.0), limit,
                                       g.method("sampled down-facing normals"), "; ".join(overhang.reasons + bridge.reasons),
                                       f"whether supports touch the {critical[feature].role} surface {feature} is unknown",
@@ -304,7 +303,7 @@ def support(ctx: Context) -> Result:
                                                         f"{feature} faces up or sideways",
                                                         f"reorient so {feature} faces up or sideways"), recheck=[f"process.{kind}.support"],
                                       earliest_stage="detail", feature=feature))
-                parts.append((UNKNOWN, f"support on critical {feature} undecided"))
+                parts.append((outcome, f"support on critical {feature} undecided"))
             continue
         if hit or start_hit:
             for feature in sorted(set(hit + start_hit) - reported):
@@ -384,7 +383,7 @@ def _graded(ctx: Context, g: Geometry, judged: Mapping[str, tuple[Limit, dict[st
     for name, (limit, value) in sorted(judged.items()):
         verdict, coverage = ctx.grade(limit, coverage, findings, check="support", measured=value, prop=name,
                                       units=value["units"], method=g.method("sampled down-facing normals"))
-        outcome = UNKNOWN if verdict == UNKNOWN else outcome
+        outcome = worst_of(outcome, verdict)
     return outcome, coverage
 
 
@@ -530,7 +529,7 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
     walls = g.facts.get("walls") or {}
     cal = ctx.limit("min_wall", MINIMUM)
     if not cal.known:
-        findings.append(Draft(f"process.{kind}.wall_uncalibrated", "minor", UNKNOWN,
+        outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.wall_uncalibrated", "minor", UNKNOWN,
                               length(walls["thickness_mm"]) if walls.get("thickness_mm") is not None else unknown("not measured"),
                               cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
                               "; ".join(cal.reasons), "the structural wall criterion is unknown",
@@ -539,7 +538,7 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                                                 "record the nozzle diameter or line width a guideline needs"),
                               recheck=[f"process.{kind}.geometry"],
                               earliest_stage="parts"))
-        return UNKNOWN, "wall criterion not calibrated"
+        return outcome, "wall criterion not calibrated"
     need = cal.threshold("mm")
     floor_only = "; the profile states no nozzle or line width, so min_wall is the plain floor" \
         if cal.status == "guideline" and cal.base_mm is None else ""
@@ -559,7 +558,6 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
         {s.role for f, s in ctx.critical_features().items() if f in feats}
     exempt = sorted(c for c in classes if c in EXEMPT_CLASSES)
     if exempt:
-        # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
         feature_cal = ctx.calibrated("min_wall", feature=exempt[0])
         if feature_cal.known and thickness >= feature_cal.bounds("mm")[1] - 1e-9:
             findings.append(Draft(f"process.{kind}.wall_feature_class", "info", UNKNOWN, length(thickness),
@@ -569,14 +567,14 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                                   "thicker than it are not separated by this scan",
                                   remedy="section the structural regions to measure their walls", recheck=[f"process.{kind}.geometry"]))
             return UNKNOWN, "structural walls not separated from the exempt feature"
-        findings.append(Draft(f"process.{kind}.wall_feature_class", "minor", UNKNOWN, length(thickness),
+        outcome = ctx.gap(findings, feature_cal, Draft(f"process.{kind}.wall_feature_class", "minor", UNKNOWN, length(thickness),
                               feature_cal.criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
                               f"{exempt[0]} features are assessed apart from structural walls",
                               f"the thinnest wall is on a {exempt[0]} feature with no calibration of its own",
                               remedy=ctx.remedy(f"calibrate min_wall with scope feature {exempt[0]}, or justify the exception in a decision",
                                                 "justify the exception in a decision"),
                               recheck=[f"process.{kind}.geometry"], feature=sorted(feats)[0] if feats else None))
-        return UNKNOWN, f"{exempt[0]} wall not calibrated"
+        return outcome, f"{exempt[0]} wall not calibrated"
     location = walls.get("location_mm")
     findings.append(Draft(f"process.{kind}.wall", "major", FAIL, length(thickness),
                           cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
@@ -612,10 +610,10 @@ def _smallest(ctx: Context, g: Geometry, findings: list[Draft], items: list[Mapp
     smallest = min(items, key=lambda p: p["diameter_mm"])
     diameter, feature = smallest["diameter_mm"], _one(set(smallest.get("features") or ()))
     if not limit.known:
-        findings.append(Draft(f"process.{kind}.{check}_uncalibrated", "minor", UNKNOWN, length(diameter),
+        outcome = ctx.gap(findings, limit, Draft(f"process.{kind}.{check}_uncalibrated", "minor", UNKNOWN, length(diameter),
                               limit.criterion(prop, "mm"), g.method(method), "; ".join(limit.reasons),
                               f"{plural} are unassessed", remedy=ctx.remedy(f"calibrate {reliable}"), recheck=[f"process.{kind}.geometry"]))
-        return UNKNOWN, f"{plural} not calibrated"
+        return outcome, f"{plural} not calibrated"
     need = limit.threshold("mm")
     if not limit.breaks(diameter, "mm"):
         return ctx.grade(limit, f"smallest {noun} {diameter:g} mm >= {limit.status} {need:g} mm", findings, check=check,
@@ -656,11 +654,10 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   recheck=[f"process.{kind}.geometry", "route.operation_plan"], feature=feature))
             parts.append((FAIL, f"{feature} has no finishing operation"))
             continue
-        # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
         cal = ctx.calibrated(characteristic, orientation=orientation if oriented else None)
         limits, unsupported = _diameter_limits(ctx, surface)
         if not cal.known:
-            findings.append(Draft(f"process.{kind}.hole_uncalibrated", "major", UNKNOWN, length(hole["diameter_mm"]),
+            outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.hole_uncalibrated", "major", UNKNOWN, length(hole["diameter_mm"]),
                                   cal.criterion(characteristic), g.method("bore recognition"),
                                   "; ".join(cal.reasons),
                                   f"the as-made size of the {surface.role} {feature}"
@@ -668,7 +665,7 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   remedy=ctx.remedy(f"make coupons in this material{' and orientation (' + orientation + ')' if oriented else ''}"
                                                     " and record the calibration, or ream the bore", "ream the bore"),
                                   recheck=[f"process.{kind}.geometry"], feature=feature))
-            parts.append((UNKNOWN, f"{feature} deviation not calibrated"))
+            parts.append((outcome, f"{feature} deviation not calibrated"))
             continue
         if not limits and not unsupported:
             findings.append(Draft(f"process.{kind}.hole_criterion_missing", "minor", UNKNOWN, length(hole["diameter_mm"]),
@@ -740,30 +737,28 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
         if feature in holes or surface.dimension_state != "as_manufactured":
             continue
         characteristic = "profile_deviation" if surface.role in ("flank", "cam") else "dimensional_deviation"
-        # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
         cal = ctx.calibrated(characteristic, feature=surface.role if characteristic == "profile_deviation" else None)
         on_bed = any(f.get("bed") for f in g.feature_faces(feature))
         if on_bed:
-            # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
             foot = ctx.calibrated("elephant_foot")
             if not foot.known:
-                findings.append(Draft(f"process.{kind}.elephant_foot", "minor", UNKNOWN, unknown("first-layer flare"),
+                outcome = ctx.gap(findings, foot, Draft(f"process.{kind}.elephant_foot", "minor", UNKNOWN, unknown("first-layer flare"),
                                       foot.criterion("elephant_foot"), g.method("bed contact faces"), "; ".join(foot.reasons),
                                       f"the {surface.role} {feature} starts at the bed, where the first layer flares",
                                       remedy=ctx.remedy("calibrate the elephant foot or chamfer the bed edge of the feature",
                                                     "chamfer the bed edge of the feature"),
                                       recheck=[f"process.{kind}.geometry"], feature=feature))
-                parts.append((UNKNOWN, f"{feature} elephant foot unknown"))
+                parts.append((outcome, f"{feature} elephant foot unknown"))
         if cal.known:
             parts.append((PASS, f"{feature} {characteristic} calibrated"))
             continue
-        findings.append(Draft(f"process.{kind}.feature_uncalibrated", "major", UNKNOWN, unknown("as-made deviation"),
+        outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.feature_uncalibrated", "major", UNKNOWN, unknown("as-made deviation"),
                               cal.criterion(characteristic), g.method("feature locators"), "; ".join(cal.reasons),
                               f"the as-printed accuracy of the {surface.role} {feature} is unknown",
                               remedy=ctx.remedy(f"calibrate {characteristic} for this material and orientation with coupons, or finish the surface",
                                                 "finish the surface"),
                               recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature))
-        parts.append((UNKNOWN, f"{feature} {characteristic} not calibrated"))
+        parts.append((outcome, f"{feature} {characteristic} not calibrated"))
     return parts
 
 
@@ -781,17 +776,19 @@ def _receiving(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[s
             hole = next((h for h in g.holes() if feature in (h.get("features") or ())), None)
             if hole is None:
                 continue  # the feature lies on another component or is not a bore of this one
-            # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
             cal = ctx.calibrated("hole_diameter_deviation", orientation=hole_class(hole["axis"]))
-            findings.append(Draft(f"process.{kind}.receiving_feature", "info" if cal.known else "major",
+            draft = Draft(f"process.{kind}.receiving_feature", "info" if cal.known else "major",
                                   UNKNOWN, length(hole["diameter_mm"]), cal.criterion("hole_diameter_deviation"),
                                   g.method("bore recognition"),
                                   "retention depends on the as-printed bore, the material's creep and the insert",
                                   f"{item.get('kind')} {item.get('id')} into {feature}: retention is unvalidated",
                                   remedy="test retention on a printed coupon with the actual insert or pin",
                                   recheck=["assembly.order", f"process.{kind}.trial"], earliest_stage="release",
-                                  feature=feature, link=not cal.known))
-            parts.append((PASS if cal.known else UNKNOWN, f"{feature} receives {item.get('kind')}"))
+                                  feature=feature, link=not cal.known)
+            outcome = PASS if cal.known else ctx.gap(findings, cal, draft)
+            if cal.known:
+                findings.append(draft)
+            parts.append((outcome, f"{feature} receives {item.get('kind')}"))
     return parts
 
 
@@ -808,15 +805,14 @@ def thermal_distortion(ctx: Context) -> Result:
     bed = g.facts.get("bed") or {}
     extent = bed.get("contact_extent")  # exact contact-face extents, apart from the sampled stability hull
     footprint = max(extent["max"][i] - extent["min"][i] for i in (0, 1)) if extent else 0.0
-    # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
     warp = ctx.calibrated("warp")
     if not warp.known:
-        findings.append(Draft(f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint),
+        outcome = ctx.gap(findings, warp, Draft(f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint),
                               warp.criterion("warp"), g.method("bed footprint"), "; ".join(warp.reasons),
                               "warp of the bed footprint is unknown",
                               remedy=ctx.remedy("calibrate warp for this material, enclosure and footprint size"),
                               recheck=[f"process.{kind}.thermal_distortion"]))
-        parts.append((UNKNOWN, "warp not calibrated"))
+        parts.append((outcome, "warp not calibrated"))
     else:
         size = warp.calibration.scope.get("size")
         covered = None
@@ -856,7 +852,7 @@ def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[st
                 return FAIL, f"{feature} flatness"
     if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
         return UNKNOWN, f"flatness criterion with operator {', '.join(sorted(set(unsupported)))} is not judged against calibrated warp"
-    if not stated:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+    if not stated:  # the user's flatness limit is missing, which no calibration or flag supplies: always UNKNOWN
         return UNKNOWN, "no critical surface states a flatness limit to judge the calibrated warp against"
     return PASS, "warp calibrated for this footprint"
 

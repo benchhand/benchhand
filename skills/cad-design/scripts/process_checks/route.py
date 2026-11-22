@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .core import FAIL, NOT_APPLICABLE, PASS, UNKNOWN, Context, Draft, Result, combine, policy, text, unknown
+from .core import FAIL, NOT_APPLICABLE, NOT_ASSESSED, NOT_ASSESSED_NOTE, PASS, UNKNOWN, Context, Draft, Result, combine, policy, text, unknown
 
 ADDITIVE = frozenset({"fdm", "resin"})
 SECONDARY = frozenset({"drilling", "reaming", "tapping", "finishing", "coating", "joining", "inspection"})
@@ -81,13 +81,15 @@ def consistency(ctx: Context) -> Result:
 
 def _capability(ctx: Context, op: Any, material: str | None, findings: list[Draft]) -> tuple[str, str]:
     if ctx.mi.is_fact(op.capability):
-        findings.append(Draft("route.capability_unknown", "major", UNKNOWN, text(f"{op.id} capability unknown"),
+        outcome, why = ctx.unprofiled(op)
+        findings.append(Draft("route.capability_unknown", "major", outcome, text(f"{op.id} capability unknown"),
                               unknown(op.capability.reason or "no capability profile"), "part.yaml route capability",
                               "not recorded", f"{op.id} names no capability of the actual equipment or supplier"
-                              + ("; outsourcing is no exemption" if op.provider == "outsourced" else ""),
+                              + ("; outsourcing is no exemption" if op.provider == "outsourced" else "")
+                              + (f"; {NOT_ASSESSED_NOTE}" if outcome == NOT_ASSESSED else ""),
                               remedy="record the capability profile of whoever performs it", recheck=[f"process.{op.kind}"],
-                              earliest_stage="parts"))
-        return UNKNOWN, f"{op.id} capability unknown"
+                              earliest_stage="parts", reason=why))
+        return outcome, f"{op.id} capability unknown"
     profile = ctx.record.capabilities.get(op.capability)
     if profile is None:
         findings.append(Draft("route.capability_reference", "major", FAIL, text(f"{op.id} capability {op.capability}"),

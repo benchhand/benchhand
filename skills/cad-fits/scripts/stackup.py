@@ -53,7 +53,10 @@ function and critical fits; nominal clearance is reported separately from the cl
 after tolerances. An unknown contributor, a relevant effect without a contributor, manufacture limits
 without calibrated capability, inspection or supplier evidence, limits taken from a fit designation
 or general-tolerance label, or a record that disagrees with the stack make the outcome unknown,
-never a pass. A zero-width contributor (a perfect dimension), a feature counted twice or in two
+never a pass. With the calibration flag off, a manufacture contributor that cites a capability with no calibration
+on record is not assessed (D36, D37): the finding and the outcome are not_assessed with the reason calibration_off,
+never a pass; a stack that also fails, or has another unknown contributor, stays fail or unknown. The tool holds no
+generic limit for such a deviation, and the user's own process gives it. A zero-width contributor (a perfect dimension), a feature counted twice or in two
 states, and a coating added on top of post-finish limits are refused. A justified RSS needs stable,
 centred, sourced distributions, an independence statement or a positive semidefinite correlation
 set, a coverage factor and an approved decision; it never governs a worst-case-governed consequence.
@@ -322,6 +325,7 @@ class _IntentStack:
         self.calibration = calibration
         self.findings: list[dict[str, Any]] = []
         self.unknown_reasons: list[str] = []
+        self.unassessed_reasons: list[str] = []  # contributors with no calibration on record while the flag is off
         self.critical = False
         self.required_evidence: list[dict[str, Any]] = []
         self.limits = list(LIMITS)
@@ -489,7 +493,7 @@ class _IntentStack:
     def finding(self, code: str, suffix: str, *, severity: str, outcome: str, measured: Mapping[str, Any],
                 consequence: str, remedy: str, uncertainty: str, subject: Mapping[str, Any] | None = None,
                 criterion: Mapping[str, Any] | None = None, alternatives: list[dict[str, str]] | None = None,
-                inputs: list[str] | None = None) -> str:
+                inputs: list[str] | None = None, reason: str | None = None) -> str:
         ident = base = f"{_slug(self.id)}_{_slug(suffix)}"
         taken = {item["id"] for item in self.findings}
         number = 2
@@ -504,6 +508,8 @@ class _IntentStack:
             "recheck": {"families": ["interface.stack" if self.subject.get("interface") else "feature.fit"],
                         "earliest_stage": "detail", **({"inputs": inputs} if inputs else {})},
         }
+        if reason is not None:
+            data["reason"] = reason  # a not_assessed finding says why; no other outcome carries one
         if self.obligation_id():
             data["obligation"] = self.obligation_id()
         if self.requirements:
@@ -521,6 +527,18 @@ class _IntentStack:
                      severity=self.severity(), outcome="unknown", measured={"status": "unknown", "reason": reason},
                      subject=subject, consequence=consequence or "the clearance remaining after tolerances is not established",
                      remedy=remedy, uncertainty=reason, inputs=inputs)
+
+    def unassessed(self, code: str, contributor: _Contributor, reason: str, remedy: str) -> None:
+        """A contributor whose limit only the user's own process can give, with the calibration flag off: not assessed."""
+        self.unassessed_reasons.append(reason)
+        self.finding(code, f"{code.split('.')[-1]}_{contributor.id}", severity=self.severity(), outcome="not_assessed",
+                     measured={"status": "unknown", "reason": reason}, subject=contributor.subject or None,
+                     consequence=f"the clearance remaining after tolerances is not established: {GUIDELINES.NOT_ASSESSED_NOTE}",
+                     remedy=remedy, uncertainty=reason, reason="calibration_off")
+
+    def open_outcome(self) -> str:
+        """The outcome of a stack that cannot be judged: unknown, or not_assessed when only unassessed contributors leave it open."""
+        return "unknown" if self.unknown_reasons or not self.unassessed_reasons else "not_assessed"
 
     def severity(self) -> str:
         return "critical" if self.critical or self.consequence in WORST_CASE_GOVERNED else "major"
@@ -748,13 +766,19 @@ class _IntentStack:
             self.unknown("stack.record_mismatch", item, f"{item.id}: operation {producer.id} uses {producer.capability}, "
                                                        f"not {profile_id}", "cite the capability of the operation")
         if not self.calibration and profile.process in GUIDELINES.GUIDELINE_PROCESSES:
-            # TODO(benchhand-tw6.24): no guideline states a manufacture deviation, so this stays unknown until the not-assessed grade.
-            self.unknown("stack.capability_unresolved", item,
-                         f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no guideline "
-                         f"value covers {capability['characteristic']}", GUIDELINES.COUPON_REMEDY)
+            # no guideline states a manufacture deviation: with the flag off it is not assessed (D36, D37)
+            self.unassessed("stack.capability_unresolved", item,
+                            f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no guideline "
+                            f"value covers {capability['characteristic']}", GUIDELINES.COUPON_REMEDY)
             return
         resolution = intent.capability_limit(profile, capability["characteristic"], material=material, on=self.on,
                                              feature=None)
+        if resolution.status == "unknown" and not self.calibration:  # no calibration is on record, and none is asked for
+            self.unassessed("stack.capability_unresolved", item,
+                            f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}: "
+                            + "; ".join(resolution.reasons), "record evidence of the capability for this material and scope "
+                                                              "(test pieces, a capability study or supplier evidence)")
+            return
         if resolution.status != "calibrated":
             self.unknown("stack.capability_unresolved", item,
                          f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}: "
@@ -924,6 +948,8 @@ class _IntentStack:
         else:
             passed = wc_pass if governing == "worst_case" else stat_pass
             outcome = "pass" if passed else "fail"
+            if outcome == "pass" and self.unassessed_reasons:
+                outcome = "not_assessed"  # fail > unknown > not_assessed > pass (D37)
         if outcome == "fail":
             self.violation(nominal, nominal_pass, worst, statistical, governing)
         elif complete and wc_pass is False and governing == "justified_rss":
@@ -938,8 +964,10 @@ class _IntentStack:
                        "method": "1D worst-case tolerance stack" if governing == "worst_case"
                        else "1D justified statistical tolerance stack",
                        "coverage": coverage, "findings": [f["id"] for f in self.findings]}
-        if self.unknown_reasons:
-            outcome_row["uncertainty"] = "; ".join(self.unknown_reasons)
+        if outcome == "not_assessed":
+            outcome_row["reason"] = "calibration_off"
+        if self.unknown_reasons or self.unassessed_reasons:
+            outcome_row["uncertainty"] = "; ".join(self.unknown_reasons + self.unassessed_reasons)
         if not outcome_row["findings"]:
             del outcome_row["findings"]
         result: dict[str, Any] = {
@@ -991,7 +1019,7 @@ class _IntentStack:
         if worst.get("status") == "known" and _verdict(worst["min"], worst["max"], self.req_min, self.req_max):
             return  # the worst case meets the requirement by itself; nothing rested on the statistics
         self.finding("stack.rss_refused", "rss_refused", severity=self.severity(),
-                     outcome="unknown" if worst.get("status") != "known" else "fail",
+                     outcome=self.open_outcome() if worst.get("status") != "known" else "fail",
                      measured={"text": "; ".join(reasons) or "statistics not established"},
                      consequence="no statistical acceptance: the worst case governs and does not meet the requirement",
                      remedy="meet the requirement by worst case, or establish measured stable centred distributions, "
@@ -1367,9 +1395,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         if status != "pass":
             governing = result["requirement"].get("governing", result["requirement"].get("method"))
-            print(f"stackup: requirement {'not met' if status == 'fail' else 'not established'} ({governing})",
-                  file=sys.stderr)
-        return 0 if status == "pass" else 1
+            said = {"fail": "not met", "not_assessed": "not assessed"}.get(status, "not established")
+            print(f"stackup: requirement {said} ({governing})", file=sys.stderr)
+        return 0 if status in ("pass", "not_assessed") else 1  # D37: a result that assessed nothing blocks nothing
     except OSError as error:
         print(f"stackup: cannot read {args.stack}: {error}", file=sys.stderr)
         return 2

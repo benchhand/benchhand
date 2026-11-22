@@ -520,7 +520,7 @@ def _achievable(ctx: Context, surface: Any, criterion: Any, findings: list[Draft
 
 
 def _uncalibrated(ctx: Context, surface: Any, cal: Calibrated, findings: list[Draft]) -> tuple[str, str]:
-    findings.append(Draft("process.cnc.precision_uncalibrated", "major", UNKNOWN, unknown("achievable accuracy"),
+    outcome = ctx.gap(findings, cal, Draft("process.cnc.precision_uncalibrated", "major", UNKNOWN, unknown("achievable accuracy"),
                           cal.criterion(cal.characteristic), "capability calibrations", "; ".join(cal.reasons),
                           f"whether {surface.feature} is achievable is unknown: machine resolution and general-tolerance "
                           "labels never answer it",
@@ -529,7 +529,7 @@ def _uncalibrated(ctx: Context, surface: Any, cal: Calibrated, findings: list[Dr
                                   "record evidence of the achievable accuracy of this feature (test cuts, a capability study or "
                                   "supplier evidence)"),
                           recheck=["process.cnc.precision"], feature=surface.feature))
-    return UNKNOWN, f"{surface.feature} accuracy not calibrated"
+    return outcome, f"{surface.feature} accuracy not calibrated"
 
 
 def _one(feats: Any) -> str | None:

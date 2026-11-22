@@ -208,12 +208,12 @@ def kerf(ctx: Context) -> Result:
     cal = ctx.calibrated("kerf_deviation")
     parts: list[tuple[str, str]] = []
     if not cal.known:
-        findings.append(Draft(f"process.{kind}.kerf_uncalibrated", "major", UNKNOWN, unknown("as-cut width deviation"),
+        outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.kerf_uncalibrated", "major", UNKNOWN, unknown("as-cut width deviation"),
                               cal.criterion("kerf_deviation"), "capability calibrations", "; ".join(cal.reasons),
                               "as-cut sizes and every fit are unknown: nominal flat geometry is not an accuracy",
                               remedy="cut kerf coupons in this exact stock and thickness and record the deviation",
                               recheck=[f"process.{kind}.kerf"], earliest_stage="detail"))
-        parts.append((UNKNOWN, "kerf not calibrated"))
+        parts.append((outcome, "kerf not calibrated"))
     else:
         parts.append((PASS, f"kerf deviation calibrated ({cal.calibration.id})"))
     fits = _tab_slot_fits(ctx, cal, findings)
@@ -261,7 +261,7 @@ def _tab_slot_fits(ctx: Context, cal: Calibrated, findings: list[Draft]) -> list
             parts.append((UNKNOWN, f"{if_id} tab thickness unknown"))
             continue
         if not cal.known:
-            parts.append((UNKNOWN, f"{if_id} kerf unknown"))
+            parts.append((ctx.gap_outcome(cal), f"{if_id} kerf unknown"))
             continue
         coat_slot = _coating(ctx, ctx.pn, slot["feature"])
         coat_tab = _coating(ctx, tab["PN"], tab["feature"])
@@ -389,12 +389,12 @@ def features(ctx: Context) -> Result:
         cal = ctx.calibrated("min_hole")
         smallest = min(holes, key=lambda h: h["diameter_mm"])
         if not cal.known:
-            findings.append(Draft(f"process.{kind}.min_hole_uncalibrated", "minor", UNKNOWN, length(smallest["diameter_mm"]),
+            outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.min_hole_uncalibrated", "minor", UNKNOWN, length(smallest["diameter_mm"]),
                                   cal.criterion("hole_diameter", ">="), "capability calibrations", "; ".join(cal.reasons),
                                   "the smallest reliable hole in this stock is unknown",
                                   remedy="calibrate the smallest cut hole for this stock and thickness",
                                   recheck=[f"process.{kind}.features"]))
-            parts.append((UNKNOWN, "min hole not calibrated"))
+            parts.append((outcome, "min hole not calibrated"))
         elif smallest["diameter_mm"] < cal.bounds("mm")[1] - 1e-9:
             findings.append(Draft(f"process.{kind}.min_hole", "major", FAIL, length(smallest["diameter_mm"]),
                                   cal.criterion("hole_diameter", ">=", cal.bounds("mm")[1]), g.method("bore recognition"),
@@ -408,11 +408,11 @@ def features(ctx: Context) -> Result:
     if walls.get("thickness_mm") is not None:
         cal = ctx.calibrated("min_web")
         if not cal.known:
-            findings.append(Draft(f"process.{kind}.min_web_uncalibrated", "minor", UNKNOWN, length(walls["thickness_mm"]),
+            outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.min_web_uncalibrated", "minor", UNKNOWN, length(walls["thickness_mm"]),
                                   cal.criterion("web_width", ">="), "capability calibrations", "; ".join(cal.reasons),
                                   "the narrowest reliable web is unknown", remedy="calibrate the minimum web",
                                   recheck=[f"process.{kind}.features"]))
-            parts.append((UNKNOWN, "min web not calibrated"))
+            parts.append((outcome, "min web not calibrated"))
         elif walls["thickness_mm"] < cal.bounds("mm")[1] - 1e-9:
             findings.append(Draft(f"process.{kind}.min_web", "major", FAIL, length(walls["thickness_mm"]),
                                   cal.criterion("web_width", ">=", cal.bounds("mm")[1]), g.method("minimum-wall scan"),
@@ -437,12 +437,12 @@ def thermal(ctx: Context) -> Result:
         if haz.known:
             parts.append((PASS, f"heat-affected zone calibrated ({haz.calibration.id})"))
         else:
-            findings.append(Draft(f"process.{kind}.haz_uncalibrated", "minor", UNKNOWN, unknown("heat-affected zone"),
+            outcome = ctx.gap(findings, haz, Draft(f"process.{kind}.haz_uncalibrated", "minor", UNKNOWN, unknown("heat-affected zone"),
                                   haz.criterion("heat_affected_zone"), "capability calibrations", "; ".join(haz.reasons),
                                   "the edge zone changed by heat (hardness, melt, burn, dross) on critical as-cut edges is unknown",
                                   remedy="calibrate the heat-affected zone, or finish the critical edges",
                                   recheck=[f"process.{kind}.thermal"]))
-            parts.append((UNKNOWN, "heat-affected zone unknown"))
+            parts.append((outcome, "heat-affected zone unknown"))
     datums = [s for s in cut_critical if s.role == "datum"]
     if datums:
         flat = ctx.calibrated("flatness")
@@ -451,12 +451,12 @@ def thermal(ctx: Context) -> Result:
                               f"flatten or finish {s.feature} after cutting, or relax the limit with the design owner",
                               f"process.{kind}.thermal", findings) for s in datums]
         else:
-            findings.append(Draft(f"process.{kind}.flatness_uncalibrated", "minor", UNKNOWN, unknown("flatness"),
+            outcome = ctx.gap(findings, flat, Draft(f"process.{kind}.flatness_uncalibrated", "minor", UNKNOWN, unknown("flatness"),
                                   flat.criterion("flatness"), "capability calibrations", "; ".join(flat.reasons),
                                   "heat distortion and sheet flatness of the datum are unknown",
                                   remedy="calibrate flatness for this stock and size", recheck=[f"process.{kind}.thermal"],
                                   feature=datums[0].feature))
-            parts.append((UNKNOWN, "flatness unknown"))
+            parts.append((outcome, "flatness unknown"))
     findings.append(Draft(f"process.{kind}.edge_evidence", "info", UNKNOWN, unknown("edge quality not assessed"),
                           unknown("edge quality, dross, burning and distortion of the actual cut"), "record content",
                           "thermal edge effects are not geometric", "edge quality is unvalidated until cut",
@@ -471,7 +471,7 @@ def _within(ctx: Context, surface: Any, cal: Calibrated, prop: str, units: str, 
     """`judge_upper_bound` for an as-cut surface; a surface stating no limit of `prop` is UNKNOWN, never a pass."""
     outcome, reason = judge_upper_bound(ctx, surface, cal, prop, units, code=code, state="as-cut", remedy=remedy,
                                         recheck=recheck, findings=findings)
-    # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
+    # the surface states no limit of its own: a gap in the record that no calibration or flag fills, so UNKNOWN either way
     return (UNKNOWN, reason) if outcome == NO_LIMIT else (outcome, reason)
 
 
@@ -512,12 +512,12 @@ def edge(ctx: Context) -> Result:
         elif cal.known:
             parts.append((PASS, f"{name} calibrated"))
         else:
-            findings.append(Draft(f"process.waterjet.{name}_uncalibrated", "minor", UNKNOWN, unknown(name),
+            outcome = ctx.gap(findings, cal, Draft(f"process.waterjet.{name}_uncalibrated", "minor", UNKNOWN, unknown(name),
                                   cal.criterion(name), "capability calibrations", "; ".join(cal.reasons),
                                   f"the {name.replace('_', ' ')} of critical as-cut edges is unknown",
                                   remedy=f"calibrate {name} for this stock and thickness, or finish the edges",
                                   recheck=["process.waterjet.edge"], feature=cut_critical[0].feature))
-            parts.append((UNKNOWN, f"{name} unknown"))
+            parts.append((outcome, f"{name} unknown"))
     return combine(method, parts, findings)
 
 
@@ -535,12 +535,12 @@ def bend(ctx: Context) -> Result:
         return Result(NOT_APPLICABLE, method, "no bend recognised (coaxial inner and outer cylinders one sheet apart)")
     radius = ctx.calibrated("min_bend_radius")
     if not radius.known:
-        findings.append(Draft("process.sheet_forming.bend_uncalibrated", "major", UNKNOWN,
+        outcome = ctx.gap(findings, radius, Draft("process.sheet_forming.bend_uncalibrated", "major", UNKNOWN,
                               length(min(b["inner_radius_mm"] for b in bends)), radius.criterion("inner_bend_radius", ">="),
                               "capability calibrations", "; ".join(radius.reasons), "cracking at the bends is not assessed",
                               remedy="record the minimum bend radius for this material, temper, thickness and grain direction",
                               recheck=["process.sheet_forming.bend"]))
-        parts.append((UNKNOWN, "bend radius not calibrated"))
+        parts.append((outcome, "bend radius not calibrated"))
     else:
         need = radius.bounds("mm")[1]
         tight = [b for b in bends if b["inner_radius_mm"] < need - 1e-9]
@@ -556,12 +556,12 @@ def bend(ctx: Context) -> Result:
             for d in [_hole_to_bend(h, b)] if d is not None]
     if near:
         if not distance.known:
-            parts.append((UNKNOWN, "hole-to-bend not calibrated"))
-            findings.append(Draft("process.sheet_forming.hole_to_bend_uncalibrated", "minor", UNKNOWN,
+            outcome = ctx.gap(findings, distance, Draft("process.sheet_forming.hole_to_bend_uncalibrated", "minor", UNKNOWN,
                                   length(min(d for _, _, d in near)), distance.criterion("hole_to_bend", ">="),
                                   "capability calibrations", "; ".join(distance.reasons),
                                   "hole distortion near bends is not assessed", remedy="calibrate the minimum hole-to-bend distance",
                                   recheck=["process.sheet_forming.bend"]))
+            parts.append((outcome, "hole-to-bend not calibrated"))
         else:
             need = distance.bounds("mm")[1]
             close = [(h, b, d) for h, b, d in near if d < need - 1e-9]
@@ -614,11 +614,11 @@ def distortion(ctx: Context) -> Result:
         if cal.known:
             parts.append((PASS, f"{name} calibrated"))
             continue
-        findings.append(Draft(f"process.sheet_forming.{name}_uncalibrated", "minor", UNKNOWN, unknown(name),
+        outcome = ctx.gap(findings, cal, Draft(f"process.sheet_forming.{name}_uncalibrated", "minor", UNKNOWN, unknown(name),
                               cal.criterion(name), "capability calibrations", "; ".join(cal.reasons),
                               f"{name.replace('_', ' ')} of this material and thickness is unknown: bent dimensions are uncertain",
                               remedy=f"calibrate {name} with test bends", recheck=["process.sheet_forming"]))
-        parts.append((UNKNOWN, f"{name} unknown"))
+        parts.append((outcome, f"{name} unknown"))
     return combine(method, parts, findings)
 
 

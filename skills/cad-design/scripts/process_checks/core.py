@@ -81,6 +81,9 @@ def guidelines() -> Any:
     return _load(GUIDELINES_MODULE, GUIDELINES_PATH)
 
 
+NOT_ASSESSED_NOTE: str = guidelines().NOT_ASSESSED_NOTE  # what a not_assessed finding says (one text, with cad-fits)
+
+
 # --- results ----------------------------------------------------------------------------------------------------
 
 @dataclass
@@ -126,7 +129,7 @@ def combine(method: str, parts: Iterable[tuple[str, str]], findings: list[Draft]
     """A Result from sub-check (outcome, coverage) pairs: fail if any fails, else unknown if any is
     unknown, else not_assessed if any is, else pass; not_applicable sub-checks drop out, and all of them makes it
     not_applicable. An outcome outside those five raises HandlerError, so a stray value never counts as a pass. `reason` is
-    kept only when the result is not_assessed."""
+    kept only when the result is not_assessed, and defaults to that of the first not_assessed finding."""
     parts = list(parts)
     for o, _ in parts:
         if o not in (*OUTCOME_ORDER, NOT_APPLICABLE):
@@ -134,7 +137,14 @@ def combine(method: str, parts: Iterable[tuple[str, str]], findings: list[Draft]
     outcomes = {o for o, _ in parts if o != NOT_APPLICABLE}
     outcome = next((o for o in OUTCOME_ORDER if o in outcomes), NOT_APPLICABLE)
     coverage = "; ".join(c for _, c in parts if c) or "nothing to assess"
+    if reason is None:  # a not_assessed sub-check names its reason on its finding
+        reason = next((f.reason for f in findings if f.outcome == NOT_ASSESSED and f.reason), None)
     return Result(outcome, method, coverage, findings, uncertainty, source, reason if outcome == NOT_ASSESSED else None)
+
+
+def worst_of(*outcomes: str) -> str:
+    """The worst of check outcomes in OUTCOME_ORDER (fail, unknown, not_assessed, pass)."""
+    return min(outcomes, key=OUTCOME_ORDER.index)
 
 
 def text(value: str) -> dict[str, str]:
@@ -193,6 +203,7 @@ class Calibrated:
     limits: Any  # a Quantity when calibrated
     reasons: tuple[str, ...]
     calibration: Any = None
+    absent: bool = False  # no calibration of it is on record to use (or the flag ignores it): the one gap the flag excuses
 
     @property
     def known(self) -> bool:
@@ -614,16 +625,42 @@ class Context:
             if found.status == "calibrated" and found.calibration.id not in self.ignored:
                 self.ignored.append(found.calibration.id)
             return Calibrated("unknown", characteristic, None,
-                              (f"{self.label}: printer calibration is off, and no guideline value covers {characteristic}",))
+                              (f"{self.label}: printer calibration is off, and no guideline value covers {characteristic}",),
+                              absent=True)
         if found.status == "calibrated":
             return Calibrated("calibrated", characteristic, found.calibration.limits, (), found.calibration)
-        return Calibrated(found.status, characteristic, None, tuple(found.reasons))
+        return Calibrated(found.status, characteristic, None, tuple(found.reasons), absent=found.status == "unknown")
 
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""
         profile = profile or self.profile
         process = profile.process if profile is not None else (self.op.kind if self.op is not None else None)
         return not self.calibration and process in guidelines().GUIDELINE_PROCESSES
+
+    def gap_outcome(self, source: Calibrated | Limit) -> str:
+        """The outcome of a check that has no limit to judge by: UNKNOWN, or NOT_ASSESSED when the calibration flag is off
+        and `source` has no calibration on record (a refused or expired one stays UNKNOWN). The tool holds no generic
+        limit for it, and the user's own process gives the production limit (D36, D37)."""
+        absent = source.calibrated.absent if isinstance(source, Limit) else source.absent
+        return UNKNOWN if self.calibration or not absent else NOT_ASSESSED
+
+    def gap(self, findings: list[Draft], source: Calibrated | Limit, draft: Draft) -> str:
+        """Append `draft`, the finding of such a check, and return its outcome (`gap_outcome`). A not assessed finding
+        carries the reason calibration_off and says that the tool does not assess the user's own production limit."""
+        outcome = self.gap_outcome(source)
+        if outcome == NOT_ASSESSED:
+            draft.outcome, draft.reason = NOT_ASSESSED, "calibration_off"
+            draft.consequence = f"{draft.consequence}; {NOT_ASSESSED_NOTE}"
+        findings.append(draft)
+        return outcome
+
+    def unprofiled(self, op: Any | None = None) -> tuple[str, str | None]:
+        """(outcome, reason) of a check whose operation (`op`, default this one) records no capability profile:
+        NOT_ASSESSED with the reason no_capability_profile for a process the calibration flag does not cover (not FDM)
+        while the flag is off, else UNKNOWN. The tool holds no generic limits for such a process (D36, D37)."""
+        if not self.calibration and (op or self.operation).kind not in guidelines().GUIDELINE_PROCESSES:
+            return NOT_ASSESSED, "no_capability_profile"
+        return UNKNOWN, None
 
     def remedy(self, text: str, fix: str | None = None) -> str:
         """`text` (the remedy that asks for a calibration) while calibration counts. With the flag off for an FDM
@@ -671,9 +708,16 @@ class Context:
         if limit.status == "calibrated" or (limit.status == "guideline" and (service in GUIDELINE_PASS_CLASSES
                                                                              or self.calibration_off())):
             return PASS, coverage
-        if limit.status == "unknown":
-            return UNKNOWN, _noted(coverage, "limit unknown")
         kind = self.operation.kind
+        if limit.status == "unknown":
+            noted = _noted(coverage, "limit unknown")
+            if self.gap_outcome(limit) == UNKNOWN:
+                return UNKNOWN, noted
+            draft = Draft(f"process.{kind}.{check}_uncalibrated", "minor", UNKNOWN, measured, limit.criterion(prop, units),
+                          method, "; ".join(limit.reasons), f"{limit.characteristic} has no limit to judge the {check} by",
+                          remedy=self.remedy(f"calibrate {limit.characteristic} for this material and machine"),
+                          recheck=[f"process.{kind}"], feature=feature)
+            return self.gap(findings, limit, draft), noted
         findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
                               limit.criterion(prop, units), method,
                               f"{limit.characteristic} is a design-guideline value, not a calibration of this machine and material",
@@ -691,16 +735,18 @@ class Context:
         method = "capability profile lookup"
         if self.mi.is_fact(op.capability):
             reason = op.capability.reason or "not recorded"
-            draft = Draft(f"process.{op.kind}.capability_unknown", "major", UNKNOWN, text(f"capability unknown: {reason}"),
+            outcome, why = self.unprofiled()
+            draft = Draft(f"process.{op.kind}.capability_unknown", "major", outcome, text(f"capability unknown: {reason}"),
                           unknown(f"no capability profile names what {self.label} can do"),
                           method, f"the capability of {self.label} is unknown: {reason}",
-                          "no check of this operation can use calibrated criteria",
+                          "no check of this operation can use calibrated criteria"
+                          + (f"; {NOT_ASSESSED_NOTE}" if outcome == NOT_ASSESSED else ""),
                           remedy="record the capability profile of the actual machine, operator or supplier"
-                                 + ("" if self.calibration_off() else ", with its calibrations"),
-                          recheck=[f"process.{op.kind}"], earliest_stage="parts")
+                                 + ("" if not self.calibration else ", with its calibrations"),
+                          recheck=[f"process.{op.kind}"], earliest_stage="parts", reason=why)
             if op.provider == "outsourced":
                 draft.consequence += "; outsourcing is no exemption: the supplier's capability and inspection are required"
-            return Result(UNKNOWN, method, "capability unknown", [draft])
+            return Result(outcome, method, "capability unknown", [draft], reason=why)
         profile = self.profile
         if profile is None:
             draft = Draft("route.capability_reference", "major", FAIL, text(f"capability {op.capability}"),

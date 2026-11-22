@@ -78,11 +78,11 @@ def draft(ctx: Context) -> Result:
     if worst_face is None:
         return Result(UNKNOWN, method, "no face normals probed")
     if need is None:
-        findings.append(Draft(f"process.{kind}.draft_uncalibrated", "minor", UNKNOWN, angle(worst),
+        outcome = ctx.gap(findings, cal, Draft(f"process.{kind}.draft_uncalibrated", "minor", UNKNOWN, angle(worst),
                               cal.criterion("draft_angle", ">="), "capability calibrations", "; ".join(cal.reasons),
                               "the minimum draft for this material, finish and tool is unknown",
                               remedy="record the tool maker's or foundry's minimum draft", recheck=[f"process.{kind}.draft"]))
-        parts.append((UNKNOWN, "draft criterion unknown"))
+        parts.append((outcome, "draft criterion unknown"))
     elif worst < need - 1e-9:
         feats = sorted(worst_face.get("features") or ())
         findings.append(Draft(f"process.{kind}.draft", "major", FAIL, angle(worst), cal.criterion("draft_angle", ">=", need),
