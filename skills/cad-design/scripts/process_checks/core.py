@@ -30,8 +30,6 @@ ASSEMBLY_DATA_MODULE = "cad_record_assembly_data"  # the shared name cad-motion 
 GUIDELINES_PATH = INTENT_PATH.with_name("guidelines.py")
 GUIDELINES_MODULE = "cad_record_guidelines"  # the shared name manufacturing_intent loads it under
 
-GUIDELINE_PROCESSES = frozenset({"fdm"})  # the processes the shipped guideline sets cover (resin and the rest have none)
-
 # The service classes whose checks take a guideline value as a pass (the user's rule). Every other class, unknown
 # included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
 GUIDELINE_PASS_CLASSES = frozenset({"appearance_concept", "fit_assembly", "functional_demo"})
@@ -624,13 +622,23 @@ class Context:
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""
         profile = profile or self.profile
-        return not self.calibration and profile is not None and profile.process in GUIDELINE_PROCESSES
+        process = profile.process if profile is not None else (self.op.kind if self.op is not None else None)
+        return not self.calibration and process in guidelines().GUIDELINE_PROCESSES
+
+    def remedy(self, text: str, fix: str | None = None) -> str:
+        """`text` (the remedy that asks for a calibration) while calibration counts. With the flag off for an FDM
+        operation: `fix`, the real remedy without the calibration clause, then the coupon text; the coupon text alone
+        when there is no other fix."""
+        if not self.calibration_off():
+            return text
+        coupon = guidelines().COUPON_REMEDY
+        return f"{fix}; {coupon}" if fix else coupon
 
     def guideline_context(self) -> Any | None:
         """The guideline scope (guidelines.Context) of this operation's capability profile and material, or None
-        without a catalog, a profile or a process in GUIDELINE_PROCESSES."""
+        without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES."""
         profile = self.profile
-        if self.catalog is None or profile is None or profile.process not in GUIDELINE_PROCESSES:
+        if self.catalog is None or profile is None or profile.process not in guidelines().GUIDELINE_PROCESSES:
             return None
         material_id = self.stock_material_id()
         return guidelines().context_for(profile, self.record.materials.get(material_id) if material_id else None)
@@ -687,7 +695,8 @@ class Context:
                           unknown(f"no capability profile names what {self.label} can do"),
                           method, f"the capability of {self.label} is unknown: {reason}",
                           "no check of this operation can use calibrated criteria",
-                          remedy="record the capability profile of the actual machine, operator or supplier, with its calibrations",
+                          remedy="record the capability profile of the actual machine, operator or supplier"
+                                 + ("" if self.calibration_off() else ", with its calibrations"),
                           recheck=[f"process.{op.kind}"], earliest_stage="parts")
             if op.provider == "outsourced":
                 draft.consequence += "; outsourcing is no exemption: the supplier's capability and inspection are required"

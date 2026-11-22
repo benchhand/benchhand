@@ -101,7 +101,7 @@ class Assessment:
     guideline_digests: Mapping[str, str] = types.MappingProxyType({})  # id@revision -> sha256 the limits can come from
     resolutions: tuple[Any, ...] = ()  # guidelines.Resolved of every guideline limit looked up (the trace's rows)
     traced: frozenset[str] = frozenset()  # ids of the findings of obligations that consulted a guideline
-    calibration: bool = False  # the calibration flag this assessment ran under; the packet seals it when on
+    calibration: bool = False  # the calibration flag this assessment ran under; the packet seals it either way
 
     @property
     def complete(self) -> bool:
@@ -169,7 +169,8 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
     digests: dict[str, str] = {}
     resolutions: list[Any] = []  # shared by every Context: the trace's rows
     traced: set[str] = set()
-    refused_reported = calibration_reported = False
+    refused_reported = False
+    last_off: tuple[Context, Any] | None = None  # the last obligation of an FDM operation run with the flag off
     ignored: list[Any] = []  # recorded FDM calibrations skipped with the flag off (shared by every Context)
     for obligation in obligations:
         subject = obligation.subject
@@ -185,9 +186,8 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
         if scope is not None and catalog.refused and not refused_reported:
             refused_reported = True  # once per assessment, on the first obligation that could use a guideline
             result.findings.append(_refused(catalog.refused))
-        if ctx.ignored and not calibration_reported:
-            calibration_reported = True  # once per assessment, on the first obligation that met a recorded calibration
-            result.findings.append(_calibration_off(ctx.ignored))
+        if ctx.calibration_off():
+            last_off = (ctx, obligation)
         drafted = _findings(ctx, obligation, result, geometry.get((pn, component)))
         for item in drafted:
             if item.get("obligation") == obligation.id and item["outcome"] == FAIL and result.outcome != FAIL:
@@ -197,6 +197,9 @@ def assess(record: Any, geometry: Mapping[tuple[str, str], Geometry] | None = No
             traced.update(f["id"] for f in drafted)
         row = _row(obligation, result, drafted)
         outcomes.append(intent().thaw(row))
+    if ignored and last_off is not None:  # once, after the loop: every recorded calibration the off flag skipped
+        ctx, obligation = last_off
+        findings += _findings(ctx, obligation, Result(PASS, "calibration flag", "none", [_calibration_off(ignored)]), None)
     return Assessment(obligations, tuple(outcomes), tuple(findings), types.MappingProxyType(dict(sorted(digests.items()))),
                       tuple(resolutions), frozenset(traced), calibration)
 
@@ -275,9 +278,7 @@ def _findings(ctx: Context, obligation: Any, result: Result, geometry: Geometry 
         _carry_reason(item, draft.outcome, draft.reason, f"{obligation.id}: finding {draft.code}")
         if draft.link:
             item["obligation"] = obligation.id
-        if draft.remedy and ctx.calibration_off() and "calibrat" in draft.remedy.lower():
-            item["remedy"] = guidelines().COUPON_REMEDY  # an FDM finding never asks the user to calibrate while the flag is off
-        elif draft.remedy:
+        if draft.remedy:
             item["remedy"] = draft.remedy
         elif draft.outcome in (FAIL, UNKNOWN):
             item["remedy"] = "provide the missing evidence named in the uncertainty, then recheck"

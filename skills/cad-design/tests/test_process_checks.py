@@ -2379,5 +2379,105 @@ class CalibrationFlagTests(Checks):
         self.assertEqual(GL.calibration_recipe(False), {"flags": {GL.CALIBRATION_FLAG: "0"}})
 
 
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class CalibrationRemedyTests(Checks):
+    """With the flag off, a remedy keeps its real fix and swaps only the calibration clause for the coupon text."""
+
+    COUPON = "for a tighter limit, print a test coupon on the target printer"
+
+    def assess_off(self, documents: dict[str, Any], data: dict[str, Any] | None, *, catalog: Any = None, flag: bool = False,
+                   pn: str = "TST-0101") -> Any:
+        record = load(self, documents)
+        found = pc.assess(record, geometry(pn, data) if data is not None else {}, today=TODAY, catalog=catalog,
+                          calibration=flag)
+        self.assertEqual(packet_errors(found.packet({"version_manifest": "0" * 64})), [])
+        return found
+
+    def remedy(self, result: Any, code: str) -> str:
+        return str(self.finding(result, code)["remedy"])
+
+    def test_a_guideline_wall_fail_still_says_to_thicken_the_wall(self) -> None:
+        result = self.assess_off(guided(), walled(1.0), catalog=SHIPPED)
+        remedy = self.remedy(result, "process.fdm.wall")
+        self.assertIn("thicken the wall", remedy)
+        self.assertIn(self.COUPON, remedy)
+        self.assertNotIn("calibration is orientation", remedy)
+
+    def test_the_same_wall_fail_with_the_flag_on_keeps_its_text(self) -> None:
+        result = self.assess_off(guided(), walled(1.0), catalog=SHIPPED, flag=True)
+        self.assertEqual(self.remedy(result, "process.fdm.wall"), "thicken the wall, or reorient if the calibration is orientation-specific")
+
+    def test_an_unlimited_wall_keeps_the_nozzle_fix(self) -> None:
+        remedy = self.remedy(self.assess_off(guided(), walled(3.0)), "process.fdm.wall_uncalibrated")
+        self.assertIn("record the nozzle diameter or line width a guideline needs", remedy)
+        self.assertIn(self.COUPON, remedy)
+
+    def test_an_unlimited_small_feature_and_hole_name_only_the_coupon(self) -> None:
+        result = self.assess_off(guided(), walled(3.0, pins=(1.0,), holes=(1.0,)))
+        for code in ("process.fdm.small_feature_uncalibrated", "process.fdm.small_hole_uncalibrated"):
+            with self.subTest(code=code):
+                self.assertEqual(self.remedy(result, code), self.COUPON)
+
+    def test_an_unlimited_overhang_keeps_the_support_plan(self) -> None:
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[])
+        remedy = self.remedy(self.assess_off(documents, SHELF), "process.fdm.overhang_uncalibrated")
+        self.assertIn("plan supports on this surface", remedy)
+        self.assertIn(self.COUPON, remedy)
+        self.assertNotIn("calibrate", remedy)
+
+    def test_an_unlimited_contact_area_names_only_the_coupon(self) -> None:
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[])
+        result = self.assess_off(documents, stable([2.0, 2.0], TRIANGLE))
+        self.assertEqual(self.remedy(result, "process.fdm.contact_area_uncalibrated"), self.COUPON)
+
+    def test_an_unlimited_warp_names_only_the_coupon(self) -> None:
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[CONTACT])
+        result = self.assess_off(documents, stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]]))
+        self.assertEqual(self.remedy(result, "process.fdm.warp_uncalibrated"), self.COUPON)
+
+    def test_an_unlimited_bore_keeps_the_ream_fix(self) -> None:
+        bore = [surface("bore", "locating", criteria=[_diameter_criterion(">= 6")])]
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[CONTACT], critical=bore)
+        result = self.assess_off(documents, facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0}))
+        remedy = self.remedy(result, "process.fdm.hole_uncalibrated")
+        self.assertIn("ream the bore", remedy)
+        self.assertIn(self.COUPON, remedy)
+        self.assertNotIn("record the calibration", remedy)
+
+    def test_an_fdm_operation_without_a_capability_asks_for_no_calibration(self) -> None:
+        route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"})]
+        documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
+                              product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+        off, on = (self.remedy(self.assess_off(documents, None, flag=flag), "process.fdm.capability_unknown")
+                   for flag in (False, True))
+        self.assertEqual(off, "record the capability profile of the actual machine, operator or supplier")
+        self.assertEqual(on, "record the capability profile of the actual machine, operator or supplier, with its calibrations")
+
+    def test_a_cnc_precision_remedy_asks_for_no_calibration_while_the_flag_is_off(self) -> None:
+        profile = FX.capability_profile("tst_mill", "cnc", parameters={"axes": known(mm(3, units="count"))},
+                                        materials=[approval(ALU, operations=["machine"])], calibrations=[])
+        critical = [surface("pocket_floor", "seal", criteria=[FX.criterion("surface_roughness", "<=", 3.2, "um")])]
+        documents = FX.record(parts=[milled("TST-0201", [end_mill(4.0, 25.0)], critical=critical)], capabilities=[profile],
+                              materials=materials())
+        off, on = (self.remedy(self.assess_off(documents, POCKET, flag=flag, pn="TST-0201"), "process.cnc.precision_uncalibrated")
+                   for flag in (False, True))
+        self.assertEqual(off, "record evidence of the achievable accuracy of this feature (test cuts, a capability study or "
+                              "supplier evidence)")
+        self.assertEqual(on, "record a calibration (test cuts, a capability study or supplier evidence) for this feature")
+
+    def test_the_ignored_calibration_note_is_emitted_once_and_names_every_ignored_calibration(self) -> None:
+        recorded = (calibration("wall_coupon", "min_wall", POLYMER, 0.5, 0.6),
+                    calibration("overhang_coupon", "overhang_angle", POLYMER, 45.0, 50.0, "deg"))
+        data = underside(60.0)
+        data["walls"] = walled(3.0)["walls"]
+        result = self.assess_off(guided(calibrations=recorded), data, catalog=SHIPPED)
+        notes = result.by_code("process.fdm.calibration_off")
+        self.assertEqual(len(notes), 1, self.codes(result))
+        self.assertIn("overhang_coupon", notes[0]["measured"]["text"])
+        self.assertIn("wall_coupon", notes[0]["measured"]["text"])
+        self.assertEqual(notes[0]["severity"], "info")
+
+
 if __name__ == "__main__":
     unittest.main()

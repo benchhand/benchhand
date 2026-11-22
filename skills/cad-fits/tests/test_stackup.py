@@ -74,19 +74,21 @@ def closing_gap_documents(*, method: str = "worst_case", relevant: tuple[str, ..
     return documents
 
 
-def tab_slot_documents() -> dict:
-    """Two laser-cut, powder-coated steel plates joined by a critical tab-and-slot interface IF-002."""
+def tab_slot_documents(process: str = "laser") -> dict:
+    """Two laser-cut (or, with `process`, otherwise made), powder-coated steel plates joined by a critical tab-and-slot
+    interface IF-002."""
     def plate(pn: str, title: str, feature: str) -> dict:
-        return fx.part(pn, title, process="laser", material="TST steel sheet", part_intent=fx.intent(
+        return fx.part(pn, title, process=process, material="TST steel sheet", part_intent=fx.intent(
             functions=[{"function": "locating"}], material_profile="tst_steel_sheet",
             critical_surfaces=fx.not_applicable("the stack covers the fit"),
-            route=[fx.operation("cut", "laser", "tst_laser"),
+            route=[fx.operation("cut", process, "tst_laser"),
                    fx.operation("coat", "coating", targets=[{"feature": feature}])]))
 
     laser = fx.capability_profile(
-        "tst_laser", "laser",
+        "tst_laser", process,
         materials=[{"material": "tst_steel_sheet", "status": "approved", "thickness": fx.known(fx.quantity(3)),
-                    "extraction": fx.known("TST extraction"), "operations": ["cut"], "source": fx.source("user")}],
+                    "extraction": fx.known("TST extraction"), "operations": ["cut"], "source": fx.source("user")}]
+        if process == "laser" else None,
         calibrations=[fx.calibration("tst_slot_coupon", "slot_width_deviation", "tst_steel_sheet",
                                      fx.quantity(lower=-0.05, upper=0.05))])
     interface = fx.interface("IF-002", "TST-0011", "TST-0012", "mounting", functional={
@@ -150,11 +152,14 @@ class IntentStackContractTests(unittest.TestCase):
             self.assertEqual(list(stackup._validator("obligation_outcome").iter_errors(row)), [], row)
 
     def bound(self, documents: dict, stack: dict, case: str) -> dict:
+        return self.bound_with(documents, stack, case)
+
+    def bound_with(self, documents: dict, stack: dict, case: str, **options: object) -> dict:
         with tempfile.TemporaryDirectory() as directory:
             hw = fx.write_record(Path(directory) / "project" / "hw", documents)
             write_case(hw, case, stack)
             record = intent.load_record(hw)
-            result = stackup.compute(stack, record, case=case, on=ON, decisions=frozenset({"DR-001"}))
+            result = stackup.compute(stack, record, case=case, on=ON, decisions=frozenset({"DR-001"}), **options)
         self.assert_schema_valid(result)
         return result
 
@@ -471,6 +476,15 @@ class IntentStackContractTests(unittest.TestCase):
         result = self.bound(tab_slot_documents(), stack, "tab-slot")
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.state_mismatch"])
+
+    def test_off_an_fdm_capability_contributor_stays_unknown_and_names_the_missing_guideline(self) -> None:
+        documents = tab_slot_documents("fdm")
+        result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(codes(result), ["stack.capability_unresolved"])
+        found = result["findings"][0]
+        self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["consequence"] + found["uncertainty"])
+        self.assertEqual(found["remedy"], "for a tighter limit, print a test coupon on the target printer")
 
     def test_an_uncalibrated_capability_stays_unknown(self) -> None:
         documents = tab_slot_documents()

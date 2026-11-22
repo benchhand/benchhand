@@ -85,6 +85,7 @@ UPPER_OPERATORS = ("<=", "<")
 # check, recipe and seal reads it through the functions below, never from the process environment directly.
 CALIBRATION_FLAG = "CAD_CALIBRATION"
 COUPON_REMEDY = "for a tighter limit, print a test coupon on the target printer"
+GUIDELINE_PROCESSES = frozenset({"fdm"})  # the processes the shipped guideline sets cover, and the flag covers in code today
 MICROMETRE_TOLERANCE = 1e-6  # a conversion such as 0.563 mm -> 562.9999999999999 um is the whole size 563 um
 
 

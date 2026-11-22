@@ -1,6 +1,6 @@
 # cad-record capability templates: fields and guidance only, never machine numbers.
 # A template is never a capability: copy one into hw/manufacturing/capabilities.yaml and record your actual
-# machine, operator or supplier, its parameters with their sources, and its calibrations.
+# machine, operator or supplier, its parameters with their sources, and, when `CAD_CALIBRATION=1`, its calibrations.
 profiles:
   - id: fdm_template
     revision: 1

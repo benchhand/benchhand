@@ -153,7 +153,7 @@ def _contact_area(ctx: Context, g: Geometry, contact: float, findings: list[Draf
         findings.append(Draft(f"process.{kind}.contact_area_uncalibrated", "minor", UNKNOWN, measured,
                               cal.criterion("bed_contact_area", ">="), g.method("planar faces at the lowest z"),
                               "; ".join(cal.reasons), "whether the first layer holds the part to the bed is unassessed",
-                              remedy="calibrate the smallest reliable bed contact area", recheck=[f"process.{kind}.orientation"]))
+                              remedy=ctx.remedy("calibrate the smallest reliable bed contact area"), recheck=[f"process.{kind}.orientation"]))
         return UNKNOWN, "bed contact area not calibrated"
     need = cal.bounds("mm2")[1]
     if contact >= need - 1e-9:
@@ -288,8 +288,8 @@ def support(ctx: Context) -> Result:
                                   g.method("sampled down-facing normals"),
                                   "; ".join(overhang.reasons + bridge.reasons) or "not calibrated",
                                   "which down-facing surfaces need support is unknown",
-                                  remedy="calibrate the unsupported overhang angle and bridge span for this material and machine, "
-                                         "or plan supports on this surface",
+                                  remedy=ctx.remedy("calibrate the unsupported overhang angle and bridge span for this material and machine, "
+                                                    "or plan supports on this surface", "plan supports on this surface"),
                                   recheck=[f"process.{kind}.support"], earliest_stage="detail", feature=_one(feats)))
             parts.append((UNKNOWN, f"face {face.get('id')} overhang not calibrated"))
             continue
@@ -300,8 +300,9 @@ def support(ctx: Context) -> Result:
                                       angle(down.get("max_angle_deg") or 0.0), limit,
                                       g.method("sampled down-facing normals"), "; ".join(overhang.reasons + bridge.reasons),
                                       f"whether supports touch the {critical[feature].role} surface {feature} is unknown",
-                                      remedy="calibrate the unsupported overhang angle and bridge span, or reorient so "
-                                             f"{feature} faces up or sideways", recheck=[f"process.{kind}.support"],
+                                      remedy=ctx.remedy("calibrate the unsupported overhang angle and bridge span, or reorient so "
+                                                        f"{feature} faces up or sideways",
+                                                        f"reorient so {feature} faces up or sideways"), recheck=[f"process.{kind}.support"],
                                       earliest_stage="detail", feature=feature))
                 parts.append((UNKNOWN, f"support on critical {feature} undecided"))
             continue
@@ -533,8 +534,9 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                               length(walls["thickness_mm"]) if walls.get("thickness_mm") is not None else unknown("not measured"),
                               cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
                               "; ".join(cal.reasons), "the structural wall criterion is unknown",
-                              remedy="calibrate the minimum reliable wall for this material, process and orientation, "
-                                     "or record the nozzle diameter or line width a guideline needs",
+                              remedy=ctx.remedy("calibrate the minimum reliable wall for this material, process and orientation, "
+                                                "or record the nozzle diameter or line width a guideline needs",
+                                                "record the nozzle diameter or line width a guideline needs"),
                               recheck=[f"process.{kind}.geometry"],
                               earliest_stage="parts"))
         return UNKNOWN, "wall criterion not calibrated"
@@ -571,7 +573,8 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                               feature_cal.criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
                               f"{exempt[0]} features are assessed apart from structural walls",
                               f"the thinnest wall is on a {exempt[0]} feature with no calibration of its own",
-                              remedy=f"calibrate min_wall with scope feature {exempt[0]}, or justify the exception in a decision",
+                              remedy=ctx.remedy(f"calibrate min_wall with scope feature {exempt[0]}, or justify the exception in a decision",
+                                                "justify the exception in a decision"),
                               recheck=[f"process.{kind}.geometry"], feature=sorted(feats)[0] if feats else None))
         return UNKNOWN, f"{exempt[0]} wall not calibrated"
     location = walls.get("location_mm")
@@ -579,7 +582,7 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                           cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
                           "sampled scan: the true minimum can be up to the sample spacing thinner",
                           f"a structural wall {thickness:.3f} mm thick at {location} is below the {cal.status} minimum",
-                          remedy="thicken the wall, or reorient if the calibration is orientation-specific",
+                          remedy=ctx.remedy("thicken the wall, or reorient if the calibration is orientation-specific", "thicken the wall"),
                           recheck=[f"process.{kind}.geometry"], feature=sorted(feats)[0] if len(feats) == 1 else None))
     return FAIL, f"structural wall below the {cal.status} minimum{floor_only}"
 
@@ -611,7 +614,7 @@ def _smallest(ctx: Context, g: Geometry, findings: list[Draft], items: list[Mapp
     if not limit.known:
         findings.append(Draft(f"process.{kind}.{check}_uncalibrated", "minor", UNKNOWN, length(diameter),
                               limit.criterion(prop, "mm"), g.method(method), "; ".join(limit.reasons),
-                              f"{plural} are unassessed", remedy=f"calibrate {reliable}", recheck=[f"process.{kind}.geometry"]))
+                              f"{plural} are unassessed", remedy=ctx.remedy(f"calibrate {reliable}"), recheck=[f"process.{kind}.geometry"]))
         return UNKNOWN, f"{plural} not calibrated"
     need = limit.threshold("mm")
     if not limit.breaks(diameter, "mm"):
@@ -662,8 +665,8 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   "; ".join(cal.reasons),
                                   f"the as-made size of the {surface.role} {feature}"
                                   f"{' (' + HOLE_CLASSES[orientation] + ')' if oriented else ''} is unknown",
-                                  remedy=f"make coupons in this material{' and orientation (' + orientation + ')' if oriented else ''}"
-                                         " and record the calibration, or ream the bore",
+                                  remedy=ctx.remedy(f"make coupons in this material{' and orientation (' + orientation + ')' if oriented else ''}"
+                                                    " and record the calibration, or ream the bore", "ream the bore"),
                                   recheck=[f"process.{kind}.geometry"], feature=feature))
             parts.append((UNKNOWN, f"{feature} deviation not calibrated"))
             continue
@@ -684,7 +687,8 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   broken, g.method("bore recognition plus calibrated deviation"),
                                   f"calibration {cal.calibration.id} scatter{'; ' + HOLE_CLASSES[orientation] if oriented else ''}",
                                   f"the as-made {surface.role} {feature} cannot hold its stated diameter limits",
-                                  remedy=f"ream or machine {feature} to size, or compensate the model and re-calibrate",
+                                  remedy=ctx.remedy(f"ream or machine {feature} to size, or compensate the model and re-calibrate",
+                                                    f"ream or machine {feature} to size, or compensate the model"),
                                   alternatives=[{"text": "a purchased bushing", "tradeoffs": "adds a part and a press fit"}],
                                   recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature))
             parts.append((FAIL, f"{feature} outside its limits as made"))
@@ -746,7 +750,8 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
                 findings.append(Draft(f"process.{kind}.elephant_foot", "minor", UNKNOWN, unknown("first-layer flare"),
                                       foot.criterion("elephant_foot"), g.method("bed contact faces"), "; ".join(foot.reasons),
                                       f"the {surface.role} {feature} starts at the bed, where the first layer flares",
-                                      remedy="calibrate the elephant foot or chamfer the bed edge of the feature",
+                                      remedy=ctx.remedy("calibrate the elephant foot or chamfer the bed edge of the feature",
+                                                    "chamfer the bed edge of the feature"),
                                       recheck=[f"process.{kind}.geometry"], feature=feature))
                 parts.append((UNKNOWN, f"{feature} elephant foot unknown"))
         if cal.known:
@@ -755,7 +760,8 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
         findings.append(Draft(f"process.{kind}.feature_uncalibrated", "major", UNKNOWN, unknown("as-made deviation"),
                               cal.criterion(characteristic), g.method("feature locators"), "; ".join(cal.reasons),
                               f"the as-printed accuracy of the {surface.role} {feature} is unknown",
-                              remedy=f"calibrate {characteristic} for this material and orientation with coupons, or finish the surface",
+                              remedy=ctx.remedy(f"calibrate {characteristic} for this material and orientation with coupons, or finish the surface",
+                                                "finish the surface"),
                               recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature))
         parts.append((UNKNOWN, f"{feature} {characteristic} not calibrated"))
     return parts
@@ -808,7 +814,7 @@ def thermal_distortion(ctx: Context) -> Result:
         findings.append(Draft(f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint),
                               warp.criterion("warp"), g.method("bed footprint"), "; ".join(warp.reasons),
                               "warp of the bed footprint is unknown",
-                              remedy="calibrate warp for this material, enclosure and footprint size",
+                              remedy=ctx.remedy("calibrate warp for this material, enclosure and footprint size"),
                               recheck=[f"process.{kind}.thermal_distortion"]))
         parts.append((UNKNOWN, "warp not calibrated"))
     else:
@@ -821,7 +827,7 @@ def thermal_distortion(ctx: Context) -> Result:
                                   warp.criterion("footprint", "<=", covered, "mm"), g.method("bed footprint"),
                                   "the calibration covers smaller footprints only",
                                   "warp of this footprint is outside the calibrated scope",
-                                  remedy="calibrate warp at this footprint size", recheck=[f"process.{kind}.thermal_distortion"]))
+                                  remedy=ctx.remedy("calibrate warp at this footprint size"), recheck=[f"process.{kind}.thermal_distortion"]))
             parts.append((UNKNOWN, "footprint beyond the warp calibration"))
         else:
             parts.append(_flatness(ctx, warp, findings))

@@ -124,7 +124,6 @@ STATES = ("as_manufactured", "after_finish", "assembled")
 CONSEQUENCES = ("collision", "binding", "loss_of_function", "critical_fit", "performance", "appearance", "other")
 WORST_CASE_GOVERNED = frozenset(("collision", "binding", "loss_of_function", "critical_fit"))
 GOVERNING_METHODS = ("worst_case", "justified_rss")
-GUIDELINE_PROCESSES = frozenset(("fdm",))  # the processes the calibration flag covers in code today (as process_checks.core)
 QUALIFYING_SOURCES = frozenset(("calibration", "test", "supplier", "datasheet", "standard"))
 SHEET_CUTTING = frozenset(("laser", "waterjet", "plasma"))
 FINISHING = frozenset(("drilling", "reaming", "tapping", "finishing", "coating", "joining"))
@@ -748,7 +747,7 @@ class _IntentStack:
         if producer is not None and producer.capability != profile_id:
             self.unknown("stack.record_mismatch", item, f"{item.id}: operation {producer.id} uses {producer.capability}, "
                                                        f"not {profile_id}", "cite the capability of the operation")
-        if not self.calibration and profile.process in GUIDELINE_PROCESSES:
+        if not self.calibration and profile.process in GUIDELINES.GUIDELINE_PROCESSES:
             # TODO(benchhand-tw6.24): no guideline states a manufacture deviation, so this stays unknown until the not-assessed grade.
             self.unknown("stack.capability_unresolved", item,
                          f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no guideline "
