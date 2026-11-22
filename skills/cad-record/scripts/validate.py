@@ -937,15 +937,17 @@ def bom_totals(bom: list[dict[str, str]], levels: list[int | None]) -> dict[str,
 def check_release_readiness(hw: Path, verification: list[dict[str, str]],
                             part_records: Mapping[str, tuple[dict[str, Any], str]], path: str,
                             findings: list[dict[str, str]]) -> None:
-    """What every release needs from the record: a verification.csv whose rows all pass or are
-    waived, and no prototype (X) part revision."""
+    """What every release needs from the record: a verification.csv whose rows all pass, are waived or are
+    not_assessed (D37: no tool assessed it; evidence.py checks the evidence shows exactly that), and no
+    prototype (X) part revision."""
     verification_path = hw / "verification.csv"
     if not verification_path.is_file():
         findings.append(finding(path, "release requires a verification.csv"))
     else:
         for index, row in enumerate(verification, start=2):
-            if row.get("result") not in {"pass", "waived"}:
-                findings.append(finding(f"{verification_path}:{index}", "release verification result must be pass or waived"))
+            if row.get("result") not in {"pass", "waived", "not_assessed"}:
+                findings.append(finding(f"{verification_path}:{index}",
+                                        "release verification result must be pass, waived or not_assessed"))
     for pn, (part, part_path) in part_records.items():
         if isinstance(part.get("rev"), str) and part["rev"].startswith("X"):
             findings.append(finding(part_path, f"release cannot include prototype revision {part['rev']} for {pn}"))

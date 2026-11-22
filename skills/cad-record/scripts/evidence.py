@@ -27,7 +27,9 @@ schemas/manufacturing-check-result.schema.json; the one place every producer pub
 and a stack-up beside their analysis bundle) and the accepted ledger hw/manufacturing/evidence.yaml. An
 obligation no producer checks (physical tests, interface fit and acceptance, contact, function, the
 creep, fatigue and impact checks) stays unknown until accepted ledger evidence shows it; it is never
-passed by default. Unknown, planned and untested never become pass; stale evidence (another version
+passed by default. A producer outcome not_assessed (D37: calibration off, or no capability profile) gives the
+obligation the status not_assessed with the producer's reason: open and listed in the release, blocking no gate,
+never a pass. Unknown, planned and untested never become pass; stale evidence (another version
 without an approving impact decision, or a changed dependency fingerprint) counts as nothing; a waiver
 stays waived, needs an approved decision, its exact subject and an unexpired scope, and never overrides a
 governing safety or regulatory requirement or a geometry-integrity failure. A software producer never
@@ -109,9 +111,11 @@ STAGES = mi.STAGES
 LEVELS = mi.EVIDENCE_LEVELS
 PHYSICAL = "physically_validated"
 # An obligation's status. Resolved: pass, waived (an approved, scoped waiver; never a pass) and not_applicable.
-RESULTS = ("pass", "fail", "waived", "not_applicable", "stale", "planned", "unknown")
+# not_assessed (D37: calibration off, or no capability profile) is not resolved and never a pass, yet blocks no gate:
+# the obligation stays open and visible, with the reason the producer gave.
+RESULTS = ("pass", "fail", "waived", "not_applicable", "not_assessed", "stale", "planned", "unknown")
 RESOLVED = frozenset({"pass", "waived", "not_applicable"})
-_WORST_FIRST = ("fail", "stale", "unknown", "planned", "waived", "pass", "not_applicable")
+_WORST_FIRST = ("fail", "stale", "unknown", "planned", "not_assessed", "waived", "pass", "not_applicable")
 PACKET_KIND = "cad-evidence-packet"
 PACKET_SCHEMA_VERSION = 1
 INVENTORY_SCHEMA = "cad-acceptance-inventory/1"
@@ -237,6 +241,7 @@ class ReleaseAssessment:
     open_obligations: tuple[str, ...]
     trial: bool
     findings: tuple[Finding, ...]
+    not_assessed: tuple[str, ...] = ()  # the in-scope obligations no tool assessed: open, blocking nothing, never a pass
 
     @property
     def blocking(self) -> tuple[Finding, ...]:
@@ -256,12 +261,19 @@ def _worst(results: Iterable[str]) -> str | None:
 
 def _best(results: Sequence[str], waived: bool) -> str:
     """The status of one obligation from all its evidence: a current fail stands unless a valid waiver
-    covers it (waived, never pass); a current pass outranks waivers, stale, planned and unknown evidence."""
+    covers it (waived, never pass); a current pass outranks waivers, stale, planned and unknown evidence.
+    not_assessed ranks below pass, waived and not_applicable and above stale, planned and no evidence; an
+    explicit unknown outcome beside it keeps the obligation unknown, since something was assessed and left open."""
     found = set(results)
     if "fail" in found:
         return "waived" if waived else "fail"
-    for result in ("pass", "waived", "not_applicable", "stale", "planned"):
+    for result in ("pass", "waived", "not_applicable"):
         if result in found or (result == "waived" and waived):
+            return result
+    if "not_assessed" in found:
+        return "unknown" if "unknown" in found else "not_assessed"
+    for result in ("stale", "planned"):
+        if result in found:
             return result
     return "unknown"
 
@@ -461,12 +473,14 @@ class Assessment:
             findings.extend(Finding("release.scope", "hw/product.yaml", problem) for problem in problems)
         policy = SERVICE_POLICY.get(service or "", None)
         results = self.results()
-        trial, waivers, still_open = False, [], []
+        trial, waivers, still_open, unassessed = False, [], [], []
         for obligation in self.expected:
             status = self.statuses[obligation.id]
             in_scope = policy is not None and in_release_scope(obligation.as_dict(), service)
             if status.result != "pass" and status.result != "not_applicable":
                 still_open.append(obligation.id)
+            if in_scope and status.result == "not_assessed":
+                unassessed.append(obligation.id)
             if status.result == "waived" and in_scope:
                 waivers.append(impact.plain(status.waiver) if status.waiver is not None else {})
                 if obligation.level == PHYSICAL:
@@ -479,7 +493,8 @@ class Assessment:
             claims[req_id] = levels
         if scope is not None:
             scope = {**scope, "trial": trial}
-        return ReleaseAssessment(service, scope, claims, tuple(waivers), tuple(still_open), trial, tuple(findings))
+        return ReleaseAssessment(service, scope, claims, tuple(waivers), tuple(still_open), trial, tuple(findings),
+                                 tuple(unassessed))
 
     def packet(self, stage: str, record_sha256: str) -> dict[str, Any]:
         """The aggregate evidence packet (`evidence.py check`, stamped by cad-recheck)."""
@@ -530,13 +545,7 @@ def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str,
             if not in_release_scope(obligation, service_class):
                 continue
             if result == "waived":
-                if service_class == "safety_critical":
-                    findings.append(Finding("release.waiver_forbidden", path,
-                                            f"{ident} is waived; a safety-critical release takes no waiver", obligation=ident))
-                elif obligation["level"] == PHYSICAL and not SERVICE_POLICY.get(service_class or "", SERVICE_POLICY["production"]).trial:
-                    findings.append(Finding("release.trial_not_permitted", path,
-                                            f"{ident} is waived untested: a {service_class} release is never an "
-                                            "unvalidated trial", obligation=ident))
+                findings.extend(_waiver_findings(obligation, path, service_class))
                 continue
             if result in RESOLVED:
                 continue
@@ -546,11 +555,33 @@ def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str,
                 continue
             if result == "planned" and obligation["level"] == PHYSICAL:
                 continue  # a physical test may stay planned until the release
+        if result == "not_assessed":
+            findings.append(_not_assessed_finding(obligation, path, stage))
+            continue
         code = {"fail": "gate.fail", "stale": "gate.stale"}.get(result, "gate.unresolved")
         severity = "error" if (not explore or result == "fail") else "warning"
         findings.append(Finding(code, path, f"{ident} is {result} at stage {stage} ({obligation.get('basis', '')})",
                                 severity, ident))
     return findings
+
+
+def _waiver_findings(obligation: Mapping[str, Any], path: str, service_class: str | None) -> list[Finding]:
+    """What a waived obligation costs a release of `service_class`: nothing, unless the class forbids the waiver."""
+    ident = obligation["id"]
+    if service_class == "safety_critical":
+        return [Finding("release.waiver_forbidden", path,
+                        f"{ident} is waived; a safety-critical release takes no waiver", obligation=ident)]
+    if obligation["level"] == PHYSICAL and not SERVICE_POLICY.get(service_class or "", SERVICE_POLICY["production"]).trial:
+        return [Finding("release.trial_not_permitted", path,
+                        f"{ident} is waived untested: a {service_class} release is never an unvalidated trial", obligation=ident)]
+    return []
+
+
+def _not_assessed_finding(obligation: Mapping[str, Any], path: str, stage: str) -> Finding:
+    """An obligation no producer assessed (D37): shown at the gate, never an error and never resolved."""
+    ident = obligation["id"]
+    return Finding("gate.not_assessed", path, f"{ident} is not assessed at stage {stage}: it blocks nothing and is no pass",
+                   "info", ident)
 
 
 SELECTION_PATH = "hw/manufacturing/selection.yaml"
@@ -746,6 +777,8 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
                                         f"{obligation.level}", "warning", ident))
                 continue
             result = outcome.get("outcome")
+            if obligation.level == PHYSICAL and result == "not_assessed":
+                continue  # D37 covers the tool's own checks, not a test the user must perform: it never stands in for one
             if obligation.level == PHYSICAL and result == "pass":
                 findings.append(Finding("evidence.physical_claim", packet.bundle,
                                         f"{packet.bundle}: a producer cannot physically validate {ident}; record the test "
@@ -757,6 +790,8 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
                 continue
             if result in ("pass", "fail", "not_applicable", "unknown"):
                 candidates[ident].append((result, packet.bundle, outcome.get("method") or ""))
+            elif result == "not_assessed":
+                candidates[ident].append((result, packet.bundle, outcome.get("reason") or ""))
 
     # ledger entries
     entry_results: dict[str, str] = {}
@@ -860,7 +895,8 @@ def _packet_problems(packet: ProducerPacket, expected: Mapping[str, Any]) -> lis
     if data.get("complete") is True and not covered:
         problems.append("it claims complete but lacks outcomes for " + ", ".join(sorted(map(str, set(packet_expected) - set(ids)))))
     results = {o.get("outcome") for o in outcomes}
-    shown = "fail" if "fail" in results else ("unknown" if "unknown" in results or not covered else "pass")
+    shown = ("fail" if "fail" in results else "unknown" if "unknown" in results or not covered
+             else "not_assessed" if "not_assessed" in results else "pass")  # the order of process_checks combine
     if data.get("result") != shown:
         problems.append(f"its result {data.get('result')!r} is not what its outcomes show ({shown})")
     given = {o.get("obligation"): o.get("outcome") for o in outcomes}
@@ -1035,7 +1071,8 @@ def _verification(record: Any, rows: Sequence[Mapping[str, str]], facets: Mappin
     """The typed verification rows: each verification.csv row with its method, criterion and stated
     result, the result its evidence shows (the worst required facet; unknown without evidence) and the
     ledger entries it rests on, with what each is tied to. A stated pass or waiver without that
-    evidence is an evidence.csv_unsupported finding."""
+    evidence is an evidence.csv_unsupported finding, and so is a stated not_assessed that the evidence
+    does not show as not_assessed (D37: it is never accepted as a pass)."""
     typed = []
     for index, row in enumerate(rows, start=2):
         req = row.get("requirement_id") or ""
@@ -1051,7 +1088,8 @@ def _verification(record: Any, rows: Sequence[Mapping[str, str]], facets: Mappin
                                  "version": configuration.get("version"), "part_rev": configuration.get("part_rev"),
                                  "tied_to": sorted(entry.get("fingerprints") or {})})
         stated = (row.get("result") or "").strip()
-        if stated == "pass" and shown != "pass" or stated == "waived" and shown not in ("pass", "waived"):
+        if (stated == "pass" and shown != "pass" or stated == "waived" and shown not in ("pass", "waived")
+                or stated == "not_assessed" and shown != "not_assessed"):
             findings.append(Finding("evidence.csv_unsupported", f"hw/verification.csv:{index}",
                                     f"{req} states {stated} but its accepted evidence shows {shown}: record current "
                                     "evidence in hw/manufacturing/evidence.yaml (a CSV result alone is not evidence)"))
@@ -1340,7 +1378,7 @@ def packet_blocking(data: Mapping[str, Any], *, record: Any, stage: str, selecti
              if f.severity == "error"]
     found += [f"{f.code}: {f.message}" for f in selection_gate(selection.assess(record, input_sha256=selection_sha256), stage)
               if f.severity == "error"]
-    recomputed = _OBLIGATION_GATE_CODES | {"gate.selection"}
+    recomputed = _OBLIGATION_GATE_CODES | {"gate.selection", "gate.not_assessed"}
     found += [f"{item.get('code')}: {item.get('message')}" for item in ((data.get("gate") or {}).get("findings") or ())
               if isinstance(item, Mapping) and item.get("severity") == "error" and item.get("code") not in recomputed]
     return found
@@ -1403,11 +1441,12 @@ def _due(obligation: Any, stage: str) -> bool:
 
 def stale_producers(assessment: Assessment, stage: str) -> set[str]:
     """The producers of every obligation due at `stage` that is not resolved (stale, failed, unknown or
-    not started). A physical validation does not count, since no producer can show it."""
+    not started). A physical validation does not count, since no producer can show it, and a not_assessed
+    one does not either: running its producer again assesses nothing until the calibration is on."""
     found: set[str] = set()
     for obligation in assessment.expected:
         if obligation.level != PHYSICAL and _due(obligation, stage) \
-                and assessment.statuses[obligation.id].result not in RESOLVED:
+                and assessment.statuses[obligation.id].result not in RESOLVED | {"not_assessed"}:
             found.update(producers_of(obligation.family))
     return found
 

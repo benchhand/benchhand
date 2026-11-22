@@ -89,6 +89,7 @@ yaml_loader = validate.yaml_loader
 
 MANIFEST = layout.MANIFEST
 SCHEMA_VERSION = 3
+NOT_ASSESSED = "not_assessed"  # a bundle status: the producer assessed nothing (calibration off or no capability profile)
 WORKFLOW_KEYS = {"product.yaml": ("flow",)}  # workflow state; advancing it is not a design change
 SHIPPED_COPIES = "manufacturing/guidelines/shipped--"  # guidelines.SHIPPED_COPY under PROJECT_RELATIVE
 EVIDENCE_PATH = re.compile(r"hw/[^\s,;()\"'<>]+")  # a project-relative path inside a verification evidence cell
@@ -355,12 +356,13 @@ def select_bundle(release: Release, kind: str, subject: str, version_sha: str, w
     if manifest.get("version_manifest_sha256") != version_sha:
         release.refuse(rel, "stale", f"{rel} is not bound to the frozen {release.version} manifest; produce it again")
         return
-    if manifest.get("status") != "pass":
-        release.refuse(rel, "failed", f"{rel} records status {manifest.get('status')!r}, not pass")
+    status = manifest.get("status")
+    if status not in ("pass", NOT_ASSESSED):  # a producer that assessed nothing blocks nothing, and is never recorded as a pass
+        release.refuse(rel, "failed", f"{rel} records status {status!r}, not pass or not_assessed")
         return
     manifest_sha = sha256(directory / MANIFEST)
     release.bundles.append({"layout": f"bundle.{kind}", "path": rel, "manifest_sha256": manifest_sha})
-    release.checks[f"{kind}/{subject}"] = "pass"
+    release.checks[f"{kind}/{subject}"] = status
     package = f"{kind}/{subject}"
     found = layout.classify(f"{release.target_rel}/{package}/{MANIFEST}")
     if found is None or found.entry.id != "release.package":
@@ -468,7 +470,7 @@ def check_acceptance(release: Release, frozen: Any) -> None:
                           "open_obligations": list(policy.open_obligations)}
     for path, sha in inventory.items():
         release.copy(f"acceptance/{path.removeprefix('hw/')}", path, sha)
-    release.checks["acceptance"] = "waived" if policy.trial else "pass"
+    release.checks["acceptance"] = "waived" if policy.trial else NOT_ASSESSED if policy.not_assessed else "pass"
 
 
 def project_findings(hw: Path, target_rel: str, repaired_on: date | None) -> list[dict[str, Any]]:

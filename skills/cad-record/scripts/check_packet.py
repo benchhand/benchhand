@@ -43,7 +43,8 @@ def build(record: Any, expected: Iterable[Any], producer: str, outcomes: list[di
     covered = {row["obligation"] for row in outcomes}
     complete = ids <= covered
     states = [row["outcome"] for row in outcomes if row["obligation"] in ids]
-    result = "fail" if "fail" in states else "unknown" if ("unknown" in states or not complete) else "pass"
+    result = ("fail" if "fail" in states else "unknown" if ("unknown" in states or not complete)
+              else "not_assessed" if "not_assessed" in states else "pass")  # D37: never folded into a pass
     scope = [o["subject"] for o in wanted if not o["subject"].get("product")] or [{"product": True}]
     unique_scope = [dict(s) for s in {json.dumps(s, sort_keys=True): s for s in scope}.values()]
     return {"schema_version": 1, "record_version": record.version, "producer": producer,
