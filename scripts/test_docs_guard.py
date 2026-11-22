@@ -178,6 +178,7 @@ ALLOWED = [
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_decision_makers_are_optional_and_read_as_none_when_absent', 'DR-001-a.md', TMP),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_an_old_form_decision_is_refused_naming_the_expected_shape', 'DR-001.md', TMP),
     Allow('skills/cad-record/tests/test_decision_records.py', 'ReadTests.test_a_slugged_file_without_front_matter_is_refused_naming_the_expected_shape', 'DR-001-gate.md', TMP),
+    Allow('skills/cad-record/tests/test_decision_records.py', 'WriteTests.test_a_malformed_gate_is_refused_naming_the_file_and_the_key', 'DR-001-gate.md', TMP),
     Allow('skills/cad-record/tests/test_design_rules.py', 'Retention.test_torque_and_retainer_decisions_exist', 'J-004 torque_path/decision DR-099 has no record: expected hw/decisions/DR-099-<slug>.md', HW),
     Allow('skills/cad-record/tests/test_design_rules.py', 'Retention.test_torque_and_retainer_decisions_exist', 'interfaces/0/limits/press_fit/axial_retainer/decision DR-098 has no record: expected hw/decisions/DR-098-<slug>.md', HW),
     Allow('skills/cad-record/tests/test_evidence.py', 'UnknownNeverPasses.test_a_verification_csv_pass_is_not_evidence', 'hw/docs/x.md', HW),

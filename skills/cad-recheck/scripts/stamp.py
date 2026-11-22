@@ -128,12 +128,16 @@ def require_profile(root: Path, committed: bool, product: dict[str, Any]) -> Non
         raise RuntimeError(gate.refusal(found))
 
 
-def require_gate_decision(root: Path, committed: bool, gate: str, stamp_time: Any) -> None:
-    """Refuse an advance of flow.stage past the stamped stage unless a decision record of hw/decisions records it:
-    status proposed (provisional) or accepted, not superseded, dated on or after the stamp's UTC day. Reads the index,
-    or HEAD when `committed`; a record cad-record decision_records refuses is a refusal too."""
+def require_gate_decision(root: Path, committed: bool, previous: str, advanced: str, stamp_time: Any) -> None:
+    """Refuse an advance of flow.stage from the stamped stage `previous` to `advanced` unless a decision record of
+    hw/decisions is the gate of that advance: its front matter says `gate: {from: <previous>, to: <advanced>}`, its
+    status is proposed (provisional) or accepted, it is not superseded and it is dated on or after the stamp's UTC
+    day. Any other record, the flow profile among them, is no gate. Reads the index, or HEAD when `committed`; a
+    record cad-record decision_records refuses is a refusal too."""
     decision_records = validate.decision_records
-    problem = f"flow.stage advanced past the stamped stage (gate {gate}) without a decision record of the gate"
+    wanted = f"gate: {{from: {previous}, to: {advanced}}}"
+    problem = (f"flow.stage advanced past the stamped stage (gate {previous} → {advanced}) without a decision record "
+               "of the gate")
     try:
         stamped = datetime.fromisoformat(stamp_time)
     except (TypeError, ValueError) as error:
@@ -147,9 +151,11 @@ def require_gate_decision(root: Path, committed: bool, gate: str, stamp_time: An
             records = decision_records.read_decisions(Path(scratch))
         except decision_records.DecisionRecordError as error:
             raise RuntimeError(f"cannot read the decision records of hw/decisions: {str(error).replace(scratch + '/', '')}") from error
-    if not any(r.status in ("proposed", "accepted") and not r.superseded_by and r.date >= stamped_on for r in records):
+    if not any(r.gate == (previous, advanced) and r.status in ("proposed", "accepted") and not r.superseded_by
+               and r.date >= stamped_on for r in records):
         raise RuntimeError(f"{problem}. Record the decision in hw/decisions as a proposed (provisional) or accepted "
-                           f"record, not superseded, dated {stamped_on} (UTC) or later.")
+                           f"record with `{wanted}` in its front matter, not superseded, dated {stamped_on} (UTC) "
+                           "or later.")
 
 
 def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:
@@ -463,7 +469,7 @@ def main() -> int:
             if record_data.get("passed") is not True:
                 raise RuntimeError("the recheck stamp does not say passed: true")
             if stamped_stage != current_stage:
-                require_gate_decision(root, committed, f"{stamped_stage} → {current_stage}", record_data.get("timestamp"))
+                require_gate_decision(root, committed, stamped_stage, current_stage, record_data.get("timestamp"))
             if record_data.get("tree_hash") != actual_hash:
                 raise RuntimeError("the recheck stamp is stale for the staged hw/ tree")
             checks = record_data.get("checks")
