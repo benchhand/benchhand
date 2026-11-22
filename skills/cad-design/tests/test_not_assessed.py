@@ -299,6 +299,23 @@ def _unprofiled(kind: str = "cnc", capability: Any = None) -> dict[str, Any]:
                        product_data=T.FX.product(T.FX.use_case()), decisions=("DR-001", "DR-002"))
 
 
+def _unprofiled_tooling(kind: str, tools: list[dict[str, Any]], *, stock: dict[str, Any] | None = None,
+                        workholding: dict[str, Any] | None = None, critical: Any = None) -> dict[str, Any]:
+    """TST-0101 with one `kind` ("cnc" or "drilling") operation that names `tools` (a 4 mm cutter when none) whose capability is unknown, with no profile.
+    `stock` overrides keys of the cnc stock, `workholding` replaces the clamp plan."""
+    cap = T.FX.unknown("no capability profile of the machine shop is recorded")
+    setup: dict[str, Any] = {"datums": ["datum_a"], "access": {"sides": ["+Z"], "tools": tools or [T.end_mill(4.0, 25.0)]}}
+    milling = {"stock": {"material_profile": T.ALU, "grade": T.known("TST 6061-T6"), "dimensions": T.known("45 x 35 x 30"),
+                         **(stock or {})}, "datums": ["datum_a"], "workholding": workholding or {"method": T.known("vice")}}
+    if kind == "cnc":
+        route = [T.FX.operation("mill", "cnc", cap, setup={**setup, **milling})]
+    else:  # a drilling operation acts on what an earlier operation made
+        route = [T.FX.operation("mill", "cnc", cap, setup=milling),
+                 T.FX.operation("drill", "drilling", cap, setup=setup, targets=[{"feature": "bore"}])]
+    return T.FX.record(parts=[T.part(PN, route, process="cnc", material=T.ALU, critical=critical)], capabilities=[],
+                       materials=T.materials())
+
+
 CNC_GATED = tuple(f"process.cnc.{family}@{PN}/mill" for family in ("stock", "setup", "access", "features", "precision"))
 
 
@@ -320,15 +337,62 @@ class NoCapabilityProfileTests(Assessed):
         route = result.by_code("route.capability_unknown")
         self.assertEqual({(f["outcome"], f["reason"]) for f in route}, {("not_assessed", "no_capability_profile")})
 
-    def test_off_a_failing_access_check_stays_a_fail_when_the_operation_has_no_profile(self) -> None:
-        """fail ranks ahead of not_assessed: a 6 mm cutter cannot make the R2 pocket corners, whatever the machine's capability."""
-        unknown_capability = T.FX.unknown("no capability profile of the machine shop is recorded")
-        milled = T.milled(PN, [T.end_mill(6.0, 30.0)], workholding=True, capability=unknown_capability)
-        documents = T.FX.record(parts=[milled], capabilities=[], materials=T.materials())
-        result = self.run_case(documents, T.geometry(PN, T.POCKET), False)
+    def test_off_a_miss_read_from_the_tool_library_is_open_when_the_operation_has_no_profile(self) -> None:
+        """The cutters and drills of the capability profile are part of the library: with no profile the operation's own
+        list may be incomplete, so a miss against it is not a fail. Each case fails with the profile (the tests of
+        test_process_checks) and is not_assessed without one."""
+        corner = T.POCKET
+        deep = T.facts(frame="model", faces=T.POCKET_FACES, holes=(T.hole("bore", 6.0, (0.0, 0.0, -1.0), depth=20.0),))
+        cases = {
+            "internal radius": ("cnc", [T.end_mill(6.0, 30.0)], corner, "process.cnc.access@TST-0101/mill"),
+            "corner reach": ("cnc", [T.end_mill(4.0, 8.0)], corner, "process.cnc.access@TST-0101/mill"),
+            "hole tool": ("cnc", [T.end_mill(12.0, 30.0)], deep, "process.cnc.access@TST-0101/mill"),
+            "hole depth": ("cnc", [T.end_mill(4.0, 5.0)], deep, "process.cnc.access@TST-0101/mill"),
+            "drill size": ("drilling", [T.end_mill(4.0, 30.0)], deep, "process.drilling.feature@TST-0101/drill"),
+            "drill depth": ("drilling", [T.end_mill(6.0, 5.0)], deep, "process.drilling.feature@TST-0101/drill"),
+            "target reach": ("drilling", [T.end_mill(6.0, 5.0)], deep, "process.drilling.access@TST-0101/drill"),
+        }
+        for name, (kind, tools, data, obligation) in cases.items():
+            with self.subTest(name):
+                result = self.run_case(_unprofiled_tooling(kind, tools), T.geometry(PN, data), False)
+                row = self.row(result, obligation)
+                self.assertEqual((row["outcome"], row.get("reason")), ("not_assessed", "no_capability_profile"))
+                self.assertEqual([f["code"] for f in result.findings if f["outcome"] == "fail" and f["code"].startswith("process.")], [])
+
+    def test_off_an_unreachable_hole_stays_a_fail_when_the_operation_has_no_profile(self) -> None:
+        """fail ranks ahead of not_assessed: no access side of the setup enters the hole, whatever the machine can do."""
+        sideways = T.facts(frame="model", faces=T.POCKET_FACES, holes=(T.hole("bore", 6.0, (1.0, 0.0, 0.0)),))
+        result = self.run_case(_unprofiled_tooling("cnc", [T.end_mill(4.0, 25.0)]), T.geometry(PN, sideways), False)
         self.assertEqual(self.row(result, f"process.cnc.access@{PN}/mill")["outcome"], "fail")
         self.assertEqual(self.row(result, f"process.cnc.stock@{PN}/mill")["outcome"], "not_assessed")
         self.assertTrue(result.by_code("process.cnc.capability_unknown"))
+
+    def test_off_a_stock_of_another_material_stays_a_fail_when_the_operation_has_no_profile(self) -> None:
+        documents = _unprofiled_tooling("cnc", [], stock={"material_profile": T.POLYMER})
+        result = self.run_case(documents, None, False)
+        self.assertEqual(self.row(result, f"process.cnc.stock@{PN}/mill")["outcome"], "fail")
+        self.assertEqual(len(result.by_code("process.cnc.stock_material")), 1)
+
+    def test_off_a_stock_thinner_than_the_part_stays_a_fail_when_the_operation_has_no_profile(self) -> None:
+        documents = _unprofiled_tooling("cnc", [], stock={"thickness": T.known(T.mm(10.0))})  # the part is 20 mm at its smallest
+        result = self.run_case(documents, T.geometry(PN, T.POCKET), False)
+        self.assertEqual(self.row(result, f"process.cnc.stock@{PN}/mill")["outcome"], "fail")
+        self.assertEqual(len(result.by_code("process.cnc.stock_size")), 1)
+
+    def test_off_a_clamp_on_a_critical_surface_stays_a_fail_when_the_operation_has_no_profile(self) -> None:
+        documents = _unprofiled_tooling("cnc", [], critical=[T.surface("seat", "seat")],
+                                        workholding={"method": T.known("vice"), "contact_regions": [{"feature": "seat"}]})
+        result = self.run_case(documents, None, False)
+        self.assertEqual(self.row(result, f"process.cnc.setup@{PN}/mill")["outcome"], "fail")
+        self.assertEqual(len(result.by_code("process.cnc.clamp_on_critical")), 1)
+
+    def test_off_a_halogenated_laser_stock_stays_a_fail_when_the_operation_has_no_profile(self) -> None:
+        pvc = T.FX.material_profile("tst_pvc_sheet", form="sheet", family="PVC")
+        part = T.cut(SHEET_PN, stock="tst_pvc_sheet", material="tst_pvc_sheet")
+        part["intent"]["route"][0]["capability"] = T.FX.unknown("no laser profile recorded")
+        documents = T.FX.record(parts=[part], capabilities=[], materials=T.materials(pvc))
+        result = self.run_case(documents, None, False)
+        self.assertEqual(self.row(result, f"process.laser.material@{SHEET_PN}/cut")["outcome"], "fail")
 
     def test_on_the_same_operation_is_unknown_with_no_reason(self) -> None:
         result = self.run_case(_unprofiled(), None, True)

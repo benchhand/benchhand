@@ -125,7 +125,9 @@ def stock(ctx: Context) -> Result:
 
 
 def _approval(ctx: Context, material: str | None, findings: list[Draft]) -> tuple[str, str]:
-    profile, mi, kind = ctx.capability, ctx.mi, ctx.operation.kind
+    profile, mi, kind = ctx.profile, ctx.mi, ctx.operation.kind
+    if profile is None:
+        return UNKNOWN, "no capability profile records the approved materials"
     approvals = profile.materials
     if mi.is_fact(approvals):
         findings.append(Draft(f"process.{kind}.material_approval", "minor", UNKNOWN,
@@ -209,7 +211,7 @@ def setup(ctx: Context) -> Result:
                               recheck=["process.cnc.setup", "process.cnc.precision"]))
         parts.append((UNKNOWN, "datums unknown"))
     parsed, bad = sides(ctx)
-    axes = ctx.capability.parameters.get("axes")
+    axes = ctx.profile.parameters.get("axes") if ctx.profile is not None else None
     count = axes.value.value if axes is not None and axes.known and hasattr(axes.value, "value") else None
     if count is not None and count < 4 and len({key for key, _ in parsed}) > 1:
         findings.append(Draft("process.cnc.setup_count", "minor", FAIL, {"value": len(parsed), "units": "count"},
@@ -245,14 +247,14 @@ def access(ctx: Context) -> Result:
                               remedy="record the access sides of the setup as +X .. -Z", recheck=["process.cnc.access"]))
         return combine(method, [(UNKNOWN, "access sides unknown")], findings)
     available = tools(ctx)
-    parts += _corners(g, available, findings)
+    parts += _corners(g, available, ctx.tool_miss, findings)
     parts += _drilled(ctx, g, available, parsed, findings)
     parts.append(_undercuts(g, parsed, findings))
     return combine(method, parts, findings,
                    uncertainty="straight tool axes along the access sides; holder geometry beyond reach is not modelled")
 
 
-def _corners(g: Geometry, available: list[Tool], findings: list[Draft]) -> list[tuple[str, str]]:
+def _corners(g: Geometry, available: list[Tool], miss: str, findings: list[Draft]) -> list[tuple[str, str]]:
     corners = g.corners()
     if not corners:
         return []
@@ -271,7 +273,7 @@ def _corners(g: Geometry, available: list[Tool], findings: list[Draft]) -> list[
         fits = [t for t, diameter in sized if diameter[1] / 2.0 <= radius + 1e-9]
         if not fits:
             smallest, diameter = min(sized, key=lambda item: item[1][1])
-            findings.append(Draft("process.cnc.internal_radius", "major", FAIL, length(radius),
+            findings.append(Draft("process.cnc.internal_radius", "major", miss, length(radius),
                                   {"property": "internal_radius", "operator": ">=", "value": round(diameter[1] / 2.0, 6),
                                    "units": "mm", "source": smallest.source or dict(POLICY)},
                                   g.method("concave corner cylinders"), "exact cylinder radius; tool diameter as sourced",
@@ -281,7 +283,7 @@ def _corners(g: Geometry, available: list[Tool], findings: list[Draft]) -> list[
                                   alternatives=[{"text": "dog-bone or relief corners", "tradeoffs": "visible relief; changes the mating part's clearance"},
                                                 {"text": "EDM or a laser-cut plate", "tradeoffs": "another process route and its own capability"}],
                                   recheck=["process.cnc.access"], feature=feature))
-            parts.append((FAIL, f"corner R{radius:g} below the smallest cutter radius"))
+            parts.append((miss, f"corner R{radius:g} below the smallest cutter radius"))
             continue
         reaching = [(t, t.reach) for t in fits if t.reach is not None]
         if not reaching:
@@ -295,7 +297,7 @@ def _corners(g: Geometry, available: list[Tool], findings: list[Draft]) -> list[
             continue
         best, reach = max(reaching, key=lambda item: item[1][0])
         if reach[0] + 1e-9 < depth:
-            findings.append(Draft("process.cnc.reach", "major", FAIL, length(depth),
+            findings.append(Draft("process.cnc.reach", "major", miss, length(depth),
                                   {"property": "corner_depth", "operator": "<=", "value": round(reach[0], 6), "units": "mm",
                                    "source": best.source or dict(POLICY)},
                                   g.method("concave corner cylinder length"), "corner length stands for the pocket depth",
@@ -306,7 +308,7 @@ def _corners(g: Geometry, available: list[Tool], findings: list[Draft]) -> list[
                                   alternatives=[{"text": "machine from the opposite side in a second setup",
                                                  "tradeoffs": "datum transfer and a second clamping"}],
                                   recheck=["process.cnc.access"], feature=feature))
-            parts.append((FAIL, f"corner {depth:g} mm deep beyond reach"))
+            parts.append((miss, f"corner {depth:g} mm deep beyond reach"))
             continue
         parts.append((PASS, f"corner R{radius:g} x {depth:g} mm reached by {best.name}"))
     return parts
@@ -341,23 +343,23 @@ def _drilled(ctx: Context, g: Geometry, available: list[Tool], parsed: list[Any]
             parts.append((UNKNOWN, f"hole {hole.get('id')} tools unknown"))
             continue
         if not usable:
-            findings.append(Draft("process.cnc.hole_tool", "major", FAIL, length(hole["diameter_mm"]),
+            findings.append(Draft("process.cnc.hole_tool", "major", ctx.tool_miss, length(hole["diameter_mm"]),
                                   policy("tool_diameter", "<=", hole["diameter_mm"], "mm",
                                          "a drill of the hole size or a smaller cutter to interpolate it"),
                                   g.method("bore recognition"), "tools as recorded",
                                   f"no recorded tool makes the Ø{hole['diameter_mm']:g} hole",
                                   remedy="use a standard drill size or add the tool", recheck=["process.cnc.access"], feature=feature))
-            parts.append((FAIL, f"no tool for hole {hole.get('id')}"))
+            parts.append((ctx.tool_miss, f"no tool for hole {hole.get('id')}"))
             continue
         reach = [t.reach[0] for t in usable if t.reach is not None]
         if reach and max(reach) + 1e-9 < hole["depth_mm"]:
-            findings.append(Draft("process.cnc.hole_depth", "major", FAIL, length(hole["depth_mm"]),
+            findings.append(Draft("process.cnc.hole_depth", "major", ctx.tool_miss, length(hole["depth_mm"]),
                                   policy("hole_depth", "<=", round(max(reach), 6), "mm", "the reach of the tools that make it"),
                                   g.method("bore recognition"), "tools as recorded",
                                   f"the {hole['depth_mm']:g} mm deep hole is beyond the tools' reach",
                                   remedy="shorten the hole, drill from both sides or add a longer tool",
                                   recheck=["process.cnc.access"], feature=feature))
-            parts.append((FAIL, f"hole {hole.get('id')} beyond reach"))
+            parts.append((ctx.tool_miss, f"hole {hole.get('id')} beyond reach"))
         elif not reach:
             parts.append((UNKNOWN, f"hole {hole.get('id')} reach unknown"))
         else:

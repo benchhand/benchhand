@@ -557,13 +557,11 @@ class Context:
         return self.record.capabilities.get(capability) if isinstance(capability, str) else None
 
     @property
-    def capability(self) -> Any:
-        """The operation's capability profile, for a check that runs behind `capability_gate` (which answers
-        the obligation itself when there is none)."""
-        profile = self.profile
-        if profile is None:
-            raise LookupError(f"{self.label}: a capability check ran without a capability profile")
-        return profile
+    def tool_miss(self) -> str:
+        """The outcome of a miss against the tool list: FAIL, or UNKNOWN when the operation has no capability profile. The
+        profile's tool library is part of that list, so without it the cutters and drills the operation names may be only
+        some of them and a miss is open."""
+        return FAIL if self.profile is not None else UNKNOWN
 
     def functions(self) -> set[str]:
         intent_ = self.part.intent
@@ -839,18 +837,18 @@ def judge_upper_bound(ctx: Context, surface: Any, cal: Calibrated, prop: str, un
 
 
 def gated(handler: Handler, kinds: tuple[str, ...] | None = None) -> Handler:
-    """`handler` behind `capability_gate`: it runs only when the operation has a usable capability profile
-    of its own kind (or of one of `kinds`)."""
+    """`handler` behind `capability_gate`: it runs when the operation has a usable capability profile of its own kind (or of
+    one of `kinds`), and when the gate answers not_assessed for want of a profile. Then fail still ranks ahead of
+    not_assessed: a handler fail that reads no profile data (a stock of another material, a clamp on a critical surface, an
+    unreachable hole) is returned with the gate's finding. A handler reads `ctx.profile` and answers UNKNOWN for what needs
+    it, and a miss against the tool list is `ctx.tool_miss`, so no fail rests on a profile that is not there."""
     def run(ctx: Context) -> Result:
         gate = ctx.capability_gate(kinds)
         if gate is None:
             return handler(ctx)
         if gate.outcome != NOT_ASSESSED:
             return gate
-        try:  # fail ranks ahead of not_assessed: a miss that needs no capability profile is still a miss
-            result = handler(ctx)
-        except LookupError:  # the handler reads the profile that is not there: nothing it could judge
-            return gate
+        result = handler(ctx)  # fail ranks ahead of not_assessed: a miss that needs no capability profile is still a miss
         if result.outcome != FAIL:
             return gate
         return Result(FAIL, result.method, result.coverage, [*gate.findings, *result.findings], result.uncertainty, result.source)

@@ -109,22 +109,25 @@ def material(ctx: Context) -> Result:
                               remedy="identify the exact grade and supplier and record a grade profile with its datasheet",
                               recheck=[f"process.{kind}.material"], earliest_stage="parts"))
         parts.append((UNKNOWN, "grade unknown"))
-    approvals = ctx.capability.materials
+    capability = ctx.profile
+    if capability is None:
+        return combine(method, parts + [(UNKNOWN, "no capability profile records the approved materials")], findings)
+    approvals = capability.materials
     if ctx.mi.is_fact(approvals):
         findings.append(Draft(f"process.{kind}.material_approval", block, UNKNOWN, unknown("approvals unknown"),
                               unknown(approvals.reason or "the capability profile records no material approvals"),
                               "capability profile materials", "not recorded",
-                              f"no approval says {ctx.capability.id} may cut {profile.id}",
+                              f"no approval says {capability.id} may cut {profile.id}",
                               remedy="record the exact materials, thicknesses and coatings the machine is approved for",
                               recheck=[f"process.{kind}.material"], earliest_stage="parts"))
         return combine(method, parts + [(UNKNOWN, "approvals unknown")], findings)
     entry = next((a for a in approvals if a.get("material") == profile.id), None)
     if entry is None:
-        findings.append(Draft(f"process.{kind}.material_approval", block, UNKNOWN, text(f"{profile.id} on {ctx.capability.id}"),
+        findings.append(Draft(f"process.{kind}.material_approval", block, UNKNOWN, text(f"{profile.id} on {capability.id}"),
                               _rule(laser, "material_approval", "approved for this machine, material and thickness"),
                               "capability profile materials", "no approval entry",
-                              f"{ctx.capability.id} is not approved for {profile.id}: do not cut it until it is",
-                              remedy=f"approve {profile.id} on {ctx.capability.id} with the supplier's safety data and test cuts",
+                              f"{capability.id} is not approved for {profile.id}: do not cut it until it is",
+                              remedy=f"approve {profile.id} on {capability.id} with the supplier's safety data and test cuts",
                               recheck=[f"process.{kind}.material"], earliest_stage="parts"))
         return combine(method, parts + [(UNKNOWN, "not approved")], findings)
     source = source_dict(entry["source"])
@@ -132,17 +135,17 @@ def material(ctx: Context) -> Result:
         findings.append(Draft(f"process.{kind}.material_forbidden", block, FAIL, text(f"{profile.id} forbidden"),
                               {"property": "material_approval", "operator": "equals", "value": "approved", "source": source},
                               "capability profile materials", "recorded approval",
-                              f"{ctx.capability.id} forbids {profile.id}: {entry.get('reason')}",
+                              f"{capability.id} forbids {profile.id}: {entry.get('reason')}",
                               remedy="choose an approved material or another capability", recheck=[f"process.{kind}.material"],
                               earliest_stage="parts"))
         return combine(method, parts + [(FAIL, "forbidden")], findings)
-    parts.append((PASS, f"{profile.id} approved on {ctx.capability.id}"))
+    parts.append((PASS, f"{profile.id} approved on {capability.id}"))
     modes = entry.get("operations")
     if modes and not ctx.before() and "cut" not in modes:
         findings.append(Draft(f"process.{kind}.operation_mode", "major", FAIL, text(f"approved for {', '.join(modes)}"),
                               {"property": "material_operations", "operator": "one_of", "value": ["cut"], "source": source},
                               "capability profile materials", "recorded approval",
-                              f"{profile.id} is approved on {ctx.capability.id} only for {', '.join(modes)}, not cutting",
+                              f"{profile.id} is approved on {capability.id} only for {', '.join(modes)}, not cutting",
                               remedy="approve cutting of this stock, or score or engrave only", recheck=[f"process.{kind}.material"]))
         parts.append((FAIL, "cutting not approved"))
     parts.append(_thickness(ctx, entry, source, findings))
@@ -158,7 +161,7 @@ def material(ctx: Context) -> Result:
         parts.append((UNKNOWN, "coating unidentified"))
     if laser:
         extraction = entry.get("extraction")
-        machine = ctx.capability.parameters.get("extraction")
+        machine = capability.parameters.get("extraction")
         if not _known(extraction) and not (machine is not None and machine.known):
             findings.append(Draft("process.laser.extraction", "critical", UNKNOWN, unknown("extraction not approved"),
                                   _rule(True, "extraction", "approved for this material"),

@@ -106,11 +106,11 @@ def access(ctx: Context) -> Result:
                 parts.append((FAIL, f"{feature} unreachable"))
                 continue
             if reach and max(reach) + 1e-9 < hole["depth_mm"]:
-                findings.append(Draft(f"process.{kind}.target_reach", "major", FAIL, length(hole["depth_mm"]),
+                findings.append(Draft(f"process.{kind}.target_reach", "major", ctx.tool_miss, length(hole["depth_mm"]),
                                       policy("feature_depth", "<=", round(max(reach), 6), "mm", "the recorded tool reach"),
                                       g.method("bore recognition"), "tools as recorded", f"the tool does not reach the bottom of {feature}",
                                       remedy="a longer tool, or work from both ends", recheck=[f"process.{kind}.access"], feature=feature))
-                parts.append((FAIL, f"{feature} beyond reach"))
+                parts.append((ctx.tool_miss, f"{feature} beyond reach"))
                 continue
             parts.append((PASS, f"{feature} reached from {hit[0]}"))
             continue
@@ -272,20 +272,20 @@ def feature(ctx: Context) -> Result:
         match = [t for t, diameter in available
                  if abs(diameter[0] - hole["diameter_mm"]) <= 0.01 and abs(diameter[1] - hole["diameter_mm"]) <= 0.01]
         if not match:
-            findings.append(Draft("process.drilling.size", "major", FAIL, length(hole["diameter_mm"]),
+            findings.append(Draft("process.drilling.size", "major", ctx.tool_miss, length(hole["diameter_mm"]),
                                   policy("drill_diameter", "equals", hole["diameter_mm"], "mm", "a recorded drill of the bore size"),
                                   g.method("bore recognition"), "tools as recorded",
                                   f"no recorded drill makes the Ø{hole['diameter_mm']:g} mm {name}",
                                   remedy="use a standard drill size or record the drill", recheck=["process.drilling.feature"], feature=name))
-            parts.append((FAIL, f"{name} has no drill"))
+            parts.append((ctx.tool_miss, f"{name} has no drill"))
             continue
         reach = [t.reach[0] for t in match if t.reach is not None]
         if reach and max(reach) + 1e-9 < hole["depth_mm"]:
-            findings.append(Draft("process.drilling.depth", "major", FAIL, length(hole["depth_mm"]),
+            findings.append(Draft("process.drilling.depth", "major", ctx.tool_miss, length(hole["depth_mm"]),
                                   policy("hole_depth", "<=", round(max(reach), 6), "mm", "the drill's reach"),
                                   g.method("bore recognition"), "tools as recorded", f"the drill does not reach the bottom of {name}",
                                   remedy="a longer drill, or drill from both ends", recheck=["process.drilling.feature"], feature=name))
-            parts.append((FAIL, f"{name} beyond reach"))
+            parts.append((ctx.tool_miss, f"{name} beyond reach"))
         else:
             parts.append((PASS if reach else UNKNOWN, f"{name} drilled by {match[0].name}"))
     return combine(method, parts, findings)
