@@ -223,7 +223,7 @@ def upgrade(hw: Path) -> Path:
 def project(root: Path, name: str, base: tuple[str, str], arm_kernel: str) -> Path:
     hw = root / name / "hw"
     hw.mkdir(parents=True)
-    (hw / "product.yaml").write_text("id: features\n", encoding="utf-8")
+    (hw / "product.yaml").write_text("record_version: 1\nid: features\n", encoding="utf-8")
     (hw / "assembly.yaml").write_text(ASSEMBLY, encoding="utf-8")
     set_model(hw, "TST-0001", base[0], base[1], "Base block")
     set_model(hw, "TST-0002", arm_kernel, "arm.py", "Swing arm", ARM)

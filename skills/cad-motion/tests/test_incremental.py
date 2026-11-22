@@ -291,7 +291,7 @@ def seal(hw: Path, label: str, *, data: dict[str, str], stamp: str = "2026-10-30
     folder = hw / "versions" / label
     (folder / "record" / "parts").mkdir(parents=True)
     (folder / "parts").mkdir()
-    (folder / "record" / "product.yaml").write_text("id: arm\n", encoding="utf-8")
+    (folder / "record" / "product.yaml").write_text("record_version: 1\nid: arm\n", encoding="utf-8")
     (folder / "record" / "assembly.yaml").write_text(yaml.safe_dump(record), encoding="utf-8")
     (folder / "record" / "interfaces.yaml").write_text(yaml.safe_dump(interfaces), encoding="utf-8")
     for pn in data:

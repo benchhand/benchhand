@@ -384,6 +384,7 @@ class FreecadRefusal(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             hw = Path(directory)
+            (hw / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")
             (hw / "assembly.yaml").write_text(yaml.safe_dump(v6_record.record()), encoding="utf-8")
             for pn, (title, frame) in v6_record.PARTS.items():
                 (hw / "parts" / pn).mkdir(parents=True)

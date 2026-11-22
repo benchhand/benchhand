@@ -66,7 +66,8 @@ SKILLS = HERE.parents[1]
 # (fits.py:39, read at fits.py:51 through pair_policy), the bundle layout (layout.py:34, read at layout.py:325) and
 # the manufacturing schema layout.py reads at :1045.
 VERDICT_DATA = (SKILLS / "cad-fits" / "data" / "iso286.json", SKILLS / "cad-record" / "layout.json",
-                SKILLS / "cad-record" / "schemas" / "manufacturing.schema.json")
+                SKILLS / "cad-record" / "schemas", SKILLS / "cad-concept" / "assets" / "schemas",
+                SKILLS / "cad-record" / "assets" / "manufacturing" / "guidelines")  # the version gate reaches them
 
 
 def _bound(value: float | None) -> float:

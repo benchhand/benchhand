@@ -97,7 +97,7 @@ STRAP_V = math.pi / 4 * (10 ** 2 - 8 ** 2) * 10
 FLAT_LENGTH = math.pi / 2 * 9
 FLAT_STATE = ("manufacture: {relationship: different, state: flat, reason: elastic_bending, decision: DR-001,"
               " volume_rel_tolerance: 1.0e-6}\n")
-FLAT_PRODUCT = "id: strap\n"
+FLAT_PRODUCT = "record_version: 1\nid: strap\n"
 # The printer is 60 x 60 x 5 mm. Printing the flat blank with its 2 mm thickness up is the approved rotation
 # [0, 0, sqrt(1/2), sqrt(1/2)] (a quarter turn about Z).
 STRAP_ORIENTATION = {"status": "approved", "rotation": {"quaternion": [0, 0, math.sqrt(0.5), math.sqrt(0.5)]}, "decision": "DR-001"}
@@ -138,7 +138,7 @@ def set_model(hw: Path, pn: str, kernel: str, template: str, params: dict, title
 def two_part_project(root: Path, kernel: str) -> Path:
     hw = root / kernel / "hw"
     hw.mkdir(parents=True)
-    (hw / "product.yaml").write_text("id: twoarm\n", encoding="utf-8")
+    (hw / "product.yaml").write_text("record_version: 1\nid: twoarm\n", encoding="utf-8")
     (hw / "assembly.yaml").write_text(ASSEMBLY, encoding="utf-8")
     set_model(hw, "TST-0001", kernel, "base.py", {"size": 40.0, "height": 20.0, "bore": 6.0}, *PARTS["TST-0001"][:2])
     projects().upgrade_project(hw)
@@ -198,7 +198,7 @@ def set_arm(hw: Path, kernel: str, template: str = "arm.py", bought: bool = Fals
 def safe_project(root: Path, kernel: str) -> Path:
     hw = root / kernel / "safe-hw"
     hw.mkdir(parents=True)
-    (hw / "product.yaml").write_text("id: safe\n", encoding="utf-8")
+    (hw / "product.yaml").write_text("record_version: 1\nid: safe\n", encoding="utf-8")
     joints = "".join(f"  - {{id: J-00{i}, type: fixed, parent: SAF-0001, child: {pn}, axis: [0, 0, 1], origin: [0, 0, 0],"
                      f" min: 0, max: 0, nominal: 0}}\n" for i, pn in enumerate(list(SAFE_CASES)[1:], start=1))
     (hw / "assembly.yaml").write_text("joints:\n" + joints, encoding="utf-8")
@@ -1240,7 +1240,7 @@ def insert_project(root: Path) -> Path:
     """The base block and the six INSERTS, with a press fit declared on `@ins-1` only (CadQuery)."""
     hw = root / "inserts" / "hw"
     hw.mkdir(parents=True)
-    (hw / "product.yaml").write_text("id: inserts\n", encoding="utf-8")
+    (hw / "product.yaml").write_text("record_version: 1\nid: inserts\n", encoding="utf-8")
     occurrences = "".join(
         f"  - {{id: {oid}, PN: {INSERT}, placement: {{translation_mm: {move}"
         + (f", rotation: {{axis: {turn['axis']}, angle_deg: {turn['angle_deg']}}}" if turn else "") + "}}\n"
@@ -1477,7 +1477,7 @@ class BoxPart:
 def fdm_record(tmp: str, build_volume: str) -> Path:
     hw = Path(tmp)
     (hw / "parts" / "TST-0001").mkdir(parents=True)
-    (hw / "product.yaml").write_text(build_volume, encoding="utf-8")
+    (hw / "product.yaml").write_text("record_version: 1\n" + build_volume, encoding="utf-8")
     (hw / "parts" / "TST-0001" / "part.yaml").write_text("process: fdm\n", encoding="utf-8")
     return hw
 

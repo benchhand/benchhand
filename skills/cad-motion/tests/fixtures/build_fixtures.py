@@ -188,6 +188,7 @@ def nest_shapes(container_kind: str) -> dict[str, object]:
 
 def write_set(folder: Path, shapes: dict[str, object], titles: dict[str, str]) -> dict[str, object]:
     folder.mkdir(parents=True, exist_ok=True)
+    (folder / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")  # the record the probes read
     parts = {pn: pose.Part(pn, f"{pn} {titles[pn]}", shape) for pn, shape in shapes.items()}
     for part in parts.values():
         pose.write_part_step(folder / f"{part.pn}.step", part)

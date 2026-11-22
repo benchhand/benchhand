@@ -88,7 +88,7 @@ def hole_project(root: Path, kernel: str) -> Path:
     """An hw/ record with one cnc part per case, all fixed to the first."""
     hw = root / kernel / "hw"
     hw.mkdir(parents=True)
-    (hw / "product.yaml").write_text("id: holes\n", encoding="utf-8")
+    (hw / "product.yaml").write_text("record_version: 1\nid: holes\n", encoding="utf-8")
     first, *rest = PNS.values()
     (hw / "assembly.yaml").write_text("joints:\n" + "".join(
         f"  - {{id: J-{i:03d}, type: fixed, parent: {first}, child: {pn}, axis: [0, 0, 1], origin: [0, 0, 0],"

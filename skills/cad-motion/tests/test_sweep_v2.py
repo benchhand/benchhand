@@ -327,6 +327,7 @@ class BetweenSampleCliTests(unittest.TestCase):
         if proc.returncode != 0:
             raise RuntimeError(f"fixture build failed: {proc.stderr[-2000:]}")
         (cls.hw / "parts").mkdir(parents=True)
+        (cls.hw / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")
         (cls.hw / "assembly.yaml").write_text(yaml.safe_dump(fixture.record(), sort_keys=False), encoding="utf-8")
         (cls.hw / "interfaces.yaml").write_text(yaml.safe_dump(fixture.interfaces(), sort_keys=False), encoding="utf-8")
         for pn, (title, frame, *_) in fixture.PARTS.items():

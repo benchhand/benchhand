@@ -41,7 +41,7 @@ class StaleSweepBundle(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-motion-stale-")
         self.addCleanup(temporary.cleanup)
         self.hw = Path(temporary.name) / "hw"
-        seal(self.hw / "versions" / "v1", {"part.txt": "built\n", "record/product.yaml": "id: TST\n"})
+        seal(self.hw / "versions" / "v1", {"part.txt": "built\n", "record/product.yaml": "record_version: 1\nid: TST\n"})
         self.bundle = self.hw / "motion" / "v1" / "whole"
         seal(self.bundle, {"result.json": "{}\n"})
         (self.bundle / "result.json").write_text("edited\n", encoding="utf-8")

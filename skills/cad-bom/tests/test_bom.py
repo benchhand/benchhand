@@ -265,7 +265,7 @@ class StepRoundTripTests(unittest.TestCase):
             (hw / "parts" / "PIN-0001" / "sources").mkdir()
             (hw / "parts" / "PIN-0001" / "sources" / "msth.pdf").write_bytes(DATASHEET)
             (hw / "product.yaml").write_text(
-                "id: test-assembly\nunits: mm\nregime: iso\ngeneral_tolerance: 0.1\n"
+                "record_version: 1\nid: test-assembly\nunits: mm\nregime: iso\ngeneral_tolerance: 0.1\n"
                 "flow: {stage: layout, recheck_from: layout}\n", encoding="utf-8"
             )
             (hw / "requirements.yaml").write_text(

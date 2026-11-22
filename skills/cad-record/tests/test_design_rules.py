@@ -297,16 +297,17 @@ class ClearanceMargin(unittest.TestCase):
     def test_the_loader_reads_a_version_record_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             record = Path(tmp) / "versions" / "v3" / "record"
-            self.assertEqual(rules.load_clearance_margins(record).default_mm, 0.1, "no files: the default")
+            with self.assertRaisesRegex(ValueError, "record.version_unsupported"):  # no product.yaml names no version
+                rules.load_clearance_margins(record)
             record.mkdir(parents=True)
-            (record / "product.yaml").write_text("design:\n  clearance_margin_mm: 0.15\n", encoding="utf-8")
+            (record / "product.yaml").write_text("record_version: 1\ndesign:\n  clearance_margin_mm: 0.15\n", encoding="utf-8")
             (record / "interfaces.yaml").write_text(
                 "interfaces:\n  - {id: IF-007, pair: [A-0001, B-0001], min_clearance_mm: 0.5, margin_mm: 0.3}\n",
                 encoding="utf-8")
             margins = rules.load_clearance_margins(record)
             self.assertEqual((margins.for_interface(None), margins.for_interface("IF-007")), (0.15, 0.3))
             (record / "product.yaml").write_text("design: [\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "cannot read"):
+            with self.assertRaisesRegex(ValueError, "record.version_unsupported"):  # an unreadable product names no version
                 rules.load_clearance_margins(record)
 
 

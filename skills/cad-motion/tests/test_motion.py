@@ -580,6 +580,7 @@ class StepTests(unittest.TestCase):
 
     def hw(self, j2_max: float) -> Path:
         folder = Path(tempfile.mkdtemp(dir=self.root))
+        (folder / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")
         (folder / "assembly.yaml").write_text(PLANAR_YAML.format(j2_max=j2_max), encoding="utf-8")
         return folder
 
@@ -697,6 +698,7 @@ class StepTests(unittest.TestCase):
 
     def test_a_part_buried_in_a_solid_or_a_compound_part_is_a_collision(self) -> None:
         hw = Path(tempfile.mkdtemp(dir=self.root))
+        (hw / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")
         (hw / "assembly.yaml").write_text(NEST_YAML, encoding="utf-8")
         for container in ("solid", "compound"):
             with self.subTest(container=container):
@@ -811,6 +813,7 @@ class StepTests(unittest.TestCase):
     def twins(self, assembly: str) -> Path:
         """A record over the twins fixture: TST-0201 assembly_zero, TST-0202 part_local."""
         hw = Path(tempfile.mkdtemp(dir=self.root))
+        (hw / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")
         (hw / "assembly.yaml").write_text(assembly, encoding="utf-8")
         for pn, title, frame in (("TST-0201", "Ground plate", None), ("TST-0202", "Arm", "part_local")):
             (hw / "parts" / pn).mkdir(parents=True)
@@ -1001,7 +1004,7 @@ class StepTests(unittest.TestCase):
         shutil.copytree(self.planar, version / "parts")
         record = version / "record"
         record.mkdir(parents=True)
-        (record / "product.yaml").write_text("id: planar-test\n", encoding="utf-8")
+        (record / "product.yaml").write_text("record_version: 1\nid: planar-test\n", encoding="utf-8")
         (record / "assembly.yaml").write_text(PLANAR_YAML.format(j2_max=90), encoding="utf-8")
         (record / "interfaces.yaml").write_text("interfaces: []\n", encoding="utf-8")
         parts = record / "parts"
@@ -1147,6 +1150,7 @@ class StepTests(unittest.TestCase):
         import yaml
 
         hw = Path(tempfile.mkdtemp(dir=self.root))
+        (hw / "product.yaml").write_text("record_version: 1\nid: fixture\n", encoding="utf-8")
         (hw / "assembly.yaml").write_text(yaml.safe_dump(v6_record.record(misphased), sort_keys=False), encoding="utf-8")
         for pn, (title, frame) in v6_record.PARTS.items():
             (hw / "parts" / pn).mkdir(parents=True)
@@ -1225,7 +1229,7 @@ class StepTests(unittest.TestCase):
         shutil.copytree(self.v6, version / "parts")
         record = version / "record"
         (record / "parts").mkdir(parents=True)
-        (record / "product.yaml").write_text("id: v6-test\n", encoding="utf-8")
+        (record / "product.yaml").write_text("record_version: 1\nid: v6-test\n", encoding="utf-8")
         (record / "assembly.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         (record / "interfaces.yaml").write_text(yaml.safe_dump(v6_record.interfaces(), sort_keys=False), encoding="utf-8")
         for pn, (title, frame) in v6_record.PARTS.items():

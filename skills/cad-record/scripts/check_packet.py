@@ -84,15 +84,15 @@ def _intent() -> Any:
 def validate(packet: Mapping[str, Any]) -> None:
     """Raise PacketError naming each way `packet` breaks manufacturing-check-result.schema.json, and for a
     record_version that is not the integer 1 (JSON Schema's const 1 also accepts 1.0)."""
-    if not _intent().is_supported_version(packet.get("record_version")):
-        raise PacketError(f"packet record_version {packet.get('record_version')!r} is not the supported record version "
-                          f"{_intent().RECORD_VERSION} (manufacturing-check-result.schema.json: record_version)")
     errors = sorted(_validator().iter_errors(packet), key=lambda e: [str(p) for p in e.absolute_path])
     if errors:
         problems = "; ".join(f"{'/'.join(str(p) for p in e.absolute_path) or '(root)'}: {e.message[:200]}"
                              for e in errors[:5])
         more = f" (and {len(errors) - 5} more)" if len(errors) > 5 else ""
         raise PacketError(f"packet does not match manufacturing-check-result.schema.json: {problems}{more}")
+    if not _intent().is_supported_version(packet.get("record_version")):  # the schema's const 1 also accepts 1.0
+        raise PacketError(f"packet record_version {packet.get('record_version')!r} is not the supported record version "
+                          f"{_intent().RECORD_VERSION} (manufacturing-check-result.schema.json: record_version)")
 
 
 def emit(layout: Any, hw: Path, version: str | None, subject: str, producer: str, packet: Mapping[str, Any],
