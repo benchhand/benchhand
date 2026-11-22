@@ -101,6 +101,7 @@ class FeatureLocatorContract(unittest.TestCase):
 
 
 def write_interfaces(hw: Path, limits: str) -> None:
+    (hw / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the pair policy reads a supported record only
     (hw / "interfaces.yaml").write_text(f"interfaces:\n  - id: IF-001\n    limits:\n{limits}", encoding="utf-8")
 
 
