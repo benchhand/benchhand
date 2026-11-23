@@ -1,5 +1,5 @@
 # Diametral running clearance of the piston in its cylinder bore, worst case. The requirement is an engineering
-# assumption: 0.2 mm minimum so a printed piston does not bind. No printer calibration is recorded, so the
+# assumption: 0.2 mm minimum so a printed piston does not bind. The H2D has no recorded process data, so the
 # contributors cite the model dimensions and the outcome shows what the record can and cannot prove.
 intent_version: 2
 id: STK-001
