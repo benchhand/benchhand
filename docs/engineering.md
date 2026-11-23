@@ -41,15 +41,15 @@ release-please (type `simple`) bumps `CHANGELOG.md` and `.release-please-manifes
 | File | JSONPath | Read by |
 |---|---|---|
 | `.claude-plugin/plugin.json` | `$.version` | Claude Code plugins. Codex reads it as a Claude-compatible manifest. |
-| `.claude-plugin/marketplace.json` | `$.plugins[0].version` | Claude Code marketplace. Codex reads it as its legacy-compatible marketplace. |
-| `package.json` | `$.version` | pi packages (`pi install git:github.com/benchhand/benchhand`). `pi.skills` is `./skills`. |
+| `.claude-plugin/marketplace.json` | `$.plugins[?(@.name=='benchhand')].version` | Claude Code marketplace. The entry is picked by name. Claude reads `plugin.json` before `marketplace.json`, so drift in `plugin.json` hides a marketplace bump. Codex reads it as its legacy-compatible marketplace. |
+| `package.json` | `$.version` | pi packages (`pi install git:github.com/benchhand/benchhand@vX.Y.Z`; without the tag pi installs the default branch). `pi.skills` is `./skills`. |
 
-`scripts/test_release_manifests.py` fails when `extra-files` differs from this table, a version differs from the release manifest, or a declared path is missing. A new versioned manifest goes into the test's `VERSIONED` list and into `extra-files` together.
+`scripts/test_release_manifests.py` fails when `extra-files` differs from this table, a version differs from the release manifest, or a declared path is missing. It also installs `release-please@17.6.0` (the version that action v5.0.0 bundles; needs `node` and `npm`, else skipped) and runs `scripts/release_please_bump.cjs`, which builds the `simple` strategy from the config and applies its updaters to the work-tree files. The test asserts that a release to 9.9.9 rewrites all three versions and nothing else. It does not open a PR or call GitHub. A new versioned manifest goes into the test's `VERSIONED` list and into `extra-files` together.
 
 Git marketplace support by harness (checked 2026-11-23):
 
 - Claude Code: yes, `/plugin marketplace add` reads `.claude-plugin/marketplace.json`.
-- Codex CLI 0.171: `codex plugin marketplace add <repo>` registered the marketplace `benchhand` from the same file. The CLI has no plugin install command, so installing a plugin from it is unverified. No Codex-specific manifest is needed. Source: <https://developers.openai.com/codex/plugins/build>.
+- Codex CLI 0.171: `codex plugin marketplace add <repo>` registered the marketplace `benchhand` from the same file. That registers the marketplace only; the CLI has no plugin install command, so installing the plugin from it is unverified. No Codex-specific manifest is needed. Source: <https://developers.openai.com/codex/plugins/build>.
 - pi 1.6.0: yes, as a package. `pi install -l -a <repo>` loaded all 15 `cad-*` skills. No prompt template is declared yet: #323 owns `harness/pi/prompts`, so add `pi.prompts` once it lands. Source: pi `docs/packages.md`.
 - OpenCode and Kiro CLI: no git marketplace. OpenCode takes plugin packages (JS) and skill catalogs (`skills` config, `index.json`); Kiro imports a skill from a repository URL. Both keep the installer route. Sources: <https://opencode.ai/docs/plugins/>, <https://kiro.dev/docs/skills/>.
 

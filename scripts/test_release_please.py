@@ -23,11 +23,19 @@ def load(path: Path) -> dict:
 
 
 def resolve(document: object, jsonpath: str) -> object:
-    """Resolve the simple `$.key[0].key` subset of JSONPath that extra-files use."""
+    """Resolve the `$.key`, `[0]` and `[?(@.key=='value')]` JSONPath subset that extra-files use.
+
+    A filter must match exactly one element, as release-please writes one version per entry.
+    """
     assert jsonpath.startswith("$"), jsonpath
     node = document
-    for key, index in re.findall(r"\.([\w-]+)|\[(\d+)\]", jsonpath):
-        node = node[int(index)] if index else node[key]
+    for key, index, field, value in re.findall(r"\.([\w-]+)|\[(\d+)\]|\[\?\(@\.([\w-]+)=='([^']*)'\)\]", jsonpath):
+        if field:
+            matches = [item for item in node if item[field] == value]
+            assert len(matches) == 1, (jsonpath, matches)
+            node = matches[0]
+        else:
+            node = node[int(index)] if index else node[key]
     return node
 
 
