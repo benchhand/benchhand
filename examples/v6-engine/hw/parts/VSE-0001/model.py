@@ -27,7 +27,7 @@ PARAMS = {
     "case_y": 64.0,
     "case_z": 40.0,
     "window_d": 56.0,  # crank and rod clearance, along X
-    "window_len": 96.0,
+    "window_len": 100.0,  # 2 mm axial thrust clearance each side of the crank webs
     "main_bore_d": 14.0,  # main bearing seat, 14 H7
     "seat_len": 12.0,
 }
