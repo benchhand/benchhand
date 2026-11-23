@@ -5,7 +5,7 @@
 """Every relative Markdown link in README.md and docs/*.md points at a file that exists, and its
 #fragment at a heading of that file. Inline links, reference definitions and `[text][id]` uses are
 checked. CHANGELOG.md (release-please) and docs/schemas.md (gen_api.py) are generated and not
-checked. Links inside fenced code blocks are ignored."""
+checked. Links inside code blocks and code spans are ignored."""
 
 import re
 import tempfile
@@ -18,17 +18,18 @@ DOCS = [ROOT / "README.md", *(p for p in sorted((ROOT / "docs").glob("*.md")) if
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
 REFERENCE = re.compile(r"(?<!!)\[[^\]]+\]\[([^\]]+)\]")
 DEFINITION = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s*(\S+)")
+CODE_SPAN = re.compile(r"`[^`]*`")
 FENCE = re.compile(r"^\s*```")
 
 
-def prose_lines(path: Path) -> list[str]:
+def prose_lines(path: Path, strip_code: bool = True) -> list[str]:
     inside = False
     kept = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if FENCE.match(line):
             inside = not inside
         elif not inside:
-            kept.append(line)
+            kept.append(CODE_SPAN.sub("", line) if strip_code else line)
     return kept
 
 
@@ -38,7 +39,7 @@ def slug(heading: str) -> str:
 
 
 def anchors(path: Path) -> set[str]:
-    return {slug(m.group(1)) for line in prose_lines(path) if (m := re.match(r"#{1,6}\s+(.*)", line))}
+    return {slug(m.group(1)) for line in prose_lines(path, strip_code=False) if (m := re.match(r"#{1,6}\s+(.*)", line))}
 
 
 def targets(doc: Path) -> list[str]:
@@ -78,7 +79,7 @@ class MarkdownLinkTests(unittest.TestCase):
             doc = root / "doc.md"
             doc.write_text(
                 "[ok](real.md#real-heading) [bad inline](gone.md) [bad anchor](real.md#nope)\n"
-                "[ref ok][a] [ref gone][b] [ref undefined][c] [url](https://example.org/x)\n"
+                "[ref ok][a] [ref gone][b] [ref undefined][c] [url](https://example.org/x) `[code](nope.md) [x][y]`\n"
                 "\n[a]: real.md\n[b]: missing.md\n"
                 "```\n[fenced](ignored.md)\n```\n",
                 encoding="utf-8")
