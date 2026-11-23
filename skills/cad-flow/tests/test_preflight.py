@@ -66,6 +66,37 @@ class HarnessInstallTests(unittest.TestCase):
             self.assertEqual(check.status, "pass")
             self.assertEqual(preflight._harness_check("claude", project, Path(temporary) / "home", {}).status,
                              "warn")
+    def pi_install(self, root: Path, guard: Path) -> None:
+        """A pi install as harness/install.py writes it: the agent names the guard by absolute path."""
+        files = {
+            ".pi/skills/cad-flow/SKILL.md": "skill",
+            ".pi/agents/cad-analyst.md": f"---\nsubagentOnlyExtensions: {json.dumps(str(guard))}\n---\n",
+        }
+        receipt = {}
+        for key, text in files.items():
+            (root / key).parent.mkdir(parents=True, exist_ok=True)
+            (root / key).write_text(text, encoding="utf-8")
+            receipt[key] = hashlib.sha256(text.encode()).hexdigest()
+        (root / ".benchhand-install.json").write_text(json.dumps({"format": 1, "files": receipt}), encoding="utf-8")
+
+    def test_pi_receipt_passes_when_the_guard_the_agents_name_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            guard = project / ".pi/cad-guard/cad-bash-guard.js"
+            guard.parent.mkdir(parents=True)
+            guard.write_text("export default () => {}", encoding="utf-8")
+            self.pi_install(project, guard)
+            self.assertEqual(preflight._harness_check("pi", project, project / "home", {}).status, "pass")
+
+    def test_pi_receipt_warns_when_the_named_guard_is_missing_after_a_move(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            self.pi_install(project, Path("/old/place/.pi/cad-guard/cad-bash-guard.js"))
+            check = preflight._harness_check("pi", project, project / "home", {})
+            self.assertEqual(check.status, "warn")
+            self.assertIn("guard", check.detail)
+            self.assertIn("--harness pi", check.fix)
+
     def test_pi_receipt_uses_project_and_user_installer_paths(self) -> None:
         sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         for scope_name, prefix in (("project", ".pi"), ("home", ".pi/agent")):

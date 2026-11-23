@@ -27,7 +27,7 @@ import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 
 CAD_ROOT = Path(__file__).resolve().parents[3]
@@ -440,48 +440,82 @@ def _vendor_check(environ: Mapping[str, str], fill: bool = False) -> Check:
         detail = f"Could not {'fill' if fill else 'verify'} cad-render's three.js cache: {error}."
     return _check("three-vendor-cache", "Pinned three.js vendor cache", "fail", detail,
                   "Run `preflight.py --warm` with network access to fill the pinned cache, then retry.")
+def _missing_pi_guards(agent: Path) -> set[str]:
+    """Guard paths a pi agent names in `subagentOnlyExtensions` that no longer exist.
+
+    The installer writes an absolute path, so moving a project leaves the agent naming a dead
+    guard. pi-subagents then fails the launch; report it here instead, before the run.
+    """
+    try:
+        text = agent.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return set()
+    missing: set[str] = set()
+    for match in re.finditer(r"^subagentOnlyExtensions:[ \t]*(.+?)[ \t]*$", text, re.MULTILINE):
+        raw = match.group(1)
+        try:
+            value = json.loads(raw) if raw.startswith('"') else raw
+        except json.JSONDecodeError:
+            value = raw
+        if isinstance(value, str) and not Path(value).is_file():
+            missing.add(value)
+    return missing
+
+
+HARNESSES = ("claude", "codex", "opencode", "kiro", "pi")
+
+
+HARNESS_PREFIXES = {
+    "claude": ((".claude/skills/", ".claude/agents/"), (".claude/skills/", ".claude/agents/")),
+    "codex": ((".agents/skills/", ".codex/agents/"), (".agents/skills/", ".codex/agents/")),
+    "opencode": ((".opencode/skills/", ".opencode/agents/"), (".config/opencode/skills/", ".config/opencode/agents/")),
+    "kiro": ((".kiro/skills/", ".kiro/agents/"), (".kiro/skills/", ".kiro/agents/")),
+    "pi": ((".pi/skills/", ".pi/agents/"), (".pi/agent/skills/", ".pi/agent/agents/")),
+}
+
+
+def _receipt_files(scope: Path, prefixes: tuple[str, str]) -> Iterator[tuple[str, Path]]:
+    """Receipt entries under `prefixes` whose installed file exists with the recorded hash."""
+    try:
+        receipt = json.loads((scope / ".benchhand-install.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return
+    files = receipt.get("files") if isinstance(receipt, dict) and receipt.get("format") == 1 else None
+    if not isinstance(files, dict):
+        return
+    for key, digest in files.items():
+        if not isinstance(key, str) or not isinstance(digest, str):
+            continue
+        relative = Path(key)
+        if relative.is_absolute() or ".." in relative.parts or not key.startswith(prefixes):
+            continue
+        target = scope / relative
+        try:
+            if target.is_file() and _file_sha256(target) == digest:
+                yield key, target
+        except OSError:
+            continue
+
+
 def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, str]) -> Check:
     """Check exact installed paths and hashes from benchhand's ownership receipt."""
-    scopes = (cwd, home)
-    prefixes = {
-        "claude": ((".claude/skills/", ".claude/agents/"), (".claude/skills/", ".claude/agents/")),
-        "codex": ((".agents/skills/", ".codex/agents/"), (".agents/skills/", ".codex/agents/")),
-        "opencode": ((".opencode/skills/", ".opencode/agents/"), (".config/opencode/skills/", ".config/opencode/agents/")),
-        "kiro": ((".kiro/skills/", ".kiro/agents/"), (".kiro/skills/", ".kiro/agents/")),
-        "pi": ((".pi/skills/", ".pi/agents/"), (".pi/agent/skills/", ".pi/agent/agents/")),
-    }
+    stale_guards: set[str] = set()
     installed_skills: set[str] = set()
     installed_agents: set[str] = set()
-    for scope, (skill_prefix, agent_prefix) in zip(scopes, prefixes[harness]):
-        try:
-            receipt = json.loads((scope / ".benchhand-install.json").read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            continue
-        files = receipt.get("files") if isinstance(receipt, dict) and receipt.get("format") == 1 else None
-        if not isinstance(files, dict):
-            continue
-        for key, digest in files.items():
-            if not isinstance(key, str) or not isinstance(digest, str):
-                continue
-            relative = Path(key)
-            if relative.is_absolute() or ".." in relative.parts:
-                continue
-            if not key.startswith((skill_prefix, agent_prefix)):
-                continue
-            target = scope / relative
-            try:
-                if not target.is_file() or _file_sha256(target) != digest:
-                    continue
-            except OSError:
-                continue
+    for scope, (skill_prefix, agent_prefix) in zip((cwd, home), HARNESS_PREFIXES[harness]):
+        for key, target in _receipt_files(scope, (skill_prefix, agent_prefix)):
             if key.startswith(skill_prefix) and Path(key).name == "SKILL.md":
                 installed_skills.add(key)
             elif key.startswith(agent_prefix) and Path(key).name.startswith("cad-"):
                 if harness != "codex" or target.suffix == ".toml":
                     installed_agents.add(key)
+                if harness == "pi":
+                    stale_guards.update(_missing_pi_guards(target))
 
-    present = bool(installed_skills and installed_agents)
+    present = bool(installed_skills and installed_agents and not stale_guards)
     detail = f"Installer receipt has {len(installed_skills)} cad-* skill(s) and {len(installed_agents)} cad-* agent(s)."
+    if stale_guards:
+        detail += f" Agents name a bash guard that is missing: {', '.join(sorted(stale_guards))} (the project moved, or the guard was deleted)."
     fix = f"Run `python3 harness/install.py --harness {harness} --project .` from the benchhand checkout."
     return _check(f"harness-{harness}", f"{harness.title()} installation", "pass" if present else "warn",
                   detail, "" if present else fix, required=False)
@@ -532,7 +566,7 @@ def run_checks(environ: Mapping[str, str] | None = None, cwd: Path | None = None
             "Install uv and ensure its bin directory is on PATH."))
                       for name in (*(runtime.id for runtime in RUNTIMES), CHROMIUM.id))
     checks.append(_run_check("three-vendor-cache", lambda: _vendor_check(env, fill=warm)))
-    harnesses = (harness,) if harness else ("claude", "codex", "opencode", "kiro", "pi")
+    harnesses = (harness,) if harness else HARNESSES
     checks.extend(_run_check(f"harness-{name}", lambda name=name: _harness_check(name, workdir, home_dir, env))
                   for name in harnesses)
     return Report(tuple(checks))
@@ -661,7 +695,7 @@ def render_text(report: Report) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="print the complete report as JSON")
-    parser.add_argument("--harness", choices=("claude", "codex", "opencode", "kiro", "pi"),
+    parser.add_argument("--harness", choices=HARNESSES,
                         help="check only this harness (default: check all harnesses)")
     parser.add_argument("--warm", action="store_true",
                         help="also install Playwright Chromium and fill the three.js cache; record the run for --status")
