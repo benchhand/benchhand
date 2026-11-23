@@ -18,7 +18,7 @@ PARAMS = {
     "skirt_h": 12.0,  # skirt below the pin axis
     "pin_bore_d": 6.012,  # 6 H7 upper limit; the wrist pin takes 6 g6
     "slot_w": 10.0,  # clearance for the 8 mm rod small end
-    "slot_top": 4.0,  # slot height above the pin axis
+    "slot_top": 6.5,  # slot height above the pin axis
     "cavity_d": 16.0,  # hollow skirt under the crown: saves print time and gives the joint a bore on the bank axis
     "cavity_top": -4.6,  # cavity ceiling, below the pin bore
 }
