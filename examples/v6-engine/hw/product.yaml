@@ -9,6 +9,47 @@ general_tolerance: {status: unknown, reason: not recorded yet, question: Q-013}
 flow:
   stage: ground
   recheck_from: ground
+  profile:
+    decision: "DR-001"
+    human_approval: "key"
+    fea:
+      enabled: true
+      mode: "accurate"
+    stack_up: "on"
+    critique: "full"
+    motion: "auto"
+    storage_results_in_git: false
+    processes:
+      fdm:
+        orientation: "propose"
+        supports: "allowed"
+        overhang_deg: "calibrated"
+        bridge_mm: "calibrated"
+        min_wall_mm: "calibrated"
+        min_feature_mm: "calibrated"
+        warp: "calibrated"
+        cosmetic_faces: false
+        print_in_place: false
+        pip_clearance_mm:
+          xy: "calibrated"
+          z: "calibrated"
+    asked:
+      human_approval: "user"
+      fea: "user"
+      stack_up: "user"
+      critique: "user"
+      storage_results_in_git: "user"
+      processes/fdm/orientation: "user"
+      processes/fdm/supports: "user"
+      processes/fdm/overhang_deg: "user"
+      processes/fdm/bridge_mm: "user"
+      processes/fdm/min_wall_mm: "user"
+      processes/fdm/min_feature_mm: "user"
+      processes/fdm/warp: "user"
+      processes/fdm/cosmetic_faces: "user"
+      processes/fdm/print_in_place: "user"
+      processes/fdm/pip_clearance_mm/xy: "user"
+      processes/fdm/pip_clearance_mm/z: "user"
 # The use case comes first. Every field stays unknown until the open questions in requirements.yaml are
 # answered with their sources; never infer it from illustrative geometry. No process, material or printer is chosen.
 use_case:
