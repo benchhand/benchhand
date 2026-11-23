@@ -6,3 +6,5 @@
 |---|---|---|---|
 | [DR-001](DR-001-flow-profile.md) | Flow profile | accepted | 2026-11-23 |
 | [DR-002](DR-002-print-the-engine-parts-in-asa-on-a-bambu-lab-h2d-class-printer.md) | Print the engine parts in ASA on a Bambu Lab H2D class printer | accepted | 2026-11-23 |
+| [DR-003](DR-003-dfm-review-of-the-v6-engine-routes-at-v4.md) | DFM review of the V6 engine routes at v4 | proposed | 2026-11-23 |
+| [DR-004](DR-004-mechanical-review-of-the-v6-engine-at-v4.md) | Mechanical review of the V6 engine at v4 | proposed | 2026-11-23 |
