@@ -1,6 +1,6 @@
 """Drive the concept viewer's node visibility in headless Chromium, as a user would.
 
-Usage: python drive_visibility.py URL SCENE_PATH
+Usage: python drive_visibility.py URL SCENE_PATH VALID_SOURCE
 Runs in cad-render's Playwright environment. The scene authors `lower-arm` (a group with
 descendants) of `short-reach` as `visible: false`. The driver prints one JSON object that
 records what it saw at each step; the test asserts on it.
@@ -76,6 +76,11 @@ def toggled(viewer: Viewer, report: dict[str, object]) -> None:
     report["toggled_checked"] = viewer.checked()
     report["toggled_labels"] = viewer.labels()
     report["save_shown"] = viewer.save()
+    # The PNG shows every variant: hiding something in another variant changes the picture and the key.
+    viewer.select("long-reach")
+    viewer.set_node("bulb", False)
+    viewer.select("short-reach")
+    report["save_other_variant"] = viewer.save()
     viewer.select("long-reach")
     report["shown_pick"] = viewer.pick("short-reach", "lower-link")
 
@@ -94,7 +99,32 @@ def reloaded(viewer: Viewer, report: dict[str, object], scene_path: str) -> None
     report["reloaded_checked"] = viewer.checked()
 
 
-def main(url: str, scene_path: str) -> int:
+def switched(viewer: Viewer, report: dict[str, object], scene_path: str, valid_source: str) -> None:
+    """A failed switch to another file leaves the first file's controls on the first file's overrides.
+
+    `other.scene.json` is invalid at first and shares every node id with the first scene. Its checkboxes must
+    start from its own file, not from what was toggled while the failed switch was pending.
+    """
+    other = scene_path.replace("lamp-arm.scene.json", "other.scene.json")
+    viewer.page.select_option("#scene-select", "other.scene.json")
+    viewer.page.wait_for_function("() => !document.getElementById('notice').hidden")
+    viewer.select("short-reach")
+    viewer.set_node("base-plate", False)  # the first file is still on screen: this is its override
+    report["failed_switch_checked"] = viewer.checked()
+    with open(valid_source, encoding="utf-8") as src, open(other, "w", encoding="utf-8") as dst:
+        dst.write(src.read())
+    viewer.page.wait_for_function("() => document.getElementById('notice').hidden")
+    viewer.settle()
+    viewer.select("short-reach")
+    report["other_checked"] = viewer.checked()
+    viewer.page.select_option("#scene-select", "lamp-arm.scene.json")
+    viewer.page.wait_for_function("() => window.cadConcept.file === 'lamp-arm.scene.json'")
+    viewer.settle()
+    viewer.select("short-reach")
+    report["back_checked"] = viewer.checked()
+
+
+def main(url: str, scene_path: str, valid_source: str) -> int:
     errors: list[str] = []
     report: dict[str, object] = {"errors": errors}
     with sync_playwright() as playwright:
@@ -111,6 +141,7 @@ def main(url: str, scene_path: str) -> int:
             authored(viewer, report)
             toggled(viewer, report)
             reloaded(viewer, report, scene_path)
+            switched(viewer, report, scene_path, valid_source)
         finally:
             browser.close()
     print(json.dumps(report))
@@ -118,4 +149,4 @@ def main(url: str, scene_path: str) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(*sys.argv[1:3]))
+    sys.exit(main(*sys.argv[1:4]))

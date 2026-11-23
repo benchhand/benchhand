@@ -547,6 +547,10 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
             scene_path.write_text(json.dumps(scene), encoding="utf-8")
             project = project_for_scene(Path(tmp), scene_path)
             scene_dir = project / "hw" / "concept"
+            valid_other = Path(tmp) / "valid-other.json"
+            valid_other.write_text(EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+            # Listed from the start but not a scene yet: the driver switches to it, sees the failure, then fixes it.
+            (scene_dir / "other.scene.json").write_text("{}", encoding="utf-8")
             proc = subprocess.Popen(
                 [sys.executable, str(SERVE_PY), "--scene-dir", str(scene_dir), "--project-root", str(project),
                  "--port", "0", "--idle-timeout", "0", "--poll", "0.1"],
@@ -555,7 +559,8 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
             try:
                 url = json.loads(proc.stdout.readline())["url"]
                 driver = subprocess.run(
-                    scriptenv.python_command(RENDER_PY, str(DRIVE_VISIBILITY), url, str(scene_dir / "lamp-arm.scene.json")),
+                    scriptenv.python_command(RENDER_PY, str(DRIVE_VISIBILITY), url,
+                                             str(scene_dir / "lamp-arm.scene.json"), str(valid_other)),
                     capture_output=True, text=True, timeout=600)
             finally:
                 proc.terminate()
@@ -578,9 +583,17 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
         self.assertTrue(report["save_hidden"].startswith("Saved "), report["save_hidden"])
         self.assertTrue(report["save_shown"].startswith("Saved "), report["save_shown"])
         self.assertNotEqual(report["save_hidden"], report["save_shown"])
+        # The PNG shows every variant, so hiding something in another variant is a new capture too.
+        self.assertTrue(report["save_other_variant"].startswith("Saved "), report["save_other_variant"])
+        self.assertNotIn(report["save_other_variant"], (report["save_hidden"], report["save_shown"]))
         # A live reload keeps the viewer's own toggles over the file's flags.
         self.assertTrue(report["reloaded_checked"]["lower-arm"])
         self.assertFalse(report["reloaded_checked"]["upper-arm"])
+        # After a failed switch to another file, the toggles still belong to the file on screen: a file
+        # with the same node ids starts from its own state, and the first file keeps its override.
+        self.assertFalse(report["failed_switch_checked"]["base-plate"])
+        self.assertTrue(report["other_checked"]["base-plate"])
+        self.assertFalse(report["back_checked"]["base-plate"])
 
 
 class ServerVendor(unittest.TestCase):

@@ -58,6 +58,7 @@ const accentColor = new THREE.Color(token("--color-accent"));
 
 const state = {
   file: null,
+  loadedFile: null,
   scene: null,
   content: null,
   grid: null,
@@ -122,7 +123,8 @@ function buildVariant(def, index) {
       node.kind === "part" ? makePart(node, palette[meshes.length % palette.length]) : new THREE.Group();
     if (node.kind === "part") meshes.push(object);
     applyTransform(object, node);
-    object.visible = state.visibility.get(visibilityKey(def.id, node.id)) ?? node.visible !== false;
+    // The variant root stands for the variant itself: `visible` does not apply to it (concept.py check rejects it).
+    object.visible = parentId === null ? true : state.visibility.get(visibilityKey(state.file, def.id, node.id)) ?? node.visible !== false;
     object.userData.variantId = def.id;
     object.userData.nodeId = node.id;
     parentObject.add(object);
@@ -140,7 +142,7 @@ function shownInTree(object) {
   return true;
 }
 
-const visibilityKey = (variantId, nodeId) => `${state.file}/${variantId}/${nodeId}`;
+const visibilityKey = (file, variantId, nodeId) => `${file}/${variantId}/${nodeId}`;
 
 function attachJoint(variantId, def, nodes) {
   const where = `variant ${variantId}, joint "${def.id}"`;
@@ -391,7 +393,7 @@ function renderNodeList(variant) {
     box.dataset.node = id;
     box.addEventListener("change", () => {
       node.object.visible = box.checked;
-      state.visibility.set(visibilityKey(variant.def.id, id), box.checked);
+      state.visibility.set(visibilityKey(state.loadedFile, variant.def.id, id), box.checked);
       requestRender();
     });
     label.append(box, ` ${node.def.label}`);
@@ -510,6 +512,7 @@ async function loadScene({ reason }) {
   const built = buildScene(scene);
   disposeContent();
   state.scene = scene;
+  state.loadedFile = state.file; // what the controls and Save now show; state.file may name a file that failed to load
   state.content = built.content;
   state.variants = built.variants;
   state.grid = makeGrid(built.content);
@@ -612,8 +615,13 @@ function compositeScreenshot() {
 }
 
 function hiddenNodes() {
-  const variant = state.variants.find((v) => v.def.id === state.selected);
-  return [...variant.nodes].filter(([, node]) => !shownInTree(node.object)).map(([id]) => id).sort();
+  // Every rendered variant is in the PNG, so every variant's visibility is part of the capture key.
+  return Object.fromEntries(
+    state.variants.map((variant) => [
+      variant.def.id,
+      [...variant.nodes].filter(([, node]) => !shownInTree(node.object)).map(([id]) => id).sort(),
+    ]),
+  );
 }
 
 async function saveScreenshot() {
@@ -622,9 +630,10 @@ async function saveScreenshot() {
   ui.shotResult.dataset.kind = "info";
   ui.shotResult.textContent = "Saving…";
   try {
+    const file = state.loadedFile; // the scene on screen, even if a switch to another file just failed
     const capture = {
-      scene: state.file,
-      scene_sha256: await fetch(`/scenes/${encodeURIComponent(state.file)}`, { cache: "no-store" })
+      scene: file,
+      scene_sha256: await fetch(`/scenes/${encodeURIComponent(file)}`, { cache: "no-store" })
         .then((response) => response.arrayBuffer())
         .then((bytes) => crypto.subtle.digest("SHA-256", bytes))
         .then((digest) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")),
@@ -639,7 +648,7 @@ async function saveScreenshot() {
     const response = await fetch("/api/screenshot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scene: state.file, variant: state.selected, capture, png: compositeScreenshot() }),
+      body: JSON.stringify({ scene: file, variant: state.selected, capture, png: compositeScreenshot() }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);

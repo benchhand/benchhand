@@ -37,7 +37,7 @@ and flows into the handoff verbatim. `root` is a group that stands for the varia
 Group: `{kind: "group", id, label, visible?, position?, rotation?, children: [node, ...]}`.
 Part: `{kind: "part", id, label, visible?, position?, rotation?, shape, color?}`.
 
-`visible: false` hides a node and its children when the viewer opens (default `true`). The viewer's Nodes list toggles it for the session, so hiding a part needs no second scene file. The handoff ignores it.
+`visible: false` hides a node and its children when the viewer opens (default `true`). The viewer's Nodes list toggles it for the session, so hiding a part needs no second scene file. The handoff ignores it. A variant's `root` stands for the variant itself, so `visible: false` on a root is a `concept.py check` error; hide its children, or retire the variant.
 
 | `shape.type` | Fields | Notes |
 |---|---|---|
