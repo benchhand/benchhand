@@ -1,6 +1,7 @@
 ---
 name: cad-review-mech
 description: Reviews mechanical requirements, load paths, fits and FEA with measured evidence.
+user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.
