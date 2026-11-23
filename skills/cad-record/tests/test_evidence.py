@@ -932,6 +932,19 @@ class SelectionGate(unittest.TestCase):
         gate = assess(selected(docs), selection_sha256=digest).gate("design_freeze")
         self.assertFalse({f.code for f in gate} & {"gate.selection", "gate.selection_approval"})
 
+    def test_a_confirmed_choice_with_an_fdm_route_and_no_machine_passes_the_freeze_and_release_gates(self) -> None:
+        """No machine recorded is a note, not a blocking unknown: the shipped guideline values govern the FDM route."""
+        docs = scenarios.qualified_polymer_cover()
+        printed = next(c for c in docs["manufacturing/selection.yaml"]["candidates"] if c["id"] == "printed_cover")
+        del printed["parts"][0]["route"][0]["capability"]
+        docs, digest = recorded(docs, primary="printed_cover")
+        for stage in ("intent", "layout", "design_freeze", "release"):
+            self.assertEqual(self.gate(docs, digest, stage), [], stage)
+        report = evidence.selection.assess(selected(docs), input_sha256=digest)
+        (capability,) = [e for d in report["decisions"] for c in d["candidates"] if c["id"] == "printed_cover"
+                         for e in c["evaluations"] if e["constraint"] == "capability"]
+        self.assertEqual(capability["outcome"], "not_assessed")
+
     def test_a_confirmed_choice_on_changed_inputs_blocks_at_every_stage(self) -> None:
         docs, _ = recorded(scenarios.qualified_polymer_cover(), primary="printed_cover")
         docs["requirements.yaml"]["requirements"][0]["text"] = "TST: the requirement changed after the confirmation"
