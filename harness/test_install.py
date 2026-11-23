@@ -145,7 +145,8 @@ class InstallerTests(unittest.TestCase):
                     self.assertIn(str(project / ".opencode/commands/cad-flow.md"), dry.stdout)
                 if harness == "pi":
                     self.assertIn(str(project / ".pi/prompts/cad-flow.md"), dry.stdout)
-                    self.assertIn(str(project / ".pi/cad-guard/cad-bash-guard.js"), dry.stdout)
+                    self.assertIn(str(project / ".pi/cad-guard/cad-guard.js"), dry.stdout)
+                    self.assertIn(str(project / ".pi/cad-guard/cad-clerk.js"), dry.stdout)
                 self.assertFalse((project / skills_relative).exists())
 
                 installed = self.run_installer(*command)
@@ -198,57 +199,25 @@ class InstallerTests(unittest.TestCase):
                 if command_dir:
                     self.assertFalse((root / command_dir).exists())
 
-    def test_pi_agents_load_the_guard_from_outside_auto_discovery(self) -> None:
-        for scope_args, root in ((["--project", str(self.project)], self.project.resolve() / ".pi"), (["--user"], self.home.resolve() / ".pi/agent")):
+    def test_pi_agents_load_their_installed_extension_from_outside_auto_discovery(self) -> None:
+        for scope_args, root in ((["--project", str(self.project)], self.project / ".pi"), (["--user"], self.home / ".pi/agent")):
             with self.subTest(scope=scope_args[0]):
                 self.run_ok("--harness", "pi", *scope_args)
-                guard = root / "cad-guard/cad-bash-guard.js"
-                self.assertEqual(guard.read_bytes(), (CAD / "harness/pi/guard/cad-bash-guard.js").read_bytes())
+                self.assertEqual((root / "cad-guard/cad-guard.js").read_bytes(), (CAD / "harness/pi/guard/cad-guard.js").read_bytes())
                 self.assertFalse((root / "extensions").exists())
                 for agent in (root / "agents").glob("*.md"):
-                    text = agent.read_text(encoding="utf-8")
-                    self.assertNotIn("__CAD_PI_BASH_GUARD__", text)
-                    shell = "tools:" in text and "bash" in text.split("tools:", 1)[1].split("\n", 1)[0]
-                    self.assertEqual(f"subagentOnlyExtensions: {json.dumps(str(guard))}\n" in text, shell, agent.name)
+                    front = yaml.safe_load(agent.read_text(encoding="utf-8").split("---\n")[1])
+                    tools = [tool.strip() for tool in front["tools"].split(",")]
+                    self.assertNotIn("bash", tools, agent.name)
+                    if "cad_run" in tools or "write" in tools or "edit" in tools:
+                        named = agent.parent / front["subagentOnlyExtensions"]
+                        self.assertEqual(named.resolve(), (root / "cad-guard" / f"{agent.stem}.js").resolve(), agent.name)
+                        self.assertEqual(named.read_bytes(), (CAD / "harness/pi/launchers" / f"{agent.stem}.js").read_bytes())
+                    else:
+                        self.assertNotIn("subagentOnlyExtensions", front, agent.name)
                 self.assertTrue((root / "prompts/cad-flow.md").is_file())
                 self.run_ok("--harness", "pi", *scope_args, "--uninstall")
                 self.assertFalse(root.exists() and any(root.rglob("*.*")))
-
-    def test_pi_guard_path_is_quoted_so_odd_characters_stay_one_value(self) -> None:
-        project = self.root / "my proj #1: a'b"
-        project.mkdir()
-        self.run_ok("--harness", "pi", "--project", str(project))
-        text = (project / ".pi/agents/cad-clerk.md").read_text(encoding="utf-8")
-        front = yaml.safe_load(text.split("---\n")[1])
-        self.assertEqual(front["subagentOnlyExtensions"], str(project.resolve() / ".pi/cad-guard/cad-bash-guard.js"))
-
-    def test_pi_refuses_a_guard_path_that_pi_subagents_cannot_read_back(self) -> None:
-        for name in ("a,b", 'a"b', "a\\b", "a\nb"):
-            with self.subTest(name=name):
-                project = self.root / name
-                project.mkdir()
-                result = self.run_installer("--harness", "pi", "--project", str(project))
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("pi", result.stderr)
-                self.assertFalse((project / ".pi").exists())
-
-    def test_pi_guard_path_is_quoted_so_odd_characters_stay_one_value(self) -> None:
-        project = self.root / "my proj #1: a'b"
-        project.mkdir()
-        self.run_ok("--harness", "pi", "--project", str(project))
-        text = (project / ".pi/agents/cad-clerk.md").read_text(encoding="utf-8")
-        front = yaml.safe_load(text.split("---\n")[1])
-        self.assertEqual(front["subagentOnlyExtensions"], str(project.resolve() / ".pi/cad-guard/cad-bash-guard.js"))
-
-    def test_pi_refuses_a_guard_path_that_pi_subagents_cannot_read_back(self) -> None:
-        for name in ("a,b", 'a"b', "a\\b", "a\nb"):
-            with self.subTest(name=name):
-                project = self.root / name
-                project.mkdir()
-                result = self.run_installer("--harness", "pi", "--project", str(project), cwd=self.root)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("pi cannot read", result.stderr)
-                self.assertFalse((project / ".pi").exists())
 
     def test_all_includes_pi(self) -> None:
         self.run_ok("--harness", "all", "--project", str(self.project))
@@ -319,11 +288,7 @@ class InstallerTests(unittest.TestCase):
         self.run_ok("--harness", "all", "--project", str(self.project))
         for harness, (_skills, agents_relative) in HARNESS_PATHS.items():
             for source in (CAD / "harness" / harness / "agents").iterdir():
-                expected = source.read_bytes()
-                if harness == "pi":  # the one installer edit: the guard path
-                    guard = (self.project.resolve() / ".pi/cad-guard/cad-bash-guard.js").as_posix()
-                    expected = expected.replace(b"__CAD_PI_BASH_GUARD__", json.dumps(guard).encode())
-                self.assertEqual((self.project / agents_relative / source.name).read_bytes(), expected)
+                self.assertEqual((self.project / agents_relative / source.name).read_bytes(), source.read_bytes())
 
     def test_tier_model_keeps_kiro_user_skill_uris(self) -> None:
         self.run_ok("--harness", "kiro", "--user", "--tier-model", "cheap=claude-haiku-4.5")
@@ -364,7 +329,7 @@ class InstallerWithoutPyYamlTests(unittest.TestCase):
     def test_every_harness_installs_without_pyyaml_and_strips_the_key(self) -> None:
         result = self.run_bare(harness="all")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for skills in (".agents/skills", ".opencode/skills", ".kiro/skills"):
+        for skills in (".agents/skills", ".opencode/skills", ".kiro/skills", ".pi/skills"):
             text = (self.project / skills / "cad-bom/SKILL.md").read_text(encoding="utf-8")
             self.assertNotIn("user-invocable", text, skills)
         claude = (self.project / ".claude/skills/cad-bom/SKILL.md").read_text(encoding="utf-8")
