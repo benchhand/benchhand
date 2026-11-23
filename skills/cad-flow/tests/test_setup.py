@@ -63,6 +63,13 @@ class PlanTests(unittest.TestCase):
         uv = next(item for item in items if item.id == "uv")
         self.assertIn("https://astral.sh/uv/install.sh", uv.command)
 
+    def test_pi_is_a_harness_choice_of_the_command_line(self) -> None:
+        with patch.dict("os.environ", {"HOME": str(self.home)}, clear=True), \
+                patch.object(setup.preflight, "run_checks", return_value=report()) as run_checks, \
+                patch.object(setup, "plan", return_value=[]), redirect_stdout(io.StringIO()):
+            self.assertEqual(setup.main(["--harness", "pi"]), 0)
+        self.assertEqual(run_checks.call_args.args[-1] if run_checks.call_args.args else run_checks.call_args.kwargs.get("harness"), "pi")
+
     def test_requested_harness_is_planned_but_not_implicit(self) -> None:
         with patch.object(setup, "_harness_needed", return_value=True):
             implicit = setup.plan(report(), self.root, self.home, self.env)
