@@ -66,73 +66,51 @@ class HarnessInstallTests(unittest.TestCase):
             self.assertEqual(check.status, "pass")
             self.assertEqual(preflight._harness_check("claude", project, Path(temporary) / "home", {}).status,
                              "warn")
-    def pi_install(self, root: Path, guard: Path) -> None:
-        """A pi install as harness/install.py writes it: the agent names the guard by absolute path."""
+    def pi_install(self, scope: Path, prefix: str, extension: str = "../cad-guard/cad-clerk.js") -> dict[str, Path]:
+        """A pi install as harness/install.py writes it, with every file in the scope's receipt."""
         files = {
-            ".pi/skills/cad-flow/SKILL.md": "skill",
-            ".pi/agents/cad-analyst.md": f"---\nsubagentOnlyExtensions: {json.dumps(str(guard))}\n---\n",
+            f"{prefix}/skills/cad-flow/SKILL.md": "skill",
+            f"{prefix}/agents/cad-clerk.md": f"---\nname: cad-clerk\nsubagentOnlyExtensions: {extension}\n---\n",
+            f"{prefix}/agents/cad-mech-reviewer.md": "---\nname: cad-mech-reviewer\ntools: read\n---\n",
+            f"{prefix}/cad-guard/cad-guard.js": "export function cadGuard() {}",
+            f"{prefix}/cad-guard/cad-clerk.js": "export default cadGuard();",
         }
         receipt = {}
         for key, text in files.items():
-            (root / key).parent.mkdir(parents=True, exist_ok=True)
-            (root / key).write_text(text, encoding="utf-8")
+            (scope / key).parent.mkdir(parents=True, exist_ok=True)
+            (scope / key).write_text(text, encoding="utf-8")
             receipt[key] = hashlib.sha256(text.encode()).hexdigest()
-        (root / ".benchhand-install.json").write_text(json.dumps({"format": 1, "files": receipt}), encoding="utf-8")
+        (scope / ".benchhand-install.json").write_text(json.dumps({"format": 1, "files": receipt}), encoding="utf-8")
+        return {key.rsplit("/", 1)[-1]: scope / key for key in files}
 
-    def test_pi_receipt_passes_when_the_guard_the_agents_name_exists(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary)
-            guard = project / ".pi/cad-guard/cad-bash-guard.js"
-            guard.parent.mkdir(parents=True)
-            guard.write_text("export default () => {}", encoding="utf-8")
-            self.pi_install(project, guard)
-            self.assertEqual(preflight._harness_check("pi", project, project / "home", {}).status, "pass")
-
-    def test_pi_receipt_warns_when_the_named_guard_is_missing_after_a_move(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary)
-            self.pi_install(project, Path("/old/place/.pi/cad-guard/cad-bash-guard.js"))
-            check = preflight._harness_check("pi", project, project / "home", {})
-            self.assertEqual(check.status, "warn")
-            self.assertIn("guard", check.detail)
-            self.assertIn("--harness pi", check.fix)
-
-    def test_pi_receipt_uses_project_and_user_installer_paths(self) -> None:
-        sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    def test_pi_receipt_passes_when_it_owns_the_extension_each_agent_names(self) -> None:
         for scope_name, prefix in (("project", ".pi"), ("home", ".pi/agent")):
             with self.subTest(scope=scope_name), tempfile.TemporaryDirectory() as temporary:
                 project, home = Path(temporary) / "project", Path(temporary) / "home"
-                project.mkdir()
-                home.mkdir()
-                scope = project if scope_name == "project" else home
-                skill = scope / prefix / "skills/cad-flow/SKILL.md"
-                agent = scope / prefix / "agents/cad-analyst.md"
-                for path in (skill, agent):
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text("installed", encoding="utf-8")
-                (scope / ".benchhand-install.json").write_text(json.dumps({"format": 1, "files": {
-                    f"{prefix}/skills/cad-flow/SKILL.md": sha(skill),
-                    f"{prefix}/agents/cad-analyst.md": sha(agent)}}), encoding="utf-8")
-                self.assertEqual(preflight._harness_check("pi", project, home, {}).status, "pass")
+                self.pi_install(project if scope_name == "project" else home, prefix)
+                check = preflight._harness_check("pi", project, home, {})
+                self.assertEqual(check.status, "pass", check.detail)
 
-    def test_pi_warns_when_an_agent_names_a_guard_that_no_longer_exists(self) -> None:
-        sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        with tempfile.TemporaryDirectory() as temporary:
-            project, home = Path(temporary) / "project", Path(temporary) / "home"
-            guard = project / ".pi/cad-guard/cad-bash-guard.js"
-            skill = project / ".pi/skills/cad-flow/SKILL.md"
-            agent = project / ".pi/agents/cad-clerk.md"
-            for path, text in ((guard, "guard"), (skill, "skill"), (agent, f'---\nname: cad-clerk\nsubagentOnlyExtensions: "{guard}"\n---\n')):
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text, encoding="utf-8")
-            (project / ".benchhand-install.json").write_text(json.dumps({"format": 1, "files": {
-                ".pi/skills/cad-flow/SKILL.md": sha(skill), ".pi/agents/cad-clerk.md": sha(agent)}}), encoding="utf-8")
-            self.assertEqual(preflight._harness_check("pi", project, home, {}).status, "pass")
-            guard.unlink()
-            stale = preflight._harness_check("pi", project, home, {})
-            self.assertEqual(stale.status, "warn")
-            self.assertIn(str(guard), stale.detail)
-            self.assertIn("harness/install.py --harness pi", stale.fix)
+    def test_pi_warns_when_an_agent_names_an_extension_its_receipt_does_not_own(self) -> None:
+        # A copied or moved project keeps an older install's absolute guard path, which may still exist.
+        cases = (("deleted", "cad-clerk.js", None), ("edited", "cad-clerk.js", "export default () => {};"),
+                 ("core edited", "cad-guard.js", "export function cadGuard() { return () => {}; }"),
+                 ("another install's guard", None, None))
+        for name, damaged, replacement in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as temporary:
+                project, home, other = Path(temporary) / "project", Path(temporary) / "home", Path(temporary) / "old"
+                if damaged is None:
+                    files = self.pi_install(project, ".pi", json.dumps(str(self.pi_install(other, ".pi")["cad-clerk.js"])))
+                else:
+                    files = self.pi_install(project, ".pi")
+                    if replacement is None:
+                        files[damaged].unlink()
+                    else:
+                        files[damaged].write_text(replacement, encoding="utf-8")
+                check = preflight._harness_check("pi", project, home, {})
+                self.assertEqual(check.status, "warn", check.detail)
+                self.assertIn("cad-clerk", check.detail)
+                self.assertIn("harness/install.py --harness pi", check.fix)
 
     def test_pi_is_a_harness_choice_of_the_command_line(self) -> None:
         report = preflight.Report((preflight.Check("uv", "uv", "pass", True, "", ""),))

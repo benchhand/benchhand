@@ -440,26 +440,31 @@ def _vendor_check(environ: Mapping[str, str], fill: bool = False) -> Check:
         detail = f"Could not {'fill' if fill else 'verify'} cad-render's three.js cache: {error}."
     return _check("three-vendor-cache", "Pinned three.js vendor cache", "fail", detail,
                   "Run `preflight.py --warm` with network access to fill the pinned cache, then retry.")
-def _missing_pi_guards(agent: Path) -> set[str]:
-    """Guard paths a pi agent names in `subagentOnlyExtensions` that no longer exist.
 
-    The installer writes an absolute path, so moving a project leaves the agent naming a dead
-    guard. pi-subagents then fails the launch; report it here instead, before the run.
+
+def _pi_unowned_extensions(agent: Path, owned: set[Path]) -> set[str]:
+    """The `subagentOnlyExtensions` entries of a pi agent that its scope's receipt does not own.
+
+    The installer writes `../cad-guard/<agent>.js`, which pi-subagents resolves from the agent
+    file. The named file and the `cad-guard.js` it imports must be receipt files of the same
+    scope with their recorded hashes. An older install, or a copied project, can name a guard
+    elsewhere that still exists; that is not the guard this install owns.
     """
     try:
         text = agent.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return set()
-    missing: set[str] = set()
+    unowned: set[str] = set()
     for match in re.finditer(r"^subagentOnlyExtensions:[ \t]*(.+?)[ \t]*$", text, re.MULTILINE):
         raw = match.group(1)
         try:
             value = json.loads(raw) if raw.startswith('"') else raw
         except json.JSONDecodeError:
             value = raw
-        if isinstance(value, str) and not Path(value).is_file():
-            missing.add(value)
-    return missing
+        named = (agent.parent / str(value)).resolve()
+        if named not in owned or named.with_name("cad-guard.js") not in owned:
+            unowned.add(f"{agent.name} names {value}")
+    return unowned
 
 
 HARNESSES = ("claude", "codex", "opencode", "kiro", "pi")
@@ -472,9 +477,11 @@ HARNESS_PREFIXES = {
     "kiro": ((".kiro/skills/", ".kiro/agents/"), (".kiro/skills/", ".kiro/agents/")),
     "pi": ((".pi/skills/", ".pi/agents/"), (".pi/agent/skills/", ".pi/agent/agents/")),
 }
+# The pi CAD extension folder of each scope (project, user), beside the agents folder.
+PI_GUARD_PREFIXES = (".pi/cad-guard/", ".pi/agent/cad-guard/")
 
 
-def _receipt_files(scope: Path, prefixes: tuple[str, str]) -> Iterator[tuple[str, Path]]:
+def _receipt_files(scope: Path, prefixes: tuple[str, ...]) -> Iterator[tuple[str, Path]]:
     """Receipt entries under `prefixes` whose installed file exists with the recorded hash."""
     try:
         receipt = json.loads((scope / ".benchhand-install.json").read_text(encoding="utf-8"))
@@ -502,7 +509,8 @@ def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, st
     stale_guards: set[str] = set()
     installed_skills: set[str] = set()
     installed_agents: set[str] = set()
-    for scope, (skill_prefix, agent_prefix) in zip((cwd, home), HARNESS_PREFIXES[harness]):
+    for scope, (skill_prefix, agent_prefix), guard_prefix in zip((cwd, home), HARNESS_PREFIXES[harness], PI_GUARD_PREFIXES):
+        owned_guards = {target.resolve() for _key, target in _receipt_files(scope, (guard_prefix,))} if harness == "pi" else set()
         for key, target in _receipt_files(scope, (skill_prefix, agent_prefix)):
             if key.startswith(skill_prefix) and Path(key).name == "SKILL.md":
                 installed_skills.add(key)
@@ -510,12 +518,13 @@ def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, st
                 if harness != "codex" or target.suffix == ".toml":
                     installed_agents.add(key)
                 if harness == "pi":
-                    stale_guards.update(_missing_pi_guards(target))
+                    stale_guards.update(_pi_unowned_extensions(target, owned_guards))
 
     present = bool(installed_skills and installed_agents and not stale_guards)
     detail = f"Installer receipt has {len(installed_skills)} cad-* skill(s) and {len(installed_agents)} cad-* agent(s)."
     if stale_guards:
-        detail += f" Agents name a bash guard that is missing: {', '.join(sorted(stale_guards))} (the project moved, or the guard was deleted)."
+        detail += (f" Agents name a CAD extension that this install's receipt does not own with its recorded hash: "
+                   f"{'; '.join(sorted(stale_guards))} (the project was copied or moved, or the extension was edited or deleted).")
     fix = f"Run `python3 harness/install.py --harness {harness} --project .` from the benchhand checkout."
     return _check(f"harness-{harness}", f"{harness.title()} installation", "pass" if present else "warn",
                   detail, "" if present else fix, required=False)
