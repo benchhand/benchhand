@@ -2,7 +2,7 @@
 name: cad-analyst
 description: "Runs one L4 analysis case (sweep, FreeCAD assembly, stack-up, static FEA, or motion) on an integrated CAD version, read-only on hw/, and proposes verification rows."
 tools: read, grep, find, ls, edit, write, bash
-subagentOnlyExtensions: @@CAD_PI_BASH_GUARD@@
+subagentOnlyExtensions: __CAD_PI_BASH_GUARD__
 skills: cad-motion, cad-analysis
 systemPromptMode: append
 inheritProjectContext: true

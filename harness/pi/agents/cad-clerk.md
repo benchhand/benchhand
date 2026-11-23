@@ -2,7 +2,7 @@
 name: cad-clerk
 description: "Does mechanical bookkeeping for the cad-flow lead (BOM rows, record bookkeeping, check-JSON summaries, sourcing extraction) and issues no verdicts or gate decisions."
 tools: read, grep, find, ls, edit, write, bash
-subagentOnlyExtensions: @@CAD_PI_BASH_GUARD@@
+subagentOnlyExtensions: __CAD_PI_BASH_GUARD__
 skills: cad-bom, cad-record
 systemPromptMode: append
 inheritProjectContext: true

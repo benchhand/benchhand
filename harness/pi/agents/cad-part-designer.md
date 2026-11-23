@@ -2,7 +2,7 @@
 name: cad-part-designer
 description: "Designs one assigned CAD unit's parts in an isolated scratch copy, checks them and delivers only its own part directories."
 tools: read, grep, find, ls, edit, write, bash
-subagentOnlyExtensions: @@CAD_PI_BASH_GUARD@@
+subagentOnlyExtensions: __CAD_PI_BASH_GUARD__
 skills: cad-model, cad-design, cad-fits
 systemPromptMode: append
 inheritProjectContext: true

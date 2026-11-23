@@ -33,7 +33,7 @@ PI_PROMPT = ROOT / "harness" / "pi" / "prompts" / "cad-flow.md"
 FLOW_SKILL = "cad-flow"
 # pi-subagents loads this extension only into the agent children that get a shell. The installer
 # replaces the placeholder with the absolute path of the installed guard.
-PI_GUARD_PLACEHOLDER = "@@CAD_PI_BASH_GUARD@@"
+PI_GUARD_PLACEHOLDER = "__CAD_PI_BASH_GUARD__"
 WORK_DIR, SHELL = ".cad-work", "uv *"
 CAPABILITIES = {"read", "write-scratch", "shell-uv", "web"}
 EXPECTED_AGENTS = {"cad-analyst", "cad-clerk", "cad-concept-designer", "cad-dfm-reviewer", "cad-mech-reviewer", "cad-part-designer", "cad-sourcing-researcher"}

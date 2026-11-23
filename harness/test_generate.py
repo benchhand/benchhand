@@ -56,7 +56,7 @@ class HarnessGeneratorTests(GeneratorCopyCase):
         self.generate()
         current = self.run_generator("--check")
         self.assertEqual(current.returncode, 0, current.stdout + current.stderr)
-        self.assertIn(f"PASS: {4 * len(AGENT_NAMES) + 1} harness files current", current.stdout)
+        self.assertIn(f"PASS: {5 * len(AGENT_NAMES) + 2} harness files current", current.stdout)
         output = self.cad / "harness" / "codex" / "agents" / f"{AGENT_NAMES[0]}.toml"
         output.write_text(output.read_text(encoding="utf-8") + "# manual drift\n", encoding="utf-8")
         stale = self.run_generator("--check")

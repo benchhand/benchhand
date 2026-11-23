@@ -2,7 +2,7 @@
 name: cad-concept-designer
 description: "Drafts one assigned L0 concept variant as a checked one-variant three.js scene in its work directory. Spawned by cad-flow; never edits hw/."
 tools: read, grep, find, ls, edit, write, bash
-subagentOnlyExtensions: @@CAD_PI_BASH_GUARD@@
+subagentOnlyExtensions: __CAD_PI_BASH_GUARD__
 skills: cad-concept
 systemPromptMode: append
 inheritProjectContext: true
