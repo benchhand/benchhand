@@ -20,7 +20,7 @@ PARAMS = {
     "slot_w": 10.0,  # clearance for the 8 mm rod small end
     "slot_top": 4.0,  # slot height above the pin axis
     "cavity_d": 16.0,  # hollow skirt under the crown: saves print time and gives the joint a bore on the bank axis
-    "cavity_top": -4.0,  # cavity ceiling, below the pin bore
+    "cavity_top": -4.6,  # cavity ceiling, below the pin bore
 }
 
 

@@ -26,7 +26,7 @@ PARAMS = {
     "case_len": 120.0,
     "case_y": 64.0,
     "case_z": 40.0,
-    "window_d": 62.0,  # crank and rod clearance, along X
+    "window_d": 56.0,  # crank and rod clearance, along X
     "window_len": 96.0,
     "main_bore_d": 14.0,  # main bearing seat, 14 H7
     "seat_len": 12.0,
