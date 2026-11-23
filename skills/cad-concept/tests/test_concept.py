@@ -114,6 +114,14 @@ class SemanticChecks(unittest.TestCase):
         self.assertIn("axis is zero-length", joined)
         self.assertIn("duplicate node id 'base-plate'", joined)
 
+    def test_a_hidden_variant_root_is_an_error(self) -> None:
+        scene = example()
+        root_id = scene["variants"][1]["root"]["id"]
+        scene["variants"][1]["root"]["visible"] = False
+        self.assertIn(f"variants.long-reach: root '{root_id}' cannot be hidden", "\n".join(concept.semantic_errors(scene)))
+        scene["variants"][1]["root"]["visible"] = True
+        self.assertEqual(concept.semantic_errors(scene), [])
+
     def test_scene_level_errors(self) -> None:
         scene = example()
         scene["chosen"] = "missing"
@@ -815,7 +823,9 @@ def skill_launch_args() -> list[str]:
 class ServerLaunchWorkflow(unittest.TestCase):
     def test_the_skill_launch_command_gives_the_same_url_and_no_idle_exit_across_restarts(self) -> None:
         args = skill_launch_args()
-        self.assertIn("--port", args)
+        # The documented values, asserted as written; the run below swaps the port for a free one.
+        self.assertEqual(args[args.index("--port") + 1], "8765")
+        self.assertEqual(args[args.index("--idle-timeout") + 1], "0")
         with socket.socket() as probe:  # the documented port may be taken on this host: swap in a free one
             probe.bind(("127.0.0.1", 0))
             free = probe.getsockname()[1]

@@ -99,6 +99,9 @@ def _variant_errors(variant: dict[str, Any]) -> list[str]:
     node_ids = [node["id"] for node, _ in nodes]
     errors += [f"duplicate node id '{i}'" for i in _duplicates(node_ids)]
     parent_of = {node["id"]: parent for node, parent in nodes}
+    if variant["root"].get("visible") is False:
+        errors.append(f"root '{variant['root']['id']}' cannot be hidden: it is the variant; "
+                      "hide its children, or retire the variant")
     for node, _ in nodes:
         shape = node.get("shape")
         if shape and shape["type"] == "capsule" and shape["height"] < 2 * shape["radius"]:
