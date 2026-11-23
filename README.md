@@ -20,28 +20,31 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
 ## Quick start
 
 1. Install the requirements above: Python 3.12, uv, FreeCAD 1.1.4 and a supported harness.
-2. Install Benchhand for your harness.
-   - Claude Code, from the marketplace. `gh auth` is not needed for this public repository:
+2. Get Benchhand and install it for your harness.
+   - Claude Code, from the marketplace. It needs no clone, and `gh auth` is not needed for this public repository:
 
      ```text
      /plugin marketplace add benchhand/benchhand
      /plugin install benchhand@benchhand
      ```
 
-     For a local checkout, add `/plugin marketplace add /path/to/benchhand` instead. The plugin command is `/benchhand:cad-flow`.
-   - Codex CLI, OpenCode and Kiro CLI, and Claude Code without the plugin: use the copy installer. Set `BENCHHAND` to the checkout path and run it from your project:
+   - Codex CLI, OpenCode, Kiro CLI, and Claude Code without the plugin: clone the repository and run the copy installer from your project. Check out the latest release tag first (see the [releases](https://github.com/benchhand/benchhand/releases)):
 
      ```sh
-     BENCHHAND=/path/to/benchhand
+     git clone https://github.com/benchhand/benchhand.git
+     git -C benchhand checkout <latest-release-tag>
+     BENCHHAND=$PWD/benchhand
      python3 "$BENCHHAND/harness/install.py" --harness codex
      ```
 
-     Choose `claude`, `codex`, `opencode`, `kiro` or `all`. The installer route exposes `/cad-flow` (`$cad-flow` in Codex).
-3. Set `CAD_SKILLS` to the installed skills folder (see the next section).
-4. Run preflight, then setup with `--yes` (see below). Setup stops if FreeCAD is missing or has the wrong version.
-5. Start `/cad-flow` and describe the product.
+     Choose `claude`, `codex`, `opencode`, `kiro` or `all`. Run the installer from the project that you want to design in, or pass `--project DIR`. If you cloned elsewhere, set `BENCHHAND` to that path.
+   - After #327 merges, Codex also installs with `codex plugin marketplace add benchhand/benchhand`, and pi with `pi install git:github.com/benchhand/benchhand`. Until then, use the copy installer for both.
+3. Start the flow in the project and describe the product:
+   - Claude Code plugin: `/benchhand:cad-flow`.
+   - Installer route: `/cad-flow` in Claude Code, OpenCode and Kiro (V3), or `$cad-flow` in Codex.
+4. The agent checks FreeCAD and runs setup at the first stage. Setup stops if FreeCAD is missing or has the wrong version. To check beforehand, see [Start and prepare a project](#start-and-prepare-a-project).
 
-There is no marketplace route for Codex, OpenCode or Kiro yet. If a step fails, see [troubleshooting](docs/troubleshooting.md).
+There is no marketplace route for OpenCode or Kiro yet. If a step fails, see [troubleshooting](docs/troubleshooting.md).
 
 ### Installer options
 
@@ -67,7 +70,7 @@ Codex CLI reads the same marketplace: `codex plugin marketplace add benchhand/be
 
 In an interactive Claude Code or OpenCode chat, start with `/cad-flow`. For interactive Kiro, use `/cad-flow` in a V3 session (`kiro-cli chat --v3`). In Codex CLI, invoke the skill with `$cad-flow` or select it from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
 
-At the project root, set `$CAD_SKILLS` to the directory containing installed `cad-*` skill folders. For a project install, this is `.claude/skills`, `.agents/skills`, `.opencode/skills`, or `.kiro/skills` for the selected harness. For a user install, it is `~/.claude/skills`, `~/.agents/skills`, `~/.config/opencode/skills` or `~/.kiro/skills`. If using a repository checkout directly, set it to `"$BENCHHAND/skills"`.
+The agent resolves `$CAD_SKILLS` itself, as the parent of the skill folder. You set it only when you run a script by hand. See [`CAD_SKILLS`](docs/reference.md#cad_skills) for the directory of each harness.
 
 ### Codex CLI sandbox requirements
 

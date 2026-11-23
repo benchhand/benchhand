@@ -8,12 +8,12 @@ Only the string `1` turns a boolean flag on, as for `CAD_REQUIRE_FREECAD`.
 
 | Variable | Default | Effect | Source |
 |---|---|---|---|
-| `CAD_SKILLS` | none | Directory that holds the installed `cad-*` skill folders. The launcher commands in the skills build their paths from it. | `README.md` |
-| `FREECADCMD` | looked up on `PATH`, then the macOS app bundle | Path to `freecadcmd` when FreeCAD is elsewhere. | `skills/cad-analysis/scripts/fea_static.py` |
-| `CCX`, `GMSH` | looked up through FreeCAD, then `PATH` | Path to the CalculiX and gmsh executables. A set value is used as given, with no fallback. | `skills/cad-flow/scripts/fea_solvers.py` |
+| `CAD_SKILLS` | none | A placeholder in the skills' commands. No script reads it from the environment. See [`CAD_SKILLS`](#cad_skills). | `skills/cad-flow/SKILL.md` |
+| `FREECADCMD` | first match of `freecadcmd` and `FreeCADCmd` on `PATH`, then `/Applications/FreeCAD.app/Contents/Resources/bin/freecadcmd`, then `~/.local/bin/freecadcmd` | Path to `freecadcmd`. Checked first when set. | `skills/cad-flow/scripts/preflight.py` |
+| `CCX`, `GMSH` | FreeCAD's own lookup, then next to `freecadcmd`, then `PATH` | Path to the CalculiX and gmsh executables. A set value is used as given, with no fallback. | `skills/cad-flow/scripts/fea_solvers.py` |
 | `CAD_OUTPUT` | `compact` on a terminal, `json` when piped | Output mode of the producers: `compact`, `json` or `text` (renders as `compact`). `--json` wins. `run.py` sets `compact` unless you set it. | `skills/cad-flow/scripts/run.py` |
 | `CAD_REQUIRE_FREECAD` | off | `1` makes a FreeCAD-gated test fail instead of skip. CI sets it. | `docs/engineering.md` |
-| `CAD_MODEL_BUILD_JOBS` | `min(cpus / 2, 4)`, at least 1 | Parallel part-build workers for `cad_model.py`, capped by the part count. A value that is not a positive integer is an error. | `skills/cad-model/scripts/cadmodel/runner.py` |
+| `CAD_MODEL_BUILD_JOBS` | `min(cpus // 2, 4)`, at least 1 | Parallel part-build workers for `cad_model.py`, capped by the part count. Integer division. An empty or whitespace-only value counts as unset. Any other value that is not a positive integer is an error. | `skills/cad-model/scripts/cadmodel/runner.py` |
 | `CAD_RENDER_RASTER_THREADS` | unset | `1` starts Chromium with `--num-raster-threads=1`. | `skills/cad-render/scripts/render.py` |
 | `CAD_CALIBRATION` | off | Printer calibration. See [Feature flags](engineering.md#feature-flags). | `skills/cad-record/scripts/guidelines.py` |
 | `CAD_FEA_METALS_NEAR_SUPPORT` | off | Form stand-in for metal ductility near a support. See [Feature flags](engineering.md#feature-flags). | `skills/cad-analysis/scripts/fea_conditions.py` |
@@ -43,17 +43,37 @@ Install paths (`harness_layout`):
 | OpenCode | `.opencode/skills`, `agents`, `commands` | `~/.config/opencode/...` |
 | Kiro CLI | `.kiro/skills`, `.kiro/agents` | `~/.kiro/...` |
 
-`CAD_SKILLS` is the `skills` folder of the matching row.
+### `CAD_SKILLS`
+
+`CAD_SKILLS` is a placeholder in the commands of the skills, such as `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" ...`. The agent fills it in as the parent directory of the `cad-flow` skill folder (`skills/cad-flow/SKILL.md`). No script reads it from the environment. `cad-viewer` only prints a command that holds it (`skills/cad-viewer/scripts/cadviewer/session.py`).
+
+When you run a script by hand, set it to the directory that holds the `cad-*` folders:
+
+| Route | Directory |
+|---|---|
+| Claude Code, project install | `.claude/skills` |
+| Claude Code, user install | `~/.claude/skills` |
+| Codex CLI, project install | `.agents/skills` |
+| Codex CLI, user install | `~/.agents/skills` |
+| OpenCode, project install | `.opencode/skills` |
+| OpenCode, user install | `~/.config/opencode/skills` |
+| Kiro CLI, project install | `.kiro/skills` |
+| Kiro CLI, user install | `~/.kiro/skills` |
+| Claude Code plugin | the plugin's `skills/` directory (not confirmed here) |
+| A checkout used directly | `"$BENCHHAND/skills"` |
 
 ## Outcome rules
 
 Results for an evidence obligation (`skills/cad-record/scripts/evidence.py`, `RESULTS`): `pass`, `fail`, `waived`, `not_applicable`, `not_assessed`, `stale`, `planned`, `unknown`. Only `pass`, `waived` and `not_applicable` resolve an obligation.
 
 - Severity order when results combine: `fail` over `unknown` over `not_assessed` over `pass`.
-- A known `fail` blocks whenever it is known, due or not.
+- A known `fail` blocks at a stage gate whenever it is known, due or not.
 - An obligation is due at its own stage. From the design freeze on, every obligation is due.
 - Before LAYOUT, an unresolved due obligation is a warning. From LAYOUT on it is an error.
-- A physical test (`physically_validated`) may stay `planned` until the release. At the release, an unresolved physical test blocks it unless it is outside the release scope or waived with a recorded reason.
+- `not_assessed` is an info finding at a gate. It blocks nothing and never counts as a pass.
+- A physical test (`physically_validated`) may stay `planned` until the release.
+- At the release, only obligations in the release scope of the service class count. A failure outside that scope does not block it.
+- At the release, a waiver resolves an obligation, with two limits. A `safety_critical` release takes no waiver. A waived physical test makes the release an unvalidated trial, and `production` and `safety_critical` refuse that. Both classes therefore need the physical test.
 
 ## Gate decision key
 
