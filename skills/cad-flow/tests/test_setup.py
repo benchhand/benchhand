@@ -65,10 +65,12 @@ class PlanTests(unittest.TestCase):
 
     def test_pi_is_a_harness_choice_of_the_command_line(self) -> None:
         with patch.dict("os.environ", {"HOME": str(self.home)}, clear=True), \
+                patch.object(setup.preflight, "_timed_freecad_checks", return_value=[]) as freecad, \
                 patch.object(setup.preflight, "run_checks", return_value=report()) as run_checks, \
                 patch.object(setup, "plan", return_value=[]), redirect_stdout(io.StringIO()):
             self.assertEqual(setup.main(["--harness", "pi"]), 0)
-        self.assertEqual(run_checks.call_args.args[-1] if run_checks.call_args.args else run_checks.call_args.kwargs.get("harness"), "pi")
+        freecad.assert_called_once()
+        self.assertEqual({call.args[3] for call in run_checks.call_args_list}, {"pi"})
 
     def test_requested_harness_is_planned_but_not_implicit(self) -> None:
         with patch.object(setup, "_harness_needed", return_value=True):
