@@ -2475,6 +2475,32 @@ class CalibrationFlagTests(Checks):
         result = self.unprofiled(walled(3.0), True)
         self.assertIn("process.fdm.capability_unknown", self.codes(result))
 
+    def test_off_approved_measured_geometry_leaves_no_unknown_obligation_and_form_check_exits_0(self) -> None:
+        """The packet form_check publishes: with the flag off, a printed part whose approved pose, walls and supports pass the
+        guideline values has no unknown obligation, whether or not a machine is recorded. The gaps that only a calibration or a
+        machine could close (bed contact area and warp: no_guideline; the envelope: no_capability_profile) are not_assessed,
+        so the evidence gate does not block."""
+        form_check = load_module("tst_form_check_flag", FORM_CHECK)
+        data = walled(3.0)
+        for name, result in (("machine recorded", self.judged(data, False)), ("no machine", self.unprofiled(data, False))):
+            with self.subTest(name):
+                packet = result.packet({"version_manifest": "0" * 64})
+                unknown = [row["obligation"] for row in packet["outcomes"] if row["outcome"] in ("unknown", "fail")]
+                self.assertEqual(unknown, [])
+                self.assertEqual((packet["result"], form_check.packet_code(False, packet)), ("not_assessed", 0))
+                reasons = {row["reason"] for row in packet["outcomes"] if row["outcome"] == "not_assessed"}
+                self.assertTrue(reasons <= {"no_guideline", "no_capability_profile"} and reasons, reasons)
+
+    def test_off_a_missing_material_is_still_unknown_not_not_assessed(self) -> None:
+        """A calibration gap is excused only for a known material: with the stock unidentified the calibration cannot be
+        looked up at all, which is a genuine unknown."""
+        route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"})]
+        documents = FX.record(parts=[part("TST-0101", route, process="fdm", material=None)], capabilities=[],
+                              materials=materials(), product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+        result = pc.assess(load(self, documents), geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED, calibration=False)
+        self.assertEqual(self.outcome(result, "process.fdm.orientation@TST-0101/print"), "unknown")
+
     def test_off_a_guideline_fail_still_fails(self) -> None:
         result = self.judged(walled(1.0), False)
         self.assertEqual(self.outcome(result, GEOMETRY), "fail")
