@@ -40,7 +40,7 @@ QUESTIONS = [
     "Must any part carry a load where breaking or bending would matter? Should I simulate it?",
     "Which fits must not jam or rattle with real, imperfect parts: only the critical ones, all of them, or none?",
     "How much review before release: full, a quick re-check of retainers, mounts and walls, or none?",
-    "Which printer, nozzle and filament? What is the bed size?",
+    "Optional: do you want to record your printer, nozzle and filament? If not, the shipped guideline values apply and nothing waits on it.",
     "Are supports allowed, or must parts print support-free? Do you know your overhang, bridge, thinnest-wall and "
     "smallest-feature limits, or should I wait for a test print?",
     "Will you pick the print orientation, or should I propose options? Which faces must stay clean?",
