@@ -14,7 +14,6 @@ so a new skill must be classified here before the suite passes.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import shutil
 import subprocess
@@ -26,6 +25,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from modload import load_fresh  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
@@ -89,7 +91,6 @@ class InstalledSkillTests(unittest.TestCase):
                 self.assertEqual((skills / name / "SKILL.md").read_bytes(), (SKILLS / name / "SKILL.md").read_bytes())
 
     def test_other_harness_installs_carry_no_key_and_lose_nothing_else(self) -> None:
-        line = f"{KEY}: false\n".encode()
         for harness in ("codex", "opencode", "kiro"):
             skills = self.install(harness)
             with self.subTest(harness=harness):
@@ -97,16 +98,13 @@ class InstalledSkillTests(unittest.TestCase):
                 for name in sorted(HIDDEN):
                     source = (SKILLS / name / "SKILL.md").read_bytes()
                     installed = (skills / name / "SKILL.md").read_bytes()
-                    self.assertEqual(installed, source.replace(line, b"", 1))
+                    eol = b"\r\n" if b"\r\n" in source else b"\n"
+                    self.assertEqual(installed, source.replace(f"{KEY}: false".encode() + eol, b"", 1))
                     self.assertEqual(set(front_matter(skills / name / "SKILL.md")), {"name", "description"})
 
 
 def load_install() -> Any:
-    spec = importlib.util.spec_from_file_location("benchhand_install", INSTALLER)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_fresh("benchhand_install", INSTALLER)
 
 
 class StripUserInvocableTests(unittest.TestCase):
@@ -124,24 +122,43 @@ class StripUserInvocableTests(unittest.TestCase):
     def test_unexpected_forms_fail_loudly(self) -> None:
         install = load_install()
         for front in ("user-invocable: true\n", "user-invocable: false # hidden\n", "user-invocable:  false\n",
-                      "user-invocable: false\nuser-invocable: false\n"):
+                      "user-invocable: false\nuser-invocable: false\n",
+                      '"user-invocable": false\n', "'user-invocable': false\n", "user-invocable : false\n"):
             with self.subTest(front=front), self.assertRaises(ValueError):
                 install.strip_user_invocable(f"---\nname: x\n{front}---\nbody\n".encode())
 
-    def test_install_without_pyyaml_keeps_crlf_bytes(self) -> None:
+    def skill_pair(self, install: Any, harness: str, out: Path) -> Any:
+        return next(p for p in install.file_pairs((harness,), out) if p.source.name == "SKILL.md")
+
+    def test_install_keeps_crlf_bytes(self) -> None:
         install = load_install()
         source = b"---\r\nname: cad-x\r\nuser-invocable: false\r\n---\r\nbody\r\n"
         with tempfile.TemporaryDirectory(prefix="cad-crlf-") as temporary:
-            skills = Path(temporary) / "skills"
-            (skills / "cad-x").mkdir(parents=True)
-            (skills / "cad-x" / "SKILL.md").write_bytes(source)
-            install.SKILLS = skills
+            root = Path(temporary)
+            (root / "skills/cad-x").mkdir(parents=True)
+            (root / "skills/cad-x/SKILL.md").write_bytes(source)
+            install.SKILLS = root / "skills"
             for harness in ("codex", "opencode", "kiro"):
                 with self.subTest(harness=harness):
-                    pair = next(p for p in install.file_pairs((harness,), Path(temporary) / "out") if p.source.name == "SKILL.md")
-                    self.assertEqual(pair.content, source.replace(b"user-invocable: false\r\n", b""))
-            claude = next(p for p in install.file_pairs(("claude",), Path(temporary) / "out") if p.source.name == "SKILL.md")
-            self.assertIsNone(claude.content)
+                    self.assertEqual(self.skill_pair(install, harness, root / "out").content,
+                                     source.replace(b"user-invocable: false\r\n", b""))
+            self.assertIsNone(self.skill_pair(install, "claude", root / "out").content)
+
+    def test_a_harness_added_later_gets_the_strip_by_default(self) -> None:
+        """A synthetic harness the installer has never heard of: an allowlist of today's names would miss it."""
+        install = load_install()
+        source = b"---\nname: cad-x\nuser-invocable: false\n---\nbody\n"
+        with tempfile.TemporaryDirectory(prefix="cad-future-") as temporary:
+            root = Path(temporary)
+            (root / "skills/cad-x").mkdir(parents=True)
+            (root / "skills/cad-x/SKILL.md").write_bytes(source)
+            (root / "generated/future/agents").mkdir(parents=True)
+            install.SKILLS = root / "skills"
+            install.GENERATED = root / "generated"
+            install.harness_layout = lambda harness, project, home: (
+                project / ".future/skills", project / ".future/agents", None)
+            self.assertEqual(self.skill_pair(install, "future", root / "out").content,
+                             b"---\nname: cad-x\n---\nbody\n")
 
 
 @unittest.skipUnless(shutil.which("claude"), "local smoke test: needs the claude CLI and a logged-in account; CI has neither")

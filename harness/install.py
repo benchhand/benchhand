@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 from typing import NamedTuple
@@ -61,7 +62,8 @@ def strip_user_invocable(data: bytes) -> bytes:
     end = next((i for i, line in enumerate(lines[1:], 1) if line.rstrip(b"\r\n") == b"---"), None)
     if end is None:
         raise ValueError("front matter has no closing --- line")
-    hits = [i for i in range(1, end) if lines[i].startswith(b"user-invocable")]
+    # A quoted spelling is the same YAML key, so it counts as a hit and then fails the exact-form check.
+    hits = [i for i in range(1, end) if re.match(rb"""["']?user-invocable""", lines[i])]
     if not hits:
         return data
     if len(hits) != 1 or lines[hits[0]].rstrip(b"\r\n") != b"user-invocable: false":
