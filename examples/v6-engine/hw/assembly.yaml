@@ -1,6 +1,365 @@
+# Reduced scope: one rod, one piston and one pin definition, each placed in six occurrences on a 60 degree V.
+# Heads and the cam drive are deferred. Each phase_deg turns a cylinder's slider-crank to its crank throw.
+occurrences:
+- id: piston-1
+  PN: V6E-0002
+  placement:
+    translation_mm: [-41.25, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: pin-1
+  PN: V6E-0003
+  placement:
+    translation_mm: [-41.25, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: rod-1
+  PN: V6E-0004
+  placement:
+    translation_mm: [-41.25, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: piston-2
+  PN: V6E-0002
+  placement:
+    translation_mm: [-30.75, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: pin-2
+  PN: V6E-0003
+  placement:
+    translation_mm: [-30.75, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: rod-2
+  PN: V6E-0004
+  placement:
+    translation_mm: [-30.75, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: piston-3
+  PN: V6E-0002
+  placement:
+    translation_mm: [-5.25, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: pin-3
+  PN: V6E-0003
+  placement:
+    translation_mm: [-5.25, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: rod-3
+  PN: V6E-0004
+  placement:
+    translation_mm: [-5.25, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: piston-4
+  PN: V6E-0002
+  placement:
+    translation_mm: [5.25, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: pin-4
+  PN: V6E-0003
+  placement:
+    translation_mm: [5.25, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: rod-4
+  PN: V6E-0004
+  placement:
+    translation_mm: [5.25, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: piston-5
+  PN: V6E-0002
+  placement:
+    translation_mm: [30.75, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: pin-5
+  PN: V6E-0003
+  placement:
+    translation_mm: [30.75, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: rod-5
+  PN: V6E-0004
+  placement:
+    translation_mm: [30.75, 31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: piston-6
+  PN: V6E-0002
+  placement:
+    translation_mm: [41.25, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: pin-6
+  PN: V6E-0003
+  placement:
+    translation_mm: [41.25, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: rod-6
+  PN: V6E-0004
+  placement:
+    translation_mm: [41.25, -31.0, 53.693575]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+mechanisms:
+- id: cylinder-1
+  type: slider_crank
+  driver: J-001
+  origin_mm: [-41.25, 0, 0]
+  crank_axis: [1, 0, 0]
+  bank_axis: [0.0, 0.5, 0.866025]
+  crank_radius_mm: 14.0
+  rod_length_mm: 48.0
+  phase_deg: 0.0
+- id: cylinder-2
+  type: slider_crank
+  driver: J-001
+  origin_mm: [-30.75, 0, 0]
+  crank_axis: [1, 0, 0]
+  bank_axis: [0.0, -0.5, 0.866025]
+  crank_radius_mm: 14.0
+  rod_length_mm: 48.0
+  phase_deg: -60.0
+- id: cylinder-3
+  type: slider_crank
+  driver: J-001
+  origin_mm: [-5.25, 0, 0]
+  crank_axis: [1, 0, 0]
+  bank_axis: [0.0, 0.5, 0.866025]
+  crank_radius_mm: 14.0
+  rod_length_mm: 48.0
+  phase_deg: 120.0
+- id: cylinder-4
+  type: slider_crank
+  driver: J-001
+  origin_mm: [5.25, 0, 0]
+  crank_axis: [1, 0, 0]
+  bank_axis: [0.0, -0.5, 0.866025]
+  crank_radius_mm: 14.0
+  rod_length_mm: 48.0
+  phase_deg: 60.0
+- id: cylinder-5
+  type: slider_crank
+  driver: J-001
+  origin_mm: [30.75, 0, 0]
+  crank_axis: [1, 0, 0]
+  bank_axis: [0.0, 0.5, 0.866025]
+  crank_radius_mm: 14.0
+  rod_length_mm: 48.0
+  phase_deg: -120.0
+- id: cylinder-6
+  type: slider_crank
+  driver: J-001
+  origin_mm: [41.25, 0, 0]
+  crank_axis: [1, 0, 0]
+  bank_axis: [0.0, -0.5, 0.866025]
+  crank_radius_mm: 14.0
+  rod_length_mm: 48.0
+  phase_deg: -180.0
 subassemblies:
-  - id: main
-    title: Main assembly
-    parts: [PRT-0001]
-joints: []
+- id: crank_train
+  title: Crankcase, crankshaft and six piston, pin and rod sets
+  parts: [V6E-0001, V6E-0005]
+  occurrences: ['@piston-1', '@pin-1', '@rod-1', '@piston-2', '@pin-2', '@rod-2', '@piston-3', '@pin-3', '@rod-3', '@piston-4', '@pin-4', '@rod-4',
+    '@piston-5', '@pin-5', '@rod-5', '@piston-6', '@pin-6', '@rod-6']
+joints:
+- id: J-001
+  type: revolute
+  parent: V6E-0001
+  child: V6E-0005
+  axis: [1, 0, 0]
+  origin: [0, 0, 0]
+  min: 0
+  max: 720
+  nominal: 0
+  torque: none
+- id: J-101
+  type: prismatic
+  parent: V6E-0001
+  child: '@piston-1'
+  axis: [0.0, 0.5, 0.866025]
+  origin: &id001 [-41.25, 31.0, 53.693575]
+  min: -28.0
+  max: 0
+  coupling: {type: slider_crank, mechanism: cylinder-1, output: displacement}
+- id: J-201
+  type: revolute
+  parent: '@piston-1'
+  child: '@rod-1'
+  axis: [1, 0, 0]
+  origin: *id001
+  min: -18
+  max: 18
+  coupling: {type: slider_crank, mechanism: cylinder-1, output: rod_angle}
+- id: J-301
+  type: fixed
+  parent: '@piston-1'
+  child: '@pin-1'
+  axis: [1, 0, 0]
+  origin: *id001
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-102
+  type: prismatic
+  parent: V6E-0001
+  child: '@piston-2'
+  axis: [0.0, -0.5, 0.866025]
+  origin: &id002 [-30.75, -31.0, 53.693575]
+  min: -28.0
+  max: 0
+  coupling: {type: slider_crank, mechanism: cylinder-2, output: displacement}
+- id: J-202
+  type: revolute
+  parent: '@piston-2'
+  child: '@rod-2'
+  axis: [1, 0, 0]
+  origin: *id002
+  min: -18
+  max: 18
+  coupling: {type: slider_crank, mechanism: cylinder-2, output: rod_angle}
+- id: J-302
+  type: fixed
+  parent: '@piston-2'
+  child: '@pin-2'
+  axis: [1, 0, 0]
+  origin: *id002
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-103
+  type: prismatic
+  parent: V6E-0001
+  child: '@piston-3'
+  axis: [0.0, 0.5, 0.866025]
+  origin: &id003 [-5.25, 31.0, 53.693575]
+  min: -28.0
+  max: 0
+  coupling: {type: slider_crank, mechanism: cylinder-3, output: displacement}
+- id: J-203
+  type: revolute
+  parent: '@piston-3'
+  child: '@rod-3'
+  axis: [1, 0, 0]
+  origin: *id003
+  min: -18
+  max: 18
+  coupling: {type: slider_crank, mechanism: cylinder-3, output: rod_angle}
+- id: J-303
+  type: fixed
+  parent: '@piston-3'
+  child: '@pin-3'
+  axis: [1, 0, 0]
+  origin: *id003
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-104
+  type: prismatic
+  parent: V6E-0001
+  child: '@piston-4'
+  axis: [0.0, -0.5, 0.866025]
+  origin: &id004 [5.25, -31.0, 53.693575]
+  min: -28.0
+  max: 0
+  coupling: {type: slider_crank, mechanism: cylinder-4, output: displacement}
+- id: J-204
+  type: revolute
+  parent: '@piston-4'
+  child: '@rod-4'
+  axis: [1, 0, 0]
+  origin: *id004
+  min: -18
+  max: 18
+  coupling: {type: slider_crank, mechanism: cylinder-4, output: rod_angle}
+- id: J-304
+  type: fixed
+  parent: '@piston-4'
+  child: '@pin-4'
+  axis: [1, 0, 0]
+  origin: *id004
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-105
+  type: prismatic
+  parent: V6E-0001
+  child: '@piston-5'
+  axis: [0.0, 0.5, 0.866025]
+  origin: &id005 [30.75, 31.0, 53.693575]
+  min: -28.0
+  max: 0
+  coupling: {type: slider_crank, mechanism: cylinder-5, output: displacement}
+- id: J-205
+  type: revolute
+  parent: '@piston-5'
+  child: '@rod-5'
+  axis: [1, 0, 0]
+  origin: *id005
+  min: -18
+  max: 18
+  coupling: {type: slider_crank, mechanism: cylinder-5, output: rod_angle}
+- id: J-305
+  type: fixed
+  parent: '@piston-5'
+  child: '@pin-5'
+  axis: [1, 0, 0]
+  origin: *id005
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-106
+  type: prismatic
+  parent: V6E-0001
+  child: '@piston-6'
+  axis: [0.0, -0.5, 0.866025]
+  origin: &id006 [41.25, -31.0, 53.693575]
+  min: -28.0
+  max: 0
+  coupling: {type: slider_crank, mechanism: cylinder-6, output: displacement}
+- id: J-206
+  type: revolute
+  parent: '@piston-6'
+  child: '@rod-6'
+  axis: [1, 0, 0]
+  origin: *id006
+  min: -18
+  max: 18
+  coupling: {type: slider_crank, mechanism: cylinder-6, output: rod_angle}
+- id: J-306
+  type: fixed
+  parent: '@piston-6'
+  child: '@pin-6'
+  axis: [1, 0, 0]
+  origin: *id006
+  min: 0
+  max: 0
+  nominal: 0
 operations: {status: unknown, reason: not recorded yet, question: Q-012}
+
