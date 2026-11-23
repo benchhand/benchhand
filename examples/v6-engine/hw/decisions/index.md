@@ -5,3 +5,4 @@
 | ID | Title | Status | Date |
 |---|---|---|---|
 | [DR-001](DR-001-flow-profile.md) | Flow profile | accepted | 2026-11-23 |
+| [DR-002](DR-002-print-the-engine-parts-in-asa-on-a-bambu-lab-h2d-class-printer.md) | Print the engine parts in ASA on a Bambu Lab H2D class printer | accepted | 2026-11-23 |
