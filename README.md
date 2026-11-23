@@ -266,7 +266,7 @@ The user confirmed two decisions on 2026-11-23. DR-001 records the project-start
 
 ### 3. Specify
 
-Six requirements each carry a verification method. REQ-001 asks the crank to turn through 720° with all six pistons moving and no pair touching. The wrist pin and the bearing seats take ISO 286 fits from `fits.py`. The 6 H7/g6 pin fit gives 4 to 24 µm clearance, and the 14 H7/f7 seat gives 16 to 52 µm.
+Six requirements each carry a verification method. REQ-001 asks the crank to turn through 720° with all six pistons moving and no pair touching. The wrist pin and the bearing seats take ISO 286 fits from `fits.py`. The 6 H7/g6 pin fit gives 4 to 24 µm clearance, and the 14 H7/f7 seat gives 16 to 52 µm. That is partial evidence for REQ-003, which also asks for a running clearance on every moving pair. No criterion exists for those pairs, so `verification.csv` reads `not_assessed`.
 
 ### 4. Concept
 
