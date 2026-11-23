@@ -35,6 +35,8 @@ from modload import result_payload  # noqa: E402
 
 CRANK_AXIS = (1.0, 0.0, 0.0)
 CYLINDERS = range(1, 7)
+FDM_MIN_WALL_MM = 1.2  # the FDM guideline, from the record's process profile and DR-002
+FORM_PARTS = ("VSE-0001", "VSE-0002")  # the crankcase window and the piston, both measured below 1.2 mm before the fix
 GENERATED = ("versions", "checks", "motion", "renders", "drawings", ".cad", "analysis")
 
 
@@ -100,11 +102,18 @@ class BuiltCrankTrainTests(unittest.TestCase):
         cls.run_proc = cls.cli("run", str(cls.hw), "--label", "v1")
         cls.check_proc = cls.cli("check", "v1", "--hw", str(cls.hw), "--no-cache")
         cls.check = result_payload(cls.check_proc.stdout) if cls.check_proc.stdout.strip() else {}
+        cls.form_proc = cls.form("--hw", str(cls.hw), "--parts-dir", str(cls.hw / "versions" / "v1" / "parts"), "--fidelity", "F2")
+        cls.form_check = result_payload(cls.form_proc.stdout) if cls.form_proc.stdout.strip() else {}
 
     @staticmethod
     def cli(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["uv", "run", "--quiet", "--script", str(CLI), *args],  # no timeout: cold OCP imports take minutes
                               capture_output=True, text=True, check=False)
+
+    @staticmethod
+    def form(*args: str) -> subprocess.CompletedProcess[str]:
+        script = HERE.parent / "scripts" / "form_check.py"
+        return subprocess.run(["uv", "run", "--quiet", "--script", str(script), *args], capture_output=True, text=True, check=False)
 
     def pairs(self) -> list[dict]:
         found = self.check["checks"]["interference"]  # joint-connected pairs are listed apart
@@ -125,6 +134,25 @@ class BuiltCrankTrainTests(unittest.TestCase):
         pair = next(p for p in self.pairs() if tuple(p["refs"]) == ("VSE-0001", "VSE-0005"))
         self.assertEqual(pair["interference_mm3"], 0.0)
         self.assertGreater(pair["clearance_mm"], 0.0)
+
+    def test_the_crankcase_and_piston_walls_meet_the_fdm_minimum(self) -> None:
+        for pn in FORM_PARTS:
+            wall = self.form_check["parts"][pn]["min_wall"]
+            with self.subTest(part=pn):
+                self.assertEqual(wall["required_mm"], FDM_MIN_WALL_MM)
+                self.assertGreaterEqual(wall["thickness_mm"], FDM_MIN_WALL_MM, f"{pn} thinnest wall {wall['thickness_mm']} mm at {wall['location_mm']}")
+
+    def test_every_joint_has_a_bore_on_its_axis_in_each_part(self) -> None:
+        joints = self.form_check["joints"]
+        self.assertEqual(sorted(joints), sorted(j["id"] for j in load_assembly()["joints"]))
+        for joint_id, joint in joints.items():
+            for part, found in joint["parts"].items():
+                with self.subTest(joint=joint_id, part=part):
+                    self.assertIsNotNone(found, "no cylinder face on the joint axis")
+                    self.assertEqual(found["kind"], "bore")
+
+    def test_the_form_check_reports_no_missing_joint_bore(self) -> None:
+        self.assertEqual([f for f in self.form_check["findings"] if f["check"] == "joint_bore_missing"], [], self.form_proc.stderr[-1000:])
 
     def test_every_pair_check_passes(self) -> None:
         self.assertEqual(self.check["checks"]["interference"]["status"], "pass", json.dumps(self.check["blocking_failures"]))
