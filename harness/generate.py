@@ -179,16 +179,21 @@ def prompt_comment(agent: Agent, harness: str) -> str:
     if harness == "kiro" and agent.writes and agent.shell:
         lines.append("<!-- CAD policy: Kiro's fs_write rules scope direct file tools, but uv shell commands still need the host command sandbox to enforce filesystem limits. Follow the .cad-work-only rule in this prompt. -->")
     if harness == "pi":
-        gaps = []
-        if agent.writes:
-            gaps.append("pi's edit and write tools cannot be scoped to .cad-work by an agent file")
-        if agent.shell:
-            gaps.append("the bash guard extension allows only a single `uv run --script` command per call")
-        if agent.web:
-            gaps.append("web research needs the pi-web-access package loaded in the child")
-        if gaps:
-            lines.append("<!-- CAD policy: " + "; ".join(gaps) + "; follow the scratch-path and uv-only rules in this prompt. -->")
+        lines.extend(pi_policy_comments(agent))
     return "\n".join(lines) + "\n\n"
+
+
+def pi_policy_comments(agent: Agent) -> list[str]:
+    gaps = []
+    if agent.writes:
+        gaps.append("pi's edit and write tools cannot be scoped to .cad-work by an agent file")
+    if agent.shell:
+        gaps.append("the bash guard extension allows only a single `uv run --script` command per call")
+    if agent.web:
+        gaps.append("web research needs the pi-web-access package loaded in the child")
+    if not gaps:
+        return []
+    return ["<!-- CAD policy: " + "; ".join(gaps) + "; follow the scratch-path and uv-only rules in this prompt. -->"]
 
 
 def kiro_rules(agent: Agent) -> list[dict[str, object]]:
@@ -291,12 +296,20 @@ def render(agent: Agent, harness: str, tier_models: TierModels | None = None) ->
             value = {**value, "model": model}
         return json.dumps(value, indent=2, ensure_ascii=False) + "\n"
     if harness == "pi":
-        fields = ["---", f"name: {agent.name}", f"description: {json.dumps(agent.description, ensure_ascii=False)}", f"tools: {', '.join(tool for capability in agent.capabilities for tool in PI_TOOLS[capability])}"]
-        if agent.shell:
-            fields.append(f"subagentOnlyExtensions: {PI_GUARD_PLACEHOLDER}")
-        fields += [f"skills: {', '.join(agent.skills)}", *((f"model: {json.dumps(model)}",) if model else ()), "systemPromptMode: append", "inheritProjectContext: true", "---"]
-        return "\n".join(fields) + f"\n\n{prompt}\n"
+        return render_pi(agent, prompt, model)
     raise ValueError(f"unknown harness {harness!r}")
+
+
+def render_pi(agent: Agent, prompt: str, model: str | None) -> str:
+    tools = ", ".join(tool for capability in agent.capabilities for tool in PI_TOOLS[capability])
+    fields = ["---", f"name: {agent.name}", f"description: {json.dumps(agent.description, ensure_ascii=False)}", f"tools: {tools}"]
+    if agent.shell:
+        fields.append(f"subagentOnlyExtensions: {PI_GUARD_PLACEHOLDER}")
+    fields.append(f"skills: {', '.join(agent.skills)}")
+    if model:
+        fields.append(f"model: {json.dumps(model)}")
+    fields += ["systemPromptMode: append", "inheritProjectContext: true", "---"]
+    return "\n".join(fields) + f"\n\n{prompt}\n"
 
 
 def output_path(name: str, harness: str) -> Path:

@@ -46,7 +46,7 @@ def installer_content(source: Path, harness: str, home: Path | None, rendered: s
     """
     if harness == "pi" and guard is not None and source.suffix == ".md" and source.parent == GENERATED / "pi" / "agents":
         text = rendered if rendered is not None else source.read_text(encoding="utf-8")
-        return text.replace(PI_GUARD_PLACEHOLDER, str(guard)).encode("utf-8")
+        return text.replace(PI_GUARD_PLACEHOLDER, json.dumps(str(guard), ensure_ascii=False)).encode("utf-8")
     is_kiro_user = harness == "kiro" and home is not None and source.parent == GENERATED / "kiro" / "agents"
     if not is_kiro_user:
         return None if rendered is None else rendered.encode("utf-8")

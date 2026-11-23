@@ -73,6 +73,12 @@ class PlanTests(unittest.TestCase):
         self.assertIn("harness/install.py", requested_harness.command)
         self.assertIn(str(setup.CAD_ROOT), requested_harness.command)
 
+    def test_cli_accepts_the_pi_harness(self) -> None:
+        with patch.object(setup.Path, "cwd", return_value=self.root), \
+                patch.object(setup.preflight, "run_checks", return_value=report()) as checks:
+            self.assertEqual(setup.main(["--harness", "pi"]), 0)
+        self.assertEqual(checks.call_args.args[3], "pi")
+
     def test_install_uses_checkout_installer_with_project_relative_destination(self) -> None:
         with patch.object(setup, "_run") as run:
             setup._install_harness("codex", self.root)

@@ -380,7 +380,7 @@ def _execute(items: Sequence[PlanItem], cwd: Path, home: Path, environ: dict[str
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--yes", action="store_true", help="execute user-level setup actions")
-    parser.add_argument("--harness", choices=("claude", "codex", "opencode", "kiro"),
+    parser.add_argument("--harness", choices=preflight.HARNESSES,
                         help="install harness files into the current project")
     parser.add_argument("--storage", action="store_true",
                         help="plan only the git storage rules of hw/ in this folder (with --yes, write them)")

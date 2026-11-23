@@ -8,9 +8,13 @@
 // the same shell limit the other harnesses give these agents. It fails closed:
 // anything it cannot prove to be one plain command is blocked.
 
-const PREFIX = /^uv[ \t]+run[ \t]+--script[ \t]+\S/;
+// `uv run --script`, then one script inside the installed skills directory ($CAD_SKILLS, set by the
+// user's environment; the agent cannot set it, because env prefixes and chains are blocked). No
+// other uv option is allowed: `--with`, `--index`, `--from`, `--python` and the like only change
+// what uv installs or runs. Script arguments after the script are the script's own.
+const PREFIX = /^uv[ \t]+run[ \t]+--script[ \t]+("?)\$CAD_SKILLS\/([A-Za-z0-9_.\/-]+\.py)\1(?=[ \t]|$)/;
 const REASON =
-  "CAD agents may run only a single plain `uv run --script ...` command per shell call: " +
+  "CAD agents may run only a single `uv run --script "$CAD_SKILLS/<script>.py" ...` command per shell call, with no other uv option: " +
   "no pipes, redirects, `;`, `&&`, `||`, `&`, subshells, command substitution, " +
   "newlines or environment prefixes.";
 
@@ -18,7 +22,9 @@ const REASON =
 export function isAllowed(command) {
   if (typeof command !== "string") return false;
   const text = command.trim();
-  if (!PREFIX.test(text)) return false;
+  const head = PREFIX.exec(text);
+  if (head === null) return false;
+  if (head[2].split("/").some((part) => part === "" || part === "." || part === "..")) return false;
   let quote = null;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];

@@ -26,6 +26,15 @@ HARNESS_PATHS = {
     "kiro": (".kiro/skills", ".kiro/agents"),
     "pi": (".pi/skills", ".pi/agents"),
 }
+# Harness -> (user-scope root under $HOME, skills dir, agents dir), and the dir of its launcher command or prompt.
+USER_ROOTS = {
+    "claude": (".claude", "skills", "agents"),
+    "codex": ("", ".agents/skills", ".codex/agents"),
+    "opencode": (".config/opencode", "skills", "agents"),
+    "kiro": (".kiro", "skills", "agents"),
+    "pi": (".pi/agent", "skills", "agents"),
+}
+COMMAND_DIRS = {"opencode": "commands", "pi": "prompts"}
 AGENT_FILES = {
     harness: sorted(path.name for path in (CAD / "harness" / harness / "agents").glob("*"))
     for harness in HARNESS_PATHS
@@ -164,22 +173,14 @@ class InstallerTests(unittest.TestCase):
         for harness in HARNESS_PATHS:
             with self.subTest(harness=harness):
                 command = ["--harness", harness, "--user"]
-                if harness == "claude":
-                    root, skills_relative, agents_relative = self.home / ".claude", "skills", "agents"
-                elif harness == "codex":
-                    root, skills_relative, agents_relative = self.home, ".agents/skills", ".codex/agents"
-                elif harness == "opencode":
-                    root, skills_relative, agents_relative = self.home / ".config/opencode", "skills", "agents"
-                elif harness == "pi":
-                    root, skills_relative, agents_relative = self.home / ".pi/agent", "skills", "agents"
-                else:
-                    root, skills_relative, agents_relative = self.home / ".kiro", "skills", "agents"
+                root, skills_relative, agents_relative = self.home / USER_ROOTS[harness][0], *USER_ROOTS[harness][1:]
+                command_dir = COMMAND_DIRS.get(harness)
                 dry = self.run_installer(*command, "--dry-run")
                 self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
                 self.assertIn(str(root / skills_relative / "cad-flow/SKILL.md"), dry.stdout)
                 self.assertIn(str(root / agents_relative / AGENT_FILES[harness][0]), dry.stdout)
-                if harness == "opencode":
-                    self.assertIn(str(root / "commands/cad-flow.md"), dry.stdout)
+                if command_dir:
+                    self.assertIn(str(root / command_dir / "cad-flow.md"), dry.stdout)
                 self.assertEqual(self.run_installer(*command).returncode, 0)
                 if harness == "kiro":
                     for agent_file in AGENT_FILES[harness]:
@@ -192,8 +193,8 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual(self.run_installer(*command, "--uninstall").returncode, 0)
                 self.assertFalse((root / skills_relative).exists())
                 self.assertFalse((root / agents_relative).exists())
-                if harness == "opencode":
-                    self.assertFalse((root / "commands").exists())
+                if command_dir:
+                    self.assertFalse((root / command_dir).exists())
 
     def test_pi_agents_load_the_guard_from_outside_auto_discovery(self) -> None:
         for scope_args, root in ((["--project", str(self.project)], self.project.resolve() / ".pi"), (["--user"], self.home.resolve() / ".pi/agent")):
@@ -206,7 +207,7 @@ class InstallerTests(unittest.TestCase):
                     text = agent.read_text(encoding="utf-8")
                     self.assertNotIn("__CAD_PI_BASH_GUARD__", text)
                     shell = "tools:" in text and "bash" in text.split("tools:", 1)[1].split("\n", 1)[0]
-                    self.assertEqual(f"subagentOnlyExtensions: {guard}\n" in text, shell, agent.name)
+                    self.assertEqual(f"subagentOnlyExtensions: {json.dumps(str(guard))}\n" in text, shell, agent.name)
                 self.assertTrue((root / "prompts/cad-flow.md").is_file())
                 self.run_ok("--harness", "pi", *scope_args, "--uninstall")
                 self.assertFalse(root.exists() and any(root.rglob("*.*")))
@@ -283,7 +284,7 @@ class InstallerTests(unittest.TestCase):
                 expected = source.read_bytes()
                 if harness == "pi":  # the one installer edit: the guard path
                     guard = (self.project.resolve() / ".pi/cad-guard/cad-bash-guard.js").as_posix()
-                    expected = expected.replace(b"__CAD_PI_BASH_GUARD__", guard.encode())
+                    expected = expected.replace(b"__CAD_PI_BASH_GUARD__", json.dumps(guard).encode())
                 self.assertEqual((self.project / agents_relative / source.name).read_bytes(), expected)
 
     def test_tier_model_keeps_kiro_user_skill_uris(self) -> None:
