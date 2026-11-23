@@ -1,0 +1,11 @@
+# Static compressive case on one connecting rod (REQ-004). The load is an engineering assumption (100 N along the
+# rod axis, small end pushed toward the big end); the ASA properties are typical datasheet-class values that no
+# record profile holds yet (DR-002 chose the family, no grade). The run is exploratory: it is not service evidence.
+step: ../../../versions/v2/manufacturing/VSE-0004/part.step
+fixed_faces: {indices: [2, 5]}   # the 12.2 mm big end bore, both halves
+loads:
+  - selector: {indices: [25, 33]}   # the 6.1 mm small end bore, both halves
+    force: [0, 0, -100]
+material: {name: ASA typical (assumed), E: 2000, nu: 0.35, density: 1.07e-9, yield: 40}
+mesh_size: 1.5
+required_safety_factor: 2
