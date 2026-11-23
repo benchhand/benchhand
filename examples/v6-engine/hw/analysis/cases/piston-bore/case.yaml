@@ -10,7 +10,7 @@ requirements: [REQ-001]
 dimension_state: as_manufactured
 consequence: binding
 relevant: [manufacture]
-requirement: {min: 0.2, method: worst_case, source: {kind: estimate, reference: "Engineering assumption for a printed running clearance", reason: "no process calibration is recorded for the H2D"}}
+requirement: {min: 0.2, method: worst_case, source: {kind: estimate, reference: "Engineering assumption for a printed running clearance", reason: "no process data is recorded for the H2D"}}
 contributors:
   - id: BORE
     category: manufacture
@@ -20,7 +20,7 @@ contributors:
     tol_plus: 0.15
     tol_minus: 0.0
     direction: 1
-    source: {kind: estimate, reference: "Assumed FDM bore deviation; no calibration recorded", reason: "no process calibration is recorded for the H2D"}
+    source: {kind: estimate, reference: "Assumed FDM bore deviation; no process data recorded", reason: "no process data is recorded for the H2D"}
   - id: PISTON
     category: manufacture
     subject: {PN: VSE-0002, feature: skirt}
@@ -29,4 +29,4 @@ contributors:
     tol_plus: 0.1
     tol_minus: 0.1
     direction: -1
-    source: {kind: estimate, reference: "Assumed FDM outside diameter deviation; no calibration recorded", reason: "no process calibration is recorded for the H2D"}
+    source: {kind: estimate, reference: "Assumed FDM outside diameter deviation; no process data recorded", reason: "no process data is recorded for the H2D"}
