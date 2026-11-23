@@ -71,6 +71,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
 layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
+guidelines = _load_module("cad_record_guidelines", SCRIPTS / "guidelines.py")
 
 REPORT_VERSION = 1
 FEASIBLE, CONDITIONAL, ELIMINATED = "feasible", "conditional", "eliminated"
@@ -662,6 +663,14 @@ class _Assessor:
         subject = {"PN": cpart.pn}
         method = f"{where}: capability profile"
         not_assumed = "unavailable tooling is never assumed"
+        if not isinstance(step.capability, str) and step.kind in guidelines.GUIDELINE_PROCESSES \
+                and not guidelines.calibration_enabled():
+            # No machine is recorded and calibration is off: the shipped guideline values govern, so the missing machine
+            # is a note. It is not a pass, and it is no proof that a machine exists.
+            return [Evaluation("capability", True, "not_assessed", subject, method,
+                               ("machine not recorded: the shipped guideline values govern this "
+                                f"{step.kind} route; this is not evidence that a machine exists",),
+                               remedy=f"optionally record the actual {step.kind} machine as a capability profile")]
         if not isinstance(step.capability, str):
             return [Evaluation("capability", True, "unknown", subject, method,
                                (f"no capability profile: {step.capability.reason}; {not_assumed}",),

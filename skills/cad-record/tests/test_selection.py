@@ -256,19 +256,37 @@ class PolymerAcceptedWithEvidence(unittest.TestCase):
         self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_cover",
                          "a feasible candidate outranks a conditional one whatever the scores")
 
-    def test_a_candidate_step_without_a_capability_is_conditional_never_a_crash(self) -> None:
+    def test_a_non_fdm_step_without_a_capability_is_conditional_never_a_crash(self) -> None:
         """A schema-invalid step that records no capability (evidence.py assesses records without the schema
         check) reads as capability unknown: the candidate stays conditional and the report still renders."""
+        documents = scenarios.qualified_polymer_cover()
+        del selection_candidate(documents, "machined_cover")["parts"][0]["route"][0]["capability"]
+        report = selection.assess(mi.normalize_record(documents))
+        machined = candidate(report, "machined_cover")
+        self.assertEqual((machined["status"], machined["unknown"]), ("conditional", ["capability"]))
+        (capability,) = evaluations(machined, "capability")
+        self.assertIn("the candidate records no capability", capability["reasons"][0])
+        self.assertEqual(machined["parts"][0]["route"][0]["capability"], "unknown")
+        self.assertEqual(only_decision(report)["recommendation"]["primary"], "printed_cover")
+        self.assertIn("machined_cover", selection.render_markdown(report))
+
+    def test_an_fdm_step_without_a_machine_is_assessed_on_the_guidelines_and_blocks_nothing(self) -> None:
+        """No machine recorded is no fault: the shipped guideline values govern FDM. The capability constraint is
+        not_assessed (a note that names the missing machine), never a pass and never a blocking unknown."""
         documents = scenarios.qualified_polymer_cover()
         del selection_candidate(documents, "printed_cover")["parts"][0]["route"][0]["capability"]
         report = selection.assess(mi.normalize_record(documents))
         printed = candidate(report, "printed_cover")
-        self.assertEqual((printed["status"], printed["unknown"]), ("conditional", ["capability"]))
+        self.assertEqual((printed["status"], printed["unknown"]), ("feasible", []))
         (capability,) = evaluations(printed, "capability")
-        self.assertIn("the candidate records no capability", capability["reasons"][0])
-        self.assertEqual(printed["parts"][0]["route"][0]["capability"], "unknown")
-        self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_cover")
-        self.assertIn("printed_cover", selection.render_markdown(report))
+        self.assertEqual(capability["outcome"], "not_assessed")
+        reasons = " ".join(capability["reasons"])
+        self.assertIn("machine not recorded", reasons)
+        self.assertIn("guideline", reasons)
+        decision = only_decision(report)
+        self.assertIn("not assessed, not a pass: capability", json.dumps(decision))
+        self.assertEqual((decision["recommendation"]["status"], decision["recommendation"]["primary"]), ("final", "printed_cover"))
+        self.assertEqual(selection.exit_status(report), 0)
 
     def test_family_guidance_never_passes_a_requirement(self) -> None:
         documents = scenarios.qualified_polymer_cover()
