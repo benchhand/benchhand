@@ -14,6 +14,7 @@ so a new skill must be classified here before the suite passes.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -88,37 +89,90 @@ class InstalledSkillTests(unittest.TestCase):
                 self.assertEqual((skills / name / "SKILL.md").read_bytes(), (SKILLS / name / "SKILL.md").read_bytes())
 
     def test_other_harness_installs_carry_no_key_and_lose_nothing_else(self) -> None:
+        line = f"{KEY}: false\n".encode()
         for harness in ("codex", "opencode", "kiro"):
             skills = self.install(harness)
             with self.subTest(harness=harness):
                 self.assertEqual(installed_with_key(skills), set())
                 for name in sorted(HIDDEN):
-                    source = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
-                    installed = (skills / name / "SKILL.md").read_text(encoding="utf-8")
-                    self.assertEqual(installed, source.replace(f"{KEY}: false\n", "", 1))
+                    source = (SKILLS / name / "SKILL.md").read_bytes()
+                    installed = (skills / name / "SKILL.md").read_bytes()
+                    self.assertEqual(installed, source.replace(line, b"", 1))
                     self.assertEqual(set(front_matter(skills / name / "SKILL.md")), {"name", "description"})
 
 
-@unittest.skipUnless(shutil.which("claude"), "needs the claude CLI")
-class PluginRouteTests(unittest.TestCase):
-    """The plugin route reads `skills/` as it is, so the key in the shared files must hide the helpers."""
+def load_install() -> Any:
+    spec = importlib.util.spec_from_file_location("benchhand_install", INSTALLER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-    def run_claude(self, project: Path, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["claude", "-p", *args, "--plugin-dir", str(ROOT), "--max-turns", "3"],
-                              cwd=project, capture_output=True, text=True, timeout=300)
+
+class StripUserInvocableTests(unittest.TestCase):
+    def test_removes_only_the_key_line_and_keeps_crlf(self) -> None:
+        install = load_install()
+        source = b"---\r\nname: cad-x\r\nuser-invocable: false\r\ndescription: d\r\n---\r\nbody\r\nuser-invocable: false\r\n"
+        expected = b"---\r\nname: cad-x\r\ndescription: d\r\n---\r\nbody\r\nuser-invocable: false\r\n"
+        self.assertEqual(install.strip_user_invocable(source), expected)
+
+    def test_file_without_the_key_is_unchanged(self) -> None:
+        install = load_install()
+        source = b"---\nname: cad-x\n---\nbody\n"
+        self.assertEqual(install.strip_user_invocable(source), source)
+
+    def test_unexpected_forms_fail_loudly(self) -> None:
+        install = load_install()
+        for front in ("user-invocable: true\n", "user-invocable: false # hidden\n", "user-invocable:  false\n",
+                      "user-invocable: false\nuser-invocable: false\n"):
+            with self.subTest(front=front), self.assertRaises(ValueError):
+                install.strip_user_invocable(f"---\nname: x\n{front}---\nbody\n".encode())
+
+    def test_install_without_pyyaml_keeps_crlf_bytes(self) -> None:
+        install = load_install()
+        source = b"---\r\nname: cad-x\r\nuser-invocable: false\r\n---\r\nbody\r\n"
+        with tempfile.TemporaryDirectory(prefix="cad-crlf-") as temporary:
+            skills = Path(temporary) / "skills"
+            (skills / "cad-x").mkdir(parents=True)
+            (skills / "cad-x" / "SKILL.md").write_bytes(source)
+            install.SKILLS = skills
+            for harness in ("codex", "opencode", "kiro"):
+                with self.subTest(harness=harness):
+                    pair = next(p for p in install.file_pairs((harness,), Path(temporary) / "out") if p.source.name == "SKILL.md")
+                    self.assertEqual(pair.content, source.replace(b"user-invocable: false\r\n", b""))
+            claude = next(p for p in install.file_pairs(("claude",), Path(temporary) / "out") if p.source.name == "SKILL.md")
+            self.assertIsNone(claude.content)
+
+
+@unittest.skipUnless(shutil.which("claude"), "local smoke test: needs the claude CLI and a logged-in account; CI has neither")
+class PluginRouteTests(unittest.TestCase):
+    """Local smoke test, not CI coverage: the plugin route reads `skills/` as it is, so the key must hide the helpers."""
+
+    def run_claude(self, project: Path, *args: str) -> list[dict[str, Any]]:
+        result = subprocess.run(["claude", "-p", *args, "--output-format", "stream-json", "--verbose",
+                                 "--plugin-dir", str(ROOT), "--max-turns", "3"],
+                                cwd=project, capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
 
     def test_plugin_lists_only_the_visible_skills_and_still_loads_a_hidden_one(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cad-plugin-")
         self.addCleanup(temporary.cleanup)
         project = Path(temporary.name)
         subprocess.run(["git", "init", "-q", str(project)], check=True)
-        init = self.run_claude(project, "hi", "--output-format", "stream-json", "--verbose")
-        self.assertEqual(init.returncode, 0, init.stderr)
-        events = [json.loads(line) for line in init.stdout.splitlines() if line.startswith("{")]
+        events = self.run_claude(project, "hi")
         commands = next(event["slash_commands"] for event in events if event.get("subtype") == "init")
         self.assertEqual({c for c in commands if c.startswith("benchhand:")}, {f"benchhand:{n}" for n in VISIBLE})
-        loaded = self.run_claude(project, "Call the Skill tool with skill 'benchhand:cad-bom' and report only its first heading.")
-        self.assertIn("CAD EBOM Roll-up", loaded.stdout)
+        events = self.run_claude(project, "Call the Skill tool with skill 'benchhand:cad-bom', then stop.")
+        calls = {block["id"] for event in events if event.get("type") == "assistant"
+                 for block in event["message"]["content"]
+                 if block.get("type") == "tool_use" and block.get("name") == "Skill"
+                 and block["input"].get("skill") == "benchhand:cad-bom"}
+        results = [block for event in events if event.get("type") == "user"
+                   for block in event["message"]["content"]
+                   if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in calls]
+        self.assertTrue(calls, "the model never called the Skill tool for cad-bom")
+        self.assertTrue(results and not any(block.get("is_error") for block in results), results)
 
 
 if __name__ == "__main__":

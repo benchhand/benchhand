@@ -79,10 +79,6 @@ class Agent:
         return "web" in self.capabilities
 
 
-# Front-matter keys only Claude Code understands. The shared SKILL.md files carry them (so the
-# Claude plugin route, which reads skills/ directly, hides the helper skills from the `/` menu);
-# `install.py` strips them for every other harness.
-CLAUDE_ONLY_SKILL_KEYS = ("user-invocable",)
 _SKILL_FRONT_MATTER = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
 
 
@@ -98,20 +94,6 @@ def skill_front_matter(text: str) -> dict[str, Any]:
     if not isinstance(fields, dict) or not all(isinstance(key, str) for key in fields):
         raise ValueError("skill front matter must be a YAML mapping")
     return fields
-
-
-def strip_claude_only_keys(text: str) -> str:
-    """Return SKILL.md text without the Claude-only front-matter keys; other text is untouched."""
-    match = _SKILL_FRONT_MATTER.match(text)
-    if match is None:
-        raise ValueError("expected YAML front matter at the top of the skill")
-    block = match.group(1)
-    for key in CLAUDE_ONLY_SKILL_KEYS:
-        block = re.sub(rf"^{re.escape(key)}:[^\n]*\n", "", block, flags=re.MULTILINE)
-    stripped = f"---\n{block}---\n{text[match.end():]}"
-    if set(skill_front_matter(stripped)) & set(CLAUDE_ONLY_SKILL_KEYS):
-        raise ValueError("a Claude-only key is not a single-line front-matter entry")
-    return stripped
 
 
 def parse_agent(path: Path) -> Agent:

@@ -288,13 +288,14 @@ class InstallerWithoutPyYamlTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.project / ".claude/agents/cad-clerk.md").is_file())
 
-    def test_codex_install_without_pyyaml_fails_cleanly_and_writes_nothing(self) -> None:
-        """Other harnesses strip the Claude-only front-matter key through the YAML loader."""
-        result = self.run_bare(harness="codex")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("PyYAML", result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
-        self.assertEqual(list(self.project.iterdir()), [])
+    def test_every_harness_installs_without_pyyaml_and_strips_the_key(self) -> None:
+        result = self.run_bare(harness="all")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for skills in (".agents/skills", ".opencode/skills", ".kiro/skills"):
+            text = (self.project / skills / "cad-bom/SKILL.md").read_text(encoding="utf-8")
+            self.assertNotIn("user-invocable", text, skills)
+        claude = (self.project / ".claude/skills/cad-bom/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("user-invocable: false", claude)
 
     def test_tier_model_without_pyyaml_fails_cleanly_and_writes_nothing(self) -> None:
         result = self.run_bare("--tier-model", "claude:cheap=haiku")

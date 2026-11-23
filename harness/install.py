@@ -49,26 +49,34 @@ def installer_content(source: Path, harness: str, home: Path | None, rendered: s
     return (json.dumps(profile, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def generator() -> object:
-    """Import harness/generate.py lazily: it needs PyYAML, which a default install does not."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    try:
-        import generate
-    except ModuleNotFoundError as error:
-        if error.name != "yaml":
-            raise
-        raise ValueError("this install needs PyYAML; run `pip install pyyaml` or `uv run --with pyyaml python harness/install.py ...`") from error
-    return generate
+def strip_user_invocable(data: bytes) -> bytes:
+    """Drop the one top-level `user-invocable: false` line from SKILL.md front matter.
+
+    Plain byte handling, so an install needs no PyYAML and keeps every other byte and the line endings.
+    A file without the key is returned as is; any other form of the key raises.
+    """
+    lines = data.splitlines(keepends=True)
+    if not lines or lines[0].rstrip(b"\r\n") != b"---":
+        raise ValueError("expected YAML front matter at the top of the skill")
+    end = next((i for i, line in enumerate(lines[1:], 1) if line.rstrip(b"\r\n") == b"---"), None)
+    if end is None:
+        raise ValueError("front matter has no closing --- line")
+    hits = [i for i in range(1, end) if lines[i].startswith(b"user-invocable")]
+    if not hits:
+        return data
+    if len(hits) != 1 or lines[hits[0]].rstrip(b"\r\n") != b"user-invocable: false":
+        raise ValueError("expected exactly one `user-invocable: false` line in the front matter")
+    del lines[hits[0]]
+    return b"".join(lines)
 
 
 def skill_content(source: Path, harness: str) -> bytes | None:
-    """Every harness but Claude Code gets SKILL.md without the Claude-only front-matter keys."""
+    """Every harness but Claude Code gets SKILL.md without the Claude-only `user-invocable` key."""
     if harness == "claude" or source.name != "SKILL.md" or source.parent.parent != SKILLS:
         return None
-    gen = generator()
-    text = source.read_text(encoding="utf-8")
-    stripped = gen.strip_claude_only_keys(text)  # type: ignore[attr-defined]
-    return None if stripped == text else stripped.encode("utf-8")
+    data = source.read_bytes()
+    stripped = strip_user_invocable(data)
+    return None if stripped == data else stripped
 
 
 def sha256(path: Path) -> str:

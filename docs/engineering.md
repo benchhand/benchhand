@@ -18,7 +18,7 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 | numpy | `numpy==2.5.5` | PEP 723 headers |
 | trimesh, python-fcl | `trimesh==4.*`, `python-fcl==0.7.0.11` | PEP 723 headers |
 | jsonschema | `>=4.23` in script headers, `skills/cad-flow/scripts/setup.py` among them: it loads `flow_profile.py`, whose cad-record gate module imports it. Test pin `4.26.0`. | `harness/test-requirements.txt`, `skills/cad-flow/scripts/setup.py` header |
-| PyYAML | `>=6.0` in script headers. Test pin `6.0.3`. | `harness/test-requirements.txt` |
+| PyYAML | `>=6.0` in script headers. Test pin `6.0.3`. `harness/install.py` needs it only for `--tier-model` (rendering agents through `harness/generate.py`); a default install, including `--harness all`, runs without it. | `harness/test-requirements.txt`, `harness/install.py` |
 | referencing | `>=0.28.4` in 25 script headers, `skills/cad-flow/scripts/setup.py` among them (same reason as `jsonschema`). No test pin: `jsonschema` installs it. Scripts import it directly, so they declare it. | PEP 723 headers, `scripts/test_script_dependencies.py` |
 | Playwright | `playwright==1.65.2`, with Chromium | `skills/cad-render` and `skills/cad-viewer` headers, `README.md` |
 | Test-only pins | `defusedxml==0.7.1`, `hypothesis==6.170.15`, `click==8.5.1` | `harness/test-requirements.txt` |
@@ -74,6 +74,7 @@ Approved departures. The tracking IDs come from the bead ledger, which the repos
 | Hand-written shell lexing in `scripts/test_no_verify_guard.py` (a `shlex` based word splitter near line 134) | The plan to replace it, the reasons and the bead status are unverified (ledger only). | benchhand-ci0 |
 | `skills/cad-model/scripts/cadmodel/safe.py` and `occ_derived.py` stay Apache-2.0 inside the MPL-2.0 repository | They are adapted from AgentCAD 0.7.0 (Apache-2.0). `NOTICE` and `skills/cad-model/NOTICE` record the source and changes. `LICENSES/Apache-2.0.txt` holds the text. | benchhand-76q |
 | FEA thresholds in `skills/cad-analysis/scripts/fea_near_support.py`: `TOLERANCE = 0.05` (5% section-resultant residual) and `TORSION_FLOOR = 1e-3` (0.1% of F x L) | Recorded as engineering judgment (decision U-2, 20 Nov). The user chose these values on 20 Nov 2026: `TOLERANCE` stays at 5% and `TORSION_FLOOR` stays at 0.1% of F x L. A section that misses a gate abstains, never a pass or a fail. Neither ASME VIII-2 Annex 5-A nor EN 13445-3 gives a number. | benchhand-2dq |
+| `user-invocable: false` in the front matter of the 12 hidden helper `skills/*/SKILL.md` files, a Claude Code key that is not an Agent Skills spec key, so a strict spec validator rejects those files | The Claude plugin route reads `skills/` directly, so the key in the shared file is what hides the helpers from the `/` menu. `harness/install.py` removes the line (plain text, no PyYAML) for every harness but Claude. `harness/test_skill_visibility.py` limits the front matter to spec keys plus this one. | benchhand-lns |
 
 ## Project-start profile gate
 
