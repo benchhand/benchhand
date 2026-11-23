@@ -13,7 +13,7 @@ Ask these focused questions before selecting material or process:
 - What accuracy, repeatability, finish and dimensional stability does function need?
 - What are the failure consequences and forbidden outcomes? Which standards or safety rules apply? Who supervises and approves?
 - What quantity, budget and lead time apply? How will the product be maintained and repaired?
-- Which stock, tools, operators and measurement capability are available? Is outsourcing acceptable? Ask about the printer only as an offer to record it, once: with no machine profile the shipped guideline values govern FDM and calibration stays off. A missing machine profile never blocks.
+- Which stock, tools, operators and measurement capability are available? Is outsourcing acceptable? Ask about the printer only as an offer to record it, once: with no machine profile the shipped guideline values govern FDM; a recorded calibration counts only when `CAD_CALIBRATION=1`. A missing machine profile never blocks.
 - What may the release claim? What operating limits, exclusions and evidence are needed?
 
 Separate **requirements**, **preferences**, **assumptions** and **open questions**. Bound and assign each assumption. Give every open question an owner and mark whether it affects choice or safety. A missing fact stays unknown. Do not infer service or loads from illustrative geometry, available equipment, a material label or a capability profile. Resolve safety- or material-critical unknowns before a final recommendation. Otherwise give conditional alternatives with clear limits.

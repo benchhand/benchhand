@@ -40,7 +40,7 @@ class NoMachineDefault(unittest.TestCase):
         line = ground_line()
         self.assertRegex(line, r"(?i)no machine profile")
         self.assertRegex(line, r"(?i)shipped guideline values govern")
-        self.assertIn("`CAD_CALIBRATION`", line)
+        self.assertIn("`CAD_CALIBRATION=1`", line)
 
     def test_ground_step_offers_the_machine_once_and_never_blocks_on_it(self) -> None:
         line = ground_line()
