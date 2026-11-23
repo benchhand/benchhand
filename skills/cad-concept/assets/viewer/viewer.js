@@ -27,6 +27,7 @@ const ui = {
   notice: byId("notice"),
   live: byId("live"),
   variants: byId("variant-list"),
+  nodes: byId("node-list"),
   shot: byId("screenshot"),
   fit: byId("fit-view"),
   shotResult: byId("shot-result"),
@@ -118,6 +119,7 @@ function buildVariant(def, index) {
       node.kind === "part" ? makePart(node, palette[meshes.length % palette.length]) : new THREE.Group();
     if (node.kind === "part") meshes.push(object);
     applyTransform(object, node);
+    object.visible = node.visible !== false;
     object.userData.variantId = def.id;
     object.userData.nodeId = node.id;
     parentObject.add(object);
@@ -197,14 +199,14 @@ const partBox = new THREE.Box3();
 function makeLabels(variants) {
   ui.labels.replaceChildren();
   const labels = [];
-  const add = (kind, text, variant, anchor) => {
+  const add = (kind, text, variant, anchor, object) => {
     const el = document.createElement("span");
     el.className = "label";
     el.dataset.kind = kind;
     el.dataset.variant = variant.def.id;
     el.textContent = text;
     ui.labels.append(el);
-    labels.push({ kind, el, variant, anchor, x: 0, y: 0, shown: false, w: 0, h: 0 });
+    labels.push({ kind, el, variant, anchor, object, x: 0, y: 0, shown: false, w: 0, h: 0 });
   };
   for (const variant of variants) {
     add("variant", variant.def.label, variant, (out) => {
@@ -220,9 +222,9 @@ function makeLabels(variants) {
         add("part", node.def.label, variant, (out) => {
           partBox.setFromObject(node.object);
           return out.set((partBox.min.x + partBox.max.x) / 2, partBox.min.y, (partBox.min.z + partBox.max.z) / 2);
-        });
+        }, node.object);
       } else {
-        add("group", node.def.label, variant, (out) => node.object.getWorldPosition(out));
+        add("group", node.def.label, variant, (out) => node.object.getWorldPosition(out), node.object);
       }
     }
   }
@@ -233,8 +235,15 @@ function makeLabels(variants) {
   return labels;
 }
 
+// A node shows only when it and every ancestor are visible.
+function shownInTree(object) {
+  for (let o = object; o; o = o.parent) if (!o.visible) return false;
+  return true;
+}
+
 function labelVisible(label) {
   if (label.kind === "variant") return true;
+  if (!shownInTree(label.object)) return false;
   // Dimmed variants keep their group labels; part labels belong to the selected variant.
   if (label.kind === "part") return ui.partLabels.checked && label.variant.def.id === state.selected;
   return ui.groupLabels.checked;
@@ -356,7 +365,37 @@ function selectVariant(id) {
   for (const button of ui.variants.querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.variant === variant.def.id));
   }
+  renderNodeList(variant);
   requestRender();
+}
+
+// Per-node visibility: starts from the scene's `visible` field, toggles for the session only.
+function renderNodeList(variant) {
+  ui.nodes.replaceChildren();
+  for (const node of variant.nodes.values()) {
+    if (node.parentId === null) continue; // the root group is the variant itself
+    const item = document.createElement("li");
+    const label = document.createElement("label");
+    label.className = "toggle";
+    label.style.paddingLeft = `${nodeDepth(variant, node) * 12}px`;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = node.object.visible;
+    box.dataset.node = node.def.id;
+    box.addEventListener("change", () => {
+      node.object.visible = box.checked;
+      requestRender();
+    });
+    label.append(box, ` ${node.def.label}`);
+    item.append(label);
+    ui.nodes.append(item);
+  }
+}
+
+function nodeDepth(variant, node) {
+  let depth = 0;
+  for (let id = node.parentId; id !== null; id = variant.nodes.get(id).parentId) depth += 1;
+  return depth - 1;
 }
 
 function renderVariantList(scene) {
@@ -404,7 +443,7 @@ ui.canvas.addEventListener("pointerup", (event) => {
     -((event.clientY - rect.top) / rect.height) * 2 + 1,
   );
   raycaster.setFromCamera(ndc, camera);
-  const hit = raycaster.intersectObjects(state.variants.flatMap((variant) => variant.meshes), false)[0];
+  const hit = raycaster.intersectObjects(state.variants.flatMap((variant) => variant.meshes.filter(shownInTree)), false)[0];
   if (hit) selectVariant(hit.object.userData.variantId);
 });
 

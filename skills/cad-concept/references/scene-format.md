@@ -34,8 +34,10 @@ and flows into the handoff verbatim. `root` is a group that stands for the varia
 
 ## Nodes
 
-Group: `{kind: "group", id, label, position?, rotation?, children: [node, ...]}`.
-Part: `{kind: "part", id, label, position?, rotation?, shape, color?}`.
+Group: `{kind: "group", id, label, visible?, position?, rotation?, children: [node, ...]}`.
+Part: `{kind: "part", id, label, visible?, position?, rotation?, shape, color?}`.
+
+`visible: false` hides a node and its children when the viewer opens (default `true`). The viewer's Nodes list toggles it for the session, so hiding a part needs no second scene file. The handoff ignores it.
 
 | `shape.type` | Fields | Notes |
 |---|---|---|

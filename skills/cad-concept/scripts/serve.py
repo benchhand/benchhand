@@ -223,6 +223,15 @@ class VendorCache:
             return data
 
 
+class QuietServer(ThreadingHTTPServer):
+    """A browser tab that closes mid-response is routine: no traceback for a client reset."""
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "cad-concept/1"
     scene_dir: Path
@@ -448,7 +457,7 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
         },
     )
     try:
-        httpd = ThreadingHTTPServer((args.host, args.port), handler)
+        httpd = QuietServer((args.host, args.port), handler)
     except OSError as exc:
         print(f"serve.py: cannot listen on {args.host}:{args.port}: {exc}", file=sys.stderr)
         return 2

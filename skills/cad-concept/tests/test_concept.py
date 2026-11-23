@@ -235,6 +235,20 @@ class SchemaCli(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertFalse(json.loads(result.stdout)["ok"])
 
+    def test_visible_flag_is_a_boolean_on_parts_and_groups(self) -> None:
+        def check(visible: object) -> int:
+            scene = example()
+            root = scene["variants"][0]["root"]
+            root["children"][0]["visible"] = visible
+            root["children"][0]["children"][0]["visible"] = visible
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "v.scene.json"
+                path.write_text(json.dumps(scene), encoding="utf-8")
+                return self.run_cli("check", str(path)).returncode
+        self.assertEqual(check(False), 0)
+        self.assertEqual(check(True), 0)
+        self.assertEqual(check("no"), 1)
+
     def test_unreadable_scene_is_a_usage_error(self) -> None:
         self.assertEqual(self.run_cli("check", "/nonexistent/x.scene.json").returncode, 2)
 
@@ -390,6 +404,26 @@ class ServerLive(unittest.TestCase):
         status, response = self.post(body, path="api/other")
         self.assertEqual(status, 404, response)
         self.assertFalse((self.scene_dir / "screenshots").exists())
+
+    def test_client_reset_is_silent_not_a_traceback(self) -> None:
+        import io
+        from contextlib import redirect_stderr
+        server = serve.ThreadingHTTPServer.__new__(serve.QuietServer)
+        for exc in (ConnectionResetError(), BrokenPipeError(), ConnectionAbortedError()):
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                try:
+                    raise exc
+                except OSError:
+                    server.handle_error(None, ("127.0.0.1", 1))
+            self.assertEqual(buf.getvalue(), "")
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            try:
+                raise ValueError("real bug")
+            except ValueError:
+                server.handle_error(None, ("127.0.0.1", 1))
+        self.assertIn("ValueError", buf.getvalue())
 
     def test_a_rebound_host_name_is_refused(self) -> None:
         port = self.url.rstrip("/").rsplit(":", 1)[1]
