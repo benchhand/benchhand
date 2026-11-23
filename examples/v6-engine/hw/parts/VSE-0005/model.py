@@ -26,6 +26,7 @@ PARAMS = {
     "journal_d": 13.97,  # 14 f7 is 13.984/13.966; the mid-limit rounded to 13.97
     "seat_len": 12.0,
     "case_len": 120.0,
+    "link_d": 10.0,  # link shaft between throws; the rod rings pass outside it
     "nose_d": 10.0,
     "nose_len": 14.0,
     "pin_angles_deg": [60.0, 180.0, 300.0],
@@ -49,7 +50,11 @@ def build(params: dict) -> cq.Shape:
     parts = [_cyl(p["nose_d"] / 2.0, -half - p["nose_len"], -half + 1.0),
              _cyl(p["journal_d"] / 2.0, -half, -half + p["seat_len"] + 1.0),
              _cyl(p["journal_d"] / 2.0, half - p["seat_len"] - 1.0, half),
-             _cyl(p["journal_d"] / 2.0, -half + p["seat_len"], half - p["seat_len"])]
+             ]
+    reach = p["pin_len"] / 2.0 + p["web_t"]
+    for k in (0, 1):  # link shafts between neighbouring throws, inside the rod-free gaps
+        x_lo = (k - 1) * p["pitch"] + reach - p["web_t"]
+        parts.append(_cyl(p["link_d"] / 2.0, x_lo, x_lo + p["pitch"] - 2.0 * reach + 2.0 * p["web_t"]))
     for k, alpha in enumerate(p["pin_angles_deg"]):
         x = (k - 1) * p["pitch"]
         py, pz = p["throw_r"] * math.cos(math.radians(alpha)), p["throw_r"] * math.sin(math.radians(alpha))
