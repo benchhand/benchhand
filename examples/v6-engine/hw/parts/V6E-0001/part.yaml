@@ -1,0 +1,11 @@
+PN: V6E-0001
+rev: X1
+title: Crankcase and V block
+material: ASA
+process: fdm
+finish: Deburr; no sharp edges
+mass_target: 120
+make_buy: make
+supplier: null
+decisions: [DR-002]
+manufacture: {relationship: same, mesh: {linear_deflection_mm: 0.05, angular_deflection_rad: 0.1}}
