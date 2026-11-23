@@ -62,13 +62,13 @@ def generator() -> object:
 
 
 def skill_content(source: Path, harness: str) -> bytes | None:
-    """Claude Code installs hide the helper skills from the `/` menu; the shared source stays spec-only."""
-    if harness != "claude" or source.name != "SKILL.md" or source.parent.parent != SKILLS:
+    """Every harness but Claude Code gets SKILL.md without the Claude-only front-matter keys."""
+    if harness == "claude" or source.name != "SKILL.md" or source.parent.parent != SKILLS:
         return None
     gen = generator()
-    if source.parent.name not in gen.HIDDEN_SKILLS:  # type: ignore[attr-defined]
-        return None
-    return gen.hide_from_menu(source.read_text(encoding="utf-8")).encode("utf-8")  # type: ignore[attr-defined]
+    text = source.read_text(encoding="utf-8")
+    stripped = gen.strip_claude_only_keys(text)  # type: ignore[attr-defined]
+    return None if stripped == text else stripped.encode("utf-8")
 
 
 def sha256(path: Path) -> str:

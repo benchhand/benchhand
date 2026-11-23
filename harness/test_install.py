@@ -283,14 +283,14 @@ class InstallerWithoutPyYamlTests(unittest.TestCase):
         probe = subprocess.run([sys.executable, "-E", "-S", "-c", "import yaml"], capture_output=True, text=True, timeout=30)
         self.assertNotEqual(probe.returncode, 0, "the isolated interpreter can import yaml; these tests would prove nothing")
 
-    def test_default_install_does_not_need_pyyaml_except_for_claude(self) -> None:
-        result = self.run_bare(harness="codex")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue((self.project / ".codex/agents/cad-clerk.toml").is_file())
-
-    def test_claude_install_without_pyyaml_fails_cleanly_and_writes_nothing(self) -> None:
-        """Claude installs add `user-invocable: false` to the helper skills through the YAML loader."""
+    def test_claude_install_does_not_need_pyyaml(self) -> None:
         result = self.run_bare()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.project / ".claude/agents/cad-clerk.md").is_file())
+
+    def test_codex_install_without_pyyaml_fails_cleanly_and_writes_nothing(self) -> None:
+        """Other harnesses strip the Claude-only front-matter key through the YAML loader."""
+        result = self.run_bare(harness="codex")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("PyYAML", result.stderr)
         self.assertNotIn("Traceback", result.stderr)

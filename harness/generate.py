@@ -79,13 +79,10 @@ class Agent:
         return "web" in self.capabilities
 
 
-# Helper skills the Claude Code `/` menu omits; the entry point (cad-flow) and the standalone
-# tools (cad-viewer, cad-fits) stay typable. Claude Code's `user-invocable: false` is not an
-# Agent Skills spec key, so the shared SKILL.md files stay without it and the Claude installer adds it.
-HIDDEN_SKILLS = frozenset({
-    "cad-analysis", "cad-bom", "cad-concept", "cad-design", "cad-drawings", "cad-model",
-    "cad-motion", "cad-recheck", "cad-record", "cad-render", "cad-review-dfm", "cad-review-mech",
-})
+# Front-matter keys only Claude Code understands. The shared SKILL.md files carry them (so the
+# Claude plugin route, which reads skills/ directly, hides the helper skills from the `/` menu);
+# `install.py` strips them for every other harness.
+CLAUDE_ONLY_SKILL_KEYS = ("user-invocable",)
 _SKILL_FRONT_MATTER = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
 
 
@@ -103,12 +100,18 @@ def skill_front_matter(text: str) -> dict[str, Any]:
     return fields
 
 
-def hide_from_menu(text: str) -> str:
-    """Return SKILL.md text with `user-invocable: false` added to its front matter."""
-    if "user-invocable" in skill_front_matter(text):
-        raise ValueError("skill already sets user-invocable")
-    end = _SKILL_FRONT_MATTER.match(text).end(1)  # type: ignore[union-attr]
-    return f"{text[:end]}user-invocable: false\n{text[end:]}"
+def strip_claude_only_keys(text: str) -> str:
+    """Return SKILL.md text without the Claude-only front-matter keys; other text is untouched."""
+    match = _SKILL_FRONT_MATTER.match(text)
+    if match is None:
+        raise ValueError("expected YAML front matter at the top of the skill")
+    block = match.group(1)
+    for key in CLAUDE_ONLY_SKILL_KEYS:
+        block = re.sub(rf"^{re.escape(key)}:[^\n]*\n", "", block, flags=re.MULTILINE)
+    stripped = f"---\n{block}---\n{text[match.end():]}"
+    if set(skill_front_matter(stripped)) & set(CLAUDE_ONLY_SKILL_KEYS):
+        raise ValueError("a Claude-only key is not a single-line front-matter entry")
+    return stripped
 
 
 def parse_agent(path: Path) -> Agent:

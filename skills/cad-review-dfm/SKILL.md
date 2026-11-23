@@ -1,6 +1,7 @@
 ---
 name: cad-review-dfm
 description: Reviews declared manufacturing routes with evidence. Use for an independent DFM review.
+user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.

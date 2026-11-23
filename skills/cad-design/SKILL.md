@@ -1,6 +1,7 @@
 ---
 name: cad-design
 description: Applies CAD appearance fidelity and declared-route manufacturing checks. Triggers on "make it look real", "detail the parts", or a PARTS/DETAIL gate.
+user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.
