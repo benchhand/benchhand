@@ -233,7 +233,7 @@ class HarnessGeneratorTests(GeneratorCopyCase):
             with self.subTest(agent=source.stem):
                 self.assertEqual(front["name"], neutral["name"])
                 self.assertEqual(front["inheritProjectContext"], True)
-                self.assertEqual(front["skills"].split(", "), neutral["skills"])
+                self.assertEqual([skill for skill in front.get("skills", "").split(", ") if skill], neutral["skills"])
                 tools = front["tools"].split(", ")
                 self.assertNotIn("bash", tools)
                 self.assertEqual("cad_run" in tools, "shell-uv" in neutral["capabilities"])
@@ -242,6 +242,12 @@ class HarnessGeneratorTests(GeneratorCopyCase):
                 # The extension loads exactly into the children that run scripts, by a path relative to the agent file.
                 expected = f"../cad-guard/{source.stem}.js" if "cad_run" in tools else None
                 self.assertEqual(front.get("subagentOnlyExtensions"), expected)
+
+    def test_pi_omits_skills_for_an_agent_with_no_skill(self) -> None:
+        """pi-subagents treats `skills` as optional; a blank value would parse as YAML null."""
+        agent = generate.Agent("cad-nobody", "Loads no skill.", "Prompt.", ("read",), ())
+        front = yaml.safe_load(generate.render(agent, "pi").split("---", 2)[1])
+        self.assertNotIn("skills", front)
 
     def test_pi_launcher_files_pass_each_agent_its_source_launchers(self) -> None:
         self.generate()
