@@ -1,0 +1,1303 @@
+{
+ "format": "cad.concept-scene",
+ "version": 1,
+ "id": "v6-engine",
+ "title": "Desktop V6 engine",
+ "units": "mm",
+ "notes": "Concept variants only: primitive proxies, not verified CAD. Material and process are proposals pending the INTENT decision.",
+ "variants": [
+  {
+   "id": "compact-handle",
+   "label": "A \u00b7 Compact, hand crank",
+   "summary": "Short 100 mm block, 60 degree V, three crank throws, hand crank on the nose.",
+   "params": {
+    "bore_mm": 22,
+    "stroke_mm": 28,
+    "bank_angle_deg": 60,
+    "cylinder_pitch_mm": 26,
+    "block_length_mm": 100
+   },
+   "root": {
+    "kind": "group",
+    "id": "v6",
+    "label": "A \u00b7 Compact, hand crank",
+    "children": [
+     {
+      "kind": "part",
+      "id": "crankcase",
+      "label": "Crankcase",
+      "shape": {
+       "type": "box",
+       "size": [
+        102,
+        100,
+        90
+       ]
+      },
+      "position": [
+       0,
+       0,
+       -20
+      ],
+      "color": "#9aa5b1"
+     },
+     {
+      "kind": "part",
+      "id": "oil-pan",
+      "label": "Oil pan",
+      "shape": {
+       "type": "box",
+       "size": [
+        92,
+        90,
+        22
+       ]
+      },
+      "position": [
+       0,
+       0,
+       -76
+      ],
+      "color": "#4b5563"
+     },
+     {
+      "kind": "group",
+      "id": "bank-left",
+      "label": "Bank left",
+      "rotation": [
+       0,
+       -30,
+       0
+      ],
+      "children": [
+       {
+        "kind": "part",
+        "id": "deck-left",
+        "label": "Deck left",
+        "shape": {
+         "type": "box",
+         "size": [
+          44,
+          80,
+          70
+         ]
+        },
+        "position": [
+         0,
+         0,
+         45
+        ],
+        "color": "#9aa5b1"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-1",
+        "label": "Cylinder left 1",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -21.667,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-2",
+        "label": "Cylinder left 2",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         4.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-3",
+        "label": "Cylinder left 3",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         30.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "head-left",
+        "label": "Head left",
+        "shape": {
+         "type": "box",
+         "size": [
+          40,
+          86,
+          50
+         ]
+        },
+        "position": [
+         0,
+         0,
+         105.0
+        ],
+        "color": "#d97706"
+       },
+       {
+        "kind": "part",
+        "id": "cover-left",
+        "label": "Cam cover left",
+        "shape": {
+         "type": "box",
+         "size": [
+          30,
+          70,
+          12
+         ]
+        },
+        "position": [
+         0,
+         0,
+         136
+        ],
+        "color": "#374151"
+       }
+      ]
+     },
+     {
+      "kind": "group",
+      "id": "bank-right",
+      "label": "Bank right",
+      "rotation": [
+       0,
+       30,
+       0
+      ],
+      "children": [
+       {
+        "kind": "part",
+        "id": "deck-right",
+        "label": "Deck right",
+        "shape": {
+         "type": "box",
+         "size": [
+          44,
+          80,
+          70
+         ]
+        },
+        "position": [
+         0,
+         0,
+         45
+        ],
+        "color": "#9aa5b1"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-1",
+        "label": "Cylinder right 1",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -30.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-2",
+        "label": "Cylinder right 2",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -4.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-3",
+        "label": "Cylinder right 3",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         21.667,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "head-right",
+        "label": "Head right",
+        "shape": {
+         "type": "box",
+         "size": [
+          40,
+          86,
+          50
+         ]
+        },
+        "position": [
+         0,
+         0,
+         105.0
+        ],
+        "color": "#d97706"
+       },
+       {
+        "kind": "part",
+        "id": "cover-right",
+        "label": "Cam cover right",
+        "shape": {
+         "type": "box",
+         "size": [
+          30,
+          70,
+          12
+         ]
+        },
+        "position": [
+         0,
+         0,
+         136
+        ],
+        "color": "#374151"
+       }
+      ]
+     },
+     {
+      "kind": "group",
+      "id": "crank",
+      "label": "Crank assembly",
+      "children": [
+       {
+        "kind": "part",
+        "id": "crankshaft",
+        "label": "Crankshaft",
+        "shape": {
+         "type": "cylinder",
+         "radius": 8,
+         "height": 140
+        },
+        "rotation": [
+         90,
+         0,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-1",
+        "label": "Crank web 1",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         -26,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-2",
+        "label": "Crank web 2",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         0,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-3",
+        "label": "Crank web 3",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         26,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-end",
+        "label": "Crank handle",
+        "shape": {
+         "type": "cylinder",
+         "radius": 14,
+         "height": 40
+        },
+        "position": [
+         0,
+         -90.0,
+         0
+        ],
+        "rotation": [
+         90,
+         0,
+         0
+        ],
+        "color": "#2563eb"
+       },
+       {
+        "kind": "part",
+        "id": "handle-grip",
+        "label": "Handle grip",
+        "shape": {
+         "type": "cylinder",
+         "radius": 6,
+         "height": 50
+        },
+        "position": [
+         0,
+         -110.0,
+         -30
+        ],
+        "color": "#2563eb"
+       }
+      ]
+     }
+    ]
+   },
+   "joints": [
+    {
+     "id": "crank",
+     "label": "Crank",
+     "type": "revolute",
+     "parent": "v6",
+     "child": "crank",
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "min": -360,
+     "max": 360,
+     "nominal": 0
+    }
+   ]
+  },
+  {
+   "id": "long-stroke-motor",
+   "label": "B \u00b7 Long stroke, motor mount",
+   "summary": "Longer 116 mm block with a motor coupling for a slow-turning display drive.",
+   "params": {
+    "bore_mm": 24,
+    "stroke_mm": 34,
+    "bank_angle_deg": 60,
+    "cylinder_pitch_mm": 30,
+    "block_length_mm": 116
+   },
+   "root": {
+    "kind": "group",
+    "id": "v6",
+    "label": "B \u00b7 Long stroke, motor mount",
+    "children": [
+     {
+      "kind": "part",
+      "id": "crankcase",
+      "label": "Crankcase",
+      "shape": {
+       "type": "box",
+       "size": [
+        104,
+        116,
+        90
+       ]
+      },
+      "position": [
+       0,
+       0,
+       -20
+      ],
+      "color": "#7c8896"
+     },
+     {
+      "kind": "part",
+      "id": "oil-pan",
+      "label": "Oil pan",
+      "shape": {
+       "type": "box",
+       "size": [
+        94,
+        106,
+        22
+       ]
+      },
+      "position": [
+       0,
+       0,
+       -76
+      ],
+      "color": "#4b5563"
+     },
+     {
+      "kind": "group",
+      "id": "bank-left",
+      "label": "Bank left",
+      "rotation": [
+       0,
+       -30,
+       0
+      ],
+      "children": [
+       {
+        "kind": "part",
+        "id": "deck-left",
+        "label": "Deck left",
+        "shape": {
+         "type": "box",
+         "size": [
+          46,
+          96,
+          70
+         ]
+        },
+        "position": [
+         0,
+         0,
+         45
+        ],
+        "color": "#7c8896"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-1",
+        "label": "Cylinder left 1",
+        "shape": {
+         "type": "cylinder",
+         "radius": 16.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -25.0,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-2",
+        "label": "Cylinder left 2",
+        "shape": {
+         "type": "cylinder",
+         "radius": 16.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         5.0,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-3",
+        "label": "Cylinder left 3",
+        "shape": {
+         "type": "cylinder",
+         "radius": 16.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         35.0,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "head-left",
+        "label": "Head left",
+        "shape": {
+         "type": "box",
+         "size": [
+          42,
+          102,
+          56
+         ]
+        },
+        "position": [
+         0,
+         0,
+         108.0
+        ],
+        "color": "#d97706"
+       },
+       {
+        "kind": "part",
+        "id": "cover-left",
+        "label": "Cam cover left",
+        "shape": {
+         "type": "box",
+         "size": [
+          32,
+          86,
+          12
+         ]
+        },
+        "position": [
+         0,
+         0,
+         142
+        ],
+        "color": "#374151"
+       }
+      ]
+     },
+     {
+      "kind": "group",
+      "id": "bank-right",
+      "label": "Bank right",
+      "rotation": [
+       0,
+       30,
+       0
+      ],
+      "children": [
+       {
+        "kind": "part",
+        "id": "deck-right",
+        "label": "Deck right",
+        "shape": {
+         "type": "box",
+         "size": [
+          46,
+          96,
+          70
+         ]
+        },
+        "position": [
+         0,
+         0,
+         45
+        ],
+        "color": "#7c8896"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-1",
+        "label": "Cylinder right 1",
+        "shape": {
+         "type": "cylinder",
+         "radius": 16.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -35.0,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-2",
+        "label": "Cylinder right 2",
+        "shape": {
+         "type": "cylinder",
+         "radius": 16.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -5.0,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-3",
+        "label": "Cylinder right 3",
+        "shape": {
+         "type": "cylinder",
+         "radius": 16.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         25.0,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "head-right",
+        "label": "Head right",
+        "shape": {
+         "type": "box",
+         "size": [
+          42,
+          102,
+          56
+         ]
+        },
+        "position": [
+         0,
+         0,
+         108.0
+        ],
+        "color": "#d97706"
+       },
+       {
+        "kind": "part",
+        "id": "cover-right",
+        "label": "Cam cover right",
+        "shape": {
+         "type": "box",
+         "size": [
+          32,
+          86,
+          12
+         ]
+        },
+        "position": [
+         0,
+         0,
+         142
+        ],
+        "color": "#374151"
+       }
+      ]
+     },
+     {
+      "kind": "group",
+      "id": "crank",
+      "label": "Crank assembly",
+      "children": [
+       {
+        "kind": "part",
+        "id": "crankshaft",
+        "label": "Crankshaft",
+        "shape": {
+         "type": "cylinder",
+         "radius": 8,
+         "height": 156
+        },
+        "rotation": [
+         90,
+         0,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-1",
+        "label": "Crank web 1",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         -30,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-2",
+        "label": "Crank web 2",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         0,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-3",
+        "label": "Crank web 3",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         30,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-end",
+        "label": "Motor coupling",
+        "shape": {
+         "type": "cylinder",
+         "radius": 18,
+         "height": 30
+        },
+        "position": [
+         0,
+         -98.0,
+         0
+        ],
+        "rotation": [
+         90,
+         0,
+         0
+        ],
+        "color": "#2563eb"
+       }
+      ]
+     },
+     {
+      "kind": "part",
+      "id": "motor",
+      "label": "Motor mount",
+      "shape": {
+       "type": "box",
+       "size": [
+        60,
+        40,
+        60
+       ]
+      },
+      "position": [
+       0,
+       -128.0,
+       0
+      ],
+      "color": "#16a34a"
+     }
+    ]
+   },
+   "joints": [
+    {
+     "id": "crank",
+     "label": "Crank",
+     "type": "revolute",
+     "parent": "v6",
+     "child": "crank",
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "min": -360,
+     "max": 360,
+     "nominal": 0
+    }
+   ]
+  },
+  {
+   "id": "open-deck-cam",
+   "label": "C \u00b7 Open deck, cam drive",
+   "summary": "Tall heads that expose the cam drive; hand crank. The showpiece option.",
+   "params": {
+    "bore_mm": 22,
+    "stroke_mm": 28,
+    "bank_angle_deg": 60,
+    "cylinder_pitch_mm": 26,
+    "block_length_mm": 100
+   },
+   "root": {
+    "kind": "group",
+    "id": "v6",
+    "label": "C \u00b7 Open deck, cam drive",
+    "children": [
+     {
+      "kind": "part",
+      "id": "crankcase",
+      "label": "Crankcase",
+      "shape": {
+       "type": "box",
+       "size": [
+        102,
+        100,
+        90
+       ]
+      },
+      "position": [
+       0,
+       0,
+       -20
+      ],
+      "color": "#b8c0c8"
+     },
+     {
+      "kind": "part",
+      "id": "oil-pan",
+      "label": "Oil pan",
+      "shape": {
+       "type": "box",
+       "size": [
+        92,
+        90,
+        22
+       ]
+      },
+      "position": [
+       0,
+       0,
+       -76
+      ],
+      "color": "#4b5563"
+     },
+     {
+      "kind": "group",
+      "id": "bank-left",
+      "label": "Bank left",
+      "rotation": [
+       0,
+       -30,
+       0
+      ],
+      "children": [
+       {
+        "kind": "part",
+        "id": "deck-left",
+        "label": "Deck left",
+        "shape": {
+         "type": "box",
+         "size": [
+          44,
+          80,
+          70
+         ]
+        },
+        "position": [
+         0,
+         0,
+         45
+        ],
+        "color": "#b8c0c8"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-1",
+        "label": "Cylinder left 1",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -21.667,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-2",
+        "label": "Cylinder left 2",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         4.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-left-3",
+        "label": "Cylinder left 3",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         30.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "head-left",
+        "label": "Head left",
+        "shape": {
+         "type": "box",
+         "size": [
+          40,
+          86,
+          72
+         ]
+        },
+        "position": [
+         0,
+         0,
+         116.0
+        ],
+        "color": "#d97706"
+       },
+       {
+        "kind": "part",
+        "id": "cover-left",
+        "label": "Cam cover left",
+        "shape": {
+         "type": "box",
+         "size": [
+          30,
+          70,
+          12
+         ]
+        },
+        "position": [
+         0,
+         0,
+         158
+        ],
+        "color": "#374151"
+       }
+      ]
+     },
+     {
+      "kind": "group",
+      "id": "bank-right",
+      "label": "Bank right",
+      "rotation": [
+       0,
+       30,
+       0
+      ],
+      "children": [
+       {
+        "kind": "part",
+        "id": "deck-right",
+        "label": "Deck right",
+        "shape": {
+         "type": "box",
+         "size": [
+          44,
+          80,
+          70
+         ]
+        },
+        "position": [
+         0,
+         0,
+         45
+        ],
+        "color": "#b8c0c8"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-1",
+        "label": "Cylinder right 1",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -30.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-2",
+        "label": "Cylinder right 2",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         -4.333,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "liner-right-3",
+        "label": "Cylinder right 3",
+        "shape": {
+         "type": "cylinder",
+         "radius": 15.0,
+         "height": 60
+        },
+        "position": [
+         0,
+         21.667,
+         40
+        ],
+        "color": "#6b7280"
+       },
+       {
+        "kind": "part",
+        "id": "head-right",
+        "label": "Head right",
+        "shape": {
+         "type": "box",
+         "size": [
+          40,
+          86,
+          72
+         ]
+        },
+        "position": [
+         0,
+         0,
+         116.0
+        ],
+        "color": "#d97706"
+       },
+       {
+        "kind": "part",
+        "id": "cover-right",
+        "label": "Cam cover right",
+        "shape": {
+         "type": "box",
+         "size": [
+          30,
+          70,
+          12
+         ]
+        },
+        "position": [
+         0,
+         0,
+         158
+        ],
+        "color": "#374151"
+       }
+      ]
+     },
+     {
+      "kind": "group",
+      "id": "crank",
+      "label": "Crank assembly",
+      "children": [
+       {
+        "kind": "part",
+        "id": "crankshaft",
+        "label": "Crankshaft",
+        "shape": {
+         "type": "cylinder",
+         "radius": 8,
+         "height": 140
+        },
+        "rotation": [
+         90,
+         0,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-1",
+        "label": "Crank web 1",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         -26,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-2",
+        "label": "Crank web 2",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         0,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-web-3",
+        "label": "Crank web 3",
+        "shape": {
+         "type": "box",
+         "size": [
+          26,
+          10,
+          26
+         ]
+        },
+        "position": [
+         0,
+         26,
+         0
+        ],
+        "color": "#9ca3af"
+       },
+       {
+        "kind": "part",
+        "id": "crank-end",
+        "label": "Crank handle",
+        "shape": {
+         "type": "cylinder",
+         "radius": 14,
+         "height": 40
+        },
+        "position": [
+         0,
+         -90.0,
+         0
+        ],
+        "rotation": [
+         90,
+         0,
+         0
+        ],
+        "color": "#2563eb"
+       },
+       {
+        "kind": "part",
+        "id": "handle-grip",
+        "label": "Handle grip",
+        "shape": {
+         "type": "cylinder",
+         "radius": 6,
+         "height": 50
+        },
+        "position": [
+         0,
+         -110.0,
+         -30
+        ],
+        "color": "#2563eb"
+       }
+      ]
+     }
+    ]
+   },
+   "joints": [
+    {
+     "id": "crank",
+     "label": "Crank",
+     "type": "revolute",
+     "parent": "v6",
+     "child": "crank",
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "min": -360,
+     "max": 360,
+     "nominal": 0
+    }
+   ]
+  }
+ ]
+}
