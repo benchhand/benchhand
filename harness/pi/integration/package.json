@@ -1,0 +1,14 @@
+{
+  "name": "benchhand-pi-integration",
+  "private": true,
+  "description": "Pinned pi and pi-subagents for harness/test_pi_integration.py; never installed with the skills.",
+  "license": "MPL-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "pi-subagents": "0.90.0"
+  }
+}
