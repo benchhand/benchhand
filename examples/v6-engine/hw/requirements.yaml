@@ -1,12 +1,40 @@
 requirements:
   - id: REQ-001
-    text: "Replace with a measurable product requirement."
-    rationale: "Explain why this requirement matters."
-    source: "Project brief or other source"
+    text: "The crank shall turn through a full 720 degree four-stroke cycle by hand with all six pistons moving, without any pair of moving parts touching."
+    rationale: "A desktop display model must run smoothly when turned by hand."
+    source: "Project brief"
     priority: must
-    verification:
-      method: T
-      criteria: "Describe the acceptance criteria for verification."
+    verification: {method: A, criteria: "Sweep the crank over 0 to 720 degrees at 5 degree steps; no collision and every declared clearance requirement met."}
+  - id: REQ-002
+    text: "The cylinder banks shall form a 60 degree V."
+    rationale: "Defines the V6 architecture."
+    source: "Project brief"
+    priority: must
+    verification: {method: I, criteria: "Inspect the bank axes in the assembly record: 60 degrees included angle."}
+  - id: REQ-003
+    text: "Every moving pair shall keep a running clearance for printed parts; the wrist pin and the crank bearing seats shall use ISO 286 fits."
+    rationale: "FDM parts jam without a stated clearance."
+    source: "Project brief"
+    priority: must
+    verification: {method: A, criteria: "cad-fits computes the limits of each declared fit; the clearance is positive at worst case."}
+  - id: REQ-004
+    text: "A connecting rod shall carry the peak gas load as a static compressive case without yielding."
+    rationale: "The rod is the most loaded printed part."
+    source: "Engineering assumption"
+    priority: should
+    verification: {method: A, criteria: "Static FEA of a connecting rod under an assumed compressive load shows a safety factor of at least 2 against the printed-material limit."}
+  - id: REQ-005
+    text: "Every custom part shall print on a 256 mm bed in FDM without supports that cannot be removed."
+    rationale: "The target printer is a Bambu H2D class machine."
+    source: "Project brief"
+    priority: must
+    verification: {method: A, criteria: "The DFM review finds no blocking finding for the chosen orientation."}
+  - id: REQ-006
+    text: "The crank shall accept a hand crank handle or a motor coupling."
+    rationale: "Two drive options are part of the brief."
+    source: "Project brief"
+    priority: could
+    verification: {method: I, criteria: "Inspect the crank nose interface."}
 preferences: []
 assumptions: []
 open_questions:

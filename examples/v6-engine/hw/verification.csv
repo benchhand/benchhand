@@ -1,2 +1,7 @@
 requirement_id,method,criteria,result,evidence
-REQ-001,T,Describe the acceptance criteria for verification.,planned,
+REQ-001,A,"Sweep the crank over 0 to 720 degrees at 5 degree steps; no collision and every declared clearance requirement met.",planned,
+REQ-002,I,"Inspect the bank axes in the assembly record: 60 degrees included angle.",planned,
+REQ-003,A,"cad-fits computes the limits of each declared fit; the clearance is positive at worst case.",planned,
+REQ-004,A,"Static FEA of a connecting rod under the assumed load shows a safety factor of at least 2 against the printed-material limit.",planned,
+REQ-005,A,"The DFM review finds no blocking finding for the chosen orientation.",planned,
+REQ-006,I,"Inspect the crank nose interface.",planned,
