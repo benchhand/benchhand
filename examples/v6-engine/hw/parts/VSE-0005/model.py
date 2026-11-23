@@ -13,7 +13,7 @@ takes a crank handle or a motor coupling.
 import math
 
 import cadquery as cq
-from cadmodel.safe import safe_fuse
+from cadmodel.safe import safe_cut, safe_fuse
 
 KERNEL = "cadquery"
 PARAMS = {
@@ -29,6 +29,8 @@ PARAMS = {
     "link_d": 10.0,  # link shaft between throws; the rod rings pass outside it
     "nose_d": 10.0,
     "nose_len": 14.0,
+    "coupling_bore_d": 4.0,  # axial hole in the nose for a hand crank pin or a motor coupling (REQ-006)
+    "coupling_bore_len": 12.0,
     "pin_angles_deg": [60.0, 180.0, 300.0],
 }
 
@@ -62,4 +64,6 @@ def build(params: dict) -> cq.Shape:
         parts.append(_cyl(p["pin_d"] / 2.0, x - reach, x + reach, py, pz))
         parts.append(_web(p, x - reach, x - reach + p["web_t"], alpha))
         parts.append(_web(p, x + reach - p["web_t"], x + reach, alpha))
-    return safe_fuse(*parts).val()
+    shaft = safe_fuse(*parts)
+    coupling = _cyl(p["coupling_bore_d"] / 2.0, -half - p["nose_len"] - 1.0, -half - p["nose_len"] + p["coupling_bore_len"])
+    return safe_cut(shaft, coupling).val()

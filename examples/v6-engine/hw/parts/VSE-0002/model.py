@@ -19,6 +19,8 @@ PARAMS = {
     "pin_bore_d": 6.012,  # 6 H7 upper limit; the wrist pin takes 6 g6
     "slot_w": 10.0,  # clearance for the 8 mm rod small end
     "slot_top": 4.0,  # slot height above the pin axis
+    "cavity_d": 16.0,  # hollow skirt under the crown: saves print time and gives the joint a bore on the bank axis
+    "cavity_top": -4.0,  # cavity ceiling, below the pin bore
 }
 
 
@@ -28,5 +30,7 @@ def build(params: dict) -> cq.Shape:
     body = cq.Workplane("XY").workplane(offset=-p["skirt_h"]).circle(p["d"] / 2.0).extrude(h)
     slot = cq.Workplane("XY").box(p["d"] + 2.0, p["slot_w"], p["slot_top"] + p["skirt_h"] + 1.0, centered=(True, True, False))
     body = safe_cut(body, slot.translate((0, 0, -p["skirt_h"] - 1.0)))
+    cavity = cq.Workplane("XY").workplane(offset=-p["skirt_h"] - 1.0).circle(p["cavity_d"] / 2.0).extrude(p["cavity_top"] + p["skirt_h"] + 1.0)
+    body = safe_cut(body, cavity)
     bore = cq.Workplane("XZ").circle(p["pin_bore_d"] / 2.0).extrude(p["d"], both=True)
     return safe_cut(body, bore).rotate((0, 0, 0), (0, 0, 1), 90).val()  # pin axis X, rod swing plane YZ
