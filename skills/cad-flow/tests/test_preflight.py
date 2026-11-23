@@ -281,6 +281,45 @@ class WarmPlanTests(unittest.TestCase):
         self.assertEqual(self.plan(warm=False)[1], {"install": False, "fill": False})
 
 
+class ChromiumOnlyTests(unittest.TestCase):
+    """`--chromium-only`: install and launch Chromium from the pinned Playwright, nothing else."""
+
+    def run_only(self, uv_status: str = "pass", chromium_status: str = "pass") -> tuple[preflight.Report, list[str]]:
+        order: list[str] = []
+
+        def make(identifier: str, status: str) -> preflight.Check:
+            order.append(identifier)
+            return preflight.Check(identifier, identifier, status, True, "", "")
+
+        def chromium(uv, install=False):
+            self.assertTrue(install)
+            return make("playwright-chromium", chromium_status)
+
+        with patch.object(preflight, "_uv_check", side_effect=lambda env: (make("uv", uv_status), "uv")), \
+                patch.object(preflight, "_chromium_check", side_effect=chromium), \
+                patch.object(preflight, "_timed_freecad_checks", side_effect=AssertionError("FreeCAD probed")), \
+                patch.object(preflight, "_vendor_check", side_effect=AssertionError("vendor cache filled")), \
+                patch("sys.stderr"):
+            return preflight.chromium_only({"HOME": "/nowhere"}), order
+
+    def test_installs_chromium_after_uv_and_probes_nothing_else(self) -> None:
+        report, order = self.run_only()
+        self.assertEqual(order, ["uv", "playwright-chromium"])
+        self.assertEqual(report.exit_code, 0)
+
+    def test_a_failed_chromium_install_exits_nonzero(self) -> None:
+        self.assertEqual(self.run_only(chromium_status="fail")[0].exit_code, 1)
+
+    def test_missing_uv_fails_without_trying_chromium(self) -> None:
+        with patch.object(preflight, "_uv_check", side_effect=lambda env: (
+                preflight.Check("uv", "uv", "fail", True, "", ""), None)), patch("sys.stderr"):
+            self.assertEqual(preflight.chromium_only({"HOME": "/nowhere"}).exit_code, 1)
+
+    def test_the_flag_is_exclusive_with_warm(self) -> None:
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            preflight.main(["--chromium-only", "--warm"])
+
+
 class WarmRecordTests(unittest.TestCase):
     def setUp(self) -> None:
         folder = tempfile.TemporaryDirectory()

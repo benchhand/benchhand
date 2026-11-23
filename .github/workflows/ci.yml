@@ -232,11 +232,11 @@ jobs:
           grep -q 'FreeCAD 1\.1\.4' version.txt
 
       - name: Playwright Chromium
-        # preflight --warm installs Chromium through cad-render's pinned Playwright, the environment the
-        # browser tests run in. The rest shard runs the cad-concept browser tests, which CAD_REQUIRE_BROWSER
-        # makes fail, not skip, when Chromium is missing.
+        # preflight --chromium-only installs and launches Chromium through cad-render's pinned Playwright, the
+        # environment the browser tests run in, and probes nothing else (no FreeCAD, no runtimes). The rest shard
+        # runs the cad-concept browser tests, which CAD_REQUIRE_BROWSER makes fail, not skip, when it is missing.
         if: env.SKIP != 'true' && matrix.shard == 'rest'
-        run: uv run --script skills/cad-flow/scripts/preflight.py --warm
+        run: uv run --script skills/cad-flow/scripts/preflight.py --chromium-only
 
       - name: Skill tests
         if: env.SKIP != 'true'

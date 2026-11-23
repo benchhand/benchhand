@@ -592,6 +592,20 @@ def run_checks(environ: Mapping[str, str] | None = None, cwd: Path | None = None
     return Report(tuple(checks))
 
 
+def chromium_only(environ: Mapping[str, str] | None = None) -> Report:
+    """Install and launch Playwright Chromium from cad-render's pin, and check nothing else.
+
+    CI's browser tests need only this: the full `--warm` stops at the first FreeCAD probe failure and
+    otherwise waits on checks (runtimes, three.js cache, harnesses) that the browser tests do not use.
+    """
+    env = os.environ if environ is None else environ
+    uv_check, uv = _run_uv_check(env)
+    checks = [uv_check]
+    if uv:
+        checks.append(_run_check(CHROMIUM.id, lambda: _chromium_check(uv, install=True)))
+    return Report(tuple(checks))
+
+
 def warm_record_path(environ: Mapping[str, str]) -> Path:
     """Where the warm-ups of this plugin copy record their state; its environments are this copy's."""
     key = hashlib.sha256(str(CAD_ROOT).encode("utf-8")).hexdigest()[:16]
@@ -788,6 +802,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="check only this harness (default: check all harnesses)")
     parser.add_argument("--warm", action="store_true",
                         help="also install Playwright Chromium and fill the three.js cache; record the run for --status")
+    parser.add_argument("--chromium-only", action="store_true",
+                        help="install and launch Playwright Chromium from cad-render's pin and check nothing else")
     parser.add_argument("--background", action="store_true",
                         help="with --warm: run the warm-up in a detached process and return once it is running")
     parser.add_argument("--status", action="store_true",
@@ -796,6 +812,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--wait", type=float, default=0.0, metavar="SECONDS",
                         help="with --status: wait up to SECONDS for a running warm-up to finish")
     args = parser.parse_args(argv)
+    if args.chromium_only and (args.warm or args.background or args.status):
+        parser.error("--chromium-only cannot be combined with --warm, --background or --status")
     if args.background and not args.warm:
         parser.error("--background needs --warm")
     if args.status and args.warm:
@@ -818,7 +836,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Warm-up {verb} in the background (pid {started['pid']}); progress in {started['log']}. "
                   "Check it with `preflight.py --status`.")
         return EXIT_NO_WARM if "error" in started else 0
-    report = warm(harness=args.harness) if args.warm else run_checks(harness=args.harness)
+    if args.chromium_only:
+        report = chromium_only()
+    else:
+        report = warm(harness=args.harness) if args.warm else run_checks(harness=args.harness)
     if args.json:
         print(json.dumps(report.as_json(), indent=2))
     else:
