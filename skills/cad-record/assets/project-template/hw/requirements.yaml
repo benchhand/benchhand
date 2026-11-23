@@ -83,7 +83,7 @@ open_questions:
     safety_relevant: false
     status: open
   - id: Q-010
-    question: Which equipment and operators are available, and is outsourcing acceptable?
+    question: Which operators are available, and is outsourcing acceptable?
     subjects:
       - {product: true}
     owner: lead

@@ -50,7 +50,7 @@ use_case:
     maintenance: {status: unknown, reason: not recorded yet, question: Q-009}
     repair: {status: unknown, reason: not recorded yet, question: Q-009}
   capability:
-    equipment: {status: unknown, reason: not recorded yet, question: Q-010}
+    equipment: {status: not_applicable, reason: "optional: offered once at GROUND; with no machine recorded the shipped guideline values govern FDM and each route's capability is checked on its own"}
     operator: {status: unknown, reason: not recorded yet, question: Q-010}
     outsourcing: {status: unknown, reason: not recorded yet, question: Q-010}
   release_scope:
