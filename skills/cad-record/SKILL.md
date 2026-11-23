@@ -1,7 +1,6 @@
 ---
 name: cad-record
 description: Creates, validates and releases a hardware design record. Triggers on "create a CAD record", "validate this hardware project", or "release the design".
-user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.

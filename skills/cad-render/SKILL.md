@@ -1,7 +1,6 @@
 ---
 name: cad-render
 description: Renders cad-model versions into PBR product PNGs and checks requirement window visibility, for stage gates. Triggers on "render v3", "show me the renders".
-user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.

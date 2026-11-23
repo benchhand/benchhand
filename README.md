@@ -43,7 +43,7 @@ Alternatively, install Claude Code as a plugin from this public GitHub repositor
 
 For a local checkout, add `/plugin marketplace add /path/to/benchhand`. Then install with `/plugin install benchhand@benchhand`. The plugin exposes `/benchhand:cad-flow`. The installer route exposes `/cad-flow`.
 
-In Claude Code, three skills are typable commands: `cad-flow` (the entry point), `cad-viewer` and `cad-fits`. The other twelve `cad-*` skills carry `user-invocable: false`, so the `/` menu omits them, but the model still loads them when a stage needs one. Other harnesses do not use that key. `harness/test_skill_visibility.py` fails when a skill is not classified as visible or hidden.
+In Claude Code, three skills are typable commands: `cad-flow` (the entry point), `cad-viewer` and `cad-fits`. `install.py --harness claude` adds `user-invocable: false` to the other twelve `cad-*` skills, so the `/` menu omits them, but the model still loads them when a stage needs one. The key is a Claude Code extension, not an Agent Skills key, so the shared `skills/*/SKILL.md` files stay without it and the other harnesses get unchanged skills. The plugin route reads `skills/` directly and cannot carry the key until the build-time plugin tree (epic benchhand-lc1) lands, so a plugin install still lists all fifteen skills. `harness/test_skill_visibility.py` fails when a skill is not classified as visible or hidden.
 
 ## Start and prepare a project
 

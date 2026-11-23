@@ -47,6 +47,30 @@ def installer_content(source: Path, harness: str, home: Path | None, rendered: s
         for resource in profile.get("resources", [])
     ]
     return (json.dumps(profile, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def generator() -> object:
+    """Import harness/generate.py lazily: it needs PyYAML, which a default install does not."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import generate
+    except ModuleNotFoundError as error:
+        if error.name != "yaml":
+            raise
+        raise ValueError("this install needs PyYAML; run `pip install pyyaml` or `uv run --with pyyaml python harness/install.py ...`") from error
+    return generate
+
+
+def skill_content(source: Path, harness: str) -> bytes | None:
+    """Claude Code installs hide the helper skills from the `/` menu; the shared source stays spec-only."""
+    if harness != "claude" or source.name != "SKILL.md" or source.parent.parent != SKILLS:
+        return None
+    gen = generator()
+    if source.parent.name not in gen.HIDDEN_SKILLS:  # type: ignore[attr-defined]
+        return None
+    return gen.hide_from_menu(source.read_text(encoding="utf-8")).encode("utf-8")  # type: ignore[attr-defined]
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -120,7 +144,7 @@ def file_pairs(harnesses: tuple[str, ...], scope: Path, home: Path | None = None
         skills_dir, agents_dir, commands_dir = harness_layout(harness, project, home)
         for source in skill_files():
             target = skills_dir / source.relative_to(SKILLS)
-            pairs.append(FilePair(source, target, relative_key(target, scope)))
+            pairs.append(FilePair(source, target, relative_key(target, scope), skill_content(source, harness)))
         agent_root = GENERATED / harness / "agents"
         for source in sorted(agent_root.iterdir()):
             if source.is_file():

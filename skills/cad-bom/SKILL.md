@@ -1,7 +1,6 @@
 ---
 name: cad-bom
 description: Rolls up an engineering BOM from a STEP AP242 assembly and hw/parts metadata into bom.csv. Triggers on "build the BOM", "EBOM", "bill of materials".
-user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.

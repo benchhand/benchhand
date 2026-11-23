@@ -79,6 +79,38 @@ class Agent:
         return "web" in self.capabilities
 
 
+# Helper skills the Claude Code `/` menu omits; the entry point (cad-flow) and the standalone
+# tools (cad-viewer, cad-fits) stay typable. Claude Code's `user-invocable: false` is not an
+# Agent Skills spec key, so the shared SKILL.md files stay without it and the Claude installer adds it.
+HIDDEN_SKILLS = frozenset({
+    "cad-analysis", "cad-bom", "cad-concept", "cad-design", "cad-drawings", "cad-model",
+    "cad-motion", "cad-recheck", "cad-record", "cad-render", "cad-review-dfm", "cad-review-mech",
+})
+_SKILL_FRONT_MATTER = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
+
+
+def skill_front_matter(text: str) -> dict[str, Any]:
+    """Parse the YAML block that opens a SKILL.md with the shared loader."""
+    match = _SKILL_FRONT_MATTER.match(text)
+    if not match:
+        raise ValueError("expected YAML front matter at the top of the skill")
+    try:
+        fields = _yaml_loader().safe_load(match.group(1))
+    except yaml.YAMLError as error:
+        raise ValueError(f"invalid YAML front matter: {error}") from error
+    if not isinstance(fields, dict) or not all(isinstance(key, str) for key in fields):
+        raise ValueError("skill front matter must be a YAML mapping")
+    return fields
+
+
+def hide_from_menu(text: str) -> str:
+    """Return SKILL.md text with `user-invocable: false` added to its front matter."""
+    if "user-invocable" in skill_front_matter(text):
+        raise ValueError("skill already sets user-invocable")
+    end = _SKILL_FRONT_MATTER.match(text).end(1)  # type: ignore[union-attr]
+    return f"{text[:end]}user-invocable: false\n{text[end:]}"
+
+
 def parse_agent(path: Path) -> Agent:
     text = path.read_text(encoding="utf-8")
     match = re.match(r"\A---\n(.*?)\n---\n(.*)\Z", text, re.DOTALL)

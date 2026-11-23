@@ -1,7 +1,6 @@
 ---
 name: cad-analysis
 description: Use for static FreeCAD finite-element analysis of a hardware case, producing checked stress, displacement, and yield-safety results.
-user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.

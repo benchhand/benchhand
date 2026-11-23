@@ -1,7 +1,6 @@
 ---
 name: cad-motion
 description: Poses, sweeps and renders jointed assemblies for interference, worst-case FEA pose and motion video. Triggers on "pose the arm", "sweep the joints", "render the motion".
-user-invocable: false
 ---
 
 Resolve `$CAD_SKILLS` as the parent directory of this skill's directory; it contains the installed `cad-*` skill folders.
