@@ -1,1 +1,6 @@
-level,PN,rev,qty,title,material,process,make_buy,supplier,mass
+level,PN,rev,qty,title,material,process,make_buy,supplier,mass,unit,designation,manufacturer,manufacturer_part_number,supplier_part_number,specification_ref,specification_rev
+1,VSE-0001,X1,1,Crankcase and V block,ASA,fdm,make,,120,pcs,,,,,,
+1,VSE-0005,X1,1,Crankshaft,ASA,fdm,make,,35,pcs,,,,,,
+1,VSE-0002,X1,6,Piston,ASA,fdm,make,,6,pcs,,,,,,
+1,VSE-0004,X1,6,Connecting rod,ASA,fdm,make,,4,pcs,,,,,,
+1,VSE-0003,X1,6,Wrist pin,ASA,fdm,make,,0.6,pcs,,,,,,
