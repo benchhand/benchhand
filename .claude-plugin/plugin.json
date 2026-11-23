@@ -1,5 +1,6 @@
 {
   "name": "benchhand",
+  "version": "0.1.1",
   "description": "Agent-assisted mechanical CAD from rapid concept through verified STEP AP242 release.",
   "license": "MPL-2.0",
   "agents": [
