@@ -30,6 +30,7 @@ const ui = {
   shot: byId("screenshot"),
   fit: byId("fit-view"),
   shotResult: byId("shot-result"),
+  nodes: byId("node-list"),
   partLabels: byId("toggle-part-labels"),
   groupLabels: byId("toggle-group-labels"),
 };
@@ -64,6 +65,9 @@ const state = {
   labels: [],
   selected: null,
   framed: false,
+  // The viewer's own show/hide choices, keyed `variant/node`; they win over the scene's `visible`
+  // and survive a live reload.
+  visibility: new Map(),
 };
 
 // --- scene build ------------------------------------------------------------
@@ -118,6 +122,7 @@ function buildVariant(def, index) {
       node.kind === "part" ? makePart(node, palette[meshes.length % palette.length]) : new THREE.Group();
     if (node.kind === "part") meshes.push(object);
     applyTransform(object, node);
+    object.visible = state.visibility.get(`${def.id}/${node.id}`) ?? node.visible !== false;
     object.userData.variantId = def.id;
     object.userData.nodeId = node.id;
     parentObject.add(object);
@@ -127,6 +132,14 @@ function buildVariant(def, index) {
   visit(def.root, root, null);
   for (const joint of def.joints ?? []) attachJoint(def.id, joint, nodes);
   return { def, index, root, nodes, meshes, box: new THREE.Box3() };
+}
+
+// A node is shown only while it and every ancestor are visible.
+function nodeShown(node, nodes) {
+  for (let n = node; n; n = n.parentId === null ? null : nodes.get(n.parentId)) {
+    if (!n.object.visible) return false;
+  }
+  return true;
 }
 
 function attachJoint(variantId, def, nodes) {
@@ -197,14 +210,14 @@ const partBox = new THREE.Box3();
 function makeLabels(variants) {
   ui.labels.replaceChildren();
   const labels = [];
-  const add = (kind, text, variant, anchor) => {
+  const add = (kind, text, variant, anchor, node = null) => {
     const el = document.createElement("span");
     el.className = "label";
     el.dataset.kind = kind;
     el.dataset.variant = variant.def.id;
     el.textContent = text;
     ui.labels.append(el);
-    labels.push({ kind, el, variant, anchor, x: 0, y: 0, shown: false, w: 0, h: 0 });
+    labels.push({ kind, el, variant, anchor, node, x: 0, y: 0, shown: false, w: 0, h: 0 });
   };
   for (const variant of variants) {
     add("variant", variant.def.label, variant, (out) => {
@@ -220,9 +233,9 @@ function makeLabels(variants) {
         add("part", node.def.label, variant, (out) => {
           partBox.setFromObject(node.object);
           return out.set((partBox.min.x + partBox.max.x) / 2, partBox.min.y, (partBox.min.z + partBox.max.z) / 2);
-        });
+        }, node);
       } else {
-        add("group", node.def.label, variant, (out) => node.object.getWorldPosition(out));
+        add("group", node.def.label, variant, (out) => node.object.getWorldPosition(out), node);
       }
     }
   }
@@ -235,6 +248,7 @@ function makeLabels(variants) {
 
 function labelVisible(label) {
   if (label.kind === "variant") return true;
+  if (!nodeShown(label.node, label.variant.nodes)) return false;
   // Dimmed variants keep their group labels; part labels belong to the selected variant.
   if (label.kind === "part") return ui.partLabels.checked && label.variant.def.id === state.selected;
   return ui.groupLabels.checked;
@@ -353,10 +367,35 @@ function selectVariant(id) {
     label.el.dataset.dim = String(!on);
     label.el.dataset.variantSelected = String(on);
   }
+  renderNodeList(variant);
   for (const button of ui.variants.querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.variant === variant.def.id));
   }
   requestRender();
+}
+
+// One checkbox per node of the selected variant, indented by depth.
+function renderNodeList(variant) {
+  const depthOf = (node) => (node.parentId === null ? 0 : 1 + depthOf(variant.nodes.get(node.parentId)));
+  const items = [];
+  for (const [id, node] of variant.nodes) {
+    if (node.parentId === null) continue; // the root group is the variant itself
+    const label = document.createElement("label");
+    label.className = "toggle";
+    label.style.paddingInlineStart = `${(depthOf(node) - 1) * 12}px`;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = node.object.visible;
+    box.dataset.node = id;
+    box.addEventListener("change", () => {
+      node.object.visible = box.checked;
+      state.visibility.set(`${variant.def.id}/${id}`, box.checked);
+      requestRender();
+    });
+    label.append(box, ` ${node.def.label}`);
+    items.push(label);
+  }
+  ui.nodes.replaceChildren(...items);
 }
 
 function renderVariantList(scene) {
@@ -404,7 +443,10 @@ ui.canvas.addEventListener("pointerup", (event) => {
     -((event.clientY - rect.top) / rect.height) * 2 + 1,
   );
   raycaster.setFromCamera(ndc, camera);
-  const hit = raycaster.intersectObjects(state.variants.flatMap((variant) => variant.meshes), false)[0];
+  const shown = state.variants.flatMap((variant) =>
+    variant.meshes.filter((mesh) => nodeShown(variant.nodes.get(mesh.userData.nodeId), variant.nodes)),
+  );
+  const hit = raycaster.intersectObjects(shown, false)[0];
   if (hit) selectVariant(hit.object.userData.variantId);
 });
 

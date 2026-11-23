@@ -15,11 +15,14 @@ Playwright Chromium are installed.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -237,6 +240,21 @@ class SchemaCli(unittest.TestCase):
 
     def test_unreadable_scene_is_a_usage_error(self) -> None:
         self.assertEqual(self.run_cli("check", "/nonexistent/x.scene.json").returncode, 2)
+
+    def check_with_visible(self, value: object) -> subprocess.CompletedProcess[str]:
+        scene = example()
+        scene["variants"][0]["root"]["children"][0]["visible"] = value
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v.scene.json"
+            path.write_text(json.dumps(scene), encoding="utf-8")
+            return self.run_cli("check", str(path))
+
+    def test_a_node_may_set_visible_false(self) -> None:
+        result = self.check_with_visible(False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_visible_must_be_a_boolean(self) -> None:
+        self.assertEqual(self.check_with_visible("no").returncode, 1)
 
 
 class ServerUnits(unittest.TestCase):
@@ -548,6 +566,25 @@ class ServerVendor(unittest.TestCase):
                 thread.join(timeout=2)
                 serve.VIEWER_DIR = original_viewer_dir
 
+class ServerNoise(unittest.TestCase):
+    def handle(self, exc: BaseException) -> str:
+        server = serve.QuietServer.__new__(serve.QuietServer)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            try:
+                raise exc
+            except BaseException:
+                server.handle_error(None, ("127.0.0.1", 1))
+        return err.getvalue()
+
+    def test_a_client_reset_leaves_no_traceback(self) -> None:
+        for exc in (ConnectionResetError(), BrokenPipeError(), ConnectionAbortedError()):
+            self.assertEqual(self.handle(exc), "", type(exc).__name__)
+
+    def test_other_errors_are_still_reported(self) -> None:
+        self.assertIn("ValueError", self.handle(ValueError("boom")))
+
+
 class ServerTimeout(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -608,6 +645,14 @@ class ServerTimeout(unittest.TestCase):
         resp.close()
         self.assertTrue(self._server_done.wait(2), "server did not expire after SSE disconnect")
 
+    def test_idle_expiry_announces_the_stop_on_stdout(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.start_server(0.3)
+            self.assertTrue(self._server_done.wait(2))
+        lines = [json.loads(line) for line in out.getvalue().splitlines()]
+        self.assertEqual(lines[-1], {"event": "stopped", "reason": "idle", "url": self.url})
+
     def test_zero_disables_idle_expiry(self) -> None:
         self.start_server(None)
         time.sleep(0.6)
@@ -641,6 +686,26 @@ def wait_until(predicate, timeout: float) -> bool:
             return True
         time.sleep(0.01)
     return predicate()
+
+class ServerFixedPort(unittest.TestCase):
+    def test_a_fixed_port_is_reused_after_a_restart(self) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        urls = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as tmp:
+                proc = subprocess.Popen([sys.executable, str(SERVE_PY), "--scene-dir", tmp, "--port", str(port),
+                                         "--cache-dir", str(Path(tmp) / "c")], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True)
+                try:
+                    urls.append(json.loads(proc.stdout.readline())["url"])
+                finally:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                    proc.stdout.close()
+        self.assertEqual(urls, [f"http://127.0.0.1:{port}/"] * 2)
+
 
 class ServerUsage(unittest.TestCase):
     def test_missing_scene_dir_is_a_usage_error(self) -> None:

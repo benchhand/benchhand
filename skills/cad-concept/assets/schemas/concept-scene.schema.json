@@ -80,7 +80,8 @@
     "transform": {
       "properties": {
         "position": { "$ref": "#/$defs/vec3", "description": "Origin in the parent frame, mm. Default [0,0,0]." },
-        "rotation": { "$ref": "#/$defs/vec3", "description": "XYZ Euler angles in degrees. Default [0,0,0]." }
+        "rotation": { "$ref": "#/$defs/vec3", "description": "XYZ Euler angles in degrees. Default [0,0,0]." },
+        "visible": { "type": "boolean", "description": "False hides the node and its children in the viewer. Default true. The handoff still lists them." }
       }
     },
     "node": {

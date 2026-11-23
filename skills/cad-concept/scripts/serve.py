@@ -389,6 +389,15 @@ class Handler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.CREATED, {"ok": True, "path": str(path), "reused": published.reused})
 
 
+class QuietServer(ThreadingHTTPServer):
+    """A browser that closes a tab or reloads resets its socket; that is not a server fault."""
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)  # type: ignore[arg-type]
+
+
 def default_cache_dir() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base) / "cad-concept" / "vendor"
@@ -448,7 +457,7 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
         },
     )
     try:
-        httpd = ThreadingHTTPServer((args.host, args.port), handler)
+        httpd = QuietServer((args.host, args.port), handler)
     except OSError as exc:
         print(f"serve.py: cannot listen on {args.host}:{args.port}: {exc}", file=sys.stderr)
         return 2
@@ -483,6 +492,7 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
                         watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
                     if watcher.stopped:
                         return
+                print(json.dumps({"event": "stopped", "reason": "idle", "url": ready["url"]}), flush=True)
                 shutdown(signal.SIGTERM, None)
                 return
 
