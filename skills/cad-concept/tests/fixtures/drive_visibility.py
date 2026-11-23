@@ -11,12 +11,87 @@ from __future__ import annotations
 import json
 import sys
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 CHROMIUM_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]
 SAVED = ("() => { const r = document.getElementById('shot-result');"
          " return r.dataset.kind === 'error' || r.textContent.startsWith('Saved '); }")
 SETTLE_MS = 400
+
+
+class Viewer:
+    """The viewer page, with the few actions and readings the scenario needs."""
+
+    def __init__(self, page: Page) -> None:
+        self.page = page
+
+    def settle(self) -> None:
+        self.page.wait_for_timeout(SETTLE_MS)
+
+    def select(self, variant: str) -> None:
+        self.page.click(f'button.variant[data-variant="{variant}"]')
+        self.settle()
+
+    def checked(self) -> dict[str, bool]:
+        return self.page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#node-list input')]"
+                                  ".map((box) => [box.dataset.node, box.checked]))")
+
+    def labels(self) -> list[str]:
+        """Nodes whose label is shown on the selected variant."""
+        return sorted(self.page.evaluate(
+            "() => [...document.querySelectorAll('.label[data-node]')]"
+            ".filter((el) => !el.hidden && el.dataset.variant === window.cadConcept.selected)"
+            ".map((el) => el.dataset.node)"))
+
+    def pick(self, variant: str, node: str) -> str:
+        """Click where `node` is on screen; return the variant that ends up selected."""
+        x, y = self.page.evaluate("([v, n]) => window.cadConcept.screenPoint(v, n)", [variant, node])
+        self.page.mouse.click(x, y)
+        self.settle()
+        return self.page.evaluate("() => window.cadConcept.selected")
+
+    def save(self) -> str:
+        self.page.click("#screenshot")
+        self.page.wait_for_function(SAVED, timeout=30_000)
+        return self.page.text_content("#shot-result")
+
+    def set_node(self, node: str, on: bool) -> None:
+        selector = f'#node-list input[data-node="{node}"]'
+        self.page.check(selector) if on else self.page.uncheck(selector)
+        self.settle()
+
+
+def authored(viewer: Viewer, report: dict[str, object]) -> None:
+    viewer.select("short-reach")
+    report["authored_checked"] = viewer.checked()
+    report["authored_labels"] = viewer.labels()
+    viewer.select("long-reach")
+    report["hidden_pick"] = viewer.pick("short-reach", "lower-link")
+
+
+def toggled(viewer: Viewer, report: dict[str, object]) -> None:
+    viewer.select("short-reach")
+    report["save_hidden"] = viewer.save()
+    viewer.set_node("lower-arm", True)
+    report["toggled_checked"] = viewer.checked()
+    report["toggled_labels"] = viewer.labels()
+    report["save_shown"] = viewer.save()
+    viewer.select("long-reach")
+    report["shown_pick"] = viewer.pick("short-reach", "lower-link")
+
+
+def reloaded(viewer: Viewer, report: dict[str, object], scene_path: str) -> None:
+    """A live reload keeps the toggles: hide a descendant, then rewrite the scene file."""
+    viewer.select("short-reach")
+    viewer.set_node("upper-arm", False)
+    with open(scene_path, encoding="utf-8") as handle:
+        scene = json.load(handle)
+    scene["title"] = "Reloaded lamp"
+    with open(scene_path, "w", encoding="utf-8") as handle:
+        json.dump(scene, handle)
+    viewer.page.wait_for_function("() => document.getElementById('scene-title').textContent === 'Reloaded lamp'")
+    viewer.settle()
+    report["reloaded_checked"] = viewer.checked()
 
 
 def main(url: str, scene_path: str) -> int:
@@ -32,60 +107,10 @@ def main(url: str, scene_path: str) -> int:
             page.goto(url)
             page.wait_for_function("() => window.cadConcept && window.cadConcept.ready")
             page.evaluate("() => window.cadConcept.ready")
-
-            def settle() -> None:
-                page.wait_for_timeout(SETTLE_MS)
-
-            def checked() -> dict[str, bool]:
-                return page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#node-list input')]"
-                                     ".map((box) => [box.dataset.node, box.checked]))")
-
-            def labels() -> list[str]:
-                return sorted(page.evaluate("() => [...document.querySelectorAll('.label[data-node]')]"
-                                            ".filter((el) => !el.hidden && el.dataset.variant === window.cadConcept.selected).map((el) => el.dataset.node)"))
-
-            def pick(variant: str, node: str) -> str:
-                x, y = page.evaluate("([v, n]) => window.cadConcept.screenPoint(v, n)", [variant, node])
-                page.mouse.click(x, y)
-                settle()
-                return page.evaluate("() => window.cadConcept.selected")
-
-            def save() -> str:
-                page.click("#screenshot")
-                page.wait_for_function(SAVED, timeout=30_000)
-                return page.text_content("#shot-result")
-
-            page.click('button.variant[data-variant="short-reach"]')
-            settle()
-            report["authored_checked"] = checked()
-            report["authored_labels"] = labels()
-            page.click('button.variant[data-variant="long-reach"]')
-            settle()
-            report["hidden_pick"] = pick("short-reach", "lower-link")
-
-            page.click('button.variant[data-variant="short-reach"]')
-            settle()
-            report["save_hidden"] = save()
-            page.check('#node-list input[data-node="lower-arm"]')
-            settle()
-            report["toggled_checked"] = checked()
-            report["toggled_labels"] = labels()
-            report["save_shown"] = save()
-            page.click('button.variant[data-variant="long-reach"]')
-            settle()
-            report["shown_pick"] = pick("short-reach", "lower-link")
-
-            # A live reload keeps the toggles: hide a descendant, then rewrite the scene file.
-            page.click('button.variant[data-variant="short-reach"]')
-            page.uncheck('#node-list input[data-node="upper-arm"]')
-            with open(scene_path, encoding="utf-8") as handle:
-                scene = json.load(handle)
-            scene["title"] = "Reloaded lamp"
-            with open(scene_path, "w", encoding="utf-8") as handle:
-                json.dump(scene, handle)
-            page.wait_for_function("() => document.getElementById('scene-title').textContent === 'Reloaded lamp'")
-            settle()
-            report["reloaded_checked"] = checked()
+            viewer = Viewer(page)
+            authored(viewer, report)
+            toggled(viewer, report)
+            reloaded(viewer, report, scene_path)
         finally:
             browser.close()
     print(json.dumps(report))
