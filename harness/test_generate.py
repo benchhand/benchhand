@@ -329,8 +329,8 @@ class SubagentWiringTests(GeneratorCopyCase):
 
     def test_researcher_without_web_blocks_live_lookups_only(self) -> None:
         text = self.source(self.RESEARCHER)
-        self.assertRegex(text, r"(?i)neither[^.\n]*frozen supplier documents[^.\n]*record")
-        self.assertRegex(text, r"(?i)RESULT: BLOCKED[^.\n]*(only|when)[^.\n]*live lookup")
+        self.assertRegex(text, r"(?i)answer from the frozen supplier documents[^.\n]*record first")
+        self.assertRegex(text, r"(?i)no live lookup[^.\n]*RESULT: DONE|RESULT: BLOCKED[^.\n]*only when[^.\n]*unresolved live requirement")
 
     def test_researcher_without_pns_returns_a_family_candidate_list_with_no_invented_pn(self) -> None:
         text = self.source(self.RESEARCHER)
@@ -342,6 +342,19 @@ class SubagentWiringTests(GeneratorCopyCase):
         text = self.FLOW.read_text(encoding="utf-8")
         self.assertRegex(text, r"(?i)`TOOLS:`[^.\n]*(no web|neither)[^.\n]*(live|web)[^.\n]*(yourself|user)")
         self.assertRegex(text, r"(?i)frozen supplier documents")
+
+    def test_researcher_validates_scope_apart_from_blocking_on_evidence(self) -> None:
+        text = self.source(self.RESEARCHER)
+        self.assertRegex(text, r"(?i)validate the scope[^.\n]*before[^.\n]*(evidence|web)")
+        self.assertRegex(text, r"(?i)escalate only[^.\n]*live[^.\n]*unresolved")
+
+    def test_lead_directs_no_live_research_when_frozen_evidence_answers_the_brief(self) -> None:
+        text = self.FLOW.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?i)do not direct live research when[^.\n]*frozen[^.\n]*fully answer")
+
+    def test_lead_lists_purchased_families_defined_by_requirements_before_pns_exist(self) -> None:
+        text = self.FLOW.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?i)purchased families[^.\n]*`bom\.csv`[^.\n]*and[^.\n]*requirements[^.\n]*before PNs")
 
     def test_every_agent_ends_with_a_handback_section_gated_on_the_exact_tool(self) -> None:
         for name in AGENT_NAMES:
