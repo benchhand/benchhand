@@ -88,6 +88,18 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - `validate.py` is listed in `GATE_ONLY` in `skills/cad-motion/scripts/code_shas.py`: a gate that decides refuse or allow, and changes no output, stays out of the manufacturing output key. `test_mfg_key_location` `OutputKeyInputTests` pins both sides: a validator edit leaves the key, an edit to `manufacturing_intent.py` changes it.
 - The commit check reads the index only: the product, the part records (`tree_parts`) and the decision records (`tree_decisions`) come from the staged tree, or from HEAD with `--committed`. A decision that is accepted in the work tree but proposed in the index does not pass. Do not add a work-tree read to it.
 
+## Subagent handback
+
+Every agent source in `agents/` ends with a `## Handback` section. It is gated on the exact tool name:
+
+- When a tool named exactly `SubagentHandback` is among the agent's tools, the agent calls it once with the full report, after every file the report names is written. A run that ends without the call is not delivered.
+- When the tool is absent, the agent ends with the report as its final message. It never calls another tool as a handback.
+- The lead's brief ends with the handback as its last step (`skills/cad-flow/references/flow.md`, "Delegation").
+
+`SubagentHandback` comes from the ASBX runner of the live run that raised the finding (benchhand-c7q.7, F18). The repository holds no copy of that runner or its tool contract, so the name and the once-only rule are unverified here and no test runs a worker through it.
+
+An agent source may list no skills (`skills: []`). Claude injects each listed skill's full text into the subagent, so `cad-sourcing-researcher` lists none. Every renderer in `harness/generate.py` must emit no blank value for an empty list; `test_every_renderer_handles_an_empty_skill_list` checks each harness in `OUTPUTS`.
+
 ## Feature flags
 
 Environment flags follow `CAD_REQUIRE_FREECAD` (`skills/cad-flow/scripts/preflight.py`): only the string `1` turns one on.

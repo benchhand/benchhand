@@ -322,29 +322,41 @@ class SubagentWiringTests(GeneratorCopyCase):
     def source(self, name: str) -> str:
         return (CAD / "agents" / f"{name}.md").read_text(encoding="utf-8")
 
-    def test_researcher_without_part_numbers_is_not_blocked(self) -> None:
-        text = self.source(self.RESEARCHER)
-        self.assertNotRegex(text, r"(?i)brief without PNs is BLOCKED")
-        self.assertRegex(text, r"(?i)no PNs[^.\n]*(family|requirement)")
-
     def test_researcher_reports_its_web_tools_before_researching(self) -> None:
         text = self.source(self.RESEARCHER)
         self.assertRegex(text, r"(?i)check which web tools you have[^.\n]*before")
         self.assertIn("TOOLS: web_search=yes|no, web_fetch=yes|no", text)
-        self.assertRegex(text, r"(?i)neither[^.\n]*RESULT: BLOCKED")
 
-    def test_lead_reads_the_tools_line_before_adopting_research(self) -> None:
+    def test_researcher_without_web_blocks_live_lookups_only(self) -> None:
+        text = self.source(self.RESEARCHER)
+        self.assertRegex(text, r"(?i)neither[^.\n]*frozen supplier documents[^.\n]*record")
+        self.assertRegex(text, r"(?i)RESULT: BLOCKED[^.\n]*(only|when)[^.\n]*live lookup")
+
+    def test_researcher_without_pns_returns_a_family_candidate_list_with_no_invented_pn(self) -> None:
+        text = self.source(self.RESEARCHER)
+        self.assertRegex(text, r"(?i)no PNs[^.\n]*family-level candidate list")
+        self.assertRegex(text, r"(?i)keyed by the[^.\n]*manufacturer designation")
+        self.assertRegex(text, r"(?i)never invent an internal PN")
+
+    def test_lead_adopts_only_cited_record_values_when_the_researcher_had_no_web(self) -> None:
         text = self.FLOW.read_text(encoding="utf-8")
-        self.assertRegex(text, r"(?i)`TOOLS:`[^.\n]*(no web|neither)[^.\n]*(yourself|user)")
+        self.assertRegex(text, r"(?i)`TOOLS:`[^.\n]*(no web|neither)[^.\n]*(live|web)[^.\n]*(yourself|user)")
+        self.assertRegex(text, r"(?i)frozen supplier documents")
 
-    def test_every_agent_ends_with_a_handback_section_naming_the_tool(self) -> None:
+    def test_every_agent_ends_with_a_handback_section_gated_on_the_exact_tool(self) -> None:
         for name in AGENT_NAMES:
             with self.subTest(agent=name):
                 text = self.source(name)
                 self.assertEqual(re.findall(r"^## (.+)$", text, flags=re.MULTILINE)[-1], "Handback")
                 section = text.split("## Handback", 1)[1]
-                self.assertIn("`SubagentHandback`", section)
+                self.assertRegex(section, r"(?i)tool named exactly `SubagentHandback`")
                 self.assertRegex(section, r"(?i)once")
+                self.assertRegex(section, r"(?i)otherwise[^.\n]*final message")
+
+    def test_engineering_guide_documents_the_handback_tool_and_its_fallback(self) -> None:
+        text = (CAD / "docs/engineering.md").read_text(encoding="utf-8")
+        self.assertIn("`SubagentHandback`", text)
+        self.assertRegex(text, r"(?i)tool is absent[^.\n]*final message")
 
     def test_flow_brief_ends_with_the_handback_step(self) -> None:
         self.assertRegex(self.FLOW.read_text(encoding="utf-8"), r"(?i)brief ends with[^.\n]*handback[^.\n]*last step")
@@ -356,6 +368,23 @@ class SubagentWiringTests(GeneratorCopyCase):
         self.assertEqual(yaml.safe_load(claude.split("---", 2)[1])["skills"], [])
         kiro = json.loads((self.cad / "harness/kiro/agents" / f"{self.RESEARCHER}.json").read_text(encoding="utf-8"))
         self.assertEqual(kiro["resources"], [])
+
+    def test_every_renderer_handles_an_empty_skill_list(self) -> None:
+        """The neutral contract allows `skills: []`; no harness may emit a blank value or a stray skill."""
+        agent = generate.Agent("cad-nobody", "Loads no skill.", "Prompt.", ("read",), ())
+        for harness in generate.OUTPUTS:
+            with self.subTest(harness=harness):
+                text = generate.render(agent, harness)
+                if harness == "codex":
+                    listed = tomllib.loads(text).get("skills", [])
+                elif harness == "kiro":
+                    listed = [r for r in json.loads(text)["resources"]]
+                else:
+                    listed = yaml.safe_load(text.split("---", 2)[1]).get("skills", [])
+                self.assertIsNotNone(listed, f"{harness} renders a blank skills value")
+                if isinstance(listed, str):
+                    listed = [item for item in listed.split(",") if item.strip()]
+                self.assertEqual(listed, [])
 
     def test_duplicate_skills_are_still_rejected(self) -> None:
         source = self.cad / "agents/cad-analyst.md"

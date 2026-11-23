@@ -51,4 +51,4 @@ MUST Never reprint code, diffs, or file contents.
 
 ## Handback
 
-Your last action is the handback. Send the report to the lead only after every file it names is written. If your harness provides a handback tool, call `SubagentHandback` once with the full report; a run that ends without that call is not delivered. Otherwise end with the report as your final message.
+Your last action is the handback. Send the report to the lead only after every file it names is written. If a tool named exactly `SubagentHandback` is among your tools, call it once with the full report; a run that ends without that call is not delivered. Otherwise, with no such tool, end with the report as your final message. Do not call any other tool as a handback.
