@@ -2440,6 +2440,38 @@ class CalibrationFlagTests(Checks):
             with self.subTest(check=check):
                 self.assertEqual(self.outcome(self.judged(data, True), obligation), "pass")
 
+    def unprofiled(self, data: dict[str, Any], flag: bool) -> Any:
+        """An FDM part whose route names no capability: no machine is recorded."""
+        route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                              supports={"strategy": "none"})]
+        documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
+                              product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+        result = pc.assess(load(self, documents), geometry("TST-0101", data), today=TODAY, catalog=SHIPPED, calibration=flag)
+        self.assertEqual(packet_errors(result.packet({"version_manifest": "0" * 64})), [])
+        return result
+
+    def test_off_an_fdm_route_with_no_machine_is_judged_on_the_guideline_values(self) -> None:
+        for check, (data, obligation) in self.CASES.items():
+            with self.subTest(check=check):
+                result = self.unprofiled(data, False)
+                self.assertEqual(self.outcome(result, obligation), "pass")
+                self.assertEqual([c for c in self.codes(result) if c.endswith("capability_unknown")], [])
+
+    def test_off_an_fdm_route_with_no_machine_still_fails_a_guideline_fail(self) -> None:
+        result = self.unprofiled(walled(1.0), False)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.wall")["criterion"]["source"]["kind"], "guideline")
+
+    def test_off_an_fdm_route_with_no_machine_is_never_a_blocking_unknown(self) -> None:
+        result = self.unprofiled(walled(3.0), False)
+        for row in result.outcomes:
+            self.assertNotEqual(row["outcome"], "unknown", row)
+        self.assertNotIn(result.result, ("unknown", "fail"))
+
+    def test_on_an_fdm_route_with_no_machine_still_needs_the_capability(self) -> None:
+        result = self.unprofiled(walled(3.0), True)
+        self.assertIn("process.fdm.capability_unknown", self.codes(result))
+
     def test_off_a_guideline_fail_still_fails(self) -> None:
         result = self.judged(walled(1.0), False)
         self.assertEqual(self.outcome(result, GEOMETRY), "fail")
@@ -2568,15 +2600,14 @@ class CalibrationRemedyTests(Checks):
         self.assertIn(self.COUPON, remedy)
         self.assertNotIn("record the calibration", remedy)
 
-    def test_an_fdm_operation_without_a_capability_asks_for_no_calibration(self) -> None:
+    def test_an_fdm_operation_without_a_capability_asks_for_calibration_only_while_the_flag_is_on(self) -> None:
         route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
                               supports={"strategy": "none"})]
         documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
                               product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
-        off, on = (self.remedy(self.assess_off(documents, None, flag=flag), "process.fdm.capability_unknown")
-                   for flag in (False, True))
-        self.assertEqual(off, "record the capability profile of the actual machine, operator or supplier")
+        on = self.remedy(self.assess_off(documents, None, flag=True), "process.fdm.capability_unknown")
         self.assertEqual(on, "record the capability profile of the actual machine, operator or supplier, with its calibrations")
+        self.assertNotIn("process.fdm.capability_unknown", self.codes(self.assess_off(documents, None, flag=False)))
 
     def test_a_cnc_precision_remedy_asks_for_no_calibration_while_the_flag_is_off(self) -> None:
         profile = FX.capability_profile("tst_mill", "cnc", parameters={"axes": known(mm(3, units="count"))},
