@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-11-23
 decision-makers:
-- the brief
+- the user
 ---
 
 # Print the engine parts in ASA on a Bambu Lab H2D class printer
@@ -18,7 +18,7 @@ Every custom part of the V6 engine is an FDM part. The brief names ASA (or PLA) 
 
 ## Decision Outcome
 
-Chosen option: "Print every custom part in ASA on the H2D profile", because the brief names the printer class and the material family. PLA stays a fallback. No filament grade is chosen, so the material profile holds no sourced properties.
+Chosen option: "Print every custom part in ASA on the H2D profile", because the brief names the printer class and the material family. Approval: confirmed by the user on 2026-11-23. PLA stays a fallback. No filament grade is chosen, so the material profile holds no sourced properties.
 
 ### Consequences
 

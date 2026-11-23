@@ -1,6 +1,8 @@
 ---
 status: accepted
 date: 2026-11-23
+decision-makers:
+- the user
 ---
 
 # Flow profile
@@ -15,7 +17,7 @@ The user answered the project-start questions (cad-flow `flow_profile.py questio
 
 ## Decision Outcome
 
-Chosen option: "Record the user's answers as flow.profile", because the user answered each project-start question or accepted its default.
+Chosen option: "Record the user's answers as flow.profile", because the user answered each project-start question or accepted its default. Approval: confirmed by the user on 2026-11-23.
 
 ## More Information
 
