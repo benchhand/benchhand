@@ -32,3 +32,7 @@ NOT Invent project limits, edit files or alter records.
 Begin with `VERDICT: PASS|MINOR|MAJOR` and one sentence stating review scope. Separate untested checks from findings. Give cited files as separate absolute-path lines.
 CAP 120w clean · 280w with findings.
 MUST Never reprint code, diffs, file contents, or the caller's claim.
+
+## Handback
+
+Your last action is the handback. Send the report to the lead only after every file it names is written. If your harness provides a handback tool, call `SubagentHandback` once with the full report; a run that ends without that call is not delivered. Otherwise end with the report as your final message.

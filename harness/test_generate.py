@@ -312,6 +312,58 @@ class TierSourceTests(GeneratorCopyCase):
         self.assertRegex(text, r"(?i)evidence packets?")
 
 
+class SubagentWiringTests(GeneratorCopyCase):
+    """Live-run findings F15, F18 and F19 (benchhand-c7q.7): research scope, tool report, handback, skills."""
+
+    RESEARCHER = "cad-sourcing-researcher"
+    FLOW = CAD / "skills/cad-flow/references/flow.md"
+
+    def source(self, name: str) -> str:
+        return (CAD / "agents" / f"{name}.md").read_text(encoding="utf-8")
+
+    def test_researcher_without_part_numbers_is_not_blocked(self) -> None:
+        text = self.source(self.RESEARCHER)
+        self.assertNotRegex(text, r"(?i)brief without PNs is BLOCKED")
+        self.assertRegex(text, r"(?i)no PNs[^.\n]*(family|requirement)")
+
+    def test_researcher_reports_its_web_tools_before_researching(self) -> None:
+        text = self.source(self.RESEARCHER)
+        self.assertRegex(text, r"(?i)check which web tools you have[^.\n]*before")
+        self.assertIn("TOOLS: web_search=yes|no, web_fetch=yes|no", text)
+        self.assertRegex(text, r"(?i)neither[^.\n]*RESULT: BLOCKED")
+
+    def test_lead_reads_the_tools_line_before_adopting_research(self) -> None:
+        text = self.FLOW.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?i)`TOOLS:`[^.\n]*(no web|neither)[^.\n]*(yourself|user)")
+
+    def test_every_agent_ends_with_a_handback_section_naming_the_tool(self) -> None:
+        for name in AGENT_NAMES:
+            with self.subTest(agent=name):
+                text = self.source(name)
+                self.assertEqual(re.findall(r"^## (.+)$", text, flags=re.MULTILINE)[-1], "Handback")
+                section = text.split("## Handback", 1)[1]
+                self.assertIn("`SubagentHandback`", section)
+                self.assertRegex(section, r"(?i)once")
+
+    def test_flow_brief_ends_with_the_handback_step(self) -> None:
+        self.assertRegex(self.FLOW.read_text(encoding="utf-8"), r"(?i)brief ends with[^.\n]*handback[^.\n]*last step")
+
+    def test_researcher_loads_no_skill_into_its_context(self) -> None:
+        self.generate()
+        self.assertEqual(yaml.safe_load(self.source(self.RESEARCHER).split("---", 2)[1])["skills"], [])
+        claude = (self.cad / "harness/claude/agents" / f"{self.RESEARCHER}.md").read_text(encoding="utf-8")
+        self.assertEqual(yaml.safe_load(claude.split("---", 2)[1])["skills"], [])
+        kiro = json.loads((self.cad / "harness/kiro/agents" / f"{self.RESEARCHER}.json").read_text(encoding="utf-8"))
+        self.assertEqual(kiro["resources"], [])
+
+    def test_duplicate_skills_are_still_rejected(self) -> None:
+        source = self.cad / "agents/cad-analyst.md"
+        source.write_text(source.read_text(encoding="utf-8").replace("skills: [cad-motion, cad-analysis]", "skills: [cad-motion, cad-motion]", 1), encoding="utf-8")
+        result = self.run_generator("--check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("skills must be a list of distinct CAD skills", result.stderr)
+
+
 class ProcessRuleTests(unittest.TestCase):
     """The cad-flow process rules stay written in the lead and worker prompts."""
 

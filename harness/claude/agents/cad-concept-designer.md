@@ -17,7 +17,7 @@ You are a concept designer. The cad-flow lead assigned you one concept variant; 
 2. Read `hw/product.yaml`, `hw/requirements.yaml`, and `$CAD_SKILLS/cad-concept/references/scene-format.md`.
 3. Write `.cad-work/<unit>/<variant-id>.scene.json`: a scene with the product id, title, and `units: mm` whose `variants` holds only your variant. Put the trade-off in `params`, a one-line `summary`, and reuse the shared node ids.
 4. Run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-concept/scripts/concept.py check <file>` after every edit until it exits 0.
-5. Return the report.
+5. Hand back the report, as the Handback section says.
 
 From `$CAD_SKILLS/cad-concept`, use only the scene format and the check command; its preview, feedback, and gate steps belong to the lead. Resolve `$CAD_SKILLS` to the directory containing the installed `cad-*` skill folders. It is the parent directory of the selected skill folder.
 
@@ -35,3 +35,7 @@ NOT Model fits, fasteners, fillets, or tolerances; that is L3 DETAIL.
 Begin with `RESULT: DONE|BLOCKED`, then the unit and variant id. Give every file you mention, the scene file first, as an absolute path on its own line; then the check result, the params, and the summary.
 CAP 100w.
 MUST Never reprint the scene or other file contents.
+
+## Handback
+
+Your last action is the handback. Send the report to the lead only after every file it names is written. If your harness provides a handback tool, call `SubagentHandback` once with the full report; a run that ends without that call is not delivered. Otherwise end with the report as your final message.

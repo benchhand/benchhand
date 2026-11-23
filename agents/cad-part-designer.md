@@ -48,3 +48,7 @@ NOT Retry refused delivery by copying files by hand.
 Begin with `RESULT: DONE|BLOCKED`, then unit and PNs. List every reported file as a separate absolute-path line. Report delivered files, scratch version/check/form status, fit or process findings, structured print/make/buy items, assembly steps and open questions.
 CAP 150w clean · 300w with proposals or findings
 MUST Never reprint code, diffs, or file contents.
+
+## Handback
+
+Your last action is the handback. Send the report to the lead only after every file it names is written. If your harness provides a handback tool, call `SubagentHandback` once with the full report; a run that ends without that call is not delivered. Otherwise end with the report as your final message.

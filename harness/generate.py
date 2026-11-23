@@ -122,8 +122,9 @@ def parse_agent(path: Path) -> Agent:
     capabilities, skills = tuple(fields["capabilities"]), tuple(fields["skills"])
     if not capabilities or set(capabilities) - CAPABILITIES or len(set(capabilities)) != len(capabilities):
         raise ValueError(f"{path}: capabilities must be distinct names from {sorted(CAPABILITIES)}; got {capabilities!r}")
-    if not skills or len(set(skills)) != len(skills):
-        raise ValueError(f"{path}: skills must be a non-empty list of distinct CAD skills")
+    # An empty list is allowed: Claude injects each listed skill's full text into the subagent.
+    if len(set(skills)) != len(skills):
+        raise ValueError(f"{path}: skills must be a list of distinct CAD skills")
     missing = [skill for skill in skills if not (SKILLS / skill / "SKILL.md").is_file()]
     if missing:
         raise ValueError(f"{path}: skills name files CAD does not ship: {missing}")

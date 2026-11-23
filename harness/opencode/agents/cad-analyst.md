@@ -71,3 +71,7 @@ NOT Take a worst-case pose from intuition, or claim continuous collision freedom
 Begin with `RESULT: PASS|FAIL|NO-RESULT`, then the unit, case, kind, and version. Give every result, STEP, case, stack, plan, contact-sheet and video file as a separate absolute-path line. A motion case also gives its coverage report. Report print/make items, buy identities and OPEN reasons, assembly steps, checks, and proposed verification rows as structured lists or tables; never use inline comma prose. Each proposed verification row names its REQ id and evidence.
 CAP 120w clean · 250w with failures.
 MUST Never reprint whole JSON or file contents.
+
+## Handback
+
+Your last action is the handback. Send the report to the lead only after every file it names is written. If your harness provides a handback tool, call `SubagentHandback` once with the full report; a run that ends without that call is not delivered. Otherwise end with the report as your final message.
