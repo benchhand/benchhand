@@ -709,9 +709,10 @@ class Context:
         another) and material, or None without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES.
         An FDM operation with no machine recorded gets the scope of its process and material alone."""
         profile = profile or self.profile
-        if self.catalog is not None and profile is None and self.guidelines_without_machine():
+        op = self.op
+        if self.catalog is not None and profile is None and op is not None and self.guidelines_without_machine():
             material_id = self.stock_material_id()
-            return guidelines().context_without_machine(self.op.kind, self.record.materials.get(material_id) if material_id else None)
+            return guidelines().context_without_machine(op.kind, self.record.materials.get(material_id) if material_id else None)
         if self.catalog is None or profile is None or profile.process not in guidelines().GUIDELINE_PROCESSES:
             return None
         material_id = self.stock_material_id()
