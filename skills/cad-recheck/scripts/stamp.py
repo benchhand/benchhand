@@ -288,10 +288,11 @@ def staged_record(root: Path, committed: bool = False) -> Staged:
     if intent.version_problem(documents.get("product.yaml")) is None:
         for rel, document in documents.items():
             invalid: list[dict[str, str]] = []
-            if not validate.validate_document(document, intent.schema_for(rel) or "", f"hw/{rel}", invalid):
+            if not validate.validate_document(document, intent.schema_for(rel) or "", f"hw/{rel}", invalid,
+                                              code=intent.SCHEMA_INVALID):
                 shown = "; ".join(item["message"] for item in invalid[:5])
                 more = f" (and {len(invalid) - 5} more)" if len(invalid) > 5 else ""
-                raise RuntimeError(f"staged {invalid[0]['path']} fails its schema: {shown}{more}")
+                raise RuntimeError(f"{intent.SCHEMA_INVALID}: staged {invalid[0]['path']} fails its schema: {shown}{more}")
     return Staged(intent.with_guideline_files(intent.normalize_record(documents), files), evidence.record_digest(files),
                   evidence.selection.input_digest(documents))
 

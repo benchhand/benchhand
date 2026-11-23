@@ -362,6 +362,7 @@ class RecheckHookTests(unittest.TestCase):
                 for what, result in (("writer", writer), ("verify", verified)):
                     self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
                     self.assertNotIn("Traceback", result.stderr, what)
+                    self.assertIn("intent.schema", result.stderr, what)  # the diagnostic contract's code
                     self.assertIn(f"hw/{rel}", result.stderr, what)
                     self.assertIn(key, result.stderr, what)
 
@@ -388,9 +389,31 @@ class RecheckHookTests(unittest.TestCase):
                         self.assertNotIn("Traceback", result.stderr, what)
                         if text != "{}\n" or required:
                             self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
+                            self.assertIn("intent.schema", result.stderr, what)
                             self.assertIn(f"hw/{rel} fails its schema", result.stderr, what)
                         else:
                             self.assertNotIn("fails its schema", result.stderr, what)
+
+    def test_a_staged_document_with_numeric_and_text_keys_is_refused_not_a_crash(self) -> None:
+        """Two schema errors under one mapping whose YAML keys are an integer and a string have error paths that
+        cannot be ordered as raw values. The writer, the index check and the committed check each refuse it
+        (exit 2, the schema code, no traceback)."""
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        packet = self.root / ".checks.json"
+        path = self.root / "hw" / "manufacturing" / "evidence.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("entries:\n  - fingerprints:\n      1: x\n      a: y\n", encoding="utf-8")
+        self.git("add", "hw/manufacturing/evidence.yaml")
+        writer = self.run_python(STAMP, "--stage", "layout", "--checks", str(packet), "--passed", cwd=self.root)
+        verified = self.verify()
+        self.git("commit", "-q", "-m", "stage the mixed-key evidence")
+        committed = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        for what, result in (("writer", writer), ("verify", verified), ("committed", committed)):
+            self.assertEqual(result.returncode, 2, f"{what}: {result.stdout}{result.stderr}")
+            self.assertNotIn("Traceback", result.stderr, what)
+            self.assertIn("intent.schema", result.stderr, what)
+            self.assertIn("hw/manufacturing/evidence.yaml", result.stderr, what)
 
     def test_a_malformed_gate_value_is_a_refusal_naming_the_record(self) -> None:
         written: list[Path] = []

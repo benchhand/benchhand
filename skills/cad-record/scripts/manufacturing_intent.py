@@ -78,12 +78,13 @@ RECORD_VERSION = 2
 # --- problem codes this module reports (validate.py maps them to report findings) -------------------------------
 VERSION_UNSUPPORTED = "record.version_unsupported"
 INCOMPLETE = "record.incomplete"
+SCHEMA_INVALID = "intent.schema"
 LOAD_DIRECTION_TOLERANCE = 1e-6
 COLOR_INVALID = "intent.color_invalid"
 CODES: Mapping[str, str] = types.MappingProxyType({
     VERSION_UNSUPPORTED: "a record_version other than 2, or none: this Benchhand cannot read it",
     INCOMPLETE: "a record version 2 record lacks a block or file version 2 requires",
-    "intent.schema": "a document violates its JSON schema",
+    SCHEMA_INVALID: "a document violates its JSON schema",
     "intent.reference": "a reference names no question, assumption, requirement, interface, part, load, profile, operation, inspection, evidence, case or decision",
     "intent.duplicate": "an id is declared twice",
     COLOR_INVALID: "a part intent.color that is not the sRGB #RRGGBB string part.schema.json defines; it reads as no color",
@@ -763,7 +764,7 @@ def read_documents(hw: Path) -> tuple[dict[str, Any], list[Problem]]:
             try:
                 documents[rel] = loader.safe_load(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
-                problems.append(Problem("intent.schema", f"hw/{rel}", "", f"cannot read YAML: {error}"))
+                problems.append(Problem(SCHEMA_INVALID, f"hw/{rel}", "", f"cannot read YAML: {error}"))
     return documents, problems
 
 

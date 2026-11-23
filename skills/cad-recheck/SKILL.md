@@ -32,7 +32,7 @@ TRIGGER
 
    After reopening a stage, commit the return to that stage and record a new decision for the next advance. Do not reuse a decision from before the reopen, even for the same build. Use a full Git history to verify an advance in CI.
 
-   The evidence input MUST be the JSON packet that `evidence.py check` writes, or an `evidence.py run` report. A run report stamps with its `packet`. A run that stopped holds no packet, so it cannot stamp. A `cad_model.py check` result is never evidence. Include `--passed` only when every blocking obligation passes, and omit it for a failed gate. A record that is not version 2 cannot be stamped.
+   The evidence input MUST be the JSON packet that `evidence.py check` writes, or an `evidence.py run` report. A run report stamps with its `packet`. A run that stopped holds no packet, so it cannot stamp. A `cad_model.py check` result is never evidence. Include `--passed` only when every blocking obligation passes, and omit it for a failed gate. A record that is not version 2 cannot be stamped. A staged record document that fails its JSON schema cannot be stamped or verified either: the writer and `--verify` (index or `--committed`) exit 2 with `intent.schema: staged hw/<file> fails its schema: <pointer>: <message>`. Fix the named key; `validate.py` reports the same schema error as a finding.
 4. Stage the design changes and `hw/.cad/recheck.json`.
 
    Before each commit of `hw/` changes, run this from the project root:

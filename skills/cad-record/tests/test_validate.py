@@ -554,15 +554,6 @@ class ValidateProject(unittest.TestCase):
         node[int(last) if isinstance(node, list) else last] = value
         return self.validate_with_text(rel, yaml.safe_dump(document))
 
-    def test_a_wrong_typed_record_key_is_a_finding_not_a_crash(self) -> None:
-        for rel, key, value in self.WRONG_TYPE_KEYS:
-            with self.subTest(file=rel, key=key, value=value):
-                result, report = self.validate_with_key(rel, key, value)
-                self.assertNotIn("Traceback", result.stderr)
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertTrue(any(str(item["path"]).endswith(rel) and key in str(item.get("message", ""))
-                                    for item in report["findings"]), report["findings"])
-
     def test_an_empty_manufacturing_document_gets_its_schema_finding(self) -> None:
         """An empty file or a null loads as None and an empty mapping as {}. Each is validated against its schema
         like any other value: None never is an object, and {} is one only when the schema requires nothing.
@@ -583,20 +574,50 @@ class ValidateProject(unittest.TestCase):
                     else:
                         self.assertEqual(found, [], "the schema allows it")
 
-    def test_a_schema_invalid_document_stays_a_blocking_error(self) -> None:
+    def test_a_wrong_typed_record_key_is_a_blocking_finding_not_a_crash(self) -> None:
         """The manufacturing-intent check reads a schema-invalid document as absent. That must not open the gate:
         the document's own schema finding is an error (validate exits 1 on it, and so do the other callers
-        that decide through blocking(): the stage advance and the drawing contract)."""
+        that decide through blocking(): the stage advance and the drawing contract). Nothing crashes on it."""
         clean, _ = self.validate()
         self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
         for rel, key, value in self.WRONG_TYPE_KEYS:
             with self.subTest(file=rel, key=key, value=value):
                 result, report = self.validate_with_key(rel, key, value)
+                self.assertNotIn("Traceback", result.stderr)
                 schema_findings = [item for item in report["findings"]
                                    if str(item["path"]).endswith(rel) and str(item.get("message", "")).startswith(key)]
                 self.assertTrue(schema_findings, report["findings"])
                 self.assertEqual({item["severity"] for item in schema_findings}, {"error"}, schema_findings)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def test_a_manufacturing_schema_finding_carries_the_intent_schema_code(self) -> None:
+        for rel in self.MANUFACTURING_FILES:
+            with self.subTest(file=rel):
+                result, report = self.validate_with_text(rel, "null\n")
+                found = [item for item in report["findings"] if str(item["path"]).split("#")[0].endswith(rel)
+                         and "is not of type" in str(item["message"])]
+                self.assertEqual(len(found), 1, report["findings"])
+                self.assertEqual(found[0].get("code"), "intent.schema", found)
+
+    def test_numeric_and_text_keys_under_one_mapping_are_findings_not_a_crash(self) -> None:
+        """YAML keys 1 and a under one mapping give two error paths that differ in an int and a str."""
+        result, report = self.validate_with_text("manufacturing/evidence.yaml", "entries:\n  - fingerprints:\n      1: x\n      a: y\n")
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue(any("fingerprints/1" in str(item["message"]) for item in report["findings"]), report["findings"])
+        self.assertTrue(any("fingerprints/a" in str(item["message"]) for item in report["findings"]), report["findings"])
+
+    def test_a_schema_invalid_product_keeps_its_declared_version(self) -> None:
+        """product.yaml fails its schema (flow is a number). Its record_version is checked on the document as
+        written: a supported one raises no version finding, an unsupported one is named, never read as None."""
+        result, report = self.validate_with_key("product.yaml", "flow", 7)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([item for item in report["findings"] if item.get("code") == "record.version_unsupported"], [])
+        document = yaml.safe_load((self.hw / "product.yaml").read_bytes())
+        result, report = self.validate_with_text("product.yaml", yaml.safe_dump({**document, "flow": 7, "record_version": 3}))
+        unsupported = [item for item in report["findings"] if item.get("code") == "record.version_unsupported"]
+        self.assertEqual(len(unsupported), 1, report["findings"])
+        self.assertIn("record_version 3", unsupported[0]["message"])
 
     def test_a_malformed_tagged_boolean_or_timestamp_is_a_finding_not_a_crash(self) -> None:
         for front in ("status: !!bool maybe", "status: accepted\nx: !!timestamp not-a-time"):

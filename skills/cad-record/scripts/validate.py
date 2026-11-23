@@ -127,10 +127,11 @@ def load_json(path: Path, findings: list[dict[str, str]]) -> Any:
 
 
 def validate_document(
-    data: Any, schema_name: str, path: str, findings: list[dict[str, str]]
+    data: Any, schema_name: str, path: str, findings: list[dict[str, str]], *, code: str | None = None
 ) -> bool:
     """Validate `data` against `schemas/<schema_name>`, with format checks, through the validator
-    schema_registry keeps for this checkout's schemas; each error becomes a finding at its JSON pointer."""
+    schema_registry keeps for this checkout's schemas; each error becomes a finding at its JSON pointer, with
+    `code` when given. Error paths mix int and str parts (a YAML key 1 beside a key a), so they sort as text."""
     schema_path = SCHEMAS / schema_name
     try:
         schema_registry.schema(SCHEMAS, schema_name)
@@ -138,10 +139,10 @@ def validate_document(
         findings.append(finding(str(schema_path), f"cannot load schema: {error}"))
         return False
     validator = schema_registry.document_validator(SCHEMAS, schema_name, formats=True)
-    errors = sorted(validator.iter_errors(data), key=lambda item: list(item.absolute_path))
+    errors = sorted(validator.iter_errors(data), key=lambda item: [str(part) for part in item.absolute_path])
     for item in errors:
         location = "/".join(str(part) for part in item.absolute_path)
-        findings.append(finding(path, f"{location + ': ' if location else ''}{item.message}"))
+        findings.append(finding(path, f"{location + ': ' if location else ''}{item.message}", code=code))
     return not errors
 
 
@@ -853,12 +854,17 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any], valid: Ma
     their schema (as part_records holds only valid part records): a document that failed is already reported
     by its schema finding, and is treated like an absent one rather than iterated as the wrong type."""
     parsed = {name: data for name, data in documents.items() if valid.get(name)}
+    declared = documents.get("product.yaml")
+    if "product.yaml" not in parsed and isinstance(declared, Mapping) and "record_version" in declared:
+        # a product that fails its schema is not read, but its declared version still is: the version is checked on
+        # the document as written, so the finding names the version it declares rather than None
+        parsed["product.yaml"] = {"record_version": declared["record_version"]}
     parsed.update({f"parts/{pn}/part.yaml": part for pn, (part, _) in part_records.items()})
     for rel, schema in intent.DOCUMENT_SCHEMAS:
         path = hw / rel
         if rel.startswith("manufacturing/") and "*" not in rel and path.is_file():  # the guideline wildcard is read below
             data = load_yaml(path, findings)
-            if validate_document(data, schema, str(path), findings):  # None (an empty file) is checked too
+            if validate_document(data, schema, str(path), findings, code=intent.SCHEMA_INVALID):  # None (an empty file) is checked too
                 parsed[rel] = data
     record = intent.normalize_record(parsed, hw=hw)
     findings.extend(_intent_finding(hw, problem.finding()) for problem in record.problems)
