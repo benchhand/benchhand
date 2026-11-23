@@ -10,3 +10,17 @@ supplier: null
 decisions: [DR-002]
 model_frame: part_local
 manufacture: {relationship: same, mesh: {linear_deflection_mm: 0.05, angular_deflection_rad: 0.1}}
+intent:
+  functions: {status: unknown, reason: not recorded yet, question: Q-002}
+  material_profile: asa
+  service: {status: unknown, reason: not recorded yet, question: Q-001}
+  critical_surfaces: {status: unknown, reason: not recorded yet, question: Q-007}
+  route:
+    - id: print
+      kind: fdm
+      title: Print the connecting rod in ASA on the H2D
+      capability: h2d
+      output_state: printed
+      orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
+      supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
+      post_processing: ["Deburr; no sharp edges"]

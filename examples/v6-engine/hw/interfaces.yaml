@@ -1,1 +1,71 @@
-interfaces: []
+interfaces:
+  - id: IF-001
+    from: "@piston-1"
+    to: "@pin-1"
+    type: motion
+    description: "Wrist pin 1 in the piston 1 bore: pin 6 g6 in a 6 H7 bore (cad-fits fits.py: clearance 4 to 24 um). The rod small-end bore is 6.1 mm, so the rod turns on the pin."
+    limits:
+      running_fit: {fit: 6 H7/g6, hole: {PN: VSE-0002, occurrence: "@piston-1", feature: pin_bore}, shaft: {PN: VSE-0003, occurrence: "@pin-1", feature: journal}, note: "ISO 286 limits: hole 6.000/6.012, shaft 5.988/5.996"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-002
+    from: "@piston-2"
+    to: "@pin-2"
+    type: motion
+    description: "Wrist pin 2 in the piston 2 bore: pin 6 g6 in a 6 H7 bore (cad-fits fits.py: clearance 4 to 24 um). The rod small-end bore is 6.1 mm, so the rod turns on the pin."
+    limits:
+      running_fit: {fit: 6 H7/g6, hole: {PN: VSE-0002, occurrence: "@piston-2", feature: pin_bore}, shaft: {PN: VSE-0003, occurrence: "@pin-2", feature: journal}, note: "ISO 286 limits: hole 6.000/6.012, shaft 5.988/5.996"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-003
+    from: "@piston-3"
+    to: "@pin-3"
+    type: motion
+    description: "Wrist pin 3 in the piston 3 bore: pin 6 g6 in a 6 H7 bore (cad-fits fits.py: clearance 4 to 24 um). The rod small-end bore is 6.1 mm, so the rod turns on the pin."
+    limits:
+      running_fit: {fit: 6 H7/g6, hole: {PN: VSE-0002, occurrence: "@piston-3", feature: pin_bore}, shaft: {PN: VSE-0003, occurrence: "@pin-3", feature: journal}, note: "ISO 286 limits: hole 6.000/6.012, shaft 5.988/5.996"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-004
+    from: "@piston-4"
+    to: "@pin-4"
+    type: motion
+    description: "Wrist pin 4 in the piston 4 bore: pin 6 g6 in a 6 H7 bore (cad-fits fits.py: clearance 4 to 24 um). The rod small-end bore is 6.1 mm, so the rod turns on the pin."
+    limits:
+      running_fit: {fit: 6 H7/g6, hole: {PN: VSE-0002, occurrence: "@piston-4", feature: pin_bore}, shaft: {PN: VSE-0003, occurrence: "@pin-4", feature: journal}, note: "ISO 286 limits: hole 6.000/6.012, shaft 5.988/5.996"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-005
+    from: "@piston-5"
+    to: "@pin-5"
+    type: motion
+    description: "Wrist pin 5 in the piston 5 bore: pin 6 g6 in a 6 H7 bore (cad-fits fits.py: clearance 4 to 24 um). The rod small-end bore is 6.1 mm, so the rod turns on the pin."
+    limits:
+      running_fit: {fit: 6 H7/g6, hole: {PN: VSE-0002, occurrence: "@piston-5", feature: pin_bore}, shaft: {PN: VSE-0003, occurrence: "@pin-5", feature: journal}, note: "ISO 286 limits: hole 6.000/6.012, shaft 5.988/5.996"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-006
+    from: "@piston-6"
+    to: "@pin-6"
+    type: motion
+    description: "Wrist pin 6 in the piston 6 bore: pin 6 g6 in a 6 H7 bore (cad-fits fits.py: clearance 4 to 24 um). The rod small-end bore is 6.1 mm, so the rod turns on the pin."
+    limits:
+      running_fit: {fit: 6 H7/g6, hole: {PN: VSE-0002, occurrence: "@piston-6", feature: pin_bore}, shaft: {PN: VSE-0003, occurrence: "@pin-6", feature: journal}, note: "ISO 286 limits: hole 6.000/6.012, shaft 5.988/5.996"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-007
+    from: VSE-0001
+    to: VSE-0005
+    type: motion
+    description: "Crankshaft main journals in the two block bearing seats: journal 14 f7 in a 14 H7 seat (cad-fits fits.py: clearance 16 to 52 um)."
+    limits:
+      running_fit: {fit: 14 H7/f7, hole: {PN: VSE-0001, feature: main_seat}, shaft: {PN: VSE-0005, feature: main_journal}, note: "ISO 286 limits: hole 14.000/14.018, shaft 13.966/13.984; the model uses the 13.97 mm mid-limit"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
