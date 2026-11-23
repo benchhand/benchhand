@@ -41,6 +41,7 @@ import ipaddress
 import json
 import os
 import re
+import select
 import signal
 import socket
 import sys
@@ -84,6 +85,7 @@ CONTENT_TYPES = {
 MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 HEARTBEAT_S = 15.0
+NOTIFY_TIMEOUT_S = 1.0
 CLIENT_DISCONNECTS = (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)
 LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
 
@@ -404,6 +406,25 @@ class QuietServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def announce(event: dict[str, object]) -> None:
+    """Best-effort stdout line, bounded by NOTIFY_TIMEOUT_S: a reader that is gone or stuck never delays shutdown.
+
+    Where stdout has a descriptor, the line goes out with one `os.write` once `select` says the pipe has room
+    (a line is below PIPE_BUF, so it is written whole or not at all). A plain `print` would block on a full pipe.
+    """
+    line = (json.dumps(event) + "\n").encode()
+    try:
+        fd = sys.stdout.fileno()
+    except (AttributeError, ValueError, OSError):  # io.UnsupportedOperation is an OSError: stdout is not a file
+        print(line.decode(), end="", flush=True)
+        return
+    try:
+        if select.select([], [fd], [], NOTIFY_TIMEOUT_S)[1]:
+            os.write(fd, line)
+    except OSError:
+        pass
+
+
 def default_cache_dir() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base) / "cad-concept" / "vendor"
@@ -498,12 +519,8 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
                         watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
                     if watcher.stopped:
                         return
-                try:
-                    print(json.dumps({"event": "stopped", "reason": "idle", "url": ready["url"]}), flush=True)
-                except OSError:
-                    pass  # a reader that went away must not keep the server running
-                finally:
-                    shutdown(signal.SIGTERM, None)
+                announce({"event": "stopped", "reason": "idle", "url": ready["url"]})
+                shutdown(signal.SIGTERM, None)
                 return
 
         threading.Thread(target=stop_when_idle, daemon=True, name="idle-timeout").start()

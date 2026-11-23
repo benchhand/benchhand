@@ -665,6 +665,7 @@ class InProcessServer(unittest.TestCase):
         self.url = ""
         self._server_done = None
         self._server_thread = None
+        self.on_ready = None
 
     def tearDown(self) -> None:
         self.stop_server()
@@ -682,6 +683,8 @@ class InProcessServer(unittest.TestCase):
         def ready(info: dict[str, object]) -> None:
             self.ready = info
             self.url = str(info["url"])
+            if self.on_ready:
+                self.on_ready(info)
         def request_shutdown(stop) -> None:
             self._shutdown = stop
 
@@ -741,6 +744,31 @@ class ServerTimeout(InProcessServer):
             self.assertTrue(self._server_done.wait(2))
         lines = [json.loads(line) for line in out.getvalue().splitlines()]
         self.assertEqual(lines[-1], {"event": "stopped", "reason": "idle", "url": self.url})
+
+    def test_a_full_stdout_pipe_does_not_keep_the_server_from_exiting(self) -> None:
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(lambda: os.close(read_fd) if read_fd >= 0 else None)
+        pipe_out = os.fdopen(write_fd, "w", encoding="utf-8")
+        self.addCleanup(lambda: pipe_out.close() if not pipe_out.closed else None)
+
+        def fill_pipe(_info: dict[str, object]) -> None:
+            # Runs after the ready line, before the idle timer: nobody reads, so the pipe fills.
+            os.set_blocking(write_fd, False)
+            try:
+                while True:
+                    os.write(write_fd, b"x" * 4096)
+            except BlockingIOError:
+                pass
+            finally:
+                os.set_blocking(write_fd, True)
+
+        self.on_ready = fill_pipe
+        with contextlib.redirect_stdout(pipe_out):
+            self.start_server(0.3)
+            exited = self._server_done.wait(5)
+            os.close(read_fd)  # releases a write that is stuck, so a failure does not leak a hung thread
+            read_fd = -1
+        self.assertTrue(exited, "a stdout nobody reads kept the server running after its idle timeout")
 
     def test_zero_disables_idle_expiry(self) -> None:
         self.start_server(None)
