@@ -43,6 +43,8 @@ Alternatively, install Claude Code as a plugin from this public GitHub repositor
 
 For a local checkout, add `/plugin marketplace add /path/to/benchhand`. Then install with `/plugin install benchhand@benchhand`. The plugin exposes `/benchhand:cad-flow`. The installer route exposes `/cad-flow`.
 
+In Claude Code, three skills are typable commands: `cad-flow` (the entry point), `cad-viewer` and `cad-fits`. The other twelve `cad-*` skills carry `user-invocable: false`, so the `/` menu omits them, but the model still loads them when a stage needs one. Other harnesses do not use that key. `harness/test_skill_visibility.py` fails when a skill is not classified as visible or hidden.
+
 ## Start and prepare a project
 
 In an interactive Claude Code or OpenCode chat, start with `/cad-flow`. For interactive Kiro, use `/cad-flow` in a V3 session (`kiro-cli chat --v3`). In Codex CLI, invoke the skill with `$cad-flow` or select it from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
