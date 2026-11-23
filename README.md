@@ -4,7 +4,7 @@ Agent-assisted mechanical CAD guides a product from concept through versioned CA
 
 Manufacturing intent is recorded per project and part: a v2 record captures intended use, requirements, candidate selection, material/process routes, real capability, assembly interfaces and evidence. Unknown facts remain unknown. The use-case **service class** describes maturity and consequence. Prototype is a service class. Only record version 2 is read; any other `record_version`, or none, is refused. New freezes/releases require a recorded material/process selection; no selection or other required unknown blocks. See `docs/manufacturing-intent.md`.
 
-This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Kiro CLI through native skills and agent profiles.
+This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, Kiro CLI, and pi through native skills and agent profiles.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
   - Linux x86_64 or aarch64: download the matching Python 3.11 AppImage and `-SHA256.txt`. Verify the checksum, extract the AppImage, and put `freecadcmd` on `PATH`.
   - See [`cad-drawings/SKILL.md`](skills/cad-drawings/SKILL.md#install-freecad) for commands. If FreeCAD is not on `PATH` or in the macOS app bundle, set `FREECADCMD`.
 - Chromium. Preflight and setup install it through Playwright.
-- Claude Code, Codex CLI, OpenCode, or Kiro CLI. The installer copies native skills and agent profiles to each harness's project paths. Claude Code also supports plugin marketplace installation.
+- Claude Code, Codex CLI, OpenCode, Kiro CLI, or pi (with the `pi-subagents` package). The installer copies native skills and agent profiles to each harness's project paths. Claude Code also supports plugin marketplace installation.
 
 ## Install
 
@@ -26,7 +26,7 @@ BENCHHAND=/path/to/benchhand
 python3 "$BENCHHAND/harness/install.py" --harness claude
 ```
 
-Choose `claude`, `codex`, `opencode`, `kiro`, or `all`. Add `--user` for a user-level install:
+Choose `claude`, `codex`, `opencode`, `kiro`, `pi`, or `all`. Add `--user` for a user-level install:
 
 ```sh
 python3 "$BENCHHAND/harness/install.py" --harness all --user
@@ -51,7 +51,7 @@ Codex CLI reads the same marketplace: `codex plugin marketplace add benchhand/be
 
 In an interactive Claude Code or OpenCode chat, start with `/cad-flow`. For interactive Kiro, use `/cad-flow` in a V3 session (`kiro-cli chat --v3`). In Codex CLI, invoke the skill with `$cad-flow` or select it from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
 
-At the project root, set `$CAD_SKILLS` to the directory containing installed `cad-*` skill folders. For a project install, this is `.claude/skills`, `.agents/skills`, `.opencode/skills`, or `.kiro/skills` for the selected harness. If using a repository checkout directly, set it to `"$BENCHHAND/skills"`.
+At the project root, set `$CAD_SKILLS` to the directory containing installed `cad-*` skill folders. For a project install, this is `.claude/skills`, `.agents/skills`, `.opencode/skills`, `.kiro/skills`, or `.pi/skills` for the selected harness. If using a repository checkout directly, set it to `"$BENCHHAND/skills"`.
 
 ### Codex CLI sandbox requirements
 
@@ -68,6 +68,14 @@ Codex custom agents inherit their parent's sandbox. A narrower profile can grant
 ### Claude Code non-interactive runs
 
 If a Claude Code `-p` run has a turn limit, set `--max-turns` above the number of turns needed for the whole stage. Claude Code errors when it reaches that limit. If the stage presents a gate, capture the session ID. Resume that conversation with `claude --resume <session-id> -p "<your explicit gate decision>"`. [Claude CLI reference](https://code.claude.com/docs/en/cli-reference) · [Claude headless mode](https://code.claude.com/docs/en/headless)
+
+### pi entry points
+
+pi has no native subagents. The CAD agents need the `pi-subagents` package (`pi install npm:pi-subagents`); the sourcing researcher also needs `pi-web-access`. The installer writes skills to `.pi/skills`, agents to `.pi/agents`, the `/cad-flow` prompt template to `.pi/prompts`, and (user scope) the same under `~/.pi/agent/`.
+
+pi loads project resources only after you trust the project, so accept the trust prompt (or set `defaultProjectTrust`) before you start. Then run `/cad-flow`.
+
+pi has no per-command shell permissions. Each CAD agent with a shell loads a small guard extension (`cad-guard/cad-bash-guard.js`, installed beside, not inside, pi's `extensions/` directory) through its `subagentOnlyExtensions` field. The guard blocks every bash call except a single plain `uv run --script ...` command, the same limit the other harnesses apply. pi's `edit` and `write` tools cannot be scoped to `.cad-work`; that rule stays prompt policy.
 
 ### Kiro CLI entry points
 
@@ -215,7 +223,7 @@ python3 "$BENCHHAND/harness/install.py" --harness all --project . \
   --tier-model kiro:cheap=<model> --tier-model opencode:cheap=provider/model#variant
 ```
 
-A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:` prefix and a `provider/model[#variant]` value, and never gets `model: inherit`. Rendering adds `model: "<m>"` to Claude (instead of `inherit`) and OpenCode, `model = "<m>"` to Codex, and `"model"` to Kiro. A tier with no entry adds no model line, so a default install matches the committed profiles. `--tier-model` needs PyYAML.
+A bare `TIER=MODEL` covers Claude, Codex and Kiro. pi needs the `pi:` prefix (`provider/model[:thinking]`) and OpenCode needs the `opencode:` prefix and a `provider/model[#variant]` value, and never gets `model: inherit`. Rendering adds `model: "<m>"` to Claude (instead of `inherit`) and OpenCode, `model = "<m>"` to Codex, and `"model"` to Kiro. A tier with no entry adds no model line, so a default install matches the committed profiles. `--tier-model` needs PyYAML.
 
 ## License
 

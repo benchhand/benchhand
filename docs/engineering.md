@@ -26,7 +26,7 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 | ruff | `0.17.4` through `uvx` and in the ratchet header | `.github/workflows/ci.yml`, `scripts/complexity_ratchet.py` |
 | reuse | `reuse[charset-normalizer]==6.3.0` | `README.md` |
 
-Other pins in the script headers (`pillow`, `ocp_viewer`, `imageio-ffmpeg`, `lib3mf`, `lxml`, `networkx`) live with the script that uses them. Read the header of the script for the exact pin. Harness targets are Claude Code, Codex CLI, OpenCode and Kiro CLI (`README.md`).
+Other pins in the script headers (`pillow`, `ocp_viewer`, `imageio-ffmpeg`, `lib3mf`, `lxml`, `networkx`) live with the script that uses them. Read the header of the script for the exact pin. Harness targets are Claude Code, Codex CLI, OpenCode, Kiro CLI and pi (`README.md`). pi agents need the `pi-subagents` npm package at run time. The pi bash guard `harness/pi/guard/cad-bash-guard.js` is plain ESM JavaScript with no dependencies and no build; `harness/test_pi_guard.py` tests it by running it under `node`, and skips when `node` is missing (the one place the repository uses Node).
 
 There is no root `pyproject.toml` and no package install. Dependencies come from one of three places:
 
