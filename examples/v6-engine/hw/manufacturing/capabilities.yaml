@@ -2,12 +2,12 @@
 # Only the printer is recorded; every other capability stays unknown. Start a new profile from cad-record
 # assets/manufacturing/capability-templates.yaml; a template is never a capability.
 # h2d holds the numbers Bambu Lab publishes and nothing else. Bambu publishes no layer height, minimum wall or feature,
-# overhang angle, bridge span or hole and fit tolerance, so generic guideline values govern those (DR-005).
+# overhang angle, bridge span or hole and fit tolerance, so generic guideline values govern those (DR-002).
 # For a tighter limit, print a test coupon on the printer. A recorded calibration counts only when `CAD_CALIBRATION=1`.
 profiles:
   - id: h2d
     revision: 1
-    title: Bambu Lab H2D, the user's own printer
+    title: Bambu Lab H2D, an H2D class printer named in the brief
     process: fdm
     provider: local
     machine:
@@ -122,11 +122,11 @@ profiles:
       - "Total volume for two nozzles 350 x 320 x 320 mm, only with identical filament in both nozzles and printing with both (tech specs, Body, Build Volume; product page footnote, accessed 2026-11-18)"
       - "Active chamber heating supported, maximum chamber temperature 65 °C (tech specs, Chamber Temperature Control, accessed 2026-11-18)"
     materials:
-      - material: petg
+      - material: asa
         status: approved
         operations: [print]
         source:
           kind: decision
-          reference: The user approved PETG on their own H2D on 2026-11-18; Bambu lists PETG as supported (tech specs, Supported Filament Type)
-          decision: DR-005
+          reference: The brief names ASA on a Bambu H2D class printer; Bambu lists ASA as supported (tech specs, Supported Filament Type)
+          decision: DR-002
     calibrations: []
