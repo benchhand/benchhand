@@ -176,7 +176,8 @@ class InstallerTests(unittest.TestCase):
                 if harness == "kiro":
                     for agent_file in AGENT_FILES[harness]:
                         profile = json.loads((root / agents_relative / agent_file).read_text(encoding="utf-8"))
-                        self.assertTrue(profile["resources"])
+                        if agent_file != "cad-sourcing-researcher.json":  # loads no skill
+                            self.assertTrue(profile["resources"])
                         for resource in profile["resources"]:
                             self.assertTrue(resource.startswith("skill://~/.kiro/skills/"), resource)
                             resource_path = self.home / resource.removeprefix("skill://~/")
