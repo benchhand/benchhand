@@ -26,10 +26,10 @@ ASK which live variant passes the VARIANT gate. The lead records the user's name
 4. Start one project-root viewer job for the complete scene directory:
 
    ```sh
-   uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-concept/scripts/serve.py --project-root . --scene-dir hw/concept --port 8765
+   uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-concept/scripts/serve.py --project-root . --scene-dir hw/concept --port 8765 --idle-timeout 0
    ```
 
-   `--port` pins the URL, so a restart returns to the same address; if it is taken, pick another and tell the user. Read the first stdout JSON line and share its `url` with the user, and repeat the `url` in the handoff message. The viewer exits after 30 idle minutes with no browser connected (`--idle-timeout`, 0 disables); it then prints `{"event": "stopped", "reason": "idle", "url": ...}` on stdout. Tell the user when that happens and restart it on the same port. Each saved edit reloads the open viewer.
+   `--port` fixes the URL across restarts; `--idle-timeout 0` keeps the managed viewer up for the whole session. A one-off launch may omit both (port 0, 30 idle minutes); a connected viewer tab keeps the server alive either way. Read the first stdout JSON line and share its `url` with the user, and print it again in every handoff line. If an idle timeout stops the viewer, it prints `{"event": "stopped", "reason": "idle", "url": ...}` on stdout; tell the user and restart it. Each saved edit reloads the open viewer. To hide a part, set `visible: false` on its node or untick it in the viewer's Nodes list; never write a second scene file.
 5. Collect feedback. Use the existing variant table for shared scene changes only after user approval. The preview proves neither CAD validity nor manufacturability.
 6. On "commit batch", run the check again and save one screenshot for each live variant; screenshots publish under `hw/concept/screenshots/`. Hand the batch to `cad-flow` for COMMIT.
 7. At VARIANT, show unresolved process/material dependencies and ask the user to select. Record the approved `chosen` variant only after its `status: accepted` DR exists; then run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-concept/scripts/concept.py handoff hw/concept/<product-id>.scene.json`.
@@ -41,7 +41,6 @@ ASK which live variant passes the VARIANT gate. The lead records the user's name
    - Record the approval as a DR with `status: accepted` in that sibling, and name the sibling in a decision record.
    - Run `concept.py handoff hw/concept/<product-id>.scene.json --out hw/concept/handoff.json`. The manifest binds to that sibling's scene by sha256.
 8. After VARIANT passes or the session ends, tell the user the viewer URL is going away and stop the serving job with the harness's job/service handle; if none exists, start it as a background job with `&`, retain `$!`, and run `kill <pid>`. Report the handoff path to `cad-flow`.
-9. To hide a part, set `"visible": false` on its node (or untick it under "Show parts" in the viewer); do not write a second scene file.
 
 | user says | operation |
 |---|---|
@@ -55,6 +54,7 @@ The viewer pins three@0.186.1 by import map with SRI digests. `serve.py` may nee
 ## Rules
 
 MUST Keep node ids stable across edits and variants: the same concept part carries the same id everywhere. The handoff and L1 key on them.
+MUST Tell the user before you stop the viewer, and give the URL again when you restart it.
 MUST Retire a variant into `retired` with a reason; never delete it.
 MUST Fix every `concept.py check` error before showing the viewer.
 MUST Treat optical requirements as hard selection constraints; follow [manufacturing-selection.md](../cad-flow/references/manufacturing-selection.md) for the one canonical optical-route rule.

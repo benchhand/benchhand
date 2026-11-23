@@ -6,7 +6,7 @@
 
 A shard is skipped only when every changed path is one that no skill test is known to read:
 repo-root Markdown, ``docs/``, ``agents/*.md``, ``harness/`` except ``install.py``,
-``skills/*/SKILL.md`` and ``skills/*/references/*.md`` except cad-record's ``layout.md``.
+``skills/*/SKILL.md`` except cad-concept's and ``skills/*/references/*.md`` except cad-record's ``layout.md``.
 
 Everything else runs every shard: any other path, a push, a missing SHA, a diff error, an empty
 diff, and any symlink, submodule, or mode or type change. The diff is read with modes because a
@@ -28,9 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 # cad-flow's setup test needs this file to exist; cad-record's test_layout.py compares layout.md
-# with layout.py's output.
+# with layout.py's output; cad-concept's test_concept.py runs the launch command that its SKILL.md gives.
 READ_BY_SKILL_TESTS = frozenset(
-    {"harness/install.py", "skills/cad-record/references/layout.md"}
+    {"harness/install.py", "skills/cad-record/references/layout.md", "skills/cad-concept/SKILL.md"}
 )
 # git's mode for a regular file; 000000 is the missing side of an added or deleted file
 REGULAR = frozenset({"100644", "100755"})

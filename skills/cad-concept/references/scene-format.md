@@ -12,7 +12,6 @@ with three variants and joints base -10..80 deg, elbow -120..0 deg, head -45..45
 | Up axis | +Z. The viewer camera looks from -Y, so variants read left to right along +X |
 | Length | mm (`"units": "mm"`) |
 | `position` | node origin in the parent frame, default `[0,0,0]` |
-| `visible` | `false` hides the node and its children in the viewer, default `true`; the handoff still lists them. The viewer's "Show parts" checkboxes toggle it without a file edit. Hide a part with this field, never with a second scene file. |
 | `rotation` | XYZ Euler degrees, three.js `XYZ` order (R = Rx * Ry * Rz), default `[0,0,0]` |
 | Primitive | centred on its part origin |
 
@@ -35,8 +34,10 @@ and flows into the handoff verbatim. `root` is a group that stands for the varia
 
 ## Nodes
 
-Group: `{kind: "group", id, label, position?, rotation?, visible?, children: [node, ...]}`.
-Part: `{kind: "part", id, label, position?, rotation?, visible?, shape, color?}`.
+Group: `{kind: "group", id, label, visible?, position?, rotation?, children: [node, ...]}`.
+Part: `{kind: "part", id, label, visible?, position?, rotation?, shape, color?}`.
+
+`visible: false` hides a node and its children when the viewer opens (default `true`). The viewer's Nodes list toggles it for the session, so hiding a part needs no second scene file. The handoff ignores it.
 
 | `shape.type` | Fields | Notes |
 |---|---|---|

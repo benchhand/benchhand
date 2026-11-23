@@ -65,7 +65,7 @@ const state = {
   labels: [],
   selected: null,
   framed: false,
-  // The viewer's own show/hide choices, keyed `variant/node`; they win over the scene's `visible`
+  // The viewer's own show/hide choices, keyed `file/variant/node`; they win over the scene's `visible`
   // and survive a live reload.
   visibility: new Map(),
 };
@@ -122,7 +122,7 @@ function buildVariant(def, index) {
       node.kind === "part" ? makePart(node, palette[meshes.length % palette.length]) : new THREE.Group();
     if (node.kind === "part") meshes.push(object);
     applyTransform(object, node);
-    object.visible = state.visibility.get(`${def.id}/${node.id}`) ?? node.visible !== false;
+    object.visible = state.visibility.get(visibilityKey(def.id, node.id)) ?? node.visible !== false;
     object.userData.variantId = def.id;
     object.userData.nodeId = node.id;
     parentObject.add(object);
@@ -134,13 +134,13 @@ function buildVariant(def, index) {
   return { def, index, root, nodes, meshes, box: new THREE.Box3() };
 }
 
-// A node is shown only while it and every ancestor are visible.
-function nodeShown(node, nodes) {
-  for (let n = node; n; n = n.parentId === null ? null : nodes.get(n.parentId)) {
-    if (!n.object.visible) return false;
-  }
+// An object is shown only while it and every ancestor are visible.
+function shownInTree(object) {
+  for (let o = object; o; o = o.parent) if (!o.visible) return false;
   return true;
 }
+
+const visibilityKey = (variantId, nodeId) => `${state.file}/${variantId}/${nodeId}`;
 
 function attachJoint(variantId, def, nodes) {
   const where = `variant ${variantId}, joint "${def.id}"`;
@@ -216,6 +216,7 @@ function makeLabels(variants) {
     el.dataset.kind = kind;
     el.dataset.variant = variant.def.id;
     el.textContent = text;
+    if (node) el.dataset.node = node.def.id;
     ui.labels.append(el);
     labels.push({ kind, el, variant, anchor, node, x: 0, y: 0, shown: false, w: 0, h: 0 });
   };
@@ -248,7 +249,7 @@ function makeLabels(variants) {
 
 function labelVisible(label) {
   if (label.kind === "variant") return true;
-  if (!nodeShown(label.node, label.variant.nodes)) return false;
+  if (!shownInTree(label.node.object)) return false;
   // Dimmed variants keep their group labels; part labels belong to the selected variant.
   if (label.kind === "part") return ui.partLabels.checked && label.variant.def.id === state.selected;
   return ui.groupLabels.checked;
@@ -380,6 +381,7 @@ function renderNodeList(variant) {
   const items = [];
   for (const [id, node] of variant.nodes) {
     if (node.parentId === null) continue; // the root group is the variant itself
+    const item = document.createElement("li");
     const label = document.createElement("label");
     label.className = "toggle";
     label.style.paddingInlineStart = `${(depthOf(node) - 1) * 12}px`;
@@ -389,11 +391,12 @@ function renderNodeList(variant) {
     box.dataset.node = id;
     box.addEventListener("change", () => {
       node.object.visible = box.checked;
-      state.visibility.set(`${variant.def.id}/${id}`, box.checked);
+      state.visibility.set(visibilityKey(variant.def.id, id), box.checked);
       requestRender();
     });
     label.append(box, ` ${node.def.label}`);
-    items.push(label);
+    item.append(label);
+    items.push(item);
   }
   ui.nodes.replaceChildren(...items);
 }
@@ -444,7 +447,7 @@ ui.canvas.addEventListener("pointerup", (event) => {
   );
   raycaster.setFromCamera(ndc, camera);
   const shown = state.variants.flatMap((variant) =>
-    variant.meshes.filter((mesh) => nodeShown(variant.nodes.get(mesh.userData.nodeId), variant.nodes)),
+    variant.meshes.filter(shownInTree),
   );
   const hit = raycaster.intersectObjects(shown, false)[0];
   if (hit) selectVariant(hit.object.userData.variantId);
@@ -608,6 +611,11 @@ function compositeScreenshot() {
   return out.toDataURL("image/png");
 }
 
+function hiddenNodes() {
+  const variant = state.variants.find((v) => v.def.id === state.selected);
+  return [...variant.nodes].filter(([, node]) => !shownInTree(node.object)).map(([id]) => id).sort();
+}
+
 async function saveScreenshot() {
   ui.shot.setAttribute("aria-busy", "true");
   ui.shot.disabled = true;
@@ -621,6 +629,9 @@ async function saveScreenshot() {
         .then((bytes) => crypto.subtle.digest("SHA-256", bytes))
         .then((digest) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")),
       variant: state.selected,
+      // Effective visibility is part of what the picture shows, so it is part of the capture key:
+      // two saves of one scene that differ only by a toggle are two bundles, not a conflict.
+      hidden_nodes: hiddenNodes(),
       camera: { position: controls.object.position.toArray(), quaternion: controls.object.quaternion.toArray(), zoom: controls.object.zoom },
       viewport: { width: ui.canvas.width, height: ui.canvas.height, device_pixel_ratio: window.devicePixelRatio },
       labels: { parts: ui.partLabels.checked, groups: ui.groupLabels.checked },
@@ -670,6 +681,14 @@ window.cadConcept = {
     return state.selected;
   },
   select: selectVariant,
+  // Client-pixel centre of a node's bounds, so a driver can click on it.
+  screenPoint(variantId, nodeId) {
+    const node = state.variants.find((v) => v.def.id === variantId).nodes.get(nodeId);
+    partBox.setFromObject(node.object).getCenter(tmp);
+    tmp.project(camera);
+    const rect = ui.canvas.getBoundingClientRect();
+    return [rect.left + ((tmp.x + 1) / 2) * rect.width, rect.top + ((1 - tmp.y) / 2) * rect.height];
+  },
   screenshot: compositeScreenshot,
   save: saveScreenshot,
 };

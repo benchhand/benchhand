@@ -20,6 +20,8 @@ import hashlib
 import io
 import json
 import os
+import re
+import shlex
 import shutil
 import signal
 import socket
@@ -43,6 +45,7 @@ CONCEPT_PY = SKILL / "scripts" / "concept.py"
 SERVE_PY = SKILL / "scripts" / "serve.py"
 RENDER_PY = SKILL.parent / "cad-render" / "scripts" / "render.py"
 PRESS_SAVE = Path(__file__).resolve().parent / "fixtures" / "press_save.py"
+DRIVE_VISIBILITY = Path(__file__).resolve().parent / "fixtures" / "drive_visibility.py"
 
 def project_for_scene(temp: Path, scene_path: Path) -> Path:
     """Make a minimal project whose layout owns this concept scene and part."""
@@ -241,20 +244,22 @@ class SchemaCli(unittest.TestCase):
     def test_unreadable_scene_is_a_usage_error(self) -> None:
         self.assertEqual(self.run_cli("check", "/nonexistent/x.scene.json").returncode, 2)
 
-    def check_with_visible(self, value: object) -> subprocess.CompletedProcess[str]:
-        scene = example()
-        scene["variants"][0]["root"]["children"][0]["visible"] = value
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "v.scene.json"
-            path.write_text(json.dumps(scene), encoding="utf-8")
-            return self.run_cli("check", str(path))
+    def test_visible_flag_is_a_boolean_on_parts_and_groups(self) -> None:
+        def check(visible: object) -> int:
+            scene = example()
+            root = scene["variants"][0]["root"]
+            self.assertEqual(root["children"][0]["kind"], "group")
+            self.assertEqual(root["children"][0]["children"][0]["kind"], "part")
+            root["children"][0]["visible"] = visible
+            root["children"][0]["children"][0]["visible"] = visible
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "v.scene.json"
+                path.write_text(json.dumps(scene), encoding="utf-8")
+                return self.run_cli("check", str(path)).returncode
+        self.assertEqual(check(False), 0)
+        self.assertEqual(check(True), 0)
+        self.assertEqual(check("no"), 1)
 
-    def test_a_node_may_set_visible_false(self) -> None:
-        result = self.check_with_visible(False)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_visible_must_be_a_boolean(self) -> None:
-        self.assertEqual(self.check_with_visible("no").returncode, 1)
 
 
 class ServerUnits(unittest.TestCase):
@@ -454,9 +459,22 @@ def png_size(data: bytes) -> tuple[int, int]:
     return width, height
 
 
-@unittest.skipUnless(shutil.which("uv") and chromium_installed(), "needs uv and Playwright Chromium")
+REQUIRE_BROWSER = "CAD_REQUIRE_BROWSER"  # "1" (set in CI) turns a missing browser into a failure, not a skip
+
+
+def require_browser(case: unittest.TestCase) -> None:
+    if shutil.which("uv") and chromium_installed():
+        return
+    if os.environ.get(REQUIRE_BROWSER) == "1":
+        case.fail(f"{REQUIRE_BROWSER}=1 but uv or Playwright Chromium is missing")
+    case.skipTest("needs uv and Playwright Chromium")
+
+
 class ViewerSaveInBrowser(unittest.TestCase):
     """serve.py with the pinned three.js cache preflight --warm fills; Save pressed in headless Chromium."""
+
+    def setUp(self) -> None:
+        require_browser(self)
 
     def test_save_button_publishes_the_selected_variant_as_a_content_bound_bundle(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cad-concept-save-") as tmp:
@@ -502,6 +520,60 @@ class ViewerSaveInBrowser(unittest.TestCase):
             checked = subprocess.run([sys.executable, str(validator), str(project)],
                                      capture_output=True, text=True, timeout=60)
             self.assertEqual(result_payload(checked.stdout), {"ok": True, "findings": []}, checked.stderr)
+
+class ViewerVisibilityInBrowser(unittest.TestCase):
+    """Authored and toggled node visibility in headless Chromium: list, labels, picking, saves, live reload."""
+
+    HIDDEN_BY_AUTHORING = {"lower-arm", "lower-link", "upper-arm", "upper-link", "head", "shade", "bulb"}
+
+    def setUp(self) -> None:
+        require_browser(self)
+
+    def test_visibility_drives_the_list_labels_picking_saves_and_survives_a_reload(self) -> None:
+        scene = example()
+        base = scene["variants"][0]["root"]["children"][0]
+        lower_arm = next(node for node in base["children"] if node["id"] == "lower-arm")
+        lower_arm["visible"] = False
+        with tempfile.TemporaryDirectory(prefix="cad-concept-visibility-") as tmp:
+            scene_path = Path(tmp) / "lamp-arm.scene.json"
+            scene_path.write_text(json.dumps(scene), encoding="utf-8")
+            project = project_for_scene(Path(tmp), scene_path)
+            scene_dir = project / "hw" / "concept"
+            proc = subprocess.Popen(
+                [sys.executable, str(SERVE_PY), "--scene-dir", str(scene_dir), "--project-root", str(project),
+                 "--port", "0", "--idle-timeout", "0", "--poll", "0.1"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            assert proc.stdout
+            try:
+                url = json.loads(proc.stdout.readline())["url"]
+                driver = subprocess.run(
+                    scriptenv.python_command(RENDER_PY, str(DRIVE_VISIBILITY), url, str(scene_dir / "lamp-arm.scene.json")),
+                    capture_output=True, text=True, timeout=600)
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+                proc.stdout.close()
+        self.assertEqual(driver.returncode, 0, driver.stdout[-3000:] + driver.stderr[-3000:])
+        report = json.loads(driver.stdout)
+        self.assertEqual(report["errors"], [])
+        # Authored `visible: false` on a group unticks only that node, and its subtree shows no labels.
+        self.assertEqual({k for k, on in report["authored_checked"].items() if not on}, {"lower-arm"})
+        self.assertFalse(self.HIDDEN_BY_AUTHORING & set(report["authored_labels"]), report["authored_labels"])
+        self.assertTrue({"base", "base-plate", "shoulder-mount"} & set(report["authored_labels"]), report)
+        # A hidden descendant cannot be picked; once shown, the same point selects its variant.
+        self.assertEqual(report["hidden_pick"], "long-reach")
+        self.assertEqual(report["shown_pick"], "short-reach")
+        # Toggling shows the group and its descendants' labels again.
+        self.assertTrue(report["toggled_checked"]["lower-arm"])
+        self.assertTrue({"lower-arm", "lower-link", "upper-arm", "upper-link"} & set(report["toggled_labels"]), report)
+        # Save, toggle, save: the capture binds the visible nodes, so the second save is a new bundle, not a 409.
+        self.assertTrue(report["save_hidden"].startswith("Saved "), report["save_hidden"])
+        self.assertTrue(report["save_shown"].startswith("Saved "), report["save_shown"])
+        self.assertNotEqual(report["save_hidden"], report["save_shown"])
+        # A live reload keeps the viewer's own toggles over the file's flags.
+        self.assertTrue(report["reloaded_checked"]["lower-arm"])
+        self.assertFalse(report["reloaded_checked"]["upper-arm"])
+
 
 class ServerVendor(unittest.TestCase):
     def test_vendor_routes_serve_preseeded_pinned_module_without_network(self) -> None:
@@ -577,15 +649,14 @@ class ServerNoise(unittest.TestCase):
                 server.handle_error(None, ("127.0.0.1", 1))
         return err.getvalue()
 
-    def test_a_client_reset_leaves_no_traceback(self) -> None:
-        for exc in (ConnectionResetError(), BrokenPipeError(), ConnectionAbortedError()):
-            self.assertEqual(self.handle(exc), "", type(exc).__name__)
-
-    def test_other_errors_are_still_reported(self) -> None:
-        self.assertIn("ValueError", self.handle(ValueError("boom")))
+    def test_a_refused_connection_and_other_errors_are_still_reported(self) -> None:
+        for exc in (ConnectionRefusedError(), ValueError("boom")):
+            self.assertIn(type(exc).__name__, self.handle(exc))
 
 
-class ServerTimeout(unittest.TestCase):
+class InProcessServer(unittest.TestCase):
+    """Runs serve.run in a thread, as the idle and noise tests need."""
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
@@ -629,6 +700,24 @@ class ServerTimeout(unittest.TestCase):
         self._server_thread.start()
         self.assertTrue(wait_until(lambda: self.ready is not None, 2), "server did not announce ready")
 
+
+class ServerResetNoise(InProcessServer):
+    def test_a_client_that_resets_mid_request_leaves_no_traceback_and_the_server_keeps_serving(self) -> None:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.start_server(None)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            for _ in range(3):
+                with socket.create_connection((host, int(port)), timeout=5) as sock:
+                    sock.sendall(b"GET /api/scenes HTTP/1.1\r\nHost: ")  # an unfinished request, then RST
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            time.sleep(0.5)
+            with urllib.request.urlopen(self.url + "api/scenes", timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+        self.assertNotIn("Traceback", err.getvalue())
+
+
+class ServerTimeout(InProcessServer):
     def test_idle_expiry_uses_seconds_level_timeout(self) -> None:
         started = time.monotonic()
         self.start_server(0.4)
@@ -687,24 +776,37 @@ def wait_until(predicate, timeout: float) -> bool:
         time.sleep(0.01)
     return predicate()
 
-class ServerFixedPort(unittest.TestCase):
-    def test_a_fixed_port_is_reused_after_a_restart(self) -> None:
-        with socket.socket() as probe:
+def skill_launch_args() -> list[str]:
+    """The serve.py arguments of the managed launch command SKILL.md tells the lead to run."""
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    match = re.search(r"^\s*uv run --script \S+ cad-concept/scripts/serve\.py (.+)$", text, re.M)
+    assert match, "no serve.py launch command in the skill"
+    return shlex.split(match.group(1))
+
+
+class ServerLaunchWorkflow(unittest.TestCase):
+    def test_the_skill_launch_command_gives_the_same_url_and_no_idle_exit_across_restarts(self) -> None:
+        args = skill_launch_args()
+        self.assertIn("--port", args)
+        with socket.socket() as probe:  # the documented port may be taken on this host: swap in a free one
             probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        urls = []
+            free = probe.getsockname()[1]
+        args[args.index("--port") + 1] = str(free)
+        readies = []
         for _ in range(2):
             with tempfile.TemporaryDirectory() as tmp:
-                proc = subprocess.Popen([sys.executable, str(SERVE_PY), "--scene-dir", tmp, "--port", str(port),
-                                         "--cache-dir", str(Path(tmp) / "c")], stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True)
+                launch = [a if a != "hw/concept" else tmp for a in args]
+                launch = [a if a != "." else tmp for a in launch]
+                proc = subprocess.Popen([sys.executable, str(SERVE_PY), *launch, "--cache-dir", str(Path(tmp) / "c")],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
                 try:
-                    urls.append(json.loads(proc.stdout.readline())["url"])
+                    readies.append(json.loads(proc.stdout.readline()))
                 finally:
                     proc.terminate()
                     proc.wait(timeout=5)
                     proc.stdout.close()
-        self.assertEqual(urls, [f"http://127.0.0.1:{port}/"] * 2)
+        self.assertEqual([r["url"] for r in readies], [f"http://127.0.0.1:{free}/"] * 2)
+        self.assertEqual([r["idle_timeout_min"] for r in readies], [0, 0])
 
 
 class ServerUsage(unittest.TestCase):

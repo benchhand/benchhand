@@ -42,6 +42,7 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
 import threading
 import time
@@ -83,6 +84,7 @@ CONTENT_TYPES = {
 MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 HEARTBEAT_S = 15.0
+CLIENT_DISCONNECTS = (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)
 LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
 
 
@@ -390,12 +392,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class QuietServer(ThreadingHTTPServer):
-    """A browser that closes a tab or reloads resets its socket; that is not a server fault."""
+    """A browser tab that closes mid-response is routine: no traceback for a client disconnect.
 
-    def handle_error(self, request: object, client_address: object) -> None:
-        if isinstance(sys.exc_info()[1], ConnectionError):
+    ConnectionRefusedError is also a ConnectionError but is not a client disconnect, so it stays reported.
+    """
+
+    def handle_error(self, request: socket.socket | tuple[bytes, socket.socket],
+                     client_address: tuple[str | bytes | bytearray, int]) -> None:
+        if isinstance(sys.exc_info()[1], CLIENT_DISCONNECTS):
             return
-        super().handle_error(request, client_address)  # type: ignore[arg-type]
+        super().handle_error(request, client_address)
 
 
 def default_cache_dir() -> Path:
@@ -492,8 +498,12 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
                         watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
                     if watcher.stopped:
                         return
-                print(json.dumps({"event": "stopped", "reason": "idle", "url": ready["url"]}), flush=True)
-                shutdown(signal.SIGTERM, None)
+                try:
+                    print(json.dumps({"event": "stopped", "reason": "idle", "url": ready["url"]}), flush=True)
+                except OSError:
+                    pass  # a reader that went away must not keep the server running
+                finally:
+                    shutdown(signal.SIGTERM, None)
                 return
 
         threading.Thread(target=stop_when_idle, daemon=True, name="idle-timeout").start()
