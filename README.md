@@ -304,7 +304,7 @@ The assembly drawing sheet (VSE-ASM) lists the five items with their quantities 
 
 ### 9. Analysis
 
-The first 720° sweep on v1 found six collisions between the crankshaft and the rods. The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. Its between-sample check is incomplete, and the record says so.
+The first 720° sweep on v1 found six collisions between the crankshaft and the rods. The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. That is partial evidence only. The sweep excludes the 19 pairs that a joint connects, enforces no pair minima, and leaves the between-sample check incomplete. REQ-001 therefore reads `not_assessed` in `verification.csv`. The example README tracks this gap as benchhand-c7q.10.
 
 ![The crank turning through 720 degrees](docs/images/v6-engine/04-motion-sweep.gif)
 
