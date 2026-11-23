@@ -15,7 +15,9 @@ release-please does not bump all three on a release. Claude reads `plugin.json` 
 
 from __future__ import annotations
 
+import copy
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -23,7 +25,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BUMP = Path(__file__).with_name("release_please_bump.cjs")
+CONFIG = ROOT / "release-please-config.json"
+TOOLS = Path(__file__).with_name("release_tools")
 
 # The release-please that the pinned action (googleapis/release-please-action v5.0.0, see
 # .github/workflows/release-please.yml) bundles. Its log line reads "release-please version 17.6.0".
@@ -63,17 +66,24 @@ def load(relative: str) -> dict[str, object]:
     return parse((ROOT / relative).read_text(encoding="utf-8"))
 
 
-def versions(files: dict[str, dict[str, object]]) -> dict[str, str]:
-    """The version each versioned manifest declares, by the same rule as `VERSIONED`."""
+def marketplace_entry(marketplace: dict[str, object]) -> dict[str, object]:
+    """The one plugin entry named `MARKETPLACE_ENTRY`, wherever it sits in the list."""
     entries = [
-        as_object(entry)
-        for entry in as_list(files[".claude-plugin/marketplace.json"]["plugins"])
-        if as_object(entry)["name"] == MARKETPLACE_ENTRY
+        entry
+        for entry in map(as_object, as_list(marketplace["plugins"]))
+        if entry["name"] == MARKETPLACE_ENTRY
     ]
     assert len(entries) == 1, entries
+    return entries[0]
+
+
+def versions(files: dict[str, dict[str, object]]) -> dict[str, str]:
+    """The version each versioned manifest declares, by the same rule as `VERSIONED`."""
     return {
         ".claude-plugin/plugin.json": as_str(files[".claude-plugin/plugin.json"]["version"]),
-        ".claude-plugin/marketplace.json": as_str(entries[0]["version"]),
+        ".claude-plugin/marketplace.json": as_str(
+            marketplace_entry(files[".claude-plugin/marketplace.json"])["version"]
+        ),
         "package.json": as_str(files["package.json"]["version"]),
     }
 
@@ -95,56 +105,73 @@ class ReleaseVersionTests(unittest.TestCase):
         self.assertEqual(current, dict.fromkeys(VERSIONED, release))
 
 
+def with_version(files: dict[str, dict[str, object]], version: str) -> dict[str, dict[str, object]]:
+    """A copy of `files` in which only the three versions the release must change are replaced."""
+    changed = copy.deepcopy(files)
+    changed[".claude-plugin/plugin.json"]["version"] = version
+    marketplace_entry(changed[".claude-plugin/marketplace.json"])["version"] = version
+    changed["package.json"]["version"] = version
+    return changed
+
+
 class ReleaseRunTests(unittest.TestCase):
-    """Runs the pinned release-please on this repository's config and checks what it would write."""
+    """Runs the pinned release-please on a repository's config and checks what it would write.
+
+    The tools install from the committed lockfile with `npm ci`, so the run uses exactly the
+    release-please that the lockfile resolves, with every dependency checked against its integrity
+    hash. CI provisions Node (`.github/workflows/ci.yml`); there a missing tool fails the test, as a
+    skip would hide a release that no longer bumps a manifest.
+    """
 
     install: Path
-    scratch: tempfile.TemporaryDirectory[str]
 
     @classmethod
     def setUpClass(cls) -> None:
         node, npm = shutil.which("node"), shutil.which("npm")
         if node is None or npm is None:
+            if os.environ.get("CI"):
+                raise AssertionError("node and npm are required in CI to run the pinned release-please")
             raise unittest.SkipTest("node and npm are needed to run the pinned release-please")
-        cls.scratch = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(cls.scratch.cleanup)
-        cls.install = Path(cls.scratch.name)
+        scratch = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(scratch.cleanup)
+        cls.install = Path(scratch.name)
+        for name in ("package.json", "package-lock.json"):
+            shutil.copy(TOOLS / name, cls.install / name)
         subprocess.run(
-            [npm, "install", "--prefix", str(cls.install), "--no-audit", "--no-fund",
-             "--ignore-scripts", f"release-please@{RELEASE_PLEASE}"],
-            check=True, capture_output=True, text=True, timeout=300,
+            [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+            cwd=cls.install, check=True, capture_output=True, text=True, timeout=300,
         )
 
-    def release(self, version: str) -> dict[str, dict[str, object]]:
+    def release(self, root: Path, version: str) -> dict[str, dict[str, object]]:
         done = subprocess.run(
-            ["node", str(BUMP), str(self.install), str(ROOT), version],
+            ["node", str(TOOLS / "bump.cjs"), str(self.install), str(root), version],
             check=True, capture_output=True, text=True, timeout=120,
         )
-        written = parse(done.stdout)
-        return {path: parse(as_str(content)) for path, content in written.items()}
+        return {path: parse(as_str(content)) for path, content in parse(done.stdout).items()}
 
-    def test_a_release_bumps_all_three_manifests(self) -> None:
-        files = self.release("9.9.9")
-        self.assertEqual(sorted(files), sorted(VERSIONED))
-        self.assertEqual(versions(files), dict.fromkeys(VERSIONED, "9.9.9"))
+    def test_the_lockfile_resolves_the_pinned_release_please(self) -> None:
+        installed = parse((self.install / "node_modules/release-please/package.json").read_text(encoding="utf-8"))
+        self.assertEqual(installed["version"], RELEASE_PLEASE)
 
-    def test_a_release_changes_only_the_version_fields(self) -> None:
-        files = self.release("9.9.9")
-        for relative in VERSIONED:
-            with self.subTest(manifest=relative):
-                before = load(relative)
-                after = files[relative]
-                self.assertEqual(before.keys(), after.keys())
-                if relative == ".claude-plugin/marketplace.json":
-                    self.assertEqual(
-                        {k: v for k, v in before.items() if k != "plugins"},
-                        {k: v for k, v in after.items() if k != "plugins"},
-                    )
-                else:
-                    self.assertEqual(
-                        {k: v for k, v in before.items() if k != "version"},
-                        {k: v for k, v in after.items() if k != "version"},
-                    )
+    def test_a_release_rewrites_exactly_the_three_versions(self) -> None:
+        before = {relative: load(relative) for relative in VERSIONED}
+        after = self.release(ROOT, "9.9.9")
+        self.assertEqual(after, with_version(before, "9.9.9"))
+
+    def test_a_release_bumps_benchhand_when_another_plugin_is_listed_first(self) -> None:
+        files = {relative: load(relative) for relative in VERSIONED}
+        marketplace = files[".claude-plugin/marketplace.json"]
+        other = {"name": "other", "version": "1.0.0", "source": "./other"}
+        marketplace["plugins"] = [other, *as_list(marketplace["plugins"])]
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            shutil.copy(CONFIG, root / CONFIG.name)
+            for relative, document in files.items():
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text(json.dumps(document, indent=2), encoding="utf-8")
+            after = self.release(root, "9.9.9")
+        self.assertEqual(after, with_version(files, "9.9.9"))
+        self.assertEqual(as_list(after[".claude-plugin/marketplace.json"]["plugins"])[0], other)
 
 
 class ManifestPathTests(unittest.TestCase):
@@ -157,7 +184,7 @@ class ManifestPathTests(unittest.TestCase):
 
     def test_marketplace_plugin_source_is_the_repository_root(self) -> None:
         marketplace = load(".claude-plugin/marketplace.json")
-        plugin = as_object(as_list(marketplace["plugins"])[0])
+        plugin = marketplace_entry(marketplace)
         self.assertEqual(plugin["name"], load(".claude-plugin/plugin.json")["name"])
         self.assertEqual((ROOT / as_str(plugin["source"])).resolve(), ROOT)
 

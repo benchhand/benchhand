@@ -4,7 +4,7 @@
 
 // Runs the pinned release-please implementation on this repository's config and prints what a
 // release to NEW_VERSION would write into each `extra-files` manifest, as JSON {path: new content}.
-// Usage: node release_please_bump.cjs <release-please install dir> <repo root> <new version>
+// Usage: node bump.cjs <release-please install dir> <repo root> <new version>
 // It builds the same `simple` strategy the action builds from release-please-config.json and
 // reads the file contents from the work tree instead of the GitHub API.
 
