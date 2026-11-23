@@ -30,8 +30,8 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 EXAMPLE_HW = REPO / "examples" / "v6-engine" / "hw"
 CLI = HERE.parents[1] / "cad-model" / "scripts" / "cad_model.py"
-sys.path.insert(0, str(REPO / "scripts"))
-from modload import result_payload  # noqa: E402
+sys.path.insert(0, str(REPO / "scripts"))  # modload lives in scripts/, which is no package: the path must exist before the import
+from modload import result_payload  # noqa: E402  (late import on purpose: E402 flags it because of the sys.path line above)
 
 CRANK_AXIS = (1.0, 0.0, 0.0)
 CYLINDERS = range(1, 7)
@@ -42,10 +42,6 @@ GENERATED = ("versions", "checks", "motion", "renders", "drawings", ".cad", "ana
 
 def load_assembly() -> dict:
     return yaml.safe_load((EXAMPLE_HW / "assembly.yaml").read_text(encoding="utf-8"))
-
-
-def dot(a: list[float], b: tuple[float, ...] | list[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
 
 
 class JointAxisTests(unittest.TestCase):
@@ -66,13 +62,13 @@ class JointAxisTests(unittest.TestCase):
             joint = self.joints[f"J-1{n:02d}"]
             with self.subTest(cylinder=n):
                 self.assertEqual(joint["type"], "prismatic")
-                self.assertAlmostEqual(math.sqrt(dot(joint["axis"], joint["axis"])), 1.0, places=9)
-                self.assertAlmostEqual(dot(joint["axis"], CRANK_AXIS), 0.0, places=9)  # perpendicular to the crank axis
+                self.assertAlmostEqual(math.sqrt(math.sumprod(joint["axis"], joint["axis"])), 1.0, places=9)
+                self.assertAlmostEqual(math.sumprod(joint["axis"], CRANK_AXIS), 0.0, places=9)  # perpendicular to the crank axis
 
     def test_the_banks_form_a_60_degree_v(self) -> None:
         axes = {n: self.joints[f"J-1{n:02d}"]["axis"] for n in CYLINDERS}
         right, left = axes[1], axes[2]
-        angle = math.degrees(math.acos(dot(right, left)))
+        angle = math.degrees(math.acos(math.sumprod(right, left)))
         self.assertAlmostEqual(angle, 60.0, places=6)
         for n in (3, 5):
             self.assertEqual(axes[n], right)
