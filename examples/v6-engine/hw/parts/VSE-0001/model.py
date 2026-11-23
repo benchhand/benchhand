@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""V6E-0001 Crankcase and V block: CadQuery 2.8, 60 degree V, three cylinders per bank.
+"""VSE-0001 Crankcase and V block: CadQuery 2.8, 60 degree V, three cylinders per bank.
 
 Zero pose, assembly coordinates: the crank axis is the X axis through the origin; the V opens toward +Z. Each bank
 axis n = (0, -sin b, cos b) is the +Z axis turned about +X by the bank angle b = -30 degrees (right bank, odd

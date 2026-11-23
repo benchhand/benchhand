@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""V6E-0003 Wrist pin: CadQuery 2.8, part_local frame, placed in six occurrences. Axis along Y, centred on the origin."""
+"""VSE-0003 Wrist pin: CadQuery 2.8, part_local frame, placed in six occurrences. Axis along Y, centred on the origin."""
 
 import cadquery as cq
 

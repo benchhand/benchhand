@@ -1,10 +1,10 @@
-PN: V6E-0004
+PN: VSE-0002
 rev: X1
-title: Connecting rod
+title: Piston
 material: ASA
 process: fdm
 finish: Deburr; no sharp edges
-mass_target: 4
+mass_target: 6
 make_buy: make
 supplier: null
 decisions: [DR-002]

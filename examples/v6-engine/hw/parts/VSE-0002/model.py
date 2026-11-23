@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""V6E-0002 Piston: CadQuery 2.8, part_local frame, placed in six occurrences.
+"""VSE-0002 Piston: CadQuery 2.8, part_local frame, placed in six occurrences.
 
 Local frame: the wrist pin axis is the X axis through the origin; the cylinder axis is +Z with the crown at +z.
 A slot through the skirt along X leaves room for the rod's small end.

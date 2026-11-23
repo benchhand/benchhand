@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""V6E-0004 Connecting rod: CadQuery 2.8, part_local frame, placed in six occurrences.
+"""VSE-0004 Connecting rod: CadQuery 2.8, part_local frame, placed in six occurrences.
 
 Local frame: the small end (wrist pin) axis is the Y axis through the origin; the big end (crank pin) axis is
 parallel to it at z = -rod_length. The rod is a flat web 8 mm thick along Y with an I-section lightening on both faces.

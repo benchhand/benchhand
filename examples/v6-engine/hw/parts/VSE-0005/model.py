@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""V6E-0005 Crankshaft: CadQuery 2.8, assembly_zero frame, one occurrence.
+"""VSE-0005 Crankshaft: CadQuery 2.8, assembly_zero frame, one occurrence.
 
 Zero pose: the crank axis is the X axis through the origin. Three throws at x = -pitch, 0, +pitch; the crank-pin
 angle alpha is measured in the YZ plane from +Y toward +Z, so the pin sits at (x, R cos a, R sin a). Each pin
