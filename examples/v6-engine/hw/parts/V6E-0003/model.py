@@ -13,4 +13,4 @@ PARAMS = {"d": 5.996, "length": 20.0}  # 6 g6 upper deviation -0.004; the piston
 def build(params: dict) -> cq.Shape:
     p = {**PARAMS, **params}
     pin = cq.Workplane("XZ").circle(p["d"] / 2.0).extrude(p["length"] / 2.0, both=True)
-    return pin.faces("|Y").chamfer(0.3).val()
+    return pin.faces("|Y").chamfer(0.3).rotate((0, 0, 0), (0, 0, 1), 90).val()  # pin axis X

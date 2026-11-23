@@ -37,4 +37,4 @@ def build(params: dict) -> cq.Shape:
         body = safe_cut(body, pocket)
     body = safe_cut(body, cq.Workplane("XZ").circle(p["small_bore_d"] / 2.0).extrude(t, both=True))
     body = safe_cut(body, cq.Workplane("XZ").center(0, -length).circle(p["big_bore_d"] / 2.0).extrude(t, both=True))
-    return body.val()
+    return body.rotate((0, 0, 0), (0, 0, 1), 90).val()  # wrist axis X, rod swing plane YZ

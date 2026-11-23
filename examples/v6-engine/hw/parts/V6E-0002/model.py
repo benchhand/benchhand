@@ -4,7 +4,7 @@
 
 """V6E-0002 Piston: CadQuery 2.8, part_local frame, placed in six occurrences.
 
-Local frame: the wrist pin axis is the Y axis through the origin; the cylinder axis is +Z with the crown at +z.
+Local frame: the wrist pin axis is the X axis through the origin; the cylinder axis is +Z with the crown at +z.
 A slot through the skirt along X leaves room for the rod's small end.
 """
 
@@ -29,4 +29,4 @@ def build(params: dict) -> cq.Shape:
     slot = cq.Workplane("XY").box(p["d"] + 2.0, p["slot_w"], p["slot_top"] + p["skirt_h"] + 1.0, centered=(True, True, False))
     body = safe_cut(body, slot.translate((0, 0, -p["skirt_h"] - 1.0)))
     bore = cq.Workplane("XZ").circle(p["pin_bore_d"] / 2.0).extrude(p["d"], both=True)
-    return safe_cut(body, bore).val()
+    return safe_cut(body, bore).rotate((0, 0, 0), (0, 0, 1), 90).val()  # pin axis X, rod swing plane YZ
