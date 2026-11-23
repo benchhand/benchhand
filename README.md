@@ -215,6 +215,128 @@ python3 "$BENCHHAND/harness/install.py" --harness all --project . \
 
 A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:` prefix and a `provider/model[#variant]` value, and never gets `model: inherit`. Rendering adds `model: "<m>"` to Claude (instead of `inherit`) and OpenCode, `model = "<m>"` to Codex, and `"model"` to Kiro. A tier with no entry adds no model line, so a default install matches the committed profiles. `--tier-model` needs PyYAML.
 
+<!-- slopvac-allow: rule=prose-promotion.promotional-verbs reason=domain-term -->
+## Showcase
+
+[`examples/v6-engine`](examples/v6-engine/README.md) takes a 3D-printable desktop V6 engine through the flow, from the project-start questions to a release attempt. The scope is small: one rod, one piston and one pin, each placed six times on a 60° V. The example leaves out the heads and the cam drive. Its record lives in `examples/v6-engine/hw`, and every number below comes from real tool output.
+
+```mermaid
+flowchart LR
+  G[1 Ground] --> I[2 Intent] --> S[3 Specify] --> C[4 Concept] --> L[5 Layout]
+  L --> P[6 Parts] --> D[7 Detail] --> B[8 BOM] --> A[9 Analysis] --> K[10 Critique] --> R[11 Release]
+```
+
+Beats: [1 Ground](#1-ground) · [2 Intent](#2-intent) · [3 Specify](#3-specify) · [4 Concept](#4-concept) · [5 Layout](#5-layout) · [6 Parts](#6-parts) · [7 Detail](#7-detail) · [8 BOM](#8-bom) · [9 Analysis](#9-analysis) · [10 Critique](#10-critique) · [11 Release](#11-release)
+
+The viewer steps the crank through the default motion plan and lists the parts and the check result beside the model:
+
+![The OCP viewer stepping the crank through the default motion plan](docs/images/v6-engine/12-viewer-parts-and-findings.gif)
+
+### 1. Ground
+
+The use case stays `unknown` where nobody has answered. These fields each point at an open question (Q-001 to Q-011) instead of a guess:
+
+- service class
+- loads
+- environment and life
+
+```yaml
+use_case:
+  status: unknown
+  service_class: {status: unknown, reason: not recorded yet, question: Q-001}
+```
+
+### 2. Intent
+
+The user confirmed two decisions on 2026-11-23. DR-001 records the project-start answers in `flow.profile`: FEA on, stack-up on, critique full, results out of git. DR-002 prints every custom part in ASA on a Bambu H2D class printer. It names no filament grade, so the material profile holds no sourced properties.
+
+### 3. Specify
+
+Six requirements each carry a verification method. REQ-001 asks the crank to turn through 720° with all six pistons moving and no pair touching. The wrist pin and the bearing seats take ISO 286 fits from `fits.py`. The 6 H7/g6 pin fit gives 4 to 24 µm clearance, and the 14 H7/f7 seat gives 16 to 52 µm.
+
+### 4. Concept
+
+Three three.js variants, compared against the requirements before any CAD.
+
+![Three concept variants](docs/images/v6-engine/01-concept-variants.png)
+
+### 5. Layout
+
+The first build places one definition of each part six times. One crank drives them through a slider-crank coupling in `assembly.yaml`. The commit-time check on v4 found a real overlap:
+
+```text
+piston-1 / rod-1   clearance 0.000 mm   interference 99.12 mm3   ok: false
+```
+
+The rod's small end (radius 6 mm) was wider than the piston slot. The 720° sweep skips pairs that a joint connects, so only the commit check saw the overlap. The example README tracks this gap as benchhand-c7q.10. Version v5 widened the slot.
+
+![Assembly, exploded](docs/images/v6-engine/03-assembly-exploded.webp)
+
+### 6. Parts
+
+The F2 form check tests the FDM wall rule against the 1.2 mm guideline. On v3 it measured 1.001 mm at the crankcase window and 0.994 mm in the piston, and both failed. Version v4 passes both. The remaining findings are unknown obligations (orientation, supports, warp), not failures.
+
+![Crankshaft part view](docs/images/v6-engine/02-parts-crankshaft.webp)
+
+### 7. Detail
+
+The stack of the piston in its bore gives 0.30 to 0.65 mm against a 0.2 mm minimum. Still, `stackup.py` refuses to call the requirement met, because the limits are estimates with no calibrated printer behind them:
+
+```text
+stackup: requirement not established (worst_case)
+```
+
+The assembly drawing sheet (VSE-ASM) lists the five items with their quantities and shows the exploded pistons.
+
+![Assembly drawing sheet](docs/images/v6-engine/09-drawing-assembly-sheet.webp)
+
+### 8. BOM
+
+`bom.py` reconciles the roll-up against the v4 snapshot: five rows, 20 instances, no mismatches.
+
+| PN | Title | Qty |
+|---|---|---|
+| VSE-0001 | Crankcase and V block | 1 |
+| VSE-0005 | Crankshaft | 1 |
+| VSE-0002 | Piston | 6 |
+| VSE-0004 | Connecting rod | 6 |
+| VSE-0003 | Wrist pin | 6 |
+
+### 9. Analysis
+
+The first 720° sweep on v1 found six collisions between the crankshaft and the rods. The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. Its between-sample check is incomplete, and the record says so.
+
+![The crank turning through 720 degrees](docs/images/v6-engine/04-motion-sweep.gif)
+
+An exploratory static FEA of one rod gives a peak of 4.51 MPa. It assumes 100 N, an ASA yield of 40 MPa and one mesh. No retained solver bundle backs it, so REQ-004 reads `not_assessed` in `verification.csv`.
+
+### 10. Critique
+
+An independent read-only reviewer (session ses_df60a1580ffe9NEcW4amRF9JX5) ran the DFM and mechanical reviews at commit eb102786. Both returned MAJOR. DR-003 and DR-004 record them with status `proposed`:
+
+```text
+DFM-01 support_unplanned           major  UNKNOWN  REQ-005
+MECH-01 clearance.nominal_contact  major  FAIL     REQ-003
+MECH-04 stack.estimated_limits     major  UNKNOWN  REQ-001/003
+```
+
+MECH-01 was a real fail: the crank web faces sat on the block window walls, 0.000 mm apart. The window is now 2 mm wider on each side. The unknown findings stay open obligations. They need prints, gauging or the user's decision, and no disposition turns them into a pass.
+
+![The viewer with the parts tree and the check panel](docs/images/v6-engine/11-viewer-findings-panel.webp)
+
+### 11. Release
+
+The release is blocked, and the dry run shows why. `release.py hw --rev A --version v7 --decision DR-004` refuses with 19 findings. Four of them:
+
+```text
+release.decision  DR-004 has status proposed, not the user's approval (accepted)
+release.frozen    product.yaml has no flow.frozen; freeze a version first
+release.failed    VSE-0001 manufacturing is not a complete pass   (x5)
+release.missing   analysis case piston-bore has no result for v7
+```
+
+The human gates, the print orientations and the gauged fits wait for the user. `validate.py` passes on the record, and no release package is sealed.
+
 ## License
 
 Benchhand uses the [Mozilla Public License 2.0](LICENSE). Two files stay under the
