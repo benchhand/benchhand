@@ -325,7 +325,7 @@ def render_pi(agent: Agent, prompt: str, model: str | None) -> str:
     if agent.shell:
         # pi-subagents resolves a `../` path from the agent file: <scope>/agents/ -> <scope>/cad-guard/.
         fields.append(f"subagentOnlyExtensions: ../cad-guard/{agent.name}.js")
-    if agent.skills:  # pi-subagents reads an absent `skills` as none; a blank value is YAML null
+    if agent.skills:  # pi-subagents reads an absent `skills` as none. A blank value is YAML null.
         fields.append(f"skills: {', '.join(agent.skills)}")
     if model:
         fields.append(f"model: {json.dumps(model)}")
