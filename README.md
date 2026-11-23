@@ -223,7 +223,21 @@ A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:
 ```mermaid
 flowchart LR
   G[1 Ground] --> I[2 Intent] --> S[3 Specify] --> C[4 Concept] --> L[5 Layout]
-  L --> P[6 Parts] --> D[7 Detail] --> B[8 BOM] --> A[9 Analysis] --> K[10 Critique] --> R[11 Release]
+  L --> P[6 Parts] --> D[7 Detail] --> B[8 BOM] --> A[9 Analysis] --> K[10 Critique]
+  K -.-> RC[Reconcile: not reached] -.-> DF[Design Freeze: not reached] -.-> R[11 Release: provisional]
+  click G href "#1-ground"
+  click I href "#2-intent"
+  click S href "#3-specify"
+  click C href "#4-concept"
+  click L href "#5-layout"
+  click P href "#6-parts"
+  click D href "#7-detail"
+  click B href "#8-bom"
+  click A href "#9-analysis"
+  click K href "#10-critique"
+  click R href "#11-release"
+  classDef open stroke-dasharray: 5 5
+  class RC,DF,R open
 ```
 
 Beats: [1 Ground](#1-ground) · [2 Intent](#2-intent) · [3 Specify](#3-specify) · [4 Concept](#4-concept) · [5 Layout](#5-layout) · [6 Parts](#6-parts) · [7 Detail](#7-detail) · [8 BOM](#8-bom) · [9 Analysis](#9-analysis) · [10 Critique](#10-critique) · [11 Release](#11-release)
