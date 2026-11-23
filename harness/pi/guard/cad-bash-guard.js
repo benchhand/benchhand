@@ -14,7 +14,7 @@
 // what uv installs or runs. Script arguments after the script are the script's own.
 const PREFIX = /^uv[ \t]+run[ \t]+--script[ \t]+("?)\$CAD_SKILLS\/([A-Za-z0-9_.\/-]+\.py)\1(?=[ \t]|$)/;
 const REASON =
-  "CAD agents may run only a single `uv run --script "$CAD_SKILLS/<script>.py" ...` command per shell call, with no other uv option: " +
+  "CAD agents may run only a single `uv run --script $CAD_SKILLS/<script>.py ...` command per shell call, with no other uv option: " +
   "no pipes, redirects, `;`, `&&`, `||`, `&`, subshells, command substitution, " +
   "newlines or environment prefixes.";
 
