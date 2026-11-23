@@ -38,7 +38,7 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
      ```
 
      Choose `claude`, `codex`, `opencode`, `kiro` or `all`. Run the installer from the project that you want to design in, or pass `--project DIR`. If you cloned elsewhere, set `BENCHHAND` to that path.
-   - After #327 merges, Codex also installs with `codex plugin marketplace add benchhand/benchhand`, and pi with `pi install git:github.com/benchhand/benchhand`. Until then, use the copy installer for both.
+   - Codex CLI and pi get their own routes in #327, once a release carries it. `codex plugin marketplace add benchhand/benchhand` only registers the marketplace; install the plugin from it afterwards. Until then, use the copy installer for Codex. pi has no copy route: `install.py` has no `pi` harness, so wait for a release that documents `pi install`.
 3. Start the flow in the project and describe the product:
    - Claude Code plugin: `/benchhand:cad-flow`.
    - Installer route: `/cad-flow` in Claude Code, OpenCode and Kiro (V3), or `$cad-flow` in Codex.
@@ -68,7 +68,7 @@ Codex CLI reads the same marketplace: `codex plugin marketplace add benchhand/be
 
 ## Start and prepare a project
 
-In an interactive Claude Code or OpenCode chat, start with `/cad-flow`. For interactive Kiro, use `/cad-flow` in a V3 session (`kiro-cli chat --v3`). In Codex CLI, invoke the skill with `$cad-flow` or select it from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
+Start the flow with the command from step 3 of the quick start. For interactive Kiro, use a V3 session (`kiro-cli chat --v3`). In Codex CLI, you can also select `cad-flow` from `/skills`. Describe the product or ask to continue the existing design record. For example: `Take this desk lamp arm from concept through a verified CAD release.`
 
 The agent resolves `$CAD_SKILLS` itself, as the parent of the skill folder. You set it only when you run a script by hand. See [`CAD_SKILLS`](docs/reference.md#cad_skills) for the directory of each harness.
 

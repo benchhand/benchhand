@@ -35,15 +35,22 @@ Run `preflight.py --warm`. It installs Chromium through Playwright and warms the
 ## A build is refused
 
 - Exit 2 from `cad_model.py run` or `stamp.py --verify` means no result. Read the stderr reason, fix it and run again. For `stamp.py`, do not commit.
-- A missing or unapproved `flow.profile` blocks from SPECIFY on. List the questions, ask the user, then record the answers in one call. `--hw` and `--decision` are required, and every applicable question needs an answer or `--accept-default`:
+- A missing or unapproved `flow.profile` blocks from SPECIFY on. Get the user's approval first: `record` writes the decision as `accepted` at once, so run it only after the user has answered. Show the user the questions:
 
   ```sh
   uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" questions
-  uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" record --hw hw --decision DR-004 \
-    --human-approval all --fea off --stack-up auto --critique full --results-in-git no
   ```
 
-  Add the FDM options (`--orientation`, `--supports` and the rest) for a project with an FDM part. `record --help` lists all options. The decision becomes `accepted` only on the user's approval. `flow_profile.py check --hw hw` reports what still blocks.
+  `record` exits 2 and records nothing unless every one of its 16 options is answered or listed in `--accept-default`, FDM options included, whatever the parts are. `--hw` and `--decision` are required. This call answers the five general questions and accepts the default of the other eleven:
+
+  ```sh
+  uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" record --hw hw --decision DR-004 \
+    --human-approval all --fea off --stack-up auto --critique full --results-in-git no \
+    --accept-default orientation supports overhang-deg bridge-mm min-wall-mm min-feature-mm \
+      warp cosmetic-faces print-in-place pip-clearance-xy pip-clearance-z
+  ```
+
+  Answer an option instead of accepting its default with its flag, such as `--supports free`. An option is never both answered and accepted. `record --help` lists the values. `flow_profile.py check --hw hw` reports what still blocks.
 - A record that is not version 2 is refused.
 
 ## A script's output is not JSON

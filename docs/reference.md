@@ -66,7 +66,8 @@ When you run a script by hand, set it to the directory that holds the `cad-*` fo
 
 Results for an evidence obligation (`skills/cad-record/scripts/evidence.py`, `RESULTS`): `pass`, `fail`, `waived`, `not_applicable`, `not_assessed`, `stale`, `planned`, `unknown`. Only `pass`, `waived` and `not_applicable` resolve an obligation.
 
-- Severity order when results combine: `fail` over `unknown` over `not_assessed` over `pass`.
+- Within one obligation, the status comes from all its evidence (`_best` in `evidence.py`). A current `fail` stands, or becomes `waived` under a valid waiver. Otherwise a current `pass`, `waived` or `not_applicable` outranks `not_assessed`, `stale`, `planned` and `unknown`. `not_assessed` beside an explicit `unknown` stays `unknown`.
+- Across a set of results, the worst one reports (`_worst`): `fail`, `stale`, `unknown`, `planned`, `not_assessed`, `waived`, `pass`, `not_applicable`. A producer packet is not evidence for one obligation; the first rule decides each obligation.
 - A known `fail` blocks at a stage gate whenever it is known, due or not.
 - An obligation is due at its own stage. From the design freeze on, every obligation is due.
 - Before LAYOUT, an unresolved due obligation is a warning. From LAYOUT on it is an error.
