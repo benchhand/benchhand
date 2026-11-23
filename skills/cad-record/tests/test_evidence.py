@@ -936,7 +936,7 @@ class SelectionGate(unittest.TestCase):
         """No machine recorded is a note, not a blocking unknown: the shipped guideline values govern the FDM route."""
         docs = scenarios.qualified_polymer_cover()
         printed = next(c for c in docs["manufacturing/selection.yaml"]["candidates"] if c["id"] == "printed_cover")
-        del printed["parts"][0]["route"][0]["capability"]
+        printed["parts"][0]["route"][0]["capability"] = fx.unknown("no machine named")
         docs, digest = recorded(docs, primary="printed_cover")
         for stage in ("intent", "layout", "design_freeze", "release"):
             self.assertEqual(self.gate(docs, digest, stage), [], stage)

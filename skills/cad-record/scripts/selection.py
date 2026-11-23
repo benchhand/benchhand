@@ -234,10 +234,14 @@ def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = fr
                      tuple(raw.get("evaluations") or ()), raw)
 
 
-def input_digest(documents: Mapping[str, Any]) -> str:
+def input_digest(documents: Mapping[str, Any], *, calibration: bool | None = None) -> str:
     """The sha256 of the record inputs a selection reads (DIGEST_SCOPE), as canonical JSON of the parsed
-    documents, so comments and formatting do not count. selection.yaml assessment.input_sha256 records it."""
+    documents, so comments and formatting do not count. selection.yaml assessment.input_sha256 records it.
+    The effective calibration flag (`calibration`; None reads CAD_CALIBRATION once) is an input too: it can change the
+    winning candidate, so an assessment made under the other setting is stale."""
     scoped: dict[str, Any] = {}
+    if guidelines.calibration_enabled() if calibration is None else calibration:
+        scoped["calibration"] = True  # absent when off, so an assessment recorded before the flag keeps its digest
     product = documents.get("product.yaml")
     if isinstance(product, Mapping):
         scoped["product.yaml#use_case"] = product.get("use_case")
@@ -551,8 +555,9 @@ class _Assessed:
 class _Assessor:
     """One selection pass over a normalized record. Pure: it reads the record and returns the report."""
 
-    def __init__(self, record: Any) -> None:
+    def __init__(self, record: Any, calibration: bool) -> None:
         self.record = record
+        self.calibration = calibration  # the flag, resolved once by `assess`; no check reads the environment
         use_case = record.use_case
         self.service = use_case.service_class.value if use_case.service_class.known else None
         temperature = use_case.facts.get("environment.temperature")
@@ -664,7 +669,7 @@ class _Assessor:
         method = f"{where}: capability profile"
         not_assumed = "unavailable tooling is never assumed"
         if not isinstance(step.capability, str) and step.kind in guidelines.GUIDELINE_PROCESSES \
-                and not guidelines.calibration_enabled():
+                and not self.calibration:
             # No machine is recorded and calibration is off: the shipped guideline values govern, so the missing machine
             # is a note. It is not a pass, and it is no proof that a machine exists.
             return [Evaluation("capability", True, "not_assessed", subject, method,
@@ -1233,11 +1238,13 @@ _CONTRADICTIONS = frozenset({"selection.recorded_recommendation_eliminated", "se
                              "selection.final_unsupported"})
 
 
-def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: str | None = None) -> dict[str, Any]:
+def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: str | None = None,
+           calibration: bool | None = None) -> dict[str, Any]:
     """The deterministic, JSON-ready selection report of a normalized record (manufacturing_intent.Record).
     `problems` are the record's problems (default record.problems); an error
     makes the report invalid, and nothing is compared on invalid input. A valid
     report's `coverage` names the record's made parts and those no candidate covers (see `_coverage`)."""
+    calibration = guidelines.calibration_enabled() if calibration is None else calibration  # read once, here
     problems = list(record.problems if problems is None else problems)
     assessment = mi.assess_use_case(record)
     findings = _Findings()
@@ -1269,7 +1276,7 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
         if _dropped_findings(findings, report, dropped):
             report["status"] = "blocked"
         return report
-    assessor = _Assessor(record)
+    assessor = _Assessor(record, calibration)
     statuses = []
     for group in _groups(candidates):
         decision = _decision(assessor, group, assessment, findings)
@@ -1781,7 +1788,8 @@ def assess_hw(hw: Path) -> dict[str, Any]:
     documents, problems = mi.read_documents(hw)
     record = mi.normalize_record(documents, hw=hw)
     problems = [*problems, *mi.schema_problems(documents), *record.problems]
-    return assess(record, problems=problems, input_sha256=input_digest(documents))
+    calibration = guidelines.calibration_enabled()
+    return assess(record, problems=problems, input_sha256=input_digest(documents, calibration=calibration), calibration=calibration)
 
 
 def exit_status(report: Mapping[str, Any]) -> int:
