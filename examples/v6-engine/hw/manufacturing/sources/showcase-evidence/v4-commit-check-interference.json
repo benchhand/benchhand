@@ -1,0 +1,102 @@
+{
+  "source": "cad_model.py check v4 --changed-only, run by evidence.py run --scope commit (stage output static.changed.out)",
+  "version": "v4",
+  "interfering_pairs": [
+    {
+      "pair": [
+        "piston-1",
+        "rod-1"
+      ],
+      "refs": [
+        "@piston-1",
+        "@rod-1"
+      ],
+      "clearance_mm": 4.965068306493846e-16,
+      "interference_mm3": 99.11942656357806,
+      "method": "exact",
+      "interferes": true,
+      "allowed": false,
+      "ok": false
+    },
+    {
+      "pair": [
+        "piston-2",
+        "rod-2"
+      ],
+      "refs": [
+        "@piston-2",
+        "@rod-2"
+      ],
+      "clearance_mm": 6.280369834735101e-16,
+      "interference_mm3": 99.11942656358369,
+      "method": "exact",
+      "interferes": true,
+      "allowed": false,
+      "ok": false
+    },
+    {
+      "pair": [
+        "piston-3",
+        "rod-3"
+      ],
+      "refs": [
+        "@piston-3",
+        "@rod-3"
+      ],
+      "clearance_mm": 9.930136612989092e-16,
+      "interference_mm3": 99.11942656357742,
+      "method": "exact",
+      "interferes": true,
+      "allowed": false,
+      "ok": false
+    },
+    {
+      "pair": [
+        "piston-4",
+        "rod-4"
+      ],
+      "refs": [
+        "@piston-4",
+        "@rod-4"
+      ],
+      "clearance_mm": 9.930136612989092e-16,
+      "interference_mm3": 99.11942656357742,
+      "method": "exact",
+      "interferes": true,
+      "allowed": false,
+      "ok": false
+    },
+    {
+      "pair": [
+        "piston-5",
+        "rod-5"
+      ],
+      "refs": [
+        "@piston-5",
+        "@rod-5"
+      ],
+      "clearance_mm": 6.280369834735101e-16,
+      "interference_mm3": 99.11942656358369,
+      "method": "exact",
+      "interferes": true,
+      "allowed": false,
+      "ok": false
+    },
+    {
+      "pair": [
+        "piston-6",
+        "rod-6"
+      ],
+      "refs": [
+        "@piston-6",
+        "@rod-6"
+      ],
+      "clearance_mm": 4.965068306493846e-16,
+      "interference_mm3": 99.11942656357806,
+      "method": "exact",
+      "interferes": true,
+      "allowed": false,
+      "ok": false
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "source": "release.py hw --rev A --version v7 --decision DR-004 (exit 1; nothing written)",
+  "version": "v7",
+  "finding_count": 19,
+  "findings": [
+    {
+      "code": "release.decision",
+      "path": "hw/decisions/DR-004-mechanical-review-of-the-v6-engine-at-v5.md",
+      "message": "DR-004 has status proposed, not the user's approval (accepted); record the user's release approval as a decision with `status: accepted`"
+    },
+    {
+      "code": "release.frozen",
+      "path": "hw/product.yaml",
+      "message": "product.yaml has no flow.frozen; freeze a version first"
+    },
+    {
+      "code": "release.failed",
+      "path": "hw/versions/v7/manufacturing/VSE-0001/manufacturing.json",
+      "message": "VSE-0001 manufacturing is not a complete pass"
+    },
+    {
+      "code": "release.failed",
+      "path": "hw/versions/v7/manufacturing/VSE-0002/manufacturing.json",
+      "message": "VSE-0002 manufacturing is not a complete pass"
+    },
+    {
+      "code": "release.failed",
+      "path": "hw/versions/v7/manufacturing/VSE-0003/manufacturing.json",
+      "message": "VSE-0003 manufacturing is not a complete pass"
+    },
+    {
+      "code": "release.failed",
+      "path": "hw/versions/v7/manufacturing/VSE-0004/manufacturing.json",
+      "message": "VSE-0004 manufacturing is not a complete pass"
+    },
+    {
+      "code": "release.failed",
+      "path": "hw/versions/v7/manufacturing/VSE-0005/manufacturing.json",
+      "message": "VSE-0005 manufacturing is not a complete pass"
+    },
+    {
+      "code": "release.missing",
+      "path": "hw/analysis/v7/piston-bore",
+      "message": "hw/analysis/v7/piston-bore is missing: analysis case piston-bore has no result for v7"
+    },
+    {
+      "code": "release.missing",
+      "path": "hw/analysis/v7/rod-compression",
+      "message": "hw/analysis/v7/rod-compression is missing: analysis case rod-compression has no result for v7"
+    },
+    {
+      "code": null,
+      "path": "hw/verification.csv:3",
+      "message": "release verification result must be pass, waived or not_assessed"
+    },
+    {
+      "code": null,
+      "path": "hw/verification.csv:6",
+      "message": "release verification result must be pass, waived or not_assessed"
+    },
+    {
+      "code": null,
+      "path": "hw/verification.csv:7",
+      "message": "release verification result must be pass, waived or not_assessed"
+    },
+    {
+      "code": null,
+      "path": "hw/versions/v7/record/parts/VSE-0001/part.yaml",
+      "message": "release cannot include prototype revision X1 for VSE-0001"
+    },
+    {
+      "code": null,
+      "path": "hw/versions/v7/record/parts/VSE-0002/part.yaml",
+      "message": "release cannot include prototype revision X1 for VSE-0002"
+    },
+    {
+      "code": null,
+      "path": "hw/versions/v7/record/parts/VSE-0003/part.yaml",
+      "message": "release cannot include prototype revision X1 for VSE-0003"
+    },
+    {
+      "code": null,
+      "path": "hw/versions/v7/record/parts/VSE-0004/part.yaml",
+      "message": "release cannot include prototype revision X1 for VSE-0004"
+    },
+    {
+      "code": null,
+      "path": "hw/versions/v7/record/parts/VSE-0005/part.yaml",
+      "message": "release cannot include prototype revision X1 for VSE-0005"
+    },
+    {
+      "code": "release.stale",
+      "path": "hw/verification.csv:2",
+      "message": "REQ-001 evidence hw/motion/v6/engine-cycle belongs to v6, not the frozen v7"
+    },
+    {
+      "code": "release.missing",
+      "path": "hw/verification.csv:5",
+      "message": "REQ-004 evidence hw/analysis/vN does not exist"
+    }
+  ]
+}

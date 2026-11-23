@@ -1,0 +1,38 @@
+{
+  "source": "cad-design form_check.py --version v3 --fidelity F2 (packet findings, process.fdm.wall)",
+  "version": "v3",
+  "findings": [
+    {
+      "PN": "VSE-0001",
+      "code": "process.fdm.wall",
+      "outcome": "fail",
+      "severity": "major",
+      "measured": {
+        "value": 1.000785,
+        "units": "mm"
+      },
+      "criterion": {
+        "property": "wall_thickness",
+        "operator": ">=",
+        "value": 1.2,
+        "units": "mm"
+      }
+    },
+    {
+      "PN": "VSE-0002",
+      "code": "process.fdm.wall",
+      "outcome": "fail",
+      "severity": "major",
+      "measured": {
+        "value": 0.994,
+        "units": "mm"
+      },
+      "criterion": {
+        "property": "wall_thickness",
+        "operator": ">=",
+        "value": 1.2,
+        "units": "mm"
+      }
+    }
+  ]
+}

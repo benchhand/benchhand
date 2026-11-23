@@ -1,0 +1,97 @@
+{
+  "source": "cad-motion sweep.py --version v1 --case engine-cycle --steps 145 --grid 0 (result.json)",
+  "version": "v1",
+  "status": "fail",
+  "collision_pose_count": 145,
+  "poses": {
+    "evaluated": 145,
+    "planned": 145,
+    "steps_per_joint": 145,
+    "grid_per_joint": 0,
+    "movable_joints": [
+      "J-001",
+      "J-101",
+      "J-102",
+      "J-103",
+      "J-104",
+      "J-105",
+      "J-106",
+      "J-201",
+      "J-202",
+      "J-203",
+      "J-204",
+      "J-205",
+      "J-206"
+    ],
+    "independent_joints": [
+      "J-001"
+    ],
+    "dependent_joints": [
+      "J-101",
+      "J-102",
+      "J-103",
+      "J-104",
+      "J-105",
+      "J-106",
+      "J-201",
+      "J-202",
+      "J-203",
+      "J-204",
+      "J-205",
+      "J-206"
+    ],
+    "spacing": {
+      "J-001": 5.0
+    }
+  },
+  "first_collision_sample": {
+    "sample": 0,
+    "independent_pose": {
+      "J-001": 0.0
+    },
+    "pairs": [
+      {
+        "pair": [
+          "VSE-0005",
+          "@rod-1"
+        ],
+        "volume_mm3": 152.8927
+      },
+      {
+        "pair": [
+          "VSE-0005",
+          "@rod-2"
+        ],
+        "volume_mm3": 152.8927
+      },
+      {
+        "pair": [
+          "VSE-0005",
+          "@rod-3"
+        ],
+        "volume_mm3": 161.8895
+      },
+      {
+        "pair": [
+          "VSE-0005",
+          "@rod-4"
+        ],
+        "volume_mm3": 152.8927
+      },
+      {
+        "pair": [
+          "VSE-0005",
+          "@rod-5"
+        ],
+        "volume_mm3": 161.8895
+      },
+      {
+        "pair": [
+          "VSE-0005",
+          "@rod-6"
+        ],
+        "volume_mm3": 691.2794
+      }
+    ]
+  }
+}

@@ -268,13 +268,13 @@ The first build places one definition of each part six times. One crank drives t
 piston-1 / rod-1   clearance 0.000 mm   interference 99.12 mm3   ok: false
 ```
 
-The rod's small end (radius 6 mm) was wider than the piston slot. The 720° sweep skips pairs that a joint connects, so only the commit check saw the overlap. The example README tracks this gap as benchhand-c7q.10. Version v5 widened the slot.
+The record keeps the excerpt for all six pairs in [`v4-commit-check-interference.json`](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v4-commit-check-interference.json). The rod's small end (radius 6 mm) was wider than the piston slot. The 720° sweep skips pairs that a joint connects, so only the commit check saw the overlap. The example README tracks this gap as benchhand-c7q.10. Version v5 widened the slot.
 
 ![Assembly, exploded](docs/images/v6-engine/03-assembly-exploded.webp)
 
 ### 6. Parts
 
-The F2 form check tests the FDM wall rule against the 1.2 mm guideline. On v3 it measured 1.001 mm at the crankcase window and 0.994 mm in the piston, and both failed. Version v4 passes both. The remaining findings are unknown obligations (orientation, supports, warp), not failures.
+The F2 form check tests the FDM wall rule against the 1.2 mm guideline. On v3 it measured 1.001 mm at the crankcase window and 0.994 mm in the piston, and both failed ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v3-form-check-walls.json)). Version v4 passes both. The remaining findings are unknown obligations (orientation, supports, warp), not failures.
 
 ![Crankshaft part view](docs/images/v6-engine/02-parts-crankshaft.webp)
 
@@ -304,7 +304,7 @@ The assembly drawing sheet (VSE-ASM) lists the five items with their quantities 
 
 ### 9. Analysis
 
-The first 720° sweep on v1 found six collisions between the crankshaft and the rods. The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. That is partial evidence only. The sweep excludes the 19 pairs that a joint connects, enforces no pair minima, and leaves the between-sample check incomplete. REQ-001 therefore reads `not_assessed` in `verification.csv`. The example README tracks this gap as benchhand-c7q.10.
+The first 720° sweep on v1 found six collisions between the crankshaft and the rods ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v1-sweep-collisions.json)). The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. That is partial evidence only. The sweep excludes the 19 pairs that a joint connects, enforces no pair minima, and leaves the between-sample check incomplete. REQ-001 therefore reads `not_assessed` in `verification.csv`. The example README tracks this gap as benchhand-c7q.10.
 
 ![The crank turning through 720 degrees](docs/images/v6-engine/04-motion-sweep.gif)
 
@@ -326,7 +326,7 @@ MECH-01 was a real fail: the crank web faces sat on the block window walls, 0.00
 
 ### 11. Release
 
-The release is blocked, and the dry run shows why. `release.py hw --rev A --version v7 --decision DR-004` refuses with 19 findings. Four of them:
+The release is blocked, and the dry run shows why. `release.py hw --rev A --version v7 --decision DR-004` refuses with 19 findings ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json)). Four of them:
 
 ```text
 release.decision  DR-004 has status proposed, not the user's approval (accepted)
