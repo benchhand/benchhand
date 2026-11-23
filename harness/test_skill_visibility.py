@@ -161,22 +161,33 @@ class StripUserInvocableTests(unittest.TestCase):
                              b"---\nname: cad-x\n---\nbody\n")
 
 
-@unittest.skipUnless(shutil.which("claude"), "local smoke test: needs the claude CLI and a logged-in account; CI has neither")
-class PluginRouteTests(unittest.TestCase):
-    """Local smoke test, not CI coverage: the plugin route reads `skills/` as it is, so the key must hide the helpers."""
+CLAUDE_GATE = unittest.skipUnless(shutil.which("claude"), "local smoke test: needs the claude CLI and a logged-in account; CI has neither")
 
-    def run_claude(self, project: Path, *args: str) -> list[dict[str, Any]]:
+
+class ClaudeCase(unittest.TestCase):
+    """Runs the real `claude` CLI with this checkout loaded as a plugin."""
+
+    def run_claude(self, project: Path, *args: str, max_turns: int = 3) -> list[dict[str, Any]]:
         result = subprocess.run(["claude", "-p", *args, "--output-format", "stream-json", "--verbose",
-                                 "--plugin-dir", str(ROOT), "--max-turns", "3"],
+                                 "--plugin-dir", str(ROOT), "--max-turns", str(max_turns)],
                                 cwd=project, capture_output=True, text=True, timeout=300)
         self.assertEqual(result.returncode, 0, result.stderr)
         return [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
 
-    def test_plugin_lists_only_the_visible_skills_and_still_loads_a_hidden_one(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="cad-plugin-")
+    def project(self, prefix: str) -> Path:
+        temporary = tempfile.TemporaryDirectory(prefix=prefix)
         self.addCleanup(temporary.cleanup)
         project = Path(temporary.name)
         subprocess.run(["git", "init", "-q", str(project)], check=True)
+        return project
+
+
+@CLAUDE_GATE
+class PluginRouteTests(ClaudeCase):
+    """Local smoke test, not CI coverage: the plugin route reads `skills/` as it is, so the key must hide the helpers."""
+
+    def test_plugin_lists_only_the_visible_skills_and_still_loads_a_hidden_one(self) -> None:
+        project = self.project("cad-plugin-")
         events = self.run_claude(project, "hi")
         commands = next(event["slash_commands"] for event in events if event.get("subtype") == "init")
         self.assertEqual({c for c in commands if c.startswith("benchhand:")}, {f"benchhand:{n}" for n in VISIBLE})
@@ -190,6 +201,57 @@ class PluginRouteTests(unittest.TestCase):
                    if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in calls]
         self.assertTrue(calls, "the model never called the Skill tool for cad-bom")
         self.assertTrue(results and not any(block.get("is_error") for block in results), results)
+
+
+FROZEN_DOCUMENT = """# Acme shoulder pin datasheet (frozen copy, rev C, accessed 2026-11-20)
+
+| Manufacturer designation | Shoulder diameter | Double shear rating | Supplier order code |
+|---|---|---|---|
+| ACME SP-0825-S | 8 mm | 4.2 kN | HV-558201 |
+| ACME SP-0610-S | 6 mm | 2.1 kN | HV-558177 |
+"""
+
+
+@CLAUDE_GATE
+class ResearcherRouteTests(ClaudeCase):
+    """Local smoke tests, not CI coverage: the researcher profile run by stock Claude Code with no web tools.
+
+    The agent runs as the session (`--agent`), so its final message is what the caller gets; this covers
+    the fallback path. Delivery through an exposed `SubagentHandback` tool is not tested here.
+    """
+
+    AGENT = "benchhand:cad-sourcing-researcher"
+
+    def research(self, project: Path, brief: str) -> str:
+        events = self.run_claude(project, brief, "--agent", self.AGENT, "--disallowedTools", "WebSearch", "WebFetch", max_turns=8)
+        init = next(event for event in events if event.get("subtype") == "init")
+        self.assertFalse({"WebSearch", "WebFetch"} & set(init["tools"]), init["tools"])
+        final = next(event for event in reversed(events) if event.get("type") == "result")
+        self.assertFalse(final.get("is_error"), final)
+        return final["result"]
+
+    def test_a_live_lookup_with_no_web_and_no_frozen_source_is_blocked_with_both_tools_absent(self) -> None:
+        report = self.research(self.project("cad-research-a-"), (
+            "Unit source-pins. Family: shoulder pins, no PNs yet. Requirement: today's list price and stock for "
+            "supplier order code ZX-9981 from the supplier website. The record holds no supplier documents."))
+        self.assertRegex(report, r"RESULT:\s*BLOCKED")
+        self.assertRegex(report, r"web_search=no")
+        self.assertRegex(report, r"web_fetch=no")
+
+    def test_a_brief_without_pns_and_a_frozen_document_returns_cited_candidates_with_no_invented_pn(self) -> None:
+        project = self.project("cad-research-b-")
+        document = project / "supplier" / "acme-shoulder-pins.md"
+        document.parent.mkdir()
+        document.write_text(FROZEN_DOCUMENT, encoding="utf-8")
+        report = self.research(project, (
+            "Unit source-pins. Family: shoulder pins, no PNs yet. Requirement: 8 mm shoulder diameter, double shear "
+            f"rating of at least 3 kN. The record's frozen supplier document is {document}. It answers the brief; "
+            "make no live lookup."))
+        self.assertRegex(report, r"RESULT:\s*DONE")
+        self.assertIn("SP-0825-S", report)
+        self.assertIn("acme-shoulder-pins.md", report)
+        self.assertIn("HV-558201", report)
+        self.assertNotRegex(report, r"\bPN-?\d{2,}\b", "the report invents an internal PN")
 
 
 if __name__ == "__main__":
