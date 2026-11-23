@@ -451,6 +451,16 @@ def context_for(profile: Any, material: Any = None) -> Context:
                    _millimetres(profile.parameters.get("line_width")), tuple(pin) if pin else None)
 
 
+def context_without_machine(process: str, material: Any = None) -> Context:
+    """The Context of a process and, when given, a material profile, with no machine recorded: every machine fact
+    (nozzle material, nozzle diameter, line width) is unknown and no guideline pin applies."""
+    facts: dict[str, str | None] = {name: None for name in SCOPE_FACTS}
+    raw = material.raw if material is not None else {}
+    for name in ("material_family", "filler", "shore"):
+        facts[name] = _text_fact(raw.get(name))
+    return Context(process, facts)
+
+
 def _matches(scope: Mapping[str, Any], context: Context) -> bool | None:
     """True when every selector matches, False when one does not, None when none fails but a fact is unknown."""
     unknown = False

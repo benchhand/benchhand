@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .core import FAIL, NOT_APPLICABLE, PASS, UNKNOWN, Context, Draft, Result, combine, policy, text, unknown
+from .core import FAIL, NOT_APPLICABLE, NOT_ASSESSED, PASS, UNKNOWN, Context, Draft, Result, combine, policy, text, unknown
 
 ADDITIVE = frozenset({"fdm", "resin"})
 SECONDARY = frozenset({"drilling", "reaming", "tapping", "finishing", "coating", "joining", "inspection"})
@@ -76,10 +76,12 @@ def consistency(ctx: Context) -> Result:
                               remedy="set part.yaml process to the route's primary operation kind", recheck=["route.consistency"],
                               earliest_stage="parts"))
         parts.append((FAIL, "process label disagrees with the route"))
-    return combine(method, parts, findings)
+    return combine(method, parts, findings, reason="no_capability_profile")
 
 
 def _capability(ctx: Context, op: Any, material: str | None, findings: list[Draft]) -> tuple[str, str]:
+    if ctx.guidelines_without_machine(op):
+        return NOT_ASSESSED, f"{op.id} records no machine; the guideline values govern"
     if ctx.mi.is_fact(op.capability):
         findings.append(Draft("route.capability_unknown", "major", UNKNOWN, text(f"{op.id} capability unknown"),
                               unknown(op.capability.reason or "no capability profile"), "part.yaml route capability",

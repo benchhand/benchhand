@@ -2458,15 +2458,18 @@ class CalibrationFlagTests(Checks):
                 self.assertEqual([c for c in self.codes(result) if c.endswith("capability_unknown")], [])
 
     def test_off_an_fdm_route_with_no_machine_still_fails_a_guideline_fail(self) -> None:
-        result = self.unprofiled(walled(1.0), False)
+        result = self.unprofiled(walled(0.5), False)  # below the plain 0.8 mm floor, which needs no nozzle
         self.assertEqual(self.outcome(result, GEOMETRY), "fail")
         self.assertEqual(self.finding(result, "process.fdm.wall")["criterion"]["source"]["kind"], "guideline")
 
-    def test_off_an_fdm_route_with_no_machine_is_never_a_blocking_unknown(self) -> None:
+    def test_off_an_fdm_route_with_no_machine_raises_no_missing_machine_finding_and_never_passes_the_machine(self) -> None:
         result = self.unprofiled(walled(3.0), False)
-        for row in result.outcomes:
-            self.assertNotEqual(row["outcome"], "unknown", row)
-        self.assertNotIn(result.result, ("unknown", "fail"))
+        gone = [c for c in self.codes(result) if c.endswith(("capability_unknown", "envelope_unknown"))]
+        self.assertEqual(gone, [])
+        route = next(row for row in result.outcomes if row["obligation"].startswith("route"))
+        self.assertEqual((route["outcome"], route.get("reason")), ("not_assessed", "no_capability_profile"))
+        orientation = next(row for row in result.outcomes if row["obligation"].startswith("process.fdm.orientation"))
+        self.assertIn("envelope is not assessed", orientation["coverage"])
 
     def test_on_an_fdm_route_with_no_machine_still_needs_the_capability(self) -> None:
         result = self.unprofiled(walled(3.0), True)

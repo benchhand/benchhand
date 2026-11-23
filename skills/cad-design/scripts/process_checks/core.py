@@ -697,10 +697,21 @@ class Context:
         coupon = guidelines().COUPON_REMEDY
         return f"{fix}; {coupon}" if fix else coupon
 
+    def guidelines_without_machine(self, op: Any | None = None) -> bool:
+        """Whether this FDM operation (default: the context's) records no machine and calibration is off: the shipped
+        guideline values govern. That is a statement about the limits, never evidence that a machine exists."""
+        op = op or self.op
+        return (op is not None and self.mi.is_fact(op.capability) and not self.calibration
+                and op.kind in guidelines().GUIDELINE_PROCESSES)
+
     def guideline_context(self, profile: Any | None = None) -> Any | None:
         """The guideline scope (guidelines.Context) of a capability profile (this operation's unless `profile` names
-        another) and material, or None without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES."""
+        another) and material, or None without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES.
+        An FDM operation with no machine recorded gets the scope of its process and material alone."""
         profile = profile or self.profile
+        if self.catalog is not None and profile is None and self.guidelines_without_machine():
+            material_id = self.stock_material_id()
+            return guidelines().context_without_machine(self.op.kind, self.record.materials.get(material_id) if material_id else None)
         if self.catalog is None or profile is None or profile.process not in guidelines().GUIDELINE_PROCESSES:
             return None
         material_id = self.stock_material_id()
@@ -738,6 +749,8 @@ class Context:
         op = self.operation
         kinds = set(kinds or {op.kind})
         method = "capability profile lookup"
+        if self.guidelines_without_machine():
+            return None  # no machine recorded: the guideline values govern, and the check runs without a profile
         if self.mi.is_fact(op.capability):
             reason = op.capability.reason or "not recorded"
             draft = Draft(f"process.{op.kind}.capability_unknown", "major", UNKNOWN, text(f"capability unknown: {reason}"),
