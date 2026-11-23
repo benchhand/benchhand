@@ -340,7 +340,7 @@ MECH-01 was a real fail: the crank web faces sat on the block window walls, 0.00
 
 ### 11. Release
 
-The release is blocked, and the dry run shows why. `release.py hw --rev A --version v7 --decision DR-004` refuses with 19 findings ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json)). Four of them:
+The release is blocked, and the dry run shows why. `release.py hw --rev A --version v7 --decision DR-004` refuses with 22 findings ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json)). Four of them. Four more `release.changed` findings name the evidence excerpts themselves, which are new since v7 was frozen:
 
 ```text
 release.decision  DR-004 has status proposed, not the user's approval (accepted)

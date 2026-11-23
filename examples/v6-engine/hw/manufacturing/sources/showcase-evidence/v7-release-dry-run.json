@@ -1,7 +1,7 @@
 {
-  "source": "release.py hw --rev A --version v7 --decision DR-004 (exit 1; nothing written)",
+  "source": "release.py hw --rev A --version v7 --decision DR-004 (exit 1; nothing written), rerun on the record after the REQ-001/REQ-003 not_assessed edits",
   "version": "v7",
-  "finding_count": 19,
+  "finding_count": 22,
   "findings": [
     {
       "code": "release.decision",
@@ -12,6 +12,26 @@
       "code": "release.frozen",
       "path": "hw/product.yaml",
       "message": "product.yaml has no flow.frozen; freeze a version first"
+    },
+    {
+      "code": "release.changed",
+      "path": "hw/manufacturing/sources/showcase-evidence/v1-sweep-collisions.json",
+      "message": "hw/manufacturing/sources/showcase-evidence/v1-sweep-collisions.json is new since v7 was frozen"
+    },
+    {
+      "code": "release.changed",
+      "path": "hw/manufacturing/sources/showcase-evidence/v3-form-check-walls.json",
+      "message": "hw/manufacturing/sources/showcase-evidence/v3-form-check-walls.json is new since v7 was frozen"
+    },
+    {
+      "code": "release.changed",
+      "path": "hw/manufacturing/sources/showcase-evidence/v4-commit-check-interference.json",
+      "message": "hw/manufacturing/sources/showcase-evidence/v4-commit-check-interference.json is new since v7 was frozen"
+    },
+    {
+      "code": "release.changed",
+      "path": "hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json",
+      "message": "hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json is new since v7 was frozen"
     },
     {
       "code": "release.failed",
@@ -50,11 +70,6 @@
     },
     {
       "code": null,
-      "path": "hw/verification.csv:3",
-      "message": "release verification result must be pass, waived or not_assessed"
-    },
-    {
-      "code": null,
       "path": "hw/verification.csv:6",
       "message": "release verification result must be pass, waived or not_assessed"
     },
@@ -89,9 +104,9 @@
       "message": "release cannot include prototype revision X1 for VSE-0005"
     },
     {
-      "code": "release.stale",
-      "path": "hw/verification.csv:2",
-      "message": "REQ-001 evidence hw/motion/v6/engine-cycle belongs to v6, not the frozen v7"
+      "code": "release.missing",
+      "path": "hw/verification.csv:3",
+      "message": "REQ-002 evidence hw/assembly.yaml: does not exist"
     },
     {
       "code": "release.missing",
