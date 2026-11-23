@@ -92,7 +92,7 @@ class HarnessGeneratorTests(GeneratorCopyCase):
             metadata = yaml.safe_load(source.read_text(encoding="utf-8").split("---", 2)[1])
             if "shell-uv" not in metadata["capabilities"]:
                 continue
-            for harness, extension in (("claude", "md"), ("codex", "toml"), ("opencode", "md"), ("kiro", "json")):
+            for harness, extension in (("claude", "md"), ("codex", "toml"), ("opencode", "md"), ("kiro", "json"), ("pi", "md")):
                 generated = self.cad / "harness" / harness / "agents" / f"{source.stem}.{extension}"
                 with self.subTest(agent=source.stem, harness=harness):
                     self.assertIn("Inspect files with the available read/search tools", generated.read_text(encoding="utf-8"))
@@ -202,6 +202,38 @@ class HarnessGeneratorTests(GeneratorCopyCase):
                     self.assertIn(message, result.stderr)
         finally:
             source.write_text(original, encoding="utf-8")
+    def test_pi_agents_follow_pi_subagents_frontmatter(self) -> None:
+        self.generate()
+        for source in sorted((self.cad / "agents").glob("*.md")):
+            neutral = yaml.safe_load(source.read_text(encoding="utf-8").split("---", 2)[1])
+            text = (self.cad / "harness/pi/agents" / f"{source.stem}.md").read_text(encoding="utf-8")
+            front = yaml.safe_load(text.split("---", 2)[1])
+            with self.subTest(agent=source.stem):
+                self.assertEqual(front["name"], neutral["name"])
+                self.assertEqual(front["inheritProjectContext"], True)
+                self.assertEqual(front["skills"].split(", "), neutral["skills"])
+                tools = front["tools"].split(", ")
+                self.assertEqual("bash" in tools, "shell-uv" in neutral["capabilities"])
+                self.assertEqual("write" in tools, "write-scratch" in neutral["capabilities"])
+                self.assertEqual("web_search" in tools, "web" in neutral["capabilities"])
+                # The guard loads exactly into the children that get a shell.
+                self.assertEqual(front.get("subagentOnlyExtensions"), generate.PI_GUARD_PLACEHOLDER if "bash" in tools else None)
+
+    def test_pi_prompt_is_a_generated_skill_launcher(self) -> None:
+        self.generate()
+        prompt = (self.cad / "harness/pi/prompts/cad-flow.md").read_text(encoding="utf-8")
+        front, body = prompt.split("---", 2)[1:]
+        self.assertEqual(sorted(yaml.safe_load(front)), ["argument-hint", "description"])
+        self.assertIn("Read the `cad-flow` skill", body)
+        self.assertIn("$@", body)
+        self.assertNotIn("$ARGUMENTS", body)
+
+    def test_pi_tier_model_needs_a_pi_prefix(self) -> None:
+        parsed = generate.parse_tier_models(["cheap=m1", "pi:cheap=anthropic/claude-haiku-4-5:low"])
+        self.assertEqual(parsed["pi"], {"cheap": "anthropic/claude-haiku-4-5:low"})
+        clerk = next(agent for agent in generate.agents() if agent.name == "cad-clerk")
+        self.assertIn('model: "anthropic/claude-haiku-4-5:low"', generate.render(clerk, "pi", parsed))
+        self.assertNotIn("model:", generate.render(clerk, "pi", {}))
 
 
 class TierRenderingTests(unittest.TestCase):
@@ -265,6 +297,7 @@ class TierRenderingTests(unittest.TestCase):
         self.assertEqual(parsed["opencode"], {"cheap": "a/b#c"})
         self.assertEqual(parsed["kiro"], {"cheap": "m1", "strong": "x:0"})
         self.assertNotEqual(parsed["opencode"].get("cheap"), "m1")  # bare spec skips OpenCode
+        self.assertNotIn("cheap", parsed["pi"])  # and pi
 
     def test_parse_tier_models_rejects_bad_specs(self) -> None:
         cases = (
