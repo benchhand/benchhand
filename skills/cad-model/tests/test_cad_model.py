@@ -1863,10 +1863,12 @@ class CheckRuleTests(unittest.TestCase):
 
     def test_missing_interfaces_file_means_no_declared_fits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
             self.assertEqual(check.declared_press_fits(Path(tmp)), [])
     def test_malformed_interfaces_remains_a_usage_finding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = Path(tmp)
+            (hw / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
             (hw / "interfaces.yaml").write_text("interfaces: [\n", encoding="utf-8")
             with self.assertRaisesRegex(build.UsageError, "cannot read interfaces"):
                 check.declared_press_fits(hw)
@@ -1966,6 +1968,7 @@ class CheckRuleTests(unittest.TestCase):
     def test_a_clearance_requirement_record_resolves_through_the_pair_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = Path(tmp)
+            (hw / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
             path = hw / "interfaces.yaml"
             requirement = ("interfaces:\n  - {id: IF-001, from: arm, to: base, type: clearance, description: Gap.,"
                            " pair: [%s, %s], min_clearance_mm: %s}\n")
@@ -1983,6 +1986,7 @@ class CheckRuleTests(unittest.TestCase):
     def test_press_fit_record_is_classified_by_cad_fits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hw = Path(tmp)
+            (hw / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
             (hw / "interfaces.yaml").write_text(
                 "interfaces:\n"
                 "  - id: IF-001\n"
@@ -2009,6 +2013,7 @@ class CheckRuleTests(unittest.TestCase):
             shutil.copytree(HERE.parents[2], plugin, ignore=shutil.ignore_patterns("__pycache__"))
             hw = Path(tmp) / "hw"
             hw.mkdir()
+            (hw / "product.yaml").write_text("record_version: 1\n", encoding="utf-8")  # the version gate reads it first
             (hw / "interfaces.yaml").write_text(
                 "interfaces:\n  - id: IF-001\n    limits:\n      press_fit: {fit: 5 H7/p6, pair: [TST-0001, TST-0002]}\n",
                 encoding="utf-8")
