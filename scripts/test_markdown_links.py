@@ -90,6 +90,48 @@ class MarkdownLinkTests(unittest.TestCase):
                 "doc.md: real.md#nope has no such heading",
             ])
 
+    def check(self, files: dict[str, str], text: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            for name, body in files.items():
+                (root / name).write_text(body, encoding="utf-8")
+            doc = root / "doc.md"
+            doc.write_text(text, encoding="utf-8")
+            return sorted(problems(doc, root))
+
+    def test_reports_a_broken_link_that_has_a_title(self) -> None:
+        text = '[t](gone.md "Title") [u](gone2.md \'Title\') [ok](real.md "Title")\n'
+        self.assertEqual(self.check({"real.md": "x\n"}, text),
+                         ["doc.md: gone.md does not exist", "doc.md: gone2.md does not exist"])
+
+    def test_reads_an_angle_bracket_destination_without_its_brackets(self) -> None:
+        text = "[a](<gone.md>) [b](<has space.md>) [c](<real.md#top>)\n\n[d]: <gone2.md>\n[e]: <has space.md>\n[use][d] [use][e]\n"
+        files = {"real.md": "# Top\n", "has space.md": "x\n"}
+        self.assertEqual(self.check(files, text), ["doc.md: gone.md does not exist", "doc.md: gone2.md does not exist"])
+
+    def test_ignores_links_in_tilde_fences_and_matches_the_fence_marker(self) -> None:
+        text = ("~~~\n[tilde](a.md)\n~~~\n"
+                "~~~~\n```\n[inner](b.md)\n```\n~~~~\n"
+                "```\n~~~\n[backtick](c.md)\n```\n"
+                "[after](d.md)\n")
+        self.assertEqual(self.check({}, text), ["doc.md: d.md does not exist"])
+
+    def test_checks_the_case_of_every_path_part(self) -> None:
+        text = "[a](Real.md) [b](sub/Inner.md) [c](Sub/inner.md) [ok](sub/inner.md) [d](real.md#Top)\n"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            (root / "sub").mkdir()
+            (root / "sub" / "inner.md").write_text("# Top\n", encoding="utf-8")
+            (root / "real.md").write_text("# Top\n", encoding="utf-8")
+            doc = root / "doc.md"
+            doc.write_text(text, encoding="utf-8")
+            self.assertEqual(sorted(problems(doc, root)), [
+                "doc.md: Real.md does not exist",
+                "doc.md: Sub/inner.md does not exist",
+                "doc.md: real.md#Top has no such heading",
+                "doc.md: sub/Inner.md does not exist",
+            ])
+
 
 if __name__ == "__main__":
     unittest.main()
