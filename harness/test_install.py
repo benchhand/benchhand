@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+import yaml
 CAD = Path(__file__).resolve().parents[1]
 INSTALLER = CAD / "harness/install.py"
 HARNESS_PATHS = {
@@ -211,6 +213,42 @@ class InstallerTests(unittest.TestCase):
                 self.assertTrue((root / "prompts/cad-flow.md").is_file())
                 self.run_ok("--harness", "pi", *scope_args, "--uninstall")
                 self.assertFalse(root.exists() and any(root.rglob("*.*")))
+
+    def test_pi_guard_path_is_quoted_so_odd_characters_stay_one_value(self) -> None:
+        project = self.root / "my proj #1: a'b"
+        project.mkdir()
+        self.run_ok("--harness", "pi", "--project", str(project))
+        text = (project / ".pi/agents/cad-clerk.md").read_text(encoding="utf-8")
+        front = yaml.safe_load(text.split("---\n")[1])
+        self.assertEqual(front["subagentOnlyExtensions"], str(project.resolve() / ".pi/cad-guard/cad-bash-guard.js"))
+
+    def test_pi_refuses_a_guard_path_that_pi_subagents_cannot_read_back(self) -> None:
+        for name in ("a,b", 'a"b', "a\\b", "a\nb"):
+            with self.subTest(name=name):
+                project = self.root / name
+                project.mkdir()
+                result = self.run_installer("--harness", "pi", "--project", str(project))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("pi", result.stderr)
+                self.assertFalse((project / ".pi").exists())
+
+    def test_pi_guard_path_is_quoted_so_odd_characters_stay_one_value(self) -> None:
+        project = self.root / "my proj #1: a'b"
+        project.mkdir()
+        self.run_ok("--harness", "pi", "--project", str(project))
+        text = (project / ".pi/agents/cad-clerk.md").read_text(encoding="utf-8")
+        front = yaml.safe_load(text.split("---\n")[1])
+        self.assertEqual(front["subagentOnlyExtensions"], str(project.resolve() / ".pi/cad-guard/cad-bash-guard.js"))
+
+    def test_pi_refuses_a_guard_path_that_pi_subagents_cannot_read_back(self) -> None:
+        for name in ("a,b", 'a"b', "a\\b", "a\nb"):
+            with self.subTest(name=name):
+                project = self.root / name
+                project.mkdir()
+                result = self.run_installer("--harness", "pi", "--project", str(project), cwd=self.root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("pi cannot read", result.stderr)
+                self.assertFalse((project / ".pi").exists())
 
     def test_all_includes_pi(self) -> None:
         self.run_ok("--harness", "all", "--project", str(self.project))

@@ -84,6 +84,25 @@ class HarnessInstallTests(unittest.TestCase):
                     f"{prefix}/agents/cad-analyst.md": sha(agent)}}), encoding="utf-8")
                 self.assertEqual(preflight._harness_check("pi", project, home, {}).status, "pass")
 
+    def test_pi_warns_when_an_agent_names_a_guard_that_no_longer_exists(self) -> None:
+        sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            project, home = Path(temporary) / "project", Path(temporary) / "home"
+            guard = project / ".pi/cad-guard/cad-bash-guard.js"
+            skill = project / ".pi/skills/cad-flow/SKILL.md"
+            agent = project / ".pi/agents/cad-clerk.md"
+            for path, text in ((guard, "guard"), (skill, "skill"), (agent, f'---\nname: cad-clerk\nsubagentOnlyExtensions: "{guard}"\n---\n')):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            (project / ".benchhand-install.json").write_text(json.dumps({"format": 1, "files": {
+                ".pi/skills/cad-flow/SKILL.md": sha(skill), ".pi/agents/cad-clerk.md": sha(agent)}}), encoding="utf-8")
+            self.assertEqual(preflight._harness_check("pi", project, home, {}).status, "pass")
+            guard.unlink()
+            stale = preflight._harness_check("pi", project, home, {})
+            self.assertEqual(stale.status, "warn")
+            self.assertIn(str(guard), stale.detail)
+            self.assertIn("harness/install.py --harness pi", stale.fix)
+
     def test_pi_is_a_harness_choice_of_the_command_line(self) -> None:
         report = preflight.Report((preflight.Check("uv", "uv", "pass", True, "", ""),))
         with patch.object(preflight, "run_checks", return_value=report), patch("sys.stdout"):

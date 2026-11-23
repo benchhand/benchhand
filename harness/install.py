@@ -37,6 +37,18 @@ class FilePair(NamedTuple):
     content: bytes | None = None
 
 
+def pi_guard_value(guard: Path) -> str:
+    """The guard path as a double-quoted frontmatter value, which YAML and pi-subagents both read back as the path.
+
+    pi-subagents splits the value on commas and does not unescape, so a path with a comma,
+    quote, backslash or control character cannot be read back: refuse it.
+    """
+    text = str(guard)
+    if any(ch in text for ch in ',"\\') or any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        raise ValueError(f"pi cannot read the guard path {text!r} back from an agent file because it holds a comma, quote, backslash or control character; install from another folder")
+    return f'"{text}"'
+
+
 def installer_content(source: Path, harness: str, home: Path | None, rendered: str | None = None, guard: Path | None = None) -> bytes | None:
     """Return the bytes to install when they differ from the committed source.
 
@@ -46,7 +58,7 @@ def installer_content(source: Path, harness: str, home: Path | None, rendered: s
     """
     if harness == "pi" and guard is not None and source.suffix == ".md" and source.parent == GENERATED / "pi" / "agents":
         text = rendered if rendered is not None else source.read_text(encoding="utf-8")
-        return text.replace(PI_GUARD_PLACEHOLDER, json.dumps(str(guard), ensure_ascii=False)).encode("utf-8")
+        return text.replace(PI_GUARD_PLACEHOLDER, pi_guard_value(guard)).encode("utf-8")
     is_kiro_user = harness == "kiro" and home is not None and source.parent == GENERATED / "kiro" / "agents"
     if not is_kiro_user:
         return None if rendered is None else rendered.encode("utf-8")
