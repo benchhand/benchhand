@@ -35,12 +35,11 @@ yaml_loader = flow_profile.yaml_loader  # the repo's YAML reader: YAML 1.1, so a
 decision_records = flow_profile.decision_records
 fx = load_module("cad_record_mi_fixtures", SKILLS / "cad-record" / "tests" / "fixtures" / "manufacturing_intent.py")
 
-# The nine project-start questions, copied by hand.
+# The eight project-start questions, copied by hand.
 QUESTIONS = [
     "Must any part carry a load where breaking or bending would matter? Should I simulate it?",
     "Which fits must not jam or rattle with real, imperfect parts: only the critical ones, all of them, or none?",
     "How much review before release: full, a quick re-check of retainers, mounts and walls, or none?",
-    "Optional: do you want to record your printer, nozzle and filament? If not, the shipped guideline values apply and nothing waits on it.",
     "Are supports allowed, or must parts print support-free? Do you know your overhang, bridge, thinnest-wall and "
     "smallest-feature limits, or should I wait for a test print?",
     "Will you pick the print orientation, or should I propose options? Which faces must stay clean?",
@@ -75,13 +74,22 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 class Questions(unittest.TestCase):
-    def test_questions_prints_the_nine_project_start_questions_verbatim_and_states_the_motion_sweep(self) -> None:
+    def test_questions_prints_the_eight_project_start_questions_verbatim_and_states_the_motion_sweep(self) -> None:
         result = run("questions")
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
-        numbered = [line for line in lines if line[:2] in {f"{n}." for n in range(1, 10)}]
+        numbered = [line for line in lines if line[:2] in {f"{n}." for n in range(1, 9)}]
         self.assertEqual(numbered, [f"{n}. {text}" for n, text in enumerate(QUESTIONS, start=1)])
         self.assertTrue(any("motion sweep" in line and "not asked" in line for line in lines), result.stdout)
+
+    def test_questions_asks_nothing_about_the_machine_and_leaves_the_offer_to_ground(self) -> None:
+        """The optional machine offer belongs to GROUND. SPECIFY collects answers only, so the offer is neither a
+        numbered question nor a thing the record command waits for."""
+        lines = run("questions").stdout.splitlines()
+        numbered = [line for line in lines if line[:2] in {f"{n}." for n in range(1, 10)}]
+        for line in numbered:
+            self.assertNotRegex(line, r"(?i)printer|machine|nozzle|filament|bed size")
+        self.assertTrue(any("GROUND" in line and "machine" in line and "not asked" in line for line in lines), lines)
 
     def test_questions_lists_the_default_of_every_decision(self) -> None:
         lines = run("questions").stdout.splitlines()
@@ -145,6 +153,16 @@ class Record(unittest.TestCase):
                                   "warp": "calibrated", "cosmetic_faces": False, "print_in_place": False,
                                   "pip_clearance_mm": {"xy": "calibrated", "z": "calibrated"}}}})
         self.assertEqual(set(profile["asked"].values()), {"asked-accepted-default"})
+
+    def test_a_declined_machine_offer_is_never_asked_again_and_blocks_nothing(self) -> None:
+        """GROUND made the offer and the user declined: no capability profile exists. Recording every start answer and
+        checking from SPECIFY on neither asks about nor blocks on the machine."""
+        self.assertFalse((self.hw / "manufacturing").exists())
+        self.assertEqual(self.record("DR-001").returncode, 0)
+        for stage in ("specify", "layout", "parts"):
+            result = run("check", "--hw", str(self.hw), "--stage", stage)
+            self.assertNotRegex(result.stdout + result.stderr, r"(?i)printer|machine|capabilit|nozzle", stage)
+        self.assertFalse((self.hw / "manufacturing").exists())
 
     def test_record_refuses_a_question_neither_answered_nor_accepted_and_writes_nothing(self) -> None:
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--fea", "off", "--accept-default",

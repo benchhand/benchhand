@@ -29,10 +29,9 @@ def ground_line() -> str:
     return next(line for line in SKILL.splitlines() if line.lstrip().startswith("At GROUND, ask"))
 
 
-def printer_question() -> str:
-    out = subprocess.run([sys.executable, str(FLOW / "scripts" / "flow_profile.py"), "questions"],
-                         capture_output=True, text=True, timeout=120, check=True).stdout
-    return next(line for line in out.splitlines() if line.startswith("4. "))
+def questions_output() -> str:
+    return subprocess.run([sys.executable, str(FLOW / "scripts" / "flow_profile.py"), "questions"],
+                          capture_output=True, text=True, timeout=120, check=True).stdout
 
 
 class NoMachineDefault(unittest.TestCase):
@@ -57,11 +56,12 @@ class NoMachineDefault(unittest.TestCase):
         self.assertRegex(SELECTION, r"(?i)shipped guideline values")
         self.assertRegex(SELECTION, r"(?i)never blocks")
 
-    def test_printer_question_is_an_optional_offer_that_waits_on_nothing(self) -> None:
-        question = printer_question()
-        self.assertRegex(question, r"(?i)optional")
-        self.assertRegex(question, r"(?i)guideline values")
-        self.assertNotRegex(question, r"^4\. Which printer")
+    def test_ground_alone_makes_the_offer(self) -> None:
+        self.assertRegex(ground_line(), r"(?i)only place that makes this offer")
+        numbered = [line for line in questions_output().splitlines() if re.match(r"\d\.", line)]
+        self.assertTrue(numbered)
+        for line in numbered:
+            self.assertNotRegex(line, r"(?i)printer|machine|nozzle|filament")
 
 
 if __name__ == "__main__":

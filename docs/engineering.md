@@ -101,6 +101,8 @@ Approved departures. The tracking IDs come from the bead ledger, which the repos
 
 The user's answers to the project-start questions live in `product.yaml` `flow.profile`, with the `DR-###` decision that holds them. From SPECIFY on, a missing profile, one whose cited decision is not `accepted`, or an applicable question with no `asked` answer blocks.
 
+The optional machine offer is not one of these questions. GROUND makes it once (`skills/cad-flow/SKILL.md`); `flow_profile.py questions` lists eight questions and states that the offer is not asked there. No answer to it is recorded in `flow.profile`, and a declined or unanswered offer blocks nothing. With no machine profile the shipped guideline values govern FDM.
+
 - Owner: `skills/cad-record/scripts/flow_profile_gate.py`, a pure function of the parsed product, the part records and an `approval` callable. It reads no file. `skills/cad-flow/scripts/flow_profile.py` owns the questions and the `record` and `check` commands.
 - Callers, each of which supplies the records and the approval:
   - `validate.py` `check_flow_profile` reads the work tree. The `flow.profile` and `flow.profile_unquoted` findings are errors; a `flow.conflict` runs only on schema-valid documents, is an error from LAYOUT on and for the safety rule at any stage, and is a warning before LAYOUT. Only an authored FEA case (a `case.yaml` with `step`) counts as one that needs FEA; a stack-up case in the same folder does not.

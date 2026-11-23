@@ -206,7 +206,7 @@ def _profile_storage(product: object, path: Path) -> bool | None:
 
 
 def storage_answer(hw: Path) -> bool | None:
-    """Whether generated results are stored in git: the answer recorded in flow.profile (project-start question 9)
+    """Whether generated results are stored in git: the answer recorded in flow.profile (project-start question 8)
     when asked, else product.yaml `storage.results_in_git`; None while the user was not asked. The two must agree."""
     import yaml  # in setup's environment; plain `python3 setup.py` without PyYAML reports it as a manual step
 
