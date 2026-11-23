@@ -75,7 +75,13 @@ pi has no native subagents. The CAD agents need the `pi-subagents` package (`pi 
 
 pi loads project resources only after you trust the project, so accept the trust prompt (or set `defaultProjectTrust`) before you start. Then run `/cad-flow`.
 
-pi has no per-command shell permissions. Each CAD agent with a shell loads a small guard extension (`cad-guard/cad-bash-guard.js`, installed beside, not inside, pi's `extensions/` directory) through its `subagentOnlyExtensions` field. The guard blocks every bash call except a single plain `uv run --script ...` command, the same limit the other harnesses apply. pi's `edit` and `write` tools cannot be scoped to `.cad-work`; that rule stays prompt policy.
+pi has no per-command shell permissions, so the CAD agents get no shell. Each agent that runs skill scripts or writes files loads the CAD extension `cad-guard/<agent>.js` through its `subagentOnlyExtensions` field. The installer writes it to `cad-guard/`, a sibling of pi's auto-discovered `extensions/` directory, so only the CAD agents load it. The extension:
+
+- adds a `cad_run` tool that runs only the skill scripts named in the agent's source, through `cad-flow/scripts/run.py` and `uv run --script`, with no shell.
+- blocks `bash`.
+- blocks `edit` and `write` outside the project's `.cad-work/`, and inside the installed skills or the extension itself.
+
+An agent without its extension still has no shell. `preflight.py --harness pi` warns when an agent names an extension that the installer receipt does not own.
 
 ### Kiro CLI entry points
 

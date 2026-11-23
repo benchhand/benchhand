@@ -26,7 +26,15 @@ This guide records the stack, layout, standards and checks of the Benchhand repo
 | ruff | `0.17.4` through `uvx` and in the ratchet header | `.github/workflows/ci.yml`, `scripts/complexity_ratchet.py` |
 | reuse | `reuse[charset-normalizer]==6.3.0` | `README.md` |
 
-Other pins in the script headers (`pillow`, `ocp_viewer`, `imageio-ffmpeg`, `lib3mf`, `lxml`, `networkx`) live with the script that uses them. Read the header of the script for the exact pin. Harness targets are Claude Code, Codex CLI, OpenCode, Kiro CLI and pi (`README.md`). pi agents need the `pi-subagents` npm package at run time. The pi bash guard `harness/pi/guard/cad-bash-guard.js` is plain ESM JavaScript with no dependencies and no build; `harness/test_pi_guard.py` tests it by running it under `node`, and skips when `node` is missing (the one place the repository uses Node).
+Other pins in the script headers (`pillow`, `ocp_viewer`, `imageio-ffmpeg`, `lib3mf`, `lxml`, `networkx`) live with the script that uses them. Read the header of the script for the exact pin. Harness targets are Claude Code, Codex CLI, OpenCode, Kiro CLI and pi (`README.md`).
+
+pi needs these parts:
+
+- At run time, pi agents need the `pi-subagents` npm package. `cad-sourcing-researcher` also needs `pi-web-access` for its `web_search` and `fetch_content` tools.
+- The pi CAD extension `harness/pi/guard/cad-guard.js` is hand-written ESM JavaScript with no dependencies and no build. `harness/generate.py` writes one entry per agent under `harness/pi/launchers/`.
+- Node runs only in tests. `harness/test_pi_guard.py` runs the extension under `node`.
+- `harness/test_pi_integration.py` starts pi and pi-subagents at the versions in `harness/pi/integration/package-lock.json`, with a scripted model. Install them with `npm ci --prefix harness/pi/integration`.
+- Both pi test files skip without their tools. `CAD_REQUIRE_PI=1` turns the skip into a failure. CI sets that variable and installs Node 22.19.0.
 
 There is no root `pyproject.toml` and no package install. Dependencies come from one of three places:
 

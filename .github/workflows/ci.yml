@@ -32,7 +32,20 @@ jobs:
           enable-cache: true
           cache-dependency-glob: scripts/typecheck.py.lock
 
+      # The pi extension tests run it under node, and harness/test_pi_integration.py starts the
+      # pinned pi with pi-subagents; CAD_REQUIRE_PI=1 turns their skips into failures.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: harness/pi/integration/package-lock.json
+
+      - name: Pinned pi for the integration test
+        run: npm ci --prefix harness/pi/integration --no-audit --no-fund
+
       - name: Harness tests
+        env:
+          CAD_REQUIRE_PI: "1"
         run: uv run --no-project --with-requirements harness/test-requirements-min.txt python -B -m unittest discover -s harness -p 'test_*.py'
 
       # scripts/test_release_manifests.py runs the pinned release-please; with CI set it fails, not
