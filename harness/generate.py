@@ -29,11 +29,11 @@ SKILLS = ROOT / "skills"
 OUTPUTS = {harness: ROOT / "harness" / harness / "agents" for harness in ("claude", "codex", "opencode", "kiro", "pi")}
 OPENCODE_COMMAND = ROOT / "harness" / "opencode" / "commands" / "cad-flow.md"
 PI_PROMPT = ROOT / "harness" / "pi" / "prompts" / "cad-flow.md"
+PI_LAUNCHERS = ROOT / "harness" / "pi" / "launchers"
 # The one skill the launcher commands and prompts name; every other skill name comes from the agent sources.
 FLOW_SKILL = "cad-flow"
-# pi-subagents loads this extension only into the agent children that get a shell. The installer
-# replaces the placeholder with the absolute path of the installed guard.
-PI_GUARD_PLACEHOLDER = "__CAD_PI_BASH_GUARD__"
+# A launcher is a skill script, relative to the installed skills directory, that cad_run may start.
+LAUNCHER = re.compile(r"cad-[a-z0-9-]+/scripts/[A-Za-z0-9_]+\.py")
 WORK_DIR, SHELL = ".cad-work", "uv *"
 CAPABILITIES = {"read", "write-scratch", "shell-uv", "web"}
 EXPECTED_AGENTS = {"cad-analyst", "cad-clerk", "cad-concept-designer", "cad-dfm-reviewer", "cad-mech-reviewer", "cad-part-designer", "cad-sourcing-researcher"}
@@ -49,9 +49,10 @@ CLAUDE_TOOLS = {
     "shell-uv": ("Bash",), "web": ("WebSearch", "WebFetch"),
 }
 # pi built-ins, plus the pi-web-access tools for web research (a prerequisite the README names).
+# A pi CAD agent has no shell: `cad_run`, from the CAD extension, runs its launchers.
 PI_TOOLS = {
     "read": ("read", "grep", "find", "ls"), "write-scratch": ("edit", "write"),
-    "shell-uv": ("bash",), "web": ("web_search", "fetch_content"),
+    "shell-uv": ("cad_run",), "web": ("web_search", "fetch_content"),
 }
 
 
@@ -76,6 +77,7 @@ class Agent:
     capabilities: tuple[str, ...]
     skills: tuple[str, ...]
     tier: str | None = None
+    launchers: tuple[str, ...] = ()
 
     @property
     def writes(self) -> bool:
@@ -118,7 +120,7 @@ def parse_agent(path: Path) -> Agent:
         raise ValueError(f"{path}: invalid YAML frontmatter: {error}") from error
     if not isinstance(fields, dict) or not all(isinstance(key, str) for key in fields):
         raise ValueError(f"{path}: frontmatter must be a YAML mapping")
-    required, optional = {"name", "description", "capabilities", "skills"}, {"tier"}
+    required, optional = {"name", "description", "capabilities", "skills"}, {"tier", "launchers"}
     if not required <= fields.keys() or fields.keys() - required - optional:
         raise ValueError(f"{path}: expected only neutral fields; missing={sorted(required - fields.keys())}, unexpected={sorted(fields.keys() - required - optional)}")
     name, description = fields["name"], fields["description"]
@@ -150,7 +152,24 @@ def parse_agent(path: Path) -> Agent:
     present = [term for term in forbidden if re.search(term, prompt, re.IGNORECASE)]
     if present:
         raise ValueError(f"{path}: prompt contains harness-coupled terms {present}")
-    return Agent(name, description, prompt, capabilities, skills, tier)
+    return Agent(name, description, prompt, capabilities, skills, tier, parse_launchers(path, fields.get("launchers"), "shell-uv" in capabilities))
+
+
+def parse_launchers(path: Path, value: object, shell: bool) -> tuple[str, ...]:
+    """The skill scripts a shell agent may run: required with `shell-uv`, refused without it."""
+    if not shell:
+        if value is not None:
+            raise ValueError(f"{path}: launchers need the shell-uv capability")
+        return ()
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) for item in value) or len(set(value)) != len(value):
+        raise ValueError(f"{path}: a shell-uv agent needs launchers, a non-empty list of distinct skill scripts")
+    bad = [item for item in value if not LAUNCHER.fullmatch(item)]
+    if bad:
+        raise ValueError(f"{path}: launchers must be cad-<skill>/scripts/<name>.py paths; got {bad}")
+    missing = [item for item in value if not (SKILLS / item).is_file()]
+    if missing:
+        raise ValueError(f"{path}: launchers name files CAD does not ship: {missing}")
+    return tuple(value)
 
 
 def agents() -> list[Agent]:
@@ -184,16 +203,16 @@ def prompt_comment(agent: Agent, harness: str) -> str:
 
 
 def pi_policy_comments(agent: Agent) -> list[str]:
-    gaps = []
-    if agent.writes:
-        gaps.append("pi's edit and write tools cannot be scoped to .cad-work by an agent file")
+    notes = []
     if agent.shell:
-        gaps.append("the bash guard extension allows only a single `uv run --script` command per call")
+        notes.append("this agent has no shell: run each documented `uv run --script \"$CAD_SKILLS/cad-flow/scripts/run.py\" <script> <args...>` command as the cad_run tool, with launcher <script> and args the remaining words; cad_run takes only " + ", ".join(agent.launchers))
+    if agent.writes:
+        notes.append("the CAD extension blocks edit and write outside the project's .cad-work/")
     if agent.web:
-        gaps.append("web research needs the pi-web-access package loaded in the child")
-    if not gaps:
+        notes.append("web research needs the pi-web-access package loaded in the child")
+    if not notes:
         return []
-    return ["<!-- CAD policy: " + "; ".join(gaps) + "; follow the scratch-path and uv-only rules in this prompt. -->"]
+    return ["<!-- CAD policy: " + "; ".join(notes) + ". -->"]
 
 
 def kiro_rules(agent: Agent) -> list[dict[str, object]]:
@@ -304,7 +323,8 @@ def render_pi(agent: Agent, prompt: str, model: str | None) -> str:
     tools = ", ".join(tool for capability in agent.capabilities for tool in PI_TOOLS[capability])
     fields = ["---", f"name: {agent.name}", f"description: {json.dumps(agent.description, ensure_ascii=False)}", f"tools: {tools}"]
     if agent.shell:
-        fields.append(f"subagentOnlyExtensions: {PI_GUARD_PLACEHOLDER}")
+        # pi-subagents resolves a `../` path from the agent file: <scope>/agents/ -> <scope>/cad-guard/.
+        fields.append(f"subagentOnlyExtensions: ../cad-guard/{agent.name}.js")
     fields.append(f"skills: {', '.join(agent.skills)}")
     if model:
         fields.append(f"model: {json.dumps(model)}")
@@ -338,16 +358,31 @@ Read the `{FLOW_SKILL}` skill and follow its workflow. With arguments, apply it 
 """
 
 
+def pi_launcher(agent: Agent) -> str:
+    """The pi extension entry one shell agent loads: the hand-written CAD extension with its launchers."""
+    return f"""// SPDX-FileCopyrightText: 2026 Sjors Robroek
+//
+// SPDX-License-Identifier: MPL-2.0
+
+// {OWNERSHIP_MARKER}
+// The pi extension for {agent.name}: cad_run with this agent's launchers, and the write guard.
+import {{ cadGuard }} from "./cad-guard.js";
+
+export default cadGuard({json.dumps(agent.name)}, {json.dumps(list(agent.launchers))});
+"""
+
+
 def generated(tier_models: TierModels | None = None) -> dict[Path, str]:
     found = agents()
     outputs = {output_path(agent.name, harness): render(agent, harness, tier_models) for harness in OUTPUTS for agent in found}
     outputs[OPENCODE_COMMAND] = opencode_command()
     outputs[PI_PROMPT] = pi_prompt()
+    outputs.update({PI_LAUNCHERS / f"{agent.name}.js": pi_launcher(agent) for agent in found if agent.shell})
     return outputs
 
 
 def unexpected(outputs: dict[Path, str]) -> list[Path]:
-    return sorted(path for folder in (*OUTPUTS.values(), OPENCODE_COMMAND.parent, PI_PROMPT.parent) if folder.is_dir() for path in folder.iterdir() if path.is_file() and path not in outputs)
+    return sorted(path for folder in (*OUTPUTS.values(), OPENCODE_COMMAND.parent, PI_PROMPT.parent, PI_LAUNCHERS) if folder.is_dir() for path in folder.iterdir() if path.is_file() and path not in outputs)
 
 
 def main() -> int:

@@ -34,7 +34,7 @@ class GeneratorCopyCase(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="cad-harness-test-")
         self.addCleanup(temporary.cleanup)
         self.cad = Path(temporary.name) / "cad-agent"
-        shutil.copytree(CAD, self.cad, copy_function=shutil.copyfile)
+        shutil.copytree(CAD, self.cad, copy_function=shutil.copyfile, ignore=shutil.ignore_patterns("node_modules", ".cad-work"))
         self.generator = self.cad / "harness" / "generate.py"
 
     def run_generator(self, *args: str) -> subprocess.CompletedProcess[str]:
@@ -56,7 +56,8 @@ class HarnessGeneratorTests(GeneratorCopyCase):
         self.generate()
         current = self.run_generator("--check")
         self.assertEqual(current.returncode, 0, current.stdout + current.stderr)
-        self.assertIn(f"PASS: {5 * len(AGENT_NAMES) + 2} harness files current", current.stdout)
+        shell_agents = 4  # each gets a pi launcher file
+        self.assertIn(f"PASS: {5 * len(AGENT_NAMES) + 2 + shell_agents} harness files current", current.stdout)
         output = self.cad / "harness" / "codex" / "agents" / f"{AGENT_NAMES[0]}.toml"
         output.write_text(output.read_text(encoding="utf-8") + "# manual drift\n", encoding="utf-8")
         stale = self.run_generator("--check")
@@ -76,7 +77,8 @@ class HarnessGeneratorTests(GeneratorCopyCase):
         for path in sorted((self.cad / "agents").glob("*.md")):
             text = path.read_text(encoding="utf-8")
             source = yaml.safe_load(text.split("---", 2)[1])
-            self.assertEqual(set(source) - {"tier"}, {"name", "description", "capabilities", "skills"})
+            self.assertEqual(set(source) - {"tier", "launchers"}, {"name", "description", "capabilities", "skills"})
+            self.assertEqual("launchers" in source, "shell-uv" in source["capabilities"])
             self.assertIn(source.get("tier", "standard"), {"cheap", "standard", "strong"})
             self.assertEqual(source["name"], path.stem)
             self.assertIsInstance(source["capabilities"], list)
@@ -202,6 +204,26 @@ class HarnessGeneratorTests(GeneratorCopyCase):
                     self.assertIn(message, result.stderr)
         finally:
             source.write_text(original, encoding="utf-8")
+
+    def test_rejects_launchers_that_do_not_match_the_shell_capability_or_ship(self) -> None:
+        cases = (
+            ("cad-analyst.md", "launchers: [", "launchers: [cad-missing/scripts/x.py, ", "launchers name files CAD does not ship"),
+            ("cad-analyst.md", "launchers: [", "launchers: [cad-motion/scripts/../scripts/sweep.py, ", "launchers must be"),
+            ("cad-analyst.md", "launchers: [", "nolaunchers: [", "unexpected"),
+            ("cad-dfm-reviewer.md", "skills: [cad-review-dfm]", "skills: [cad-review-dfm]\nlaunchers: [cad-bom/scripts/bom.py]", "launchers"),
+        )
+        for name, old, new, message in cases:
+            source = self.cad / "agents" / name
+            original = source.read_text(encoding="utf-8")
+            try:
+                with self.subTest(agent=name, new=new):
+                    source.write_text(original.replace(old, new, 1), encoding="utf-8")
+                    result = self.run_generator("--check")
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(message, result.stderr)
+            finally:
+                source.write_text(original, encoding="utf-8")
+
     def test_pi_agents_follow_pi_subagents_frontmatter(self) -> None:
         self.generate()
         for source in sorted((self.cad / "agents").glob("*.md")):
@@ -213,11 +235,40 @@ class HarnessGeneratorTests(GeneratorCopyCase):
                 self.assertEqual(front["inheritProjectContext"], True)
                 self.assertEqual(front["skills"].split(", "), neutral["skills"])
                 tools = front["tools"].split(", ")
-                self.assertEqual("bash" in tools, "shell-uv" in neutral["capabilities"])
-                self.assertEqual("write" in tools, "write-scratch" in neutral["capabilities"])
+                self.assertNotIn("bash", tools)
+                self.assertEqual("cad_run" in tools, "shell-uv" in neutral["capabilities"])
+                self.assertEqual("write" in tools and "edit" in tools, "write-scratch" in neutral["capabilities"])
                 self.assertEqual("web_search" in tools, "web" in neutral["capabilities"])
-                # The guard loads exactly into the children that get a shell.
-                self.assertEqual(front.get("subagentOnlyExtensions"), generate.PI_GUARD_PLACEHOLDER if "bash" in tools else None)
+                # The extension loads exactly into the children that run scripts, by a path relative to the agent file.
+                expected = f"../cad-guard/{source.stem}.js" if "cad_run" in tools else None
+                self.assertEqual(front.get("subagentOnlyExtensions"), expected)
+
+    def test_pi_launcher_files_pass_each_agent_its_source_launchers(self) -> None:
+        self.generate()
+        shell_agents = []
+        for source in sorted((self.cad / "agents").glob("*.md")):
+            neutral = yaml.safe_load(source.read_text(encoding="utf-8").split("---", 2)[1])
+            launcher_file = self.cad / "harness/pi/launchers" / f"{source.stem}.js"
+            with self.subTest(agent=source.stem):
+                if "shell-uv" not in neutral["capabilities"]:
+                    self.assertNotIn("launchers", neutral)
+                    self.assertFalse(launcher_file.exists())
+                    continue
+                shell_agents.append(source.stem)
+                text = launcher_file.read_text(encoding="utf-8")
+                self.assertIn('import { cadGuard } from "./cad-guard.js";', text)
+                self.assertIn(f"export default cadGuard({json.dumps(source.stem)}, {json.dumps(neutral['launchers'])});", text)
+                self.assertIn(generate.OWNERSHIP_MARKER, text)
+                for launcher in neutral["launchers"]:
+                    self.assertTrue((self.cad / "skills" / launcher).is_file(), launcher)
+        self.assertEqual(shell_agents, ["cad-analyst", "cad-clerk", "cad-concept-designer", "cad-part-designer"])
+
+    def test_every_script_a_shell_agent_prompt_runs_is_a_launcher(self) -> None:
+        for source in sorted((self.cad / "agents").glob("*.md")):
+            front, prompt = source.read_text(encoding="utf-8").split("---", 2)[1:]
+            named = set(re.findall(r'run\.py"? (cad-[a-z0-9-]+/scripts/[A-Za-z0-9_]+\.py)', prompt))
+            with self.subTest(agent=source.stem):
+                self.assertLessEqual(named, set(yaml.safe_load(front).get("launchers", [])))
 
     def test_pi_prompt_is_a_generated_skill_launcher(self) -> None:
         self.generate()
