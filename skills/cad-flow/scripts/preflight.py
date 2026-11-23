@@ -795,6 +795,18 @@ def render_text(report: Report) -> str:
     return "\n".join(lines)
 
 
+def _check_flags(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Reject flag combinations that have no meaning; `parser.error` exits with status 2."""
+    if args.chromium_only and (args.warm or args.background or args.status):
+        parser.error("--chromium-only cannot be combined with --warm, --background or --status")
+    if args.background and not args.warm:
+        parser.error("--background needs --warm")
+    if args.status and args.warm:
+        parser.error("--status reports on a warm-up; it cannot start one")
+    if args.wait and not args.status:
+        parser.error("--wait needs --status")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="print the complete report as JSON")
@@ -812,14 +824,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--wait", type=float, default=0.0, metavar="SECONDS",
                         help="with --status: wait up to SECONDS for a running warm-up to finish")
     args = parser.parse_args(argv)
-    if args.chromium_only and (args.warm or args.background or args.status):
-        parser.error("--chromium-only cannot be combined with --warm, --background or --status")
-    if args.background and not args.warm:
-        parser.error("--background needs --warm")
-    if args.status and args.warm:
-        parser.error("--status reports on a warm-up; it cannot start one")
-    if args.wait and not args.status:
-        parser.error("--wait needs --status")
+    _check_flags(parser, args)
     if args.status:
         code, text = warm_status(wait_s=args.wait)
         print(json.dumps({"exit_code": code, "status": text,
