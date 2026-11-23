@@ -1,5 +1,5 @@
 requirement_id,method,criteria,result,evidence
-REQ-001,A,"Sweep the crank over 0 to 720 degrees at 5 degree steps; no collision and every declared clearance requirement met.",planned,
+REQ-001,A,"Sweep the crank over 0 to 720 degrees at 5 degree steps; no collision and every declared clearance requirement met.",pass,"hw/motion/v2/engine-cycle (not tracked): sweep.py v2, 145 steps over 0-720 deg, grid 0; 0 collision poses; smallest clearance 0.052 mm (rod-5 to pin-5); between-sample check incomplete, 864 unproved intervals (warning)"
 REQ-002,I,"Inspect the bank axes in the assembly record: 60 degrees included angle.",planned,
 REQ-003,A,"cad-fits computes the limits of each declared fit; the clearance is positive at worst case.",planned,
 REQ-004,A,"Static FEA of a connecting rod under the assumed load shows a safety factor of at least 2 against the printed-material limit.",planned,
