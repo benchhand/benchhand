@@ -648,6 +648,43 @@ class RenderEndToEnd(Fixture):
         self.assertEqual((width, height), (3 * 320 + 4 * 8, 240 + 34 + 2 * 8))
 
 
+@unittest.skipUnless(shutil.which("uv") and chromium_installed(), "needs uv and Playwright Chromium")
+class RenderHideGhost(Fixture):
+    """motion.py render --hide and --ghost reach the contact sheet and the render record."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.case("quick", {"schema": 1, "fps": 10, "max_step": {"deg": 30},
+                            "segments": [{"id": "low", "to": {"J-001": -90, "J-002": -60}},
+                                         {"id": "high", "to": {"J-001": 90, "J-002": 60}, "camera": "front"}]})
+
+    def sheet(self, label: str, *flags: str) -> tuple[dict[str, Any], bytes]:
+        out = self.hw.parent / ".cad-work" / label
+        code, result = run("render", "--hw", self.hw, "--version", "v1", "--case", "quick", "--outputs", "sheet",
+                           "--size", "320x240", "--out-dir", out, *flags)
+        self.assertEqual(code, 0, result)
+        return result["render"], (out / "contact-sheet.png").read_bytes()
+
+    def test_the_contact_sheet_honours_hide_and_ghost_and_the_record_lists_them(self) -> None:
+        plain, plain_png = self.sheet("none")
+        hidden, hidden_png = self.sheet("hide", "--hide", "TST-0001")
+        ghosted, ghosted_png = self.sheet("ghost", "--ghost", "TST-0001")
+        self.assertEqual((plain["hidden"], plain["ghosted"]), ([], []))
+        self.assertEqual((hidden["hidden"], hidden["ghosted"]), (["TST-0001"], []))
+        self.assertEqual((ghosted["hidden"], ghosted["ghosted"]), ([], ["TST-0001"]))
+        self.assertEqual(len({plain_png, hidden_png, ghosted_png}), 3)
+        self.assertEqual(hidden["parity"]["status"], "pass")
+
+    def test_the_flags_are_part_of_the_published_recipe(self) -> None:
+        ctx = motion.Context(self.hw, "v1")
+        effective = plan.load(ctx.chain, self.hw, pose.LAYOUT, "quick")
+        def recipe(**flags: list[str]) -> dict[str, Any]:
+            return motion._recipe(ctx, effective, ["sheet"], [320, 240], None, **flags)
+        self.assertNotEqual(recipe(), recipe(hide=["TST-0001"]))
+        self.assertNotEqual(recipe(hide=["TST-0001"]), recipe(ghost=["TST-0001"]))
+        self.assertEqual(recipe(), motion._recipe(ctx, effective, ["sheet"], [320, 240], None))
+
+
 @unittest.skipUnless(shutil.which("uv") and freecad_assembly.find_freecad(None), "needs uv and freecadcmd")
 class CrosscheckFreecad(unittest.TestCase):
     """The V6 fixture's coupled laws solved by FreeCAD on the default plan's frames."""

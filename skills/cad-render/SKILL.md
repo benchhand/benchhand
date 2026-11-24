@@ -25,7 +25,7 @@ TRIGGER
 ## Workflow
 
 1. Build first: `cad-model` `run` writes `hw/versions/vN/` and `latest.json`.
-2. Render: `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-render/scripts/render.py hw [--version latest|vN] [--views ...] [--size WxH] [--subject S] [--replace] [--out-dir .cad-work/...]`
+2. Render: `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-render/scripts/render.py hw [--version latest|vN] [--views ...] [--size WxH] [--subject S] [--hide PN|ID] [--ghost PN|ID] [--show PN|ID] [--replace] [--out-dir .cad-work/...]`
    -> immutable `hw/renders/<vN>/<subject>/` bundles with requested PNGs, `render.json`, and `manifest.json`.
    `--views` accepts `iso front side exploded`, `closeup-<PN>` / `part-<PN>`, and custom `dir-<X>-<Y>-<Z>` directions in assembly coordinates (+Z up, front -Y). Encode each signed decimal using `p` or `m` and `d` for the decimal point; for example `dir-p1-m1d5-p0-closeup-LMP-0004`. Directions are normalized. `-closeup-<PN>` or `-part-<PN>` optionally frames a PN from that direction; `@occurrence` uses the same explicit, filename-safe reference accepted by `closeup-@occurrence`. Names are deterministic and safe as `{VIEW}.png` bundle file names. Camera up switches to +Z near vertical directions.
    The bundle manifest seals its files and binds the bundle to the version manifest. `render.json` holds
@@ -83,6 +83,19 @@ part's height. The key light shades the parts onto each other, never the floor.
 The cache key includes every version-bound scene input, resolved material and exact-parity policy.
 Repeating the same version and subject reuses its verified immutable bundle, including with `--replace`;
 `--replace` retains and replaces a bundle only when its recipe differs. Compare bundles or scratch directories through their `render.json` files.
+
+## Hide or ghost a part that blocks the view
+
+A large reference or existing body (a mount-face envelope disc, a purchased housing) can cover the parts a
+view is about. Hide or ghost it; never write a custom renderer for that.
+- `--ghost <PN|occurrence-id>` draws the part translucent with visible edges. It never occludes the subject or a visibility target.
+- `--hide <PN|occurrence-id>` leaves the part out of every view and of the framing.
+- Both repeat. A PN names every occurrence of it, an id (`@ring-a` or `ring-a`) one. `--show <id>` forces a part visible that its default hides or ghosts.
+- `part.yaml` `render: shown|ghost|hidden` sets the default for a part (shown when absent); the flags override it.
+- An unknown id, one id under two flags, a hidden `closeup-` or `part-` subject and a hidden visibility target exit 2.
+- A hidden or ghosted window part is see-through to the visibility check, like `transparency: transparent`.
+- `render.json` lists `hidden` and `ghosted`, and each view's `render_inputs` holds both, so a change re-renders a view that a prior version would otherwise supply.
+- `cad-motion motion.py render` takes the same three flags for its frames and contact sheet.
 
 ## Requirement visibility
 

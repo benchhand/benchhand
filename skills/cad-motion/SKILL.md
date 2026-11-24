@@ -173,7 +173,7 @@ outside the limits are plan errors (exit 2; a coupled joint names its driver).
    [--case C | --plan .cad-work/<unit>/plan.yaml] [--print-default] [--frames-out .cad-work/<unit>/frames.json]`
    prints the coverage report; `--print-default` prints the default plan as YAML to start a case from.
 2. Render: `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-motion/scripts/motion.py render --hw hw --version vN [--case C] [--outputs glb,sheet,video,frames]
-   [--size 1280x720] [--crosscheck freecad] [--replace] [--out-dir .cad-work/<unit>/render]` checks
+   [--size 1280x720] [--hide PN|ID] [--ghost PN|ID] [--show PN|ID] [--crosscheck freecad] [--replace] [--out-dir .cad-work/<unit>/render]` checks
    coverage first (a failure writes nothing), then publishes `hw/motion/vN/<case>/`: `plan.json`,
    `coverage.json`, `result.json`, and as asked `motion.glb` (the version's own GLB nodes and
    materials with one LINEAR clip, keys refined until the interpolation is within 0.1 mm / 0.1 deg),
@@ -181,6 +181,10 @@ outside the limits are plan errors (exit 2; a coupled joint names its driver).
    and `frames/`. cad-render draws the frames with one camera per segment, fitted to what the segment
    sweeps; motion frames have no floor shadow. Default outputs are `glb,sheet`: seconds, as only the
    sheet tiles render. The same recipe reuses the bundle; another needs `--replace`.
+   When a reference or existing body blocks the frames or the contact sheet, ghost or hide it with `--ghost` or `--hide`
+   (a PN, or an occurrence id; repeatable); never write a custom renderer. `part.yaml` `render: shown|ghost|hidden` is the
+   per-part default and `--show` overrides it (see cad-render). Hidden parts still move and pass the parity check. The
+   flags are part of the recipe, and `result.json` `render` lists `hidden` and `ghosted`.
 3. Cross-check: `--crosscheck freecad` first solves the coupled record in FreeCAD on the same frames
    (`freecad_assembly.py --frames`): Belt or Gears joints for parallel linear couplings, closed
    loops for slider-cranks, formulas for the rest. Every joint must agree within 1e-3, and only

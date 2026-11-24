@@ -87,7 +87,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Sequence, cast
+from typing import Any, Callable, Sequence, TypedDict, cast
 from urllib.parse import unquote, urlsplit
 
 HERE = Path(__file__).resolve()
@@ -1489,8 +1489,15 @@ def motion_parity(spec: dict[str, Any], worlds: dict[int, dict[str, Any]]) -> di
             "worst": worst}
 
 
-def render_flags(args: argparse.Namespace) -> dict[str, list[str]]:
-    """The --hide, --ghost and --show refs of the command line, as build_scene's keyword arguments."""
+class PartFlags(TypedDict):
+    """The --hide, --ghost and --show refs of the command line: build_scene's keyword arguments."""
+
+    hide: list[str]
+    ghost: list[str]
+    show: list[str]
+
+
+def render_flags(args: argparse.Namespace) -> PartFlags:
     return {"hide": args.hide, "ghost": args.ghost, "show": args.show}
 
 

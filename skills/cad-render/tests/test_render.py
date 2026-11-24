@@ -1244,6 +1244,54 @@ class BrowserRender(unittest.TestCase):
         self.assertEqual(opaque_summary, {"REQ-001/0": {"status": "fail", "visible_fraction": {TARGET: 0.0}}})
         self.assertEqual(clear_summary, {"REQ-001/0": {"status": "pass", "visible_fraction": {TARGET: 1.0}}})
 
+    def scratch_render(self, label: str, *args: str) -> tuple[int, dict, dict]:
+        """render.py to scratch: (exit code, summary, render.json)."""
+        code, summary = self.render("--out-dir", str(self.hw.parent / ".cad-work" / label), *args)
+        metadata = json.loads((Path(summary["out_dir"]) / "render.json").read_text(encoding="utf-8"))
+        return code, summary, metadata
+
+    def test_a_hidden_part_leaves_no_pixels_and_render_json_lists_it(self) -> None:
+        box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=2)
+        without = {pn: box for pn, box in BOXES.items() if pn != OTHER}
+        box_version.write(self.hw, "v2", without, {pn: r for pn, r in box_parts().items() if pn != OTHER},
+                          record_version=2)
+        views = ("--views", "front", "iso")
+        _, _, shown = self.scratch_render("shown", "--version", "v1", *views)
+        _, hidden_summary, hidden = self.scratch_render("hidden", "--version", "v1", "--hide", OTHER, *views)
+        _, absent_summary, absent = self.scratch_render("absent", "--version", "v2", *views)
+        self.assertEqual((hidden["hidden"], hidden["ghosted"]), ([OTHER], []))
+        self.assertEqual((shown["hidden"], shown["ghosted"]), ([], []))
+        for view in ("front", "iso"):
+            png = Path(hidden_summary["pngs"][view]).read_bytes()
+            self.assertEqual(png, Path(absent_summary["pngs"][view]).read_bytes(), view)
+            self.assertEqual(hidden["views"][view]["render_inputs"]["hidden"], [OTHER])
+
+    def test_a_ghosted_part_is_drawn_but_never_occludes_a_target_behind_it(self) -> None:
+        self.hw.mkdir(parents=True, exist_ok=True)
+        requirements(self.hw, FRONT)
+        box_version.write(self.hw, "v1", BOXES, box_parts("opaque"), record_version=2)
+        fractions = {}
+        pngs = {}
+        for label, flags in (("opaque", ()), ("ghost", ("--ghost", WINDOW)), ("hide", ("--hide", WINDOW))):
+            code, summary, metadata = self.scratch_render(label, "--version", "v1", "--views", "front", *flags)
+            target = metadata["visibility"][0]["targets"][0]
+            fractions[label] = (code, target["silhouette_px"], target["visible_px"])
+            pngs[label] = Path(summary["pngs"]["front"]).read_bytes()
+        silhouette = fractions["hide"][1]
+        self.assertGreater(silhouette, 1000)
+        self.assertEqual(fractions["opaque"], (1, silhouette, 0))
+        self.assertEqual(fractions["hide"], (0, silhouette, silhouette))
+        self.assertEqual(fractions["ghost"], fractions["hide"])
+        self.assertEqual(len(set(pngs.values())), 3)  # the ghost is drawn: neither the opaque nor the hidden picture
+
+    def test_the_part_yaml_default_hides_and_show_brings_the_part_back(self) -> None:
+        parts = box_parts()
+        parts[OTHER]["render"] = "hidden"
+        box_version.write(self.hw, "v1", BOXES, parts, record_version=2)
+        _, _, defaulted = self.scratch_render("default", "--version", "v1", "--views", "front")
+        _, _, shown = self.scratch_render("show", "--version", "v1", "--views", "front", "--show", OTHER)
+        self.assertEqual((defaulted["hidden"], shown["hidden"]), ([OTHER], []))
+
     def test_an_unchanged_part_view_is_copied_and_a_changed_one_rendered(self) -> None:
         views = ("--views", "iso", PART_VIEW)
         box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=2)
