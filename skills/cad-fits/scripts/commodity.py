@@ -1,5 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12"
 # dependencies = []
 # ///
 """Modelled dimensions of common commodity hardware, from ../data/commodity.json.
@@ -57,8 +61,8 @@ def lookup(designation: str) -> dict[str, Any]:
                               "dimensions": dict(zip((f.strip() for f in entry["fields"].split(",")), values, strict=True))}
     if match["length"]:
         result["length"] = float(match["length"])
-    if size in table()["thread"]:
-        result["thread"] = table()["thread"][size]
+    if size in table()["thread"]["size"]:
+        result["thread"] = table()["thread"]["size"][size]
     return result
 
 

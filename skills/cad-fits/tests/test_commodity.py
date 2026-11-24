@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Commodity hardware table tests. Expected values are the published ISO dimensions
-(ISO 4762 M4: dk 7, k 4, s 3; ISO 4032 M5: s 8, m 4.7; ISO 273 medium M6 hole 6.6)."""
+(ISO 4762 M4: dk 7, k 4, s 3; ISO 4032 M5: s 8, m 4.7; ISO 273 medium M6 hole 6.6), read from
+https://www.fasteners.eu/standards/ISO/4762/, .../4032/ and https://mechcodex.com/reference/metric-clearance-hole-sizes."""
 
 from __future__ import annotations
 
@@ -9,7 +14,7 @@ import sys
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).with_name("scripts") / "commodity.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "commodity.py"
 SPEC = importlib.util.spec_from_file_location("cad_commodity", SCRIPT)
 assert SPEC and SPEC.loader
 commodity = importlib.util.module_from_spec(SPEC)
@@ -20,7 +25,7 @@ SPEC.loader.exec_module(commodity)
 class CommodityTests(unittest.TestCase):
     def test_socket_head_screw_dimensions_and_length(self) -> None:
         found = commodity.lookup("ISO 4762 M4x20")
-        self.assertEqual(found["dimensions"], {"head_diameter_max": 7.0, "head_height": 4.0, "key_width": 3.0})
+        self.assertEqual(found["dimensions"], {"head_diameter_max": 7.0, "head_height_max": 4.0, "key_width": 3.0})
         self.assertEqual(found["length"], 20.0)
         self.assertEqual(found["thread"]["pitch"], 0.7)
 
@@ -34,7 +39,7 @@ class CommodityTests(unittest.TestCase):
         self.assertEqual(found["dimensions"], {"length": 5.7, "outside_diameter": 4.6, "recommended_hole": 4.0})
 
     def test_unknown_designation_or_size_is_refused(self) -> None:
-        for text in ("ISO 9999 M4", "ISO 4762 M12", "bolt"):
+        for text in ("ISO 9999 M4", "ISO 4762 M12", "ISO 7380-1 M2", "bolt"):
             with self.subTest(text=text), self.assertRaises(commodity.CommodityError):
                 commodity.lookup(text)
 
