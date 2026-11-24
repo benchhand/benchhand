@@ -29,7 +29,7 @@ import hashlib
 import math
 import re
 import types
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
@@ -2647,9 +2647,12 @@ def obligation_anchor(subject: Mapping[str, Any]) -> str:
     return "product"
 
 
-def interfaces_of(record: Record, pn: str) -> tuple[str, ...]:
-    """The ids of the interfaces that name part number `pn` as their from or to end, in record order."""
-    return tuple(ident for ident, item in record.interfaces.items() if pn in (item.raw.get("from"), item.raw.get("to")))
+def interfaces_of(record: Record, pn: str, part_number: Callable[[Any], Any] | None = None) -> tuple[str, ...]:
+    """The ids of the interfaces that name part number `pn` as their from or to end, in record order. `part_number`
+    maps an end to the part number it names (an @occurrence to its PN); without it an end is compared as written."""
+    resolve = part_number or (lambda ref: ref)
+    return tuple(ident for ident, item in record.interfaces.items()
+                 if pn in (resolve(item.raw.get("from")), resolve(item.raw.get("to"))))
 
 
 def required_checks(record: Record) -> tuple[Obligation, ...]:
