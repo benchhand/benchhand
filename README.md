@@ -218,7 +218,7 @@ A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:
 <!-- slopvac-allow: rule=prose-promotion.promotional-verbs reason=domain-term -->
 ## Showcase
 
-[`examples/v6-engine`](examples/v6-engine/README.md) takes a 3D-printable desktop V6 engine through the flow, from the project-start questions to a release attempt. The scope is small: one rod, one piston and one pin, each placed six times on a 60° V. The example leaves out the heads and the cam drive. Its record lives in `examples/v6-engine/hw`, and every number below comes from real tool output.
+[`examples/v6-engine`](examples/v6-engine/README.md) takes a 3D-printable desktop V6 engine through the flow, from the project-start questions to a release attempt. This example models one rod, one piston and one pin, each placed six times on a 60° V. Its record lives in `examples/v6-engine/hw`, and every number below comes from tool output.
 
 ```mermaid
 flowchart LR
@@ -282,7 +282,7 @@ The first build places one definition of each part six times. One crank drives t
 piston-1 / rod-1   clearance 0.000 mm   interference 99.12 mm3   ok: false
 ```
 
-The record keeps the excerpt for all six pairs in [`v4-commit-check-interference.json`](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v4-commit-check-interference.json). The rod's small end (radius 6 mm) was wider than the piston slot. The 720° sweep skips pairs that a joint connects, so only the commit check saw the overlap. The example README tracks this gap as benchhand-c7q.10. Version v5 widened the slot.
+The record keeps the excerpt for all six pairs in [`v4-commit-check-interference.json`](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v4-commit-check-interference.json). The rod's small end (radius 6 mm) was wider than the piston slot. The 720° sweep skips pairs that a joint connects, so only the commit check saw the overlap. Version v5 widened the slot.
 
 ![Assembly, exploded](docs/images/v6-engine/03-assembly-exploded.webp)
 
@@ -318,7 +318,7 @@ The assembly drawing sheet (VSE-ASM) lists the five items with their quantities 
 
 ### 9. Analysis
 
-The first 720° sweep on v1 found six collisions between the crankshaft and the rods ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v1-sweep-collisions.json)). The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. That is partial evidence only. The sweep excludes the 19 pairs that a joint connects, enforces no pair minima, and leaves the between-sample check incomplete. REQ-001 therefore reads `not_assessed` in `verification.csv`. The example README tracks this gap as benchhand-c7q.10.
+The first 720° sweep on v1 found six collisions between the crankshaft and the rods ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v1-sweep-collisions.json)). The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. That is partial evidence only. The sweep excludes the 19 pairs that a joint connects, enforces no pair minima, and leaves the between-sample check incomplete. REQ-001 therefore reads `not_assessed` in `verification.csv`. The tool limit behind this is known: benchhand-c7q.10.
 
 ![The crank turning through 720 degrees](docs/images/v6-engine/04-motion-sweep.gif)
 
@@ -326,7 +326,7 @@ An exploratory static FEA of one rod gives a peak of 4.51 MPa. It assumes 100 N,
 
 ### 10. Critique
 
-An independent read-only reviewer (session ses_df60a1580ffe9NEcW4amRF9JX5) ran the DFM and mechanical reviews at commit eb102786. Both returned MAJOR. DR-003 and DR-004 record them with status `proposed`:
+The DFM and mechanical reviews both returned MAJOR. DR-003 and DR-004 record them with status `proposed`:
 
 ```text
 DFM-01 support_unplanned           major  UNKNOWN  REQ-005
