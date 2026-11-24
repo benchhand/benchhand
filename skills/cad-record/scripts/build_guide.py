@@ -65,6 +65,16 @@ if "cad_record_assembly_operations" not in sys.modules:
     _OPERATIONS_SPEC.loader.exec_module(OPERATIONS)
 else:
     OPERATIONS = sys.modules["cad_record_assembly_operations"]
+COMMODITY_PATH = SKILL / "scripts" / "commodity_identity.py"
+if "cad_record_commodity_identity" not in sys.modules:  # the shared decision on which designations identify a commodity item
+    _COMMODITY_SPEC = importlib.util.spec_from_file_location("cad_record_commodity_identity", COMMODITY_PATH)
+    if _COMMODITY_SPEC is None or _COMMODITY_SPEC.loader is None:
+        raise ImportError(f"{COMMODITY_PATH} not found")
+    COMMODITY = importlib.util.module_from_spec(_COMMODITY_SPEC)
+    sys.modules["cad_record_commodity_identity"] = COMMODITY
+    _COMMODITY_SPEC.loader.exec_module(COMMODITY)
+else:
+    COMMODITY = sys.modules["cad_record_commodity_identity"]
 YAML_LOADER_PATH = SKILL / "scripts" / "yaml_loader.py"
 if "cad_record_yaml_loader" not in sys.modules:  # the shared YAML reader: yaml.safe_load on libyaml
     _YAML_SPEC = importlib.util.spec_from_file_location("cad_record_yaml_loader", YAML_LOADER_PATH)
@@ -546,10 +556,11 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
                 drawing = LAYOUT.bundle_dir(hw, "drawings", version, pn) / "sheet-1.pdf"
                 if drawing.is_file():
                     drawing_link = markdown_link("drawing sheet PDF", drawing, out)
-            commodity = bool(procurement.get("mode") == "catalog" and procurement.get("designation")
-                             and not procurement.get("manufacturer_part_number") and not procurement.get("supplier_part_number"))
-            if commodity and not supplier:
-                supplier = COMMODITY_SUPPLIER
+            label = COMMODITY.commodity_label(part)
+            commodity = label is not None
+            if label is not None:
+                designation = label
+                supplier = supplier or COMMODITY_SUPPLIER
             buy_rows.append((*common, designation, quantity, supplier, order_code, drawing_link))
             commodity_rows.append(commodity)
 
