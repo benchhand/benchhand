@@ -19,7 +19,7 @@ The banks are staggered by 10.5 mm along the crank (head-1 at x = -5.25, head-2 
 
 ## Decision Outcome
 
-Chosen option: "Camshaft stubs of different length per bank", the usual production V6 layout. The belt plane is x = -68.75. The bank B camshaft (VSE-0007, 156 mm) already puts its pulley there. The bank A camshaft (VSE-0011, 135 mm) moves its stub inboard by 10.5 mm. The crank pulley VSE-0008 (20T) sits at x = -68.75 on the current nose: faces at -72.75 and -64.75, 4.75 mm clear of the crankcase.
+Chosen option: "Camshaft stubs of different length per bank", because it is the usual production V6 layout and keeps one belt, one tensioner and one belt plane. The belt plane is x = -68.75. The bank B camshaft (VSE-0007, 156 mm) already puts its pulley there. The bank A camshaft (VSE-0011, 135 mm) moves its stub inboard by 10.5 mm. The crank pulley VSE-0008 (20T) sits at x = -68.75 on the current nose: faces at -72.75 and -64.75, 4.75 mm clear of the crankcase.
 
 Belt path in the belt plane (y, z from the crank axis): crank pulley (0, 0) r 6.37; cam pulleys (±45, 77.94) r 12.73; idler (0, 70) r 5, back side; tensioner at z = 30, back side, travel y -30 to -6. The pitch length runs from 411.2 mm to 424.3 mm over the travel. The stock 420 mm GT2 closed loop (210 teeth) sits at y = -10.7.
 
