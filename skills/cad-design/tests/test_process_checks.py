@@ -2471,6 +2471,23 @@ class CalibrationFlagTests(Checks):
         orientation = next(row for row in result.outcomes if row["obligation"].startswith("process.fdm.orientation"))
         self.assertIn("envelope is not assessed", orientation["coverage"])
 
+    def test_off_an_outsourced_or_safety_critical_fdm_route_with_no_machine_still_needs_the_capability(self) -> None:
+        """The guideline fallback covers only a route whose machine is optional evidence: a supplier's capability and a
+        safety-critical service need a capability profile, so the route and the check stay unknown."""
+        for name, provider, service in (("outsourced", "outsourced", None), ("safety_critical", None, "safety_critical")):
+            with self.subTest(name):
+                route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
+                                      supports={"strategy": "none"}, **({"provider": provider} if provider else {}))]
+                if provider:
+                    route[0]["supplier"] = "TST supplier"
+                use = FX.use_case(**({"service_class": known(service)} if service else {}))
+                documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
+                                      product_data=FX.product(use), decisions=("DR-001", "DR-002"))
+                result = pc.assess(load(self, documents), geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED,
+                                   calibration=False)
+                self.assertIn("process.fdm.capability_unknown", self.codes(result))
+                self.assertIn("route.capability_unknown", self.codes(result))
+
     def test_on_an_fdm_route_with_no_machine_still_needs_the_capability(self) -> None:
         result = self.unprofiled(walled(3.0), True)
         self.assertIn("process.fdm.capability_unknown", self.codes(result))

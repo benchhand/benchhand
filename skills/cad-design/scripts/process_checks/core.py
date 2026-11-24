@@ -698,11 +698,12 @@ class Context:
         return f"{fix}; {coupon}" if fix else coupon
 
     def guidelines_without_machine(self, op: Any | None = None) -> bool:
-        """Whether this FDM operation (default: the context's) records no machine and calibration is off: the shipped
-        guideline values govern. That is a statement about the limits, never evidence that a machine exists."""
+        """Whether this FDM operation (default: the context's) records no machine, and the machine is optional evidence:
+        calibration is off, the operation is local and the service class is below safety_critical. The shipped guideline
+        values then govern. That is a statement about the limits, never evidence that a machine exists."""
         op = op or self.op
-        return (op is not None and self.mi.is_fact(op.capability) and not self.calibration
-                and op.kind in guidelines().GUIDELINE_PROCESSES)
+        return (op is not None and self.mi.is_fact(op.capability)
+                and guidelines().machine_optional(op.kind, op.provider, self.service_class, self.calibration))
 
     def guideline_context(self, profile: Any | None = None) -> Any | None:
         """The guideline scope (guidelines.Context) of a capability profile (this operation's unless `profile` names
