@@ -407,6 +407,7 @@ def command_render(args: argparse.Namespace) -> int:
     wall = time.monotonic()
     ctx = Context(args.hw, args.version)
     outputs, size = parse_outputs(args.outputs), parse_size(args.size)
+    _require_images_for_part_flags(args, outputs)
     effective, source = select_plan(args, ctx)
     if args.plan is not None and args.out_dir is None:
         raise pose.MotionError("a --plan file renders to scratch: pass --out-dir under .cad-work")
@@ -501,6 +502,16 @@ def command_render(args: argparse.Namespace) -> int:
     result["timings_s"] = {**timings, "total": round(time.monotonic() - wall, 3)}
     _emit(result, ctx.hw, "render", 0, args.json)
     return 0
+
+
+def _require_images_for_part_flags(args: argparse.Namespace, outputs: Sequence[str]) -> None:
+    """--hide, --ghost and --show change rendered images only: refuse them when none is asked for."""
+    if {"sheet", "video", "frames"} & set(outputs):
+        return
+    for flag in ("hide", "ghost", "show"):
+        if getattr(args, flag):
+            raise pose.MotionError(f"--{flag} changes rendered images: add sheet, video or frames to --outputs "
+                                   f"(got {','.join(outputs)})")
 
 
 def _part_flags(args: argparse.Namespace) -> list[str]:
