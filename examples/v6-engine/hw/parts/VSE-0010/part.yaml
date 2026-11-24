@@ -8,6 +8,7 @@ mass_target: 5
 make_buy: buy
 supplier: null
 decisions: [DR-005]
+model_frame: part_local
 procurement:
   mode: catalog
   designation: "Timing belt, GT2 profile, 2 mm pitch, 6 mm wide, closed loop 420 mm pitch length (210 teeth)"
