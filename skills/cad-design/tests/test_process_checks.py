@@ -1170,9 +1170,9 @@ INSERT = {"kind": "family_designation", "family": "heat_set_insert", "thread": "
 class CommodityDesignationTests(Checks):
     """A commodity item is bought by standard designation: no vendor PN, supplier or lead time is needed."""
 
-    def bought(self, purchase: dict[str, Any]) -> Any:
+    def bought(self, purchase: dict[str, Any], **procurement: Any) -> Any:
         item = part("TST-0701", [FX.operation("buy", "purchased", purchase=purchase)], process="purchased",
-                    material=None, make_buy="buy", procurement={"mode": "catalog"})
+                    material=None, make_buy="buy", procurement={"mode": "catalog", **procurement})
         item["intent"]["material_profile"] = FX.not_applicable("catalogue item")
         return self.assess(FX.record(parts=[item], capabilities=[], materials=materials()))
 
@@ -1222,6 +1222,33 @@ class CommodityDesignationTests(Checks):
         result = self.bought(pn_row)
         self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "unknown")
         self.assertIn("purchase.availability_unknown", self.codes(result))
+
+    def test_an_open_manufacturer_part_number_withholds_the_commodity_pass(self) -> None:
+        result = self.bought(self.commodity(), open={"manufacturer_part_number": "no catalogue part found"})
+        self.assertNotEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "pass")
+        self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "unknown")
+
+    def test_commodity_availability_needs_an_eligible_designation(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        cases = {
+            "a manufacturer part number": pn_row,
+            "an ineligible designation": {**pn_row, "designation": {**SCREW, "length": "not_applicable"}},
+        }
+        for name, purchase in cases.items():
+            with self.subTest(name):
+                claimed = self.bought({**purchase, "availability": known("commodity")}, manufacturer_part_number="TST-PN 1")
+                self.assertEqual(self.outcome(claimed, "purchase.availability@TST-0701/buy"), "unknown")
+                named = self.bought({**purchase, "availability": known("TST Supply Co stock item")},
+                                    manufacturer_part_number="TST-PN 1")
+                self.assertEqual(self.outcome(named, "purchase.availability@TST-0701/buy"), "pass")
+
+    def test_the_unresolved_availability_diagnostic_asks_for_no_lead_time(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        finding = self.finding(self.bought(pn_row), "purchase.availability_unknown")
+        self.assertNotIn("lead time", json.dumps(finding).lower())
+        self.assertIn("supplier", finding["remedy"] + json.dumps(finding["measured"]))
 
     def test_a_reference_catalogue_is_a_non_binding_example(self) -> None:
         listing = [{"vendor": "McMaster-Carr", "part_number": "91290A164", "url": "https://www.mcmaster.com/91290A164/"}]
