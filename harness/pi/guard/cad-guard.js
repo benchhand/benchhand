@@ -84,7 +84,21 @@ export function childEnv(env, skills) {
   return out;
 }
 
-/** The real path `raw` would write, with missing tail parts kept, or null when it cannot be resolved. */
+/** True when `target` names nothing on disk; false when it exists, as a dangling link does, or cannot be checked. */
+function missing(target) {
+  try {
+    fs.lstatSync(target);
+    return false;
+  } catch (error) {
+    return error?.code === "ENOENT";
+  }
+}
+
+/**
+ * The real path `raw` would write, with missing tail parts kept, or null when it cannot be resolved.
+ * Only parts that do not exist are kept as text: a link that does not resolve (dangling, or a loop)
+ * makes the path unresolvable, because the write would follow it to a place no check has seen.
+ */
 function realTarget(raw, cwd) {
   const text = raw.startsWith("@") ? raw.slice(1) : raw;
   if (text === "" || text.startsWith("~") || text.includes("\0") || text.split(/[\\/]/).includes("..")) return null;
@@ -93,6 +107,7 @@ function realTarget(raw, cwd) {
   for (;;) {
     const real = realpath(current);
     if (real !== null) return path.join(real, ...tail);
+    if (!missing(current)) return null;
     const parent = path.dirname(current);
     if (parent === current) return null;
     tail.unshift(path.basename(current));
@@ -105,13 +120,14 @@ export function writeProblem(raw, { cwd, skills = skillsDir(), guardDir = GUARD_
   if (typeof raw !== "string") return "the path is not a string";
   const target = realTarget(raw, cwd);
   const project = realpath(cwd);
-  if (target === null || project === null) return `the path ${JSON.stringify(raw)} cannot be resolved without "..", "~" or a missing root`;
+  if (target === null || project === null) return `the path ${JSON.stringify(raw)} cannot be resolved without "..", "~", a missing root or a link that does not resolve`;
   for (const protectedDir of [skills, guardDir]) {
     const real = realpath(protectedDir) ?? path.resolve(protectedDir);
     if (inside(target, real)) return `${target} is inside the installed ${real}`;
   }
+  // The write creates or replaces the last part inside its parent, so the parent's real path must lie in the work dir.
   const work = path.join(project, WORK_DIR);
-  if (!inside(target, work) || target === work) return `${target} is outside ${work}`;
+  if (!inside(path.dirname(target), work)) return `${target} is outside ${work}`;
   return null;
 }
 
