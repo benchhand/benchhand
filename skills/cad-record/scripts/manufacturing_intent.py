@@ -2645,6 +2645,11 @@ def obligation_anchor(subject: Mapping[str, Any]) -> str:
     return "product"
 
 
+def interfaces_of(record: Record, pn: str) -> tuple[str, ...]:
+    """The ids of the interfaces that name part number `pn` as their from or to end, in record order."""
+    return tuple(ident for ident, item in record.interfaces.items() if pn in (item.raw.get("from"), item.raw.get("to")))
+
+
 def required_checks(record: Record) -> tuple[Obligation, ...]:
     """Every check obligation the record implies, enumerated before any producer runs, sorted by id:
     each made component x route operation x its kind's check families; purchase checks for bought items;

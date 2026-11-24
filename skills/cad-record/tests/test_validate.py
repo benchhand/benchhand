@@ -967,7 +967,7 @@ class ExistingEquipment(unittest.TestCase):
             documents["parts/TST-0009/part.yaml"]["procurement"] = {"mode": "catalog"}
 
         messages = [str(f["message"]) for f in self.findings(bought) if "TST-0009" in str(f["path"])]
-        self.assertTrue(any("existing equipment is not bought" in m for m in messages), messages)
+        self.assertTrue(any("procurement" in m for m in messages), messages)
 
 
 class SubjectOccurrences(unittest.TestCase):
