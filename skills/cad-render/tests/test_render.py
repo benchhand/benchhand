@@ -1022,13 +1022,17 @@ class PartRenderState(unittest.TestCase):
         with self.assertRaisesRegex(render.InfraError, f"{OTHER} is named by both --hide and --ghost"):
             self.scene(hide=[OTHER], ghost=[f"@{OTHER}"])
 
-    def test_a_render_that_hides_every_part_is_refused(self) -> None:
+    def test_a_render_whose_flags_hide_every_part_is_refused(self) -> None:
+        self.write()
+        for hide in ([WINDOW, TARGET, f"@{OTHER}"], [WINDOW, TARGET, OTHER]):
+            with self.subTest(hide=hide), self.assertRaisesRegex(render.InfraError, "every part is hidden"):
+                self.scene(hide=hide)
+
+    def test_a_render_whose_part_yaml_and_flags_hide_every_part_is_refused(self) -> None:
         self.write({WINDOW: "hidden", TARGET: "hidden"})
         with self.assertRaisesRegex(render.InfraError, "every part is hidden"):
-            self.scene(hide=[OTHER])  # the last one hidden by flag, the others by part.yaml
-        self.write()
-        with self.assertRaisesRegex(render.InfraError, "every part is hidden"):
-            self.scene(hide=[WINDOW, TARGET, f"@{OTHER}"])
+            self.scene(hide=[OTHER])
+        self.assertEqual(self.scene(show=[TARGET])["hidden"], [WINDOW])  # one shown part is enough
 
     def test_a_view_cannot_name_a_hidden_part_as_its_subject(self) -> None:
         self.write()
