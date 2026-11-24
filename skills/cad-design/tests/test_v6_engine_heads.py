@@ -56,7 +56,7 @@ def axis_of(occ: dict) -> tuple[float, float, float]:
 class CamDriveTests(unittest.TestCase):
     def test_the_cam_turns_once_per_two_crank_turns(self) -> None:
         crank, cam = params("VSE-0008")["teeth"], params("VSE-0009")["teeth"]
-        self.assertEqual(crank / cam, 2)
+        self.assertEqual(cam / crank, 2)  # the cam pulley carries twice the crank pulley's teeth
 
     def test_the_belt_is_a_whole_number_of_gt2_teeth(self) -> None:
         belt = params("VSE-0010")
