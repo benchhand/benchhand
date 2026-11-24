@@ -11,11 +11,9 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .core import FAIL, PASS, UNKNOWN, Context, Draft, Result, assembly_data, intent, policy, text, unknown
+from .core import FAIL, PASS, UNKNOWN, Context, Draft, Result, assembly_data, commodity_identity, intent, policy, text, unknown
 
 TRACEABLE = frozenset({"datasheet", "standard", "supplier", "test", "calibration"})
-# A designation of these kinds names a commodity: any supplier of the standard or family satisfies it.
-COMMODITY_KINDS = frozenset({"standard_designation", "family_designation"})
 
 # The standards bodies a bought part's designation may name, alone or combined (DIN EN ISO 4017, ISO/EN/DIN 898-1).
 STANDARDS = ("DIN", "ISO", "EN", "ASME", "ANSI")
@@ -58,7 +56,7 @@ _THREAD_SIZE = re.compile(r"(?:M\d|#\d+-\d|\d+/\d+-\d)")
 
 # Standards that specify features or tolerances (threads, fits, general tolerances), not purchasable parts. A feature
 # standard matches by body plus number: ISO 965 covers ISO 965-1, DIN ISO 965-1 and DIN EN ISO 965-1, not DIN 965 (a screw).
-FEATURE_STANDARDS = ("ISO 965", "ISO 261", "ISO 262", "ISO 68", "ISO 286", "ISO 2768", "ISO 1101", "ASME Y14.5", "ASME B1.1")
+FEATURE_STANDARDS = commodity_identity().FEATURE_STANDARDS
 _FEATURE = tuple(tuple(entry.split(" ", 1)) for entry in FEATURE_STANDARDS)
 
 DESIGNATION_RULE = "a standard designation with a size (DIN 471 - 5x0.6), or a manufacturer part number"
@@ -99,23 +97,11 @@ def _missing(ctx: Context, family: str, what: str, consequence: str, severity: s
     return Result(UNKNOWN, f"purchase {family}", f"{what} unknown", [draft])
 
 
-def _commodity(purchase: Any) -> Mapping[str, Any] | None:
-    """The commodity designation of a purchase (standard or family), or None for a manufacturer part number."""
-    data = (purchase or {}).get("designation")
-    return data if isinstance(data, Mapping) and data.get("kind") in COMMODITY_KINDS else None
-
-
-def _commodity_text(data: Mapping[str, Any]) -> str:
-    name = data.get("standard") or data.get("family") or ""
-    rest = [str(data[k]) for k in ("size", "thread", "length") if data.get(k) not in (None, "not_applicable")]
-    return " ".join([str(name), *rest]).strip()
-
-
 def identity(ctx: Context) -> Result:
-    designation = _commodity(ctx.operation.purchase)
+    designation = commodity_identity().commodity_designation(ctx.operation.purchase)
     if designation:
-        return Result(PASS, "purchase identity", f"identified by designation {_commodity_text(designation)}; any "
-                      "supplier of that standard or family is acceptable")
+        return Result(PASS, "purchase identity", f"identified by designation {commodity_identity().designation_text(designation)}; "
+                      "any supplier of that standard or family is acceptable")
     data = _fact(ctx.operation.purchase, "identity")
     if not _known(data):
         return _missing(ctx, "identity", "manufacturer and part number, or a standard or family designation",
@@ -240,7 +226,7 @@ def mounting(ctx: Context) -> Result:
 
 
 def availability(ctx: Context) -> Result:
-    if _commodity(ctx.operation.purchase):
+    if commodity_identity().commodity_designation(ctx.operation.purchase):
         return Result(PASS, "purchase availability", "commodity: obtainable from any supplier of the designation; "
                       "reference catalogue entries are non-binding examples")
     if not _known(_fact(ctx.operation.purchase, "availability")):
