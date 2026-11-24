@@ -15,7 +15,6 @@ procurement:
   open:
     manufacturer: "no manufacturer selected; GT2 2 mm pitch closed loops of 420 mm are a stock length, the source is still to be named (DR-005)"
     manufacturer_part_number: "no manufacturer selected (DR-005)"
-manufacture: {relationship: same}
 intent:
   functions: {status: unknown, reason: not recorded yet, question: Q-002}
   material_profile: {status: unknown, reason: "no grade is selected; the material is the usual GT2 construction, not a sourced grade", question: Q-002}
