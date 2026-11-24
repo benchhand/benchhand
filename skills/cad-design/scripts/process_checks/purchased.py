@@ -37,11 +37,17 @@ def _missing(ctx: Context, family: str, what: str, consequence: str, severity: s
     return Result(UNKNOWN, f"purchase {family}", f"{what} unknown", [draft])
 
 
+def _commodity_label(ctx: Context) -> str | None:
+    """The order line when this purchase is a commodity item: an eligible designation and no open identity field. One
+    decision for the identity and availability checks, the BOM and the build guide (cad-record commodity_identity.py)."""
+    return commodity_identity().commodity_label(ctx.part.raw, ctx.operation.purchase)
+
+
 def identity(ctx: Context) -> Result:
-    designation = commodity_identity().commodity_designation(ctx.operation.purchase)
-    if designation:
-        return Result(PASS, "purchase identity", f"identified by designation {commodity_identity().designation_text(designation)}; "
-                      "any supplier of that standard or family is acceptable")
+    label = _commodity_label(ctx)
+    if label:
+        return Result(PASS, "purchase identity", f"identified by designation {label}; any supplier of that standard or "
+                      "family is acceptable")
     data = _fact(ctx.operation.purchase, "identity")
     if not _known(data):
         return _missing(ctx, "identity", "manufacturer and part number, or a standard or family designation",
@@ -166,12 +172,14 @@ def mounting(ctx: Context) -> Result:
 
 
 def availability(ctx: Context) -> Result:
-    if commodity_identity().commodity_designation(ctx.operation.purchase):
+    if _commodity_label(ctx):
         return Result(PASS, "purchase availability", "commodity: obtainable from any supplier of the designation; "
                       "reference catalogue entries are non-binding examples")
-    if not _known(_fact(ctx.operation.purchase, "availability")):
-        return _missing(ctx, "availability", "availability (a named supplier, or commodity)",
-                        "the item may not be obtainable", severity="minor")
+    data = _fact(ctx.operation.purchase, "availability")
+    claimed = _known(data) and str(data.get("value", "")).strip().lower() == "commodity"
+    if not _known(data) or claimed:  # `commodity` is for an eligible designation; any other item needs a named supplier
+        return _missing(ctx, "availability", "availability (a named supplier)", "the item may not be obtainable",
+                        severity="minor")
     return Result(PASS, "purchase availability", "availability recorded")
 
 
