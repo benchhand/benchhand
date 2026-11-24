@@ -1,0 +1,32 @@
+PN: VSE-0012
+rev: X1
+title: Smooth idler pulley 10 mm OD, 3 mm bore, flanged
+material: Aluminium with a sealed ball bearing
+process: purchased
+finish: As supplied
+mass_target: 3
+make_buy: buy
+supplier: null
+decisions: [DR-005]
+procurement:
+  mode: catalog
+  designation: "Smooth flanged idler pulley for 6 mm GT2 belt, 10 mm OD, 3 mm bore, with bearing"
+  open:
+    manufacturer: "no manufacturer selected; 10 mm smooth GT2 idlers are a stock item, the source is still to be named (DR-005)"
+    manufacturer_part_number: "no manufacturer selected (DR-005)"
+manufacture: {relationship: same}
+intent:
+  functions: {status: unknown, reason: not recorded yet, question: Q-002}
+  material_profile: {status: unknown, reason: "no grade is selected; the material is the usual aluminium idler construction, not a sourced grade", question: Q-002}
+  service: {status: unknown, reason: not recorded yet, question: Q-001}
+  critical_surfaces: {status: unknown, reason: not recorded yet, question: Q-007}
+  route:
+    - id: buy
+      kind: purchased
+      title: Buy two smooth 10 mm GT2 idler pulleys
+      output_state: installed
+      purchase:
+        identity: {status: unknown, reason: "no manufacturer or part number is selected (DR-005, procurement.open)", question: Q-002}
+        specification: {status: known, value: "smooth flanged idler, 10 mm OD, 3 mm bore, for a 6 mm belt", basis: user_declared, sources: [{kind: decision, reference: "DR-005", decision: DR-005}]}
+        ratings: {status: unknown, reason: "no load or speed rating is recorded", question: Q-002}
+        availability: {status: unknown, reason: "no supplier is selected", question: Q-002}
