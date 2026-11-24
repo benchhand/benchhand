@@ -112,6 +112,21 @@ class HarnessInstallTests(unittest.TestCase):
                 self.assertIn("cad-clerk", check.detail)
                 self.assertIn("harness/install.py --harness pi", check.fix)
 
+    def test_pi_warns_when_an_agent_profile_differs_from_its_receipt(self) -> None:
+        # The receipt and the other agents stay as installed; only cad-clerk.md is edited to name a stale guard.
+        with tempfile.TemporaryDirectory() as temporary:
+            project, home, other = Path(temporary) / "project", Path(temporary) / "home", Path(temporary) / "old"
+            stale = self.pi_install(other, ".pi")["cad-clerk.js"]
+            files = self.pi_install(project, ".pi")
+            receipt = (project / ".benchhand-install.json").read_text(encoding="utf-8")
+            files["cad-clerk.md"].write_text(f"---\nname: cad-clerk\nsubagentOnlyExtensions: {json.dumps(str(stale))}\n---\n",
+                                             encoding="utf-8")
+            check = preflight._harness_check("pi", project, home, {})
+            self.assertEqual((project / ".benchhand-install.json").read_text(encoding="utf-8"), receipt)
+            self.assertEqual(check.status, "warn", check.detail)
+            self.assertIn(".pi/agents/cad-clerk.md", check.detail)
+            self.assertIn("harness/install.py --harness pi", check.fix)
+
     def test_pi_is_a_harness_choice_of_the_command_line(self) -> None:
         report = preflight.Report((preflight.Check("uv", "uv", "pass", True, "", ""),))
         with patch.object(preflight, "run_checks", return_value=report), patch("sys.stdout"):
