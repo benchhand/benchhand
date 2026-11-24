@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import json
 import subprocess
@@ -391,21 +392,51 @@ class BuildGuide(unittest.TestCase):
         self.assertEqual(misdated.returncode, 2)
         self.assertIn("release A was sealed on 2026-10-01, not 2026-10-05", misdated.stderr)
 
-    def test_commodity_buy_rows_are_grouped_by_designation(self) -> None:
+    NUT = {"kind": "standard_designation", "standard": "ISO 4032", "size": "M4", "length": "not_applicable",
+           "property_class": "8", "finish": "zinc plated"}
+
+    def designate(self, hw: Path, pn: str, designation: dict) -> None:
+        """Re-record `pn` as bought by structured designation: no manufacturer, part number or designation text."""
+        part_path = hw / "parts" / pn / "part.yaml"
+        part = yaml.safe_load(part_path.read_text(encoding="utf-8"))
+        part["procurement"] = {"mode": "catalog"}
+        part["supplier"] = None
+        purchase = part["intent"]["route"][0]["purchase"]
+        purchase.pop("identity", None)
+        purchase["designation"] = copy.deepcopy(designation)
+        part_path.write_text(yaml.safe_dump(part, sort_keys=False), encoding="utf-8")
+
+    def bom_quantity(self, hw: Path, pn: str) -> int:
+        with (hw / "bom.csv").open(newline="", encoding="utf-8") as stream:
+            return sum(int(row["qty"]) for row in csv.DictReader(stream) if row["PN"] == pn)
+
+    def test_structured_commodity_rows_are_grouped_by_designation_with_summed_quantity(self) -> None:
         hw = self.copy_lamp_example()
         self.make_version(hw, "v1")
-        designation = "Hex nut ISO 4032 - M4, property class 8, zinc plated"
+        expected = self.bom_quantity(hw, "LMP-0008") + self.bom_quantity(hw, "LMP-0009")
         for pn in ("LMP-0008", "LMP-0009"):
-            part_path = hw / "parts" / pn / "part.yaml"
-            part = yaml.safe_load(part_path.read_text(encoding="utf-8"))
-            part["procurement"] = {"mode": "catalog", "designation": designation, "standard": "ISO 4032"}
-            part.pop("supplier", None)
-            part_path.write_text(yaml.safe_dump(part, sort_keys=False), encoding="utf-8")
+            self.designate(hw, pn, self.NUT)
         guide = self.generate(hw)
-        rows = [line for line in guide.splitlines() if designation in line]
+        rows = [line for line in guide.splitlines() if "ISO 4032 M4, 8, zinc plated" in line]
         self.assertEqual(len(rows), 1, rows)
-        self.assertIn("LMP-0008, LMP-0009", rows[0])
-        self.assertIn("any supplier (commodity)", rows[0])
+        cells = [cell.strip() for cell in rows[0].strip("|").split("|")]
+        self.assertIn("LMP-0008, LMP-0009", cells)
+        self.assertIn(str(expected), cells)
+        self.assertIn("any supplier (commodity)", cells)
+
+    def test_an_unresolved_insert_is_not_labelled_any_supplier(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        guide = self.generate(hw)
+        row = next(line for line in guide.splitlines() if "LMP-0010" in line and "OPEN" in line)
+        self.assertNotIn("any supplier", row)
+
+    def test_an_ineligible_structured_designation_is_not_a_commodity_row(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        self.designate(hw, "LMP-0008", {**self.NUT, "standard": "ISO 4032", "length": 5.0, "kind": "family_designation"})
+        guide = self.generate(hw)
+        self.assertNotIn("any supplier (commodity)", guide)
 
     def test_buy_identity_open_fields_remain_visible(self) -> None:
         hw = self.copy_lamp_example()
