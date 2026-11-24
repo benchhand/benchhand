@@ -154,6 +154,16 @@ class InstallerTests(unittest.TestCase):
                     self.assertFalse((project / ".opencode/commands").exists())
                 self.assertFalse((project / ".benchhand-install.json").exists())
 
+    def assert_kiro_resources_installed(self, agents_dir: Path) -> None:
+        for agent_file in AGENT_FILES["kiro"]:
+            profile = json.loads((agents_dir / agent_file).read_text(encoding="utf-8"))
+            if agent_file != "cad-sourcing-researcher.json":  # loads no skill
+                self.assertTrue(profile["resources"])
+            for resource in profile["resources"]:
+                self.assertTrue(resource.startswith("skill://~/.kiro/skills/"), resource)
+                resource_path = self.home / resource.removeprefix("skill://~/")
+                self.assertTrue(resource_path.is_file(), f"{agent_file} resource is missing: {resource_path}")
+
     def test_user_install_and_uninstall_use_contract_roots(self) -> None:
         for harness in HARNESS_PATHS:
             with self.subTest(harness=harness):
@@ -174,14 +184,7 @@ class InstallerTests(unittest.TestCase):
                     self.assertIn(str(root / "commands/cad-flow.md"), dry.stdout)
                 self.assertEqual(self.run_installer(*command).returncode, 0)
                 if harness == "kiro":
-                    for agent_file in AGENT_FILES[harness]:
-                        profile = json.loads((root / agents_relative / agent_file).read_text(encoding="utf-8"))
-                        if agent_file != "cad-sourcing-researcher.json":  # loads no skill
-                            self.assertTrue(profile["resources"])
-                        for resource in profile["resources"]:
-                            self.assertTrue(resource.startswith("skill://~/.kiro/skills/"), resource)
-                            resource_path = self.home / resource.removeprefix("skill://~/")
-                            self.assertTrue(resource_path.is_file(), f"{agent_file} resource is missing: {resource_path}")
+                    self.assert_kiro_resources_installed(root / agents_relative)
                 self.assertEqual(self.run_installer(*command, "--uninstall").returncode, 0)
                 self.assertFalse((root / skills_relative).exists())
                 self.assertFalse((root / agents_relative).exists())
