@@ -484,13 +484,16 @@ MAIN_DOMAINS = ("capability", "condition", "criterion", "environment", "finish",
                 "material", "orientation", "process", "route", "setup", "source", "use_case")
 # Per case and family prefix, the digest of the fingerprints of every subject in the family's origin/main domains,
 # computed with impact.py of origin/main a69bbb46 (cad-record unchanged since 4a8916f8).
+# The engineering., requirement. and policy. entries are the exception: those families read the source domain, which now also
+# fingerprints the guideline sets a machine-free FDM route resolves through (benchhand-miw). Their values were recomputed
+# with that one change; every family that does not read the source domain still matches main.
 MAIN_FAMILY_DIGESTS: dict[str, dict[str, str]] = {
     "occurrence-placed": {
         "cad.": "573156ddba3e6bd069d5e9b862fb776a3ff83d095b155568d72a16d723ca5b56",
         "route.": "49248d3142a21391c8eae67178fbdc43dab9bc4c276cdebe72cf308bcf5c325c",
         "process.": "9c67614853d423da5712d35a4784611f8b0558886efbc5881a0277811fa4f570",
         "optical.": "ea9f72b837e030fd22c329918f3e5f7a03287ecadea8b277f337b90f92a3955c",
-        "engineering.": "7e777a8020773a3e550e4d90606496bcbec18b9557f103b05f04866a5cb1f1ba",
+        "engineering.": "69fe8827e35a39af46a9bec30007ba6bf908eac0ffea8e04d9a1224701689361",
         "feature.": "7302d9165857612dc7a10b888fea1b837dd86e8c8f23ff02724531429b79efa2",
         "interface.": "b2a95ced884053db6226d05aba17af7aaf55f3ea3ba58cafa723171aa238301f",
         "contact.": "6dc6bdafa3baa71b397dcb831f6715e48b4a054151ac34eceef36410e400f5a2",
@@ -498,15 +501,15 @@ MAIN_FAMILY_DIGESTS: dict[str, dict[str, str]] = {
         "assembly.": "790afb7ac9ed872d78a1e355c7719e2f43c4530f102328ab5498dfb771eb64cb",
         "export.3mf": "57b05be936547f3302bcb984594b44edeaa9412dd9a8c0f0bcb1957781ba6677",
         "function.": "7575681d57fb9d88388d93c384af9436c452ce3cfd236687df30d7c05f2425f8",
-        "requirement.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
-        "policy.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
+        "requirement.": "cc34e9370e988b6397832881d2b94e8ea67d36b2aad023220785c43c7f01eb89",
+        "policy.": "cc34e9370e988b6397832881d2b94e8ea67d36b2aad023220785c43c7f01eb89",
     },
     "broken inventory": {
         "cad.": "573156ddba3e6bd069d5e9b862fb776a3ff83d095b155568d72a16d723ca5b56",
         "route.": "49248d3142a21391c8eae67178fbdc43dab9bc4c276cdebe72cf308bcf5c325c",
         "process.": "9c67614853d423da5712d35a4784611f8b0558886efbc5881a0277811fa4f570",
         "optical.": "ea9f72b837e030fd22c329918f3e5f7a03287ecadea8b277f337b90f92a3955c",
-        "engineering.": "7e777a8020773a3e550e4d90606496bcbec18b9557f103b05f04866a5cb1f1ba",
+        "engineering.": "69fe8827e35a39af46a9bec30007ba6bf908eac0ffea8e04d9a1224701689361",
         "feature.": "7302d9165857612dc7a10b888fea1b837dd86e8c8f23ff02724531429b79efa2",
         "interface.": "b2a95ced884053db6226d05aba17af7aaf55f3ea3ba58cafa723171aa238301f",
         "contact.": "6dc6bdafa3baa71b397dcb831f6715e48b4a054151ac34eceef36410e400f5a2",
@@ -514,8 +517,8 @@ MAIN_FAMILY_DIGESTS: dict[str, dict[str, str]] = {
         "assembly.": "790afb7ac9ed872d78a1e355c7719e2f43c4530f102328ab5498dfb771eb64cb",
         "export.3mf": "57b05be936547f3302bcb984594b44edeaa9412dd9a8c0f0bcb1957781ba6677",
         "function.": "7575681d57fb9d88388d93c384af9436c452ce3cfd236687df30d7c05f2425f8",
-        "requirement.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
-        "policy.": "e60c578893c6a9d0740164788d1d70d7eeec85278977e42ca05f665807f726ec",
+        "requirement.": "cc34e9370e988b6397832881d2b94e8ea67d36b2aad023220785c43c7f01eb89",
+        "policy.": "cc34e9370e988b6397832881d2b94e8ea67d36b2aad023220785c43c7f01eb89",
     },
 }
 
