@@ -683,15 +683,16 @@ def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
             fail("assembly.installed_twice", f"{op.id} installs sub-build {op.part}, which is already in place",
                  "the sequence installs the same unit twice", "remove the duplicate install step", severity="major")
         return
-    claimed = (step.part, step.into, *step.closes) if step.build is not None else (step.part,) if op.installs else ()
-    for ref in claimed:
+    pairs = zip((step.part, step.into, *step.closes), (op.part, op.into, *op.closes))
+    claimed = pairs if step.build is not None else [(step.part, op.part)] if op.installs else []
+    for ref, written in claimed:
         owners = state.shared.get(ref) if ref is not None else None
         if owners is None or owners.index(step.build) == 0 or (ref, step.build) in reported:
             continue
         reported.add((ref, step.build))
-        fail("assembly.sub_build_shared", f"{op.id} uses {ref} in {_build_name(step.build)}, which "
+        fail("assembly.sub_build_shared", f"{op.id} uses {written} in {_build_name(step.build)}, which "
              f"{_build_name(owners[0])} also uses", f"one physical part cannot be built into {len(owners)} units",
-             f"keep {ref} in one build, or add an occurrence for the other")
+             f"keep {written} in one build, or add an occurrence for the other")
     unit = state.sub_builds.get(step.build) if step.build is not None else None
     if unit is not None and unit.last == op.index and step.build not in installer:
         fail("assembly.sub_build_not_installed", f"no install operation puts sub-build {step.build} into the assembly",

@@ -416,11 +416,13 @@ class NeverInstalledPacketTests(unittest.TestCase):
         self.assertEqual(result.statuses["assembly.order@product"].result, "pass")
 
 
-DATASHEET = [{"kind": "datasheet", "reference": "Loctite EA 9466 TDS, cure schedule"}]
+DATASHEET = [{"kind": "datasheet", "reference": "Loctite EA 9466 TDS, cure schedule", "url": "https://example.com/ea9466.pdf",
+              "accessed": "2026-11-24"}]
 
 
 def sourced(value: float, units: str, sources: list | None = None) -> dict:
-    return {"status": "known", "value": {"value": value, "units": units}, "sources": DATASHEET if sources is None else sources}
+    return {"status": "known", "value": {"value": value, "units": units}, "basis": "supplier_typical",
+            "sources": DATASHEET if sources is None else sources}
 
 
 class SubBuildTests(unittest.TestCase):
