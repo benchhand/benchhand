@@ -78,4 +78,4 @@ def drawing_features(params: dict, shape: cq.Shape) -> dict:
             add("side_face_low" if y < 0 else "side_face_high", "plane_face", patch)
         else:
             add("top_edge" if z > (p["plate_z0"] + p["plate_z1"]) / 2.0 else "bottom_edge", "plane_face", patch)
-    return {name: {"kind": kind, "frame": "assembly_zero", "patches": patches} for name, (kind, patches) in features.items()}
+    return {name: {"kind": kind, "frame": "part_local", "patches": patches} for name, (kind, patches) in features.items()}
