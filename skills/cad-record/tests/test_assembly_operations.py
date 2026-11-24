@@ -416,6 +416,54 @@ class NeverInstalledPacketTests(unittest.TestCase):
         self.assertEqual(result.statuses["assembly.order@product"].result, "pass")
 
 
+DATASHEET = [{"kind": "datasheet", "reference": "Loctite EA 9466 TDS, cure schedule"}]
+
+
+def sourced(value: float, units: str, sources: list | None = None) -> dict:
+    return {"status": "known", "value": {"value": value, "units": units}, "sources": DATASHEET if sources is None else sources}
+
+
+class SubBuildTests(unittest.TestCase):
+    """A bench sub-build has its own ground, sequence and state; one install operation puts its output in place."""
+
+    PNS = ("TST-0101", "TST-0102")  # housing, hanger
+    MAGNET = "TST-0103"
+
+    def inventory(self, extra: tuple[str, ...] = ()):
+        record = {"occurrences": [{"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0], *extra]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1]],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        return assembly_data.normalize(record, {self.MAGNET: "part_local"})
+
+    @staticmethod
+    def bond(magnet: str) -> dict:
+        return {"id": f"bond-{magnet}", "kind": "join", "sub_build": "hanger", "part": f"@{magnet}", "into": "TST-0102",
+                "direction": [0, 0, -1], "acceptance": {"kind": "flush", "features": ["magnet_face", "pocket_rim"]},
+                "consumables": ["epoxy"]}
+
+    CURE = {"id": "cure-hanger", "kind": "hold", "sub_build": "hanger", "part": "TST-0102",
+            "duration": sourced(24, "h"), "fixture": "bench cure jig", "orientation": [0, 0, 1],
+            "cure": {"time": sourced(24, "h"), "temperature": sourced(23, "deg_C")}}
+    INSTALL = {"id": "install-hanger", "kind": "install", "part": "hanger", "into": "TST-0101", "direction": [0, 0, -1],
+               "acceptance": {"kind": "engaged", "features": ["hinge_pin"]}}
+
+    def items(self) -> list[dict]:
+        return [self.bond("mag-a"), self.bond("mag-b"), dict(self.CURE), dict(self.INSTALL)]
+
+    def test_magnets_bonded_on_the_bench_then_the_hanger_installed_is_clean(self) -> None:
+        operations = ops.normalize({"operations": self.items()})
+        state = ops.sequence(operations, self.inventory())
+        self.assertEqual(state.ground, "TST-0101")
+        self.assertEqual(state.floating, frozenset())
+        hanger = state.sub_builds["hanger"]
+        self.assertEqual((hanger.ground, hanger.floating), ("TST-0102", frozenset()))
+        report = ops.check_order(operations, self.inventory())
+        self.assertEqual(report.findings, ())
+        self.assertEqual({row["outcome"] for row in report.outcomes}, {"pass"})
+        self.assertEqual(report.outcome("assembly.order@op:cure-hanger")["outcome"], "pass")
+
+
 class SchemaParity(unittest.TestCase):
     """assembly.schema.json#/$defs/assembly_operation and this module describe one set of operations. A kind
     added to one without the other (print_in_place is deferred, see the interfaces `print_in_place` block) fails here."""
