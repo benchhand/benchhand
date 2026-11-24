@@ -463,6 +463,90 @@ class SubBuildTests(unittest.TestCase):
         self.assertEqual({row["outcome"] for row in report.outcomes}, {"pass"})
         self.assertEqual(report.outcome("assembly.order@op:cure-hanger")["outcome"], "pass")
 
+    def test_the_bench_record_is_valid_against_the_schema(self) -> None:
+        check = fx.ref_validator("https://srobroek.com/cad/schemas/assembly.schema.json#/$defs/assembly_operation")
+        for item in self.items():
+            self.assertEqual(list(check.iter_errors(item)), [], item["id"])
+        self.assertNotEqual(list(check.iter_errors({**self.INSTALL, "part": "TST-0102"})), [], "an install names a sub-build")
+        self.assertNotEqual(list(check.iter_errors({**self.bond("mag-a"), "duration": sourced(1, "h")})), [],
+                            "only a hold has a duration")
+
+    def test_the_cure_hold_sees_only_its_sub_build(self) -> None:
+        plan = {request.operation.id: request
+                for request in ops.access_plan(ops.normalize({"operations": self.items()}), self.inventory())}
+        cure = plan["cure-hanger"]
+        self.assertEqual(cure.tool_obstacles, frozenset({"mag-a", "mag-b"}), "the housing is not there during the cure")
+        install = plan["install-hanger"]
+        self.assertEqual((install.moving, install.frame, install.unit), ("TST-0102", "TST-0101",
+                                                                         frozenset({"TST-0102", "mag-a", "mag-b"})))
+        self.assertEqual(install.path_obstacles, frozenset(), "the magnets travel with the hanger")
+
+    def test_installing_a_sub_build_before_its_own_steps_finish_is_an_order_error(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        report = ops.check_order(ops.normalize({"operations": [bond_a, install, bond_b, cure]}), self.inventory())
+        [finding] = [f for f in report.findings if f["code"] == "assembly.sub_build_unfinished"]
+        self.assertEqual(finding["obligation"], "assembly.order@op:install-hanger")
+        self.assertIn("bond-mag-b, cure-hanger", finding["measured"]["text"])
+        self.assertEqual(report.outcome("assembly.order@op:install-hanger")["outcome"], "fail")
+
+    def test_a_part_used_in_two_sub_builds_is_an_error(self) -> None:
+        tab = {**self.bond("mag-b"), "id": "bond-tab", "sub_build": "tab", "into": "TST-0104"}
+        install_tab = {**self.INSTALL, "id": "install-tab", "part": "tab"}
+        report = ops.check_order(ops.normalize({"operations": [*self.items(), tab, install_tab]}),
+                                 self.inventory(extra=("TST-0104",)))
+        [finding] = [f for f in report.findings if f["code"] == "assembly.sub_build_shared"]
+        self.assertEqual(finding["obligation"], "assembly.order@op:bond-tab")
+        self.assertIn("@mag-b", finding["measured"]["text"])
+        self.assertIn("sub-build hanger", finding["measured"]["text"])
+
+    def test_install_names_a_sub_build_that_exists_and_every_sub_build_is_installed(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        for name, items, code, op_id in (
+                ("unknown unit", [bond_a, bond_b, cure, install, {**install, "id": "install-lid", "part": "lid"}],
+                 "assembly.sub_build_unknown", "install-lid"),
+                ("never installed", [bond_a, bond_b, cure], "assembly.sub_build_not_installed", "cure-hanger"),
+                ("installed twice", [bond_a, bond_b, cure, install, {**install, "id": "again"}],
+                 "assembly.installed_twice", "again")):
+            with self.subTest(name):
+                report = ops.check_order(ops.normalize({"operations": items}), self.inventory())
+                self.assertIn(code, {f["code"] for f in report.findings})
+                self.assertEqual(report.outcome(f"assembly.order@op:{op_id}")["outcome"], "fail")
+
+    def test_a_cure_figure_without_a_datasheet_source_fails(self) -> None:
+        for name, cure in (("supplier time", {"time": sourced(24, "h", [{"kind": "supplier", "reference": "email"}])}),
+                           ("unknown temperature", {"time": sourced(24, "h"),
+                                                    "temperature": {"status": "unknown", "reason": "not looked up"}})):
+            with self.subTest(name):
+                bond_a, bond_b, _cure, install = self.items()
+                report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, {**self.CURE, "cure": cure}, install]}),
+                                         self.inventory())
+                self.assertEqual([f["code"] for f in report.findings], ["assembly.cure_unsourced"])
+
+    def test_a_hold_shorter_than_the_cure_time_fails(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        short = {**cure, "duration": sourced(90, "min"), "cure": {"time": sourced(1, "d")}}
+        report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, short, install]}), self.inventory())
+        [finding] = report.findings
+        self.assertEqual(finding["code"], "assembly.hold_short")
+        self.assertIn("1.5 h, the cure time is 24 h", finding["measured"]["text"])
+
+    def test_an_uninstalled_subassembly_member_floats_in_its_sub_build(self) -> None:
+        bond_a, _bond_b, cure, install = self.items()
+        report = ops.check_order(ops.normalize({"operations": [bond_a, cure, install]}), self.inventory())
+        [finding] = report.findings
+        self.assertEqual((finding["code"], finding["subject"]), ("assembly.never_installed",
+                                                                 {"PN": self.MAGNET, "occurrence": "@mag-b"}))
+        self.assertIn("sub-build hanger has one base (the base is TST-0102)", finding["measured"]["text"])
+
+    def test_bench_operations_are_normalized_strictly(self) -> None:
+        for name, item in (("install of a part", {**self.INSTALL, "part": "TST-0102"}),
+                           ("install inside a sub-build", {**self.INSTALL, "sub_build": "hanger"}),
+                           ("duration on a join", {**self.bond("mag-a"), "duration": sourced(1, "h")}),
+                           ("cure without a time", {**self.CURE, "cure": {"temperature": sourced(23, "deg_C")}}),
+                           ("sub-build id", {**self.bond("mag-a"), "sub_build": "Hanger"})):
+            with self.subTest(name), self.assertRaises(ops.OperationsError):
+                ops.normalize({"operations": [item]})
+
 
 class SchemaParity(unittest.TestCase):
     """assembly.schema.json#/$defs/assembly_operation and this module describe one set of operations. A kind
