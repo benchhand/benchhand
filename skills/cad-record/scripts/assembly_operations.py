@@ -768,7 +768,9 @@ class AccessRequest:
     occurrence's model frame, the tools, and the occurrences present at that state as obstacles (the
     moving part and its receiver excluded for the part path; the operated part excluded for the tools).
     `path` is the declared insertion path (receiver frame, see `_path`), None for the default straight
-    line along `direction`. `unknown` lists what keeps reach unknown."""
+    line along `direction`. `unknown` lists what keeps reach unknown. The obstacles are the parts of the
+    operation's own build: a sub-build step sees only its sub-build. An install moves the sub-build as one
+    unit: `moving` is its base and `unit` all its members, none of which is an obstacle to the others."""
 
     operation: AssemblyOperation
     part: str
@@ -781,6 +783,7 @@ class AccessRequest:
     tools: tuple[Tool, ...]
     unknown: tuple[str, ...]
     path: tuple[Vec, ...] | None = None
+    unit: frozenset[str] = frozenset()
 
 
 def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRequest, ...]:
@@ -790,7 +793,7 @@ def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRe
     for step in state.steps:
         op = step.operation
         unknown: list[str] = []
-        travels = op.kind in JOINING or op.kind in ("close", "disassemble")
+        travels = op.kind in JOINING or op.kind in ("close", "disassemble", "install")
         if travels and op.direction is None:
             unknown.append(f"{op.id} has no direction: its part path is unknown")
         if op.id in state.unresolved:
@@ -803,12 +806,23 @@ def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRe
                 unknown.append(f"tool {tool.name!r} has no sourced envelope solid: its reach is unknown")
             if tool.approach is None:
                 unknown.append(f"tool {tool.name!r} has no approach direction")
-        after = set(step.present) | ({step.part} if op.installs else set())
-        path_obstacles = frozenset(after - {step.part} - ({step.into} if step.into else set()))
-        tool_obstacles = frozenset(after - {step.part})
-        requests.append(AccessRequest(op, step.part, step.part if travels else None, step.into or step.part,
+        built = state.sub_builds.get(step.part) if op.kind == "install" else None
+        unit = built.present if built is not None else frozenset()
+        operated = (built.ground or step.part) if built is not None else step.part
+        if op.kind == "install":
+            if built is None or built.ground is None:
+                unknown.append(f"{op.id}: sub-build {op.part} has no base occurrence: its path is unknown")
+            elif len(unit) > 1:
+                unknown.append(f"{op.id}: sub-build {op.part} travels as one unit; only the path of its base "
+                               f"{built.ground} is checked, the other members ({', '.join(sorted(unit - {built.ground}))}) "
+                               "are carried along unchecked")
+        moved = unit or {step.part}
+        after = set(step.present) | (set(moved) if op.installs else set())
+        path_obstacles = frozenset(after - moved - ({step.into} if step.into else set()))
+        tool_obstacles = frozenset(after - moved)
+        requests.append(AccessRequest(op, operated, operated if travels else None, step.into or operated,
                                       op.direction, op.removes, path_obstacles, tool_obstacles, op.tools, tuple(unknown),
-                                      op.path))
+                                      op.path, unit))
     return tuple(requests)
 
 
