@@ -9,17 +9,14 @@ https://www.fasteners.eu/standards/ISO/4762/, .../4032/ and https://mechcodex.co
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "commodity.py"
-SPEC = importlib.util.spec_from_file_location("cad_commodity", SCRIPT)
-assert SPEC and SPEC.loader
-commodity = importlib.util.module_from_spec(SPEC)
-sys.modules["cad_commodity"] = commodity
-SPEC.loader.exec_module(commodity)
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+from modload import load_module  # noqa: E402
+
+commodity = load_module("cad_commodity", Path(__file__).resolve().parents[1] / "scripts" / "commodity.py")
 
 
 class CommodityTests(unittest.TestCase):
