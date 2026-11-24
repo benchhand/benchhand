@@ -1,0 +1,32 @@
+PN: VSE-0010
+rev: X1
+title: Timing belt GT2 6 mm, 420 mm closed loop
+material: Neoprene, glass-fibre cords
+process: purchased
+finish: As supplied
+mass_target: 5
+make_buy: buy
+supplier: null
+decisions: [DR-005]
+procurement:
+  mode: catalog
+  designation: "Timing belt, GT2 profile, 2 mm pitch, 6 mm wide, closed loop 420 mm pitch length (210 teeth)"
+  open:
+    manufacturer: "no manufacturer selected; GT2 2 mm pitch closed loops of 420 mm are a stock length, the source is still to be named (DR-005)"
+    manufacturer_part_number: "no manufacturer selected (DR-005)"
+manufacture: {relationship: same}
+intent:
+  functions: {status: unknown, reason: not recorded yet, question: Q-002}
+  material_profile: {status: unknown, reason: "no grade is selected; the material is the usual GT2 construction, not a sourced grade", question: Q-002}
+  service: {status: unknown, reason: not recorded yet, question: Q-001}
+  critical_surfaces: {status: unknown, reason: not recorded yet, question: Q-007}
+  route:
+    - id: buy
+      kind: purchased
+      title: Buy a GT2 6 mm 420 mm closed-loop timing belt
+      output_state: installed
+      purchase:
+        identity: {status: unknown, reason: "no manufacturer or part number is selected (DR-005, procurement.open)", question: Q-002}
+        specification: {status: known, value: "GT2, 2 mm pitch, 6 mm wide, 420 mm pitch length closed loop, 210 teeth", basis: user_declared, sources: [{kind: decision, reference: "DR-005", decision: DR-005}]}
+        ratings: {status: unknown, reason: "no tension or load rating is recorded", question: Q-002}
+        availability: {status: unknown, reason: "no supplier is selected", question: Q-002}
