@@ -176,6 +176,33 @@ class ToolCallTests(unittest.TestCase):
                     self.assertEqual(scope.decide("write", {"path": path})["block"], True)  # type: ignore[index]
             self.assertEqual(scope.decide("edit", {})["block"], True)  # type: ignore[index]
 
+    def test_blocks_writes_through_a_link_that_does_not_resolve(self) -> None:
+        with Scope() as scope:
+            work = scope.project / ".cad-work/u1"
+            (work / "to-missing-file").symlink_to(scope.outside / "new.py")
+            (work / "to-missing-dir").symlink_to(scope.outside / "no-such-dir")
+            (work / "to-missing-inside").symlink_to(work / "not-yet")
+            (work / "loop").symlink_to(work / "loop")
+            cases = {
+                "dangling file link outside": ".cad-work/u1/to-missing-file",
+                "dangling dir link outside": ".cad-work/u1/to-missing-dir/x.py",
+                "dangling link inside scratch": ".cad-work/u1/to-missing-inside",
+                "link loop": ".cad-work/u1/loop",
+            }
+            for name, path in cases.items():
+                for tool in ("write", "edit"):
+                    with self.subTest(case=name, tool=tool):
+                        self.assertEqual(scope.decide(tool, {"path": path})["block"], True)  # type: ignore[index]
+            self.assertFalse((scope.outside / "new.py").exists())
+
+    def test_blocks_writes_through_a_file_link_that_points_outside_scratch(self) -> None:
+        with Scope() as scope:
+            (scope.project / ".cad-work/u1/evil-link.py").symlink_to(scope.outside / "evil.py")
+            (scope.project / ".cad-work/u1/record-link").symlink_to(scope.project / "hw")
+            for path in (".cad-work/u1/evil-link.py", ".cad-work/u1/record-link/product.yaml"):
+                with self.subTest(path=path):
+                    self.assertEqual(scope.decide("write", {"path": path})["block"], True)  # type: ignore[index]
+
     def test_lets_other_tools_through(self) -> None:
         with Scope() as scope:
             for tool in ("read", "grep", "cad_run"):
