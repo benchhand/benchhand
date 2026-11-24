@@ -368,9 +368,10 @@ def _operation(raw: Any, index: int, where: str) -> AssemblyOperation:
 
 @dataclass(frozen=True)
 class Step:
-    """One operation in sequence with the assembly state just before it: the occurrences present and
+    """One operation in sequence with the state of its own build just before it: the occurrences present and
     the enclosed ones (occurrence -> the close operation that enclosed it). `part` and `into` are
-    resolved occurrence ids (the raw references without an inventory)."""
+    resolved occurrence ids (the raw references without an inventory; an install's part is its sub-build id).
+    `build` is the operation's sub-build, None for the main build."""
 
     operation: AssemblyOperation
     part: str
@@ -378,21 +379,43 @@ class Step:
     closes: tuple[str, ...]
     present: frozenset[str]
     closed: Mapping[str, str]
+    build: str | None = None
+
+
+@dataclass(frozen=True)
+class SubBuild:
+    """A bench sub-build: its own members, base and state, installed into the main build as one unit."""
+
+    id: str
+    members: frozenset[str]  # the occurrences its operations name, plus the subassembly of the same id
+    ground: str | None  # its one base: the first uninstalled member its operations name
+    floating: frozenset[str]  # with an inventory: its other members no operation installs
+    last: int | None  # record index of its last operation, None when no operation belongs to it
+    present: frozenset[str]  # its members in place once its own operations are done
+    closed: Mapping[str, str]  # the members it encloses, and the close operation that does it
 
 
 @dataclass(frozen=True)
 class AssemblyState:
     steps: tuple[Step, ...]
-    base: frozenset[str]  # present from the start: every occurrence no operation installs
+    base: frozenset[str]  # present from the start of the main build: every main occurrence no operation installs
     unresolved: Mapping[str, str] = field(default_factory=dict)  # operation id -> why its references do not resolve
-    ground: str | None = None  # with an inventory: the one base, the first uninstalled occurrence the sequence names
-    floating: frozenset[str] = frozenset()  # with an inventory: the other occurrences no operation installs
+    ground: str | None = None  # with an inventory: the main build's one base, the first uninstalled occurrence it names
+    floating: frozenset[str] = frozenset()  # with an inventory: the other main occurrences no operation installs
+    sub_builds: Mapping[str, SubBuild] = field(default_factory=dict)
+    shared: Mapping[str, tuple[str | None, ...]] = field(default_factory=dict)  # occurrence -> the builds claiming it
 
 
 def sequence(operations: Operations, inventory: Any = None, existing: frozenset[str] = frozenset()) -> AssemblyState:
-    """The assembly state before each operation, in record order. With an assembly_data Inventory,
+    """The state of each operation's build before it, in record order. With an assembly_data Inventory,
     references resolve to occurrence ids and every occurrence counts; without one, the raw references
-    stand for themselves and the base is every referenced part no operation installs."""
+    stand for themselves and a build's base is every part it references that none of its operations installs.
+
+    Sub-builds. An operation with `sub_build` belongs to that bench sub-build; the occurrences its operations
+    name (and the members of the subassembly of the same id) are the sub-build's own, with their own base, state
+    and closure. An install operation puts a sub-build into the main build as one unit: from then on its
+    members, and what it encloses, are part of the main build's state. Every other occurrence is the main
+    build's. An occurrence two builds claim is in `shared` (a main build claims only what it installs)."""
     unresolved: dict[str, str] = {}
 
     def resolve(ref: str, op: AssemblyOperation) -> str:
@@ -405,34 +428,85 @@ def sequence(operations: Operations, inventory: Any = None, existing: frozenset[
             unresolved.setdefault(op.id, str(error))
             return ref
 
-    resolved = [(op, resolve(op.part, op), None if op.into is None else resolve(op.into, op),
-                 tuple(resolve(ref, op) for ref in op.closes)) for op in operations.items]
-    installed = {part for op, part, _into, _closes in resolved if op.installs}
-    named = list(dict.fromkeys(ref for _op, part, into, closes in resolved for ref in (part, into, *closes)
-                               if ref is not None))
-    everyone = set(inventory.ids) if inventory is not None else set(named)
-    base = frozenset(everyone - installed)
-    # The record names no base. The first uninstalled occurrence the sequence names is the base, or the first
-    # occurrence of the inventory when the sequence names none (an empty known sequence). The rest float.
+    resolved = [(op, op.part if op.kind == "install" else resolve(op.part, op),
+                 None if op.into is None else resolve(op.into, op), tuple(resolve(ref, op) for ref in op.closes))
+                for op in operations.items]
+    builds = list(dict.fromkeys(op.sub_build for op in operations.items if op.sub_build is not None))
+    claims: dict[str, list[str | None]] = {}
+
+    def claim(ref: str, build: str | None) -> None:
+        owners = claims.setdefault(ref, [])
+        if build not in owners:
+            owners.append(build)
+
+    groups = {group.id: group.members for group in inventory.groups} if inventory is not None else {}
+    for build in builds:
+        for member in groups.get(build, ()):
+            claim(member, build)
+    for op, part, into, closes in resolved:
+        if op.sub_build is not None:
+            for ref in (part, into, *closes):
+                if ref is not None:
+                    claim(ref, op.sub_build)
+        elif op.installs and op.kind != "install":
+            claim(part, None)
+    members = {build: frozenset(ref for ref, owners in claims.items() if build in owners) for build in builds}
+    owned = frozenset().union(*members.values()) if members else frozenset()
+    named_by: dict[str | None, list[str]] = {}
+    for op, part, into, closes in resolved:
+        refs = (into, *closes) if op.kind == "install" else (part, into, *closes)
+        named_by.setdefault(op.sub_build, []).extend(ref for ref in refs if ref is not None)
+    installed: dict[str | None, set[str]] = {}
+    for op, part, _into, _closes in resolved:
+        if op.installs and op.kind != "install":
+            installed.setdefault(op.sub_build, set()).add(part)
+    named = list(dict.fromkeys(named_by.get(None, ())))
+    everyone = set(inventory.ids) if inventory is not None else set(named) | {ref for refs in named_by.values() for ref in refs}
+    base = frozenset(everyone - owned - installed.get(None, set()))
+    # The record names no base. The first uninstalled occurrence the build names is its base, or the first
+    # occurrence of the inventory (of the subassembly, for a sub-build) when it names none. The rest float.
     ground = None
     # existing equipment (these part numbers) is present from the start: never the product's base, never floating
     preexisting = frozenset(o.id for o in inventory.occurrences if o.pn in existing) if inventory is not None else frozenset()
     if inventory is not None:
         ground = next((ref for ref in (*named, *inventory.ids) if ref in base - preexisting), None)
     floating = frozenset(base - {ground} - preexisting) if inventory is not None else frozenset()
-    present = set(base)
-    closed: dict[str, str] = {}
+    present: dict[str | None, set[str]] = {None: set(base)}
+    closed: dict[str | None, dict[str, str]] = {None: {}}
+    sub_base: dict[str, frozenset[str]] = {}
+    sub_ground: dict[str, str | None] = {}
+    for build in builds:
+        sub_base[build] = frozenset(members[build] - installed.get(build, set()))
+        order = (*named_by.get(build, ()), *groups.get(build, ()), *sorted(members[build]))
+        sub_ground[build] = next((ref for ref in order if ref in sub_base[build]), None)
+        present[build] = set(sub_base[build])
+        closed[build] = {}
     steps = []
     for op, part, into, closes in resolved:
-        steps.append(Step(op, part, into, closes, frozenset(present), types.MappingProxyType(dict(closed))))
+        build = op.sub_build
+        steps.append(Step(op, part, into, closes, frozenset(present[build]),
+                          types.MappingProxyType(dict(closed[build])), build))
+        if op.kind == "install":
+            if part in present and part is not None:
+                present[None] |= present[part]
+                for ref, closer in closed[part].items():
+                    closed[None].setdefault(ref, closer)
+            continue
         if op.installs:
-            present.add(part)
+            present[build].add(part)
         if op.removes:
-            present.discard(part)
+            present[build].discard(part)
         if op.kind == "close":
             for ref in closes:
-                closed.setdefault(ref, op.id)
-    return AssemblyState(tuple(steps), base, types.MappingProxyType(unresolved), ground, floating)
+                closed[build].setdefault(ref, op.id)
+    last = {op.sub_build: op.index for op in operations.items if op.sub_build is not None}
+    sub_builds = {build: SubBuild(build, members[build], sub_ground[build],
+                                  frozenset(sub_base[build] - {sub_ground[build]}) if inventory is not None else frozenset(),
+                                  last.get(build), frozenset(present[build]), types.MappingProxyType(dict(closed[build])))
+                  for build in builds}
+    shared = {ref: tuple(owners) for ref, owners in claims.items() if len(owners) > 1}
+    return AssemblyState(tuple(steps), base, types.MappingProxyType(unresolved), ground, floating,
+                         types.MappingProxyType(sub_builds), types.MappingProxyType(shared))
 
 
 # --------------------------------------------------------------------------- findings
