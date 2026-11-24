@@ -23,7 +23,8 @@ assembly by the product they instance, and writes an indented BOM:
             from hw/parts/<PN>/part.yaml; mass is mass_target verbatim
     unit    "pcs": qty counts STEP instances
     designation, manufacturer, manufacturer_part_number, supplier_part_number
-            from part.yaml `procurement`
+            from part.yaml `procurement`; a blank designation takes the order line of an eligible
+            structured `purchase.designation` (cad-record commodity_identity.py)
     specification_ref, specification_rev
             from part.yaml `procurement.specification` reference and revision
 
@@ -64,6 +65,7 @@ if LAYOUT is None:
     sys.modules["cad_record_layout"] = LAYOUT
     _SPEC.loader.exec_module(LAYOUT)
 YAML_LOADER_PATH = LAYOUT_PATH.with_name("yaml_loader.py")
+COMMODITY_PATH = LAYOUT_PATH.with_name("commodity_identity.py")
 
 
 def yaml_loader() -> Any:
@@ -77,6 +79,19 @@ def yaml_loader() -> Any:
         sys.modules["cad_record_yaml_loader"] = module
         spec.loader.exec_module(module)
     return module
+
+def commodity_identity() -> Any:
+    """cad-record's commodity_identity.py under its shared name: which designations identify a commodity item."""
+    module = sys.modules.get("cad_record_commodity_identity")
+    if module is None:
+        spec = importlib.util.spec_from_file_location("cad_record_commodity_identity", COMMODITY_PATH)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{COMMODITY_PATH} not found")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cad_record_commodity_identity"] = module
+        spec.loader.exec_module(module)
+    return module
+
 
 COLUMNS = ("level", "PN", "rev", "qty", "title", "material", "process", "make_buy", "supplier", "mass",
            "unit", "designation", "manufacturer", "manufacturer_part_number", "supplier_part_number",
@@ -259,6 +274,8 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
         procurement = meta.get("procurement") if isinstance(meta.get("procurement"), dict) else {}
         specification = procurement.get("specification") if isinstance(procurement.get("specification"), dict) else {}
         row.update({key: _cell(procurement.get(key)) for key in PROCUREMENT_FIELDS})
+        if not row["designation"]:  # a commodity item is identified by its structured designation, not a vendor part number
+            row["designation"] = commodity_identity().commodity_label(meta) or ""
         row["specification_ref"] = _cell(specification.get("reference"))
         row["specification_rev"] = _cell(specification.get("revision"))
         row["title"] = _cell(title)

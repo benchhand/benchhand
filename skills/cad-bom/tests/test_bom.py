@@ -131,10 +131,10 @@ class RollUpTests(unittest.TestCase):
              "finish": "A2"}
 
     @staticmethod
-    def bought(designation: dict, **extra: object) -> dict:
+    def bought(structured: dict, **extra: object) -> dict:
         """A part.yaml bought by structured designation: no manufacturer, part number or designation text."""
         return {"rev": "X1", "make_buy": "buy", "procurement": {"mode": "catalog", **extra},
-                "intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": designation}}]}}
+                "intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": structured}}]}}
 
     def test_a_structured_commodity_designation_fills_the_designation_column(self) -> None:
         screw = bom.Node("FST-0001", False)
