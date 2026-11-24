@@ -274,8 +274,8 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
         procurement = meta.get("procurement") if isinstance(meta.get("procurement"), dict) else {}
         specification = procurement.get("specification") if isinstance(procurement.get("specification"), dict) else {}
         row.update({key: _cell(procurement.get(key)) for key in PROCUREMENT_FIELDS})
-        if not row["designation"]:  # a commodity item is identified by its structured designation, not a vendor part number
-            row["designation"] = commodity_identity().commodity_label(meta) or ""
+        # the same lookup the record validator expects: the text of the record, else a commodity item's structured designation
+        row["designation"] = _cell(commodity_identity().designation_cell(meta))
         row["specification_ref"] = _cell(specification.get("reference"))
         row["specification_rev"] = _cell(specification.get("revision"))
         row["title"] = _cell(title)
