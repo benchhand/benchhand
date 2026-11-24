@@ -50,6 +50,7 @@ distance short of its criterion is a failure; retention evidence is what support
 from __future__ import annotations
 
 import math
+import re
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -57,8 +58,9 @@ from typing import Any, TypeGuard
 
 Vec = tuple[float, float, float]
 
-KINDS = ("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "adjust", "inspect", "disassemble")
-INSTALLING = frozenset(("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close"))
+KINDS = ("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "adjust", "inspect", "disassemble",
+         "install", "hold")
+INSTALLING = frozenset(("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "install"))
 JOINING = frozenset(("press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join"))
 INTERFACE_LIMIT_KINDS = frozenset(("press_fit", "heat_set", "retaining_ring"))  # the fit, insert or ring comes from the interface limit of this kind
 ACCEPTANCE = {"seated": 2, "standoff": 2, "flush": 2, "engaged": 1, "torqued": 1, "adjusted": 1, "inspected": 1}
@@ -68,7 +70,11 @@ REQUIRED = {  # schema: assembly.schema.json#/$defs/assembly_operation allOf
     "retaining_ring": ("into", "interface", "direction", "acceptance"), "insert": ("into", "direction", "acceptance"),
     "fasten": ("into", "direction", "acceptance"), "join": ("into", "direction", "acceptance"), "close": ("into", "closes"),
     "adjust": ("acceptance",), "inspect": ("acceptance",), "disassemble": ("into", "direction"),
+    "install": ("into", "direction", "acceptance"), "hold": ("duration", "fixture", "orientation"),
 }
+SUB_BUILD_ID = re.compile(r"^[a-z][a-z0-9_-]*$")  # schema: assembly.schema.json#/$defs/sub_build_id
+TIME_H = {"s": 1 / 3600, "min": 1 / 60, "h": 1.0, "d": 24.0}  # manufacturing.schema.json time units, in hours
+CURE_SOURCES = frozenset(("datasheet",))  # a cure time or temperature counts only from the adhesive's datasheet
 QUALIFYING_SOURCES = frozenset(("test", "supplier", "datasheet", "standard", "calibration"))
 HOST_TEMPERATURE_KINDS = frozenset(("heat_set", "insert", "press_fit"))
 TEMPERATURE_LIMITS = ("max_service_temperature", "heat_deflection_temperature")
@@ -147,6 +153,11 @@ class AssemblyOperation:
     raw: Mapping[str, Any]
     edge_distance: Mapping[str, Any] | None = None  # {criterion, distance} as recorded
     path: tuple[Vec, ...] | None = None  # declared insertion path: start, then via, mm offsets (receiver frame)
+    sub_build: str | None = None  # the bench sub-build this operation belongs to; None for the main build
+    duration: Mapping[str, Any] | None = None  # hold: how long the part stays in its fixture (a quantity fact)
+    fixture: str | None = None  # hold: what holds the part
+    orientation: Vec | None = None  # hold: the part's up direction during the hold, in its own model frame
+    cure: Mapping[str, Any] | None = None  # hold: {time, temperature} quantity facts from the adhesive's datasheet
 
     @property
     def installs(self) -> bool:
@@ -316,6 +327,20 @@ def _operation(raw: Any, index: int, where: str) -> AssemblyOperation:
                           approach=None if approach is None else _vector(approach, f"{at}/approach"),
                           reach=_fact(entry, "reach"), envelope=_fact(entry, "envelope")))
     joint = raw.get("verify_joint")
+    sub_build = raw.get("sub_build")
+    if sub_build is not None and (not isinstance(sub_build, str) or not SUB_BUILD_ID.match(sub_build)):
+        raise OperationsError(f"{where}/sub_build must be a sub-build id (lower case, digits, - or _)")
+    if kind == "install":
+        if not isinstance(raw.get("part"), str) or not SUB_BUILD_ID.match(raw["part"]):
+            raise OperationsError(f"{where}/part: an install operation installs a sub-build: name its id")
+        if sub_build is not None:
+            raise OperationsError(f"{where}: an install operation belongs to the main build, not to sub-build {sub_build}")
+    for key in ("duration", "fixture", "orientation", "cure"):
+        if key in raw and kind != "hold":
+            raise OperationsError(f"{where}/{key}: only a hold operation has a {key}")
+    cure = raw.get("cure")
+    if cure is not None and (not isinstance(cure, Mapping) or "time" not in cure or set(cure) - {"time", "temperature"}):
+        raise OperationsError(f"{where}/cure needs a time and, optionally, a temperature")
     if "edge_distance" in raw and kind not in JOINING:
         raise OperationsError(f"{where}/edge_distance: a {kind} operation makes no joint")
     direction = None if raw.get("direction") is None else _vector(raw["direction"], f"{where}/direction")
@@ -332,7 +357,10 @@ def _operation(raw: Any, index: int, where: str) -> AssemblyOperation:
         service_access=_fact(raw, "service_access"),
         inspection=None if raw.get("inspection") is None else _text(raw["inspection"], f"{where}/inspection"),
         raw=types.MappingProxyType(dict(raw)), edge_distance=_fact(raw, "edge_distance"),
-        path=_path(raw, kind, direction, where))
+        path=_path(raw, kind, direction, where), sub_build=sub_build, duration=_fact(raw, "duration"),
+        fixture=None if raw.get("fixture") is None else _text(raw["fixture"], f"{where}/fixture"),
+        orientation=None if raw.get("orientation") is None else _vector(raw["orientation"], f"{where}/orientation"),
+        cure=None if cure is None else types.MappingProxyType(dict(cure)))
 
 
 # --------------------------------------------------------------------------- sequence and presence
