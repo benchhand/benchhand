@@ -127,7 +127,10 @@ def _standard_problem(designation: Mapping[str, Any]) -> str | None:
     standard = str(designation["standard"])
     if is_feature_standard(standard):
         return f"{standard} is a feature standard, not a part standard"
-    problem = size_problem(standard, str(designation["size"]))
+    size = str(designation["size"])
+    if re.search(r"[x\u00d7]", size):  # the length has its own field: M4 with length 20, never M4x20
+        return f"size {size!r} embeds a length; record the length in the length field"
+    problem = size_problem(standard, size)
     if problem:
         return problem
     length = designation["length"]
