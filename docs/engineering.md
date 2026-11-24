@@ -112,7 +112,17 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - Owner: `render_states` in `skills/cad-render/scripts/render.py` resolves the lists; `skills/cad-render/assets/renderer/render.js` draws them. A ghost reuses the ghosted-context material of the close-up fallback (`ghostMaterial`) and adds edge lines. The viewer's `parts` action (`skills/cad-viewer`) is a separate browser-side tool and is not reused.
 - A ghost is never an occluder: the mask pass and the floor bake leave it out, and requirement visibility counts a ghosted or hidden window part as see-through. A hidden visibility target is an error.
 - `render.json` and `motion-render.json` list `hidden` and `ghosted`. Both enter the cache key and every view's `render_inputs`, so a change re-renders. `motion.py` adds them to the bundle recipe.
-- `make_buy: existing` (benchhand-pcy) is not on main (the `make_buy` enum is `make|buy`), so no default ghost comes from it yet.
+- `make_buy: existing` (benchhand-pcy) sets no default ghost yet.
+
+## Existing equipment
+
+`make_buy: existing` marks equipment the product mounts onto or interfaces with that is not part of the device, such as a shaft or a mount face. It has no SKU, no purchase and no manufacture.
+
+- Contract: `skills/cad-record/schemas/part.schema.json` (`make_buy`, `$defs/existing`). An existing part carries `existing.dimensions` as a known range (lower and upper, no single value) with one of the bases in `$defs/existing`. The schema refuses `supplier` and `procurement` on it, and also `manufacture` and `intent`.
+- `manufacturing_intent.py`: its sourcing is `existing` (`Part.existing`). Its route is not checked against its sourcing. A version 2 record does not ask it for `intent`. `required_checks` gives it no obligation, so no process or purchase check runs on it.
+- `selection.py`: `assess` drops a candidate part entry that names it before assessment, so selection never ranks it or proposes a `make_buy` for it.
+- `validate.py` `check_existing`: `existing.interface_missing` when no interface joins it to a product part, and `existing.installed` when an assembly operation names it as `part`. It may be an operation's `into`. `validate.py` and `cad-design` `process_checks/purchased.py` find its interfaces with `manufacturing_intent.interfaces_of`.
+- Not yet covered: BOM and release treatment, and margins and stack-up against its range (bead benchhand-pcy, later PRs).
 
 ## Feature flags
 
