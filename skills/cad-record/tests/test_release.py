@@ -1499,6 +1499,19 @@ class Acceptance(ReleaseCase):
         self.assertEqual(validate.blocking(validate.validate_project(hw)), [], "readable: only the release refuses an unanchored freeze")
         self.refused_with(hw, "release.frozen", "anchors no evidence_sha256")
 
+    def test_a_schema_error_elsewhere_in_the_product_keeps_the_stale_anchor_finding(self) -> None:
+        hw = self.project()
+        ledger = hw / "manufacturing" / "evidence.yaml"
+        data = yaml.safe_load(ledger.read_text(encoding="utf-8"))
+        data["entries"].append({"id": "EV-099", "requirement": "REQ-001", "subject": {"product": True}, "level": "cad_valid",
+                                "result": "planned", "method": "TST late plan"})
+        ledger.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        edit_yaml(hw / "product.yaml", lambda product: product.update(id="Bad Id"))
+        findings = validate.validate_project(hw)
+        self.assertTrue([item for item in findings if str(item["path"]).endswith("product.yaml")
+                         and str(item["message"]).startswith("id: ")], findings)
+        self.assertIn("record.evidence_anchor", [item.get("code") for item in findings])
+
     def test_evidence_accepted_after_the_freeze_needs_a_new_anchor(self) -> None:
         hw = self.project()
         ledger = hw / "manufacturing" / "evidence.yaml"

@@ -837,6 +837,22 @@ def _intent_finding(hw: Path, item: Mapping[str, Any]) -> dict[str, Any]:
     return {**item, "path": _below_hw(hw, str(item["path"]))}
 
 
+def _valid_freeze(product: Mapping[str, Any]) -> dict[str, Any]:
+    """`{"flow": {"frozen": ...}}` of a product that failed its schema, when the freeze itself is well formed (no
+    schema error at or below flow/frozen), else `{}`. An unrelated schema error, an invalid id for example, must not
+    strip the freeze: the acceptance anchor is still checked against it."""
+    flow = product.get("flow")
+    frozen = flow.get("frozen") if isinstance(flow, Mapping) else None
+    if not isinstance(frozen, Mapping):
+        return {}
+    try:
+        validator = schema_registry.document_validator(SCHEMAS, "product.schema.json", formats=True)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    own = [item for item in validator.iter_errors(product) if tuple(item.absolute_path)[:2] == ("flow", "frozen")]
+    return {} if own else {"flow": {"frozen": dict(frozen)}}
+
+
 def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any], valid: Mapping[str, bool],
                                part_records: Mapping[str, tuple[dict[str, Any], str]],
                                verification: list[dict[str, str]], findings: list[dict[str, Any]],
@@ -858,7 +874,7 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any], valid: Ma
     if "product.yaml" not in parsed and isinstance(declared, Mapping) and "record_version" in declared:
         # a product that fails its schema is not read, but its declared version still is: the version is checked on
         # the document as written, so the finding names the version it declares rather than None
-        parsed["product.yaml"] = {"record_version": declared["record_version"]}
+        parsed["product.yaml"] = {"record_version": declared["record_version"], **_valid_freeze(declared)}
     parsed.update({f"parts/{pn}/part.yaml": part for pn, (part, _) in part_records.items()})
     for rel, schema in intent.DOCUMENT_SCHEMAS:
         path = hw / rel
