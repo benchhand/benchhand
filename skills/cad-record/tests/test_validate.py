@@ -19,6 +19,7 @@ import tempfile
 import unittest
 import yaml
 from pathlib import Path
+from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import result_payload  # noqa: E402
 from decision_fixture import decision_path, write_test_decision  # noqa: E402
