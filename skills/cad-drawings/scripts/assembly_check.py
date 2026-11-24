@@ -217,7 +217,8 @@ def _operations_module() -> Any:
 def drawing_operations(assembly: Mapping[str, Any]) -> list[Operation]:
     """The installing operations of a parsed assembly.yaml, in record order, as the drawing presents
     them; IntentError for operations held in drawing.operations or malformed. Service steps (adjust,
-    inspect, disassemble) and unknown operations add none."""
+    inspect, disassemble), holds, sub-build installs (a unit, not one drawing item) and unknown operations
+    add none."""
     module = _operations_module()
     try:
         normalized = module.normalize(assembly)
@@ -226,7 +227,7 @@ def drawing_operations(assembly: Mapping[str, Any]) -> list[Operation]:
     return [Operation(id=op.id, kind=op.kind, part=op.part, into=op.into, interface=op.interface,
                       direction=op.direction, acceptance=op.acceptance, features=op.features,
                       verify_joint=op.verify_joint, tools=op.tool_names, consumables=op.consumables)
-            for op in normalized.items if op.installs]
+            for op in normalized.items if op.installs and op.kind != "install"]
 
 
 def operations_summary(assembly: Mapping[str, Any]) -> list[dict[str, Any]]:
