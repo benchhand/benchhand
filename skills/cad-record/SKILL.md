@@ -24,6 +24,14 @@ TRIGGER
    Stop if `hw/` already exists; do not merge a template into a record. The template has record-file placeholders and no part folders. Add `hw/parts/<PN>/part.yaml` and `model.py` for each PN matching `^[A-Z]{2,5}-[0-9]{4}$`; record the EBOM, verification and decisions in their canonical paths from [layout.md](references/layout.md). Never copy `.cad/recheck.json`; `cad-recheck` generates it.
 2. At GROUND, read [manufacturing selection](../cad-flow/references/manufacturing-selection.md). Follow its single decision table for service class and optical requirements.
 3. In v2, keep requirements, preferences, assumptions and open questions separate; record each part's material/process intent, capability and evidence. Use the existing validators, selectors and producer checks; do not create a parallel workflow. LOAD [manufacturing-intent.md](references/manufacturing-intent.md) for the record contract and [evidence.md](references/evidence.md) for evidence and gates.
+
+   Record equipment the product mounts onto, but that is not part of the device, as `make_buy: existing`. A shaft, a mount face or a tripod are examples. It needs no SKU and no purchase. Ask the user first: "Is X equipment you already have that the device mounts onto, and not part of what we build? Where do its dimensions come from, and what range?" Then:
+
+   - Record `existing.dimensions` as a known range (lower and upper) with its basis and sources.
+   - Leave out `supplier` and `procurement`: it is not bought.
+   - Leave out `manufacture` and `intent`: it is not built.
+   - Join it to a product part with an interface.
+   - Name it only as an assembly operation's `into`, never its `part`.
 4. Build record-derived guides after `vN` exists:
 
    ```sh
