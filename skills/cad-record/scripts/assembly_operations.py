@@ -19,7 +19,15 @@ satisfy. A part an installing operation (press_fit, heat_set, retaining_ring, in
 close) puts in place is absent before it and present after it until a disassemble operation removes
 it; the one occurrence no operation installs is present from the start (the base: with an inventory, the first
 such occurrence the sequence names, as the record designates none). Any other uninstalled occurrence fails
-`assembly.never_installed`. A close operation encloses its
+`assembly.never_installed`.
+
+Sub-builds. An operation with `sub_build` belongs to a bench sub-build (a subassembly id, or a new id), with
+its own base, state and closure, judged by the same rules. An `install` operation puts the finished sub-build
+into the main build as one unit; it fails `assembly.order` when the sub-build is unknown, unfinished or
+installed twice, an occurrence two builds use fails it, and a sub-build no install puts in place fails it.
+A `hold` keeps its part in a fixture for a duration in an orientation, judged against its own build's state;
+its cure time and temperature count only as known facts with a datasheet source, and the hold must last the
+cure time. A close operation encloses its
 `closes` parts: no later operation reaches them. `check_order` judges exactly this declared sequence:
 an operation whose receiving part is absent, whose part is enclosed or installed twice, or whose
 predecessor comes later or is missing fails `assembly.order`. Whether the part and the tools can
@@ -1025,13 +1033,18 @@ def summary(operations: Operations) -> list[dict[str, Any]]:
     rows = []
     for op in operations.items:
         row: dict[str, Any] = {"id": op.id, "kind": op.kind, "part": op.part}
-        for key in ("into", "interface", "acceptance", "verify_joint", "inspection"):
+        for key in ("into", "interface", "acceptance", "verify_joint", "inspection", "sub_build", "fixture"):
             if getattr(op, key) is not None:
                 row[key] = getattr(op, key)
         if op.direction is not None:
             row["direction"] = list(op.direction)
         if op.path is not None:
             row["path"] = [list(point) for point in op.path]
+        if op.orientation is not None:
+            row["orientation"] = list(op.orientation)
+        for key in ("duration", "cure"):
+            if getattr(op, key) is not None:
+                row[key] = _thaw(getattr(op, key))
         for key in ("features", "predecessors", "closes", "consumables"):
             if getattr(op, key):
                 row[key] = list(getattr(op, key))
