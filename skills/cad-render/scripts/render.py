@@ -753,6 +753,9 @@ def build_scene(hw: Path, version: Version, views: list[str], size: tuple[int, i
                               DIRECTIONS["exploded"])
     by_pn = {oid: o.pn for oid, o in occurrences.items()}
     hidden, ghosted = render_states(by_pn, records, hide=hide, ghost=ghost, show=show)
+    if len(hidden) == len(by_pn):
+        raise InfraError("every part is hidden, so nothing is left to render; show or ghost one (--show, --ghost, "
+                         "or part.yaml render)")
     checks, requirements_sha = (visibility_checks(requirements, by_pn, records, hidden, ghosted)
                                 if requirements else ([], None))
     view_specs = []
