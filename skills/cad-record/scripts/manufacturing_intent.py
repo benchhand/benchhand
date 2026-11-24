@@ -1513,7 +1513,8 @@ class _Reader:
                 self.problem(INCOMPLETE, "hw/requirements.yaml", "", f"record version 2 needs {', '.join(missing)} "
                              "(empty lists when there are none)")
         for rel in sorted(self.documents):
-            if re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and (part := self.doc(rel)) is not None and "intent" not in part:
+            if (re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and (part := self.doc(rel)) is not None and "intent" not in part
+                    and part.get("make_buy") != "existing"):  # existing equipment is outside the product and carries no intent
                 self.problem(INCOMPLETE, f"hw/{rel}", "", "record version 2 needs intent; record unknowns explicitly")
         for index, item in enumerate((self.doc("interfaces.yaml") or {}).get("interfaces") or ()):
             if isinstance(item, Mapping) and "functional" not in item:

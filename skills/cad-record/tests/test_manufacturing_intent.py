@@ -650,7 +650,7 @@ class RequiredChecks(unittest.TestCase):
                               interfaces=[fx.interface("IF-001", "TST-0001", "TST-0009")])
         record = mi.normalize_record(documents)
         self.assertEqual([o.id for o in mi.required_checks(record) if o.subject.get("PN") == "TST-0009"], [])
-        self.assertEqual([p.message for p in record.problems if "TST-0009" in p.message], [])
+        self.assertEqual([p.message for p in record.problems if "TST-0009" in p.message or "TST-0009" in p.path], [])
 
     def test_a_route_on_existing_equipment_is_not_judged_as_a_catalogue_buy(self) -> None:
         stray = fx.existing_part("TST-0009", intent=fx.intent(route=[fx.operation("print", "fdm", "tst_printer")]))
