@@ -961,6 +961,23 @@ class ExistingEquipment(unittest.TestCase):
 
         self.assertEqual(self.codes(operation("TST-0001", "TST-0009")), [])
         self.assertEqual(self.codes(operation("TST-0009", "TST-0001")), ["existing.installed"])
+    def test_existing_equipment_named_by_its_occurrence(self) -> None:
+        def placed(documents: dict[str, Any]) -> None:
+            documents["parts/TST-0009/part.yaml"]["model_frame"] = "part_local"
+            documents["assembly.yaml"]["occurrences"] = [{"id": "mount", "PN": "TST-0009"}]
+            group = documents["assembly.yaml"]["subassemblies"][0]
+            group["parts"].remove("TST-0009")
+            group["occurrences"] = ["@mount"]
+            documents["interfaces.yaml"]["interfaces"][-1] = fx.interface("IF-009", "TST-0001", "@mount")
+
+        def installed(documents: dict[str, Any]) -> None:
+            placed(documents)
+            documents["assembly.yaml"]["operations"].append(
+                {"id": "mount", "kind": "press_fit", "part": "@mount", "into": "TST-0001", "interface": "IF-009",
+                 "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["bearing_face", "seat_floor"]}})
+
+        self.assertEqual(self.codes(placed), [])
+        self.assertEqual(self.codes(installed), ["existing.installed"])
 
 
 class SubjectOccurrences(unittest.TestCase):
