@@ -137,18 +137,19 @@ COMMODITY_SUPPLIER = "any supplier (commodity)"
 
 
 def group_commodity(rows: list[tuple[Any, ...]], commodity: list[bool]) -> list[tuple[Any, ...]]:
-    """Buy rows with the commodity rows that share a designation merged into one: their item numbers and PNs
-    joined, their quantities summed. Rows are (item, PN, designation, qty, supplier, order code, drawing); a
-    vendor-specific row stays on its own line."""
-    grouped: dict[str, list[Any]] = {}
+    """Buy rows with the commodity rows that share a designation, supplier and order code merged into one: their item
+    numbers and PNs joined, their quantities summed. Rows are (item, PN, designation, qty, supplier, order code,
+    drawing); a row bound to another vendor, or any non-commodity row, stays on its own line."""
+    grouped: dict[tuple[Any, ...], list[Any]] = {}
     result: list[Any] = []
     for row, is_commodity in zip(rows, commodity, strict=True):
         if not is_commodity:
             result.append(row)
             continue
-        group = grouped.get(str(row[2]))
+        key = (row[2], row[4], row[5])  # a vendor-bound row (a named supplier, an order code) merges only with its own kind
+        group = grouped.get(key)
         if group is None:
-            grouped[str(row[2])] = group = [[row[0]], [row[1]], row[2], row[3], *row[4:]]
+            grouped[key] = group = [[row[0]], [row[1]], row[2], row[3], *row[4:]]
             result.append(group)
             continue
         group[0].append(row[0])
