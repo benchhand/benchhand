@@ -502,6 +502,33 @@ joints:
   min: 0
   max: 0
   nominal: 0
+- id: J-423
+  type: fixed
+  parent: VSE-0001
+  child: '@belt'
+  axis: [1, 0, 0]
+  origin: [-68.75, 0, 0]
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-424
+  type: fixed
+  parent: VSE-0001
+  child: '@idler'
+  axis: [1, 0, 0]
+  origin: [-68.75, 0, 70.0]
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-425
+  type: fixed
+  parent: VSE-0001
+  child: '@tensioner'
+  axis: [1, 0, 0]
+  origin: [-68.75, -10.7, 30.0]
+  min: 0
+  max: 0
+  nominal: 0
 operations: {status: unknown, reason: not recorded yet, question: Q-012}
 drawing:
   number: VSE-ASM
