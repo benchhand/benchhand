@@ -99,22 +99,22 @@ def _missing(ctx: Context, family: str, what: str, consequence: str, severity: s
     return Result(UNKNOWN, f"purchase {family}", f"{what} unknown", [draft])
 
 
-def _designation(purchase: Any) -> Mapping[str, Any] | None:
+def _commodity(purchase: Any) -> Mapping[str, Any] | None:
     """The commodity designation of a purchase (standard or family), or None for a manufacturer part number."""
     data = (purchase or {}).get("designation")
     return data if isinstance(data, Mapping) and data.get("kind") in COMMODITY_KINDS else None
 
 
-def _designation_text(data: Mapping[str, Any]) -> str:
+def _commodity_text(data: Mapping[str, Any]) -> str:
     name = data.get("standard") or data.get("family") or ""
     rest = [str(data[k]) for k in ("size", "thread", "length") if data.get(k) not in (None, "not_applicable")]
     return " ".join([str(name), *rest]).strip()
 
 
 def identity(ctx: Context) -> Result:
-    designation = _designation(ctx.operation.purchase)
+    designation = _commodity(ctx.operation.purchase)
     if designation:
-        return Result(PASS, "purchase identity", f"identified by designation {_designation_text(designation)}; any "
+        return Result(PASS, "purchase identity", f"identified by designation {_commodity_text(designation)}; any "
                       "supplier of that standard or family is acceptable")
     data = _fact(ctx.operation.purchase, "identity")
     if not _known(data):
@@ -240,7 +240,7 @@ def mounting(ctx: Context) -> Result:
 
 
 def availability(ctx: Context) -> Result:
-    if _designation(ctx.operation.purchase):
+    if _commodity(ctx.operation.purchase):
         return Result(PASS, "purchase availability", "commodity: obtainable from any supplier of the designation; "
                       "reference catalogue entries are non-binding examples")
     if not _known(_fact(ctx.operation.purchase, "availability")):
