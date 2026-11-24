@@ -657,6 +657,22 @@ class RequiredChecks(unittest.TestCase):
         record = mi.normalize_record(fx.record(parts=[fx.part("TST-0001"), stray]))
         self.assertEqual([p.message for p in record.problems if p.code == "intent.route"], [])
 
+    def test_existing_dimensions_are_checked_like_any_fact(self) -> None:
+        reversed_range = fx.known(fx.quantity(lower=30.2, upper=29.8))
+        undeclared = fx.known(fx.quantity(lower=29.8, upper=30.2), "assumed", assumption="ASM-099")
+        uncited = fx.known(fx.quantity(lower=29.8, upper=30.2), "measured",
+                           [fx.source("datasheet", artifact="parts/TST-0009/sources/sheet.pdf", sha256="a" * 64)])
+        for label, dimensions, code in (("reversed range", reversed_range, "intent.number"),
+                                        ("undeclared assumption", undeclared, "intent.reference"),
+                                        ("missing cited artifact", uncited, "intent.source_artifact")):
+            with self.subTest(label):
+                documents = fx.tst_record()
+                documents["parts/TST-0009/part.yaml"] = fx.existing_part("TST-0009", existing={"dimensions": dimensions})
+                documents["assembly.yaml"]["subassemblies"][0]["parts"].append("TST-0009")
+                documents["interfaces.yaml"]["interfaces"].append(fx.interface("IF-009", "TST-0001", "TST-0009"))
+                record = mi.load_record(fx.write_record(temp_hw(self), documents))
+                self.assertIn(code, [p.code for p in record.problems if "TST-0009" in p.path], [p.message for p in record.problems])
+
     def test_every_obligation_validates_and_is_enumerated_once(self) -> None:
         checks = mi.required_checks(mi.normalize_record(fx.tst_record()))
         schema = fx.ref_validator("https://srobroek.com/cad/schemas/manufacturing.schema.json#/$defs/obligation")
