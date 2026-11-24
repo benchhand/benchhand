@@ -912,6 +912,63 @@ class AssemblyInventory(unittest.TestCase):
                          [("hw/assembly.yaml", "error", "subassemblies/0 must be a mapping")])
 
 
+class ExistingEquipment(unittest.TestCase):
+    """Pre-existing equipment the product mounts onto: it interfaces with a product part, is never installed, never bought."""
+
+    def findings(self, edit: Any = None) -> list[dict[str, Any]]:
+        from modload import load_module  # noqa: PLC0415 - used by this class alone
+
+        validate = load_module("cad_record_validate", SKILL / "scripts" / "validate.py")
+        documents = fx.tst_record()
+        documents["parts/TST-0009/part.yaml"] = fx.existing_part("TST-0009", "Mount face")
+        documents["assembly.yaml"]["subassemblies"][0]["parts"].append("TST-0009")
+        documents["interfaces.yaml"]["interfaces"].append(fx.interface("IF-009", "TST-0001", "TST-0009"))
+        if edit is not None:
+            edit(documents)
+        temporary = tempfile.TemporaryDirectory(prefix="cad-record-existing-")
+        self.addCleanup(temporary.cleanup)
+        hw = Path(temporary.name) / "project" / "hw"
+        fx.write_record(hw, documents)
+        return [f for f in validate.validate_project(hw.parent) if f["severity"] == "error"]
+
+    def codes(self, edit: Any = None) -> list[str]:
+        return [str(f.get("code")) for f in self.findings(edit) if str(f.get("code")).startswith("existing.")]
+
+    def test_existing_equipment_on_a_product_interface_passes(self) -> None:
+        self.assertEqual(self.codes(), [])
+
+    def test_existing_equipment_needs_an_interface_with_a_product_part(self) -> None:
+        def no_interface(documents: dict[str, Any]) -> None:
+            documents["interfaces.yaml"]["interfaces"].pop()
+
+        def only_other_equipment(documents: dict[str, Any]) -> None:
+            documents["parts/TST-0008/part.yaml"] = fx.existing_part("TST-0008", "Tripod")
+            documents["assembly.yaml"]["subassemblies"][0]["parts"].append("TST-0008")
+            documents["interfaces.yaml"]["interfaces"][-1] = fx.interface("IF-009", "TST-0008", "TST-0009")
+
+        for label, edit, expected in (("no interface", no_interface, ["existing.interface_missing"]),
+                                      ("only other equipment", only_other_equipment,
+                                       ["existing.interface_missing", "existing.interface_missing"])):
+            with self.subTest(label):
+                self.assertEqual(self.codes(edit), expected)
+
+    def test_existing_equipment_receives_a_part_but_is_never_installed(self) -> None:
+        def operation(part: str, into: str) -> Any:
+            return lambda d: d["assembly.yaml"]["operations"].append(
+                {"id": "mount", "kind": "press_fit", "part": part, "into": into, "interface": "IF-009", "direction": [0, 0, -1],
+                 "acceptance": {"kind": "seated", "features": ["bearing_face", "seat_floor"]}})
+
+        self.assertEqual(self.codes(operation("TST-0001", "TST-0009")), [])
+        self.assertEqual(self.codes(operation("TST-0009", "TST-0001")), ["existing.installed"])
+
+    def test_procurement_on_existing_equipment_is_refused(self) -> None:
+        def bought(documents: dict[str, Any]) -> None:
+            documents["parts/TST-0009/part.yaml"]["procurement"] = {"mode": "catalog"}
+
+        messages = [str(f["message"]) for f in self.findings(bought) if "TST-0009" in str(f["path"])]
+        self.assertTrue(any("existing equipment is not bought" in m for m in messages), messages)
+
+
 class SubjectOccurrences(unittest.TestCase):
     """validate_project reports a subject occurrence that is unknown or belongs to another part."""
 
