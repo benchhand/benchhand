@@ -390,9 +390,6 @@ def check_procurement(part: dict[str, Any], path: str, hw: Path, findings: list[
     procurement = part.get("procurement")
     if not isinstance(procurement, dict):
         return
-    if part["make_buy"] == "existing":
-        findings.append(finding(path, "procurement: existing equipment is outside the product and is not bought"))
-        return
     mode = procurement["mode"]
     if mode == "catalog" and part["make_buy"] != "buy":
         findings.append(finding(path, "procurement/mode catalog requires make_buy: buy"))

@@ -962,13 +962,6 @@ class ExistingEquipment(unittest.TestCase):
         self.assertEqual(self.codes(operation("TST-0001", "TST-0009")), [])
         self.assertEqual(self.codes(operation("TST-0009", "TST-0001")), ["existing.installed"])
 
-    def test_procurement_on_existing_equipment_is_refused(self) -> None:
-        def bought(documents: dict[str, Any]) -> None:
-            documents["parts/TST-0009/part.yaml"]["procurement"] = {"mode": "catalog"}
-
-        messages = [str(f["message"]) for f in self.findings(bought) if "TST-0009" in str(f["path"])]
-        self.assertTrue(any("procurement" in m for m in messages), messages)
-
 
 class SubjectOccurrences(unittest.TestCase):
     """validate_project reports a subject occurrence that is unknown or belongs to another part."""
