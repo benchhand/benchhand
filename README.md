@@ -38,7 +38,7 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
      ```
 
      Choose `claude`, `codex`, `opencode`, `kiro` or `all`. Run the installer from the project that you want to design in, or pass `--project DIR`. If you cloned elsewhere, set `BENCHHAND` to that path.
-   - Codex CLI and pi get their own routes in #327, once a release carries it. `codex plugin marketplace add benchhand/benchhand` only registers the marketplace; install the plugin from it afterwards. Until then, use the copy installer for Codex. pi has no copy route: `install.py` has no `pi` harness, so wait for a release that documents `pi install`.
+   - Codex keeps the copy installer. pi has no copy route, because `install.py` has no `pi` harness. pi installs only after a release that carries #327; this guide documents the command then.
 3. Start the flow in the project and describe the product:
    - Claude Code plugin: `/benchhand:cad-flow`.
    - Installer route: `/cad-flow` in Claude Code, OpenCode and Kiro (V3), or `$cad-flow` in Codex.
@@ -49,6 +49,8 @@ There is no marketplace route for OpenCode or Kiro yet. If a step fails, see [tr
 ### Installer options
 
 Add `--user` for a user-level install, or `--project DIR` to pick a project (the two exclude each other). `--dry-run` previews changes. `--uninstall` removes only the files that the installer recorded. The [reference](docs/reference.md#installer-flags) lists the flags and the install path for each harness.
+
+In Claude Code, three skills are typable commands: `cad-flow` (the entry point), `cad-viewer` and `cad-fits`. The other twelve `cad-*` skills carry `user-invocable: false`, so the `/` menu omits them in both the installer route and the plugin route, but the model still loads them when a stage needs one. `user-invocable` is a Claude Code extension, not an Agent Skills key, so a strict Agent Skills validator rejects those twelve shared `SKILL.md` files. This is an accepted exception: the plugin route reads `skills/` directly and has no other place to carry the key. `install.py` strips the key for every harness except Claude, so Codex, OpenCode and Kiro get spec-only skills. `harness/test_skill_visibility.py` fails when a skill is not classified as visible or hidden.
 
 ## Documentation
 
@@ -61,8 +63,6 @@ Add `--user` for a user-level install, or `--project DIR` to pick a project (the
 | [Architecture](docs/architecture.md) | Components and flows |
 | [Engineering guide](docs/engineering.md) | Stack, pins, checks and approved departures |
 | [Schemas](docs/schemas.md) | Generated schema reference |
-
-In Claude Code, three skills are typable commands: `cad-flow` (the entry point), `cad-viewer` and `cad-fits`. The other twelve `cad-*` skills carry `user-invocable: false`, so the `/` menu omits them in both the installer route and the plugin route, but the model still loads them when a stage needs one. `user-invocable` is a Claude Code extension, not an Agent Skills key, so a strict Agent Skills validator rejects those twelve shared `SKILL.md` files. This is an accepted exception: the plugin route reads `skills/` directly and has no other place to carry the key. `install.py` strips the key for every harness except Claude, so Codex, OpenCode and Kiro get spec-only skills. `harness/test_skill_visibility.py` fails when a skill is not classified as visible or hidden.
 
 Codex CLI reads the same marketplace: `codex plugin marketplace add benchhand/benchhand` registers it. For pi, install the repository as a package with `pi install git:github.com/benchhand/benchhand@vX.Y.Z` (add `-l` for one project); it loads the `cad-*` skills. Without `@vX.Y.Z` pi installs the default branch, not a release. Each release PR bumps the plugin, marketplace and `package.json` versions together, so the manifests of a tagged release carry its version. OpenCode and Kiro have no git marketplace; use the installer.
 
