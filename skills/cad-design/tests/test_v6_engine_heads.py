@@ -87,6 +87,18 @@ class BeltPathTests(unittest.TestCase):
             with self.subTest(occ=occ["id"]):
                 self.assertGreaterEqual(inner_face - CASE_END_X_MM, MIN_BELT_CLEARANCE_MM)
 
+    def test_all_three_pulleys_share_one_belt_plane(self) -> None:  # DR-005
+        xs = [o["placement"]["translation_mm"][0] for pn in ("VSE-0008", "VSE-0009") for o in occurrences(pn)]
+        self.assertEqual(len(xs), 3)
+        self.assertLessEqual(max(xs) - min(xs), 0.1)
+
+    def test_the_stock_belt_length_lies_within_the_tensioner_travel(self) -> None:  # DR-005
+        belt = params("VSE-0010")
+        # DR-005 path: crank r 6.37 at (0, 0), cams r 12.73 at (+/-45, 77.94), back-side idler r 5 at (0, 70),
+        # back-side tensioner r 5 at z = 30; its travel y -30..-6 spans 411.2..424.3 mm of pitch length.
+        self.assertGreaterEqual(belt["length_mm"], 411.2)
+        self.assertLessEqual(belt["length_mm"], 424.3)
+
 
 if __name__ == "__main__":
     unittest.main()
