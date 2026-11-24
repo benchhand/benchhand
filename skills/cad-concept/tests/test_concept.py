@@ -807,6 +807,57 @@ class ServerTimeout(InProcessServer):
             read_fd = -1
         self.assertTrue(exited, "a stdout nobody reads kept the server running after its idle timeout")
 
+    def test_a_client_that_connects_while_the_stop_is_notified_is_never_cut_off(self) -> None:
+        read_fd, write_fd = os.pipe()
+        pipe_out = os.fdopen(write_fd, "w", encoding="utf-8")
+        self.addCleanup(lambda: os.close(read_fd) if read_fd >= 0 else None)
+        self.addCleanup(lambda: pipe_out.close() if not pipe_out.closed else None)
+
+        def fill_pipe(_info: dict[str, object]) -> None:
+            os.set_blocking(write_fd, False)
+            try:
+                while True:
+                    os.write(write_fd, b"x" * 4096)
+            except BlockingIOError:
+                pass
+            finally:
+                os.set_blocking(write_fd, True)
+
+        self.on_ready = fill_pipe
+        cut_off = []
+        with contextlib.redirect_stdout(pipe_out):
+            self.start_server(0.3)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            deadline = time.monotonic() + 4
+            while not self._server_done.is_set() and time.monotonic() < deadline and not cut_off:
+                try:
+                    sock = socket.create_connection((host, int(port)), timeout=0.5)
+                except OSError:
+                    break  # no longer accepting: the server is gone
+                with sock:
+                    sock.settimeout(0.5)
+                    try:
+                        sock.sendall(f"GET /events HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
+                        head = sock.recv(4096)
+                        if b" 200 " not in head.split(b"\r\n")[0]:
+                            continue  # refused (503) or never answered: it was told, not cut off
+                        # A client that got its stream holds the server open: the stream must stay up.
+                        sock.settimeout(1.0)
+                        try:
+                            while True:
+                                if not sock.recv(4096):
+                                    cut_off.append("EOF on an accepted /events stream")
+                                    break
+                        except TimeoutError:
+                            pass  # still open a second later: not cut off
+                    except OSError:
+                        pass
+                    if self._server_done.is_set():
+                        break
+            os.close(read_fd)
+            read_fd = -1
+        self.assertEqual(cut_off, [])
+
     def test_zero_disables_idle_expiry(self) -> None:
         self.start_server(None)
         time.sleep(0.6)

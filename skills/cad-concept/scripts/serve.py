@@ -148,6 +148,7 @@ class SceneWatcher(threading.Thread):
         self.last_change: list[str] = []
         self.last_activity = time.monotonic()
         self.live_clients = 0
+        self.closing = False  # the idle stop is committed: new /events clients are refused
         self.ready = threading.Event()  # set once the first snapshot is taken: later edits are changes
         self._halt = threading.Event()
 
@@ -155,10 +156,22 @@ class SceneWatcher(threading.Thread):
         with self.cond:
             self.last_activity = time.monotonic()
 
-    def client_connected(self) -> None:
+    def client_connected(self) -> bool:
+        """Count a live client; False once the idle stop is committed, so the caller refuses it."""
         with self.cond:
+            if self.closing:
+                return False
             self.live_clients += 1
             self.cond.notify_all()
+            return True
+
+    def commit_idle_stop(self, seconds: float) -> bool:
+        """Decide the idle stop under the lock that counts clients: after True, no client is ever counted."""
+        with self.cond:
+            if self.stopped or self.live_clients or time.monotonic() - self.last_activity < seconds:
+                return False
+            self.closing = True
+            return True
 
     def client_disconnected(self) -> None:
         with self.cond:
@@ -310,7 +323,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _events(self) -> None:
         watcher = self.watcher
-        watcher.client_connected()
+        if not watcher.client_connected():
+            self._error(HTTPStatus.SERVICE_UNAVAILABLE, "the viewer server is stopping (idle timeout)")
+            return
         try:
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream")
@@ -508,6 +523,7 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
     print(json.dumps(ready), flush=True)
     if ready_callback:
         ready_callback(ready)
+    idle_stopped = threading.Event()
     if timeout_s > 0:
         def stop_when_idle() -> None:
             while True:
@@ -519,15 +535,19 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
                         watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
                     if watcher.stopped:
                         return
-                announce({"event": "stopped", "reason": "idle", "url": ready["url"]})
-                shutdown(signal.SIGTERM, None)
+                if not watcher.commit_idle_stop(timeout_s):
+                    continue  # a client arrived between the wait and the commit
+                idle_stopped.set()
+                shutdown(signal.SIGTERM, None)  # stops accepting first; the notice follows, below
                 return
 
         threading.Thread(target=stop_when_idle, daemon=True, name="idle-timeout").start()
     try:
         httpd.serve_forever(poll_interval=0.2)
     finally:
-        httpd.server_close()
+        httpd.server_close()  # the listening socket is closed before anyone is told the server stopped
+    if idle_stopped.is_set():
+        announce({"event": "stopped", "reason": "idle", "url": ready["url"]})
     return 0
 
 
