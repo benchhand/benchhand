@@ -22,6 +22,8 @@ PARAMS = {
     "chamber_d": 26.0,  # combustion chamber pocket over the 24 mm bore
     "chamber_h": 3.0,  # pocket depth above the deck face; leaves 7 mm to the cam journal bore
     "journal_bore_d": 8.04,  # 8 H7 upper limit; the camshaft journal is 8 f7
+    "lobe_pocket_r": 7.5,  # cam lobe nose reaches 7.0 mm
+    "lobe_pocket_w": 7.0,  # lobe 6 mm wide
 }
 
 
@@ -35,4 +37,9 @@ def build(params: dict) -> cq.Shape:
     for i in (-1, 0, 1):
         pocket = cq.Solid.makeCylinder(p["chamber_d"] / 2.0, p["chamber_h"], cq.Vector(i * p["cyl_pitch"], 0, p["deck_h"]), cq.Vector(0, 0, 1))
         body = safe_cut(body, cq.Workplane(obj=pocket))
+    # A lobe pocket around each cam lobe (lobe nose 7 mm from the axis, 0.5 mm running clearance); the 8 H7 bore alone left the lobes buried.
+    for i in (-1, 0, 1):
+        x = i * p["cyl_pitch"] - p["lobe_pocket_w"] / 2.0
+        lobe_pocket = cq.Solid.makeCylinder(p["lobe_pocket_r"], p["lobe_pocket_w"], cq.Vector(x, 0, p["deck_h"] + p["cam_h"]), cq.Vector(1, 0, 0))
+        body = safe_cut(body, cq.Workplane(obj=lobe_pocket))
     return body.val()
