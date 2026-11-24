@@ -70,9 +70,14 @@ class Size(unittest.TestCase):
     designation, so a property class such as 8.8 is no size."""
 
     def test_a_property_class_is_not_a_size_for_a_threaded_standard(self) -> None:
-        for size in ("8.8", "20", "M4 8.8", "M4x"):
+        for size in ("8.8", "20", "M4 8.8", "M4x", "M4x20", "M4\u00d720"):
             with self.subTest(size=size):
                 self.assertIn("size", ci.designation_problem({**SCREW, "size": size}) or "")
+
+    def test_a_size_that_embeds_the_length_is_refused(self) -> None:
+        problem = ci.designation_problem({**SCREW, "size": "M4x20"})
+        self.assertIn("embeds a length", problem or "")
+        self.assertIsNone(ci.designation_problem({**SCREW, "size": "M4", "length": 20}))
 
     def test_valid_sizes_of_each_family_of_standard(self) -> None:
         cases = {
