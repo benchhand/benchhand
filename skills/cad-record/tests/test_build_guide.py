@@ -391,6 +391,22 @@ class BuildGuide(unittest.TestCase):
         self.assertEqual(misdated.returncode, 2)
         self.assertIn("release A was sealed on 2026-10-01, not 2026-10-05", misdated.stderr)
 
+    def test_commodity_buy_rows_are_grouped_by_designation(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        designation = "Hex nut ISO 4032 - M4, property class 8, zinc plated"
+        for pn in ("LMP-0008", "LMP-0009"):
+            part_path = hw / "parts" / pn / "part.yaml"
+            part = yaml.safe_load(part_path.read_text(encoding="utf-8"))
+            part["procurement"] = {"mode": "catalog", "designation": designation, "standard": "ISO 4032"}
+            part.pop("supplier", None)
+            part_path.write_text(yaml.safe_dump(part, sort_keys=False), encoding="utf-8")
+        guide = self.generate(hw)
+        rows = [line for line in guide.splitlines() if designation in line]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("LMP-0008, LMP-0009", rows[0])
+        self.assertIn("any supplier (commodity)", rows[0])
+
     def test_buy_identity_open_fields_remain_visible(self) -> None:
         hw = self.copy_lamp_example()
         self.make_version(hw, "v1")

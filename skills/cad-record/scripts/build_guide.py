@@ -123,6 +123,34 @@ def text(value: Any) -> str:
     return cell(str(value).strip())
 
 
+COMMODITY_SUPPLIER = "any supplier (commodity)"
+
+
+def group_commodity(rows: list[tuple[Any, ...]], commodity: list[bool]) -> list[tuple[Any, ...]]:
+    """Buy rows with the commodity rows that share a designation merged into one: their item numbers and PNs
+    joined, their quantities summed. Rows are (item, PN, designation, qty, supplier, order code, drawing); a
+    vendor-specific row stays on its own line."""
+    grouped: dict[str, list[Any]] = {}
+    result: list[Any] = []
+    for row, is_commodity in zip(rows, commodity, strict=True):
+        if not is_commodity:
+            result.append(row)
+            continue
+        group = grouped.get(str(row[2]))
+        if group is None:
+            grouped[str(row[2])] = group = [[row[0]], [row[1]], row[2], row[3], *row[4:]]
+            result.append(group)
+            continue
+        group[0].append(row[0])
+        group[1].append(row[1])
+        try:
+            group[3] = int(group[3]) + int(row[3])
+        except (TypeError, ValueError):
+            group[3] = None
+    return [(", ".join(str(i) for i in r[0] if i is not None) or None, ", ".join(r[1]), *r[2:]) if isinstance(r, list)
+            else r for r in result]
+
+
 def table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     lines.extend("| " + " | ".join(text(value) for value in row) + " |" for row in rows)
@@ -486,6 +514,7 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
 
     make_rows: list[tuple[Any, ...]] = []
     buy_rows: list[tuple[Any, ...]] = []
+    commodity_rows: list[bool] = []
     for pn in part_numbers:
         part = part_records.get(pn, {})
         bom = bom_by_pn.get(pn, {})
@@ -517,7 +546,14 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
                 drawing = LAYOUT.bundle_dir(hw, "drawings", version, pn) / "sheet-1.pdf"
                 if drawing.is_file():
                     drawing_link = markdown_link("drawing sheet PDF", drawing, out)
+            commodity = bool(procurement.get("mode") == "catalog" and procurement.get("designation")
+                             and not procurement.get("manufacturer_part_number") and not procurement.get("supplier_part_number"))
+            if commodity and not supplier:
+                supplier = COMMODITY_SUPPLIER
             buy_rows.append((*common, designation, quantity, supplier, order_code, drawing_link))
+            commodity_rows.append(commodity)
+
+    buy_rows = group_commodity(buy_rows, commodity_rows)
 
     try:
         operations = OPERATIONS.normalize(assembly)
