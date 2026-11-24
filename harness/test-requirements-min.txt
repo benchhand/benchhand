@@ -1,6 +1,7 @@
 # Minimal test pins for steps that run host scripts declaring PyYAML or nothing (harness/install.py,
-# harness/generate.py, scripts/docs_only.py, scripts/ci_shards.py). Keep it to PyYAML: a package
+# harness/generate.py, scripts/docs_only.py, scripts/ci_shards.py). Keep it to PyYAML and markdown-it-py (the link guard): a package
 # beyond it on the path could hide a missing declaration. scripts/test_test_requirements.py checks
 # that the PyYAML pin matches harness/test-requirements.txt.
 # Install with: uv run --no-project --with-requirements harness/test-requirements-min.txt ...
 pyyaml==6.0.3  # harness/generate.py and install.py --tier-model; test_generate.py, test_docs_only.py
+markdown-it-py==4.3.0  # the link guard (scripts/test_markdown_links.py) parses Markdown with it

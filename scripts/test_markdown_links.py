@@ -2,45 +2,61 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Every relative Markdown link in README.md and docs/*.md points at a file that exists, and its
-#fragment at a heading of that file. Inline links, reference definitions and `[text][id]` uses are
-checked, with titles and <angle> destinations. Path parts match case exactly, as on Linux. CHANGELOG.md (release-please) and docs/schemas.md (gen_api.py) are generated and not
-checked. Links inside fenced blocks (backtick or tilde) and code spans are ignored."""
+"""Every relative Markdown link and image in README.md and docs/*.md points at a file that exists,
+and its #fragment at a heading of that file. markdown-it-py (CommonMark) parses the files, so
+inline links with any title form, <angle> destinations, reference links and definitions, and fence
+rules follow the specification. Links inside fenced blocks and code spans are ignored. A
+`[text][id]` use with no definition is reported as `[id]`. Path parts match case exactly, as on
+Linux. CHANGELOG.md (release-please) and docs/schemas.md (gen_api.py) are generated and not
+checked."""
 
 import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
+
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATED = {"schemas.md"}  # gen_api.py output; regex patterns in it look like links
 DOCS = [ROOT / "README.md", *(p for p in sorted((ROOT / "docs").glob("*.md")) if p.name not in GENERATED)]
-LINK = re.compile(r"""(?<!!)\[[^\]]*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)""")
-REFERENCE = re.compile(r"(?<!!)\[[^\]]+\]\[([^\]]+)\]")
-DEFINITION = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s*(<[^>]*>|\S+)")
-CODE_SPAN = re.compile(r"`[^`]*`")
-FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+UNDEFINED_REFERENCE = re.compile(r"\[[^\]]+\]\[([^\]]+)\]")
+SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 
 
-def prose_lines(path: Path, strip_code: bool = True) -> list[str]:
-    """The lines outside fenced code blocks. A fence closes on the same character, at least as long."""
-    fence = ""
-    kept = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        opened = FENCE.match(line)
-        if fence:
-            if opened and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence):
-                fence = ""
-        elif opened:
-            fence = opened.group(1)
-        else:
-            kept.append(CODE_SPAN.sub("", line) if strip_code else line)
-    return kept
+def parse(path: Path) -> tuple[list[Token], dict[str, dict[str, str]]]:
+    env: dict[str, dict[str, str]] = {}
+    return MarkdownIt("commonmark").parse(path.read_text(encoding="utf-8"), env), env
 
 
-def unwrap(target: str) -> str:
-    return target[1:-1] if target.startswith("<") and target.endswith(">") else target
+def slug(heading: str) -> str:
+    text = re.sub(r"[`*]", "", heading.strip().lower())
+    return re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", text))
+
+
+def anchors(path: Path) -> set[str]:
+    tokens, _ = parse(path)
+    return {slug(after.content) for token, after in zip(tokens, tokens[1:]) if token.type == "heading_open"}
+
+
+def targets(doc: Path) -> list[str]:
+    """Targets of the links and images of `doc`, and of every reference definition. A `[text][id]`
+    use with no definition yields the target `[id]`, which no file matches, so `problems` reports it."""
+    tokens, env = parse(doc)
+    found = [definition["href"] for definition in env.get("references", {}).values()]
+    for token in tokens:
+        if token.type != "inline":
+            continue
+        children = token.children or []
+        found.extend(child.attrGet("href") or "" for child in children if child.type == "link_open")
+        found.extend(child.attrGet("src") or "" for child in children if child.type == "image")
+        text = "".join(child.content for child in children if child.type == "text")
+        defined = {label.lower() for label in env.get("references", {})}
+        found.extend(f"[{ident}]" for ident in UNDEFINED_REFERENCE.findall(text) if ident.lower() not in defined)
+    return list(dict.fromkeys(unquote(target) for target in found))
 
 
 def exists_exact(path: Path, root: Path) -> bool:
@@ -59,31 +75,10 @@ def exists_exact(path: Path, root: Path) -> bool:
     return True
 
 
-def slug(heading: str) -> str:
-    text = re.sub(r"[`*]", "", heading.strip().lower())
-    return re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", text))
-
-
-def anchors(path: Path) -> set[str]:
-    return {slug(m.group(1)) for line in prose_lines(path, strip_code=False) if (m := re.match(r"#{1,6}\s+(.*)", line))}
-
-
-def targets(doc: Path) -> list[str]:
-    """Targets of the inline links and reference definitions of `doc`. A `[text][id]` use with no
-    definition yields the target `[id]`, which no file matches, so `problems` reports it."""
-    lines = prose_lines(doc)
-    defined = {m.group(1).lower() for line in lines if (m := DEFINITION.match(line))}
-    found = [unwrap(m.group(2)) for line in lines if (m := DEFINITION.match(line))]
-    for line in lines:
-        found.extend(unwrap(target) for target in LINK.findall(line))
-        found.extend(f"[{ident}]" for ident in REFERENCE.findall(line) if ident.lower() not in defined)
-    return found
-
-
 def problems(doc: Path, root: Path) -> list[str]:
     found = []
     for target in targets(doc):
-        if re.match(r"[a-z][a-z0-9+.-]*:", target):
+        if SCHEME.match(target):
             continue
         name, _, fragment = target.partition("#")
         path = doc if not name else (doc.parent / name).resolve()
@@ -140,6 +135,14 @@ class MarkdownLinkTests(unittest.TestCase):
                 "~~~~\n```\n[inner](b.md)\n```\n~~~~\n"
                 "```\n~~~\n[backtick](c.md)\n```\n"
                 "[after](d.md)\n")
+        self.assertEqual(self.check({}, text), ["doc.md: d.md does not exist"])
+
+    def test_reports_a_broken_link_with_a_parenthesised_title(self) -> None:
+        text = "[t](gone.md (Title)) [ok](real.md (Title))\n"
+        self.assertEqual(self.check({"real.md": "x\n"}, text), ["doc.md: gone.md does not exist"])
+
+    def test_a_tilde_fence_closer_followed_by_text_does_not_close_the_fence(self) -> None:
+        text = "~~~\n[a](a.md)\n~~~ not a closer\n[b](b.md)\n~~~\n[after](d.md)\n"
         self.assertEqual(self.check({}, text), ["doc.md: d.md does not exist"])
 
     def test_checks_the_case_of_every_path_part(self) -> None:

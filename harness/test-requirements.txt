@@ -8,3 +8,4 @@ jsonschema==4.26.0  # skill tests that validate records against their schemas
 defusedxml==0.7.1  # drawing skill tests that parse SVG/XML
 hypothesis==6.170.15  # property-based tests (cad-fits, cad-drawings)
 click==8.5.1  # the Click CLI helper (skills/cad-record/scripts/cli.py)
+markdown-it-py==4.3.0  # the link guard (scripts/test_markdown_links.py) parses Markdown with it
