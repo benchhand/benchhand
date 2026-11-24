@@ -2202,6 +2202,14 @@ class _Reader:
                     found.add(data["PN"])
         return frozenset(found)
 
+    def candidate_part_profiles(self, part: Mapping[str, Any], path: str, where: str) -> None:
+        """The material, capability and purchase references of one selection candidate part entry."""
+        self.id_or_fact(part.get("material_profile"), "material", path, f"{where}/material_profile")
+        for j, step in enumerate(part.get("route") or ()):
+            if isinstance(step, Mapping):
+                self.id_or_fact(step.get("capability"), "capability", path, f"{where}/route/{j}/capability")
+                self.purchase(step.get("purchase"), path, f"{where}/route/{j}/purchase")
+
     def selection(self) -> Selection:
         path = "hw/manufacturing/selection.yaml"
         data = self.doc("manufacturing/selection.yaml") or {}
@@ -2230,13 +2238,8 @@ class _Reader:
                                                       proposal.get("reason"), entries, proposal.get("transparency"))
                 else:
                     self.ref("part", part.get("PN"), path, where)
-                if part.get("PN") in existing:
-                    continue  # selection drops an existing-equipment entry, so its profiles are never read
-                self.id_or_fact(part.get("material_profile"), "material", path, f"{where}/material_profile")
-                for j, step in enumerate(part.get("route") or ()):
-                    if isinstance(step, Mapping):
-                        self.id_or_fact(step.get("capability"), "capability", path, f"{where}/route/{j}/capability")
-                        self.purchase(step.get("purchase"), path, f"{where}/route/{j}/purchase")
+                if part.get("PN") not in existing:  # selection drops an existing-equipment entry unread
+                    self.candidate_part_profiles(part, path, where)
             if introduced and isinstance(ident, str):
                 proposed[ident] = types.MappingProxyType(introduced)
             for interface in item.get("interfaces") or ():
