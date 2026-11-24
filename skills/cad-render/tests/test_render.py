@@ -847,6 +847,7 @@ PART_VIEW = f"part-{TARGET}"
 BOXES = {WINDOW: ((-30.0, -22.0, 0.0), (30.0, -20.0, 40.0)),
          TARGET: ((-10.0, -5.0, 5.0), (10.0, 5.0, 25.0)),
          OTHER: ((40.0, -10.0, 0.0), (60.0, 10.0, 20.0))}
+AO_TOLERANCE = 4  # 8-bit levels
 BELOW, WALL = "TST-0004", "TST-0005"
 BELOW_BOX = ((-10.0, -10.0, -30.0), (10.0, 10.0, -20.0))  # under the assembly's floor
 WALL_BOX = ((11.0, -10.0, 5.0), (30.0, -5.0, 25.0))  # 5 mm proud of the target face, 1 mm to its right
@@ -1281,11 +1282,14 @@ class BrowserRender(unittest.TestCase):
             target = metadata["visibility"][0]["targets"][0]
             fractions[label] = (code, target["silhouette_px"], target["visible_px"])
             pngs[label] = Path(summary["pngs"]["front"]).read_bytes()
-        silhouette = fractions["hide"][1]
+        # A ghost stays in the picture, so the camera frames the window as it does for the opaque one; a hidden
+        # window is not framed, so the target fills more of the frame.
+        silhouette, hidden_silhouette = fractions["opaque"][1], fractions["hide"][1]
         self.assertGreater(silhouette, 1000)
         self.assertEqual(fractions["opaque"], (1, silhouette, 0))
-        self.assertEqual(fractions["hide"], (0, silhouette, silhouette))
-        self.assertEqual(fractions["ghost"], fractions["hide"])
+        self.assertEqual(fractions["ghost"], (0, silhouette, silhouette))
+        self.assertEqual(fractions["hide"], (0, hidden_silhouette, hidden_silhouette))
+        self.assertGreater(hidden_silhouette, silhouette)
         self.assertEqual(len(set(pngs.values())), 3)  # the ghost is drawn: neither the opaque nor the hidden picture
 
     def test_the_part_yaml_default_hides_and_show_brings_the_part_back(self) -> None:
@@ -1354,11 +1358,14 @@ class BrowserRender(unittest.TestCase):
         edge = png_pixels.column_of(ghost["views"]["front"]["camera"], (WALL_BOX[0][0], WALL_BOX[0][1], WALL_BOX[0][2]), width)
         columns = int(edge) - 3
         self.assertGreater(columns, 100)
-        changed = sum(
-            1 for y in range(height) for x in range(columns)
-            if max(abs(ghost_rows[(y * width + x) * channels + c] - hide_rows[(y * width + x) * channels + c])
-                   for c in range(3)) > 0)
-        self.assertEqual(changed, 0)
+        def differing(tolerance: int) -> int:
+            return sum(
+                1 for y in range(height) for x in range(columns)
+                if max(abs(ghost_rows[(y * width + x) * channels + c] - hide_rows[(y * width + x) * channels + c])
+                       for c in range(3)) > tolerance)
+        # Two renders of one scene are bit-identical here, so any change is the ghost's; TOLERANCE only leaves room
+        # for another GPU's rounding.
+        self.assertEqual((differing(0), differing(AO_TOLERANCE)), (0, 0), f"of {columns * height} pixels left of the wall")
 
     def test_a_changed_hide_or_ghost_list_recaptures_and_an_unchanged_one_is_copied(self) -> None:
         views = ("--views", "iso", PART_VIEW)
