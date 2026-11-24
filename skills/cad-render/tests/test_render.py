@@ -34,6 +34,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 import box_version  # noqa: E402 - kernel-free sealed box versions
+import png_pixels  # noqa: E402 - PNG reader and camera projection for pixel tests
 
 SKILL = Path(__file__).resolve().parent.parent
 RENDER_PY = SKILL / "scripts" / "render.py"
@@ -846,6 +847,9 @@ PART_VIEW = f"part-{TARGET}"
 BOXES = {WINDOW: ((-30.0, -22.0, 0.0), (30.0, -20.0, 40.0)),
          TARGET: ((-10.0, -5.0, 5.0), (10.0, 5.0, 25.0)),
          OTHER: ((40.0, -10.0, 0.0), (60.0, 10.0, 20.0))}
+BELOW, WALL = "TST-0004", "TST-0005"
+BELOW_BOX = ((-10.0, -10.0, -30.0), (10.0, 10.0, -20.0))  # under the assembly's floor
+WALL_BOX = ((11.0, -10.0, 5.0), (30.0, -5.0, 25.0))  # 5 mm proud of the target face, 1 mm to its right
 GROWN_TARGET = ((-10.0, -5.0, 5.0), (10.0, 5.0, 30.0))
 GROWN_OTHER = ((40.0, -10.0, 0.0), (70.0, 10.0, 25.0))
 
@@ -1291,6 +1295,83 @@ class BrowserRender(unittest.TestCase):
         _, _, defaulted = self.scratch_render("default", "--version", "v1", "--views", "front")
         _, _, shown = self.scratch_render("show", "--version", "v1", "--views", "front", "--show", OTHER)
         self.assertEqual((defaulted["hidden"], shown["hidden"]), ([OTHER], []))
+
+    def test_a_hidden_part_below_the_floor_does_not_move_the_floor_or_the_framing(self) -> None:
+        low = {"title": "Low", "material": "Aluminum 6061-T6", "finish": "Machined"}
+        box_version.write(self.hw, "v1", {**BOXES, BELOW: BELOW_BOX}, {**box_parts(), BELOW: low}, record_version=2)
+        box_version.write(self.hw, "v2", BOXES, box_parts(), record_version=2)
+        views = ("--views", "front", "iso")
+        _, hidden_summary, _ = self.scratch_render("hidden", "--version", "v1", "--hide", BELOW, *views)
+        _, absent_summary, _ = self.scratch_render("absent", "--version", "v2", *views)
+        _, shown_summary, _ = self.scratch_render("shown", "--version", "v1", *views)
+        for view in ("front", "iso"):
+            hidden_png = Path(hidden_summary["pngs"][view]).read_bytes()
+            self.assertEqual(hidden_png, Path(absent_summary["pngs"][view]).read_bytes(), view)
+            self.assertNotEqual(hidden_png, Path(shown_summary["pngs"][view]).read_bytes(), view)  # the fixture does reach the floor
+
+    def test_a_large_hidden_window_does_not_set_the_visibility_camera(self) -> None:
+        self.hw.mkdir(parents=True, exist_ok=True)
+        boxes = {**BOXES, WINDOW: ((-300.0, -22.0, -300.0), (300.0, -20.0, 300.0))}
+        silhouettes = {}
+        for label, binding, flags in (("hidden", FRONT, ("--hide", WINDOW)),
+                                      ("alone", {**FRONT, "window": [TARGET]}, ())):
+            requirements(self.hw, binding)
+            box_version.write(self.hw, "v1" if label == "hidden" else "v2", boxes, box_parts("opaque"), record_version=2)
+            _, _, metadata = self.scratch_render(label, "--version", "v1" if label == "hidden" else "v2",
+                                                 "--views", "front", *flags)
+            silhouettes[label] = metadata["visibility"][0]["targets"][0]["silhouette_px"]
+        self.assertGreater(silhouettes["alone"], 1000)
+        self.assertEqual(silhouettes["hidden"], silhouettes["alone"])
+
+    def test_a_ghosted_visibility_target_keeps_its_silhouette_and_is_seen_through_a_clear_window(self) -> None:
+        self.hw.mkdir(parents=True, exist_ok=True)
+        requirements(self.hw, FRONT)
+        box_version.write(self.hw, "v1", BOXES, box_parts("transparent"), record_version=2)
+        box_version.write(self.hw, "v2", BOXES, box_parts("opaque"), record_version=2)
+        measured = {}
+        for label, version, flags in (("plain", "v1", ()), ("clear", "v1", ("--ghost", TARGET)),
+                                      ("blocked", "v2", ("--ghost", TARGET))):
+            code, _, metadata = self.scratch_render(label, "--version", version, "--views", "front", *flags)
+            target = metadata["visibility"][0]["targets"][0]
+            measured[label] = (code, target["silhouette_px"], target["visible_px"], target["visible_fraction"])
+            self.assertEqual(metadata["ghosted"], [TARGET] if flags else [])
+        silhouette = measured["plain"][1]
+        self.assertGreater(silhouette, 1000)
+        self.assertEqual(measured["plain"], (0, silhouette, silhouette, 1.0))
+        self.assertEqual(measured["clear"], (0, silhouette, silhouette, 1.0))
+        self.assertEqual(measured["blocked"], (1, silhouette, 0, 0.0))
+
+    def test_a_ghost_beside_a_part_adds_no_ambient_occlusion_to_it(self) -> None:
+        wall = {"title": "Wall", "material": "Aluminum 6061-T6", "finish": "Machined"}
+        boxes = {TARGET: BOXES[TARGET], OTHER: BOXES[OTHER], WALL: WALL_BOX}
+        box_version.write(self.hw, "v1", boxes, {**{pn: r for pn, r in box_parts().items() if pn != WINDOW}, WALL: wall},
+                          record_version=2)
+        _, ghost_summary, ghost = self.scratch_render("ghost", "--version", "v1", "--ghost", WALL, "--views", "front")
+        _, hide_summary, hide = self.scratch_render("hide", "--version", "v1", "--hide", WALL, "--views", "front")
+        width, height, channels, ghost_rows = png_pixels.decode(Path(ghost_summary["pngs"]["front"]).read_bytes())
+        _, _, _, hide_rows = png_pixels.decode(Path(hide_summary["pngs"]["front"]).read_bytes())
+        # The ghost's left edge, with a margin: left of it every pixel is the target's, the floor's or the backdrop's.
+        edge = png_pixels.column_of(ghost["views"]["front"]["camera"], (WALL_BOX[0][0], WALL_BOX[0][1], WALL_BOX[0][2]), width)
+        columns = int(edge) - 3
+        self.assertGreater(columns, 100)
+        changed = sum(
+            1 for y in range(height) for x in range(columns)
+            if max(abs(ghost_rows[(y * width + x) * channels + c] - hide_rows[(y * width + x) * channels + c])
+                   for c in range(3)) > 0)
+        self.assertEqual(changed, 0)
+
+    def test_a_changed_hide_or_ghost_list_recaptures_and_an_unchanged_one_is_copied(self) -> None:
+        views = ("--views", "iso", PART_VIEW)
+        for label in ("v1", "v2", "v3"):
+            box_version.write(self.hw, label, BOXES, box_parts(), record_version=2)
+        code, first = self.render("--version", "v1", *views)
+        self.assertEqual((code, first["reused"]), (0, {}))
+        code, ghosted = self.render("--version", "v2", "--ghost", OTHER, *views)
+        self.assertEqual((code, ghosted["reused"]), (0, {}))
+        self.assertEqual(sorted(name for name in ghosted["view_wall_s"] if not name.endswith("_s")), sorted(["iso", PART_VIEW]))
+        code, third = self.render("--version", "v3", *views)
+        self.assertEqual((code, third["reused"]), (0, {"iso": "v1", PART_VIEW: "v1"}))
+        self.assertEqual(sorted(name for name in third["view_wall_s"] if not name.endswith("_s")), [])
 
     def test_an_unchanged_part_view_is_copied_and_a_changed_one_rendered(self) -> None:
         views = ("--views", "iso", PART_VIEW)

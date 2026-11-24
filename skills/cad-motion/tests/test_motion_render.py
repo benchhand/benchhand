@@ -648,6 +648,17 @@ class RenderEndToEnd(Fixture):
         self.assertEqual((width, height), (3 * 320 + 4 * 8, 240 + 34 + 2 * 8))
 
 
+class RenderStateFlagsNeedImages(Fixture):
+    def test_hide_ghost_and_show_are_refused_when_no_image_is_rendered(self) -> None:
+        for flag in ("--hide", "--ghost", "--show"):
+            with self.subTest(flag=flag):
+                code, out = run("render", "--hw", self.hw, "--version", "v1", "--outputs", "glb", flag, "TST-0001")
+                self.assertEqual(code, 2, out)
+                self.assertIn(flag, out["error"])
+                self.assertIn("sheet, video or frames", out["error"])
+
+
+
 @unittest.skipUnless(shutil.which("uv") and chromium_installed(), "needs uv and Playwright Chromium")
 class RenderHideGhost(Fixture):
     """motion.py render --hide and --ghost reach the contact sheet and the render record."""
