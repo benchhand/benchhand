@@ -352,7 +352,11 @@ class _Record:
                         for m in declared)  # a main or component material that is unknown could be any of them
         for op in self.route(pn):  # a guideline set the part's capability profile resolves through, for its own materials
             profile = op.get("capability")
-            for ref, sha in guidelines.digests_for(digests.get(profile), [] if undecided else self.profiles(pn)).items() if isinstance(profile, str) else ():
+            if not isinstance(profile, str) and op.get("kind") in guidelines.GUIDELINE_PROCESSES:
+                profile_digests = digests.get(guidelines.machine_free_key(op["kind"]))  # no machine: the process's own sets
+            else:
+                profile_digests = digests.get(profile) if isinstance(profile, str) else None
+            for ref, sha in guidelines.digests_for(profile_digests, [] if undecided else self.profiles(pn)).items():
                 values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:

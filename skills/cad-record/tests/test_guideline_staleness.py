@@ -78,6 +78,30 @@ class Staleness(unittest.TestCase):
         documents = {rel: data for rel, data in fx.tst_record().items() if not rel.startswith("_")}
         self.assertEqual(dict(mi.normalize_record(documents).guideline_digests), {})
 
+    def machine_free(self) -> None:
+        """TST-0001's route names no machine: its capability is an unknown fact."""
+        path = self.hw / "parts" / "TST-0001" / "part.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for operation in data["intent"]["route"]:
+            operation["capability"] = fx.unknown("no machine recorded")
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    def test_tightening_a_guideline_after_a_build_stales_a_part_that_names_no_machine(self) -> None:
+        """An FDM route with no machine resolves its limits through the guideline sets for its process and material, so
+        editing such a set changes the part's source fingerprint, though no capability profile names it."""
+        self.machine_free()
+        put(self.project, "generic", guideline("fdm.generic", 0.8))
+        before = self.source(self.record())
+        put(self.project, "generic", guideline("fdm.generic", 0.9))
+        self.assertNotEqual(self.source(self.record()), before)
+
+    def test_a_machine_free_part_records_the_digests_of_the_sets_it_resolves_through(self) -> None:
+        self.machine_free()
+        path = put(self.project, "generic", guideline("fdm.generic"))
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        digests = self.record().guideline_digests
+        self.assertEqual(digests[gl.machine_free_key("fdm")]["tst_polymer_printed"], {"fdm.generic@1": digest})
+
     def test_editing_an_applicable_set_changes_the_source_fingerprint_and_no_other_domain(self) -> None:
         put(self.project, "generic", guideline("fdm.generic", 0.8))
         before = impact.subject_fingerprints(self.record())["TST-0001"]

@@ -570,10 +570,17 @@ def applicable_digests(catalog: Catalog, context: Context) -> dict[str, str]:
     return dict(sorted(found.items()))
 
 
+def machine_free_key(process: str) -> str:
+    """The `record_digests` key of the guideline sets a route of `process` resolves through when no machine is recorded.
+    It cannot be a capability profile id (ids are plain names), so it never collides with one."""
+    return f"(no machine: {process})"
+
+
 def record_digests(record: Any, catalog: Catalog) -> dict[str, dict[str, dict[str, str]]]:
     """capability profile id -> material profile name -> applicable_digests of that profile with that material. A record
     without materials has the one name "" (the profile alone). A profile that no set can resolve through is left out; one
-    that some material resolves sets for lists every material, so that a material with none is not read as unknown."""
+    that some material resolves sets for lists every material, so that a material with none is not read as unknown.
+    Each guideline process also has a `machine_free_key` entry: the sets its routes resolve through with no machine."""
     found: dict[str, dict[str, dict[str, str]]] = {}
     for ident, profile in sorted(record.capabilities.items()):
         materials: dict[str, Any] = dict(record.materials) or {"": None}
@@ -581,6 +588,12 @@ def record_digests(record: Any, catalog: Catalog) -> dict[str, dict[str, dict[st
                        for name, material in sorted(materials.items())}
         if any(by_material.values()):
             found[ident] = by_material
+    for process in sorted(GUIDELINE_PROCESSES):
+        materials = dict(record.materials) or {"": None}
+        by_material = {name: applicable_digests(catalog, context_without_machine(process, material))
+                       for name, material in sorted(materials.items())}
+        if any(by_material.values()):
+            found[machine_free_key(process)] = by_material
     return found
 
 
