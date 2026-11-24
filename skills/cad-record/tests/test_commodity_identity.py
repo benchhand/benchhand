@@ -65,6 +65,64 @@ class Eligibility(unittest.TestCase):
         self.assertIn("length", ci.designation_problem(dowel) or "")
 
 
+class Size(unittest.TestCase):
+    """The size of a structured designation follows the legacy designation rules: a threaded fastener needs a thread
+    designation, so a property class such as 8.8 is no size."""
+
+    def test_a_property_class_is_not_a_size_for_a_threaded_standard(self) -> None:
+        for size in ("8.8", "20", "M4 8.8", "M4x"):
+            with self.subTest(size=size):
+                self.assertIn("size", ci.designation_problem({**SCREW, "size": size}) or "")
+
+    def test_valid_sizes_of_each_family_of_standard(self) -> None:
+        cases = {
+            "a metric screw": {**SCREW, "size": "M4"},
+            "a button head screw": {**SCREW, "standard": "ISO 7380-1", "size": "M5"},
+            "a washer": {**NUT, "standard": "ISO 7089", "size": "M4"},
+            "a dowel": {**SCREW, "standard": "ISO 8734", "size": "6"},
+        }
+        for name, designation in cases.items():
+            with self.subTest(name):
+                self.assertIsNone(ci.designation_problem(designation))
+
+    def test_a_combined_feature_standard_is_no_part(self) -> None:
+        for standard in ("ISO 965-1", "DIN ISO 965-1", "DIN EN ISO 965-1", "ASME B1.1"):
+            with self.subTest(standard):
+                self.assertIn("feature", ci.designation_problem({**SCREW, "standard": standard}) or "")
+        self.assertIsNone(ci.designation_problem({**SCREW, "standard": "DIN 965", "size": "M4"}), "DIN 965 is a screw")
+
+
+class OneMatcher(unittest.TestCase):
+    def test_the_legacy_parser_and_the_structured_check_share_the_feature_list(self) -> None:
+        self.assertFalse(ci.designation_parses("ISO 965-1 - M4"))
+        self.assertTrue(ci.designation_parses("DIN 471 - 5x0.6"))
+        self.assertIn("ISO 965", ci.FEATURE_STANDARDS)
+
+
+class OpenIdentity(unittest.TestCase):
+    def test_the_label_honours_an_open_identity_field_for_a_given_purchase(self) -> None:
+        record = part(SCREW, opened={"manufacturer_part_number": "not chosen"})
+        purchase = record["intent"]["route"][0]["purchase"]
+        self.assertIsNone(ci.commodity_label(record, purchase))
+        self.assertEqual(ci.commodity_label(part(SCREW), purchase), "ISO 4762 M4x20, 8.8, A2")
+
+
+class DesignationCell(unittest.TestCase):
+    """The one lookup behind the BOM column and its validation."""
+
+    def test_the_text_of_the_record_wins(self) -> None:
+        record = part(SCREW)
+        record["procurement"] = {"mode": "catalog", "designation": "ISO 4762 - M4 x 20"}
+        self.assertEqual(ci.designation_cell(record), "ISO 4762 - M4 x 20")
+
+    def test_an_eligible_structured_designation_fills_a_blank_text(self) -> None:
+        self.assertEqual(ci.designation_cell(part(SCREW)), "ISO 4762 M4x20, 8.8, A2")
+
+    def test_nothing_when_the_designation_is_ineligible_or_unresolved(self) -> None:
+        self.assertIsNone(ci.designation_cell(part({**SCREW, "length": "not_applicable"})))
+        self.assertIsNone(ci.designation_cell(part(SCREW, opened={"manufacturer_part_number": "x"})))
+
+
 class Text(unittest.TestCase):
     def test_a_standard_designation_reads_like_an_order_line(self) -> None:
         self.assertEqual(ci.designation_text(SCREW), "ISO 4762 M4x20, 8.8, A2")
