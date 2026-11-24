@@ -127,6 +127,36 @@ class RollUpTests(unittest.TestCase):
         self.assertEqual({k: rows[0][k] for k in bom.COLUMNS[10:]},
                          {"unit": "pcs", **{k: "" for k in bom.COLUMNS[11:]}}, "an assembly has no part.yaml")
 
+    SCREW = {"kind": "standard_designation", "standard": "ISO 4762", "size": "M4", "length": 20, "property_class": "8.8",
+             "finish": "A2"}
+
+    @staticmethod
+    def bought(designation: dict, **extra: object) -> dict:
+        """A part.yaml bought by structured designation: no manufacturer, part number or designation text."""
+        return {"rev": "X1", "make_buy": "buy", "procurement": {"mode": "catalog", **extra},
+                "intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": designation}}]}}
+
+    def test_a_structured_commodity_designation_fills_the_designation_column(self) -> None:
+        screw = bom.Node("FST-0001", False)
+        rows = bom.roll_up([bom.Node("ASM-0001", True, [(screw, 4)])], {"FST-0001": self.bought(self.SCREW)})["rows"]
+        self.assertEqual(rows[1]["designation"], "ISO 4762 M4x20, 8.8, A2")
+        self.assertEqual((rows[1]["manufacturer"], rows[1]["manufacturer_part_number"], rows[1]["supplier_part_number"]), ("", "", ""))
+
+    def test_an_ineligible_or_unresolved_designation_leaves_the_column_alone(self) -> None:
+        screw = bom.Node("FST-0001", False)
+        top = [bom.Node("ASM-0001", True, [(screw, 1)])]
+        ineligible = self.bought({**self.SCREW, "length": "not_applicable"})
+        unresolved = self.bought(self.SCREW, open={"manufacturer_part_number": "not chosen"})
+        for name, record in (("ineligible", ineligible), ("unresolved", unresolved)):
+            with self.subTest(name):
+                self.assertEqual(bom.roll_up(top, {"FST-0001": record})["rows"][1]["designation"], "")
+
+    def test_the_designation_text_of_the_record_wins_over_the_structured_label(self) -> None:
+        screw = bom.Node("FST-0001", False)
+        record = self.bought(self.SCREW, designation="ISO 4762 - M4 x 20 - 8.8")
+        rows = bom.roll_up([bom.Node("ASM-0001", True, [(screw, 1)])], {"FST-0001": record})["rows"]
+        self.assertEqual(rows[1]["designation"], "ISO 4762 - M4 x 20 - 8.8")
+
 
 class ConsoleRedirectTests(unittest.TestCase):
     """The OCCT console redirect keeps output written through C stdio, as OCCT writes it, off the JSON stdout."""
