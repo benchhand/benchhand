@@ -22,6 +22,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import result_payload  # noqa: E402
 from decision_fixture import add_flow_profile  # noqa: E402
@@ -276,7 +278,8 @@ class StepRoundTripTests(unittest.TestCase):
         self.assertEqual(summary["missing_part_yaml"], ["BRK-0002"])
         self.assertEqual(summary["missing_in_step"], ["NUT-0001"])
 
-    def test_generated_bom_pipes_into_cad_record_validator(self) -> None:
+    def roundtrip(self, tweak: object = None) -> tuple[dict, subprocess.CompletedProcess[str]]:
+        """Build a project, roll the BOM up, validate the record: the BOM rows and the validation run."""
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory) / "project"
             hw = project / "hw"
@@ -314,17 +317,41 @@ class StepRoundTripTests(unittest.TestCase):
             # The record as current cad-record reads it: record version 2 with explicit unknowns.
             record_fixtures().upgrade_record(hw)
             add_flow_profile(hw)  # the project-start profile is due at LAYOUT
+            if tweak is not None:
+                tweak(hw)
 
             bom_proc, _ = self.run_bom(hw)
             self.assertEqual(bom_proc.returncode, 0, bom_proc.stderr)
-            pin = rows_by_level_pn(hw / "bom.csv")[("1", "PIN-0001")]
-            self.assertEqual((pin["unit"], pin["designation"], pin["specification_rev"]),
-                             ("pcs", "ISO 8734 4 x 12 A1", "2024-03"))
+            rows = rows_by_level_pn(hw / "bom.csv")
             validation = subprocess.run(
                 [sys.executable, str(RECORD_VALIDATOR), str(project)],
                 capture_output=True, text=True, check=False, timeout=60,
             )
+        return rows, validation
 
+    def test_generated_bom_pipes_into_cad_record_validator(self) -> None:
+        rows, validation = self.roundtrip()
+        pin = rows[("1", "PIN-0001")]
+        self.assertEqual((pin["unit"], pin["designation"], pin["specification_rev"]), ("pcs", "ISO 8734 4 x 12 A1", "2024-03"))
+        self.assertEqual(validation.returncode, 0, validation.stdout + validation.stderr)
+        self.assertEqual(result_payload(validation.stdout), {"ok": True, "findings": []})
+
+    def test_a_designation_only_part_generates_a_bom_that_validates(self) -> None:
+        def designate(hw: Path) -> None:
+            path = hw / "parts" / "SCR-0001" / "part.yaml"
+            record = yaml.safe_load(path.read_text(encoding="utf-8"))
+            record["procurement"] = {"mode": "catalog"}
+            unknown = {"status": "unknown", "reason": "not recorded in this fixture"}
+            record["intent"]["route"] = [{"id": "buy", "kind": "purchased", "purchase": {
+                "designation": {"kind": "standard_designation", "standard": "ISO 4762", "size": "M3", "length": 8,
+                                "property_class": "A2-70"},
+                "specification": unknown, "ratings": unknown}}]
+            path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+
+        rows, validation = self.roundtrip(designate)
+        screw = rows[("1", "SCR-0001")]
+        self.assertEqual(screw["designation"], "ISO 4762 M3x8, A2-70")
+        self.assertEqual((screw["manufacturer"], screw["manufacturer_part_number"], screw["supplier_part_number"]), ("", "", ""))
         self.assertEqual(validation.returncode, 0, validation.stdout + validation.stderr)
         self.assertEqual(result_payload(validation.stdout), {"ok": True, "findings": []})
 
