@@ -22,7 +22,7 @@
 # schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
 # schema-sha256 373d95bcca809d496fad780d25ae37088c76685d4bc68c3b2392106c395a15ce skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
-# schema-sha256 7c8c783ae3e4cf6a511604f715645e7c727f1229b192a25e65e8d1277887893c skills/cad-record/schemas/part.schema.json
+# schema-sha256 0f2b807b64f486e53c4390370a0bd8cc756ca03b0fd15e8d006045b8400155f6 skills/cad-record/schemas/part.schema.json
 # schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
 # schema-sha256 94a94ac92a3a0c25ce67d7eecda0e39d90d8fb8392cf497c7745591eb308d1da skills/cad-record/schemas/release-manifest.schema.json
 # schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
@@ -5440,6 +5440,7 @@ class Part(TypedDict):
     - model_frame: Frame of model.py's geometry: assembly_zero (default) is assembly coordinates at the zero joint pose, one identity-placed occurrence only; part_local is the definition's own origin and axes, placed by each occurrence
     - form_class: The part's form type for the cad-design form check; absent means solid, and only a solid part is judged block_like
     - transparency: How much light the part passes; absent means opaque. Only a transparent part is see-through to the visibility check. An optical requirement is a hard selection constraint met by a purchased transparent part or identified transparent stock on a suitable route, never by an opaque process
+    - render: How render.py and cad-motion motion.py render draw the part by default; absent means shown. ghost draws it translucent with visible edges and never as an occluder, hidden leaves it out of the picture. A reference body that blocks the view is ghost or hidden. The --show, --ghost and --hide flags override it. A visibility target cannot be hidden
     - manufacture: How a custom-made part is manufactured relative to its installed definition (cad-record layout.json manufacturing). Absent: relationship same, compared to 1e-9 relative volume, default mesh.
     """
     PN: Required[str]
@@ -5455,6 +5456,7 @@ class Part(TypedDict):
     model_frame: NotRequired[Literal["assembly_zero", "part_local"]]
     form_class: NotRequired[Literal["solid", "frame", "plate", "skeleton", "shell"]]
     transparency: NotRequired[Literal["opaque", "translucent", "transparent"]]
+    render: NotRequired[Literal["shown", "ghost", "hidden"]]
     procurement: NotRequired[DrawingProcurement]
     drawing: NotRequired[DrawingPartDrawing]
     manufacture: NotRequired[PartManufacture]

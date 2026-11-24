@@ -960,6 +960,97 @@ class VisibilityChecks(unittest.TestCase):
                     render.requirements_input(self.version)
 
 
+class PartRenderState(unittest.TestCase):
+    """Which occurrences a render hides or ghosts: part.yaml `render`, then --show, --ghost, --hide (no browser)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.hw = Path(self.tmp.name) / "hw"
+
+    def write(self, defaults: dict[str, str] | None = None) -> None:
+        parts = box_parts()
+        for pn, value in (defaults or {}).items():
+            parts[pn]["render"] = value
+        box_version.write(self.hw, "v1", BOXES, parts, record_version=2)
+        self.version = render.resolve_version(self.hw, "v1")
+
+    def scene(self, *views: str, **flags: list[str]) -> dict:
+        return render.build_scene(self.hw, self.version, list(views) or ["front"], (400, 300),
+                                  materials.MaterialTable.load(), **flags)[0]
+
+    def test_without_a_default_or_a_flag_everything_is_shown(self) -> None:
+        self.write()
+        scene = self.scene()
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([], []))
+
+    def test_the_part_yaml_default_applies_to_the_part(self) -> None:
+        self.write({OTHER: "ghost", WINDOW: "hidden"})
+        scene = self.scene()
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([WINDOW], [OTHER]))
+
+    def test_the_flags_override_the_part_yaml_default(self) -> None:
+        self.write({OTHER: "ghost", WINDOW: "hidden"})
+        scene = self.scene(show=[WINDOW], hide=[OTHER])
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([OTHER], []))
+        scene = self.scene(show=[OTHER], ghost=[WINDOW])
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([], [WINDOW]))
+
+    def test_an_id_names_a_pn_or_an_occurrence(self) -> None:
+        self.write()
+        self.assertEqual(self.scene(hide=[f"@{OTHER}"])["hidden"], [OTHER])
+        self.assertEqual(self.scene(ghost=[OTHER, TARGET])["ghosted"], [TARGET, OTHER])
+
+    def test_a_pn_names_every_occurrence_placed(self) -> None:
+        by_pn = {"a": "P-1", "b": "P-1", "c": "P-2"}
+        records = {"P-1": {}, "P-2": {}}
+        self.assertEqual(render.render_states(by_pn, records, hide=["P-1"], ghost=["@c"], show=[]),
+                         (["a", "b"], ["c"]))
+
+    def test_an_unknown_id_is_an_error_naming_it(self) -> None:
+        self.write()
+        for flag in ("hide", "ghost", "show"):
+            with self.subTest(flag=flag), self.assertRaisesRegex(render.InfraError, f"--{flag}: no part or occurrence TST-9999"):
+                self.scene(**{flag: ["TST-9999"]})
+
+    def test_one_id_in_two_flags_is_an_error(self) -> None:
+        self.write()
+        with self.assertRaisesRegex(render.InfraError, f"{OTHER} is named by both --hide and --ghost"):
+            self.scene(hide=[OTHER], ghost=[f"@{OTHER}"])
+
+    def test_a_view_cannot_name_a_hidden_part_as_its_subject(self) -> None:
+        self.write()
+        with self.assertRaisesRegex(render.InfraError, f"closeup-{OTHER}: {OTHER} is hidden"):
+            self.scene(f"closeup-{OTHER}", hide=[OTHER])
+
+    def test_hidden_and_ghosted_parts_enter_the_cache_key_and_the_view_inputs(self) -> None:
+        self.write()
+        def built(**flags: list[str]) -> tuple[dict, dict]:
+            scene, by_pn_material, keyed = render.build_scene(self.hw, self.version, ["front", PART_VIEW], (400, 300),
+                                                              materials.MaterialTable.load(), **flags)
+            return keyed["key"], render.view_inputs(self.version, scene, keyed, by_pn_material)
+        keys, inputs = zip(*(built(**flags) for flags in ({}, {"hide": [OTHER]}, {"ghost": [OTHER]})))
+        self.assertEqual(len({json.dumps(k, sort_keys=True) for k in keys}), 3)
+        for name in ("front", PART_VIEW):
+            self.assertEqual(len({json.dumps(i[name], sort_keys=True) for i in inputs}), 3, name)
+
+    def test_a_hidden_visibility_target_is_an_error(self) -> None:
+        self.write()
+        path = requirements(self.hw, FRONT)
+        with self.assertRaisesRegex(render.InfraError, f"REQ-001 visibility 0: target {TARGET} cannot be hidden"):
+            render.build_scene(self.hw, self.version, ["front"], (400, 300), materials.MaterialTable.load(), path,
+                               hide=[TARGET])
+
+    def test_ghosted_and_hidden_window_parts_are_see_through_and_a_ghosted_target_is_not_dropped(self) -> None:
+        self.write()
+        path = requirements(self.hw, FRONT)
+        for flags, see_through in (({}, []), ({"ghost": [WINDOW]}, [WINDOW]), ({"hide": [WINDOW]}, [WINDOW])):
+            with self.subTest(flags=flags):
+                checks = render.build_scene(self.hw, self.version, ["front"], (400, 300), materials.MaterialTable.load(),
+                                            path, **flags)[2]["visibility"]
+                self.assertEqual((checks[0]["see_through"], checks[0]["targets"]), (see_through, [TARGET]))
+
+
 class VisibilityGrade(unittest.TestCase):
     CAMERA = {"frame": "glb", "position": [0.0, 0.1, 0.3], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0],
               "fov_deg": 30, "aspect": 4 / 3, "near": 0.01, "far": 1.0}
