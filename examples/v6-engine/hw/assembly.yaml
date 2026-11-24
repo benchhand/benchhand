@@ -567,4 +567,6 @@ drawing:
   items:
     - {item: 1, PN: VSE-0001}
     - {item: 2, PN: VSE-0005}
-    - {item: 3, PN: VSE-0002, occurrences: ["@piston-1", "@piston-2", "
+    - {item: 3, PN: VSE-0002, occurrences: ["@piston-1", "@piston-2", "@piston-3", "@piston-4", "@piston-5", "@piston-6"]}
+    - {item: 4, PN: VSE-0003, occurrences: ["@pin-1", "@pin-2", "@pin-3", "@pin-4", "@pin-5", "@pin-6"]}
+    - {item: 5, PN: VSE-0004, occurrences: ["@rod-1", "@rod-2", "@rod-3", "@rod-4", "@rod-5", "@rod-6"]}
