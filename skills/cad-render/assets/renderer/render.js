@@ -599,42 +599,44 @@ async function boot() {
     const beautyShadowType = renderer.shadowMap.type;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     bakeScene.add(root, ground);
-    const bakeHidden = ghostObjects(() => true);
-    const bakeBefore = bakeHidden.map((object) => object.visible);
-    bakeHidden.forEach((object) => { object.visible = false; });
     renderer.setClearColor(0x000000, 0);
     try {
-      aimFloorCamera(floor, half, true);
-      renderer.setRenderTarget(heights);
-      withMaterials(() => heightMaterial, null, () => renderer.render(bakeScene, bakeCamera));
-      const blur = contactBlur.material.uniforms;
-      blur.contactHeight.value = radius * STUDIO.contactHeight;
-      for (const [source, weigh, dx, dy, target] of [[heights, true, 1, 0, contactPass], [contactPass, false, 0, 1, contact]]) {
-        blur.source.value = source.texture;
-        blur.weigh.value = weigh;
-        blur.texel.value.set(dx / STUDIO.contactMapSize, dy / STUDIO.contactMapSize);
-        renderer.setRenderTarget(target);
-        contactBlur.render(renderer);
-      }
-      aimFloorCamera(floor, half, false);
-      renderer.setRenderTarget(occlusion);
-      renderer.clear();
-      renderer.autoClear = false;
-      ground.receiveShadow = true;
-      withMaterials(() => castOnly, bakeShadow, () => {
-        for (let i = 0; i < STUDIO.groundSamples; i += 1) {
-          aimShadowLight(bakeLight, centre, coneDirection(i, STUDIO.groundSamples, cone), radius);
-          renderer.render(bakeScene, bakeCamera);
-        }
-      });
+      // A ghost is see-through: it casts no shadow and sets no contact height on the floor.
+      withObjectsHidden(ghostObjects(() => true), () => bakeFloorMaps(floor, half, centre, radius, cone));
     } finally {
-      bakeHidden.forEach((object, i) => { object.visible = bakeBefore[i]; });
       ground.receiveShadow = false;
       renderer.autoClear = true;
       renderer.setRenderTarget(null);
       renderer.shadowMap.type = beautyShadowType;
       world.add(root, ground);
     }
+  }
+
+  // The three bake passes of bakeFloor: part heights, the blurred contact term, the softbox occlusion.
+  function bakeFloorMaps(floor, half, centre, radius, cone) {
+    aimFloorCamera(floor, half, true);
+    renderer.setRenderTarget(heights);
+    withMaterials(() => heightMaterial, null, () => renderer.render(bakeScene, bakeCamera));
+    const blur = contactBlur.material.uniforms;
+    blur.contactHeight.value = radius * STUDIO.contactHeight;
+    for (const [source, weigh, dx, dy, target] of [[heights, true, 1, 0, contactPass], [contactPass, false, 0, 1, contact]]) {
+      blur.source.value = source.texture;
+      blur.weigh.value = weigh;
+      blur.texel.value.set(dx / STUDIO.contactMapSize, dy / STUDIO.contactMapSize);
+      renderer.setRenderTarget(target);
+      contactBlur.render(renderer);
+    }
+    aimFloorCamera(floor, half, false);
+    renderer.setRenderTarget(occlusion);
+    renderer.clear();
+    renderer.autoClear = false;
+    ground.receiveShadow = true;
+    withMaterials(() => castOnly, bakeShadow, () => {
+      for (let i = 0; i < STUDIO.groundSamples; i += 1) {
+        aimShadowLight(bakeLight, centre, coneDirection(i, STUDIO.groundSamples, cone), radius);
+        renderer.render(bakeScene, bakeCamera);
+      }
+    });
   }
 
   // Points the key and the fill at the sphere (centre, radius).
