@@ -2015,9 +2015,15 @@ class _Reader:
             pointer = f"operations/{index}"
             self.define("assembly_operation", item.get("id"), path, pointer)
             self.ref("interface", item.get("interface"), path, pointer)
-            for key, dimensions in (("engagement", ("length",)), ("torque", ("torque",)), ("retention", None), ("service_access", None)):
+            for key, dimensions in (("engagement", ("length",)), ("torque", ("torque",)), ("retention", None), ("service_access", None),
+                                    ("duration", ("time",))):
                 if key in item:
                     self.fact(item[key], path, f"{pointer}/{key}", dimensions)
+            cure = item.get("cure")
+            if isinstance(cure, Mapping):
+                for key, dimensions in (("time", ("time",)), ("temperature", ("temperature",))):
+                    if key in cure:
+                        self.fact(cure[key], path, f"{pointer}/cure/{key}", dimensions)
             edge = item.get("edge_distance")
             if isinstance(edge, Mapping):
                 criterion = edge.get("criterion")
