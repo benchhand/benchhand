@@ -47,6 +47,16 @@ def shared(definition: str) -> Any:
     return fx.ref_validator(f"https://srobroek.com/cad/schemas/manufacturing.schema.json#/$defs/{definition}")
 
 
+def _designate(purchase: dict, *, omit: str | None = None, family: bool = False) -> None:
+    """Replace a purchase's identity with a commodity designation, minus one field."""
+    designation = ({"kind": "family_designation", "family": "heat-set insert", "thread": "M3", "length": 5.7,
+                    "outside_diameter": 4.6, "recommended_hole": 4.0} if family else
+                   {"kind": "standard_designation", "standard": "ISO 4762", "size": "M4", "length": 20, "property_class": "8.8"})
+    designation.pop(omit, None)
+    purchase.pop("identity", None)
+    purchase["designation"] = designation
+
+
 class SchemaCase(unittest.TestCase):
     def assert_valid(self, name: str, document: Any) -> None:
         self.assertEqual(errors(name, document), [])
@@ -464,6 +474,12 @@ class RecordDocuments(SchemaCase):
             "purchase criteria on a made step": (lambda d: existing(d).update(route=[{**made[0], "purchase": purchase}]), False),
             "purchase criteria without ratings": (lambda d: existing(d)["route"][0]["purchase"].pop("ratings"), False),
             "a purchase with an unidentified item": (lambda d: existing(d)["route"][0]["purchase"].update(identity=fx.known("")), False),
+            "a designation-only purchase": (lambda d: _designate(existing(d)["route"][0]["purchase"]), True),
+            "a designation without a size": (lambda d: _designate(existing(d)["route"][0]["purchase"], omit="size"), False),
+            "a designation without a length": (lambda d: _designate(existing(d)["route"][0]["purchase"], omit="length"), False),
+            "a purchase with neither identity nor designation": (lambda d: existing(d)["route"][0]["purchase"].pop("identity"), False),
+            "a heat-set insert family designation": (lambda d: _designate(existing(d)["route"][0]["purchase"], family=True), True),
+            "a heat-set insert without its hole": (lambda d: _designate(existing(d)["route"][0]["purchase"], family=True, omit="recommended_hole"), False),
             "a proposal without its reason": (lambda d: new(d)["proposed"].pop("reason"), False),
             "a proposal with an unknown sourcing": (lambda d: new(d)["proposed"].update(sourcing="borrowed"), False),
             "a catalogue proposal without purchase criteria": (lambda d: new(d)["route"][0].pop("purchase"), False),
