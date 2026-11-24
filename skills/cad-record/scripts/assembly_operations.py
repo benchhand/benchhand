@@ -576,6 +576,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
         if step.operation.installs:
             installer.setdefault(step.part, []).append(step.operation)
     outcomes, findings = [], []
+    reported: set[tuple[str, str | None]] = set()  # (occurrence, build) pairs already failed as shared
     for step in state.steps:
         op = step.operation
         obligation = f"assembly.order@op:{op.id}"
@@ -636,6 +637,9 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                     if not later:  # an enclosed part installed later fails at that later step instead
                         fail("assembly.part_absent", f"{op.id} encloses {ref}, which is not in place", f"{ref} is missing "
                              "inside the closed assembly", f"install {ref} before {op.id}")
+        _sub_build_rules(operations, state, step, installer, reported, fail)
+        if op.kind == "hold":
+            _hold_rules(op, fail)
         findings.extend(mine)
         row: dict[str, Any] = {"obligation": obligation, "outcome": "fail" if mine else "pass", "level": "process_planned",
                                "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
@@ -653,27 +657,103 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
     return Report(tuple(outcomes), tuple(findings))
 
 
+def _build_name(build: str | None) -> str:
+    return "the main build" if build is None else f"sub-build {build}"
+
+
+def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
+                     installer: Mapping[str, list[AssemblyOperation]], reported: set[tuple[str, str | None]],
+                     fail: Callable[..., None]) -> None:
+    """An install names a sub-build that exists, is finished and is installed once; an occurrence belongs to one
+    build; a sub-build is installed. `reported` keeps one shared finding per occurrence and build."""
+    op = step.operation
+    if op.kind == "install":
+        unit = state.sub_builds.get(step.part)
+        if unit is None:
+            fail("assembly.sub_build_unknown", f"{op.id} installs sub-build {op.part}, but no operation belongs to it",
+                 f"nothing builds {op.part}: the unit this step puts in place does not exist",
+                 f"give the bench operations of {op.part} `sub_build: {op.part}`, or name an existing sub-build")
+        elif unit.last is not None and unit.last > op.index:
+            pending = [other.id for other in operations.items if other.sub_build == op.part and other.index > op.index]
+            fail("assembly.sub_build_unfinished",
+                 f"{op.id} installs sub-build {op.part} before its own step(s) {', '.join(pending)}",
+                 f"{op.part} goes into the assembly unfinished: its later bench steps cannot be done in place",
+                 f"move {op.id} after {pending[-1]}")
+        if any(other.index < op.index for other in installer.get(step.part, ())):
+            fail("assembly.installed_twice", f"{op.id} installs sub-build {op.part}, which is already in place",
+                 "the sequence installs the same unit twice", "remove the duplicate install step", severity="major")
+        return
+    claimed = (step.part, step.into, *step.closes) if step.build is not None else (step.part,) if op.installs else ()
+    for ref in claimed:
+        owners = state.shared.get(ref) if ref is not None else None
+        if owners is None or owners.index(step.build) == 0 or (ref, step.build) in reported:
+            continue
+        reported.add((ref, step.build))
+        fail("assembly.sub_build_shared", f"{op.id} uses {ref} in {_build_name(step.build)}, which "
+             f"{_build_name(owners[0])} also uses", f"one physical part cannot be built into {len(owners)} units",
+             f"keep {ref} in one build, or add an occurrence for the other")
+    unit = state.sub_builds.get(step.build) if step.build is not None else None
+    if unit is not None and unit.last == op.index and step.build not in installer:
+        fail("assembly.sub_build_not_installed", f"no install operation puts sub-build {step.build} into the assembly",
+             f"the parts of {step.build} are built on the bench but never reach the assembly",
+             f"add an install operation with part {step.build} after {op.id}")
+
+
+def _hold_rules(op: AssemblyOperation, fail: Callable[..., None]) -> None:
+    """A cure hold's time and temperature are datasheet facts, and the part stays in its fixture for the cure time."""
+    if op.cure is None:
+        return
+    for name in ("time", "temperature"):
+        fact = _mapping(op.cure.get(name))
+        if name in op.cure and not (fact.get("status") == "known" and any(
+                isinstance(source, Mapping) and source.get("kind") in CURE_SOURCES for source in fact.get("sources") or ())):
+            fail("assembly.cure_unsourced", f"{op.id}: the cure {name} is not a known fact with a datasheet source",
+                 "the hold may end before the adhesive or potting has cured: the bond can shift or fail in service",
+                 f"record the cure {name} from the adhesive's datasheet, with the datasheet as its source", severity="major")
+    held = _hours(op.duration, lower=True)
+    needed = _hours(op.cure.get("time"), lower=False)
+    if needed is not None and (held is None or held < needed):
+        measured = "unknown" if held is None else f"{held:g} h"
+        fail("assembly.hold_short", f"{op.id}: the hold lasts {measured}, the cure time is {needed:g} h",
+             "the part leaves its fixture before it has cured: the bond can shift or fail",
+             f"hold for at least {needed:g} h, or choose an adhesive whose datasheet cure time fits the hold")
+
+
+def _hours(fact: Any, *, lower: bool) -> float | None:
+    """A known time quantity fact in hours: its lower end when `lower`, else its upper end; None otherwise."""
+    if not isinstance(fact, Mapping) or fact.get("status") != "known":
+        return None
+    quantity = _mapping(fact.get("value"))
+    scale = TIME_H.get(quantity.get("units")) if isinstance(quantity.get("units"), str) else None
+    value = quantity.get("value") if _number(quantity.get("value")) else quantity.get("lower" if lower else "upper")
+    return value * scale if scale is not None and _number(value) else None
+
+
 def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any]]:
-    """A finding per occurrence of the inventory that no operation installs and that is not the assembly's one
+    """A finding per occurrence of the inventory that no operation installs and that is not its build's one
     base: it would pass as a second base, but nothing says where it comes from."""
     found: list[dict[str, Any]] = []
     taken: set[str] = set()
-    for occurrence_id in sorted(state.floating):
+    floats = [(occurrence_id, None, state.ground) for occurrence_id in sorted(state.floating)]
+    floats += [(occurrence_id, unit.id, unit.ground) for unit in state.sub_builds.values()
+               for occurrence_id in sorted(unit.floating)]
+    for occurrence_id, build, ground in floats:
         occurrence = inventory.get(occurrence_id)
         subject: dict[str, Any] = {"PN": occurrence.pn}
         if occurrence.explicit:
             subject["occurrence"] = occurrence.ref
-        base = inventory.get(state.ground).ref if state.ground else "none"
+        base = inventory.get(ground).ref if ground else "none"
+        where = "the assembly" if build is None else f"sub-build {build}"
         ident = f"{_slug(occurrence_id)}_never_installed"
         while ident in taken:  # `clip-a` and `clip_a` slug alike
             ident = f"{ident}_2"
         taken.add(ident)
         found.append(_finding(
             ident, "assembly.never_installed", None, severity="critical", outcome="fail",
-            measured=f"no operation installs {occurrence.ref}, and the assembly has one base (the base is {base})",
-            consequence=f"{occurrence.ref} is in the assembly but the sequence never puts it in place, so it floats "
-                        "beside the base and the assembly cannot be built as recorded",
-            remedy=f"add the installing operation for {occurrence.ref}, or remove the occurrence from the assembly",
+            measured=f"no operation installs {occurrence.ref}, and {where} has one base (the base is {base})",
+            consequence=f"{occurrence.ref} is in {where} but the sequence never puts it in place, so it floats "
+                        f"beside the base and {where} cannot be built as recorded",
+            remedy=f"add the installing operation for {occurrence.ref}, or remove the occurrence from {where}",
             family="assembly.order", obligation="assembly.order@product", subject=subject))
     return found
 
