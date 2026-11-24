@@ -1,7 +1,7 @@
 {
-  "source": "release.py hw --rev A --version v7 --decision DR-004 (exit 1; nothing written), rerun on the record after the REQ-001/REQ-003 not_assessed edits",
+  "source": "release.py hw --rev A --version v7 --decision DR-004 (exit 1; nothing written), rerun after the verification.csv evidence paths were corrected",
   "version": "v7",
-  "finding_count": 22,
+  "finding_count": 21,
   "findings": [
     {
       "code": "release.decision",
@@ -32,6 +32,11 @@
       "code": "release.changed",
       "path": "hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json",
       "message": "hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json is new since v7 was frozen"
+    },
+    {
+      "code": "release.changed",
+      "path": "hw/manufacturing/sources/showcase-evidence/v7-sweep-summary.json",
+      "message": "hw/manufacturing/sources/showcase-evidence/v7-sweep-summary.json is new since v7 was frozen"
     },
     {
       "code": "release.failed",
@@ -102,16 +107,6 @@
       "code": null,
       "path": "hw/versions/v7/record/parts/VSE-0005/part.yaml",
       "message": "release cannot include prototype revision X1 for VSE-0005"
-    },
-    {
-      "code": "release.missing",
-      "path": "hw/verification.csv:3",
-      "message": "REQ-002 evidence hw/assembly.yaml: does not exist"
-    },
-    {
-      "code": "release.missing",
-      "path": "hw/verification.csv:5",
-      "message": "REQ-004 evidence hw/analysis/vN does not exist"
     }
   ]
 }

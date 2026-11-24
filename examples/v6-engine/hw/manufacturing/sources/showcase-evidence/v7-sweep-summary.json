@@ -1,0 +1,57 @@
+{
+  "source": "cad-motion sweep.py --hw hw --version v7 --case engine-cycle --steps 145 --grid 0 (result.json; the bundle itself is not kept in git)",
+  "version": "v7",
+  "status": "pass",
+  "collision_pose_count": 0,
+  "poses": {
+    "evaluated": 145,
+    "planned": 145,
+    "steps_per_joint": 145,
+    "grid_per_joint": 0,
+    "movable_joints": [
+      "J-001",
+      "J-101",
+      "J-102",
+      "J-103",
+      "J-104",
+      "J-105",
+      "J-106",
+      "J-201",
+      "J-202",
+      "J-203",
+      "J-204",
+      "J-205",
+      "J-206"
+    ],
+    "independent_joints": [
+      "J-001"
+    ],
+    "dependent_joints": [
+      "J-101",
+      "J-102",
+      "J-103",
+      "J-104",
+      "J-105",
+      "J-106",
+      "J-201",
+      "J-202",
+      "J-203",
+      "J-204",
+      "J-205",
+      "J-206"
+    ],
+    "spacing": {
+      "J-001": 5.0
+    }
+  },
+  "smallest_checked_gap": {
+    "pair": [
+      "@rod-5",
+      "@pin-5"
+    ],
+    "clearance_mm": 0.052,
+    "required_mm": 0.0
+  },
+  "between_sample_check": "incomplete",
+  "limits": "joint-connected pairs are excluded from the sweep and no pair minima are enforced (benchhand-c7q.10)"
+}
