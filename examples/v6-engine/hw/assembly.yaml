@@ -127,6 +127,20 @@ occurrences:
     rotation:
       axis: [1, 0, 0]
       angle_deg: 30.0
+- id: head-1
+  PN: VSE-0006
+  placement:
+    translation_mm: [-5.25, 0, 0]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: head-2
+  PN: VSE-0006
+  placement:
+    translation_mm: [5.25, 0, 0]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
 mechanisms:
 - id: cylinder-1
   type: slider_crank
