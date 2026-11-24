@@ -59,6 +59,8 @@ const accentColor = new THREE.Color(token("--color-accent"));
 const state = {
   file: null,
   loadedFile: null,
+  loadedSha: null,
+  loadSeq: 0,
   scene: null,
   content: null,
   grid: null,
@@ -112,7 +114,7 @@ function applyTransform(object, node) {
   object.rotation.set(rx * DEG, ry * DEG, rz * DEG, "XYZ");
 }
 
-function buildVariant(def, index) {
+function buildVariant(def, index, file) {
   const root = new THREE.Group();
   root.name = `variant:${def.id}`;
   const nodes = new Map();
@@ -124,7 +126,7 @@ function buildVariant(def, index) {
     if (node.kind === "part") meshes.push(object);
     applyTransform(object, node);
     // The variant root stands for the variant itself: `visible` does not apply to it (concept.py check rejects it).
-    object.visible = parentId === null ? true : state.visibility.get(visibilityKey(state.file, def.id, node.id)) ?? node.visible !== false;
+    object.visible = parentId === null ? true : state.visibility.get(visibilityKey(file, def.id, node.id)) ?? node.visible !== false;
     object.userData.variantId = def.id;
     object.userData.nodeId = node.id;
     parentObject.add(object);
@@ -175,10 +177,10 @@ function validateScene(scene) {
   }
 }
 
-function buildScene(scene) {
+function buildScene(scene, file) {
   validateScene(scene);
   const content = new THREE.Group();
-  const variants = scene.variants.map((def, index) => buildVariant(def, index));
+  const variants = scene.variants.map((def, index) => buildVariant(def, index, file));
   // Lay out side by side along X at their authored nominal joint configurations.
   const sizes = variants.map((v) => new THREE.Box3().setFromObject(v.root));
   const widest = Math.max(...sizes.map((b) => b.max.x - b.min.x));
@@ -473,15 +475,26 @@ function showOverlay(kind, title, body) {
   ui.overlayBody.textContent = body;
 }
 
-async function fetchJson(url) {
+async function fetchText(url) {
   const response = await fetch(url, { cache: "no-store" });
   const text = await response.text();
   if (!response.ok) throw new SceneError(`${url}: HTTP ${response.status} ${text.slice(0, 200)}`);
+  return text;
+}
+
+function parseJson(url, text) {
   try {
     return JSON.parse(text);
   } catch (error) {
     throw new SceneError(`${url} is not valid JSON: ${error.message}`);
   }
+}
+
+const fetchJson = async (url) => parseJson(url, await fetchText(url));
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function listScenes() {
@@ -507,20 +520,28 @@ function disposeContent() {
   state.grid?.geometry.dispose();
 }
 
-async function loadScene({ reason }) {
-  const scene = await fetchJson(`/scenes/${encodeURIComponent(state.file)}`);
-  const built = buildScene(scene);
+// Every load takes a sequence number; a response that is no longer the newest is dropped before it touches
+// any state, so a slow older load can never bind the controls or Save to the wrong file.
+async function loadScene({ reason, seq, file }) {
+  const text = await fetchText(`/scenes/${encodeURIComponent(file)}`);
+  if (seq !== state.loadSeq) return;
+  const scene = parseJson(file, text);
+  const sha = await sha256Hex(text);
+  if (seq !== state.loadSeq) return;
+  const built = buildScene(scene, file);
   disposeContent();
   state.scene = scene;
-  state.loadedFile = state.file; // what the controls and Save now show; state.file may name a file that failed to load
+  // What the controls and Save show, with the digest of the very bytes that built it.
+  state.loadedFile = file;
+  state.loadedSha = sha;
   state.content = built.content;
   state.variants = built.variants;
   state.grid = makeGrid(built.content);
   world.add(state.content, state.grid);
   state.labels = makeLabels(state.variants);
   ui.title.textContent = scene.title;
-  ui.file.textContent = state.file;
-  ui.select.value = state.file;
+  ui.file.textContent = file;
+  ui.select.value = file;
   ui.overlay.hidden = true;
   ui.notice.hidden = true;
   renderVariantList(scene);
@@ -532,11 +553,12 @@ async function loadScene({ reason }) {
   }
   setControlsEnabled(true);
   const time = new Date().toLocaleTimeString();
-  setStatus(`${reason} ${state.file} · ${state.variants.length} variants · ${time}`);
-  window.dispatchEvent(new CustomEvent("cad-concept:loaded", { detail: { file: state.file, reason } }));
+  setStatus(`${reason} ${file} · ${state.variants.length} variants · ${time}`);
+  window.dispatchEvent(new CustomEvent("cad-concept:loaded", { detail: { file, reason } }));
 }
 
 async function load(reason) {
+  let mine = null; // this call's sequence number, once it has one
   try {
     if (!state.file) {
       const scenes = await listScenes();
@@ -549,9 +571,12 @@ async function load(reason) {
         return;
       }
     }
+    const seq = ++state.loadSeq;
+    mine = seq;
     setStatus(`Loading ${state.file}…`, "loading");
-    await loadScene({ reason });
+    await loadScene({ reason, seq, file: state.file });
   } catch (error) {
+    if (mine !== null && mine !== state.loadSeq) return; // a newer load owns the screen
     const message = error instanceof SceneError ? error.message : String(error?.stack ?? error);
     if (state.content) {
       ui.notice.hidden = false;
@@ -630,14 +655,14 @@ async function saveScreenshot() {
   ui.shotResult.dataset.kind = "info";
   ui.shotResult.textContent = "Saving…";
   try {
-    const file = state.loadedFile; // the scene on screen, even if a switch to another file just failed
+    // One synchronous snapshot of the scene on screen: file, digest, visibility, camera and PNG all come from
+    // the same loaded scene, and nothing awaits in between, so a load or a toggle cannot split them.
+    const file = state.loadedFile;
+    const variant = state.selected;
     const capture = {
       scene: file,
-      scene_sha256: await fetch(`/scenes/${encodeURIComponent(file)}`, { cache: "no-store" })
-        .then((response) => response.arrayBuffer())
-        .then((bytes) => crypto.subtle.digest("SHA-256", bytes))
-        .then((digest) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")),
-      variant: state.selected,
+      scene_sha256: state.loadedSha,
+      variant,
       // Effective visibility is part of what the picture shows, so it is part of the capture key:
       // two saves of one scene that differ only by a toggle are two bundles, not a conflict.
       hidden_nodes: hiddenNodes(),
@@ -645,10 +670,11 @@ async function saveScreenshot() {
       viewport: { width: ui.canvas.width, height: ui.canvas.height, device_pixel_ratio: window.devicePixelRatio },
       labels: { parts: ui.partLabels.checked, groups: ui.groupLabels.checked },
     };
+    const png = compositeScreenshot();
     const response = await fetch("/api/screenshot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scene: file, variant: state.selected, capture, png: compositeScreenshot() }),
+      body: JSON.stringify({ scene: file, variant, capture, png }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
@@ -685,6 +711,9 @@ window.cadConcept = {
   ready: null,
   get file() {
     return state.file;
+  },
+  get loadedFile() {
+    return state.loadedFile;
   },
   get selected() {
     return state.selected;

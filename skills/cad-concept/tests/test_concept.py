@@ -566,6 +566,12 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
                 proc.terminate()
                 proc.wait(timeout=5)
                 proc.stdout.close()
+            # Read the saved bundle while the temporary project still exists.
+            lamp_sha = hashlib.sha256((scene_dir / "lamp-arm.scene.json").read_bytes()).hexdigest()
+            report = json.loads(driver.stdout) if driver.returncode == 0 else {}
+            if "save_during_switch" in report:
+                saved = Path(report["save_during_switch"].removeprefix("Saved "))
+                saved_capture = json.loads((saved.parent / "manifest.json").read_text(encoding="utf-8"))["recipe"]["capture"]
         self.assertEqual(driver.returncode, 0, driver.stdout[-3000:] + driver.stderr[-3000:])
         report = json.loads(driver.stdout)
         self.assertEqual(report["errors"], [])
@@ -594,6 +600,16 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
         self.assertFalse(report["failed_switch_checked"]["base-plate"])
         self.assertTrue(report["other_checked"]["base-plate"])
         self.assertFalse(report["back_checked"]["base-plate"])
+        # A slow older load that lands last is dropped: the newer file stays on screen and bound.
+        self.assertEqual(report["stale_title"], "Reloaded lamp")
+        self.assertEqual(report["stale_loaded_file"], "lamp-arm.scene.json")
+        self.assertEqual(report["stale_select"], "lamp-arm.scene.json")
+        # A scene switch while a save is in flight: the bundle is the first scene's, whole.
+        self.assertTrue(report["save_during_switch"].startswith("Saved "), report["save_during_switch"])
+        capture = saved_capture
+        self.assertEqual(capture["scene"], "lamp-arm.scene.json")
+        self.assertEqual(capture["scene_sha256"], lamp_sha)
+        self.assertTrue({"base-plate", "upper-arm"} <= set(capture["hidden_nodes"]["short-reach"]), capture)
 
 
 class ServerVendor(unittest.TestCase):

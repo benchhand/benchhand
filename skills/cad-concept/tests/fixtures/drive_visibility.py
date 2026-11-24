@@ -124,6 +124,49 @@ def switched(viewer: Viewer, report: dict[str, object], scene_path: str, valid_s
     report["back_checked"] = viewer.checked()
 
 
+def stale_load(viewer: Viewer, report: dict[str, object]) -> None:
+    """A slow, older load that arrives after a newer one must change nothing."""
+    page = viewer.page
+    held: list = []
+    gate = {"open": False}
+    page.route("**/scenes/other.scene.json", lambda route: route.continue_() if gate["open"] else held.append(route))
+    page.select_option("#scene-select", "other.scene.json")  # this request is held
+    page.select_option("#scene-select", "lamp-arm.scene.json")  # the newer one answers at once
+    viewer.settle()
+    gate["open"] = True
+    for route in held:
+        route.continue_()
+    viewer.settle()
+    page.unroute("**/scenes/other.scene.json")
+    report["stale_title"] = page.text_content("#scene-title")
+    report["stale_loaded_file"] = page.evaluate("() => window.cadConcept.loadedFile")
+    report["stale_select"] = page.evaluate("() => document.getElementById('scene-select').value")
+
+
+def save_during_switch(viewer: Viewer, report: dict[str, object]) -> None:
+    """Switching files while a save is in flight must not mix the new scene into the old scene's bundle."""
+    page = viewer.page
+    held: list = []
+    gate = {"open": False}
+
+    def hold(route) -> None:
+        route.continue_() if gate["open"] else held.append(route)
+
+    page.route("**/scenes/lamp-arm.scene.json", hold)  # a save that re-reads the scene would wait here
+    page.route("**/api/screenshot", hold)
+    viewer.select("short-reach")
+    page.click("#screenshot")
+    page.select_option("#scene-select", "other.scene.json")
+    page.wait_for_function("() => window.cadConcept.loadedFile === 'other.scene.json'")
+    gate["open"] = True
+    for route in held:
+        route.continue_()
+    page.wait_for_function(SAVED, timeout=30_000)
+    page.unroute("**/scenes/lamp-arm.scene.json")
+    page.unroute("**/api/screenshot")
+    report["save_during_switch"] = page.text_content("#shot-result")
+
+
 def main(url: str, scene_path: str, valid_source: str) -> int:
     errors: list[str] = []
     report: dict[str, object] = {"errors": errors}
@@ -142,6 +185,8 @@ def main(url: str, scene_path: str, valid_source: str) -> int:
             toggled(viewer, report)
             reloaded(viewer, report, scene_path)
             switched(viewer, report, scene_path, valid_source)
+            stale_load(viewer, report)
+            save_during_switch(viewer, report)
         finally:
             browser.close()
     print(json.dumps(report))
