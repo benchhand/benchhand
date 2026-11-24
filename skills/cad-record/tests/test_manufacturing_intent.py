@@ -645,6 +645,18 @@ class RequiredChecks(unittest.TestCase):
     def obligations(self, documents: dict[str, Any]) -> dict[str, Any]:
         return {o.id: o for o in mi.required_checks(mi.normalize_record(documents))}
 
+    def test_existing_equipment_carries_no_obligation_of_its_own(self) -> None:
+        documents = fx.record(parts=[fx.part("TST-0001"), fx.existing_part("TST-0009")],
+                              interfaces=[fx.interface("IF-001", "TST-0001", "TST-0009")])
+        record = mi.normalize_record(documents)
+        self.assertEqual([o.id for o in mi.required_checks(record) if o.subject.get("PN") == "TST-0009"], [])
+        self.assertEqual([p.message for p in record.problems if "TST-0009" in p.message], [])
+
+    def test_a_route_on_existing_equipment_is_not_judged_as_a_catalogue_buy(self) -> None:
+        stray = fx.existing_part("TST-0009", intent=fx.intent(route=[fx.operation("print", "fdm", "tst_printer")]))
+        record = mi.normalize_record(fx.record(parts=[fx.part("TST-0001"), stray]))
+        self.assertEqual([p.message for p in record.problems if p.code == "intent.route"], [])
+
     def test_every_obligation_validates_and_is_enumerated_once(self) -> None:
         checks = mi.required_checks(mi.normalize_record(fx.tst_record()))
         schema = fx.ref_validator("https://srobroek.com/cad/schemas/manufacturing.schema.json#/$defs/obligation")

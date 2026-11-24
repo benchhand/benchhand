@@ -673,15 +673,20 @@ class Part:
     title: str | None
     material: str | None  # the legacy declaration, never a property source
     process: str | None  # the scalar primary-process label
-    sourcing: str  # make, made_to_drawing or catalogue
+    sourcing: str  # make, made_to_drawing, catalogue or existing
     transparency: str | None
     intent: PartIntent
     raw: Mapping[str, Any]
 
     @property
     def made(self) -> bool:
-        """Custom-made (make or made_to_drawing); a catalogue buy is not."""
+        """Custom-made (make or made_to_drawing); a catalogue buy is not, nor is existing equipment."""
         return self.sourcing in ("make", "made_to_drawing")
+
+    @property
+    def existing(self) -> bool:
+        """Pre-existing equipment the product mounts onto: outside the product, never bought or made."""
+        return self.sourcing == "existing"
 
 
 @dataclass(frozen=True)
@@ -1680,7 +1685,7 @@ class _Reader:
     def part_fields(self, pn: str, data: Mapping[str, Any], intent: PartIntent) -> Part:
         make_buy = data.get("make_buy")
         procurement = _mapping(data.get("procurement"))
-        sourcing = ("make" if make_buy == "make" else
+        sourcing = ("make" if make_buy == "make" else "existing" if make_buy == "existing" else
                     "made_to_drawing" if procurement.get("mode") == "made_to_drawing" else "catalogue")
         return Part(pn, data.get("title"), data.get("material"), data.get("process"), sourcing,
                     data.get("transparency"), intent, freeze(data))
@@ -1917,8 +1922,8 @@ class _Reader:
 
     def check_route_sourcing(self, part: Part, path: str) -> None:
         route = part.intent.route
-        if is_fact(route):
-            return
+        if is_fact(route) or part.existing:
+            return  # existing equipment has no route; the part schema refuses one
         kinds = [op.kind for op in route]
         if part.sourcing == "catalogue":
             made = sorted({str(k) for k in kinds if k not in ("purchased", "inspection")})
@@ -2389,7 +2394,7 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
 @dataclass(frozen=True)
 class PartRoute:
     pn: str
-    sourcing: str  # make, made_to_drawing or catalogue
+    sourcing: str  # make, made_to_drawing, catalogue or existing
     operations: tuple[Operation, ...]  # route order; empty while the route is unknown
     # An id is None only for an operation or component a schema-invalid record leaves unnamed.
     predecessors: Mapping[str | None, tuple[str | None, ...]]  # operation id -> the operations it depends on
@@ -2699,6 +2704,8 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
 
 
 def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
+    if part.existing:
+        return  # outside the product: no route, purchase or process obligations, and no intent to complete
     intent = part.intent
     made = part.made
     base = {"PN": pn}
