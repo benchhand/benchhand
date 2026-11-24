@@ -1,5 +1,5 @@
 # Reduced scope: one rod, one piston and one pin definition, each placed in six occurrences on a 60 degree V.
-# Heads and the cam drive are deferred. Each phase_deg turns a cylinder's slider-crank to its crank throw.
+# One head and one camshaft per bank; one serpentine GT2 belt drives both cams at half crank speed (DR-005). Each phase_deg turns a cylinder's slider-crank to its crank throw.
 occurrences:
 - id: piston-1
   PN: VSE-0002
@@ -141,6 +141,62 @@ occurrences:
     rotation:
       axis: [1, 0, 0]
       angle_deg: 30.0
+- id: cam-a
+  PN: VSE-0011
+  placement:
+    translation_mm: [-5.25, 45.0, 77.942286340599]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: -30.0
+- id: cam-b
+  PN: VSE-0007
+  placement:
+    translation_mm: [5.25, -45.0, 77.942286340599]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 30.0
+- id: crank-pulley
+  PN: VSE-0008
+  placement:
+    translation_mm: [-68.75, 0, 0]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 0.0
+- id: cam-pulley-a
+  PN: VSE-0009
+  placement:
+    translation_mm: [-68.75, 45.0, 77.942286340599]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 0.0
+- id: cam-pulley-b
+  PN: VSE-0009
+  placement:
+    translation_mm: [-68.75, -45.0, 77.942286340599]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 0.0
+- id: belt
+  PN: VSE-0010
+  placement:
+    translation_mm: [-68.75, 0, 0]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 0.0
+- id: idler
+  PN: VSE-0012
+  placement:
+    translation_mm: [-68.75, 0, 70.0]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 0.0
+- id: tensioner
+  PN: VSE-0012
+  placement:
+    translation_mm: [-68.75, -10.7, 30.0]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 0.0
 mechanisms:
 - id: cylinder-1
   type: slider_crank
@@ -372,6 +428,71 @@ joints:
   child: '@pin-6'
   axis: [1, 0, 0]
   origin: *id006
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-401
+  type: revolute
+  parent: '@head-1'
+  child: '@cam-a'
+  axis: [1, 0, 0]
+  origin: [-5.25, 45.0, 77.942286340599]
+  min: 0
+  max: 360
+  nominal: 0
+  coupling: {type: linear, driver: J-001, ratio: 0.5}
+- id: J-402
+  type: revolute
+  parent: '@head-2'
+  child: '@cam-b'
+  axis: [1, 0, 0]
+  origin: [5.25, -45.0, 77.942286340599]
+  min: 0
+  max: 360
+  nominal: 0
+  coupling: {type: linear, driver: J-001, ratio: 0.5}
+- id: J-411
+  type: fixed
+  parent: VSE-0005
+  child: '@crank-pulley'
+  axis: [1, 0, 0]
+  origin: [-68.75, 0, 0]
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-412
+  type: fixed
+  parent: '@cam-a'
+  child: '@cam-pulley-a'
+  axis: [1, 0, 0]
+  origin: [-68.75, 45.0, 77.942286340599]
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-413
+  type: fixed
+  parent: '@cam-b'
+  child: '@cam-pulley-b'
+  axis: [1, 0, 0]
+  origin: [-68.75, -45.0, 77.942286340599]
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-421
+  type: fixed
+  parent: VSE-0001
+  child: '@head-1'
+  axis: [1, 0, 0]
+  origin: [-5.25, 0, 0]
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-422
+  type: fixed
+  parent: VSE-0001
+  child: '@head-2'
+  axis: [1, 0, 0]
+  origin: [5.25, 0, 0]
   min: 0
   max: 0
   nominal: 0
