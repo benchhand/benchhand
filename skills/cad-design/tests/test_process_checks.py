@@ -1182,14 +1182,15 @@ class CommodityDesignationTests(Checks):
             self.assertEqual(self.outcome(result, f"purchase.{family}@TST-0701/buy"), "pass", family)
 
     def test_a_manufacturer_pn_row_still_needs_its_part_number(self) -> None:
-        result = self.bought({"specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+        result = self.bought({"identity": FX.unknown("part number not recorded"),
+                              "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
                               "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])})
         self.assertEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "unknown")
 
     def test_availability_asks_for_no_lead_time(self) -> None:
         result = self.bought({k: v for k, v in self.commodity().items() if k != "designation"} | {"identity": known("TST-PN 1")})
         finding = self.finding(result, "purchase.availability_unknown")
-        self.assertNotIn("lead time", finding["measured"]["value"] + finding["remedy"] + finding["consequence"])
+        self.assertNotIn("lead time", json.dumps(finding).lower())
 
     def test_commodity_availability_and_non_binding_reference_catalogue_pass(self) -> None:
         result = self.bought(self.commodity(availability=known("commodity"), reference_catalogue=[
