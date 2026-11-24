@@ -267,11 +267,11 @@ subassemblies:
     '@piston-5', '@pin-5', '@rod-5', '@piston-6', '@pin-6', '@rod-6']
 - id: heads
   title: Two cylinder heads, each with its camshaft
-  parts: []
+  parts: [VSE-0006, VSE-0007, VSE-0011]
   occurrences: ['@head-1', '@head-2', '@cam-a', '@cam-b']
 - id: cam_drive
   title: Serpentine GT2 belt drive (DR-005)
-  parts: []
+  parts: [VSE-0008, VSE-0009, VSE-0010, VSE-0012, VSE-0013]
   occurrences: ['@crank-pulley', '@cam-pulley-a', '@cam-pulley-b', '@belt', '@idler', '@tensioner', '@bracket']
 joints:
 - id: J-001
