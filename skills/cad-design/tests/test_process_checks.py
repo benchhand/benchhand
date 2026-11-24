@@ -1160,6 +1160,10 @@ class OpticalRouteTests(Checks):
 
 SCREW = {"kind": "standard_designation", "standard": "ISO 4762", "size": "M4", "length": 20,
          "property_class": "8.8", "finish": "A2 zinc flake"}
+NUT = {"kind": "standard_designation", "standard": "ISO 4032", "size": "M4", "length": "not_applicable",
+       "property_class": "8"}
+INSERT = {"kind": "family_designation", "family": "heat_set_insert", "thread": "M3", "length": 5.7,
+          "outside_diameter": 4.6, "recommended_hole": 4.0}
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
@@ -1181,20 +1185,47 @@ class CommodityDesignationTests(Checks):
         for family in ("identity", "dimensions", "availability"):
             self.assertEqual(self.outcome(result, f"purchase.{family}@TST-0701/buy"), "pass", family)
 
+    def test_an_eligible_nut_and_heat_set_insert_pass(self) -> None:
+        for name, designation in (("nut without a length", NUT), ("heat-set insert", INSERT)):
+            with self.subTest(name):
+                result = self.bought(self.commodity(designation=copy.deepcopy(designation)))
+                self.assertEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "pass")
+                self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "pass")
+
+    def test_an_ineligible_designation_passes_neither_identity_nor_availability(self) -> None:
+        cases = {
+            "an unknown family": {**INSERT, "family": "mystery_widget"},
+            "a feature-only standard": {**SCREW, "standard": "ISO 965-1"},
+            "a screw with no length": {**SCREW, "length": "not_applicable"},
+        }
+        for name, designation in cases.items():
+            with self.subTest(name):
+                result = self.bought(self.commodity(designation=designation))
+                self.assertNotEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "pass")
+                self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "unknown")
+
     def test_a_manufacturer_pn_row_still_needs_its_part_number(self) -> None:
         result = self.bought({"identity": FX.unknown("part number not recorded"),
                               "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
                               "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])})
         self.assertEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "unknown")
 
-    def test_availability_asks_for_no_lead_time(self) -> None:
-        result = self.bought({k: v for k, v in self.commodity().items() if k != "designation"} | {"identity": known("TST-PN 1")})
-        finding = self.finding(result, "purchase.availability_unknown")
-        self.assertNotIn("lead time", json.dumps(finding).lower())
+    def test_a_named_supplier_satisfies_availability_with_no_lead_time(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        result = self.bought({**pn_row, "availability": known("TST Supply Co stock item")})
+        self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "pass")
 
-    def test_commodity_availability_and_non_binding_reference_catalogue_pass(self) -> None:
-        result = self.bought(self.commodity(availability=known("commodity"), reference_catalogue=[
-            {"vendor": "McMaster-Carr", "part_number": "91290A164", "url": "https://www.mcmaster.com/91290A164/"}]))
+    def test_a_non_commodity_item_without_a_named_supplier_stays_unresolved(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        result = self.bought(pn_row)
+        self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "unknown")
+        self.assertIn("purchase.availability_unknown", self.codes(result))
+
+    def test_a_reference_catalogue_is_a_non_binding_example(self) -> None:
+        listing = [{"vendor": "McMaster-Carr", "part_number": "91290A164", "url": "https://www.mcmaster.com/91290A164/"}]
+        result = self.bought(self.commodity(reference_catalogue=listing))
         self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "pass")
 
 
