@@ -509,8 +509,10 @@ joints:
   min: 0
   max: 0
   nominal: 0
+# WORKAROUND (belt mount): a belt is positioned by the pulleys it wraps, not by a rigid mount. A fixed joint needs touching parts
+# and the belt envelope does not touch the crankcase (5.75 mm), so the belt hangs on a zero-range revolute joint on the crank axis.
 - id: J-423
-  type: fixed
+  type: revolute
   parent: VSE-0001
   child: '@belt'
   axis: [1, 0, 0]
@@ -565,6 +567,4 @@ drawing:
   items:
     - {item: 1, PN: VSE-0001}
     - {item: 2, PN: VSE-0005}
-    - {item: 3, PN: VSE-0002, occurrences: ["@piston-1", "@piston-2", "@piston-3", "@piston-4", "@piston-5", "@piston-6"]}
-    - {item: 4, PN: VSE-0003, occurrences: ["@pin-1", "@pin-2", "@pin-3", "@pin-4", "@pin-5", "@pin-6"]}
-    - {item: 5, PN: VSE-0004, occurrences: ["@rod-1", "@rod-2", "@rod-3", "@rod-4", "@rod-5", "@rod-6"]}
+    - {item: 3, PN: VSE-0002, occurrences: ["@piston-1", "@piston-2", "
