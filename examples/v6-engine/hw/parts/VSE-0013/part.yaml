@@ -24,3 +24,42 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [0.7071067811865476, 0, 0.7071067811865476, 0]}, note: "Plate flat on the bed. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: mount_face, role: plane}
+    B: {feature: bottom_edge, role: plane}
+    C: {feature: side_face_low, role: plane}
+  coordinate_frame:
+    origin: {intersection: [A, B, C]}
+    x: {normal_to: A}
+    y: {normal_to: C}
+    z: {normal_to: B}
+  views:
+    - {id: principal, kind: orthographic, normal_to: A}
+    - {id: side, kind: orthographic, normal_to: C}
+  features:
+    mount_face: {size: general}
+    axle_face: {size: general}
+    top_edge: {size: general}
+    bottom_edge: {size: general}
+    side_face_low: {size: general}
+    side_face_high: {size: general}
+    axle_idler: {size: interface}
+    axle_tensioner: {size: interface}
+    axle_end_idler: {size: general}
+    axle_end_tensioner: {size: general}
+  dimensions:
+    - {id: plate_thickness, operation: thickness, features: [mount_face, axle_face], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: plate_width, operation: width, features: [side_face_low, side_face_high], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: plate_height, operation: plane_separation, features: [bottom_edge, top_edge], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: axle_idler_d, operation: diameter, features: [axle_idler], tolerance: {deviation_mm: [-0.008, -0.002]}}
+    - {id: axle_tensioner_d, operation: diameter, features: [axle_tensioner], tolerance: {deviation_mm: [-0.008, -0.002]}}
+    - {id: axle_idler_len, operation: length, features: [axle_face, axle_end_idler], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: axle_tensioner_len, operation: length, features: [axle_face, axle_end_tensioner], tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA. Deburr; the two axles are turned or sanded to 3 g6 so the idler bores (3 H7) run on them."}
+    - {kind: process, text: "Print with the plate flat on the bed and the axles pointing up."}
+  sheet: {sizes: [A4, A3], scale: auto}
