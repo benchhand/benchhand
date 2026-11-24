@@ -395,12 +395,14 @@ class BuildGuide(unittest.TestCase):
     NUT = {"kind": "standard_designation", "standard": "ISO 4032", "size": "M4", "length": "not_applicable",
            "property_class": "8", "finish": "zinc plated"}
 
-    def designate(self, hw: Path, pn: str, designation: dict) -> None:
-        """Re-record `pn` as bought by structured designation: no manufacturer, part number or designation text."""
+    def designate(self, hw: Path, pn: str, designation: dict, *, supplier: str | None = None,
+                  order_code: str | None = None) -> None:
+        """Re-record `pn` as bought by structured designation: no manufacturer, part number or designation text.
+        A supplier or an order code binds the row to a vendor."""
         part_path = hw / "parts" / pn / "part.yaml"
         part = yaml.safe_load(part_path.read_text(encoding="utf-8"))
-        part["procurement"] = {"mode": "catalog"}
-        part["supplier"] = None
+        part["procurement"] = {"mode": "catalog", **({"supplier_part_number": order_code} if order_code else {})}
+        part["supplier"] = supplier
         purchase = part["intent"]["route"][0]["purchase"]
         purchase.pop("identity", None)
         purchase["designation"] = copy.deepcopy(designation)
@@ -423,6 +425,28 @@ class BuildGuide(unittest.TestCase):
         self.assertIn("LMP-0008, LMP-0009", cells)
         self.assertIn(str(expected), cells)
         self.assertIn("any supplier (commodity)", cells)
+
+    def nut_rows(self, first: dict, second: dict) -> list[str]:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        self.designate(hw, "LMP-0008", self.NUT, **first)
+        self.designate(hw, "LMP-0009", self.NUT, **second)
+        return [line for line in self.generate(hw).splitlines() if "ISO 4032 M4, 8, zinc plated" in line]
+
+    def test_commodity_rows_with_different_suppliers_stay_separate(self) -> None:
+        rows = self.nut_rows({}, {"supplier": "TST Supply Co"})
+        self.assertEqual(len(rows), 2, rows)
+        self.assertTrue(all("LMP-0008, LMP-0009" not in row for row in rows), rows)
+
+    def test_commodity_rows_with_different_order_codes_stay_separate(self) -> None:
+        rows = self.nut_rows({"order_code": "TST-4032-A"}, {"order_code": "TST-4032-B"})
+        self.assertEqual(len(rows), 2, rows)
+
+    def test_commodity_rows_with_the_same_supplier_and_order_code_merge(self) -> None:
+        bound = {"supplier": "TST Supply Co", "order_code": "TST-4032-A"}
+        rows = self.nut_rows(bound, bound)
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("LMP-0008, LMP-0009", rows[0])
 
     def test_an_unresolved_insert_is_not_labelled_any_supplier(self) -> None:
         hw = self.copy_lamp_example()
