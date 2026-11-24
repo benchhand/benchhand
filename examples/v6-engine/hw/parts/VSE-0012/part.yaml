@@ -8,6 +8,7 @@ mass_target: 3
 make_buy: buy
 supplier: null
 decisions: [DR-005]
+model_frame: part_local
 procurement:
   mode: catalog
   designation: "Smooth flanged idler pulley for 6 mm GT2 belt, 10 mm OD, 3 mm bore, with bearing"
