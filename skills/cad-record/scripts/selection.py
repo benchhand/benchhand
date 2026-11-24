@@ -218,9 +218,13 @@ def _open_choice(value: Any, what: str) -> Any:
     return mi.Fact.unknown_because(f"the candidate records no {what}")
 
 
-def _candidate(ident: str, raw: Mapping[str, Any]) -> Candidate:
+def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = frozenset()) -> Candidate:
+    """A selection.yaml candidate. A part entry naming existing equipment is dropped: it is outside the product, so it
+    is never assessed, ranked or proposed a material, route or make_buy."""
     parts = []
     for entry in raw.get("parts") or ():
+        if entry.get("PN") in existing:
+            continue
         steps = [Step(step.get("kind"), _open_choice(step.get("capability"), "capability"), step.get("provider"))
                  for step in entry.get("route") or ()]
         parts.append(CandidatePart(entry.get("PN"), _open_choice(entry.get("material_profile"), "material profile"),
@@ -1237,7 +1241,8 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
         return report
     if not assessment.final_ready:
         _use_case_finding(findings, assessment, report["use_case"])
-    candidates = [_candidate(ident, raw) for ident, raw in record.selection.candidates.items()]
+    existing = frozenset(pn for pn, part in record.parts.items() if part.existing)
+    candidates = [_candidate(ident, raw, existing) for ident, raw in record.selection.candidates.items()]
     if not candidates:
         findings.add("selection.not_assessed", "selection", {"product": True}, "minor", "unknown",
                      measured=_unknown("hw/manufacturing/selection.yaml records no candidates"),
