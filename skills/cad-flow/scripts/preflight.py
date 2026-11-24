@@ -481,8 +481,8 @@ HARNESS_PREFIXES = {
 PI_GUARD_PREFIXES = (".pi/cad-guard/", ".pi/agent/cad-guard/")
 
 
-def _receipt_files(scope: Path, prefixes: tuple[str, ...]) -> Iterator[tuple[str, Path]]:
-    """Receipt entries under `prefixes` whose installed file exists with the recorded hash."""
+def _receipt_entries(scope: Path, prefixes: tuple[str, ...]) -> Iterator[tuple[str, Path, bool]]:
+    """Receipt entries under `prefixes` whose installed file exists, and whether it has the recorded hash."""
     try:
         receipt = json.loads((scope / ".benchhand-install.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
@@ -498,19 +498,35 @@ def _receipt_files(scope: Path, prefixes: tuple[str, ...]) -> Iterator[tuple[str
             continue
         target = scope / relative
         try:
-            if target.is_file() and _file_sha256(target) == digest:
-                yield key, target
+            if target.is_file():
+                yield key, target, _file_sha256(target) == digest
         except OSError:
             continue
+
+
+def _receipt_files(scope: Path, prefixes: tuple[str, ...]) -> Iterator[tuple[str, Path]]:
+    """Receipt entries under `prefixes` whose installed file exists with the recorded hash."""
+    for key, target, matches in _receipt_entries(scope, prefixes):
+        if matches:
+            yield key, target
+
+
+def _pi_changed_agents(scope: Path, agent_prefix: str) -> set[str]:
+    """pi agent profiles that exist but differ from the receipt: an edit can name a guard this install does not own."""
+    return {key for key, _target, matches in _receipt_entries(scope, (agent_prefix,))
+            if not matches and Path(key).name.startswith("cad-")}
 
 
 def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, str]) -> Check:
     """Check exact installed paths and hashes from benchhand's ownership receipt."""
     stale_guards: set[str] = set()
+    changed_agents: set[str] = set()
     installed_skills: set[str] = set()
     installed_agents: set[str] = set()
     for scope, (skill_prefix, agent_prefix), guard_prefix in zip((cwd, home), HARNESS_PREFIXES[harness], PI_GUARD_PREFIXES):
         owned_guards = {target.resolve() for _key, target in _receipt_files(scope, (guard_prefix,))} if harness == "pi" else set()
+        if harness == "pi":
+            changed_agents.update(_pi_changed_agents(scope, agent_prefix))
         for key, target in _receipt_files(scope, (skill_prefix, agent_prefix)):
             if key.startswith(skill_prefix) and Path(key).name == "SKILL.md":
                 installed_skills.add(key)
@@ -520,11 +536,14 @@ def _harness_check(harness: str, cwd: Path, home: Path, environ: Mapping[str, st
                 if harness == "pi":
                     stale_guards.update(_pi_unowned_extensions(target, owned_guards))
 
-    present = bool(installed_skills and installed_agents and not stale_guards)
+    present = bool(installed_skills and installed_agents and not stale_guards and not changed_agents)
     detail = f"Installer receipt has {len(installed_skills)} cad-* skill(s) and {len(installed_agents)} cad-* agent(s)."
     if stale_guards:
         detail += (f" Agents name a CAD extension that this install's receipt does not own with its recorded hash: "
                    f"{'; '.join(sorted(stale_guards))} (the project was copied or moved, or the extension was edited or deleted).")
+    if changed_agents:
+        detail += (f" Agent profiles differ from the hash in the receipt, so preflight cannot vouch for the CAD extension they load: "
+                   f"{'; '.join(sorted(changed_agents))}.")
     fix = f"Run `python3 harness/install.py --harness {harness} --project .` from the benchhand checkout."
     return _check(f"harness-{harness}", f"{harness.title()} installation", "pass" if present else "warn",
                   detail, "" if present else fix, required=False)
