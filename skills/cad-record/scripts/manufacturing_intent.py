@@ -1706,6 +1706,8 @@ class _Reader:
             intent = self.intent(pn, intent_data, path) if isinstance(intent_data, Mapping) else \
                 PartIntent.unknown("part.yaml has no intent")
             part = self.part_fields(pn, data, intent)
+            if part.existing:
+                self.fact(_mapping(data.get("existing")).get("dimensions"), path, "existing/dimensions")
             self.check_route_sourcing(part, path)
             found[part.pn] = part
         return types.MappingProxyType(found)
