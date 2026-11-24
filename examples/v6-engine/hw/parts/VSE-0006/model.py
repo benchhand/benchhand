@@ -20,7 +20,7 @@ PARAMS = {
     "cam_h": 14.0,  # cam axis above the deck face
     "cyl_pitch": 36.0,  # cylinder pitch along X within one bank
     "chamber_d": 26.0,  # combustion chamber pocket over the 24 mm bore
-    "chamber_h": 3.0,  # pocket depth above the deck face; leaves 5 mm to the cam journal bore
+    "chamber_h": 3.0,  # pocket depth above the deck face; leaves 7 mm to the cam journal bore
     "journal_bore_d": 8.04,  # 8 H7 upper limit; the camshaft journal is 8 f7
 }
 
