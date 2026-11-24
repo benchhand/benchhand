@@ -15,6 +15,7 @@ path = [
     "**/*.ini",
     "**/*.lock",
     "**/*.pin",
+    "**/.node-version",
     "**/.gitignore",
     "**/.gitkeep",
     "**/NOTICE",

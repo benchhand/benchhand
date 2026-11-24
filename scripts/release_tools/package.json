@@ -1,0 +1,7 @@
+{
+  "name": "benchhand-release-tools",
+  "private": true,
+  "description": "Pins the release-please that the pinned action bundles, for scripts/test_release_manifests.py. Not the pi package; that is the root package.json.",
+  "engines": { "node": ">=24" },
+  "dependencies": { "release-please": "17.6.0" }
+}

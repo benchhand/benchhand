@@ -36,6 +36,23 @@ There is no root `pyproject.toml` and no package install. Dependencies come from
 
 Release automation is release-please (`release-please-config.json`, `.github/workflows/release-please.yml`). Renovate keeps dependencies current (`.github/renovate.json5`).
 
+release-please (type `simple`) bumps `CHANGELOG.md` and `.release-please-manifest.json`. Its `extra-files` entries (type `json`, with a JSONPath) make a release PR bump the other manifests to the same version:
+
+| File | JSONPath | Read by |
+|---|---|---|
+| `.claude-plugin/plugin.json` | `$.version` | Claude Code plugins. Codex reads it as a Claude-compatible manifest. |
+| `.claude-plugin/marketplace.json` | `$.plugins[?(@.name=='benchhand')].version` | Claude Code marketplace. The entry is picked by name. Claude reads `plugin.json` before `marketplace.json`, so drift in `plugin.json` hides a marketplace bump. Codex reads it as its legacy-compatible marketplace. |
+| `package.json` | `$.version` | pi packages (`pi install git:github.com/benchhand/benchhand@vX.Y.Z`; without the tag pi installs the default branch). `pi.skills` is `./skills`. |
+
+`scripts/test_release_manifests.py` fails when `extra-files` differs from this table, a version differs from the release manifest, or a declared path is missing. It also runs the pinned release-please: `scripts/release_tools/` holds a `package.json` and a committed `package-lock.json` for `release-please@17.6.0` (the version that action v5.0.0 bundles), and the test installs them with `npm ci`, so every package is checked against its lockfile hash. `scripts/release_tools/bump.cjs` builds the `simple` strategy from the config and applies its updaters to the files of a repository root. The tests assert that a release to 9.9.9 rewrites exactly the three versions in the real manifests, and in a fixture whose marketplace lists another plugin first. Without `node` and `npm` the test skips locally and fails when `CI` is set. CI provisions Node from `scripts/release_tools/.node-version` (24.22.3) with `actions/setup-node` v7.1.0, pinned to its SHA. Nothing opens a PR or calls GitHub. A new versioned manifest goes into the test's `VERSIONED` list and into `extra-files` together.
+
+Git marketplace support by harness (checked 2026-11-23):
+
+- Claude Code: yes, `/plugin marketplace add` reads `.claude-plugin/marketplace.json`.
+- Codex CLI 0.171: `codex plugin marketplace add <repo>` registered the marketplace `benchhand` from the same file. That registers the marketplace only; the CLI has no plugin install command, so installing the plugin from it is unverified. No Codex-specific manifest is needed. Source: <https://developers.openai.com/codex/plugins/build>.
+- pi 1.6.0: yes, as a package. `pi install -l -a <repo>` loaded all 15 `cad-*` skills. No prompt template is declared yet: #323 owns `harness/pi/prompts`, so add `pi.prompts` once it lands. Source: pi `docs/packages.md`.
+- OpenCode and Kiro CLI: no git marketplace. OpenCode takes plugin packages (JS) and skill catalogs (`skills` config, `index.json`); Kiro imports a skill from a repository URL. Both keep the installer route. Sources: <https://opencode.ai/docs/plugins/>, <https://kiro.dev/docs/skills/>.
+
 ## Layout and dependency direction
 
 The directory layout, the components and the flows are in [architecture.md](architecture.md). This section keeps the import rules.

@@ -15,6 +15,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "release-please-config.json"
 WORKFLOW = ROOT / ".github" / "workflows" / "release-please.yml"
+# Only this marketplace entry follows the release; another plugin listed there keeps its own version.
+MARKETPLACE_ENTRY = "benchhand"
 SHA_REF = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 
 
@@ -23,11 +25,19 @@ def load(path: Path) -> dict:
 
 
 def resolve(document: object, jsonpath: str) -> object:
-    """Resolve the simple `$.key[0].key` subset of JSONPath that extra-files use."""
+    """Resolve the `$.key`, `[0]` and `[?(@.key=='value')]` JSONPath subset that extra-files use.
+
+    A filter must match exactly one element, as release-please writes one version per entry.
+    """
     assert jsonpath.startswith("$"), jsonpath
     node = document
-    for key, index in re.findall(r"\.([\w-]+)|\[(\d+)\]", jsonpath):
-        node = node[int(index)] if index else node[key]
+    for key, index, field, value in re.findall(r"\.([\w-]+)|\[(\d+)\]|\[\?\(@\.([\w-]+)=='([^']*)'\)\]", jsonpath):
+        if field:
+            matches = [item for item in node if item[field] == value]
+            assert len(matches) == 1, (jsonpath, matches)
+            node = matches[0]
+        else:
+            node = node[int(index)] if index else node[key]
     return node
 
 
@@ -63,11 +73,17 @@ def release_state_problems(root: Path) -> list[str]:
         if found is None or found.group(1) != version:
             problems.append(f"first CHANGELOG release heading {heading!r} is not {version}")
 
-    for relative in (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
-        text = (root / relative).read_text(encoding="utf-8")
-        for found_version in re.findall(r'"version"\s*:\s*"([^"]+)"', text):
-            if found_version != version:
-                problems.append(f"{relative} version {found_version} is not {version}")
+    plugin = json.loads((root / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))
+    marketplace = json.loads((root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
+    entries = [entry for entry in marketplace["plugins"] if entry["name"] == MARKETPLACE_ENTRY]
+    if len(entries) != 1:
+        problems.append(f"marketplace.json lists {len(entries)} plugins named {MARKETPLACE_ENTRY}, not one")
+    recorded = {".claude-plugin/plugin.json": plugin["version"]}
+    if entries:
+        recorded[f".claude-plugin/marketplace.json ({MARKETPLACE_ENTRY})"] = entries[0]["version"]
+    for relative, found_version in recorded.items():
+        if found_version != version:
+            problems.append(f"{relative} version {found_version} is not {version}")
 
     version_txt = root / "version.txt"
     if version_txt.exists() and version_txt.read_text(encoding="utf-8").strip() != version:
@@ -75,10 +91,18 @@ def release_state_problems(root: Path) -> list[str]:
     return problems
 
 
-def write_release_state(root: Path, version: str, *, unreleased: bool, version_txt: str | None = None) -> None:
+def write_release_state(
+    root: Path,
+    version: str,
+    *,
+    unreleased: bool,
+    version_txt: str | None = None,
+    other_plugin: dict[str, str] | None = None,
+) -> None:
     (root / ".claude-plugin").mkdir()
     (root / ".claude-plugin" / "plugin.json").write_text(f'{{"version": "{version}"}}', encoding="utf-8")
-    (root / ".claude-plugin" / "marketplace.json").write_text('{"plugins": [{"name": "x"}]}', encoding="utf-8")
+    plugins = [*([other_plugin] if other_plugin else []), {"name": "benchhand", "version": version}]
+    (root / ".claude-plugin" / "marketplace.json").write_text(json.dumps({"plugins": plugins}), encoding="utf-8")
     (root / ".release-please-manifest.json").write_text(json.dumps({".": version}), encoding="utf-8")
     sections = ["# Changelog\n", "## Unreleased\n\n- pending\n"] if unreleased else ["# Changelog\n"]
     sections += [
@@ -108,13 +132,47 @@ class ReleaseStateTests(unittest.TestCase):
             problems = release_state_problems(root)
         self.assertEqual(len(problems), 2, problems)  # plugin.json and version.txt
 
+    def test_another_plugin_keeps_its_own_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_release_state(
+                Path(tmp), "0.2.0", unreleased=False, other_plugin={"name": "other", "version": "1.0.0"}
+            )
+            self.assertEqual(release_state_problems(Path(tmp)), [])
+
+    def test_a_stale_benchhand_marketplace_entry_is_reported_behind_another_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_release_state(root, "0.2.0", unreleased=False, other_plugin={"name": "other", "version": "0.2.0"})
+            stale = {"plugins": [{"name": "other", "version": "0.2.0"}, {"name": "benchhand", "version": "0.1.1"}]}
+            (root / ".claude-plugin" / "marketplace.json").write_text(json.dumps(stale), encoding="utf-8")
+            problems = release_state_problems(root)
+        self.assertEqual(len(problems), 1, problems)
+
+    def test_marketplace_must_list_exactly_one_benchhand_entry(self) -> None:
+        current = {"name": "benchhand", "version": "0.2.0"}
+        cases = {
+            "zero": ([{"name": "other", "version": "0.2.0"}], 0),
+            "two": ([current, dict(current)], 2),
+        }
+        for label, (plugins, count) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                write_release_state(root, "0.2.0", unreleased=False)
+                (root / ".claude-plugin" / "marketplace.json").write_text(
+                    json.dumps({"plugins": plugins}), encoding="utf-8"
+                )
+                self.assertEqual(
+                    release_state_problems(root),
+                    [f"marketplace.json lists {count} plugins named benchhand, not one"],
+                )
+
     def test_invalid_manifest_version_and_stale_changelog_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_release_state(root, "0.2.0", unreleased=True)
             (root / ".release-please-manifest.json").write_text('{".": "0.3"}', encoding="utf-8")
             problems = release_state_problems(root)
-        self.assertEqual(len(problems), 3, problems)  # not semver, changelog heading, plugin.json
+        self.assertEqual(len(problems), 4, problems)  # not semver, changelog heading, plugin.json, marketplace
 
 
 class ConfigTests(unittest.TestCase):
