@@ -377,6 +377,24 @@ class ExistingEquipmentIsNotSelected(unittest.TestCase):
         self.assertEqual(only_decision(report)["recommendation"]["primary"], "purchased_shaft")
         self.assertNotIn("TST-0409", json.dumps(report["decisions"]))
 
+    def test_a_candidate_of_only_existing_equipment_is_never_recommended(self) -> None:
+        documents = scenarios.wear_shaft_options()
+        documents["parts/TST-0409/part.yaml"] = fx.existing_part("TST-0409", "Mount face")
+        documents["manufacturing/selection.yaml"]["candidates"].append(scenarios.candidate(
+            "mount_only", "The mount face alone", "existing equipment only",
+            [scenarios.cpart("TST-0409", "tst_polymer_m_printed", scenarios.step("fdm", "tst_printer", "local"))],
+            cost=1, scores={"PRF-001": 10, "PRF-002": 10}))
+        report = assess(self, documents)
+        self.assertNotIn("mount_only", json.dumps(report["decisions"]))
+
+    def test_a_stale_profile_on_an_existing_equipment_row_is_ignored(self) -> None:
+        documents = scenarios.wear_shaft_options()
+        documents["parts/TST-0409/part.yaml"] = fx.existing_part("TST-0409", "Mount face")
+        selection_candidate(documents, "purchased_shaft")["parts"].append(
+            scenarios.cpart("TST-0409", "tst_retired_profile", scenarios.step("fdm", "tst_retired_printer", "local")))
+        report = assess(self, documents)
+        self.assertEqual(only_decision(report)["recommendation"]["primary"], "purchased_shaft")
+
 
 class MandatoryConstraintsBeforeScores(unittest.TestCase):
     """Row 5: hard constraints eliminate before any score ranks; an unknown mandatory result never wins."""
