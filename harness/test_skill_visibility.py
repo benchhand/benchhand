@@ -15,6 +15,7 @@ so a new skill must be classified here before the suite passes.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate  # noqa: E402
@@ -203,6 +206,40 @@ class PluginRouteTests(ClaudeCase):
         self.assertTrue(results and not any(block.get("is_error") for block in results), results)
 
 
+FROZEN_DESIGNATIONS = {"ACME SP-0825-S", "ACME SP-0610-S"}
+INTERNAL_PN = re.compile(r"[A-Z]{2,5}-[0-9]{4}")  # the PN grammar in cad-record's assembly and drawing schemas
+
+
+def report_fields(report: str) -> dict[str, Any]:
+    """The structured fields of a researcher report: RESULT, TOOLS, BLOCK_REASON and the `candidates` yaml block."""
+    result = re.search(r"^RESULT:\s*(DONE|BLOCKED)\b", report, re.MULTILINE)
+    tools_line = re.search(r"^TOOLS:(.*)$", report, re.MULTILINE)
+    reason = re.search(r"^BLOCK_REASON:\s*(\w+)", report, re.MULTILINE)
+    block = re.search(r"```ya?ml\n(.*?)```", report, re.DOTALL)
+    data = yaml.safe_load(block.group(1)) if block else None
+    return {
+        "result": result.group(1) if result else None,
+        "tools": dict(re.findall(r"(web_search|web_fetch)=(yes|no)", tools_line.group(1))) if tools_line else {},
+        "block_reason": reason.group(1) if reason else None,
+        "candidates": data.get("candidates", []) if isinstance(data, dict) else [],
+    }
+
+
+def candidate_problems(candidates: list[Any], designations: set[str]) -> list[str]:
+    """Each way a candidate breaks the report contract: missing field, designation not in the source, or an internal PN."""
+    problems = []
+    for index, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            problems.append(f"candidate {index} is not a mapping")
+            continue
+        problems += [f"candidate {index} lacks {key}" for key in ("designation", "order_code", "citation") if not candidate.get(key)]
+        if candidate.get("designation") not in designations:
+            problems.append(f"candidate {index} designation {candidate.get('designation')!r} is not in the source")
+        problems += [f"candidate {index} {key} is an internal PN: {value}" for key, value in candidate.items()
+                     if isinstance(value, str) and INTERNAL_PN.fullmatch(value.strip())]
+    return problems
+
+
 FROZEN_DOCUMENT = """# Acme shoulder pin datasheet (frozen copy, rev C, accessed 2026-11-20)
 
 | Manufacturer designation | Shoulder diameter | Double shear rating | Supplier order code |
@@ -230,28 +267,65 @@ class ResearcherRouteTests(ClaudeCase):
         self.assertFalse(final.get("is_error"), final)
         return final["result"]
 
-    def test_a_live_lookup_with_no_web_and_no_frozen_source_is_blocked_with_both_tools_absent(self) -> None:
-        report = self.research(self.project("cad-research-a-"), (
+    def test_a_live_lookup_with_no_web_and_no_frozen_source_is_blocked_for_unavailable_live_evidence(self) -> None:
+        fields = report_fields(self.research(self.project("cad-research-a-"), (
             "Unit source-pins. Family: shoulder pins, no PNs yet. Requirement: today's list price and stock for "
-            "supplier order code ZX-9981 from the supplier website. The record holds no supplier documents."))
-        self.assertRegex(report, r"RESULT:\s*BLOCKED")
-        self.assertRegex(report, r"web_search=no")
-        self.assertRegex(report, r"web_fetch=no")
+            "supplier order code ZX-9981 from the supplier website. The record holds no supplier documents.")))
+        self.assertEqual(fields["result"], "BLOCKED")
+        self.assertEqual(fields["tools"], {"web_search": "no", "web_fetch": "no"})
+        # Missing PNs is `invalid_scope`; this brief has a valid family scope and an unavailable live source.
+        self.assertEqual(fields["block_reason"], "live_evidence_unavailable")
 
-    def test_a_brief_without_pns_and_a_frozen_document_returns_cited_candidates_with_no_invented_pn(self) -> None:
+    def test_a_brief_without_pns_and_a_frozen_document_returns_candidates_keyed_by_manufacturer_designation(self) -> None:
         project = self.project("cad-research-b-")
         document = project / "supplier" / "acme-shoulder-pins.md"
         document.parent.mkdir()
         document.write_text(FROZEN_DOCUMENT, encoding="utf-8")
-        report = self.research(project, (
+        fields = report_fields(self.research(project, (
             "Unit source-pins. Family: shoulder pins, no PNs yet. Requirement: 8 mm shoulder diameter, double shear "
             f"rating of at least 3 kN. The record's frozen supplier document is {document}. It answers the brief; "
-            "make no live lookup."))
-        self.assertRegex(report, r"RESULT:\s*DONE")
-        self.assertIn("SP-0825-S", report)
-        self.assertIn("acme-shoulder-pins.md", report)
-        self.assertIn("HV-558201", report)
-        self.assertNotRegex(report, r"\bPN-?\d{2,}\b", "the report invents an internal PN")
+            "make no live lookup.")))
+        self.assertEqual(fields["result"], "DONE")
+        self.assertIsNone(fields["block_reason"])
+        self.assertTrue(fields["candidates"], "the report has no candidates block")
+        self.assertEqual(candidate_problems(fields["candidates"], FROZEN_DESIGNATIONS), [])
+        chosen = [c for c in fields["candidates"] if c["designation"] == "ACME SP-0825-S"]
+        self.assertEqual(len(chosen), 1, fields["candidates"])
+        self.assertEqual(chosen[0]["order_code"], "HV-558201")
+        self.assertIn("acme-shoulder-pins.md", chosen[0]["citation"])
+
+
+class ReportFieldTests(unittest.TestCase):
+    """The report parser and candidate checks that the live tests rely on, run on canned reports."""
+
+    GOOD = (
+        "RESULT: DONE\nTOOLS: web_search=no, web_fetch=no\nUnit: source-pins\n\n```yaml\ncandidates:\n"
+        "  - designation: ACME SP-0825-S\n    order_code: HV-558201\n    citation: /p/acme.md#row-1\n```\n")
+
+    def test_fields_are_read_from_the_header_lines_and_the_yaml_block(self) -> None:
+        fields = report_fields(self.GOOD)
+        self.assertEqual(fields["result"], "DONE")
+        self.assertEqual(fields["tools"], {"web_search": "no", "web_fetch": "no"})
+        self.assertIsNone(fields["block_reason"])
+        self.assertEqual(fields["candidates"], [{"designation": "ACME SP-0825-S", "order_code": "HV-558201", "citation": "/p/acme.md#row-1"}])
+        self.assertEqual(candidate_problems(fields["candidates"], FROZEN_DESIGNATIONS), [])
+
+    def test_a_blocked_report_carries_its_reason(self) -> None:
+        blocked = "RESULT: BLOCKED\nTOOLS: web_search=no, web_fetch=no\nBLOCK_REASON: invalid_scope\n"
+        self.assertEqual(report_fields(blocked)["block_reason"], "invalid_scope")
+        self.assertEqual(report_fields(blocked)["candidates"], [])
+
+    def test_a_candidate_with_a_schema_valid_internal_pn_or_missing_fields_is_rejected(self) -> None:
+        cases = {
+            "internal PN as designation": [{"designation": "CAD-0123", "order_code": "HV-558201", "citation": "/p/acme.md"}],
+            "internal PN in another field": [{"designation": "ACME SP-0825-S", "order_code": "HV-558201", "citation": "/p/acme.md", "pn": "CAD-0123"}],
+            "designation not in the source": [{"designation": "ACME SP-9999-S", "order_code": "HV-558201", "citation": "/p/acme.md"}],
+            "no order code": [{"designation": "ACME SP-0825-S", "citation": "/p/acme.md"}],
+            "no citation": [{"designation": "ACME SP-0825-S", "order_code": "HV-558201"}],
+        }
+        for name, candidates in cases.items():
+            with self.subTest(case=name):
+                self.assertTrue(candidate_problems(candidates, FROZEN_DESIGNATIONS))
 
 
 if __name__ == "__main__":
