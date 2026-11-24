@@ -38,6 +38,15 @@ TRIGGER
   `manufacturer_part_number` and `supplier_part_number` copy part.yaml `procurement`;
   `specification_ref` and `specification_rev` copy its `specification` `reference` and `revision`.
   They stay blank when the part declares none.
+- A commodity item (screw, nut, washer, dowel, O-ring, heat-set insert) is bought by designation:
+  `procurement.designation` states the standard, size, length, property class and finish
+  (`ISO 4762 M4x20, 8.8, A2`; an insert is a family designation: thread, length, outside diameter, hole).
+  Its manufacturer and part-number cells stay blank and the supplier is any supplier. A
+  `purchase.reference_catalogue` entry (vendor, PN, URL) is a non-binding example and never an order requirement.
+  Record a vendor part number only when a requirement needs a property the designation cannot state (special
+  coating, captive part, certified lot). The build guide merges commodity rows with one designation into a single
+  buy row with its PNs and total quantity.
+- Availability means a named supplier or commodity (any supplier). No lead time is required.
 
 ## Rules
 

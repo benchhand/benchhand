@@ -16,17 +16,19 @@ TRIGGER
 ## Workflow
 
 1. Fit limits: `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-fits/scripts/fits.py SIZE FIT [--expect TYPE]`. SIZE is nominal mm; FIT is `H7/g6` or one class; TYPE is `clearance|transition|interference`.
-2. An intent stack is `hw/analysis/cases/<case>/case.yaml`, with `intent_version: 2` and `interfaces[].functional.variation.stack_case` naming its case id. LOAD the [manufacturing fit reference](references/process-fits.md). Run from the project root:
+2. Commodity hardware dimensions: `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-fits/scripts/commodity.py "ISO 4762 M4"` prints head, nut, washer, dowel or heat-set insert sizes, the pitch, the ISO 273 clearance hole and the tap drill. Use it instead of re-deriving them; a size outside the table exits 2.
+3. An intent stack is `hw/analysis/cases/<case>/case.yaml`, with `intent_version: 2` and `interfaces[].functional.variation.stack_case` naming its case id. LOAD the [manufacturing fit reference](references/process-fits.md). Run from the project root:
 
    ```sh
    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-fits/scripts/stackup.py hw/analysis/cases/<case>/case.yaml --hw hw --version vN [--replace]
    ```
 
    The stack YAML is positional. An intent result publishes at `hw/analysis/vN/<case>/` and its required-check packet at `hw/checks/vN/stack-<case>/`. A standalone stack can use `--out .cad-work/<unit>/stack.json`, but `--out` cannot combine with `--hw` and `--version`. Exit 0 is pass; 1 is a completed violation or UNKNOWN; 2 is invalid input or infrastructure error.
-3. Report the computed worst-case result. Worst case governs collision, binding, lost function and critical fits. `justified_rss` applies only to suitable non-governing consequences and needs sourced stable centered distributions, supported independence/correlation, coverage/probability and approved decision. A plain quadrature sum is never a probability claim.
+4. Report the computed worst-case result. Worst case governs collision, binding, lost function and critical fits. `justified_rss` applies only to suitable non-governing consequences and needs sourced stable centered distributions, supported independence/correlation, coverage/probability and approved decision. A plain quadrature sum is never a probability claim.
 
 ## Rules
 
+MUST Take commodity hardware dimensions from `commodity.py`, not from memory.
 MUST Take fit limits and classification from `fits.py` output.
 MUST Report stack outcome and method from `stackup.py` output; no statistical method overrides governing worst-case failure.
 DEFAULT Express asymmetric tolerances with `tol_plus`/`tol_minus`.

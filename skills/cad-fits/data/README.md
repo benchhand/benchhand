@@ -49,3 +49,24 @@ A controlled copy of the standard governs. These previews are not substitutes fo
   ([B4.1-1967 R2020](https://www.asme.org/codes-standards/find-codes-standards/preferred-limits-and-fits-for-cylindrical-parts)).
   The only public tables found are secondary reproductions of the 1967 text, so
   no B4.1 table ships here.
+
+# Commodity hardware data
+
+`commodity.json` holds the modelled dimensions of common commodity hardware, in millimetres, so a
+model or a record reads one table instead of re-deriving thread and head sizes. `scripts/commodity.py`
+is its lookup. Values are nominal or maximum catalogue values for modelling, not inspection limits.
+
+| Entry | Source |
+|---|---|
+| `thread.pitch` | ISO 261 coarse pitch. |
+| `thread.clearance_hole_medium` | ISO 273 medium series (H13 hole). |
+| `thread.tap_drill` | Conventional tap drill for the coarse thread (about d − pitch), rounded to the common drill. |
+| ISO 4762 | Socket head cap screw head diameter `dk` max, head height `k` and key width `s`, from the ISO 4762 dimension table (equivalent to DIN 912). |
+| ISO 7380-1 | Button head screw `dk`, `k` max and key width `s`, from the ISO 7380-1 dimension table. |
+| ISO 4032 | Hex nut style 1 across flats `s` and height `m` max. |
+| ISO 7089 | Plain washer normal series, grade A: inside diameter `d1` min, outside diameter `d2` and thickness `h`. |
+| ISO 8734 | Hardened dowel pin type A, nominal diameter (m6). |
+| `heat_set_insert` | No standard exists. The standard-length brass inserts of CNC Kitchen as listed in <https://forgent3d.com/en/calculators/clearance-hole-chart> (checked 2026-11-24): length, outside diameter and recommended hole. ruthex, PEM and McMaster list holes 0.1 mm or so different (M4 5.6 against 5.7 mm); use the datasheet of the insert bought. |
+
+The ISO values were entered from the public dimension tables of the standards, not from controlled copies,
+and are not cross-checked against the standards texts. A controlled copy governs.

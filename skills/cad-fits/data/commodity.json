@@ -1,0 +1,35 @@
+{
+  "units": "mm",
+  "note": "Modelled nominal or maximum catalogue dimensions of common commodity hardware, keyed by thread size. Provenance in README.md.",
+  "thread": {
+    "M2":   {"pitch": 0.4,  "clearance_hole_medium": 2.4, "tap_drill": 1.6},
+    "M2.5": {"pitch": 0.45, "clearance_hole_medium": 2.9, "tap_drill": 2.05},
+    "M3":   {"pitch": 0.5,  "clearance_hole_medium": 3.4, "tap_drill": 2.5},
+    "M4":   {"pitch": 0.7,  "clearance_hole_medium": 4.5, "tap_drill": 3.3},
+    "M5":   {"pitch": 0.8,  "clearance_hole_medium": 5.5, "tap_drill": 4.2},
+    "M6":   {"pitch": 1.0,  "clearance_hole_medium": 6.6, "tap_drill": 5.0},
+    "M8":   {"pitch": 1.25, "clearance_hole_medium": 9.0, "tap_drill": 6.8}
+  },
+  "standards": {
+    "ISO 4762": {"item": "socket head cap screw", "fields": "head_diameter_max, head_height, key_width",
+      "size": {"M2": [3.8, 2.0, 1.5], "M2.5": [4.5, 2.5, 2.0], "M3": [5.5, 3.0, 2.5], "M4": [7.0, 4.0, 3.0],
+               "M5": [8.5, 5.0, 4.0], "M6": [10.0, 6.0, 5.0], "M8": [13.0, 8.0, 6.0]}},
+    "ISO 7380-1": {"item": "button head screw", "fields": "head_diameter_max, head_height_max, key_width",
+      "size": {"M2": [4.0, 1.25, 1.5], "M2.5": [5.0, 1.5, 1.5], "M3": [5.7, 1.65, 2.0], "M4": [7.6, 2.2, 2.5],
+               "M5": [9.5, 2.75, 3.0], "M6": [10.5, 3.3, 4.0], "M8": [14.0, 4.4, 5.0]}},
+    "ISO 4032": {"item": "hex nut, style 1", "fields": "across_flats, height_max",
+      "size": {"M2": [4.0, 1.6], "M2.5": [5.0, 2.0], "M3": [5.5, 2.4], "M4": [7.0, 3.2],
+               "M5": [8.0, 4.7], "M6": [10.0, 5.2], "M8": [13.0, 6.8]}},
+    "ISO 7089": {"item": "plain washer, normal series, product grade A", "fields": "inside_diameter_min, outside_diameter, thickness",
+      "size": {"M2": [2.2, 5.0, 0.3], "M2.5": [2.7, 6.0, 0.5], "M3": [3.2, 7.0, 0.5], "M4": [4.3, 9.0, 0.8],
+               "M5": [5.3, 10.0, 1.0], "M6": [6.4, 12.0, 1.6], "M8": [8.4, 16.0, 1.6]}},
+    "ISO 8734": {"item": "hardened dowel pin, type A, tolerance m6", "fields": "diameter",
+      "size": {"2": [2.0], "3": [3.0], "4": [4.0], "5": [5.0], "6": [6.0], "8": [8.0]}}
+  },
+  "families": {
+    "heat_set_insert": {"item": "heat-set threaded insert, standard length, brass; no ISO standard defines it",
+      "fields": "length, outside_diameter, recommended_hole",
+      "size": {"M2": [3.0, 3.6, 3.2], "M2.5": [4.0, 4.6, 4.0], "M3": [5.7, 4.6, 4.0], "M4": [8.1, 6.3, 5.7],
+               "M5": [9.5, 7.1, 6.5], "M6": [12.7, 8.7, 8.1], "M8": [12.7, 10.2, 9.7]}}
+  }
+}
