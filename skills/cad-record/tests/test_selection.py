@@ -303,6 +303,21 @@ class PolymerAcceptedWithEvidence(unittest.TestCase):
         self.assertEqual((flagged["status"], flagged["unknown"]), ("conditional", ["capability"]))
         self.assertEqual(only_decision(on)["recommendation"]["primary"], "machined_cover")
 
+    def test_the_machine_is_required_for_an_outsourced_or_a_safety_critical_fdm_route(self) -> None:
+        """The no-machine exception covers only a route whose equipment evidence is optional: a supplier's capability and a
+        safety-critical service need a capability profile whatever the flag says."""
+        outsourced = self.with_unknown_capability("printed_cover")
+        selection_candidate(outsourced, "printed_cover")["parts"][0]["route"][0]["provider"] = "outsourced"
+        critical = self.with_unknown_capability("printed_cover")
+        critical["product.yaml"]["use_case"]["service_class"] = fx.known("safety_critical")
+        for name, documents in (("outsourced", outsourced), ("safety_critical", critical)):
+            with self.subTest(name):
+                report = self.assessed(documents, None)
+                printed = candidate(report, "printed_cover")
+                self.assertIn("capability", printed["unknown"])
+                (capability,) = evaluations(printed, "capability")
+                self.assertEqual(capability["outcome"], "unknown")
+
     def test_the_effective_calibration_flag_is_part_of_the_confirmation_digest(self) -> None:
         """The flag can change the winning candidate, so an assessment recorded under one setting is stale under the other."""
         documents = scenarios.qualified_polymer_cover()

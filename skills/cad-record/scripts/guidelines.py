@@ -366,6 +366,14 @@ def snapshot_files(hw: Path) -> dict[str, bytes]:
             for g in sorted(discover(hw).guidelines.values(), key=lambda g: g.id) if g.origin == "shipped" and g.file is not None}
 
 
+def machine_optional(process: str | None, provider: str | None, service_class: str | None, calibration: bool) -> bool:
+    """Whether a route's machine is optional evidence: an FDM route (the process the shipped guideline values cover) with
+    calibration off, run locally, for a service class below safety_critical. A supplier's capability and a safety-critical
+    service need a recorded capability profile whatever the flag says; the shipped guidelines never stand in for one."""
+    return (process in GUIDELINE_PROCESSES and not calibration and provider != "outsourced"
+            and service_class != "safety_critical")
+
+
 def calibration_enabled() -> bool:
     """Whether the calibration flag is on. Read it once per job and pass the value on."""
     return os.getenv(CALIBRATION_FLAG) == "1"
