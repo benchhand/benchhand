@@ -148,6 +148,24 @@ class ReleaseStateTests(unittest.TestCase):
             problems = release_state_problems(root)
         self.assertEqual(len(problems), 1, problems)
 
+    def test_marketplace_must_list_exactly_one_benchhand_entry(self) -> None:
+        current = {"name": "benchhand", "version": "0.2.0"}
+        cases = {
+            "zero": ([{"name": "other", "version": "0.2.0"}], 0),
+            "two": ([current, dict(current)], 2),
+        }
+        for label, (plugins, count) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                write_release_state(root, "0.2.0", unreleased=False)
+                (root / ".claude-plugin" / "marketplace.json").write_text(
+                    json.dumps({"plugins": plugins}), encoding="utf-8"
+                )
+                self.assertEqual(
+                    release_state_problems(root),
+                    [f"marketplace.json lists {count} plugins named benchhand, not one"],
+                )
+
     def test_invalid_manifest_version_and_stale_changelog_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
