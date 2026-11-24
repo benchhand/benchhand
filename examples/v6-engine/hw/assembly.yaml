@@ -197,6 +197,13 @@ occurrences:
     rotation:
       axis: [1, 0, 0]
       angle_deg: 0.0
+- id: bracket
+  PN: VSE-0013
+  placement:
+    translation_mm: [-60.0, 0, 0]
+    rotation:
+      axis: [1, 0, 0]
+      angle_deg: 0.0
 mechanisms:
 - id: cylinder-1
   type: slider_crank
@@ -265,7 +272,7 @@ subassemblies:
 - id: cam_drive
   title: Serpentine GT2 belt drive (DR-005)
   parts: []
-  occurrences: ['@crank-pulley', '@cam-pulley-a', '@cam-pulley-b', '@belt', '@idler', '@tensioner']
+  occurrences: ['@crank-pulley', '@cam-pulley-a', '@cam-pulley-b', '@belt', '@idler', '@tensioner', '@bracket']
 joints:
 - id: J-001
   type: revolute
@@ -513,7 +520,7 @@ joints:
   nominal: 0
 - id: J-424
   type: fixed
-  parent: VSE-0001
+  parent: '@bracket'
   child: '@idler'
   axis: [1, 0, 0]
   origin: [-68.75, 0, 70.0]
@@ -522,10 +529,19 @@ joints:
   nominal: 0
 - id: J-425
   type: fixed
-  parent: VSE-0001
+  parent: '@bracket'
   child: '@tensioner'
   axis: [1, 0, 0]
   origin: [-68.75, -10.7, 30.0]
+  min: 0
+  max: 0
+  nominal: 0
+- id: J-426
+  type: fixed
+  parent: VSE-0001
+  child: '@bracket'
+  axis: [1, 0, 0]
+  origin: [-60.0, 0, 0]
   min: 0
   max: 0
   nominal: 0
