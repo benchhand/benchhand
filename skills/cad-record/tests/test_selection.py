@@ -365,6 +365,19 @@ class JustifiedAlternatives(unittest.TestCase):
         self.assertIn("never relax a mandatory requirement", finding["remedy"])
 
 
+class ExistingEquipmentIsNotSelected(unittest.TestCase):
+    """Pre-existing equipment the product mounts onto is outside the product: never a candidate part, never a make_buy proposal."""
+
+    def test_a_candidate_naming_existing_equipment_proposes_nothing_for_it(self) -> None:
+        documents = scenarios.wear_shaft_options()
+        documents["parts/TST-0409/part.yaml"] = fx.existing_part("TST-0409", "Mount face")
+        selection_candidate(documents, "purchased_shaft")["parts"].append(
+            scenarios.cpart("TST-0409", "tst_polymer_m_printed", scenarios.step("fdm", "tst_printer", "local")))
+        report = assess(self, documents)
+        self.assertEqual(only_decision(report)["recommendation"]["primary"], "purchased_shaft")
+        self.assertNotIn("TST-0409", json.dumps(report["decisions"]))
+
+
 class MandatoryConstraintsBeforeScores(unittest.TestCase):
     """Row 5: hard constraints eliminate before any score ranks; an unknown mandatory result never wins."""
 
