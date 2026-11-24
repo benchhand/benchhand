@@ -1242,7 +1242,9 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
     if not assessment.final_ready:
         _use_case_finding(findings, assessment, report["use_case"])
     existing = frozenset(pn for pn, part in record.parts.items() if part.existing)
-    candidates = [_candidate(ident, raw, existing) for ident, raw in record.selection.candidates.items()]
+    built = [(_candidate(ident, raw, existing), raw) for ident, raw in record.selection.candidates.items()]
+    # a candidate whose every part entry names existing equipment proposes nothing to make or buy
+    candidates = [candidate for candidate, raw in built if candidate.parts or not raw.get("parts")]
     if not candidates:
         findings.add("selection.not_assessed", "selection", {"product": True}, "minor", "unknown",
                      measured=_unknown("hw/manufacturing/selection.yaml records no candidates"),

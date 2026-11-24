@@ -2193,11 +2193,21 @@ class _Reader:
         return MaterialProfile(ident, int(item.get("revision", 0)), level, item.get("family"), grade, form,
                                state.get("conditioning", "unknown"), typical_only, tuple(properties), freeze(item))
 
+    def existing_pns(self) -> frozenset[str]:
+        """The part numbers whose part.yaml records make_buy existing."""
+        found = set()
+        for rel in self.documents:
+            if re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and isinstance(data := self.doc(rel), Mapping):
+                if data.get("make_buy") == "existing" and isinstance(data.get("PN"), str):
+                    found.add(data["PN"])
+        return frozenset(found)
+
     def selection(self) -> Selection:
         path = "hw/manufacturing/selection.yaml"
         data = self.doc("manufacturing/selection.yaml") or {}
         candidates: dict[str, Mapping[str, Any]] = {}
         proposed: dict[str, Mapping[str, ProposedPart]] = {}
+        existing = self.existing_pns()
         for index, item in enumerate(data.get("candidates") or ()):
             if not isinstance(item, Mapping):
                 continue
@@ -2220,6 +2230,8 @@ class _Reader:
                                                       proposal.get("reason"), entries, proposal.get("transparency"))
                 else:
                     self.ref("part", part.get("PN"), path, where)
+                if part.get("PN") in existing:
+                    continue  # selection drops an existing-equipment entry, so its profiles are never read
                 self.id_or_fact(part.get("material_profile"), "material", path, f"{where}/material_profile")
                 for j, step in enumerate(part.get("route") or ()):
                     if isinstance(step, Mapping):
