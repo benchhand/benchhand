@@ -61,7 +61,7 @@ NOT Invent product identities, order codes, availability, prices, tolerances, pr
 
 ## Output
 
-Begin with `RESULT: DONE|BLOCKED`, then `TOOLS: web_search=yes|no, web_fetch=yes|no`, then the unit and family. Per PN, report proposed part.yaml values and interfaces.yaml limits with citations, including print/make files, purchasable identity, supplier/order codes, OPEN identity fields and reasons, assembly operations, and checks as structured lists or tables, never inline comma prose. Give every cited local file as its own absolute-path line.
+Begin with `RESULT: DONE|BLOCKED`, then `TOOLS: web_search=yes|no, web_fetch=yes|no`, then, when BLOCKED, `BLOCK_REASON: invalid_scope|live_evidence_unavailable`, then the unit and family. `invalid_scope` means the brief names neither PNs nor a family with requirements. `live_evidence_unavailable` means a mandatory live requirement is unresolved and no web tool or frozen supplier document answers it. Missing PNs alone is never a block reason. With no PNs, give the candidates in one fenced `yaml` block that holds `candidates:`, one item per candidate with `designation` (the full manufacturer designation as the source states it), `order_code` and `citation` (absolute path or URL, with page, table or row); no field holds an internal PN. Per PN, report proposed part.yaml values and interfaces.yaml limits with citations, including print/make files, purchasable identity, supplier/order codes, OPEN identity fields and reasons, assembly operations, and checks as structured lists or tables, never inline comma prose. Give every cited local file as its own absolute-path line.
 CAP 200w per PN.
 MUST Never reprint whole datasheets or file contents.
 

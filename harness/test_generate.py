@@ -340,7 +340,8 @@ class SubagentWiringTests(GeneratorCopyCase):
 
     def test_lead_adopts_only_cited_record_values_when_the_researcher_had_no_web(self) -> None:
         text = self.FLOW.read_text(encoding="utf-8")
-        self.assertRegex(text, r"(?i)`TOOLS:`[^.\n]*(no web|neither)[^.\n]*(live|web)[^.\n]*(yourself|user)")
+        self.assertRegex(text, r"(?i)`RESULT: DONE` report is complete, even when `TOOLS:` reports no web tools")
+        self.assertRegex(text, r"(?i)only for a report with `RESULT: BLOCKED` and `BLOCK_REASON: live_evidence_unavailable`")
         self.assertRegex(text, r"(?i)frozen supplier documents")
 
     def test_researcher_validates_scope_apart_from_blocking_on_evidence(self) -> None:
@@ -348,13 +349,17 @@ class SubagentWiringTests(GeneratorCopyCase):
         self.assertRegex(text, r"(?i)validate the scope[^.\n]*before[^.\n]*(evidence|web)")
         self.assertRegex(text, r"(?i)escalate only[^.\n]*live[^.\n]*unresolved")
 
-    def test_lead_directs_no_live_research_when_frozen_evidence_answers_the_brief(self) -> None:
-        text = self.FLOW.read_text(encoding="utf-8")
-        self.assertRegex(text, r"(?i)do not direct live research when[^.\n]*frozen[^.\n]*fully answer")
 
     def test_lead_lists_purchased_families_defined_by_requirements_before_pns_exist(self) -> None:
         text = self.FLOW.read_text(encoding="utf-8")
         self.assertRegex(text, r"(?i)purchased families[^.\n]*`bom\.csv`[^.\n]*and[^.\n]*requirements[^.\n]*before PNs")
+
+    def test_researcher_output_defines_the_block_reasons_and_the_candidate_fields(self) -> None:
+        text = self.source(self.RESEARCHER)
+        self.assertIn("BLOCK_REASON: invalid_scope|live_evidence_unavailable", text)
+        self.assertRegex(text, r"(?i)missing PNs alone is never a block reason")
+        for field in ("`designation`", "`order_code`", "`citation`"):
+            self.assertIn(field, text)
 
     def test_every_agent_ends_with_a_handback_section_gated_on_the_exact_tool(self) -> None:
         for name in AGENT_NAMES:
