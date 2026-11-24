@@ -40,7 +40,8 @@ def _missing(ctx: Context, family: str, what: str, consequence: str, severity: s
 def _commodity_label(ctx: Context) -> str | None:
     """The order line when this purchase is a commodity item: an eligible designation and no open identity field. One
     decision for the identity and availability checks, the BOM and the build guide (cad-record commodity_identity.py)."""
-    return commodity_identity().commodity_label(ctx.part.raw, ctx.operation.purchase)
+    label: str | None = commodity_identity().commodity_label(ctx.part.raw, ctx.operation.purchase)
+    return label
 
 
 def identity(ctx: Context) -> Result:
