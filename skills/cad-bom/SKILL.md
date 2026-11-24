@@ -39,7 +39,7 @@ TRIGGER
   `specification_ref` and `specification_rev` copy its `specification` `reference` and `revision`.
   They stay blank when the part declares none.
 - A commodity item (screw, nut, washer, dowel, O-ring, heat-set insert) is bought by designation:
-  `procurement.designation` states the standard, size, length, property class and finish
+  the structured `purchase.designation` (or `procurement.designation` text) states the standard, size, length, property class and finish
   (`ISO 4762 M4x20, 8.8, A2`; an insert is a family designation: thread, length, outside diameter, hole).
   Its manufacturer and part-number cells stay blank and the supplier is any supplier. A
   `purchase.reference_catalogue` entry (vendor, PN, URL) is a non-binding example and never an order requirement.
