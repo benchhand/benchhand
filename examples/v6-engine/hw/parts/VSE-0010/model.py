@@ -54,30 +54,32 @@ def _tangent(c1, r1, c2, r2):
     return (c1[0] - r1 * ny, c1[1] - r1 * nz), (c2[0] - r2 * ny, c2[1] - r2 * nz)
 
 
-def path_length(circles: list[tuple[tuple[float, float], float]]) -> float:
-    """Length of the closed path of tangent runs and wraps."""
+def _segments(circles: list[tuple[tuple[float, float], float]]):
+    """Each wrap in loop order as (centre, |r|, start point, start angle, signed sweep, end point), then the run
+    leaving it, which ends at the next wrap's start point."""
     runs = [_tangent(*circles[i], *circles[(i + 1) % len(circles)]) for i in range(len(circles))]
-    total = sum(math.dist(*run) for run in runs)
-    for i, (c, r) in enumerate(circles):
-        start, end = runs[i - 1][1], runs[i][0]
-        a0 = math.atan2(start[1] - c[1], start[0] - c[0])
-        a1 = math.atan2(end[1] - c[1], end[0] - c[0])
-        total += abs(r) * ((a1 - a0) % math.tau if r > 0 else (a0 - a1) % math.tau)
-    return total
-
-
-def _wire(circles: list[tuple[tuple[float, float], float]], x: float) -> cq.Wire:
-    point = lambda yz: cq.Vector(x, yz[0], yz[1])  # noqa: E731
-    runs = [_tangent(*circles[i], *circles[(i + 1) % len(circles)]) for i in range(len(circles))]
-    edges = []
     for i, (c, r) in enumerate(circles):
         start, end = runs[i - 1][1], runs[i][0]
         a0 = math.atan2(start[1] - c[1], start[0] - c[0])
         a1 = math.atan2(end[1] - c[1], end[0] - c[0])
         sweep = (a1 - a0) % math.tau if r > 0 else -((a0 - a1) % math.tau)
+        yield (c, abs(r), start, a0, sweep, end), runs[i]
+
+
+def path_length(circles: list[tuple[tuple[float, float], float]]) -> float:
+    """Length of the closed path of tangent runs and wraps."""
+    return sum(radius * abs(sweep) + math.dist(*run) for (_, radius, _, _, sweep, _), run in _segments(circles))
+
+
+def _wire(circles: list[tuple[tuple[float, float], float]], x: float) -> cq.Wire:
+    def point(yz: tuple[float, float]) -> cq.Vector:
+        return cq.Vector(x, yz[0], yz[1])
+
+    edges = []
+    for (c, radius, start, a0, sweep, end), run in _segments(circles):
         mid = a0 + sweep / 2.0
-        edges.append(cq.Edge.makeThreePointArc(point(start), point((c[0] + abs(r) * math.cos(mid), c[1] + abs(r) * math.sin(mid))), point(end)))
-        edges.append(cq.Edge.makeLine(point(end), point(runs[i][1])))
+        edges.append(cq.Edge.makeThreePointArc(point(start), point((c[0] + radius * math.cos(mid), c[1] + radius * math.sin(mid))), point(end)))
+        edges.append(cq.Edge.makeLine(point(run[0]), point(run[1])))
     return cq.Wire.assembleEdges(edges)
 
 
