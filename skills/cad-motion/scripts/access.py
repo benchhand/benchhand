@@ -35,8 +35,9 @@ operation (the parts present then):
     envelope; otherwise hand work and a common tool named by type and size get their shipped standard
     envelope (cad-record tool_envelopes.py), built here with its tip at the entry's declared contact point (the
     operated part's model frame), the tool axis along the approach. Without one, a tool that drives the part it
-    installs or removes has its tip on the centre of that part's box face it comes from; a tool on a part that
-    does not move needs the contact point, or the operation stays unknown, because the box centre is not where an
+    installs or removes has its tip on the centre of the face of that part's box it arrives through (the face whose
+    normal points most against the approach); an approach that meets two faces equally, or a tool on a part that
+    does not move, needs the contact point, or the operation stays unknown, because the box centre is not where an
     off-centre feature is.
 A path is measured with cad-motion's pair evaluator at sampled positions, leg by leg. A translation moves
 every point by the same distance, so a distance d_i at s_i and d_j at s_j prove the segment clear when
@@ -62,7 +63,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
-import itertools
 import json
 import math
 import sys
@@ -479,23 +479,31 @@ def _unrotate(rigid: Any, vector: Sequence[float]) -> tuple[float, float, float]
     return (x, y, z)
 
 
-def envelope_shape(envelope: Any, part_shape: Any, approach: Sequence[float],
-                   contact: Sequence[float] | None = None) -> Any:
-    """A standard envelope's coaxial cylinders in the operated part's model frame, the tool axis running back along
-    -`approach` (unit, model frame): the tip at the declared `contact` point, else (a part the tool drives along its
-    path) on the face of the part's box that the tool arrives from, centred on the box."""
+FACE_TIE = 1e-9  # two faces meet an approach equally when its components along their normals differ by less
+
+
+def envelope_tip(low: Sequence[float], high: Sequence[float], approach: Sequence[float]) -> tuple[float, float, float] | None:
+    """The default tip of a tool on a part it drives along its path: the centre of the face of the part's box
+    (`low`, `high`, model frame) that the tool arrives through, the face whose outward normal points most against
+    the unit `approach`. None when two faces meet it equally (an approach at 45 degrees to both): which one the tool
+    works on is not known, so the entry needs its contact point."""
+    back = [-a for a in approach]
+    first, second = sorted(range(3), key=lambda i: abs(back[i]), reverse=True)[:2]
+    if abs(back[first]) - abs(back[second]) < FACE_TIE:
+        return None
+    tip = [(a + b) / 2 for a, b in zip(low, high)]
+    tip[first] = high[first] if back[first] > 0 else low[first]
+    return (tip[0] + 0.0, tip[1] + 0.0, tip[2] + 0.0)
+
+
+def envelope_shape(envelope: Any, tip: Sequence[float], approach: Sequence[float]) -> Any:
+    """A standard envelope's coaxial cylinders in the operated part's model frame, from `tip`, the tool axis running
+    back along -`approach` (unit, model frame)."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
     from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
     back = (-approach[0], -approach[1], -approach[2])
-    if contact is not None:
-        tip = list(contact)
-    else:
-        low, high = pose.box_corners(part_shape)
-        centre = [(a + b) / 2 for a, b in zip(low, high)]
-        depth = max(_dot([c - m for c, m in zip(corner, centre)], back) for corner in itertools.product(*zip(low, high)))
-        tip = [m + back[i] * depth for i, m in enumerate(centre)]
     shape = None
     for segment in envelope.segments:
         origin = gp_Pnt(*(tip[i] + back[i] * segment.start_mm for i in range(3)))
@@ -519,7 +527,15 @@ def standard_envelopes(requests: Iterable[Any], chain: Any, world: Mapping[str, 
                 problems[(op_id, reach.index)] = f"tool {reach.tool.name!r}: the operated part {operated} has no geometry or placement"
                 continue
             approach = _unrotate(world[operated], _rotate(world[request.frame], reach.approach))
-            shape = envelope_shape(reach.envelope, definitions[chain.pn(operated)].shape, approach, reach.contact)
+            tip = reach.contact if reach.contact is not None else envelope_tip(
+                *pose.box_corners(definitions[chain.pn(operated)].shape), approach)
+            if tip is None:
+                problems[(op_id, reach.index)] = (
+                    f"tool {reach.tool.name!r}: its approach meets two faces of {operated}'s box equally, so the face it "
+                    f"works on is not known: declare where its tip engages (tool_access contact, mm in {operated}'s "
+                    "model frame)")
+                continue
+            shape = envelope_shape(reach.envelope, tip, approach)
             shapes[(op_id, reach.index)] = (f"tool:{op_id}:{reach.index}", shape, reach.envelope.report())
     return shapes, problems
 

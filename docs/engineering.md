@@ -198,7 +198,7 @@ The assembly access check never asks the user to model a tool or a hand.
 - Values that no standard gives, each named in the envelope's sources:
   - Phillips handle diameter and length come from the FACOM ISORYL AP catalogue (supplier).
   - Wrench head thickness is an estimate, 0.4 s + 2 mm.
-- Without a contact point, a tool that drives the part it installs or removes has its tip on the centre of that part's box face it comes from. A tool on a part that does not move (adjust, inspect) needs the contact point, else the operation is unknown: the box centre is not where an off-centre feature is.
+- Without a contact point, a tool that drives the part it installs or removes has its tip on the centre of the box face it arrives through: the face whose normal points most against the approach. A tool on a part that does not move (adjust, inspect), or an approach that meets two faces equally (45 degrees), needs the contact point, else the operation is unknown. The box centre is not where an off-centre feature is.
 - An entry is read as one tool phrase: the whole entry names the tool and its size, and a socket takes the drive it names. Hex, Allen and Inbus keys are one tool. A size or a tool word inside other text makes no tool.
 - A cited STEP solid in `tool_access` overrides the shipped envelope. A `tools` entry for the same tool as a `tool_access` entry is checked once, as that entry. Same tool means the same shipped designation (type, size and a socket's drive), else the same text. A name that matches no envelope is an instruction note in the outcome's uncertainty.
 - Changes to `tool_envelopes.py` or `assembly_operations.py` change the access policy digest (`access.py` `policy_digest`), so the next run does not reuse a published packet.
