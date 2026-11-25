@@ -1617,7 +1617,6 @@ def _diameter_criterion(text: str) -> dict[str, Any]:
 
 # --- contract -------------------------------------------------------------------------------------------------------
 
-LENIENT = {"appearance_concept", "fit_assembly", "functional_demo"}  # the user's rule, written out apart from the code
 NOZZLE_04 = {"nozzle_diameter": known(mm(0.4), "supplier_typical", [datasheet("TST printer datasheet")])} if DEPS else {}
 GEOMETRY = "process.fdm.geometry@TST-0101/print"
 SUPPORT = "process.fdm.support@TST-0101/print"
@@ -1659,8 +1658,8 @@ def underside(angle: float, kind: str = "overhang", span: float | None = None) -
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
 class GuidelineLimitTests(Checks):
-    """Without a calibration the FDM checks judge against the shipped guideline sets, and a guideline pass counts only
-    for the appearance_concept, fit_assembly and functional_demo service classes."""
+    """Without a calibration the FDM checks judge against the shipped guideline sets. An applicable guideline settles a
+    check in every service class under either calibration flag: a calibration only tightens it."""
 
     def judged(self, data: dict[str, Any], **options: Any) -> Any:
         return self.assess(guided(**options), geometry("TST-0101", data), catalog=SHIPPED)
@@ -1684,25 +1683,16 @@ class GuidelineLimitTests(Checks):
                 self.assertEqual((criterion["source"]["kind"], criterion["source"]["reference"], criterion["source"]["revision"],
                                   criterion["source"]["sha256"]), ("guideline", ref, str(SHIPPED.guidelines[ref].revision), SHIPPED.guidelines[ref].sha256))
 
-    def test_a_guideline_pass_counts_only_for_three_service_classes(self) -> None:
+    def test_a_guideline_pass_counts_in_every_service_class_under_either_flag(self) -> None:
         cases = {"wall": (walled(3.0), GEOMETRY), "small_feature": (walled(3.0, pins=(3.0,)), GEOMETRY),
                  "small_hole": (walled(3.0, holes=(3.0,)), GEOMETRY), "support": (underside(30.0), SUPPORT)}
-        for service in MI.SERVICE_CLASSES:
-            for check, (data, obligation) in cases.items():
-                with self.subTest(service=service, check=check):
-                    result = self.judged(data, service=service)
-                    only = f"process.fdm.{check}_guideline_only"
-                    if service in LENIENT:
-                        self.assertEqual(self.outcome(result, obligation), "pass")
-                        self.assertNotIn(only, self.codes(result))
-                    else:
-                        self.assertEqual(self.outcome(result, obligation), "unknown")
-                        self.assertEqual(self.finding(result, only)["criterion"]["source"]["kind"], "guideline")
-
-    def test_an_unknown_service_class_takes_no_guideline_pass(self) -> None:
-        result = self.judged(walled(3.0))
-        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
-        self.assertIn("process.fdm.wall_guideline_only", self.codes(result))
+        for flag in ("0", "1"):
+            for service in (*MI.SERVICE_CLASSES, None):
+                for check, (data, obligation) in cases.items():
+                    with self.subTest(flag=flag, service=service, check=check), \
+                            mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                        result = self.judged(data, service=service)
+                        self.assertEqual(self.outcome(result, obligation), "pass", self.codes(result, obligation))
 
     def test_a_guideline_fail_fails_in_every_service_class(self) -> None:
         for service in (*MI.SERVICE_CLASSES, None):
@@ -1714,7 +1704,6 @@ class GuidelineLimitTests(Checks):
         wall = calibration("wall_study", "min_wall", POLYMER, 0.8, 1.0)
         result = self.judged(walled(1.1), calibrations=(wall,))
         self.assertEqual(self.outcome(result, GEOMETRY), "pass")
-        self.assertNotIn("process.fdm.wall_guideline_only", self.codes(result))
 
     def test_a_refused_calibration_lets_the_guideline_apply_and_keeps_its_reasons(self) -> None:
         other = calibration("wall_study", "min_wall", ALU, 0.4, 0.5)
@@ -1758,15 +1747,6 @@ class GuidelineLimitTests(Checks):
             self.assertEqual(packet["dependencies"][key], SHIPPED.guidelines[ref].sha256)
         self.assertNotIn("guideline_fdm_nozzle_d0_6_r1", packet["dependencies"], "a 0.6 mm set cannot apply to a 0.4 mm nozzle")
 
-    def test_the_guideline_only_note_is_stated_once_when_an_overhang_and_a_bridge_are_both_judged(self) -> None:
-        strict = sorted(set(MI.SERVICE_CLASSES) - LENIENT)[0]
-        data = facts(faces=(bed_face(), face("f10", features=("underside",), down_=down(60.0, 200.0)),
-                            face("f11", features=("bridge",), down_=down(90.0, 200.0, "bridge", span=4.0))),
-                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
-        planned = {"strategy": "reachable_noncritical", "contact_regions": [{"feature": "underside"}], "removal": REMOVAL}
-        coverage = self.judged(data, service=strict, supports=planned).outcome(SUPPORT)["coverage"]
-        self.assertEqual(coverage.count("(guideline value only)"), 1, coverage)
-
     def test_the_probe_plan_scans_walls_at_the_guideline_minimum(self) -> None:
         record = load(self, guided())
         self.assertEqual(pc.probe_plan(record, "TST-0101", "main", today=TODAY, catalog=SHIPPED)["wall_mm"], 1.2)
@@ -1780,14 +1760,11 @@ class GuidelineLimitTests(Checks):
             with self.subTest(name):
                 self.assertEqual(self.outcome(self.judged(data, service="functional_demo"), obligation), "pass")
 
-    def test_planned_supports_keep_the_guideline_grade(self) -> None:
+    def test_planned_supports_pass_on_the_guideline_grade_in_every_service_class(self) -> None:
         planned = {"strategy": "reachable_noncritical", "contact_regions": [{"feature": "underside"}], "removal": REMOVAL}
-        strict = sorted(set(MI.SERVICE_CLASSES) - LENIENT)[0]
-        for service, outcome in (("functional_demo", "pass"), (strict, "unknown")):
+        for service in ("functional_demo", "working_prototype", "production"):
             with self.subTest(service=service):
-                result = self.judged(underside(60.0), service=service, supports=planned)
-                self.assertEqual(self.outcome(result, SUPPORT), outcome)
-                self.assertEqual("process.fdm.support_guideline_only" in self.codes(result), outcome == "unknown")
+                self.assertEqual(self.outcome(self.judged(underside(60.0), service=service, supports=planned), SUPPORT), "pass")
 
     def test_an_unknown_recorded_limit_grades_unknown_once_without_a_guideline_only_finding(self) -> None:
         """No catalog and no calibration: the overhang limit is unknown, and a flat down-facing face (nothing beyond
@@ -1795,7 +1772,6 @@ class GuidelineLimitTests(Checks):
         result = self.assess(guided(service="functional_demo"), geometry("TST-0101", underside(0.0)))
         self.assertEqual(self.outcome(result, SUPPORT), "unknown")
         self.assertEqual(result.outcome(SUPPORT)["coverage"].count("(limit unknown)"), 1, result.outcome(SUPPORT)["coverage"])
-        self.assertEqual([c for c in self.codes(result) if c.endswith("_guideline_only")], [])
 
     def test_a_resolver_warning_reaches_the_finding_that_cites_the_limit(self) -> None:
         result = self.judged(walled(1.0), pin=("fdm.generic@7",))
@@ -1835,25 +1811,6 @@ class GuidelineLimitTests(Checks):
             outcomes.append((self.outcome(result, "process.resin.geometry@TST-0902/form"), self.codes(result)))
         self.assertEqual(outcomes[0], outcomes[1])
         self.assertEqual([c for c in outcomes[1][1] if "small_hole" in c], [])
-
-    def test_the_guideline_pass_classes_are_known_service_classes(self) -> None:
-        self.assertLessEqual(set(pc.GUIDELINE_PASS_CLASSES), set(MI.SERVICE_CLASSES) - {"unknown"})
-
-    def test_an_approved_waiver_of_the_guideline_only_finding_waives_the_obligation(self) -> None:
-        evidence = _module("cad_record_evidence", SKILLS / "cad-record" / "scripts" / "evidence.py")
-        acceptance = _module("cad_record_acceptance_fixtures", SKILLS / "cad-record" / "tests" / "fixtures" / "acceptance.py")
-        found = self.finding(self.judged(walled(3.0)), "process.fdm.wall_guideline_only")
-        waiver = acceptance.waiver(found["subject"], obligation=GEOMETRY)
-        disposition = {"finding": found["id"], "producer": {"bundle": "hw/checks/v1/process", "manifest_sha256": "b" * 64},
-                       "status": "accepted_waiver", "reason": "TST", "decision": "DR-002", "waiver": waiver}
-        documents = guided(dispositions=(disposition,))
-        record = load(self, documents)
-        packet = pc.assess(record, geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED).packet(
-            {"version_manifest": "0" * 64})
-        result = evidence.assess(record, version="v1", manifest_sha256="0" * 64, today=TODAY,
-                                 packets=[evidence.ProducerPacket("hw/checks/v1/process", "b" * 64, packet)],
-                                 approved=lambda decision: decision in ("DR-001", "DR-002"))
-        self.assertEqual(result.statuses[GEOMETRY].result, "waived")
 
 
 TPU_WALL_SET = """\
@@ -2478,12 +2435,10 @@ class CalibrationFlagTests(Checks):
                     self.assertEqual(self.outcome(result, obligation), "pass")
                     self.assertEqual([c for c in self.codes(result, obligation) if c.endswith(("_guideline_only", "_uncalibrated"))], [])
 
-    def test_on_a_guideline_pass_in_an_unknown_service_class_stays_unknown(self) -> None:
+    def test_on_a_guideline_pass_still_passes_in_an_unknown_service_class(self) -> None:
         for check, (data, obligation) in self.CASES.items():
             with self.subTest(check=check):
-                result = self.judged(data, True)
-                self.assertEqual(self.outcome(result, obligation), "unknown")
-                self.assertIn(f"process.fdm.{check}_guideline_only", self.codes(result))
+                self.assertEqual(self.outcome(self.judged(data, True), obligation), "pass")
 
     def test_off_a_guideline_fail_still_fails(self) -> None:
         result = self.judged(walled(1.0), False)
@@ -3035,14 +2990,23 @@ class GuidelineWithoutCalibrationTests(Checks):
         result = self.reamed(0.6, catalog=None)
         self.advisory(result, "process.reaming.allowance_unverified", self.REAM)
 
-    def test_a_sufficient_ream_allowance_is_graded_by_the_printer_flag_in_a_strict_service_class(self) -> None:
-        """The guideline value comes from the printer's profile, so the printer's calibration flag grades it: off, the
-        guideline passes in every class; on, a strict class needs a calibration or a waiver."""
-        for flag, expected in (("0", "pass"), ("1", "unknown")):
+    def test_a_sufficient_ream_allowance_after_printing_passes_in_a_strict_service_class_under_either_flag(self) -> None:
+        for flag in ("0", "1"):
             with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
                 result = self.reamed(0.6, catalog=SHIPPED, service="working_prototype")
-                self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
-                self.assertEqual(flag == "1", "process.reaming.allowance_guideline_only" in self.codes(result, self.REAM))
+                self.assertEqual(self.outcome(result, self.REAM), "pass", self.codes(result, self.REAM))
+
+    def test_a_conforming_working_prototype_bore_passes_on_the_guideline_under_either_flag(self) -> None:
+        """A calibration only tightens: with the flag on and no coupon, the applicable printer guideline settles the bore."""
+        documents = guided(service="working_prototype", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion("between 5.0 7.0")])]
+        data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
+                                                         "measured": 12})
+        for flag in ("0", "1"):
+            with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                result = self.assess(documents, geometry("TST-0101", data), catalog=SHIPPED)
+                self.assertEqual(self.outcome(result, GEOMETRY), "pass", self.codes(result, GEOMETRY))
 
 
 if __name__ == "__main__":

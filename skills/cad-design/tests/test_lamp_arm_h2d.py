@@ -234,11 +234,10 @@ class H2dCalibrationFlagTests(unittest.TestCase):
         result = self.judge(False, wall=0.3)
         self.assertEqual(result.outcome(f"process.fdm.geometry@{PRINTED[0]}/print")["outcome"], "fail")
 
-    def test_on_the_same_wall_is_unknown_as_a_guideline_only_value(self) -> None:
+    def test_on_the_same_wall_passes_on_the_guideline_value(self) -> None:
         result = self.judge(True)
         obligation = f"process.fdm.geometry@{PRINTED[0]}/print"
-        self.assertEqual(result.outcome(obligation)["outcome"], "unknown")
-        self.assertIn("process.fdm.wall_guideline_only", codes(result, obligation))
+        self.assertEqual(result.outcome(obligation)["outcome"], "pass")
 
     def test_off_the_unpublished_bed_contact_minimum_names_the_missing_guideline_and_asks_for_no_calibration(self) -> None:
         result = self.judge(False)
