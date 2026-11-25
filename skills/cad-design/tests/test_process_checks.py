@@ -2748,9 +2748,19 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(result, GEOMETRY), "pass")
 
     def test_a_bore_with_neither_a_calibration_nor_a_guideline_value_is_a_non_blocking_advisory(self) -> None:
-        result = self.bored("between 5.0 7.0", catalog=None)
-        self.advisory(result, "process.fdm.hole_uncalibrated", GEOMETRY)
+        result = self.bored("between 5.0 7.0", catalog=None)  # no catalog: the wall has no value either, so the obligation stays open
+        found = self.finding(result, "process.fdm.hole_uncalibrated")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
         self.assertIn("bore hole_diameter_deviation not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_small_pin_or_hole_with_neither_a_calibration_nor_a_guideline_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.assess(guided(), geometry("TST-0101", walled(3.0, pins=(1.0,), holes=(1.0,))))
+        for code, what in (("process.fdm.small_feature_uncalibrated", "small pins and bosses"),
+                           ("process.fdm.small_hole_uncalibrated", "small holes")):
+            with self.subTest(code=code):
+                found = self.finding(result, code)
+                self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+                self.assertIn(f"{what} not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
 
 
 if __name__ == "__main__":
