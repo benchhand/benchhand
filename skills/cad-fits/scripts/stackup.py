@@ -747,14 +747,19 @@ class _IntentStack:
         if producer is not None and producer.capability != profile_id:
             self.unknown("stack.record_mismatch", item, f"{item.id}: operation {producer.id} uses {producer.capability}, "
                                                        f"not {profile_id}", "cite the capability of the operation")
-        if not self.calibration and profile.process in GUIDELINES.GUIDELINE_PROCESSES:
-            # TODO(benchhand-tw6.24): no guideline states a manufacture deviation, so this stays unknown until the not-assessed grade.
+        resolution = None if (not self.calibration and profile.process in GUIDELINES.GUIDELINE_PROCESSES) else \
+            intent.capability_limit(profile, capability["characteristic"], material=material, on=self.on, feature=None)
+        if resolution is None or resolution.status != "calibrated":
+            guideline = self.guideline_deviation(profile, capability["characteristic"], material)
+            if guideline is not None:  # benchhand-c7q.30: calibration is never required; the guideline value governs
+                self.qualify_limits(intent, item, guideline.value, f"guideline {guideline.provenance[0].guideline}'s value",
+                                    {"guideline": guideline.provenance[0].guideline})
+                return
+        if resolution is None:
             self.unknown("stack.capability_unresolved", item,
                          f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no guideline "
                          f"value covers {capability['characteristic']}", GUIDELINES.COUPON_REMEDY)
             return
-        resolution = intent.capability_limit(profile, capability["characteristic"], material=material, on=self.on,
-                                             feature=None)
         if resolution.status != "calibrated":
             self.unknown("stack.capability_unresolved", item,
                          f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}: "
@@ -763,15 +768,26 @@ class _IntentStack:
                               "(test pieces, a capability study or supplier evidence)")
             return
         calibration = resolution.calibration
-        limits = calibration.limits
-        item.resolved = {"calibration": calibration.id, "limits": {"lower": limits.lower, "upper": limits.upper,
-                                                                    "value": limits.value, "units": limits.units}}
-        if capability["characteristic"].endswith("deviation") and limits.lower is not None:
+        self.qualify_limits(intent, item, calibration.limits, f"calibration {calibration.id}'s demonstrated deviation",
+                            {"calibration": calibration.id})
+
+    def guideline_deviation(self, profile: Any, characteristic: str, material: str) -> Any | None:
+        """The guideline interval (guidelines.Resolved) of `characteristic` for a printed profile, or None."""
+        if self.catalog is None or profile.process not in GUIDELINES.GUIDELINE_PROCESSES:
+            return None
+        found = GUIDELINES.resolve_guidelines(self.catalog, GUIDELINES.context_for(profile, self.record.materials.get(material)),
+                                              characteristic)
+        return found if found.status == "guideline" and found.operator == "between" else None
+
+    def qualify_limits(self, intent: Any, item: _Contributor, limits: Any, basis: str, resolved: dict[str, Any]) -> None:
+        """Record what qualified the contributor; limits tighter than a deviation interval stay unqualified."""
+        item.resolved = {**resolved, "limits": {"lower": limits.lower, "upper": limits.upper, "value": limits.value,
+                                                "units": limits.units}}
+        if item.capability["characteristic"].endswith("deviation") and limits.lower is not None:
             low, high = intent.convert(limits.lower, limits.units, "mm"), intent.convert(limits.upper, limits.units, "mm")
             if low < -item.minus - 1e-12 or high > item.plus + 1e-12:
                 self.unknown("stack.limits_unqualified", item,
-                             f"{item.id}'s limits -{item.minus}/+{item.plus} mm are tighter than calibration "
-                             f"{calibration.id}'s demonstrated deviation {low}..{high} mm",
+                             f"{item.id}'s limits -{item.minus}/+{item.plus} mm are tighter than {basis} {low}..{high} mm",
                              "use the demonstrated limits, or a finishing operation and inspection that achieve them")
 
     # ---------------------------------------------------------------- statistics
