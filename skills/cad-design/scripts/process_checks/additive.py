@@ -397,8 +397,7 @@ def _graded(ctx: Context, g: Geometry, judged: Mapping[str, tuple[Limit, dict[st
     """A support pass graded by every limit a face was judged against (Context.grade)."""
     outcome = PASS
     for name, (limit, value) in sorted(judged.items()):
-        verdict, coverage = ctx.grade(limit, coverage, findings, check="support", measured=value, prop=name,
-                                      units=value["units"], method=g.method("sampled down-facing normals"))
+        verdict, coverage = ctx.grade(limit, coverage)
         outcome = UNKNOWN if verdict == UNKNOWN else outcome
     return outcome, coverage
 
@@ -583,9 +582,7 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                               feature=sorted(feats)[0] if feats else None))
         return FAIL, f"{exempt[0]} wall below its calibrated minimum"
     if not cal.breaks(thickness, "mm"):
-        return ctx.grade(cal, f"thinnest wall {thickness:.3f} mm >= {cal.status} {need:g} mm{floor_only}", findings,
-                         check="wall", measured=length(thickness), prop="wall_thickness", units="mm",
-                         method=g.method("minimum-wall scan"))
+        return ctx.grade(cal, f"thinnest wall {thickness:.3f} mm >= {cal.status} {need:g} mm{floor_only}")
     if feature_cal is not None:
         if feature_cal.known:  # the wall meets its own calibration: structural walls are not separated by the scan
             findings.append(Draft(f"process.{kind}.wall_feature_class", "info", UNKNOWN, length(thickness),
@@ -646,8 +643,7 @@ def _smallest(ctx: Context, g: Geometry, findings: list[Draft], items: list[Mapp
                          plural, f"{plural} not calibrated")
     need = limit.threshold("mm")
     if not limit.breaks(diameter, "mm"):
-        return ctx.grade(limit, f"smallest {noun} {diameter:g} mm >= {limit.status} {need:g} mm", findings, check=check,
-                         measured=length(diameter), prop=prop, units="mm", method=g.method(method), feature=feature)
+        return ctx.grade(limit, f"smallest {noun} {diameter:g} mm >= {limit.status} {need:g} mm")
     findings.append(Draft(f"process.{kind}.{check}", "major", FAIL, length(diameter), limit.criterion(prop, "mm"),
                           g.method(method), "cylinder radius is exact",
                           f"the {noun} is below the {limit.status} {reliable.removeprefix('the ')}",
@@ -722,9 +718,7 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
         elif unsupported:  # no miss on the criteria judged, but another cannot be: open, never a pass
             parts.append((UNKNOWN, f"{feature} diameter criterion with operator {', '.join(unsupported)} is not judged"))
         else:
-            parts.append(ctx.settle(cal, f"{feature} within its limits with the {cal.status} {characteristic}", findings,
-                                    check="hole", measured={"lower": round(made[0], 6), "upper": round(made[1], 6), "units": "mm"},
-                                    criterion=cal.criterion(characteristic), method=g.method("bore recognition"), feature=feature))
+            parts.append(ctx.settle(cal, f"{feature} within its limits with the {cal.status} {characteristic}"))
     return parts
 
 
@@ -931,9 +925,7 @@ def _deviation(ctx: Context, g: Geometry, surface: Any, characteristic: str, ban
             return FAIL, f"{feature} elephant foot outside its tolerance"
     if unsupported:
         return UNKNOWN, f"{feature} {characteristic} criterion with operator {', '.join(unsupported)} is not judged"
-    return ctx.settle(cal, f"{feature} {characteristic} {cal.status} within {band[0]:g}..{band[1]:g} mm", findings, check="feature",
-                      measured={"lower": round(low, 6), "upper": round(high, 6), "units": "mm"}, criterion=criterion,
-                      method=g.method("feature locators"), feature=feature)
+    return ctx.settle(cal, f"{feature} {characteristic} {cal.status} within {band[0]:g}..{band[1]:g} mm")
 
 
 def _receiving(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[str, str]]:
@@ -1039,8 +1031,7 @@ def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[st
         return UNKNOWN, f"flatness criterion with operator {', '.join(sorted(set(unsupported)))} is not judged against calibrated warp"
     if not stated:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
         return UNKNOWN, f"no critical surface states a flatness limit to judge the {warp.status} warp against"
-    return ctx.settle(warp, "warp within the stated flatness limits for this footprint", findings, check="warp",
-                      measured=length(worst), criterion=warp.criterion("warp"), method=f"{warp.status} warp against the criterion")
+    return ctx.settle(warp, "warp within the stated flatness limits for this footprint")
 
 
 # --- resin ------------------------------------------------------------------------------------------------------

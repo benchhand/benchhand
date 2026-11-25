@@ -32,10 +32,6 @@ GUIDELINES_MODULE = "cad_record_guidelines"  # the shared name manufacturing_int
 COMMODITY_IDENTITY_PATH = INTENT_PATH.with_name("commodity_identity.py")
 COMMODITY_IDENTITY_MODULE = "cad_record_commodity_identity"  # the shared name cad-bom and cad-record load it under
 
-# The service classes whose checks take a guideline value as a pass (the user's rule). Every other class, unknown
-# included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
-GUIDELINE_PASS_CLASSES = frozenset({"appearance_concept", "fit_assembly", "functional_demo"})
-
 class HandlerError(RuntimeError):
     """A handler broke the packet contract: a failing finding linked to an obligation it did not fail, a stray outcome,
     or a missing or misplaced not_assessed reason."""
@@ -679,34 +675,12 @@ class Context:
         status = instead.status if not instead.known else "unknown"
         return Calibrated(status, characteristic, None, (*instead.reasons, *why))
 
-    def counts(self, status: str, profile: Any | None = None) -> bool:
-        """Whether a limit of `status` settles a check: a calibration always; a guideline value with the calibration flag
-        off for the profile it came from (this operation's unless `profile` names another), or in a service class of
-        GUIDELINE_PASS_CLASSES."""
-        return status == "calibrated" or (status == "guideline" and (self.service_class in GUIDELINE_PASS_CLASSES
-                                                                     or self.calibration_off(profile)))
-
-    def settle(self, cal: Calibrated, coverage: str, findings: list[Draft], *, check: str, measured: Mapping[str, Any],
-               criterion: Mapping[str, Any], method: str, feature: str | None = None,
-               profile: Any | None = None) -> tuple[str, str]:
-        """A sub-check that met `cal` (calibrated or guideline, from `profile` when not this operation's): PASS, noted
-        as uncalibrated for a guideline value, or UNKNOWN with the guideline-only finding where `counts` refuses it."""
-        if self.counts(cal.status, profile):
-            return PASS, _noted(coverage, cal.note) if cal.note else coverage
-        self._guideline_only(check, cal.characteristic, measured, criterion, method, feature, findings)
-        return UNKNOWN, _noted(coverage, "guideline value only")
-
-    def _guideline_only(self, check: str, characteristic: str, measured: Mapping[str, Any], criterion: Mapping[str, Any],
-                        method: str, feature: str | None, findings: list[Draft]) -> None:
-        kind = self.operation.kind
-        service = self.service_class
-        findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured, criterion, method,
-                              f"{characteristic} is a design-guideline value, not a calibration of this machine and material",
-                              f"a {service or 'unknown'} service class needs a calibrated or waived {characteristic}: "
-                              "a guideline value alone does not pass it",
-                              remedy=f"calibrate {characteristic} for this material and machine, or waive this finding "
-                                     "with an approved decision",
-                              recheck=[f"process.{kind}"], feature=feature))
+    @staticmethod
+    def settle(cal: Calibrated, coverage: str) -> tuple[str, str]:
+        """A sub-check that met `cal`: PASS under either calibration flag and in every service class, since an applicable
+        printer guideline settles a check and a calibration only tightens it (benchhand-c7q.30). A guideline value is
+        noted as uncalibrated."""
+        return PASS, _noted(coverage, cal.note) if cal.note else coverage
 
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""
@@ -751,17 +725,13 @@ class Context:
         fact = self.record.use_case.service_class
         return str(fact.value) if fact.known else None
 
-    def grade(self, limit: Limit, coverage: str, findings: list[Draft], *, check: str, measured: Mapping[str, Any],
-              prop: str, units: str, method: str, feature: str | None = None) -> tuple[str, str]:
-        """A sub-check that met `limit`: a pass for a calibrated limit, or a guideline value when the service class is one
-        of GUIDELINE_PASS_CLASSES. A guideline value in another class is unknown, with a finding a calibration or an
-        approved waiver settles. An unknown limit is unknown too (its callers report why)."""
-        if self.counts(limit.status):
-            return PASS, coverage
+    @staticmethod
+    def grade(limit: Limit, coverage: str) -> tuple[str, str]:
+        """A sub-check that met `limit`: PASS for a calibrated or guideline limit under either flag and in every service
+        class (a calibration only tightens). An unknown limit is UNKNOWN (its callers report why)."""
         if limit.status == "unknown":
             return UNKNOWN, _noted(coverage, "limit unknown")
-        self._guideline_only(check, limit.characteristic, measured, limit.criterion(prop, units), method, feature, findings)
-        return UNKNOWN, _noted(coverage, "guideline value only")
+        return PASS, coverage
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:
         """UNKNOWN or FAIL when the operation has no usable capability profile of its own kind."""
