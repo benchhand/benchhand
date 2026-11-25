@@ -223,7 +223,7 @@ def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = fr
     is never assessed, ranked or proposed a material, route or make_buy."""
     parts = []
     for entry in raw.get("parts") or ():
-        if entry.get("PN") in existing:
+        if isinstance(entry.get("PN"), str) and entry["PN"] in existing:
             continue
         steps = [Step(step.get("kind"), _open_choice(step.get("capability"), "capability"), step.get("provider"))
                  for step in entry.get("route") or ()]

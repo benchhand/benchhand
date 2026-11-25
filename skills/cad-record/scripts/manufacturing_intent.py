@@ -2238,7 +2238,8 @@ class _Reader:
                                                       proposal.get("reason"), entries, proposal.get("transparency"))
                 else:
                     self.ref("part", part.get("PN"), path, where)
-                if part.get("PN") not in existing:  # selection drops an existing-equipment entry unread
+                pn = part.get("PN")
+                if not (isinstance(pn, str) and pn in existing):  # selection drops an existing-equipment entry unread
                     self.candidate_part_profiles(part, path, where)
             if introduced and isinstance(ident, str):
                 proposed[ident] = types.MappingProxyType(introduced)
