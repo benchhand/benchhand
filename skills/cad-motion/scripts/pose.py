@@ -836,6 +836,7 @@ class StepAssembly:
 
     definitions: dict[str, Part]
     components: tuple[Component, ...]
+    unnumbered: tuple[str, ...] = ()  # leaf products whose name carries no PN, which the components leave out
 
 
 def component_name(part: Part, occurrence: Any) -> str | None:
@@ -1053,8 +1054,9 @@ def read_assembly_step(path: Path) -> StepAssembly:
     """Read an assembly STEP through XCAF: each PN's definition from its referred product label, and
     every component placing it, with its cumulative location and its product path from the root.
 
-    A leaf product whose name does not start with a PN is ignored. Two different products named
-    with one PN are refused: a PN is one definition.
+    A leaf product whose name does not start with a PN is no component; its name is listed under
+    `unnumbered`. An assembly product needs no PN. Two different products named with one PN are
+    refused: a PN is one definition.
     """
     from OCP.IFSelect import IFSelect_RetDone
     from OCP.STEPCAFControl import STEPCAFControl_Reader
@@ -1085,6 +1087,7 @@ def read_assembly_step(path: Path) -> StepAssembly:
     definitions: dict[str, Part] = {}
     labels: dict[str, Any] = {}
     components: list[Component] = []
+    unnumbered: list[str] = []
 
     def visit(label: Any, location: Any, trail: tuple[str, ...], instance: Any) -> None:
         if XCAFDoc_ShapeTool.IsAssembly_s(label):
@@ -1100,6 +1103,7 @@ def read_assembly_step(path: Path) -> StepAssembly:
         product = name(label)
         match = PN_PREFIX.match(product)
         if not match:
+            unnumbered.append(product or "<unnamed>")
             return
         pn = match.group(1)
         if pn not in definitions:
@@ -1116,7 +1120,7 @@ def read_assembly_step(path: Path) -> StepAssembly:
     tool.GetFreeShapes(roots)
     for index in range(1, roots.Length() + 1):
         visit(roots.Value(index), TopLoc_Location(), (), None)
-    return StepAssembly(definitions, tuple(components))
+    return StepAssembly(definitions, tuple(components), tuple(unnumbered))
 
 
 def load_definitions(hw: Path, parts_dir: Path, record_hw: Path | None = None) -> dict[str, Part]:

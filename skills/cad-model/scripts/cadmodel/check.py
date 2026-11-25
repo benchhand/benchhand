@@ -248,13 +248,13 @@ def _glb_occurrence_nodes(gltf: Mapping[str, Any],
 def product_subset(expected: Mapping[str, str], existing: set[str], scene: Iterable[Any],
                    scene_definitions: Mapping[str, tuple[str, float]], shipped: Iterable[Any],
                    shipped_definitions: Mapping[str, tuple[str, float]], text_pns: set[str], gltf: Mapping[str, Any],
-                   listed: Iterable[str]) -> dict[str, Any]:
+                   listed: Iterable[str], *, unnumbered: Iterable[str] = ()) -> dict[str, Any]:
     """product.step (`shipped` components, `shipped_definitions` PN -> (name, volume), `text_pns` the PNs its PRODUCT
     entities name) and product.glb (`gltf`) against `expected`, the delivered occurrences of the in-context scene
     (`scene` components, `scene_definitions`). Components match by occurrence name, never by tree path. Each expected
     occurrence ships once, with the PN, definition and placement the scene gives it, as exactly one reachable GLB node
-    with a mesh; nothing else ships, no name leads with an `existing` PN, and the manifest's `listed` occurrences are
-    the expected ones."""
+    with a mesh; nothing else ships (no `unnumbered` leaf product either), no name leads with an `existing` PN, and the
+    manifest's `listed` occurrences are the expected ones."""
     pose = load_pose()
     by_id = {(c.occurrence or c.pn): c for c in scene}
     components = list(shipped)
@@ -284,7 +284,7 @@ def product_subset(expected: Mapping[str, str], existing: set[str], scene: Itera
               "existing_in_glb": sorted({pn for name in names for pn in existing if name.startswith(pn)}),
               "glb_missing_nodes": sorted(oid for oid, meshes in nodes.items() if not any(meshes)),
               "glb_duplicate_nodes": sorted(oid for oid, meshes in nodes.items() if len(meshes) > 1),
-              "glb_extra_nodes": sorted(extra), "glb_malformed": malformed}
+              "glb_extra_nodes": sorted(extra), "glb_malformed": malformed, "unnumbered_leaves": sorted(unnumbered)}
     ok = all(not value for key, value in result.items() if key != "occurrences") and all(
         row["ok"] for row in found.values())
     return {"status": _status(ok), "blocking": True, **result}
@@ -308,7 +308,8 @@ def product_exports(folder: Path, manifest: Mapping[str, Any], step: Any,
 
     return product_subset(delivered_occurrences(step.components, records), existing, step.components,
                           facts(step.definitions), shipped.components, facts(shipped.definitions),
-                          sourcing.step_pns(text), mesh.gltf_json(folder / product["glb"]), product["occurrences"])
+                          sourcing.step_pns(text), mesh.gltf_json(folder / product["glb"]), product["occurrences"],
+                          unnumbered=shipped.unnumbered)
 
 
 def brep_validity(parts: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
