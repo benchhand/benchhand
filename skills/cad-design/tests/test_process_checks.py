@@ -2873,6 +2873,18 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(result)],
                          [("surface_roughness", "unknown")])
 
+    def test_size_semantics_come_from_a_declared_table_and_a_length_unit_not_a_suffix(self) -> None:
+        """roughness_height is a roughness in mm, not a size: no band check. Declared sizes in a length unit get one."""
+        rough = self.critical("datum", criteria=[FX.criterion("roughness_height", "between", [0.0032, 0.0063], "mm")])
+        self.assertEqual(rough.by_code("process.fdm.criterion_band"), [])
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(rough)], [("roughness_height", "unknown")])
+        for prop in ("seat_depth", "tongue_width"):
+            with self.subTest(prop=prop):
+                narrow = self.critical("datum", criteria=[FX.criterion(prop, "between", [9.9, 10.1], "mm")])
+                self.assertEqual(self.finding(narrow, "process.fdm.criterion_band")["criterion"]["property"], prop)
+        angular = self.critical("datum", criteria=[FX.criterion("thickness", "between", [1.0, 1.1], "deg")])
+        self.assertEqual(angular.by_code("process.fdm.criterion_band"), [])
+
     def test_a_flank_with_neither_a_calibration_nor_a_guideline_profile_deviation_is_a_non_blocking_advisory(self) -> None:
         result = self.critical("flank", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
         found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
