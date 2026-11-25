@@ -655,9 +655,17 @@ class Context:
         guideline), else unknown with every reason. Calibration is never required: a guideline value governs until one
         exists (benchhand-c7q.30)."""
         cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature)
-        context = self.guideline_context(profile)
-        if cal.known or context is None:
+        if cal.known:
             return cal
+        return self.guideline_value(characteristic, cal, profile=profile, orientation=orientation, feature=feature, size=size)
+
+    def guideline_value(self, characteristic: str, instead: Calibrated, *, profile: Any | None = None,
+                        orientation: str | None = None, feature: str | None = None, size: float | None = None) -> Calibrated:
+        """The guideline interval of `characteristic` (status guideline) in place of `instead`, a calibration that is
+        missing or that the check rejected; else `instead` with the guideline's reasons added."""
+        context = self.guideline_context(profile)
+        if context is None:
+            return instead
         found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation, feature=feature,
                                                 size=size)
         self.consulted.append(found)
@@ -667,7 +675,8 @@ class Context:
             return Calibrated("guideline", characteristic, found.value, (), None, found)
         why = found.reasons or ((f"the guideline {characteristic} limit is {found.operator}, not an interval",)
                                 if found.status == "guideline" else (f"no guideline states {characteristic}",))
-        return Calibrated(cal.status, characteristic, None, (*cal.reasons, *why))
+        status = instead.status if not instead.known else "unknown"
+        return Calibrated(status, characteristic, None, (*instead.reasons, *why))
 
     def counts(self, status: str, profile: Any | None = None) -> bool:
         """Whether a limit of `status` settles a check: a calibration always; a guideline value with the calibration flag

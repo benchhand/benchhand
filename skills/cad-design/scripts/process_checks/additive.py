@@ -909,27 +909,35 @@ def thermal_distortion(ctx: Context) -> Result:
     bed = g.facts.get("bed") or {}
     extent = bed.get("contact_extent")  # exact contact-face extents, apart from the sampled stability hull
     footprint = max(extent["max"][i] - extent["min"][i] for i in (0, 1)) if extent else 0.0
-    warp = ctx.governing("warp", size=footprint)
-    if not warp.known:
+    warp: Calibrated | None = ctx.governing("warp", size=footprint)
+    size = warp.calibration.scope.get("size") if warp is not None and warp.calibration is not None else None
+    covered = ctx.mi.quantity(size).to("mm").bounds[1] if isinstance(size, Mapping) else None
+    if warp is not None and covered is not None and footprint > covered + 1e-9:
+        # a coupon smaller than the footprint is rejected first, so an applicable guideline value still governs
+        scope = warp.criterion("footprint", "<=", covered, "mm")
+        rejected = Calibrated("unknown", "warp", None,
+                              (f"warp calibration {warp.calibration.id} covers footprints up to {covered:g} mm only",))
+        warp = ctx.guideline_value("warp", rejected, size=footprint)
+        note = Draft(f"process.{kind}.warp_scope", "info" if warp.known else "minor", UNKNOWN, length(footprint), scope,
+                     g.method("bed footprint"), "the calibration covers smaller footprints only",
+                     "warp of this footprint is outside the calibrated scope"
+                     + ("; the guideline value governs" if warp.known else ""),
+                     remedy=ctx.remedy("calibrate warp at this footprint size"), recheck=[f"process.{kind}.thermal_distortion"],
+                     link=not warp.known)
+        if warp.known:
+            findings.append(note)
+        else:
+            parts.append(_no_basis(ctx, findings, note, "warp", "footprint beyond the warp calibration",
+                                   why="the warp calibration covers smaller footprints only"))
+            warp = None
+    if warp is not None and not warp.known:
         parts.append(_no_basis(ctx, findings, Draft(
             f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint), warp.criterion("warp"),
             g.method("bed footprint"), "; ".join(warp.reasons), "warp of the bed footprint is unknown",
             remedy=ctx.remedy("calibrate warp for this material, enclosure and footprint size"),
             recheck=[f"process.{kind}.thermal_distortion"]), "warp", "warp not calibrated"))
-    else:
-        size = warp.calibration.scope.get("size") if warp.calibration is not None else None  # a guideline has no size scope
-        covered = None
-        if isinstance(size, Mapping):
-            covered = ctx.mi.quantity(size).to("mm").bounds[1]
-        if covered is not None and footprint > covered + 1e-9:
-            parts.append(_no_basis(ctx, findings, Draft(
-                f"process.{kind}.warp_scope", "minor", UNKNOWN, length(footprint),
-                warp.criterion("footprint", "<=", covered, "mm"), g.method("bed footprint"),
-                "the calibration covers smaller footprints only", "warp of this footprint is outside the calibrated scope",
-                remedy=ctx.remedy("calibrate warp at this footprint size"), recheck=[f"process.{kind}.thermal_distortion"]),
-                "warp", "footprint beyond the warp calibration", why="the warp calibration covers smaller footprints only"))
-        else:
-            parts.append(_flatness(ctx, warp, findings))
+    elif warp is not None:
+        parts.append(_flatness(ctx, warp, findings))
     return combine(method, parts, findings, uncertainty="calibrated scatter; part-specific thermal history is not simulated",
                    reason=NO_BASIS)
 
