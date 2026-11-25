@@ -364,13 +364,15 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
         return regime_text(regime, text)
 
     operation, limit = op.operation, op.limit
+    # existing equipment has no item: the note names it by its product name
+    into = f"item {op.into_item}" if op.into_item is not None else f"{op.into_name} (existing)"
     until = acceptance_text(operation.acceptance, operation.features, measured, regime)
     data = None
     if operation.kind == "press_fit":
-        action = words(f"Press item {op.part_item} into item {op.into_item}")
+        action = words(f"Press item {op.part_item} into {into}")
         data = words("fit ") + str(limit["fit"])
     elif operation.kind == "heat_set":
-        action = words(f"Heat-set item {op.part_item} into item {op.into_item}")
+        action = words(f"Heat-set item {op.part_item} into {into}")
         lower, upper = limit.get("hole_tol", (0.0, 0.0))
         tolerance = f" ±{_number(upper)}" if lower == -upper and upper else (
             f" {lower:+g}/{upper:+g}" if lower or upper else "")
@@ -378,14 +380,14 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
         if "depth_min" in limit:
             data += words(f", depth min {_number(limit['depth_min'])}")
     elif operation.kind == "retaining_ring":
-        action = words(f"Fit ring item {op.part_item} onto item {op.into_item}")
+        action = words(f"Fit ring item {op.part_item} onto {into}")
         data = str(limit["ring"])
         if "groove_d" in limit and "groove_w" in limit:
             data += words(", groove ") + f"⌀{limit['groove_d']} x {limit['groove_w']}"
     else:
-        verbs = {"insert": "Insert item {p} into item {i}", "fasten": "Fasten item {p} into item {i}",
-                 "join": "Join item {p} to item {i}", "close": "Close item {i} with item {p}"}
-        action = words(verbs[operation.kind].format(p=op.part_item, i=op.into_item))
+        verbs = {"insert": "Insert item {p} into {i}", "fasten": "Fasten item {p} into {i}",
+                 "join": "Join item {p} to {i}", "close": "Close {i} with item {p}"}
+        action = words(verbs[operation.kind].format(p=op.part_item, i=into))
     text = action
     if op.direction is not None:
         text += words(" along ") + direction_text(op.direction)

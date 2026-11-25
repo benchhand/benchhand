@@ -81,6 +81,39 @@ def make_view(doc, page, spec, objects, scale, position, page_height):
     return view
 
 
+def make_reference(doc, page, spec, objects, scale, position, page_height):
+    """The view's existing equipment (spec reference) in a view of its own at the same direction, scale and place:
+    hidden-line removal leaves it out of the product's view, so it never occludes a delivered part. None without any."""
+    if not spec.get("reference"):
+        return None
+    return make_view(doc, page, {**spec, "id": spec["id"] + "-reference", "occurrences": spec["reference"]},
+                     objects, scale, position, page_height)
+
+
+def reference_layer(view, reference, objects, spec):
+    """The reference view's visible paths, the shift that puts them in the product view's local frame, and the bounds
+    the product view takes with them. TechDraw centres each view on its own sources, so the shift is where one model
+    point lands in the product view less where it lands in the reference view."""
+    geometry = freecad_views.serialize_view(reference, view_id=spec["id"], role="reference")
+    point = objects[spec["reference"][0]].Shape.BoundBox.Center
+    here = freecad_views.project_anchor(view, (point.x, point.y, point.z))
+    there = freecad_views.project_anchor(reference, (point.x, point.y, point.z))
+    dx, dy = here[0] - there[0], here[1] - there[1]
+    x0, y0, x1, y1 = geometry.bounds
+    return {"paths": list(geometry.visible), "offset": [dx, dy], "bounds": [x0 + dx, y0 + dy, x1 + dx, y1 + dy]}
+
+
+def with_reference(geometry, layer):
+    """A serialised view with its reference layer: the paths, their shift and the bounds of both."""
+    data = geometry.to_dict()
+    if layer is None:
+        return data
+    x0, y0, x1, y1 = data["bounds"]
+    rx0, ry0, rx1, ry1 = layer["bounds"]
+    return {**data, "reference": layer["paths"], "reference_offset": layer["offset"],
+            "bounds": [min(x0, rx0), min(y0, ry0), max(x1, rx1), max(y1, ry1)]}
+
+
 def new_page(doc, name, template_path):
     page = doc.addObject("TechDraw::DrawPage", name)
     template = doc.addObject("TechDraw::DrawSVGTemplate", name + "_template")
@@ -185,11 +218,13 @@ def measure(doc, objects_by_scene):
         for spec in page_spec["views"]:
             objects = objects_by_scene[spec["scene"]]
             views.append((page_spec["sheet"], spec, objects,
-                          make_view(doc, page, spec, objects, 1.0, (100.0, 100.0), height)))
+                          make_view(doc, page, spec, objects, 1.0, (100.0, 100.0), height),
+                          make_reference(doc, page, spec, objects, 1.0, (100.0, 100.0), height)))
     doc.recompute()
     result = []
-    for sheet, spec, objects, view in views:
+    for sheet, spec, objects, view, reference in views:
         geometry = freecad_views.serialize_view(view, view_id=spec["id"], role="assembly")
+        layer = None if reference is None else reference_layer(view, reference, objects, spec)
         direction = vector(spec["direction"])
         direction.normalize()
         x_direction = vector(spec["x_direction"])
@@ -208,7 +243,7 @@ def measure(doc, objects_by_scene):
                     anchors[oid] = {"point": [point.x, point.y, point.z],
                                     "local": [x - geometry.centre_mm[0], y - geometry.centre_mm[1]]}
                     break
-        result.append({"sheet": sheet, "view": spec["id"], "bounds": list(geometry.bounds), "anchors": anchors,
+        result.append({"sheet": sheet, "view": spec["id"], "bounds": with_reference(geometry, layer)["bounds"], "anchors": anchors,
                        "extents": {oid: extent(shapes[oid], x_direction, up) for oid in spec["anchors"]}})
     measured = {spec["id"]: acceptance(objects_by_scene["assembled"], spec) for spec in JOB.get("acceptance", [])}
     return {"status": "pass", "mode": "measure", "views": result, "acceptance": measured,
@@ -219,13 +254,17 @@ def draw(doc, objects_by_scene):
     result = []
     for page_spec in JOB["pages"]:
         page, height = new_page(doc, f"Sheet{page_spec['sheet']}", page_spec["template"])
-        views = [(spec, make_view(doc, page, spec, objects_by_scene[spec["scene"]], spec["scale"], spec["position"],
-                                  height)) for spec in page_spec["views"]]
+        views = []
+        for spec in page_spec["views"]:
+            objects = objects_by_scene[spec["scene"]]
+            views.append((spec, objects, make_view(doc, page, spec, objects, spec["scale"], spec["position"], height),
+                          make_reference(doc, page, spec, objects, spec["scale"], spec["position"], height)))
         doc.recompute()
-        for spec, view in views:
+        for spec, objects, view, reference in views:
             geometry = freecad_views.serialize_view(view, view_id=spec["id"], role="assembly")
+            layer = None if reference is None else reference_layer(view, reference, objects, spec)
             anchors = {oid: list(freecad_views.project_anchor(view, point)) for oid, point in spec["anchors"].items()}
-            result.append({"sheet": page_spec["sheet"], "view": spec["id"], "geometry": geometry.to_dict(),
+            result.append({"sheet": page_spec["sheet"], "view": spec["id"], "geometry": with_reference(geometry, layer),
                            "anchors": anchors})
     return {"status": "pass", "mode": "draw", "views": result, "freecad": list(App.Version()[:4])}
 
