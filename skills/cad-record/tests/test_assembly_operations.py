@@ -629,6 +629,13 @@ class SubBuildTests(unittest.TestCase):
                                          self.inventory())
                 self.assertEqual([f["code"] for f in report.findings], ["assembly.cure_unsourced"])
 
+    def test_an_unsourced_cure_time_is_not_compared_with_the_hold(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        unsourced = {**cure, "duration": sourced(1, "h"),
+                     "cure": {"time": sourced(24, "h", [{"kind": "user", "reference": "the user", "origin": "TST"}])}}
+        report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, unsourced, install]}), self.inventory())
+        self.assertEqual([f["code"] for f in report.findings], ["assembly.cure_unsourced"])
+
     def test_a_hold_shorter_than_the_cure_time_fails(self) -> None:
         bond_a, bond_b, cure, install = self.items()
         short = {**cure, "duration": sourced(90, "min"), "cure": {"time": sourced(1, "d")}}
