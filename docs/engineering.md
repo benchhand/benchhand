@@ -137,7 +137,12 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
   - `product.step` puts each occurrence under a `made` or `purchased` group product (`pose.write_assembly_step` `groups`), and `product.glb` takes those group nodes from it.
   - `mesh.group_glb` puts the occurrence nodes of `assembly.glb` under `made`, `purchased` and `existing` nodes. It adds the group nodes at the end, so the part-map indices hold.
   - `assembly.step` keeps its flat tree. Its readers build occurrence paths from that tree (`pose.read_assembly_step`). Bead benchhand-pcy.4 groups it once they resolve occurrences by name.
-- cad-model `check.py` `product_exports` matches components by occurrence name, never by tree path. It fails when `product.step` differs from the delivered occurrences of `assembly.step` in placement or definition name. It also fails when a product name or `product.glb` node starts with an existing PN. It compares each definition by name and read-back volume.
+- cad-model `check.py` `product_exports`:
+  - The frozen part records decide which occurrences of `assembly.step` ship (`delivered_occurrences`, through `sourcing.delivered`). The manifest's `product.occurrences` must list the same set; the check never takes it on trust.
+  - `product_subset` matches components by occurrence name, never by tree path. Each delivered occurrence ships once, with the PN, definition (name and read-back volume) and placement that `assembly.step` gives it.
+  - In `product.glb`, each delivered occurrence has exactly one node reachable from the scene with a mesh in its subtree. Any other reachable mesh node fails.
+  - A STEP product id or name, or a GLB node name, that starts with an existing PN fails.
+  - A failure fails every `cad.readback` outcome of the published packet, so the evidence that `release.py` reads carries it.
 - cad-bom `bom.py` writes no row for existing equipment and never reports it in `missing_in_step`. Its children merge like a phantom's. `release.py` `check_bom` refuses a BOM row for it.
 - `release.py`:
   - It ships `definition/product.step`.
