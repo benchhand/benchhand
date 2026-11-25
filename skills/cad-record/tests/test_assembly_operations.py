@@ -514,6 +514,21 @@ class SubBuildTests(unittest.TestCase):
                 self.assertIn(code, {f["code"] for f in report.findings})
                 self.assertEqual(report.outcome(f"assembly.order@op:{op_id}")["outcome"], "fail")
 
+    def test_an_occurrence_named_like_a_sub_build_is_not_its_install(self) -> None:
+        record = {"occurrences": [*({"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")),
+                                  {"id": "hanger", "PN": "TST-0105"}],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0]], "occurrences": ["@hanger"]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1]],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        inventory = assembly_data.normalize(record, {self.MAGNET: "part_local", "TST-0105": "part_local"})
+        pin = {"id": "insert-pin", "kind": "insert", "part": "@hanger", "into": "TST-0101", "direction": [0, 0, -1],
+               "acceptance": {"kind": "engaged", "features": ["pin_bore"]}}
+        bond_a, bond_b, cure, install = self.items()
+        missing = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, cure, pin]}), inventory)
+        self.assertEqual([f["code"] for f in missing.findings], ["assembly.sub_build_not_installed"])
+        complete = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, cure, pin, install]}), inventory)
+        self.assertEqual(complete.findings, ())
+
     def test_a_mistyped_bench_receiver_leaves_its_step_unknown(self) -> None:
         bond_a, bond_b, cure, install = self.items()
         typo = {**bond_a, "into": "TST-9999"}

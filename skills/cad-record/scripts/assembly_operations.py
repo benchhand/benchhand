@@ -601,10 +601,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                         "uncertainty": operations.unknown},), ())
     state = sequence(operations, inventory, existing)
     position = {op.id: op.index for op in operations.items}
-    installer: dict[str, list[AssemblyOperation]] = {}
-    for step in state.steps:
-        if step.operation.installs:
-            installer.setdefault(step.part, []).append(step.operation)
+    installer, transfers = _installers(state)
     outcomes, findings = [], []
     for step in state.steps:
         op = step.operation
@@ -633,7 +630,8 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                 fail("assembly.order_impossible", f"{op.id} comes before its predecessor {predecessor} in the sequence",
                      f"{op.id} cannot be carried out in the declared sequence",
                      f"move {op.id} after {predecessor}, or correct its predecessors")
-        enclosed = [ref for ref in (step.part, step.into) if ref is not None and ref in step.closed
+        reached = (step.into,) if op.kind == "install" else (step.part, step.into)  # an install's part is a unit
+        enclosed = [ref for ref in reached if ref is not None and ref in step.closed
                     and not (op.kind == "close" and ref == step.into)]
         for ref in enclosed:
             closer = step.closed[ref]
@@ -652,7 +650,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                  (f" (installed later by {', '.join(later)})" if later else " (removed earlier)"),
                  "the receiving part is missing at this step: the declared order is impossible",
                  f"install {op.into} before {op.id}")
-        if op.installs and step.part in step.present:
+        if op.installs and op.kind != "install" and step.part in step.present:
             fail("assembly.installed_twice", f"{op.id} installs {op.part}, which is already in place",
                  "the sequence installs the same occurrence twice", "remove the duplicate step, or disassemble first",
                  severity="major")
@@ -666,7 +664,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                     if not later:  # an enclosed part installed later fails at that later step instead
                         fail("assembly.part_absent", f"{op.id} encloses {ref}, which is not in place", f"{ref} is missing "
                              "inside the closed assembly", f"install {ref} before {op.id}")
-        _sub_build_rules(operations, state, step, installer, fail)
+        _sub_build_rules(operations, state, step, transfers, fail)
         findings.extend(mine)
         row: dict[str, Any] = {"obligation": obligation, "outcome": "fail" if mine else "pass", "level": "process_planned",
                                "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
@@ -688,6 +686,20 @@ def _build_name(build: str | None) -> str:
     return "the main build" if build is None else f"sub-build {build}"
 
 
+def _installers(state: AssemblyState) -> tuple[dict[str, list[AssemblyOperation]], dict[str, list[AssemblyOperation]]]:
+    """(occurrence -> the operations that install it, sub-build id -> the install operations that transfer it), in
+    record order. Kept apart, so an occurrence whose id is a sub-build id is never taken for the unit."""
+    occurrences: dict[str, list[AssemblyOperation]] = {}
+    transfers: dict[str, list[AssemblyOperation]] = {}
+    for step in state.steps:
+        op = step.operation
+        if op.kind == "install":
+            transfers.setdefault(step.part, []).append(op)
+        elif op.installs:
+            occurrences.setdefault(step.part, []).append(op)
+    return occurrences, transfers
+
+
 def _claimed(step: Step) -> list[tuple[str | None, str | None]]:
     """(resolved, written) references a step claims for its build: all of them in a sub-build, the installed
     part in the main build."""
@@ -697,7 +709,7 @@ def _claimed(step: Step) -> list[tuple[str | None, str | None]]:
 
 
 def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
-                     installer: Mapping[str, list[AssemblyOperation]], fail: Callable[..., None]) -> None:
+                     transfers: Mapping[str, list[AssemblyOperation]], fail: Callable[..., None]) -> None:
     """An install names a sub-build that exists, is finished and is installed once; an occurrence belongs to one
     build (failed at the first step of each later build that claims it); a sub-build is installed; a hold's
     cure is sourced and long enough."""
@@ -716,7 +728,7 @@ def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
                  f"{op.id} installs sub-build {op.part} before its own step(s) {', '.join(pending)}",
                  f"{op.part} goes into the assembly unfinished: its later bench steps cannot be done in place",
                  f"move {op.id} after {pending[-1]}")
-        if any(other.index < op.index for other in installer.get(step.part, ())):
+        if any(other.index < op.index for other in transfers.get(step.part, ())):
             fail("assembly.installed_twice", f"{op.id} installs sub-build {op.part}, which is already in place",
                  "the sequence installs the same unit twice", "remove the duplicate install step", severity="major")
         return
@@ -730,7 +742,7 @@ def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
              f"{_build_name(owners[0])} also uses", f"one physical part cannot be built into {len(owners)} units",
              f"keep {written} in one build, or add an occurrence for the other")
     unit = state.sub_builds.get(step.build) if step.build is not None else None
-    if unit is not None and unit.last == op.index and step.build not in installer:
+    if unit is not None and unit.last == op.index and step.build not in transfers:
         fail("assembly.sub_build_not_installed", f"no install operation puts sub-build {step.build} into the assembly",
              f"the parts of {step.build} are built on the bench but never reach the assembly",
              f"add an install operation with part {step.build} after {op.id}")
