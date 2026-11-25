@@ -447,8 +447,8 @@ def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict
     problems: dict[tuple[str, int], str] = {}
     digests: dict[str, str] = {}
     for request in requests:
-        for number, tool in enumerate(request.tools):
-            cited = tool.envelope_artifact if tool.declared else None
+        for reach in request.reaches:
+            number, tool, cited = reach.index, reach.tool, reach.artifact
             if cited is None:
                 continue
             artifact, sha = cited
