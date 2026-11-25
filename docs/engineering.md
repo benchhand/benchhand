@@ -186,7 +186,7 @@ The module:
 
 The assembly access check never asks the user to model a tool or a hand.
 
-- Owner: `skills/cad-record/scripts/tool_envelopes.py`, stdlib only. It classifies each `tools` or `tool_access` entry as hand, observe, bench, tool or note, and returns the shipped envelope of hand work and of sized common tools. `assembly_operations.py` `access_plan` turns the entries into `reaches` and `notes`. `skills/cad-motion/scripts/access.py` builds each envelope as coaxial cylinders in the operated part's frame. The tip sits on the part's box face that the tool arrives from.
+- Owner: `skills/cad-record/scripts/tool_envelopes.py`, stdlib only. It classifies each `tools` or `tool_access` entry as hand, observe, bench, tool or note, and returns the shipped envelope of hand work and of sized common tools. `assembly_operations.py` `access_plan` turns the entries into `reaches` and `notes`. `skills/cad-motion/scripts/access.py` builds each envelope as coaxial cylinders in the operated part's frame, with the tip at the entry's `tool_access` `contact` point.
 - Sources, copied into the tables with their table numbers:
   - hex keys: ISO 2936:2014 Table 1
   - Phillips PH1 to PH3: ISO 8764-1:2004 blade diameter and ISO 8764-2:2004 Table 1 series B length
@@ -197,7 +197,9 @@ The assembly access check never asks the user to model a tool or a hand.
 - Values that no standard gives, each named in the envelope's sources:
   - Phillips handle diameter and length come from the FACOM ISORYL AP catalogue (supplier).
   - Wrench head thickness is an estimate, 0.4 s + 2 mm.
-- A cited STEP solid in `tool_access` overrides the shipped envelope. A name that matches no envelope is an instruction note in the outcome's uncertainty.
+- Without a contact point, a tool that drives the part it installs or removes has its tip on the centre of that part's box face it comes from. A tool on a part that does not move (adjust, inspect) needs the contact point, else the operation is unknown: the box centre is not where an off-centre feature is.
+- An entry is read as one tool phrase: the whole entry names the tool and its size, and a socket takes the drive it names. Hex, Allen and Inbus keys are one tool. A size or a tool word inside other text makes no tool.
+- A cited STEP solid in `tool_access` overrides the shipped envelope. A `tools` name that a `tool_access` entry also names is checked once, as that entry. A name that matches no envelope is an instruction note in the outcome's uncertainty.
 - Changes to `tool_envelopes.py` or `assembly_operations.py` change the access policy digest (`access.py` `policy_digest`), so the next run does not reuse a published packet.
 
 ## Feature flags
