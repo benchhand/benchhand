@@ -135,6 +135,7 @@ ALLOWED = [
     Allow('skills/cad-record/tests/test_build_guide.py', 'BuildGuide.setUp', 'docs', HW),
     Allow('skills/cad-record/tests/test_build_guide.py', 'BuildGuide.test_a_hand_edited_generated_document_is_kept_unless_replace', 'docs', HW),
     Allow('skills/cad-record/tests/test_build_guide.py', 'BuildGuide.test_a_hand_edited_generated_document_is_kept_unless_replace', 'hw/docs/okh.toml was edited after build_guide.py generated it', HW),
+    Allow('skills/cad-record/tests/test_build_guide.py', 'BuildGuide.test_a_hold_quantity_that_does_not_parse_is_a_guide_input_error', 'index.md', HW),
     Allow('skills/cad-record/tests/test_build_guide.py', 'BuildGuide.test_a_partial_license_prints_human_owned_never_none', 'din-spec-3105-1-checklist.md', HW),
     Allow('skills/cad-record/tests/test_build_guide.py', 'BuildGuide.test_canonical_docs_output_generates_okh_and_din_from_record', 'din-spec-3105-1-checklist.md', HW),
     Allow('skills/cad-record/tests/test_build_guide.py', 'BuildGuide.test_canonical_docs_output_generates_okh_and_din_from_record', 'docs', HW),
