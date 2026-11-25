@@ -42,10 +42,16 @@ receiving part's frame, installed orientation kept), from `start` through `via` 
 pose, whose last leg must arrive along `direction`. Without one the part travels the default straight
 line along `direction`, and access reports that default.
 
-Tools. A plain `tools` entry is a display name: its reach and envelope stay unknown. A
-`tool_access` entry may name a capability profile, an approach (receiver-local, like `direction`),
-a reach and an envelope; an envelope fact whose source carries an artifact (a STEP solid of the tool
-and holder in the operated part's model frame at the engaged pose) is what a geometric check uses.
+Tools. Every `tools` and `tool_access` entry keeps its text for the instructions and is classified
+(tool_envelopes.py): hand work reaches with a shipped standard hand envelope; visual, timed and bench
+entries reach nothing; a common tool named by type and size (a "3 mm hex key", a "PH2 screwdriver")
+reaches with a parametric envelope from its cited standard; anything else is an instruction note, never
+an access obligation. A `tool_access` entry may name a capability profile, an approach (receiver-local,
+like `direction`), a reach and an envelope; an envelope fact whose source carries an artifact (a STEP
+solid of the tool and holder in the operated part's model frame at the engaged pose) overrides the
+shipped envelope, and is how a special tool is checked. An entry without an approach approaches along
+the operation's direction. An operation that moves no part and that nothing reaches has no access to
+check: its access is not applicable.
 
 Joints. `check_joints` judges the joint evidence of fastening, insert, press-fit, heat-set,
 retaining-ring and joining operations, one `assembly.joint@op:<id>` outcome each: retention needs a
@@ -68,6 +74,20 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeGuard
+
+
+def _load_module(name: str, path: Path) -> Any:
+    """A standard-library sibling module loaded once by path and registered in sys.modules."""
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{path.name} not found at {path}")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+tool_envelopes = _load_module("cad_record_tool_envelopes", Path(__file__).resolve().parent / "tool_envelopes.py")
 
 Vec = tuple[float, float, float]
 
@@ -889,7 +909,9 @@ class AccessRequest:
     occurrence's model frame, the tools, and the occurrences present at that state as obstacles (the
     moving part and its receiver excluded for the part path; the operated part excluded for the tools).
     `path` is the declared insertion path (receiver frame, see `_path`), None for the default straight
-    line along `direction`. `unknown` lists what keeps reach unknown. The obstacles are the parts of the
+    line along `direction`. `reaches` are the entries that reach the operated part with an envelope,
+    `notes` the entries that stay instruction notes, `unknown` what keeps access unknown, and
+    `applicable` False when the operation moves no part and nothing reaches it. The obstacles are the parts of the
     operation's own build: a sub-build step sees only its sub-build. An install moves the sub-build as one
     unit: `moving` is its base and `unit` all its members, none of which is an obstacle to the others."""
 
@@ -907,6 +929,48 @@ class AccessRequest:
     unit: frozenset[str] = frozenset()
     not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold); None when access applies
     advisory: tuple[str, ...] = ()  # names of tools access cannot measure and never blocks on (see hold_reach)
+    reaches: tuple[Reach, ...] = ()
+    notes: tuple[str, ...] = ()
+    applicable: bool = True
+
+
+@dataclass(frozen=True)
+class Reach:
+    """One entry that reaches the operated part: `index` in the operation's tools, its `role` (hand or tool),
+    the envelope's `source` (standard: the shipped `envelope`; step: the cited solid `artifact`, path below
+    hw/ and sha256), and its `approach` (receiver frame), the operation's direction when `approach_default`."""
+
+    index: int
+    tool: Tool
+    role: str
+    source: str
+    approach: Vec
+    approach_default: bool = False
+    envelope: Any = None  # tool_envelopes.Envelope when source is standard
+    artifact: tuple[str, str] | None = None
+
+    @property
+    def label(self) -> str:
+        return self.tool.name if self.envelope is None else f"{self.tool.name} ({self.envelope.designation})"
+
+
+def _reach(op: AssemblyOperation, index: int, tool: Tool, unknown: list[str], notes: list[str]) -> Reach | None:
+    """The reach of one tool entry; an entry that reaches nothing adds its note, if any, and gives None."""
+    entry = tool_envelopes.classify(tool.name)
+    artifact = tool.envelope_artifact if tool.declared else None
+    if artifact is None and entry.role not in tool_envelopes.REACHING:
+        if entry.role == tool_envelopes.NOTE:
+            notes.append(f"{entry.note}: kept as an instruction note, its reach is not checked; cite a STEP solid of "
+                         "the tool in tool_access to check it")
+        return None
+    approach = tool.approach or op.direction
+    if approach is None:
+        unknown.append(f"tool {tool.name!r} has no approach direction")
+        return None
+    role = entry.role if entry.role in tool_envelopes.REACHING else tool_envelopes.TOOL
+    if artifact is not None:
+        return Reach(index, tool, role, "step", approach, tool.approach is None, artifact=artifact)
+    return Reach(index, tool, role, "standard", approach, tool.approach is None, envelope=entry.envelope)
 
 
 def hold_reach(op: AssemblyOperation) -> tuple[tuple[Tool, ...], tuple[str, ...]]:
@@ -957,27 +1021,24 @@ def access_plan(operations: Operations, inventory: Any = None,
                                                          "reaches nothing"))
             continue
         unknown: list[str] = []
+        notes: list[str] = []
         travels = op.kind in JOINING or op.kind in ("close", "disassemble", "install")
         if travels and op.direction is None:
             unknown.append(f"{op.id} has no direction: its part path is unknown")
         if op.id in state.unresolved:
             unknown.append(state.unresolved[op.id])
-        for tool in tools:
-            if not tool.declared:
-                unknown.append(f"tool {tool.name!r} is a name only: its reach and envelope are unknown")
-                continue
-            if tool.envelope_artifact is None:
-                unknown.append(f"tool {tool.name!r} has no sourced envelope solid: its reach is unknown")
-            if tool.approach is None:
-                unknown.append(f"tool {tool.name!r} has no approach direction")
+        reaches = [reach for index, tool in enumerate(op.tools) if tool in tools
+                   if (reach := _reach(op, index, tool, unknown, notes)) is not None]
         unit, operated = _unit(state, step, unknown)
         moved = unit if op.kind == "install" else frozenset({step.part})  # an install's part is a unit id, no occurrence
         after = set(step.present) | (set(moved) if op.installs else set())
         path_obstacles = frozenset(after - moved - ({step.into} if step.into else set()))
         tool_obstacles = frozenset(after - moved)
+        applicable = travels or bool(reaches) or bool(unknown)
         requests.append(AccessRequest(op, operated, operated if travels else None, step.into or operated or step.part,
                                       op.direction, op.removes, path_obstacles, tool_obstacles, tools, tuple(unknown),
-                                      op.path, unit, advisory=advisory))
+                                      op.path, unit, advisory=advisory, reaches=tuple(reaches), notes=tuple(notes),
+                                      applicable=applicable))
     return tuple(requests)
 
 
