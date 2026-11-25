@@ -808,8 +808,7 @@ def thermal_distortion(ctx: Context) -> Result:
     bed = g.facts.get("bed") or {}
     extent = bed.get("contact_extent")  # exact contact-face extents, apart from the sampled stability hull
     footprint = max(extent["max"][i] - extent["min"][i] for i in (0, 1)) if extent else 0.0
-    # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
-    warp = ctx.calibrated("warp")
+    warp = ctx.governing("warp")
     if not warp.known:
         findings.append(Draft(f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint),
                               warp.criterion("warp"), g.method("bed footprint"), "; ".join(warp.reasons),
@@ -818,7 +817,7 @@ def thermal_distortion(ctx: Context) -> Result:
                               recheck=[f"process.{kind}.thermal_distortion"]))
         parts.append((UNKNOWN, "warp not calibrated"))
     else:
-        size = warp.calibration.scope.get("size")
+        size = warp.calibration.scope.get("size") if warp.calibration is not None else None  # a guideline has no size scope
         covered = None
         if isinstance(size, Mapping):
             covered = ctx.mi.quantity(size).to("mm").bounds[1]
@@ -848,8 +847,8 @@ def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[st
             limit = ctx.mi.convert(item["value"], item.get("units", "mm"), "mm")
             if ctx.mi.exceeds_upper_bound(worst, item["operator"], limit, 1e-9):
                 findings.append(Draft(f"process.{_k(ctx)}.warp", "major", FAIL, length(worst),
-                                      {**item, "units": item.get("units", "mm")}, "calibrated warp against the criterion",
-                                      f"calibration {warp.calibration.id}",
+                                      {**item, "units": item.get("units", "mm")}, f"{warp.status} warp against the criterion",
+                                      warp.basis,
                                       f"the as-printed {feature} can exceed its flatness limit",
                                       remedy=f"finish {feature} after printing or reorient", feature=feature,
                                       recheck=[f"process.{_k(ctx)}.thermal_distortion"]))
@@ -857,8 +856,9 @@ def _flatness(ctx: Context, warp: Calibrated, findings: list[Draft]) -> tuple[st
     if unsupported:  # a miss is a FAIL above; otherwise a criterion this check cannot judge leaves the result open
         return UNKNOWN, f"flatness criterion with operator {', '.join(sorted(set(unsupported)))} is not judged against calibrated warp"
     if not stated:  # TODO(benchhand-tw6.24): report "not assessed" instead of UNKNOWN when CAD_CALIBRATION is off
-        return UNKNOWN, "no critical surface states a flatness limit to judge the calibrated warp against"
-    return PASS, "warp calibrated for this footprint"
+        return UNKNOWN, f"no critical surface states a flatness limit to judge the {warp.status} warp against"
+    return ctx.settle(warp, "warp within the stated flatness limits for this footprint", findings, check="warp",
+                      measured=length(worst), criterion=warp.criterion("warp"), method=f"{warp.status} warp against the criterion")
 
 
 # --- resin ------------------------------------------------------------------------------------------------------
