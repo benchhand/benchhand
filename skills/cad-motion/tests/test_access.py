@@ -138,6 +138,19 @@ class OrderTests(unittest.TestCase):
         self.assertEqual(plan["fasten-cover"].unknown, ())
         self.assertTrue(any("torque driver" in note for note in plan["fasten-cover"].notes))
 
+    def test_a_tool_free_hold_gets_an_explicit_not_applicable_row_with_its_reason(self) -> None:
+        items = operations("blocked_socket.yaml")
+        items.append({"id": "hold-bracket", "kind": "inspect", "part": "TST-0105", "tools": ["hold"],
+                      "acceptance": {"kind": "inspected", "features": ["bracket_foot"]}})
+        request = next(r for r in ops.access_plan(ops.normalize({"operations": items}), inventory())
+                       if r.operation.id == "hold-bracket")
+        entry = access.OperationAccess(request.operation, unknown=list(request.unknown), notes=list(request.notes),
+                                       applicable=request.applicable)
+        row = access.access_outcome(entry, [])
+        self.assertEqual((row["obligation"], row["outcome"]), ("assembly.access@op:hold-bracket", "not_applicable"))
+        self.assertIn("moves no part and no tool or hand reaches it", row["uncertainty"])
+        self.assertEqual(list(validator("obligation_outcome").iter_errors(row)), [])
+
 
 def access_record(items: list[dict]) -> dict:
     """A record version 2 project of the five fixture parts with `items` as its operations."""
