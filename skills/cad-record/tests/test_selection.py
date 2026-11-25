@@ -387,6 +387,21 @@ class ExistingEquipmentIsNotSelected(unittest.TestCase):
         report = assess(self, documents)
         self.assertNotIn("mount_only", json.dumps(report["decisions"]))
 
+    def test_a_recorded_final_choice_of_an_existing_only_candidate_blocks(self) -> None:
+        documents = scenarios.wear_shaft_options()
+        documents["parts/TST-0409/part.yaml"] = fx.existing_part("TST-0409", "Mount face")
+        selection_doc = documents["manufacturing/selection.yaml"]
+        selection_doc["candidates"].append(scenarios.candidate(
+            "mount_only", "The mount face alone", "existing equipment only",
+            [scenarios.cpart("TST-0409", "tst_polymer_m_printed", scenarios.step("fdm", "tst_printer", "local"))], cost=1))
+        selection_doc["status"] = "confirmed"
+        selection_doc["assessment"]["decision"] = "DR-001"
+        selection_doc["recommendation"] = {"status": "final", "primary": "mount_only", "reasons": ["TST: cheapest"],
+                                           "limits": ["TST: none recorded"], "what_would_change": ["TST: nothing recorded"]}
+        report = assess(self, documents)
+        self.assertEqual([f["severity"] for f in findings(report, "selection.recorded_recommendation_dropped")], ["critical"])
+        self.assertEqual((report["status"], selection.exit_status(report)), ("blocked", 1))
+
     def test_a_stale_profile_on_an_existing_equipment_row_is_ignored(self) -> None:
         documents = scenarios.wear_shaft_options()
         documents["parts/TST-0409/part.yaml"] = fx.existing_part("TST-0409", "Mount face")

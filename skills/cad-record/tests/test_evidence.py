@@ -941,6 +941,13 @@ class SelectionGate(unittest.TestCase):
                      "selection.recorded_route_eliminated"):
             self.assertTrue(any(m.startswith(code) for m in messages), (code, messages))
 
+    def test_a_recorded_recommendation_of_a_dropped_candidate_blocks_even_while_exploring(self) -> None:
+        report = {"status": "blocked", "decisions": [], "findings": [
+            {"code": "selection.recorded_recommendation_dropped", "subject": {"product": True}, "severity": "critical",
+             "consequence": "TST consequence", "remedy": "TST remedy"}]}
+        errors = [f.message for f in evidence.selection_gate(report, "intent") if f.severity == "error"]
+        self.assertTrue(any(m.startswith("selection.recorded_recommendation_dropped") for m in errors), errors)
+
     def test_an_eliminated_record_route_blocks_even_while_exploring(self) -> None:
         docs, digest = recorded(scenarios.transparent_cover())  # the window is recorded as a 'clear' FDM print
         errors = [f for f in self.gate(docs, digest, "intent") if f.severity == "error"]
