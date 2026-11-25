@@ -15,6 +15,7 @@ Run: python3 -m unittest discover -s skills/cad-record/tests -p test_tool_envelo
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import sys
 import unittest
@@ -113,6 +114,25 @@ class EnvelopeTests(unittest.TestCase):
         # hand length t4 P5 152.
         self.assertEqual(segments(envelope), [(0.0, 59.0, 11.5), (59.0, 93.0, 48.5)])
         self.assertIn("ISO 15534-3", envelope.sources[0]["reference"])
+
+    def test_sized_pliers_have_their_jaws_swept_then_the_rest_to_their_maximum_length(self) -> None:
+        # ISO 5746:2021 Table 1, engineer's pliers, nominal 160 mm: l max 169, l3 32 +- 5, w3 max 25, t1 max 11.2
+        # (read from the standard, not the module). The jaws, w3 by t1 in section, sweep a circle of their
+        # diagonal about the tool axis, over l3 at its largest; the rest of the tool runs on to l max.
+        jaws_length, jaws_radius, overall = 32.0 + 5.0, round(math.hypot(25.0, 11.2) / 2, 6), 169.0
+        for name in ("160 mm combination pliers", "engineer's pliers 160 mm"):
+            with self.subTest(name=name):
+                envelope = envelopes.classify(name).envelope
+                self.assertEqual(envelope.designation, "160 mm engineer's pliers")
+                jaws, rest = envelope.segments
+                self.assertEqual((jaws.start_mm, jaws.length_mm, jaws.radius_mm), (0.0, jaws_length, jaws_radius))
+                self.assertEqual((rest.start_mm, rest.start_mm + rest.length_mm), (jaws_length, overall))
+                self.assertIn("ISO 5746:2021 Table 1", envelope.sources[0]["reference"])
+
+    def test_pliers_without_a_listed_nominal_length_are_a_note(self) -> None:
+        for name in ("pliers", "170 mm pliers"):
+            with self.subTest(name=name):
+                self.assertEqual(envelopes.classify(name).role, "note")
 
 
 BRACKET = {"id": "mount-bracket", "kind": "join", "part": "TST-0105", "into": "TST-0101", "direction": [0, 0, -1],
