@@ -542,6 +542,28 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
         self.assertFalse(result["requirement"]["pass"])
 
+    def sized_printed_slot(self, width: float) -> tuple[dict, dict]:
+        """The uncalibrated printed slot at `width` mm against a tab 0.1 mm narrower, with limits the stack meets."""
+        documents, stack = self.uncalibrated_printed_slot(0.5)
+        contributor(stack, "W")["nominal"] = width
+        contributor(stack, "T")["nominal"] = width - 0.1
+        stack["requirement"]["min"] = -2.0
+        return documents, stack
+
+    def test_the_shipped_accuracy_guideline_qualifies_a_printed_contributor_up_to_100_mm(self) -> None:
+        documents, stack = self.sized_printed_slot(50.0)
+        result = self.bound_with(documents, stack, "tab-slot", catalog=GL.discover(None))
+        self.assertEqual(result["outcome"], "pass", codes(result))
+        self.assertEqual(next(r for r in result["contributors"] if r["id"] == "W")["resolved"]["guideline"], "fdm.accuracy@2")
+
+    def test_a_160_mm_printed_contributor_is_not_qualified_at_the_100_mm_floor(self) -> None:
+        """0.5% of 160 mm is 0.8 mm: the cited 0.5 mm floor does not hold there, so the contributor is not assessed."""
+        documents, stack = self.sized_printed_slot(160.0)
+        result = self.bound_with(documents, stack, "tab-slot", catalog=GL.discover(None))
+        self.assertEqual(result["outcome"], "not_assessed")
+        self.assertEqual(codes(result), ["stack.capability_not_assessed"])
+        self.assertIn("up to 100 mm", result["findings"][0]["uncertainty"])
+
     def test_a_known_stack_failure_is_not_masked_by_a_not_assessed_contributor(self) -> None:
         documents, stack = self.uncalibrated_printed_slot(0.5)  # worst case -1.05 mm against a minimum of 0
         result = self.bound_with(documents, stack, "tab-slot", catalog=clearance_catalog(clearance_limit()))

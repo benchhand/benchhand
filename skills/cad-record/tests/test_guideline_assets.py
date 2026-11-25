@@ -102,6 +102,7 @@ class ShippedValues(unittest.TestCase):
             with self.subTest(characteristic):
                 item = limit_of("fdm.accuracy", characteristic)
                 self.assertEqual((item["operator"], item["quantity"]), ("between", {"lower": -0.5, "upper": 0.5, "units": "mm"}))
+                self.assertEqual(item["applies_to"], {"max_size": {"value": 100, "units": "mm"}})  # 0.5% of 100 mm is the floor
                 self.assertTrue(item["disputed"])
                 self.assertEqual(len(item["citations"]), 2)
 

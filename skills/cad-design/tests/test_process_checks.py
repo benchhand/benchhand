@@ -2737,14 +2737,21 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.advisory(result, "process.fdm.warp_scope", self.thermal(result))
 
     def critical(self, role: str, *, on_bed: bool = False, catalog: Any = SHIPPED, calibrations: tuple = (),
-                 criteria: list | None = None) -> Any:
-        """TST-0101 with one critical planar feature face_a of `role` (on the bed when `on_bed`) stating `criteria`."""
+                 criteria: list | None = None, size: float = 30.0) -> Any:
+        """TST-0101, `size` mm at its largest, with one critical planar feature face_a of `role` (on the bed when
+        `on_bed`) stating `criteria`."""
         documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
         documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
             surface("face_a", role, **({"criteria": criteria} if criteria else {}))]
         data = facts(faces=(face("f1", features=("face_a",), bed=on_bed),),
                      walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        data["bbox_mm"] = {"min": [0, 0, 0], "max": [size, 20, 30]}
         return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_a_feature_of_a_part_over_100_mm_takes_no_shipped_deviation_and_is_not_assessed(self) -> None:
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.6, 0.6), size=160.0)
+        found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
+        self.assertIn("up to 100 mm", found["uncertainty"])
 
     @staticmethod
     def tolerance(characteristic: str, lower: float, upper: float) -> list[dict[str, Any]]:
@@ -2760,7 +2767,7 @@ class GuidelineWithoutCalibrationTests(Checks):
         result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.3, 0.3))
         self.assertEqual(self.outcome(result, GEOMETRY), "fail")
         found = self.finding(result, "process.fdm.feature_deviation")
-        self.assertEqual((found["subject"]["feature"], found["uncertainty"]), ("face_a", "guideline fdm.accuracy@1"))
+        self.assertEqual((found["subject"]["feature"], found["uncertainty"]), ("face_a", "guideline fdm.accuracy@2"))
 
     def test_a_critical_feature_with_only_other_criteria_is_judged_by_those_checks_alone(self) -> None:
         result = self.critical("datum", criteria=[_flatness_criterion("<= 1.5")])
