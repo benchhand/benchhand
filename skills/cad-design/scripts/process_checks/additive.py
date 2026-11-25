@@ -569,38 +569,42 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
     classes = {(g.facts.get("features") or {}).get(f, {}).get("kind") for f in feats} | \
         {s.role for f, s in ctx.critical_features().items() if f in feats}
     exempt = sorted(c for c in classes if c in EXEMPT_CLASSES)
-    # a feature class is never judged against a structural guideline, and its own calibration is checked first: a
-    # structural pass never hides a calibrated miss
-    feature_cal = ctx.calibrated("min_wall", feature=exempt[0]) if exempt else None
-    if feature_cal is not None and feature_cal.known and thickness < feature_cal.bounds("mm")[1] - 1e-9:
-        own = feature_cal.bounds("mm")[1]
+    # a feature class is never judged against a structural guideline, and every class's own calibration is checked first:
+    # a structural pass never hides a calibrated miss of any class the sample carries
+    owns = {c: ctx.calibrated("min_wall", feature=c) for c in exempt}
+    missed = sorted(((own.bounds("mm")[1], c) for c, own in owns.items() if own.known and thickness < own.bounds("mm")[1] - 1e-9),
+                    reverse=True)
+    if missed:
+        need_own, worst = missed[0]  # the strictest class minimum the wall misses
         findings.append(Draft(f"process.{kind}.wall_feature_class", "major", FAIL, length(thickness),
-                              feature_cal.criterion("wall_thickness", ">=", own), g.method("minimum-wall scan"),
+                              owns[worst].criterion("wall_thickness", ">=", need_own), g.method("minimum-wall scan"),
                               "sampled scan: the true minimum can be up to the sample spacing thinner",
-                              f"the {exempt[0]} wall {thickness:.3f} mm thick is below its own calibrated minimum {own:g} mm",
-                              remedy=f"thicken the {exempt[0]} feature", recheck=[f"process.{kind}.geometry"],
+                              f"the {worst} wall {thickness:.3f} mm thick is below its own calibrated minimum {need_own:g} mm",
+                              remedy=f"thicken the {', '.join(c for _, c in missed)} feature", recheck=[f"process.{kind}.geometry"],
                               feature=sorted(feats)[0] if feats else None))
-        return FAIL, f"{exempt[0]} wall below its calibrated minimum"
+        return FAIL, f"{worst} wall below its calibrated minimum"
     if not cal.breaks(thickness, "mm"):
         return ctx.grade(cal, f"thinnest wall {thickness:.3f} mm >= {cal.status} {need:g} mm{floor_only}")
-    if feature_cal is not None:
-        if feature_cal.known:  # the wall meets its own calibration: structural walls are not separated by the scan
+    if exempt:
+        uncalibrated = [c for c in exempt if not owns[c].known]
+        if not uncalibrated:  # the wall meets every class calibration: structural walls are not separated by the scan
             findings.append(Draft(f"process.{kind}.wall_feature_class", "info", UNKNOWN, length(thickness),
-                                  feature_cal.criterion("wall_thickness", ">=", feature_cal.bounds("mm")[1]),
+                                  owns[exempt[0]].criterion("wall_thickness", ">=", max(owns[c].bounds("mm")[1] for c in exempt)),
                                   g.method("minimum-wall scan"), "the scan reports one global minimum",
-                                  f"the thinnest wall is on a {exempt[0]} feature within its own calibration; structural walls "
-                                  "thicker than it are not separated by this scan",
+                                  f"the thinnest wall is on a {', '.join(exempt)} feature within its own calibration; structural "
+                                  "walls thicker than it are not separated by this scan",
                                   remedy="section the structural regions to measure their walls", recheck=[f"process.{kind}.geometry"]))
             return UNKNOWN, "structural walls not separated from the exempt feature"
+        names = ", ".join(uncalibrated)
         return _no_basis(ctx, findings, Draft(
             f"process.{kind}.wall_feature_class", "minor", UNKNOWN, length(thickness),
-            feature_cal.criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
-            f"{exempt[0]} features are assessed apart from structural walls",
-            f"the thinnest wall is on a {exempt[0]} feature with no calibration of its own",
-            remedy=ctx.remedy(f"calibrate min_wall with scope feature {exempt[0]}, or justify the exception in a decision",
+            owns[uncalibrated[0]].criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
+            f"{names} features are assessed apart from structural walls",
+            f"the thinnest wall is on a {names} feature with no calibration of its own",
+            remedy=ctx.remedy(f"calibrate min_wall with scope feature {uncalibrated[0]}, or justify the exception in a decision",
                               "justify the exception in a decision"),
             recheck=[f"process.{kind}.geometry"], feature=sorted(feats)[0] if feats else None),
-            f"{exempt[0]} wall", f"{exempt[0]} wall not calibrated")
+            f"{names} wall", f"{names} wall not calibrated")
     location = walls.get("location_mm")
     findings.append(Draft(f"process.{kind}.wall", "major", FAIL, length(thickness),
                           cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
