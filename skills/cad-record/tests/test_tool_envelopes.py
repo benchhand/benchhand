@@ -244,7 +244,7 @@ class AccessPlanTests(unittest.TestCase):
                 request = plan(BRACKET, {**adjust, "tools": [written], "tool_access": [
                     {"tool": declared, "approach": [0, 0, -1], "contact": [30, 0, 44]}]})["adjust-bracket"]
                 self.assertEqual([reach.index for reach in request.reaches], [1])
-                self.assertEqual(len(request.unknown), 1, "the tools entry still needs its own contact point")
+                self.assertEqual(len(request.unknown), 1, "the tools entry still needs its own placement")
                 self.assertIn(repr(written), request.unknown[0])
 
 
