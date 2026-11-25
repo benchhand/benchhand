@@ -304,6 +304,26 @@ def _fact(raw: Mapping[str, Any], key: str) -> Mapping[str, Any] | None:
     return value if isinstance(value, Mapping) else None
 
 
+def _bench(raw: Mapping[str, Any], kind: str, where: str) -> tuple[str | None, Mapping[str, Any] | None]:
+    """The operation's sub-build and cure block, checked: an install names a sub-build and belongs to the main
+    build, and only a hold has a duration, fixture, orientation or cure."""
+    sub_build = raw.get("sub_build")
+    if sub_build is not None and (not isinstance(sub_build, str) or not SUB_BUILD_ID.match(sub_build)):
+        raise OperationsError(f"{where}/sub_build must be a sub-build id (lower case, digits, - or _)")
+    if kind == "install":
+        if not isinstance(raw.get("part"), str) or not SUB_BUILD_ID.match(raw["part"]):
+            raise OperationsError(f"{where}/part: an install operation installs a sub-build: name its id")
+        if sub_build is not None:
+            raise OperationsError(f"{where}: an install operation belongs to the main build, not to sub-build {sub_build}")
+    for key in ("duration", "fixture", "orientation", "cure"):
+        if key in raw and kind != "hold":
+            raise OperationsError(f"{where}/{key}: only a hold operation has a {key}")
+    cure = raw.get("cure")
+    if cure is not None and (not isinstance(cure, Mapping) or "time" not in cure or set(cure) - {"time", "temperature"}):
+        raise OperationsError(f"{where}/cure needs a time and, optionally, a temperature")
+    return sub_build, cure
+
+
 def _operation(raw: Any, index: int, where: str) -> AssemblyOperation:
     if not isinstance(raw, Mapping):
         raise OperationsError(f"{where} must be a mapping")
@@ -335,20 +355,7 @@ def _operation(raw: Any, index: int, where: str) -> AssemblyOperation:
                           approach=None if approach is None else _vector(approach, f"{at}/approach"),
                           reach=_fact(entry, "reach"), envelope=_fact(entry, "envelope")))
     joint = raw.get("verify_joint")
-    sub_build = raw.get("sub_build")
-    if sub_build is not None and (not isinstance(sub_build, str) or not SUB_BUILD_ID.match(sub_build)):
-        raise OperationsError(f"{where}/sub_build must be a sub-build id (lower case, digits, - or _)")
-    if kind == "install":
-        if not isinstance(raw.get("part"), str) or not SUB_BUILD_ID.match(raw["part"]):
-            raise OperationsError(f"{where}/part: an install operation installs a sub-build: name its id")
-        if sub_build is not None:
-            raise OperationsError(f"{where}: an install operation belongs to the main build, not to sub-build {sub_build}")
-    for key in ("duration", "fixture", "orientation", "cure"):
-        if key in raw and kind != "hold":
-            raise OperationsError(f"{where}/{key}: only a hold operation has a {key}")
-    cure = raw.get("cure")
-    if cure is not None and (not isinstance(cure, Mapping) or "time" not in cure or set(cure) - {"time", "temperature"}):
-        raise OperationsError(f"{where}/cure needs a time and, optionally, a temperature")
+    sub_build, cure = _bench(raw, kind, where)
     if "edge_distance" in raw and kind not in JOINING:
         raise OperationsError(f"{where}/edge_distance: a {kind} operation makes no joint")
     direction = None if raw.get("direction") is None else _vector(raw["direction"], f"{where}/direction")
@@ -597,7 +604,6 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
         if step.operation.installs:
             installer.setdefault(step.part, []).append(step.operation)
     outcomes, findings = [], []
-    reported: set[tuple[str, str | None]] = set()  # (occurrence, build) pairs already failed as shared
     for step in state.steps:
         op = step.operation
         obligation = f"assembly.order@op:{op.id}"
@@ -658,9 +664,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                     if not later:  # an enclosed part installed later fails at that later step instead
                         fail("assembly.part_absent", f"{op.id} encloses {ref}, which is not in place", f"{ref} is missing "
                              "inside the closed assembly", f"install {ref} before {op.id}")
-        _sub_build_rules(operations, state, step, installer, reported, fail)
-        if op.kind == "hold":
-            _hold_rules(op, fail)
+        _sub_build_rules(operations, state, step, installer, fail)
         findings.extend(mine)
         row: dict[str, Any] = {"obligation": obligation, "outcome": "fail" if mine else "pass", "level": "process_planned",
                                "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
@@ -682,12 +686,22 @@ def _build_name(build: str | None) -> str:
     return "the main build" if build is None else f"sub-build {build}"
 
 
-def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
-                     installer: Mapping[str, list[AssemblyOperation]], reported: set[tuple[str, str | None]],
-                     fail: Callable[..., None]) -> None:
-    """An install names a sub-build that exists, is finished and is installed once; an occurrence belongs to one
-    build; a sub-build is installed. `reported` keeps one shared finding per occurrence and build."""
+def _claimed(step: Step) -> list[tuple[str | None, str | None]]:
+    """(resolved, written) references a step claims for its build: all of them in a sub-build, the installed
+    part in the main build."""
     op = step.operation
+    pairs = list(zip((step.part, step.into, *step.closes), (op.part, op.into, *op.closes)))
+    return pairs if step.build is not None else pairs[:1] if op.installs and op.kind != "install" else []
+
+
+def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
+                     installer: Mapping[str, list[AssemblyOperation]], fail: Callable[..., None]) -> None:
+    """An install names a sub-build that exists, is finished and is installed once; an occurrence belongs to one
+    build (failed at the first step of each later build that claims it); a sub-build is installed; a hold's
+    cure is sourced and long enough."""
+    op = step.operation
+    if op.kind == "hold":
+        _hold_rules(op, fail)
     if op.kind == "install":
         unit = state.sub_builds.get(step.part)
         if unit is None:
@@ -704,13 +718,12 @@ def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
             fail("assembly.installed_twice", f"{op.id} installs sub-build {op.part}, which is already in place",
                  "the sequence installs the same unit twice", "remove the duplicate install step", severity="major")
         return
-    pairs = zip((step.part, step.into, *step.closes), (op.part, op.into, *op.closes))
-    claimed = pairs if step.build is not None else [(step.part, op.part)] if op.installs else []
-    for ref, written in claimed:
+    earlier = {ref for other in state.steps[:op.index] if other.build == step.build for ref, _ in _claimed(other)}
+    for ref, written in _claimed(step):
         owners = state.shared.get(ref) if ref is not None else None
-        if owners is None or owners.index(step.build) == 0 or (ref, step.build) in reported:
+        if owners is None or owners.index(step.build) == 0 or ref in earlier:
             continue
-        reported.add((ref, step.build))
+        earlier.add(ref)
         fail("assembly.sub_build_shared", f"{op.id} uses {written} in {_build_name(step.build)}, which "
              f"{_build_name(owners[0])} also uses", f"one physical part cannot be built into {len(owners)} units",
              f"keep {written} in one build, or add an occurrence for the other")
@@ -746,7 +759,8 @@ def _hours(fact: Any, *, lower: bool) -> float | None:
     if not isinstance(fact, Mapping) or fact.get("status") != "known":
         return None
     quantity = _mapping(fact.get("value"))
-    scale = TIME_H.get(quantity.get("units")) if isinstance(quantity.get("units"), str) else None
+    units = quantity.get("units")
+    scale = TIME_H.get(units) if isinstance(units, str) else None
     value = quantity.get("value") if _number(quantity.get("value")) else quantity.get("lower" if lower else "upper")
     return value * scale if scale is not None and _number(value) else None
 
@@ -756,7 +770,8 @@ def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any
     base: it would pass as a second base, but nothing says where it comes from."""
     found: list[dict[str, Any]] = []
     taken: set[str] = set()
-    floats = [(occurrence_id, None, state.ground) for occurrence_id in sorted(state.floating)]
+    floats: list[tuple[str, str | None, str | None]] = [(occurrence_id, None, state.ground)
+                                                         for occurrence_id in sorted(state.floating)]
     floats += [(occurrence_id, unit.id, unit.ground) for unit in state.sub_builds.values()
                for occurrence_id in sorted(unit.floating)]
     for occurrence_id, build, ground in floats:
@@ -808,6 +823,24 @@ class AccessRequest:
     unit: frozenset[str] = frozenset()
 
 
+def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozenset[str], str]:
+    """(the parts that move together, the operated occurrence): an install moves its sub-build's parts with the
+    sub-build's base as the operated part, noting in `unknown` what the check cannot cover; any other step moves
+    its own part."""
+    op = step.operation
+    if op.kind != "install":
+        return frozenset(), step.part
+    built = state.sub_builds.get(step.part)
+    if built is None or built.ground is None:
+        unknown.append(f"{op.id}: sub-build {op.part} has no base occurrence: its path is unknown")
+        return (built.present if built is not None else frozenset()), step.part
+    if len(built.present) > 1:
+        unknown.append(f"{op.id}: sub-build {op.part} travels as one unit; only the path of its base "
+                       f"{built.ground} is checked, the other members ({', '.join(sorted(built.present - {built.ground}))}) "
+                       "are carried along unchecked")
+    return built.present, built.ground
+
+
 def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRequest, ...]:
     """One AccessRequest per operation, from the declared sequence (see `sequence`)."""
     state = sequence(operations, inventory)
@@ -828,16 +861,7 @@ def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRe
                 unknown.append(f"tool {tool.name!r} has no sourced envelope solid: its reach is unknown")
             if tool.approach is None:
                 unknown.append(f"tool {tool.name!r} has no approach direction")
-        built = state.sub_builds.get(step.part) if op.kind == "install" else None
-        unit = built.present if built is not None else frozenset()
-        operated = (built.ground or step.part) if built is not None else step.part
-        if op.kind == "install":
-            if built is None or built.ground is None:
-                unknown.append(f"{op.id}: sub-build {op.part} has no base occurrence: its path is unknown")
-            elif len(unit) > 1:
-                unknown.append(f"{op.id}: sub-build {op.part} travels as one unit; only the path of its base "
-                               f"{built.ground} is checked, the other members ({', '.join(sorted(unit - {built.ground}))}) "
-                               "are carried along unchecked")
+        unit, operated = _unit(state, step, unknown)
         moved = unit or {step.part}
         after = set(step.present) | (set(moved) if op.installs else set())
         path_obstacles = frozenset(after - moved - ({step.into} if step.into else set()))
@@ -1041,6 +1065,13 @@ def _upper_deg_c(fact: Any) -> float | None:
     return None if upper is None else _to_deg_c(float(upper), quantity.units)
 
 
+def _hold_summary(op: AssemblyOperation) -> dict[str, Any]:
+    """A hold's orientation, duration and cure as JSON (empty for any other operation)."""
+    row: dict[str, Any] = {} if op.orientation is None else {"orientation": list(op.orientation)}
+    row.update({key: _thaw(getattr(op, key)) for key in ("duration", "cure") if getattr(op, key) is not None})
+    return row
+
+
 def summary(operations: Operations) -> list[dict[str, Any]]:
     """The normalized semantics as JSON, for drawing recipes and guide provenance."""
     rows = []
@@ -1053,11 +1084,7 @@ def summary(operations: Operations) -> list[dict[str, Any]]:
             row["direction"] = list(op.direction)
         if op.path is not None:
             row["path"] = [list(point) for point in op.path]
-        if op.orientation is not None:
-            row["orientation"] = list(op.orientation)
-        for key in ("duration", "cure"):
-            if getattr(op, key) is not None:
-                row[key] = _thaw(getattr(op, key))
+        row.update(_hold_summary(op))
         for key in ("features", "predecessors", "closes", "consumables"):
             if getattr(op, key):
                 row[key] = list(getattr(op, key))
