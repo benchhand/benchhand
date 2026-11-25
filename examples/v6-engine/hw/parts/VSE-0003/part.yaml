@@ -25,7 +25,7 @@ intent:
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
       inspection:
-        - {id: gauge-journal, feature: journal, method: "Gauge the printed journal against the 6 g6 limits before assembly", instrument: micrometer, state: as_manufactured}
+        - {id: gauge_journal, feature: journal, method: "Gauge the printed journal against the 6 g6 limits before assembly", instrument: micrometer, state: as_manufactured}
 drawing:
   type: detail
   datum_features:
