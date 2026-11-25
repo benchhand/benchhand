@@ -2546,10 +2546,17 @@ class CapabilityResolution:
     reasons: tuple[str, ...]
 
 
+# The reason capability_limit gives for a calibration whose size scope is smaller than the request.
+SIZE_SCOPE_REASON = "covers sizes up to"
+
+
 def capability_limit(profile: CapabilityProfile, characteristic: str, *, material: str, on: date | None = None,
-                     tool: str | None = None, orientation: str | None = None, feature: str | None = None) -> CapabilityResolution:
+                     tool: str | None = None, orientation: str | None = None, feature: str | None = None,
+                     size: float | None = None) -> CapabilityResolution:
     """The calibration that demonstrates `characteristic` for `material` (and the tool, orientation and
-    feature when given), valid on `on`. Machine parameters and nominal resolution never answer it."""
+    feature when given), valid on `on`, whose size scope (when it states one) covers `size` mm. The first that fits
+    wins, so a smaller coupon listed first never hides a larger one. Machine parameters and nominal resolution never
+    answer it."""
     if profile.template:
         return CapabilityResolution("refused", profile.id, characteristic, None, (f"{profile.id} is a template, not a capability",))
     reasons = []
@@ -2565,6 +2572,11 @@ def capability_limit(profile: CapabilityProfile, characteristic: str, *, materia
                 why.append(f"{calibration.id} {key} is {scope.get(key) or 'not stated'}, {wanted} requested")
         if on is not None and calibration.valid_until and calibration.valid_until < on.isoformat():
             why.append(f"{calibration.id} expired on {calibration.valid_until}")
+        covered = scope.get("size")
+        if size is not None and isinstance(covered, Mapping):
+            largest = quantity(covered).to("mm").bounds[1]
+            if size > largest + 1e-9:
+                why.append(f"{calibration.id} {SIZE_SCOPE_REASON} {largest:g} mm, {size:g} mm requested")
         if why:
             reasons.extend(why)
             continue

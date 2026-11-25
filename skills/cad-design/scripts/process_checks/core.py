@@ -628,7 +628,8 @@ class Context:
 
     # capability ---------------------------------------------------------------------------------------------------
     def calibrated(self, characteristic: str, *, profile: Any | None = None, material: str | None = None,
-                   orientation: str | None = None, feature: str | None = None, tool: str | None = None) -> Calibrated:
+                   orientation: str | None = None, feature: str | None = None, tool: str | None = None,
+                   size: float | None = None) -> Calibrated:
         """The calibration of `characteristic` on this operation's capability profile for its material:
         never a machine parameter, a nominal resolution or another material's calibration."""
         profile = profile or self.profile
@@ -638,7 +639,7 @@ class Context:
         if material is None:
             return Calibrated("unknown", characteristic, None, (f"{self.label}: the material profile is unknown",))
         found = self.mi.capability_limit(profile, characteristic, material=material, on=self.today,
-                                         orientation=orientation, feature=feature, tool=tool)
+                                         orientation=orientation, feature=feature, tool=tool, size=size)
         if self.calibration_off(profile):
             if found.status == "calibrated" and found.calibration.id not in self.ignored:
                 self.ignored.append(found.calibration.id)
@@ -654,7 +655,7 @@ class Context:
         for the profile (this operation's unless `profile` names another) and material, for a feature of `size` mm (status
         guideline), else unknown with every reason. Calibration is never required: a guideline value governs until one
         exists (benchhand-c7q.30)."""
-        cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature)
+        cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature, size=size)
         if cal.known:
             return cal
         return self.guideline_value(characteristic, cal, profile=profile, orientation=orientation, feature=feature, size=size)
