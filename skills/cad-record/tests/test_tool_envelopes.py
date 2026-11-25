@@ -50,6 +50,28 @@ class ClassificationTests(unittest.TestCase):
                 self.assertEqual(entry.role, role)
                 self.assertEqual(entry.name, name, "the instruction text is kept as written")
 
+    def test_a_name_is_read_as_one_tool_phrase_with_its_own_size_and_drive(self) -> None:
+        cases = {
+            "PH2 alignment marker": ("note", None),
+            "Allen key (3 mm)": ("tool", "3 mm hex key"),
+            "Inbus key 4 mm": ("tool", "4 mm hex key"),
+            "4 mm Allen wrench": ("tool", "4 mm hex key"),
+            "hex key, 2.5 mm": ("tool", "2.5 mm hex key"),
+            "8 mm socket with 1/2-inch drive": ("tool", "8 mm socket, 12.5 mm square drive"),
+            '1/2" drive 8 mm socket': ("tool", "8 mm socket, 12.5 mm square drive"),
+            "8 mm socket with 3/4-inch drive": ("note", None),
+        }
+        for name, (role, designation) in cases.items():
+            with self.subTest(name=name):
+                entry = envelopes.classify(name)
+                self.assertEqual((entry.role, entry.envelope and entry.envelope.designation), (role, designation))
+                self.assertEqual(entry.name, name, "the instruction text is kept as written")
+
+    def test_a_socket_on_a_named_drive_takes_that_drive_s_outline(self) -> None:
+        # ISO 2725-1:2017 Table 3, 12.5 mm drive, s 8: d1 max 14.0, d2 max 24.0, l max type A 40.
+        envelope = envelopes.classify("8 mm socket with 1/2-inch drive").envelope
+        self.assertEqual(segments(envelope), [(0.0, 40.0, 12.0)])
+
     def test_only_hand_and_sized_tools_carry_an_envelope(self) -> None:
         for name in ("by eye", "on the bench", "frobnicator", "hex key"):
             with self.subTest(name=name):
