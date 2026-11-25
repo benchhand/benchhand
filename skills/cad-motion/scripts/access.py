@@ -115,6 +115,9 @@ class AccessError(ValueError):
     """Inputs that cannot be used: a usage error (exit 2)."""
 
 
+ToolShape = tuple[str, Any, Any]  # (definition key, shape, the standard envelope's report or None for a cited STEP solid)
+
+
 # --------------------------------------------------------------------------- vectors
 
 
@@ -354,7 +357,7 @@ def engagement_caps(*declarations: Iterable[dict[str, Any]]) -> dict[tuple[str, 
 
 
 def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], definitions: Mapping[str, Any],
-               caps: Mapping[tuple[str, str], float | None], tools: Mapping[tuple[str, int], tuple[str, Any]]) -> list[OperationAccess]:
+               caps: Mapping[tuple[str, str], float | None], tools: Mapping[tuple[str, int], ToolShape]) -> list[OperationAccess]:
     """The paths of each operation's AccessRequest; `tools` maps (operation id, tool index) to the
     envelope definition key and its shape, for the tools whose solid was read."""
     plans = []
@@ -439,11 +442,11 @@ def declared_legs(ident: str, moving: str, installed: Any, frame: Any, points: S
     return legs
 
 
-def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict[tuple[str, int], tuple[str, Any]],
+def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict[tuple[str, int], ToolShape],
                                                                           dict[tuple[str, int], str], dict[str, str]]:
     """(envelope key and shape per (operation id, tool index), the reason a cited solid could not be used,
     the sha256 of each envelope artifact read). The artifact resolves in the record snapshot, else hw/."""
-    shapes: dict[tuple[str, int], tuple[str, Any]] = {}
+    shapes: dict[tuple[str, int], ToolShape] = {}
     problems: dict[tuple[str, int], str] = {}
     digests: dict[str, str] = {}
     for request in requests:
@@ -461,7 +464,7 @@ def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict
                 problems[(request.operation.id, number)] = f"tool {tool.name!r}: {artifact} does not match its sha256"
                 continue
             key = f"tool:{request.operation.id}:{number}"
-            shapes[(request.operation.id, number)] = (key, pose.read_shape(target))
+            shapes[(request.operation.id, number)] = (key, pose.read_shape(target), None)
             digests[artifact] = sha
     return shapes, problems, digests
 
@@ -556,11 +559,11 @@ def declared_engagements(record_hw: Path, assembly: Any) -> dict[tuple[str, str]
 
 
 def measure_plans(plans: Sequence[OperationAccess], definitions: Mapping[str, Any],
-                  tools: Mapping[tuple[str, int], tuple[str, Any]], step_mm: float, min_step_mm: float) -> None:
+                  tools: Mapping[tuple[str, int], ToolShape], step_mm: float, min_step_mm: float) -> None:
     """Measure every path of `plans` with one pair evaluator over the parts and the tool envelopes."""
     shapes = {pn: part.shape for pn, part in definitions.items()}
     parts = dict(definitions)
-    for key, shape in tools.values():
+    for key, shape, _envelope in tools.values():
         shapes[key] = shape
         parts[key] = pose.Part(key, key, shape)
     measurer = pair_measure.PairMeasurer(shapes, geometry_ids=pose.geometry_ids(parts),
