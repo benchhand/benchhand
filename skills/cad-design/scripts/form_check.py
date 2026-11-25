@@ -1641,8 +1641,8 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
             (stage / "result.json").write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
             bundle = layout.publish(args.hw, "bundle.checks", params, stage, recipe=recipe, producer=pc.PRODUCER,
                                     status=packet["result"], replace=args.replace).path
-    code = finish(report, blocking, packet, bundle, reused is not None)
-    return report, code
+    exit_code = finish(report, blocking, packet, bundle, reused is not None)
+    return report, exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
