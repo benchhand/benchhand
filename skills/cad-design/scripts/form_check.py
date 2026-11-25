@@ -91,8 +91,9 @@ Checks (each failure is one `findings` entry):
 
 stdout: JSON in the tool-result envelope (cad-record emit.py) whose payload is {status, fidelity, parts, joints, findings[, version, manufacturing]}; `manufacturing` holds
 the packet's status, complete, bundle, outcome counts, open obligations and its major and critical
-findings. stderr: diagnostics.
-Exit 0 = no blocking finding and (--version) a passing packet, 1 = a blocking finding or a failing,
+findings. With --version, `status` is fail on a blocking fidelity finding, else the packet's result (pass, fail,
+unknown or not_assessed). stderr: diagnostics.
+Exit 0 = no blocking finding and (--version) a passing or not-assessed packet, 1 = a blocking finding or a failing,
 unknown or incomplete packet (or a record of an unsupported version), 2 = usage or infrastructure error.
 """
 
@@ -1583,6 +1584,14 @@ def packet_code(blocking: bool, packet: dict[str, Any]) -> int:
     return 1 if blocking or packet["result"] not in ("pass", "not_assessed") else 0
 
 
+def finish(report: dict[str, Any], blocking: bool, packet: dict[str, Any], bundle: Path, reused: bool) -> int:
+    """Put the packet's manufacturing section on `report` and its verdict in the report's status: a failing fidelity
+    check fails it, else the packet result stands (a not_assessed packet is never reported as pass). The exit code."""
+    report["manufacturing"] = packet_report(packet, bundle, reused)
+    report["status"] = "fail" if blocking else packet["result"]
+    return packet_code(blocking, packet)
+
+
 def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], int]:
     """The legacy fidelity checks on a built version's installed parts, then the process-dispatched
     manufacturing checks of its record snapshot and manufacturing outputs, published as the version's
@@ -1632,8 +1641,8 @@ def check_version(args: argparse.Namespace, pose: Any) -> tuple[dict[str, Any], 
             (stage / "result.json").write_text(json.dumps(packet, indent=2) + "\n", encoding="utf-8")
             bundle = layout.publish(args.hw, "bundle.checks", params, stage, recipe=recipe, producer=pc.PRODUCER,
                                     status=packet["result"], replace=args.replace).path
-    report["manufacturing"] = packet_report(packet, bundle, reused is not None)
-    return report, packet_code(blocking, packet)
+    code = finish(report, blocking, packet, bundle, reused is not None)
+    return report, code
 
 
 def main(argv: list[str] | None = None) -> int:
