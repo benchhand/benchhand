@@ -2978,6 +2978,18 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual((found["outcome"], found["severity"], found["criterion"]["value"]), ("fail", "major", 0.5))
         self.assertNotIn("reason", found)
 
+    def test_an_exempt_wall_that_meets_the_structural_minimum_still_answers_to_its_own_calibration(self) -> None:
+        data = walled(0.30)
+        data["walls"]["features"] = ["tip"]
+        data["features"]["tip"] = {"kind": "tooth_tip", "faces": [], "mapped": True}
+        structural = calibration("wall_coupon", "min_wall", POLYMER, 0.2, 0.25)
+        tip = calibration("tip_coupon", "min_wall", POLYMER, 0.45, 0.5, feature="tooth_tip")
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+            result = self.assess(guided(service="functional_demo", calibrations=(structural, tip)), geometry("TST-0101", data),
+                                 catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.wall_feature_class")["criterion"]["value"], 0.5)
+
     def test_a_thin_wall_on_an_exempt_feature_class_without_its_own_calibration_is_a_non_blocking_advisory(self) -> None:
         data = walled(0.3)
         data["walls"]["features"] = ["tip"]
