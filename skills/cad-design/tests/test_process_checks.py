@@ -20,6 +20,7 @@ import copy
 import hashlib
 import importlib.util
 import itertools
+import io
 import json
 import math
 import os
@@ -2390,6 +2391,28 @@ class FormCheckPacketExitTests(unittest.TestCase):
 
     def test_a_failing_fidelity_check_still_exits_1_on_a_not_assessed_packet(self) -> None:
         self.assertEqual(self.form_check.packet_code(True, self.packet("not_assessed")), 1)
+
+    def finished(self, blocking: bool, packet: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        report: dict[str, Any] = {"status": "fail" if blocking else "pass", "fidelity": "F2", "parts": {}, "findings": []}
+        code = self.form_check.finish(report, blocking, packet, Path("bundle"), False)
+        return code, report
+
+    def test_the_report_status_carries_the_manufacturing_verdict_over_a_clean_fidelity_check(self) -> None:
+        cases = (("not_assessed", False, "not_assessed", 0), ("unknown", False, "unknown", 1), ("fail", False, "fail", 1),
+                 ("pass", False, "pass", 0), ("not_assessed", True, "fail", 1))
+        for result, blocking, status, exit_code in cases:
+            with self.subTest(packet=result, fidelity_fails=blocking):
+                code, report = self.finished(blocking, self.packet(result, ("o.a", result, "no_guideline" if result == "not_assessed" else None)))
+                self.assertEqual((report["status"], code, report["manufacturing"]["status"]), (status, exit_code, result))
+
+    def test_the_envelope_and_the_compact_headline_say_not_assessed(self) -> None:
+        code, report = self.finished(False, self.packet("not_assessed", ("o.a", "not_assessed", "no_guideline")))
+        emit = self.form_check.emit
+        self.assertEqual(json.loads(emit.envelope_text(report, emit.SCHEMA))["status"], "not_assessed")
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", {emit.ENV: "compact"}):
+            emit.emit(report, tool="form_check", name="form_check", code=code, scratch=Path(tmp), stream=out)
+        self.assertTrue(out.getvalue().startswith("form_check: not_assessed (exit 0)"), out.getvalue()[:200])
 
 
 @unittest.skipUnless(UV and DEPS, "uv, pyyaml and jsonschema are required for the kernel build")
