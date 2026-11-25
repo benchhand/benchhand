@@ -29,9 +29,8 @@ sys.modules["cad_motion_pose"] = pose
 _spec.loader.exec_module(pose)
 
 out = Path(sys.argv[1])
-box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape()
-parts = {pn: pose.Part(pn, name, box) for pn, name in
-         (("TST-0001", "TST-0001 Base"), ("TST-0002", "TST-0002 Pin"), ("Body001", "Body001"))}
+parts = {pn: pose.Part(pn, name, BRepPrimAPI_MakeBox(size, size, size).Shape()) for pn, name, size in
+         (("TST-0001", "TST-0001 Base", 10.0), ("TST-0002", "TST-0002 Pin", 4.0), ("Body001", "Body001", 6.0))}
 occurrences = [SimpleNamespace(id=pn, pn=pn, explicit=False) for pn in parts]
 here = pose.Rigid(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)), (0.0, 0.0, 0.0))
 pose.write_assembly_step(out, "fixture v1", parts, occurrences, {pn: here for pn in parts},
