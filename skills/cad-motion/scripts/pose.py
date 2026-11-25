@@ -287,6 +287,7 @@ class Joint:
     min: float
     max: float
     nominal: float | None  # None for a coupled joint: its value derives from its coupling
+    mount: Vec | None = None  # a fixed joint's declared flat-mount point, assembly mm (form_check's face contact)
 
     @property
     def movable(self) -> bool:
@@ -429,8 +430,18 @@ def make_joint(raw: Mapping[str, Any], resolve: Callable[[str, str], str] | None
     return Joint(
         id=jid, type=kind, parent=parent, child=child,
         axis=(axis[0] / norm, axis[1] / norm, axis[2] / norm),
-        origin=_vector(raw.get("origin"), f"{jid}.origin"), **limits,
+        origin=_vector(raw.get("origin"), f"{jid}.origin"), **limits, mount=_mount(raw, jid, kind),
     )
+
+
+def _mount(raw: Mapping[str, Any], jid: str, kind: str) -> Vec | None:
+    """A fixed joint's declared flat-mount point (`mount: {point: [x, y, z]}`), or None."""
+    mount = raw.get("mount")
+    if mount is None:
+        return None
+    if kind != "fixed" or not isinstance(mount, Mapping) or set(mount) != {"point"}:
+        raise MotionError(f"{jid}: mount is a fixed joint's {{point: [x, y, z]}}")
+    return _vector(mount["point"], f"{jid}.mount.point")
 
 
 def _part_records(hw: Path) -> dict[str, dict[str, Any]]:

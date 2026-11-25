@@ -59,7 +59,8 @@
           {"if": {"properties": {"type": {"const": "fixed"}}}, "then": {"required": ["nominal"]}},
           {"if": {"properties": {"type": {"const": "prismatic"}}},
            "then": {"not": {"anyOf": [{"required": ["torque"]}, {"required": ["torque_path"]}]}}},
-          {"if": {"required": ["torque_path"]}, "then": {"required": ["torque"], "properties": {"torque": {"const": "transmitted"}}}}
+          {"if": {"required": ["torque_path"]}, "then": {"required": ["torque"], "properties": {"torque": {"const": "transmitted"}}}},
+          {"if": {"required": ["mount"]}, "then": {"properties": {"type": {"const": "fixed"}}}}
         ],
         "properties": {
           "id": {"$ref": "#/$defs/joint_id"},
@@ -76,7 +77,12 @@
             "description": "Whether the child carries drive torque. From stage parts on, every revolute declares it (none for a hand-positioned or free-running joint), and so does every fixed joint inside the drive train that a revolute not declared none starts; a fixed joint declared transmitted names its torque_path",
             "type": "string", "enum": ["transmitted", "none"]
           },
-          "torque_path": {"$ref": "#/$defs/torque_path"}
+          "torque_path": {"$ref": "#/$defs/torque_path"},
+          "mount": {
+            "description": "A fixed joint's declared flat mount: a point on the intended contact between its parts, in assembly mm. form_check accepts a face contact that this point lies on; declare it when the joint frame is off the contact, so the geometry alone cannot tell the mount from incidental contact",
+            "type": "object", "additionalProperties": false, "required": ["point"],
+            "properties": {"point": {"$ref": "#/$defs/vector"}}
+          }
         }
       }
     },

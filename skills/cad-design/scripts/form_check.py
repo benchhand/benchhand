@@ -788,19 +788,80 @@ def _extent(shape: Any, origin: Sequence[float], direction: Sequence[float]) -> 
 
 
 def datum_distance(patch: Any, datum: tuple[Sequence[float], Sequence[float]]) -> float:
-    """How far the contact patch lies from the joint's datum plane, the plane through the joint origin normal to the
-    joint axis: 0 when the plane meets the patch. A datum normal to the contact must lie in it; an offset datum (a
-    head framed on the crank axis, its axis along the deck) must cut through it."""
+    """How far one connected contact patch lies from the joint's datum plane, the plane through the joint origin normal
+    to the joint axis: 0 when the plane meets the patch."""
     low, high = _extent(patch, *datum)
     return 0.0 if low <= 0.0 <= high else min(abs(low), abs(high))
 
 
+def _islands(overlap: Any) -> list[Any]:
+    """The overlap's connected patches: its faces grouped where they share an edge, each as one compound."""
+    from cadmodel import occ
+
+    faces = faces_of(overlap)
+    edges = [occ.subshapes(face, "EDGE") for face in faces]
+    root = list(range(len(faces)))
+
+    def find(i: int) -> int:
+        while root[i] != i:
+            i = root[i]
+        return i
+
+    for i, j in itertools.combinations(range(len(faces)), 2):
+        if any(a.IsSame(b) for a in edges[i] for b in edges[j]):
+            root[find(j)] = find(i)
+    groups: dict[int, list[Any]] = {}
+    for i, face in enumerate(faces):
+        groups.setdefault(find(i), []).append(face)
+    return [occ.compound(group) for group in groups.values()]
+
+
+def _outline(face: Any) -> Any:
+    """The planar face its outer wire bounds: the face with its openings filled."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.BRepTools import BRepTools
+
+    return BRepBuilderAPI_MakeFace(BRepTools.OuterWire_s(face), True).Face()
+
+
+def locate(patch: Any, ours: dict[str, Any], datum: tuple[Sequence[float], Sequence[float]],
+           mount: Sequence[float] | None) -> tuple[str, float]:
+    """How one connected contact patch is tied to the joint, as (locator, locator_mm), all in the parent frame:
+    `mount`, a declared mount point, must lie on the patch; else a face-normal joint's `origin` must lie on it; else
+    (an offset datum) the `projection` of the origin along the contact normal must fall inside the patch's outline."""
+    origin, axis = datum
+    if mount is not None:
+        return "mount", _distance(_xyz3(mount), patch)
+    if _norm(_cross(axis, ours["normal"])) <= AXIS_TOL:
+        return "origin", _distance(_xyz3(origin), patch)
+    depth = _dot(_sub(origin, ours["point"]), ours["normal"])
+    foot = _xyz3([origin[i] - depth * ours["normal"][i] for i in range(3)])
+    return "projection", min(_distance(foot, _outline(face)) for face in faces_of(patch))
+
+
+def _xyz3(point: Sequence[float]) -> tuple[float, float, float]:
+    return (point[0], point[1], point[2])
+
+
+CONTACT_AT_JOINT, CONTACT_UNPLACED, CONTACT_ELSEWHERE = 0, 1, 2  # a patch's grade; lowest wins
+
+
+def _grade(gap: float, off: float, locator: str, located: float, tol: float) -> int:
+    """At the joint: within `tol` across the patch and tied to the joint by `locate` (an offset datum must also cut the
+    patch). Unplaced: such a contact on the datum plane that only the locator misses, and no mount is declared, so the
+    geometry cannot tell an intended mount from incidental contact. Elsewhere: anything else."""
+    on_datum = off <= tol or locator == "mount"
+    if gap <= tol and on_datum and located <= tol:
+        return CONTACT_AT_JOINT
+    return CONTACT_UNPLACED if gap <= tol and on_datum and locator != "mount" else CONTACT_ELSEWHERE
+
+
 class Contact(NamedTuple):
-    """face_contact's answer: the best facing pair (None: none overlaps), whether it mates at the joint, and the face
-    pairs whose kernel Boolean failed. A failure leaves the contact unknown, never an empty intersection."""
+    """face_contact's answer: the best patch (None: none overlaps), its grade (_grade) and the face pairs whose kernel
+    Boolean failed. A failure leaves the contact unknown, never an empty intersection."""
 
     best: dict[str, Any] | None
-    at_joint: bool
+    grade: int
     failures: list[str]
 
 
@@ -838,10 +899,10 @@ def separation(patch: Any, ours: dict[str, Any], normal: Sequence[float], point:
 
 
 def _pair_contact(ours: dict[str, Any], face: Any, normal: Sequence[float], point: Sequence[float], relative: Any,
-                  pose: Any, datum: tuple[Sequence[float], Sequence[float]],
-                  tol: float) -> tuple[tuple[bool, float, float, float], dict[str, Any]] | None:
-    """One facing pair's (rank, contact) for face_contact; None when it overlaps by less than CONTACT_MIN_AREA_MM2.
-    Raises ContactFailure when cad-model's occ.boolean reports a kernel error."""
+                  pose: Any, datum: tuple[Sequence[float], Sequence[float]], mount: Sequence[float] | None,
+                  tol: float) -> list[tuple[tuple[int, float, float, float, float], dict[str, Any]]]:
+    """One facing pair's (rank, contact) per connected overlap patch of at least CONTACT_MIN_AREA_MM2, for
+    face_contact. Raises ContactFailure when cad-model's occ.boolean reports a kernel error."""
     from cadmodel import occ
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
 
@@ -850,25 +911,32 @@ def _pair_contact(ours: dict[str, Any], face: Any, normal: Sequence[float], poin
         overlap = occ.boolean("common", ours["face"], [laid])
     except occ.GeometryError as error:
         raise ContactFailure(f"the overlap Boolean failed: {error}") from error
-    area = sum(face_area(found) for found in faces_of(overlap))
-    if area < CONTACT_MIN_AREA_MM2:
-        return None
-    gap = max(abs(end) for end in separation(overlap, ours, normal, point))
-    off = datum_distance(overlap, datum)
-    return ((not (gap <= tol and off <= tol), gap, off, -area),
-            {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6), "kind": "face"})
+    found = []
+    for patch in _islands(overlap):
+        area = sum(face_area(piece) for piece in faces_of(patch))
+        if area < CONTACT_MIN_AREA_MM2:
+            continue
+        gap = max(abs(end) for end in separation(patch, ours, normal, point))
+        off = datum_distance(patch, datum)
+        locator, located = locate(patch, ours, datum, mount)
+        found.append(((_grade(gap, off, locator, located, tol), gap, off, located, -area),
+                      {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6),
+                       "locator": locator, "locator_mm": round(located, 6), "kind": "face"}))
+    return found
 
 
 def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], relative: Any, pose: Any,
-                 datum: tuple[Sequence[float], Sequence[float]], tol: float, window: float) -> Contact:
-    """The planar face pair of two parts that mates them at the joint: outward normals opposite within AXIS_TOL, planes
-    at most `window` mm apart, and an overlap of at least CONTACT_MIN_AREA_MM2 once the child face is laid on the
-    parent's plane (_onto_plane). `relative` takes child-frame points into the parent frame; `datum` is the joint origin
-    and axis in the parent frame. offset_mm is the largest separation across the overlap (separation), area_mm2 the
-    overlap and datum_mm its distance from the joint's datum plane (datum_distance). A pair within `tol` on both
-    counts, compared before rounding, wins; then the nearest."""
+                 datum: tuple[Sequence[float], Sequence[float]], mount: Sequence[float] | None, tol: float,
+                 window: float) -> Contact:
+    """The connected contact patch between two parts' planar faces that mates them at the joint: outward normals
+    opposite within AXIS_TOL, planes at most `window` mm apart, and an overlap of at least CONTACT_MIN_AREA_MM2 once
+    the child face is laid on the parent's plane (_onto_plane). `relative` takes child-frame points into the parent
+    frame; `datum` (the joint origin and axis) and `mount` (a declared mount point, or None) are in the parent frame.
+    Per patch: offset_mm is its largest separation (separation), area_mm2 its area, datum_mm its distance from the
+    joint's datum plane (datum_distance), and locator and locator_mm how it is tied to the joint (locate). The best
+    grade (_grade) wins, compared before rounding; then the nearest."""
     turn = pose.Rigid(relative.rot, (0.0, 0.0, 0.0))
-    best: tuple[tuple[bool, float, float, float], dict[str, Any]] | None = None
+    best: tuple[tuple[int, float, float, float, float], dict[str, Any]] | None = None
     failures = []
     for j, theirs in enumerate(child):
         normal, point = turn.apply(theirs["normal"]), relative.apply(theirs["point"])
@@ -877,13 +945,12 @@ def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], rela
                     or abs(_dot(_sub(point, ours["point"]), ours["normal"])) > window):
                 continue
             try:
-                found = _pair_contact(ours, theirs["face"], normal, point, relative, pose, datum, tol)
+                found = _pair_contact(ours, theirs["face"], normal, point, relative, pose, datum, mount, tol)
             except ContactFailure as failure:
                 failures.append(f"parent planar face {i} with child planar face {j}: {failure}")
                 continue
-            if found is not None and (best is None or found[0] < best[0]):
-                best = found
-    return Contact(None, False, failures) if best is None else Contact(best[1], not best[0][0], failures)
+            best = min([*found, *([best] if best is not None else [])], key=lambda row: row[0], default=None)
+    return Contact(None, CONTACT_ELSEWHERE, failures) if best is None else Contact(best[1], best[0][0], failures)
 
 
 def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list[dict[str, Any]]],
@@ -907,25 +974,44 @@ def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list
     contact = None
     if fixed and missing and parent_pn in planes and child_pn in planes:
         datum = (parent_rest.apply(joint.origin), pose.Rigid(parent_rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis))
+        mount = parent_rest.apply(joint.mount) if joint.mount is not None else None
         contact = face_contact(planes[parent_pn], planes[child_pn], parent_rest @ child_rest.inverse(), pose,
-                               datum, tol, max(CONTACT_SEARCH_MM, tol))
-        if contact.at_joint:
+                               datum, mount, tol, max(CONTACT_SEARCH_MM, tol))
+        if contact.grade == CONTACT_AT_JOINT:
             parts.update(dict.fromkeys(missing, contact.best))
             return parts, []
     return parts, _mating_findings(joint.id, missing, parts, contact, fixed, tol)
 
 
+UNPLACED_REMEDY = ("if this contact is the intended mount, declare it on the joint as mount.point: [x, y, z], a point on "
+                   "the contact in assembly mm, or frame the joint origin on the contact")
+
+
+def _unknown(contact: Contact) -> tuple[str, str | None] | None:
+    """(reason, remedy) when the contact can be neither shown nor ruled out, else None."""
+    if contact.failures:
+        return (f"{len(contact.failures)} face-contact Boolean(s) failed, so the contact is unknown; first: "
+                f"{contact.failures[0]}"), None
+    if contact.grade == CONTACT_UNPLACED and contact.best is not None:
+        return (f"a face contact lies on the joint's datum plane, but its {contact.best['locator']} locator misses it by "
+                f"{contact.best['locator_mm']} mm, so the geometry cannot tell an intended mount from incidental "
+                "contact"), UNPLACED_REMEDY
+    return None
+
+
 def _mating_findings(joint_id: str, missing: list[str], parts: dict[str, Any], contact: Contact | None, fixed: bool,
                      tol: float) -> list[dict[str, Any]]:
-    """A finding per endpoint without mating geometry: joint_contact_unknown (status unknown, with the reason) when a
-    face-contact Boolean failed, since the contact can then be neither shown nor ruled out; else joint_bore_missing."""
+    """A finding per endpoint without mating geometry: joint_contact_unknown (status unknown, with its reason and any
+    remedy) when a face-contact Boolean failed or an unplaced contact (_grade) cannot be told from incidental contact;
+    else joint_bore_missing."""
     findings = []
-    if contact is not None and contact.failures:
-        reason = (f"{len(contact.failures)} face-contact Boolean(s) failed, so the contact is unknown; first: "
-                  f"{contact.failures[0]}")
+    unknown = _unknown(contact) if contact is not None else None
+    if unknown is not None and contact is not None:
+        reason, remedy = unknown
         for ref in missing:
             findings.append({"check": "joint_contact_unknown", "joint": joint_id, "part": ref, "status": "unknown",
-                             "reason": reason, "nearest": parts[ref], "contact": contact.best, "tol_mm": tol})
+                             "reason": reason, **({"remedy": remedy} if remedy else {}), "nearest": parts[ref],
+                             "contact": contact.best, "tol_mm": tol})
             parts[ref] = {"kind": "unknown", "reason": reason}
         return findings
     for ref in missing:
