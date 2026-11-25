@@ -147,6 +147,18 @@ class AccessPlanTests(unittest.TestCase):
         [reach] = plan({**BRACKET, "tool_access": [cited]})["mount-bracket"].reaches
         self.assertEqual((reach.source, reach.artifact), ("step", ("manufacturing/sources/key.step", "0" * 64)))
 
+    def test_a_tool_named_in_both_fields_is_checked_once_as_its_tool_access_entry(self) -> None:
+        cited = {"tool": "3 mm hex key", "approach": [0, 0, -1],
+                 "envelope": {"status": "known", "value": "special key", "basis": "supplier_typical",
+                              "sources": [{"kind": "supplier", "reference": "key CAD", "artifact": "manufacturing/sources/key.step",
+                                           "sha256": "0" * 64}]}}
+        for name in ("3 mm hex key", "3 mm Hex Key"):
+            with self.subTest(name=name):
+                request = plan({**BRACKET, "tools": [name], "tool_access": [cited]})["mount-bracket"]
+                [reach] = request.reaches
+                self.assertEqual((reach.index, reach.source), (1, "step"), "the default envelope is not scheduled too")
+                self.assertEqual(request.tools[0].name, name, "the instruction text is kept")
+
     def test_an_unrecognised_name_is_an_instruction_note_not_an_unknown(self) -> None:
         for field in ("tools", "tool_access"):
             with self.subTest(field=field):
