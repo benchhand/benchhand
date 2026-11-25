@@ -1101,6 +1101,24 @@ class StackupCliTests(unittest.TestCase):
             self.assertEqual(manifest["recipe"]["options"]["intent_version"], 2)
             self.assertEqual(output["check_bundle"], "hw/checks/v1/stack-closing-gap")
 
+    def test_a_not_assessed_stack_publishes_its_verdict_and_exits_0(self) -> None:
+        """A missing printer basis blocks no gate: the bundle records not_assessed and the run exits 0."""
+        stack = fixture("laser_tab_slot.yaml")
+        stack["requirement"]["min"] = -1.0  # the declared limits meet it
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", tab_slot_documents("fdm"))
+            case = write_case(hw, "tab-slot", stack)
+            snapshot_version(hw)
+            out, err = io.StringIO(), io.StringIO()
+            with unittest.mock.patch.dict("os.environ"), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                os.environ.pop(stackup.GUIDELINES.CALIBRATION_FLAG, None)
+                status = stackup.main([str(case), "--hw", str(hw), "--version", "v1"])
+            self.assertEqual(status, 0, err.getvalue())
+            self.assertEqual(json.loads(out.getvalue())["outcome"], "not_assessed")
+            manifest = json.loads((hw / "analysis" / "v1" / "tab-slot" / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["status"], "not_assessed")
+            self.assertIn("requirement not assessed", err.getvalue())
+
     def assembly_stack(self) -> dict:
         """A PN-subject stack of two sourced assembly contributors that passes: 0.2 mm +/- 0.1 against 0.0 to 0.4."""
         source = {"kind": "user", "reference": "TST stack input", "origin": "TST fixture user"}
