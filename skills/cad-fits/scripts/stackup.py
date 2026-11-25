@@ -119,6 +119,9 @@ RESULT_DECIMALS = 6
 PRODUCER = "cad-fits stackup.py"
 
 INTENT_VERSION = 2
+# The revision of how a contributor's limits are qualified, sealed in the recipe: a bundle of another revision (or of none,
+# before benchhand-c7q.30 let a guideline value qualify a printed contributor) is never reused. Bump it when a verdict can change.
+BASIS_REVISION = 1
 CATEGORIES = ("manufacture", "assembly", "thermal", "moisture", "wear", "deformation", "coating", "adhesive", "joining")
 STATES = ("as_manufactured", "after_finish", "assembled")
 CONSEQUENCES = ("collision", "binding", "loss_of_function", "critical_fit", "performance", "appearance", "other")
@@ -1384,7 +1387,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.out is not None:
                 raise StackError("--out is only allowed for standalone scratch output")
             options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS, "intent_version": INTENT_VERSION, "case": case,
-                                       "method": (stack.get("requirement") or {}).get("method", "worst_case")}
+                                       "method": (stack.get("requirement") or {}).get("method", "worst_case"),
+                                       "basis_revision": BASIS_REVISION}
             recipe = {"source_yaml_sha256": hashlib.sha256(stack_path.read_bytes()).hexdigest(), "options": options,
                       **GUIDELINES.calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
             reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
