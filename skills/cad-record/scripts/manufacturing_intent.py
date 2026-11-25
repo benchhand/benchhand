@@ -2575,7 +2575,7 @@ def capability_limit(profile: CapabilityProfile, characteristic: str, *, materia
     return CapabilityResolution("refused", profile.id, characteristic, None, tuple(reasons))
 
 
-def _scope_mismatches(calibration: Any, material: str, wanted: Mapping[str, str | None], on: date | None,
+def _scope_mismatches(calibration: Calibration, material: str, wanted: Mapping[str, str | None], on: date | None,
                       size: float | None) -> list[str]:
     """Why `calibration` does not demonstrate the request: another material, tool, orientation or feature, an expiry
     before `on`, or a size scope smaller than `size` mm."""
