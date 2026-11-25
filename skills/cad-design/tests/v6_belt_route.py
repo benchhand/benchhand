@@ -67,7 +67,7 @@ def loop_length(wraps):
 
 def main() -> None:
     version = Path(sys.argv[1])
-    occurrences = {o["id"]: o for o in yaml.safe_load((version / "record" / "assembly.yaml").read_text())["occurrences"]}
+    occurrences = {o["id"]: o for o in yaml.safe_load((version / "record" / "assembly.yaml").read_text(encoding="utf-8"))["occurrences"]}
     wraps, report = [], {}
     for oid, pn, side in ROUTE:
         placement = occurrences[oid]["placement"]
