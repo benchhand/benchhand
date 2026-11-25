@@ -17,6 +17,7 @@ import copy
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 from unittest.mock import patch
 import shutil
@@ -150,6 +151,25 @@ class OrderTests(unittest.TestCase):
         self.assertEqual((row["obligation"], row["outcome"]), ("assembly.access@op:hold-bracket", "not_applicable"))
         self.assertIn("moves no part and no tool or hand reaches it", row["uncertainty"])
         self.assertEqual(list(validator("obligation_outcome").iter_errors(row)), [])
+
+    def test_a_default_tip_sits_on_the_centre_of_the_face_the_tool_arrives_from(self) -> None:
+        # A 40 x 2 mm plate (x -20..20, z -1..1). The tool comes down from above, a little from +x: the tip is the
+        # top face's centre (0, 0, 1), on the part, wherever the projected box depth would put it.
+        low, high = (-20.0, -5.0, -1.0), (20.0, 5.0, 1.0)
+        slight = (-0.3 / math.hypot(0.3, 1.0), 0.0, -1.0 / math.hypot(0.3, 1.0))
+        forty = (-math.sin(math.radians(40)), 0.0, -math.cos(math.radians(40)))
+        cases = {(0.0, 0.0, -1.0): (0.0, 0.0, 1.0), slight: (0.0, 0.0, 1.0), forty: (0.0, 0.0, 1.0),
+                 (1.0, 0.0, 0.0): (-20.0, 0.0, 0.0)}
+        for approach, tip in cases.items():
+            with self.subTest(approach=approach):
+                self.assertEqual(access.envelope_tip(low, high, approach), tip)
+
+    def test_an_approach_that_meets_two_faces_equally_needs_a_contact_point(self) -> None:
+        low, high = (-20.0, -5.0, -1.0), (20.0, 5.0, 1.0)
+        half = math.sqrt(0.5)
+        for approach in ((-half, 0.0, -half), (0.0, half, -half)):
+            with self.subTest(approach=approach):
+                self.assertIsNone(access.envelope_tip(low, high, approach))
 
     def test_an_unknown_access_row_keeps_its_instruction_notes(self) -> None:
         items = operations("blocked_socket.yaml")
@@ -381,6 +401,30 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertEqual((code, self.outcomes(result)["assembly.access@op:fasten-cover"]), (1, "fail"))
         routes = [p["route"] for p in result["detail"]["paths"]["fasten-cover"]]
         self.assertEqual(routes, ["straight_default", "approach"])
+
+    def test_an_oblique_default_tip_needs_a_face_and_a_contact_on_it_finds_the_bracket(self) -> None:
+        """The screw head (x 17.2 to 22.8, z 12 to 27) is driven by a 3 mm hex key from 45 degrees, after the bracket is
+        mounted. That approach meets the head's top and side faces equally, so without a contact point the step is
+        unknown. With its tip on the head's top centre (20, 0, 27) the key, leaning to +x, runs into the bracket plate
+        (x 14 to 40, z 40 to 44): at z 40 its axis is at x 33."""
+        approach = [-1, 0, -1]
+        for contact, expected in ((None, "unknown"), ([20, 0, 27], "fail")):
+            with self.subTest(contact=contact):
+                items = operations("blocked_socket.yaml", self.socket_sha)
+                entry = {"tool": "3 mm hex key", "approach": approach}
+                if contact is not None:
+                    entry["contact"] = contact
+                items[3]["tool_access"] = [entry]
+                hw = self.project(f"oblique-{'contact' if contact else 'default'}", items)
+                code, result, stderr = self.run_access(hw, *self.parts_args())
+                self.assert_schema_valid(result)
+                row = next(r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:fasten-cover")
+                self.assertEqual((code, row["outcome"]), (1, expected), stderr)
+                if expected == "unknown":
+                    self.assertIn("contact", row["uncertainty"])
+                else:
+                    blocked = next(f for f in result["findings"] if f["code"] == "assembly.tool_blocked")
+                    self.assertIn("TST-0105", blocked["consequence"])
 
     def test_a_tool_is_placed_at_its_declared_contact_not_the_part_centre(self) -> None:
         """A 3 mm hex key adjusts the cover (60 x 60, centred on the axis) from above, after the bracket is mounted:
