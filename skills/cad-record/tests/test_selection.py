@@ -402,6 +402,17 @@ class ExistingEquipmentIsNotSelected(unittest.TestCase):
         self.assertEqual([f["severity"] for f in findings(report, "selection.recorded_recommendation_dropped")], ["critical"])
         self.assertEqual((report["status"], selection.exit_status(report)), ("blocked", 1))
 
+    def test_a_non_string_recommendation_role_with_no_candidates_is_not_assessed(self) -> None:
+        """The schema rejects a list role; a record read without it (as evidence assessment reads one) still reports."""
+        documents = scenarios.wear_shaft_options()
+        documents["manufacturing/selection.yaml"]["candidates"] = []
+        documents["manufacturing/selection.yaml"]["recommendation"] = {
+            "status": "conditional", "primary": ["mount_only"], "reasons": ["TST: x"], "limits": ["TST: y"],
+            "what_would_change": ["TST: z"]}
+        report = selection.assess(mi.normalize_record(documents))
+        self.assertEqual((report["status"], [f["code"] for f in report["findings"]]),
+                         ("not_assessed", ["selection.not_assessed"]))
+
     def test_a_stale_profile_on_an_existing_equipment_row_is_ignored(self) -> None:
         documents = scenarios.wear_shaft_options()
         documents["parts/TST-0409/part.yaml"] = fx.existing_part("TST-0409", "Mount face")
