@@ -661,6 +661,7 @@ class RequiredChecks(unittest.TestCase):
         for label, pn in (("list", ["TST-0001"]), ("mapping", {"PN": "TST-0001"})):
             with self.subTest(label):
                 documents = fx.tst_record()
+                documents["manufacturing/selection.yaml"] = proposing_selection()
                 documents["manufacturing/selection.yaml"]["candidates"][0]["parts"][0]["PN"] = pn
                 record = mi.normalize_record(documents)
                 self.assertIsNotNone(record.selection)
