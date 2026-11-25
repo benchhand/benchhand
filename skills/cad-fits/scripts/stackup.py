@@ -127,6 +127,8 @@ GOVERNING_METHODS = ("worst_case", "justified_rss")
 QUALIFYING_SOURCES = frozenset(("calibration", "test", "supplier", "datasheet", "standard"))
 SHEET_CUTTING = frozenset(("laser", "waterjet", "plasma"))
 FINISHING = frozenset(("drilling", "reaming", "tapping", "finishing", "coating", "joining"))
+PRINTERS = frozenset(("fdm", "resin"))  # printer calibration is optional on these (benchhand-c7q.30)
+NO_BASIS = "no_guideline"  # the not_assessed reason of a printed contributor with no calibration or guideline value
 EFFECT_FINISHES = {"coating": "coating", "joining": "joining"}  # finishes counted by their own effect contributor
 STACK_KEYS = frozenset(("intent_version", "id", "title", "units", "subject", "requirements", "dimension_state",
                         "consequence", "relevant", "requirement", "statistics", "contributors", "clearance", "note"))
@@ -322,6 +324,7 @@ class _IntentStack:
         self.calibration = calibration
         self.findings: list[dict[str, Any]] = []
         self.unknown_reasons: list[str] = []
+        self.not_assessed_reasons: list[str] = []  # a missing printer basis: open, never a pass, never masking a fail
         self.critical = False
         self.required_evidence: list[dict[str, Any]] = []
         self.limits = list(LIMITS)
@@ -489,7 +492,7 @@ class _IntentStack:
     def finding(self, code: str, suffix: str, *, severity: str, outcome: str, measured: Mapping[str, Any],
                 consequence: str, remedy: str, uncertainty: str, subject: Mapping[str, Any] | None = None,
                 criterion: Mapping[str, Any] | None = None, alternatives: list[dict[str, str]] | None = None,
-                inputs: list[str] | None = None) -> str:
+                inputs: list[str] | None = None, reason: str | None = None) -> str:
         ident = base = f"{_slug(self.id)}_{_slug(suffix)}"
         taken = {item["id"] for item in self.findings}
         number = 2
@@ -504,6 +507,8 @@ class _IntentStack:
             "recheck": {"families": ["interface.stack" if self.subject.get("interface") else "feature.fit"],
                         "earliest_stage": "detail", **({"inputs": inputs} if inputs else {})},
         }
+        if reason is not None:
+            data["reason"] = reason
         if self.obligation_id():
             data["obligation"] = self.obligation_id()
         if self.requirements:
@@ -521,6 +526,15 @@ class _IntentStack:
                      severity=self.severity(), outcome="unknown", measured={"status": "unknown", "reason": reason},
                      subject=subject, consequence=consequence or "the clearance remaining after tolerances is not established",
                      remedy=remedy, uncertainty=reason, inputs=inputs)
+
+    def not_assessed(self, code: str, contributor: _Contributor, reason: str, remedy: str) -> None:
+        """A printed contributor whose limits neither a calibration nor a guideline value qualifies (benchhand-c7q.30):
+        a minor not_assessed finding. The stack outcome is not_assessed only where the declared limits would pass."""
+        self.not_assessed_reasons.append(reason)
+        self.finding(code, f"{code.split('.')[-1]}_{contributor.id}", severity="minor", outcome="not_assessed",
+                     measured={"status": "unknown", "reason": reason}, subject=contributor.subject or None,
+                     consequence=f"{contributor.id}'s declared limits are not qualified: print and inspect it, or calibrate to assess",
+                     remedy=remedy, uncertainty=reason, reason=NO_BASIS)
 
     def severity(self) -> str:
         return "critical" if self.critical or self.consequence in WORST_CASE_GOVERNED else "major"
@@ -756,9 +770,15 @@ class _IntentStack:
                                     {"guideline": guideline.provenance[0].guideline})
                 return
         if resolution is None:
-            self.unknown("stack.capability_unresolved", item,
-                         f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no guideline "
-                         f"value covers {capability['characteristic']}", GUIDELINES.COUPON_REMEDY)
+            self.not_assessed("stack.capability_not_assessed", item,
+                              f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no "
+                              f"guideline value covers {capability['characteristic']}", GUIDELINES.COUPON_REMEDY)
+            return
+        if resolution.status != "calibrated" and profile.process in PRINTERS:
+            self.not_assessed("stack.capability_not_assessed", item,
+                              f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}, and no guideline "
+                              f"value covers it: " + "; ".join(resolution.reasons),
+                              "print and inspect the part, or calibrate the capability for this material and scope")
             return
         if resolution.status != "calibrated":
             self.unknown("stack.capability_unresolved", item,
@@ -948,6 +968,8 @@ class _IntentStack:
                                f"approved statistical interval governs this {self.consequence} consequence")
         if clearance is not None and clearance.failed:
             outcome = "fail"  # a nominal gap below a guideline minimum is a miss; a met one never raises the outcome
+        if outcome == "pass" and self.not_assessed_reasons:
+            outcome = "not_assessed"  # the declared limits pass but a printed contributor's are not qualified: never a pass
         obligation = self.obligation_id()
         coverage = (f"declared contributors {', '.join(c.id for c in self.contributors)} over effects "
                     f"{', '.join(self.relevant)}; " + "; ".join(LIMITS))
@@ -957,6 +979,9 @@ class _IntentStack:
                        "coverage": coverage, "findings": [f["id"] for f in self.findings]}
         if self.unknown_reasons:
             outcome_row["uncertainty"] = "; ".join(self.unknown_reasons)
+        elif outcome == "not_assessed":
+            outcome_row["reason"] = NO_BASIS
+            outcome_row["uncertainty"] = "; ".join(self.not_assessed_reasons)
         if not outcome_row["findings"]:
             del outcome_row["findings"]
         result: dict[str, Any] = {
@@ -1384,9 +1409,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         if status != "pass":
             governing = result["requirement"].get("governing", result["requirement"].get("method"))
-            print(f"stackup: requirement {'not met' if status == 'fail' else 'not established'} ({governing})",
-                  file=sys.stderr)
-        return 0 if status == "pass" else 1
+            said = {"fail": "not met", "not_assessed": "not assessed"}.get(status, "not established")
+            print(f"stackup: requirement {said} ({governing})", file=sys.stderr)
+        return 0 if status in ("pass", "not_assessed") else 1  # not_assessed blocks no gate (D37)
     except OSError as error:
         print(f"stackup: cannot read {args.stack}: {error}", file=sys.stderr)
         return 2
