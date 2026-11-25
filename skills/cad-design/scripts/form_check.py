@@ -768,12 +768,33 @@ def mating_cylinders(parent: list[dict[str, Any]], child: list[dict[str, Any]],
     return (parent[0] if parent else None), (child[0] if child else None)
 
 
+def _extent(shape: Any, origin: Sequence[float], direction: Sequence[float]) -> tuple[float, float]:
+    """The range of (x - origin) . direction over `shape`, from its tight box in a frame whose z axis is `direction`."""
+    from cadmodel import occ
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pnt, gp_Trsf
+
+    local = gp_Trsf()
+    local.SetTransformation(gp_Ax3(gp_Pnt(*origin), gp_Dir(*direction)))  # global coordinates into the frame's
+    low, high = occ.bbox(BRepBuilderAPI_Transform(shape, local, True).Shape())
+    return low[2], high[2]
+
+
+def datum_distance(patch: Any, datum: tuple[Sequence[float], Sequence[float]]) -> float:
+    """How far the contact patch lies from the joint's datum plane, the plane through the joint origin normal to the
+    joint axis: 0 when the plane meets the patch. A datum normal to the contact must lie in it; an offset datum (a
+    head framed on the crank axis, its axis along the deck) must cut through it."""
+    low, high = _extent(patch, *datum)
+    return 0.0 if low <= 0.0 <= high else min(abs(low), abs(high))
+
+
 def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], relative: Any, pose: Any,
-                 window: float) -> dict[str, Any] | None:
-    """The planar face pair of two parts that faces each other closest (outward normals opposite, planes at most
-    `window` mm apart) and overlaps by at least CONTACT_MIN_AREA_MM2 once the child face is moved onto the parent's
-    plane. `relative` takes child-frame points into the parent frame. offset_mm is the distance between the planes,
-    area_mm2 their overlap."""
+                 datum: tuple[Sequence[float], Sequence[float]], tol: float, window: float) -> dict[str, Any] | None:
+    """The planar face pair of two parts that mates them at the joint: outward normals opposite, planes at most
+    `window` mm apart, overlapping by at least CONTACT_MIN_AREA_MM2 once the child face is moved onto the parent's
+    plane. `relative` takes child-frame points into the parent frame; `datum` is the joint origin and axis in the parent
+    frame. offset_mm is the distance between the planes, area_mm2 their overlap and datum_mm the patch's distance from
+    the joint's datum plane (datum_distance). A pair within `tol` on both counts wins, then the nearest."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
     from OCP.gp import gp_Trsf, gp_Vec
@@ -787,7 +808,7 @@ def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], rela
             if _dot(ours["normal"], normal) >= 0.0 or _norm(_cross(ours["normal"], normal)) > AXIS_TOL:
                 continue
             gap = _dot(_sub(point, ours["point"]), ours["normal"])  # > 0: apart, < 0: overlapping
-            if abs(gap) > window or (best is not None and abs(gap) > best["offset_mm"]):
+            if abs(gap) > window:
                 continue
             if moved is None:
                 moved = BRepBuilderAPI_Transform(theirs["face"], pose.to_trsf(relative), True).Shape()
@@ -797,10 +818,16 @@ def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], rela
             area = sum(face_area(face) for face in faces_of(common.Shape())) if common.IsDone() else 0.0
             if area < CONTACT_MIN_AREA_MM2:
                 continue
-            found: dict[str, Any] = {"offset_mm": round(abs(gap), 6), "area_mm2": round(area, 4), "kind": "face"}
-            if best is None or (found["offset_mm"], -found["area_mm2"]) < (best["offset_mm"], -best["area_mm2"]):
+            found: dict[str, Any] = {"offset_mm": round(abs(gap), 6), "area_mm2": round(area, 4),
+                                     "datum_mm": round(datum_distance(common.Shape(), datum), 6), "kind": "face"}
+            if best is None or _contact_rank(found, tol) < _contact_rank(best, tol):
                 best = found
     return best
+
+
+def _contact_rank(contact: dict[str, Any], tol: float) -> tuple[bool, float, float, float]:
+    at_joint = contact["offset_mm"] <= tol and contact["datum_mm"] <= tol
+    return not at_joint, contact["offset_mm"], contact["datum_mm"], -contact["area_mm2"]
 
 
 def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list[dict[str, Any]]],
@@ -823,9 +850,10 @@ def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list
     fixed = joint.type == "fixed"
     contact = None
     if fixed and missing and parent_pn in planes and child_pn in planes:
+        datum = (parent_rest.apply(joint.origin), pose.Rigid(parent_rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis))
         contact = face_contact(planes[parent_pn], planes[child_pn], parent_rest @ child_rest.inverse(), pose,
-                               max(CONTACT_SEARCH_MM, tol))
-        if contact is not None and contact["offset_mm"] <= tol:
+                               datum, tol, max(CONTACT_SEARCH_MM, tol))
+        if contact is not None and not _contact_rank(contact, tol)[0]:
             parts.update(dict.fromkeys(missing, contact))
             return parts, []
     findings = []
