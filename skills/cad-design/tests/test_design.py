@@ -431,6 +431,13 @@ JOINT_GEOMETRY_PARTS = {
     "TST-0609": (FDM_MADE, SHAFT + ".translate((0.2, 0, 0))"),
     "TST-0610": (BOUGHT, "cq.Workplane().cylinder(10, 8).faces('>Z').workplane().hole(6)"),  # a roller: Ø16 over a Ø6 bore
     "TST-0611": (FDM_MADE, "cq.Workplane().cylinder(20, 3)"),  # its stub axle
+    # An R3 edge fillet whose axis is the joint axis at (7, 7), beside a Ø6 bore on the same axis.
+    "TST-0615": (FDM_MADE, "cq.Workplane().box(20, 20, 10).edges('|Z and >X and >Y').fillet(3)"),
+    "TST-0616": (BOUGHT, "cq.Workplane().box(20, 20, 10).cut(cq.Workplane().cylinder(12, 3).translate((7, 7, 0)))"),
+    # A half-bore journal: a Ø10 bore through the block's edge leaves a 180-degree concave face.
+    "TST-0617": (FDM_MADE, "cq.Workplane().box(20, 20, 10).translate((10, 0, 0)).cut(cq.Workplane().cylinder(12, 5))"),
+    # A D-shaft: a flat 4 mm off the axis leaves a 286-degree convex face of radius 5.
+    "TST-0618": (FDM_MADE, SHAFT + ".cut(cq.Workplane().box(10, 10, 30).translate((9, 0, 0)))"),
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -449,6 +456,9 @@ joints:
 - {id: J-605, type: revolute, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 - {id: J-606, type: revolute, parent: TST-0602, child: TST-0609, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 - {id: J-607, type: fixed, parent: TST-0611, child: TST-0610, axis: [0, 0, 1], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+- {id: J-616, type: revolute, parent: TST-0616, child: TST-0615, axis: [0, 0, 1], origin: [7, 7, 0], min: -10, max: 10, nominal: 0}
+- {id: J-617, type: revolute, parent: TST-0617, child: TST-0601, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
+- {id: J-618, type: revolute, parent: TST-0602, child: TST-0618, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 """
 
 
@@ -518,6 +528,18 @@ class JointGeometryTests(unittest.TestCase):
         self.assertEqual(self.missing("J-607"), {})
         self.assertEqual((found["TST-0611"]["kind"], found["TST-0611"]["radius"]), ("shank", 3.0))
         self.assertEqual((found["TST-0610"]["kind"], found["TST-0610"]["radius"]), ("bore", 3.0))
+
+    def test_an_edge_fillet_on_the_joint_axis_is_no_shank(self) -> None:
+        missing = self.missing("J-616")
+        self.assertEqual(sorted(missing), ["TST-0615"])
+        self.assertIsNone(missing["TST-0615"]["nearest"])
+
+    def test_a_half_bore_journal_and_a_d_shaft_still_mate(self) -> None:
+        for joint, part, kind in (("J-617", "TST-0617", "bore"), ("J-618", "TST-0618", "shank")):
+            with self.subTest(joint=joint):
+                self.assertEqual(self.missing(joint), {})
+                found = self.found(joint)[part]
+                self.assertEqual((found["kind"], found["radius"], found["offset_mm"]), (kind, 5.0, 0.0))
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
