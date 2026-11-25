@@ -46,6 +46,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+import http.client
 import urllib.error
 import urllib.request
 from http import HTTPStatus
@@ -212,7 +213,7 @@ class VendorCache:
             try:
                 with urllib.request.urlopen(CDN_BASE + rel, timeout=30) as resp:
                     data = resp.read()
-            except (urllib.error.URLError, TimeoutError) as exc:
+            except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as exc:  # HTTPException: a truncated body
                 raise OSError(f"cannot fetch {CDN_BASE + rel}: {exc}") from exc
             if not sri_matches(data, sri):
                 raise OSError(f"{CDN_BASE + rel} does not match pinned digest {sri}")

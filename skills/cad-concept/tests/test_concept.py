@@ -30,6 +30,7 @@ import unittest
 import urllib.error
 import urllib.request
 import zlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -263,6 +264,29 @@ class ServerUnits(unittest.TestCase):
             self.assertEqual(cache.get("/vendor/pkg@1/x.js"), data)
             with self.assertRaises(LookupError):
                 cache.get("/vendor/pkg@1/other.js")
+
+    def test_a_truncated_download_is_a_fetch_failure_naming_the_module(self) -> None:
+        class Short(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # announces 100 bytes, sends 10, then closes
+                self.send_response(200)
+                self.send_header("Content-Length", "100")
+                self.end_headers()
+                self.wfile.write(b"export con")
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Short)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        sri = "sha384-" + base64.b64encode(hashlib.sha384(b"export const x = 1;\n").digest()).decode()
+        base = f"http://127.0.0.1:{server.server_address[1]}/"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(serve, "CDN_BASE", base):
+            cache = serve.VendorCache(Path(tmp), {"/vendor/pkg@1/x.js": sri})
+            with self.assertRaisesRegex(OSError, r"cannot fetch http://127\.0\.0\.1:\d+/pkg@1/x\.js: IncompleteRead"):
+                cache.get("/vendor/pkg@1/x.js")
+            self.assertFalse((Path(tmp) / "pkg@1/x.js").exists())
 
     def test_scene_names_and_change_detection(self) -> None:
         self.assertTrue(serve.SCENE_NAME.match("lamp-arm.scene.json"))
