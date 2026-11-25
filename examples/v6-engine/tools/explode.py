@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 
 REPO = Path(__file__).resolve().parents[3]
 RENDERER = REPO / "skills/cad-render/assets/renderer"
@@ -160,8 +160,12 @@ def main() -> None:
         def log_message(self, *a):
             pass
 
-        def _s(self, body, ct):
-            self.send_response(HTTPStatus.OK); self.send_header("Content-Type", ct); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        def _error(self, status, message):
+            print(f"{status.value} {self.path}: {message}", file=sys.stderr)
+            self._s(message.encode(), "text/plain; charset=utf-8", status)
+
+        def _s(self, body, ct, status=HTTPStatus.OK):
+            self.send_response(status); self.send_header("Content-Type", ct); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
 
         def do_GET(self):
             p = unquote(self.path.split("?")[0])
@@ -170,9 +174,13 @@ def main() -> None:
             if p == "/model.glb": return self._s(raw, "model/gltf-binary")
             if p.startswith("/vendor/"):
                 try: return self._s(vendor.get(p), "text/javascript")
-                except Exception:
-                    self.send_response(404); self.end_headers(); return
-            self.send_response(404); self.end_headers()
+                except LookupError: return self._error(HTTPStatus.NOT_FOUND, f"{p} is not a pinned module")
+                except OSError as exc:  # a failed fetch or a digest mismatch, not a missing resource
+                    vendor_failures.append(str(exc))
+                    return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
+            self._error(HTTPStatus.NOT_FOUND, f"{p} not found")
+
+    vendor_failures: list[str] = []
 
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
     import threading
@@ -187,11 +195,25 @@ def main() -> None:
             pg.on("console", lambda m: print("console:", m.text, file=sys.stderr))
             pg.on("pageerror", lambda e: print("pageerror:", e, file=sys.stderr))
             await pg.goto(f"http://127.0.0.1:{port}/")
-            await pg.wait_for_function("window.__done === true", timeout=180000)
+            for _ in range(180):  # one-second waits, so a vendor failure ends the run at once instead of at the timeout
+                if vendor_failures:
+                    return
+                try:
+                    await pg.wait_for_function("window.__done === true", timeout=1000)
+                    break
+                except PlaywrightTimeoutError:
+                    continue
+            else:
+                raise TimeoutError("the page did not finish in 180 s")
             await pg.screenshot(path=str(out))
             await b.close()
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    finally:
+        srv.shutdown()
+        if vendor_failures:
+            sys.exit("explode.py: the renderer's vendor modules failed to load: " + "; ".join(vendor_failures))
     print("wrote", out)
 
 
