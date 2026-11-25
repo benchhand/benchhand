@@ -752,7 +752,7 @@ class _IntentStack:
         if resolution is None or resolution.status != "calibrated":
             guideline = self.guideline_deviation(profile, capability["characteristic"], material)
             if guideline is not None:  # benchhand-c7q.30: calibration is never required; the guideline value governs
-                self.qualify_limits(intent, item, guideline.value, f"guideline {guideline.provenance[0].guideline}'s value",
+                self.qualify_limits(intent, item, capability["characteristic"], guideline.value, f"guideline {guideline.provenance[0].guideline}'s value",
                                     {"guideline": guideline.provenance[0].guideline})
                 return
         if resolution is None:
@@ -768,7 +768,7 @@ class _IntentStack:
                               "(test pieces, a capability study or supplier evidence)")
             return
         calibration = resolution.calibration
-        self.qualify_limits(intent, item, calibration.limits, f"calibration {calibration.id}'s demonstrated deviation",
+        self.qualify_limits(intent, item, capability["characteristic"], calibration.limits, f"calibration {calibration.id}'s demonstrated deviation",
                             {"calibration": calibration.id})
 
     def guideline_deviation(self, profile: Any, characteristic: str, material: str) -> Any | None:
@@ -779,11 +779,12 @@ class _IntentStack:
                                               characteristic)
         return found if found.status == "guideline" and found.operator == "between" else None
 
-    def qualify_limits(self, intent: Any, item: _Contributor, limits: Any, basis: str, resolved: dict[str, Any]) -> None:
+    def qualify_limits(self, intent: Any, item: _Contributor, characteristic: str, limits: Any, basis: str,
+                       resolved: dict[str, Any]) -> None:
         """Record what qualified the contributor; limits tighter than a deviation interval stay unqualified."""
         item.resolved = {**resolved, "limits": {"lower": limits.lower, "upper": limits.upper, "value": limits.value,
                                                 "units": limits.units}}
-        if item.capability["characteristic"].endswith("deviation") and limits.lower is not None:
+        if characteristic.endswith("deviation") and limits.lower is not None:
             low, high = intent.convert(limits.lower, limits.units, "mm"), intent.convert(limits.upper, limits.units, "mm")
             if low < -item.minus - 1e-12 or high > item.plus + 1e-12:
                 self.unknown("stack.limits_unqualified", item,
