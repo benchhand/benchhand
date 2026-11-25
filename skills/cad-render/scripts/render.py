@@ -149,6 +149,7 @@ def _load_record_module(name: str, path: Path) -> Any:
 
 
 layout = _load_record_module("cad_record_layout", LAYOUT_PY)
+sourcing = _load_record_module("cad_record_sourcing", LAYOUT_PY.with_name("sourcing.py"))
 LAYOUT_VIEW_NAME = re.compile(layout.load().tokens["VIEW"]["pattern"])
 # Front and side keep a low elevation so the ground plane, and the shadow on it, stays in view.
 DIRECTIONS = {
@@ -706,9 +707,10 @@ def named_occurrences(ref: str, by_pn: dict[str, str], flag: str) -> list[str]:
 def render_states(by_pn: dict[str, str], records: dict[str, dict[str, Any]], *, hide: Sequence[str],
                   ghost: Sequence[str], show: Sequence[str]) -> tuple[list[str], list[str]]:
     """(hidden, ghosted) occurrence ids, in `by_pn` order. Each part starts at its part.yaml `render`
-    (default shown); --show, --ghost and --hide then set the occurrences they name. One id under two
-    flags is an error."""
-    state = {oid: records[pn].get("render", "shown") for oid, pn in by_pn.items()}
+    (default shown, and ghost for existing equipment, which is not part of the delivered product); --show,
+    --ghost and --hide then set the occurrences they name. One id under two flags is an error."""
+    state = {oid: records[pn].get("render", "shown" if sourcing.delivered(records[pn]) else "ghost")
+             for oid, pn in by_pn.items()}
     named: dict[str, str] = {}
     for flag, value, refs in (("hide", "hidden", hide), ("ghost", "ghost", ghost), ("show", "shown", show)):
         for ref in refs:
