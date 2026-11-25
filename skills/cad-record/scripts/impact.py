@@ -331,14 +331,16 @@ class _Record:
                 {"id": op.get("id"), "post_processing": op.get("post_processing"), "allowances": op.get("allowances")}
                 for op in route]},
             "geometry": {"model": self.geometry.get(pn), "manufacture": part.get("manufacture"),
-                         "components": intent.get("components"), "critical_surfaces": intent.get("critical_surfaces")},
+                         "components": intent.get("components"), "critical_surfaces": intent.get("critical_surfaces"),
+                         **({"existing": part["existing"]["dimensions"]} if _get(part, "existing", "dimensions") else {})},
             "appearance": {"color": intent.get("color")},
             "interface": {"interfaces": [self.interfaces[i] for i in sorted(self.interfaces_of(pn))],
                           "operations": [op for op in self.operations if pn in (op.get("part"), op.get("into"))],
                           "datums": _get(part, "drawing", "datum_features")},
             "criterion": {"requirements": criteria, "policy": _get(self.use_case, "evidence_policy")},
         }
-        sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
+        sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria,
+                              _get(part, "existing", "dimensions")])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
         digests = getattr(self.record, "guideline_digests", None) or {}
         declared = [intent.get("material_profile"), *(c.get("material_profile") for c in intent.get("components") or ()
