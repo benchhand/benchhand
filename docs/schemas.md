@@ -14,7 +14,7 @@ schema-sha256 2af936cbacdc55c0cf3789c97db7ef72a6e230ad2ab0a5a968862238ab75fcad s
 schema-sha256 6ef27bc4c8273de006b8606504ea0897de10da12688d904197b43c3d8dc84e72 skills/cad-record/schemas/manufacturing-check-result.schema.json
 schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b skills/cad-record/schemas/manufacturing-evidence.schema.json
 schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
-schema-sha256 3a70ff36a1ebb40d1485b7fa0008051dcdacfaa1d05651ac1694cf02f3ab6f83 skills/cad-record/schemas/manufacturing-guideline.schema.json
+schema-sha256 c9a2ba7204fcf8065d3fc9a1c052dce71da9552ab8690a434f71da458d20e83a skills/cad-record/schemas/manufacturing-guideline.schema.json
 schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
 schema-sha256 373d95bcca809d496fad780d25ae37088c76685d4bc68c3b2392106c395a15ce skills/cad-record/schemas/manufacturing.schema.json
@@ -3402,7 +3402,7 @@ Source: `/$defs/limit`
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `characteristic` | `Literal["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "sliding_clearance", "enclosure", "nozzle_material"]` | yes |  | only a characteristic whose quantity the capability schema bounds, so no limit holds an unbounded value |
+| `characteristic` | `Literal["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "warp", "sliding_clearance", "enclosure", "nozzle_material"]` | yes |  | only a characteristic whose quantity the capability schema bounds, so no limit holds an unbounded value |
 | `operator` | `Literal[">=", "<=", ">", "<", "between", "equals", "one_of"]` | yes |  |  |
 | `quantity` | `ManufacturingQuantity` | no |  | the limit as a value (>=, <=) or an interval (between), in one unit |
 | `relative` | `ManufacturingGuidelineRelative` | no |  |  |
@@ -3429,7 +3429,7 @@ Constraints not expressed by the type:
 - if {"properties":{"characteristic":{"const":"min_feature"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_feature"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_feature"}}}}}
 - if {"properties":{"characteristic":{"const":"min_hole"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_hole"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_hole"}}}}}
 - if {"properties":{"characteristic":{"const":"sliding_clearance"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"}}}}}
-- if {"properties":{"characteristic":{"enum":["hole_diameter_deviation","dimensional_deviation","profile_deviation"]}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}
+- if {"properties":{"characteristic":{"enum":["hole_diameter_deviation","dimensional_deviation","profile_deviation","warp"]}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}
 - if {"properties":{"characteristic":{"enum":["enclosure","nozzle_material"]}},"required":["characteristic"]} then {"properties":{"operator":{"enum":["equals","one_of"]}}}
 - if {"properties":{"characteristic":{"const":"enclosure"}},"required":["characteristic"]} then {"properties":{"value":{"description":"a boolean fact: the requirement is true or false","anyOf":[{"type":"boolean"},{"type":"array","items":{"type":"boolean"}}]}}}
 - if {"properties":{"characteristic":{"const":"nozzle_material"}},"required":["characteristic"]} then {"properties":{"value":{"description":"lowercase, like the scope names and the material facts","anyOf":[{"type":"string","pattern":"^[a-z0-9][a-z0-9_.-]*$"},{"type":"array","items":{"type":"string","pattern":"^[a-z0-9][a-z0-9_.-]*$"}}]}}}
