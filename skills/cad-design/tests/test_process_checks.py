@@ -2736,6 +2736,20 @@ class GuidelineWithoutCalibrationTests(Checks):
             result = self.warped("<= 1.5", catalog=SHIPPED, calibrations=(warp,))
         self.advisory(result, "process.fdm.warp_scope", self.thermal(result))
 
+    def test_an_undersized_warp_coupon_is_rejected_and_the_project_warp_guideline_judges_the_footprint(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(5))  # the footprint is 12 mm
+        for flatness, expected in (("<= 1.5", "pass"), ("<= 0.5", "fail")):  # the project guideline says 0..1 mm
+            with self.subTest(flatness=flatness), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+                result = self.warped(flatness, catalog=accuracy_catalog(self.WARP), calibrations=(warp,))
+                obligation = self.thermal(result)
+                self.assertEqual(self.outcome(result, obligation), expected, self.codes(result, obligation))
+                note = self.finding(result, "process.fdm.warp_scope")
+                self.assertEqual((note["severity"], note["outcome"], "obligation" in note), ("info", "unknown", False))
+                if expected == "fail":
+                    self.assertEqual(self.finding(result, "process.fdm.warp")["uncertainty"], "guideline tst.fdm.accuracy@1")
+                else:
+                    self.assertIn("uncalibrated: guideline value 0..1 mm used", result.outcome(obligation)["coverage"])
+
     def critical(self, role: str, *, on_bed: bool = False, catalog: Any = SHIPPED, calibrations: tuple = (),
                  criteria: list | None = None, size: float = 30.0) -> Any:
         """TST-0101, `size` mm at its largest, with one critical planar feature face_a of `role` (on the bed when
