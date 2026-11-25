@@ -1448,6 +1448,16 @@ class ExistingEquipmentBuildTests(unittest.TestCase):
         self.assertEqual(self.step_pns("product.step"), {"TST-0001"})
         self.assertEqual(self.step_pns("assembly.step"), {"TST-0001", "TST-0002"})
 
+    def test_product_step_groups_its_occurrences_and_assembly_step_stays_flat(self) -> None:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(FIXTURES / "step_tree_probe.py"),
+                               str(self.folder / "product.step"), str(self.folder / "assembly.step")],
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        trees = json.loads(proc.stdout)
+        self.assertEqual(trees[str(self.folder / "product.step")], {"TST-0001 Base block": ["twoarm v1", "made"]})
+        self.assertEqual(trees[str(self.folder / "assembly.step")],
+                         {"TST-0001 Base block": ["twoarm v1"], "TST-0002 Swing arm": ["twoarm v1"]})
+
     def test_glb_groups_occurrences_by_sourcing_and_the_product_glb_has_no_existing_group(self) -> None:
         def groups(name: str) -> dict[str, list[str]]:
             nodes = mesh.gltf_json(self.folder / name)["nodes"]
