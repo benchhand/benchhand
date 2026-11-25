@@ -223,6 +223,30 @@ class AccessPlanTests(unittest.TestCase):
         [reach] = request.reaches
         self.assertEqual((reach.contact, request.unknown), ((30.0, 0.0, 44.0), ()))
 
+    def test_a_tool_access_entry_stands_for_the_same_tool_written_another_way_in_tools(self) -> None:
+        adjust = {"id": "adjust-bracket", "kind": "adjust", "part": "TST-0105",
+                  "acceptance": {"kind": "adjusted", "features": ["bracket_foot"]}}
+        cases = {"3 mm hex key": "Allen key (3 mm)", "hex key 3 mm": "3mm Inbus key",
+                 "10 mm socket on a 3/8\" drive": "10 mm socket, 10 mm drive"}
+        for written, declared in cases.items():
+            with self.subTest(tools=written, tool_access=declared):
+                request = plan(BRACKET, {**adjust, "tools": [written], "tool_access": [
+                    {"tool": declared, "approach": [0, 0, -1], "contact": [30, 0, 44]}]})["adjust-bracket"]
+                [reach] = request.reaches
+                self.assertEqual((reach.index, reach.contact, request.unknown), (1, (30.0, 0.0, 44.0), ()))
+                self.assertEqual(request.tools[0].name, written, "the instruction text is kept as written")
+
+    def test_different_tools_in_the_two_fields_are_each_checked(self) -> None:
+        adjust = {"id": "adjust-bracket", "kind": "adjust", "part": "TST-0105",
+                  "acceptance": {"kind": "adjusted", "features": ["bracket_foot"]}}
+        for written, declared in (("4 mm hex key", "3 mm hex key"), ("10 mm socket, 1/2 drive", "10 mm socket, 3/8 drive")):
+            with self.subTest(tools=written, tool_access=declared):
+                request = plan(BRACKET, {**adjust, "tools": [written], "tool_access": [
+                    {"tool": declared, "approach": [0, 0, -1], "contact": [30, 0, 44]}]})["adjust-bracket"]
+                self.assertEqual([reach.index for reach in request.reaches], [1])
+                self.assertEqual(len(request.unknown), 1, "the tools entry still needs its own contact point")
+                self.assertIn(repr(written), request.unknown[0])
+
 
 if __name__ == "__main__":
     unittest.main()
