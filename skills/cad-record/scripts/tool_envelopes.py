@@ -14,7 +14,10 @@ and gives it a role:
   - hand: the hand reaches the part (by hand, fingers, finger tight). Envelope: a standard hand, below.
   - observe: nothing reaches (by eye, visual check, clock, wait). No access check.
   - bench: nothing reaches the assembly (bench, on the bench, hold). No access check.
-  - tool: a common tool named with its type and size, with a parametric envelope from the cited standard.
+  - tool: a common tool named with its type and size, with a parametric envelope from the cited standard. The
+    whole entry must be that one phrase ("Allen key (3 mm)", "8 mm socket with 1/2-inch drive"; hex, Allen and
+    Inbus keys are one tool), so a size or a tool word inside other text ("PH2 alignment marker") makes no tool,
+    and a socket takes the drive the entry names, or none when the standard lists no such drive.
   - note: anything else, including a tool type without a size. It stays an instruction note; it is never an
     access obligation, and a cited STEP solid (tool_access envelope) is the way to check a special tool.
 
@@ -133,6 +136,7 @@ PLIERS = {125: (132.0, 31.0, 20.0, 9.0), 140: (149.0, 34.0, 23.0, 10.0), 160: (1
 PLIERS_HANDLE_SPAN_MM = 65.0  # ISO 5746:2021 Figure 1: 50 +15 -5 mm across the handles
 # ISO 15534-3:2000 Table 1.
 FINGER_BREADTH_MM, FINGER_LENGTH_MM, HAND_BREADTH_MM, HAND_LENGTH_MM = 23.0, 59.0, 97.0, 152.0
+# ISO 2725-1:2017 drive squares: the inch designation and the nominal mm size, both as written.
 DRIVES = {"1/4": 6.3, "6.3": 6.3, "3/8": 10.0, "10": 10.0, "1/2": 12.5, "12.5": 12.5}
 
 
@@ -154,24 +158,45 @@ def _hand() -> Envelope:
 
 # --------------------------------------------------------------------------- classification
 
-NUMBER = r"(\d+(?:\.\d+)?)"
-HAND_TEXT = re.compile(r"(?:by |with (?:the |a |one )?)?(?:hand|hands|finger|fingers|thumb)s?(?:[- ](?:tight|tightened|press(?:ed)?|pressure))?"
-                       r"|(?:hand|finger)[- ]tighten(?:ed)?|manual(?:ly)?|press by hand|push by hand")
+# A name is read whole: after `_normal`, one of these phrases must match all of it, so a size or a tool word
+# elsewhere in the text ("PH2 alignment marker") never makes a tool. Hyphens, commas and brackets read as spaces.
+NUMBER = r"\d+(?:\.\d+)?"
+ARTICLE = r"(?:(?:with |using )?(?:a |an |the |one ))?"
+HAND_TEXT = re.compile(r"(?:by |with (?:the |a |one )?)?(?:hand|hands|finger|fingers|thumb)s?(?: (?:tight|tightened|press(?:ed)?|pressure))?"
+                       r"|(?:hand|finger) tighten(?:ed)?|manual(?:ly)?|press by hand|push by hand")
 OBSERVE_TEXT = re.compile(r"(?:by |with (?:the |a )?)?(?:eye|eyes|visual(?: check| inspection)?|look|clock|timer|watch|stopwatch)"
                           r"|visually|wait\b.*|(?:inspect(?:ion)?|check) by eye")
 BENCH_TEXT = re.compile(r"(?:on |at )?(?:the |a )?(?:bench|workbench|table)(?: work)?|hold(?: in place)?|bench work")
-HEX_KEY = re.compile(NUMBER + r"\s*mm\s+(?:hex(?:agon)?|allen|hex socket screw)(?:\s+socket)?\s+(?:key|wrench)\b"
-                     r"|(?:hex(?:agon)?|allen) (?:key|wrench)\s+" + NUMBER + r"\s*mm")
-PHILLIPS_TEXT = re.compile(r"\bph\s?([0-9])\b")
-WRENCH = re.compile(NUMBER + r"\s*mm\s+(open[- ]?end(?:ed)?|open|ring|box(?:[- ]end)?|combination)?\s*(?:wrench|spanner)\b")
-SOCKET = re.compile(NUMBER + r"\s*mm\s+(?:(?:6|12)[- ]point\s+|hex\s+|bi-?hex\s+|double[- ]hex\s+)?socket\b")
-DRIVE = re.compile(r"(1/4|3/8|1/2)\s*(?:in(?:ch)?|\")?\s*(?:square\s+)?drive|(6\.3|10|12\.5)\s*mm\s+(?:square\s+)?drive")
-PLIERS_TEXT = re.compile(r"(?:(\d{3})\s*mm\s+)?(?:combination |engineer'?s |universal )?pliers\b(?:\s+(\d{3})\s*mm)?")
-TOOL_WORDS = re.compile(r"\b(hex|allen|key|screwdriver|driver|wrench|spanner|socket|ratchet|pliers|torx|pozidriv|pz\d)\b")
+
+
+def _phrases(*forms: str) -> tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(ARTICLE + form) for form in forms)
+
+
+_HEX_NOUN = r"(?:hex(?:agon)?(?: socket(?: screw)?)?|allen|inbus) (?:key|wrench)"
+HEX_KEY = _phrases(rf"(?P<size>{NUMBER}) ?mm {_HEX_NOUN}", rf"{_HEX_NOUN} (?P<size>{NUMBER}) ?mm")
+PHILLIPS_TEXT = _phrases(r"(?:phillips )?ph ?(?P<size>\d)(?: phillips)?(?: screw ?driver)?",
+                         r"(?:phillips )?screw ?driver (?:phillips )?ph ?(?P<size>\d)")
+_FORM = r"(?:(?P<form>open end(?:ed)?|open|ring|box(?: end)?|combination) )?"
+WRENCH = _phrases(rf"(?P<size>{NUMBER}) ?mm {_FORM}(?:wrench|spanner)", rf"{_FORM}(?:wrench|spanner) (?P<size>{NUMBER}) ?mm")
+_SOCKET = r"(?:(?:6|12) point |hex |bi ?hex |double hex )?socket"
+_DRIVE = rf"(?:(?P<inch>\d+/\d+) ?(?:in|inch|\")?|(?P<drive_mm>{NUMBER}) ?mm) (?:square )?drive"
+SOCKET = _phrases(rf"(?P<size>{NUMBER}) ?mm {_SOCKET}(?: (?:with |on |for )?(?:a )?{_DRIVE})?",
+                  rf"{_DRIVE} (?P<size>{NUMBER}) ?mm {_SOCKET}")
+_PLIERS = r"(?:combination |engineers |universal )?pliers"
+PLIERS_TEXT = _phrases(rf"(?:(?P<size>\d{{3}}) ?mm )?{_PLIERS}", rf"{_PLIERS} (?P<size>\d{{3}}) ?mm")
+TOOL_WORDS = re.compile(r"\b(hex|allen|inbus|key|screwdriver|driver|wrench|spanner|socket|ratchet|pliers|torx|pozidriv|pz\d)\b")
 
 
 def _normal(name: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"(\d),(\d)", r"\1.\2", name.strip().lower()))
+    """Lower case, a decimal comma as a point, no apostrophes, and hyphens, commas and brackets as spaces."""
+    text = re.sub(r"(\d),(\d)", r"\1.\2", name.strip().lower()).replace("'", "").replace("\u2019", "")
+    return re.sub(r"\s+", " ", re.sub(r"[-\u2010-\u2013(),;:\[\]]", " ", text)).strip()
+
+
+def _phrase(patterns: tuple[re.Pattern[str], ...], text: str) -> re.Match[str] | None:
+    """The match of the one phrase that is the whole of `text`, if any."""
+    return next((match for pattern in patterns if (match := pattern.fullmatch(text))), None)
 
 
 def _size(table: dict[float, Any], text: str) -> float | None:
@@ -180,7 +205,7 @@ def _size(table: dict[float, Any], text: str) -> float | None:
 
 
 def _hex_key(name: str, match: re.Match[str]) -> Entry:
-    size = _size(HEX_KEYS, match.group(1) or match.group(2))
+    size = _size(HEX_KEYS, match["size"])
     if size is None:
         return Entry(name, NOTE, note=f"{name!r}: ISO 2936 lists no hex key of that size")
     e_max, long_arm, short_arm = HEX_KEYS[size]
@@ -190,7 +215,7 @@ def _hex_key(name: str, match: re.Match[str]) -> Entry:
 
 
 def _phillips(name: str, match: re.Match[str]) -> Entry:
-    size = int(match.group(1))
+    size = int(match["size"])
     if size not in PHILLIPS:
         return Entry(name, NOTE, note=f"{name!r}: no shipped Phillips envelope for PH{size} (PH1 to PH3 are)")
     blade, length, handle, handle_length = PHILLIPS[size]
@@ -202,10 +227,10 @@ def _phillips(name: str, match: re.Match[str]) -> Entry:
 
 
 def _wrench(name: str, match: re.Match[str]) -> Entry:
-    size = _size(WRENCHES, match.group(1))
+    size = _size(WRENCHES, match["size"])
     if size is None:
         return Entry(name, NOTE, note=f"{name!r}: ISO 3318 lists no wrench of that width across flats")
-    form = match.group(2) or "open"
+    form = match["form"] or "open"
     box = form.startswith(("ring", "box"))
     open_width, box_width = WRENCHES[size]
     width = box_width if box else open_width
@@ -217,10 +242,13 @@ def _wrench(name: str, match: re.Match[str]) -> Entry:
         {"kind": "estimate", "reference": f"head thickness {thickness:g} mm (0.4 s + 2 mm): ISO 3318 gives none"})))
 
 
-def _socket(name: str, text: str, match: re.Match[str]) -> Entry:
-    value = float(match.group(1))
-    drive_match = DRIVE.search(text)
-    drives = [DRIVES[next(g for g in drive_match.groups() if g)]] if drive_match else sorted(SOCKETS)
+def _socket(name: str, match: re.Match[str]) -> Entry:
+    value = float(match["size"])
+    drive = match["inch"] or match["drive_mm"]
+    if drive is not None and drive not in DRIVES:
+        return Entry(name, NOTE, note=f"{name!r}: ISO 2725-1 Tables 1 to 3 give the 1/4, 3/8 and 1/2 inch "
+                                     "(6.3, 10 and 12.5 mm) square drives only")
+    drives = sorted(SOCKETS) if drive is None else [DRIVES[drive]]
     for drive in drives:
         size = _size(SOCKETS[drive], str(value))
         if size is not None:
@@ -233,7 +261,7 @@ def _socket(name: str, text: str, match: re.Match[str]) -> Entry:
 
 
 def _pliers(name: str, match: re.Match[str]) -> Entry:
-    text = match.group(1) or match.group(2)
+    text = match["size"]
     if text is None or int(text) not in PLIERS:
         return Entry(name, NOTE, note=f"{name!r}: name the nominal length (one of {', '.join(map(str, PLIERS))} mm) "
                                      "for the ISO 5746 envelope")
@@ -255,15 +283,15 @@ def classify(name: str) -> Entry:
         return Entry(name, OBSERVE)
     if BENCH_TEXT.fullmatch(text):
         return Entry(name, BENCH)
-    if match := HEX_KEY.search(text):
+    if match := _phrase(HEX_KEY, text):
         return _hex_key(name, match)
-    if match := SOCKET.search(text):
-        return _socket(name, text, match)
-    if match := WRENCH.search(text):
+    if match := _phrase(SOCKET, text):
+        return _socket(name, match)
+    if match := _phrase(WRENCH, text):
         return _wrench(name, match)
-    if (match := PHILLIPS_TEXT.search(text)) and not re.search(r"\b(bit|socket)\b", text):
+    if match := _phrase(PHILLIPS_TEXT, text):
         return _phillips(name, match)
-    if match := PLIERS_TEXT.search(text):
+    if match := _phrase(PLIERS_TEXT, text):
         return _pliers(name, match)
     if TOOL_WORDS.search(text):
         return Entry(name, NOTE, note=f"{name!r}: a tool without a size or type that has a shipped envelope "
