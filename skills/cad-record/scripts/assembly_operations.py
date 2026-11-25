@@ -440,32 +440,15 @@ def sequence(operations: Operations, inventory: Any = None, existing: frozenset[
                  None if op.into is None else resolve(op.into, op), tuple(resolve(ref, op) for ref in op.closes))
                 for op in operations.items]
     builds = list(dict.fromkeys(op.sub_build for op in operations.items if op.sub_build is not None))
-    claims: dict[str, list[str | None]] = {}
-
-    def claim(ref: str, build: str | None) -> None:
-        owners = claims.setdefault(ref, [])
-        if build not in owners:
-            owners.append(build)
-
     groups = {group.id: group.members for group in inventory.groups} if inventory is not None else {}
-    for build in builds:
-        for member in groups.get(build, ()):
-            claim(member, build)
-    for op, part, into, closes in resolved:
-        if op.sub_build is not None:
-            for ref in (part, into, *closes):
-                if ref is not None:
-                    claim(ref, op.sub_build)
-        elif op.installs and op.kind != "install":
-            claim(part, None)
+    claims = _claims(resolved, builds, groups)
     members = {build: frozenset(ref for ref, owners in claims.items() if build in owners) for build in builds}
     owned = frozenset().union(*members.values()) if members else frozenset()
     named_by: dict[str | None, list[str]] = {}
+    installed: dict[str | None, set[str]] = {}
     for op, part, into, closes in resolved:
         refs = (into, *closes) if op.kind == "install" else (part, into, *closes)
         named_by.setdefault(op.sub_build, []).extend(ref for ref in refs if ref is not None)
-    installed: dict[str | None, set[str]] = {}
-    for op, part, _into, _closes in resolved:
         if op.installs and op.kind != "install":
             installed.setdefault(op.sub_build, set()).add(part)
     named = list(dict.fromkeys(named_by.get(None, ())))
@@ -479,34 +462,10 @@ def sequence(operations: Operations, inventory: Any = None, existing: frozenset[
     if inventory is not None:
         ground = next((ref for ref in (*named, *inventory.ids) if ref in base - preexisting), None)
     floating = frozenset(base - {ground} - preexisting) if inventory is not None else frozenset()
-    present: dict[str | None, set[str]] = {None: set(base)}
-    closed: dict[str | None, dict[str, str]] = {None: {}}
-    sub_base: dict[str, frozenset[str]] = {}
-    sub_ground: dict[str, str | None] = {}
-    for build in builds:
-        sub_base[build] = frozenset(members[build] - installed.get(build, set()))
-        order = (*named_by.get(build, ()), *groups.get(build, ()), *sorted(members[build]))
-        sub_ground[build] = next((ref for ref in order if ref in sub_base[build]), None)
-        present[build] = set(sub_base[build])
-        closed[build] = {}
-    steps = []
-    for op, part, into, closes in resolved:
-        build = op.sub_build
-        steps.append(Step(op, part, into, closes, frozenset(present[build]),
-                          types.MappingProxyType(dict(closed[build])), build))
-        if op.kind == "install":
-            if part in present and part is not None:
-                present[None] |= present[part]
-                for ref, closer in closed[part].items():
-                    closed[None].setdefault(ref, closer)
-            continue
-        if op.installs:
-            present[build].add(part)
-        if op.removes:
-            present[build].discard(part)
-        if op.kind == "close":
-            for ref in closes:
-                closed[build].setdefault(ref, op.id)
+    sub_base = {build: frozenset(members[build] - installed.get(build, set())) for build in builds}
+    sub_ground = {build: next((ref for ref in (*named_by.get(build, ()), *groups.get(build, ()), *sorted(members[build]))
+                               if ref in sub_base[build]), None) for build in builds}
+    steps, present, closed = _walk(resolved, base, sub_base)
     last = {op.sub_build: op.index for op in operations.items if op.sub_build is not None}
     sub_builds = {build: SubBuild(build, members[build], sub_ground[build],
                                   frozenset(sub_base[build] - {sub_ground[build]}) if inventory is not None else frozenset(),
@@ -515,6 +474,60 @@ def sequence(operations: Operations, inventory: Any = None, existing: frozenset[
     shared = {ref: tuple(owners) for ref, owners in claims.items() if len(owners) > 1}
     return AssemblyState(tuple(steps), base, types.MappingProxyType(unresolved), ground, floating,
                          types.MappingProxyType(sub_builds), types.MappingProxyType(shared))
+
+
+Resolved = tuple[AssemblyOperation, str, str | None, tuple[str, ...]]
+
+
+def _claims(resolved: list[Resolved], builds: list[str],
+            groups: Mapping[str, tuple[str, ...]]) -> dict[str, list[str | None]]:
+    """occurrence -> the builds that claim it, in claim order: a sub-build claims its subassembly's members and
+    what its operations name; the main build claims only what it installs."""
+    claims: dict[str, list[str | None]] = {}
+
+    def claim(ref: str, build: str | None) -> None:
+        owners = claims.setdefault(ref, [])
+        if build not in owners:
+            owners.append(build)
+
+    for build in builds:
+        for member in groups.get(build, ()):
+            claim(member, build)
+    for op, part, into, closes in resolved:
+        if op.sub_build is not None:
+            for ref in (part, into, *closes):
+                if ref is not None:
+                    claim(ref, op.sub_build)
+        elif op.installs and op.kind != "install":
+            claim(part, None)
+    return claims
+
+
+def _walk(resolved: list[Resolved], base: frozenset[str], sub_base: Mapping[str, frozenset[str]]
+          ) -> tuple[list[Step], dict[str | None, set[str]], dict[str | None, dict[str, str]]]:
+    """The steps in record order, each with its own build's state; an install adds the sub-build's parts and
+    closures to the main build. Returns the steps and each build's final present and closed maps."""
+    present: dict[str | None, set[str]] = {None: set(base), **{build: set(parts) for build, parts in sub_base.items()}}
+    closed: dict[str | None, dict[str, str]] = {build: {} for build in present}
+    steps = []
+    for op, part, into, closes in resolved:
+        owner = op.sub_build
+        steps.append(Step(op, part, into, closes, frozenset(present[owner]),
+                          types.MappingProxyType(dict(closed[owner])), owner))
+        if op.kind == "install":
+            if part in present:
+                present[None] |= present[part]
+                for ref, closer in closed[part].items():
+                    closed[None].setdefault(ref, closer)
+            continue
+        if op.installs:
+            present[owner].add(part)
+        if op.removes:
+            present[owner].discard(part)
+        if op.kind == "close":
+            for ref in closes:
+                closed[owner].setdefault(ref, op.id)
+    return steps, present, closed
 
 
 # --------------------------------------------------------------------------- findings
