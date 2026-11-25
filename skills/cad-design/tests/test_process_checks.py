@@ -2653,7 +2653,7 @@ class GuidelineWithoutCalibrationTests(Checks):
     def test_a_guideline_warp_fails_a_flatness_limit_it_misses_with_basis_guideline(self) -> None:
         result = self.warped("<= 0.5", catalog=accuracy_catalog(self.WARP))
         self.assertEqual(self.outcome(result, self.thermal(result)), "fail")
-        self.assertEqual(self.finding(result, "process.fdm.warp")["criterion"]["source"]["kind"], "guideline")
+        self.assertEqual(self.finding(result, "process.fdm.warp")["uncertainty"], "guideline tst.fdm.accuracy")
 
     def test_a_warp_calibration_overrides_the_guideline_value(self) -> None:
         warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.3, size=mm(15))
@@ -2673,7 +2673,7 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual(self.outcome(result, GEOMETRY), expected)
                 self.assertEqual(result.by_code("process.fdm.hole_uncalibrated"), [])
                 if expected == "fail":
-                    self.assertEqual(self.finding(result, "process.fdm.hole_fit")["criterion"]["source"]["kind"], "guideline")
+                    self.assertTrue(self.finding(result, "process.fdm.hole_fit")["uncertainty"].startswith("guideline tst.fdm.accuracy"))
                 else:
                     self.assertIn("uncalibrated: guideline value -0.5..0.5 mm used; calibrate to tighten",
                                   result.outcome(GEOMETRY)["coverage"])
