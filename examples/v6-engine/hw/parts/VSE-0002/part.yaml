@@ -24,3 +24,43 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+      inspection:
+        - {id: gauge_pin_bore, feature: pin_bore, method: "Gauge the printed pin bore against the 6 H7 limits before assembly", instrument: pin_gauge, state: as_manufactured}
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: crown, role: plane}
+    B: {feature: slot_wall_neg, role: plane}
+    C: {feature: skirt_wall, role: axis}
+  coordinate_frame:
+    origin: {intersection: [A, C]}
+    z: {normal_to: A}
+    x: {normal_to: B}
+  views:
+    - {id: principal, kind: orthographic, normal_to: A}
+    - {id: front, kind: orthographic, normal_to: B}
+    - {id: section_axis, kind: section, normal_axis: y, through: cavity_wall}
+  features:
+    skirt_wall: {size: general}
+    pin_bore: {size: general}
+    cavity_wall: {size: general}
+    crown: {size: general}
+    slot_top: {size: general}
+    skirt_end: {size: general}
+    cavity_ceiling: {size: general}
+    slot_wall_pos: {size: general}
+    slot_wall_neg: {size: general}
+  dimensions:
+    - {id: piston_height, operation: plane_separation, features: [crown, skirt_end], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: crown_thickness, operation: thickness, features: [crown, slot_top], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: slot_width, operation: width, features: [slot_wall_neg, slot_wall_pos], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: cavity_depth, operation: plane_separation, features: [cavity_ceiling, skirt_end], presentation: section, tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: skirt_d, operation: diameter, features: [skirt_wall], tolerance: {deviation_mm: [-0.1, 0.1]}}
+    - {id: pin_bore_d, operation: diameter, features: [pin_bore], tolerance: {deviation_mm: [-0.012, 0.0]}}
+    - {id: cavity_d, operation: diameter, features: [cavity_wall], tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA. The pin bore is reamed to 6 H7 for the 6 g6 wrist pin; the skirt runs in the 24 mm cylinder bore with 0.4 mm diametral clearance. Deburr."}
+    - {kind: process, text: "Print with the crown up as modelled; the open skirt faces the bed and its support strategy is open (Q-010)."}
+  sheet: {sizes: [A4, A3], scale: "2:1"}
