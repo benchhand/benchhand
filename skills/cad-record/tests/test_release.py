@@ -428,14 +428,17 @@ SUPERSEDED = ["hw/checks/v1", "hw/renders/v1", "hw/versions/v1", "hw/checks/v2",
 
 def add_clamp_post(hw: Path) -> None:
     """EXT-0001, the desk clamp post the base mounts onto: existing equipment with a model for the fit checks,
-    fixed to the base plate and joined to it by IF-099, with no bom.csv row."""
+    fixed to the base plate in base_sub and joined to it by IF-099, with no bom.csv row."""
     write(hw / "parts" / "EXT-0001" / "part.yaml",
-          yaml.safe_dump(fx.existing_part("EXT-0001", "Desk clamp post"), sort_keys=False))
+          yaml.safe_dump(fx.existing_part("EXT-0001", "Desk clamp post", rev="A"), sort_keys=False))
     write(hw / "parts" / "EXT-0001" / "model.py", "# the post as measured\n")
     edit_yaml(hw / "interfaces.yaml", lambda data: data["interfaces"].append(fx.interface("IF-099", "LMP-0001", "EXT-0001")))
-    edit_yaml(hw / "assembly.yaml", lambda data: data["joints"].append(
-        {"id": "J-099", "type": "fixed", "parent": "LMP-0001", "child": "EXT-0001", "axis": [0, 0, 1], "origin": [0, 0, 0],
-         "min": 0, "max": 0, "nominal": 0}))
+
+    def mount(data: dict[str, Any]) -> None:
+        data["subassemblies"][0]["parts"].append("EXT-0001")
+        data["joints"].append({"id": "J-099", "type": "fixed", "parent": "LMP-0001", "child": "EXT-0001", "axis": [0, 0, 1],
+                               "origin": [0, 0, 0], "min": 0, "max": 0, "nominal": 0})
+    edit_yaml(hw / "assembly.yaml", mount)
 
 
 PRODUCT_STEP = "".join(f"#{n}=PRODUCT('LMP-00{n:02d} part','','',(#99));\n" for n in range(1, 12))

@@ -24,7 +24,7 @@
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 # schema-sha256 050bcaa9f4434f53535d13d127f7aa52bc9c772416535aee36518bbd22e75426 skills/cad-record/schemas/part.schema.json
 # schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
-# schema-sha256 94a94ac92a3a0c25ce67d7eecda0e39d90d8fb8392cf497c7745591eb308d1da skills/cad-record/schemas/release-manifest.schema.json
+# schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
 # schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
 # schema-sha256 3f66dcd1ef22b8b40aa94f0c95919cf0f90b6b848bb0e36bffb772fa506292c1 skills/cad-record/schemas/stackup.schema.json
 # schema-sha256 60c50ec2df3452d6896b33d1d2c344b7ada20e0df00ce56a800c520b9e34571f skills/cad-record/schemas/tool-settings.schema.json
@@ -443,6 +443,7 @@ __all__ = [
     "ReleaseManifestV3AcceptanceScope",
     "ReleaseManifestV3Frozen",
     "ReleaseManifestV3ManufacturingAdditionalProperties",
+    "ReleaseManifestV3MatesWithItems",
     "Requirements",
     "RequirementsAssumptionsItems",
     "RequirementsOpenQuestionsItems",
@@ -6267,6 +6268,27 @@ ReleaseManifestBundles = list[ReleaseManifestBundlesItems]
 ReleaseManifestChecks = Mapping[str, Literal["pass", "fail", "waived", "not_assessed"]]
 
 
+class ReleaseManifestV3MatesWithItems(TypedDict):
+    """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v3/properties/mates_with/items
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+
+    Field notes:
+    - interface: pattern: "^IF-[0-9]{3}$"
+    - type: minLength: 1
+    - mates: the interface's product-side end as written: a PN, @occurrence or subassembly id; minLength: 1
+    - equipment: pattern: "^[A-Z]{2,5}-[0-9]{4}$"
+    - title: minLength: 1
+    """
+    interface: Required[str]
+    type: Required[str]
+    mates: Required[str]
+    equipment: Required[str]
+    title: Required[str]
+    existing: Required[PartExisting]
+
+
 class ReleaseManifestV3AcceptanceScope(TypedDict):
     """Source: skills/cad-record/schemas/release-manifest.schema.json#/$defs/v3/properties/acceptance/properties/scope
 
@@ -6314,6 +6336,7 @@ class ReleaseManifestV3(TypedDict):
     - released_at: format: "date-time"
     - approval: the decision record approving this release
     - manufacturing: Per custom-made PN of the frozen version: its process, assembled quantity, package files, the route kinds it was assessed for and its per-component files; propertyNames: {"pattern":"^[A-Z]{2,5}-[0-9]{4}$"}
+    - mates_with: The existing equipment the product interfaces with (make_buy existing), one entry per interface with an existing end: listed for the fit it needs, never delivered, so absent from bom.csv, manufacturing and the product definition
     - acceptance: What the release is accepted for, sealed from its own package bytes: the canonical acceptance inventory and its digest (equal to frozen.evidence_sha256), the release scope, the evidence levels claimed per requirement, the approved waivers and any obligations left open within a permitted trial scope. Unknown is never a pass, and a waiver stays waived
     """
     schema_version: Required[Literal[3]]
@@ -6327,6 +6350,7 @@ class ReleaseManifestV3(TypedDict):
     manufacturing: Required[Mapping[str, ReleaseManifestV3ManufacturingAdditionalProperties]]
     bundles: Required[ReleaseManifestBundles]
     checks: Required[ReleaseManifestChecks]
+    mates_with: NotRequired[list[ReleaseManifestV3MatesWithItems]]
     acceptance: Required[ReleaseManifestV3Acceptance]
 
 

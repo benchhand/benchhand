@@ -72,6 +72,21 @@
         },
         "bundles": {"$ref": "#/$defs/bundles"},
         "checks": {"$ref": "#/$defs/checks"},
+        "mates_with": {
+          "description": "The existing equipment the product interfaces with (make_buy existing), one entry per interface with an existing end: listed for the fit it needs, never delivered, so absent from bom.csv, manufacturing and the product definition",
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["interface", "type", "mates", "equipment", "title", "existing"],
+            "properties": {
+              "interface": {"type": "string", "pattern": "^IF-[0-9]{3}$"},
+              "type": {"type": "string", "minLength": 1},
+              "mates": {"description": "the interface's product-side end as written: a PN, @occurrence or subassembly id", "type": "string", "minLength": 1},
+              "equipment": {"type": "string", "pattern": "^[A-Z]{2,5}-[0-9]{4}$"},
+              "title": {"type": "string", "minLength": 1},
+              "existing": {"$ref": "part.schema.json#/$defs/existing"}
+            }
+          }
+        },
         "acceptance": {
           "description": "What the release is accepted for, sealed from its own package bytes: the canonical acceptance inventory and its digest (equal to frozen.evidence_sha256), the release scope, the evidence levels claimed per requirement, the approved waivers and any obligations left open within a permitted trial scope. Unknown is never a pass, and a waiver stays waived",
           "type": "object", "additionalProperties": false, "required": ["evidence_sha256", "inventory", "scope", "claims", "waivers", "open_obligations"],

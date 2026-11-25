@@ -26,7 +26,10 @@ never builds. It refuses the release when any of these fails, and then writes no
 - a build_guide.py okh.toml in hw/docs/ that describes another release;
 - the manufacturing outputs and the process route of every custom-made part;
 - the drawings, the analysis cases and the verification evidence, each a sealed bundle of that version;
-- bom.csv quantities against the frozen assembly;
+- bom.csv quantities against the frozen assembly, with no row for existing equipment (make_buy existing);
+- the product definition: product.step naming no existing equipment, or for a version without one and without
+  existing equipment its assembly.step; with existing equipment the in-context assembly.step goes under context/
+  and each interface with an existing end is listed under mates_with;
 - the acceptance: the freeze's evidence_sha256 is the acceptance digest (evidence.py) as it stands,
   and the evidence meets the release policy of the use case's service class: every obligation in
   its scope resolved, no unresolved critical finding, an unvalidated trial only where the class
@@ -85,6 +88,7 @@ validate = _load_module("cad_record_validate", Path(__file__).resolve().parent /
 layout = validate.layout
 prune = _load_module("cad_record_prune", Path(__file__).resolve().parent / "prune.py")
 generated_docs = _load_module("cad_record_generated_docs", Path(__file__).resolve().parent / "generated_docs.py")
+sourcing = _load_module("cad_record_sourcing", Path(__file__).resolve().parent / "sourcing.py")
 yaml_loader = validate.yaml_loader
 
 MANIFEST = layout.MANIFEST
@@ -120,6 +124,7 @@ class Release:
     checks: dict[str, str] = field(default_factory=dict)
     considered: set[str] = field(default_factory=set)  # bundle paths already selected or refused
     acceptance: dict[str, Any] | None = None  # the manifest's acceptance block, once the evidence is accepted
+    mates_with: list[dict[str, Any]] = field(default_factory=list)  # existing equipment the product interfaces with
     # the release time, fixed once: the manifest records it and a generated okh.toml must name its date
     released_at: str = ""
 
@@ -399,7 +404,8 @@ def check_evidence(release: Release, rows: list[dict[str, str]], version_sha: st
 
 def check_bom(release: Release, rows: list[dict[str, str]], quantities: dict[str, int],
               parts: dict[str, dict[str, Any]]) -> None:
-    """bom.csv rolls up to the frozen assembly: each part's total is its occurrence count."""
+    """bom.csv rolls up to the frozen assembly: each delivered part's total is its occurrence count, and no row
+    names existing equipment (sourcing.delivered)."""
     levels: list[int | None] = []
     for row in rows:
         try:
@@ -407,11 +413,65 @@ def check_bom(release: Release, rows: list[dict[str, str]], quantities: dict[str
         except (TypeError, ValueError, KeyError):
             levels.append(None)
     totals = validate.bom_totals(rows, levels)
-    for pn in sorted(set(quantities) | (set(totals) & set(parts))):
+    outside = {pn for pn, part in parts.items() if not sourcing.delivered(part)}
+    for pn in sorted(outside & set(totals)):
+        release.refuse("hw/bom.csv", "stale", f"bom.csv lists {pn}, which is existing equipment and not part of the "
+                                              "delivered product; regenerate it with cad-bom")
+    for pn in sorted((set(quantities) | (set(totals) & set(parts))) - outside):
         if totals.get(pn, 0) != quantities.get(pn, 0):
             release.refuse("hw/bom.csv", "stale", f"bom.csv gives {pn} a quantity of {totals.get(pn, 0)}; the frozen "
                                                   f"{release.version} assembly places it {quantities.get(pn, 0)} times")
     release.checks["bom"] = "pass"
+
+
+def copy_definition(release: Release, folder: Path, sealed: dict[str, str], parts: dict[str, dict[str, Any]]) -> None:
+    """The product definition: the version's product.step, which must name no existing equipment, and with existing
+    equipment its in-context assembly.step for fit review. A version without product.step ships its assembly.step,
+    unless the record has existing equipment, which that file holds."""
+    version = release.version
+    existing = {pn for pn, part in parts.items() if not sourcing.delivered(part)}
+    product = f"hw/versions/{version}/{sourcing.PRODUCT_STEP}"
+    if sourcing.PRODUCT_STEP in sealed:
+        named = sorted(sourcing.step_pns((folder / sourcing.PRODUCT_STEP).read_text(encoding="utf-8", errors="replace"))
+                       & existing)
+        if named:
+            release.refuse(product, "contaminated", f"{sourcing.PRODUCT_STEP} holds existing equipment {', '.join(named)}, "
+                                                    "which is not part of the delivered product; build a new version")
+        release.copy(sourcing.RELEASE_PRODUCT_STEP, product, sealed[sourcing.PRODUCT_STEP])
+    elif existing:
+        release.refuse(product, "missing", f"{version} has no {sourcing.PRODUCT_STEP} and its assembly.step holds existing "
+                                           f"equipment {', '.join(sorted(existing))}; build a new version with cad-model run")
+    if "assembly.step" not in sealed:
+        release.refuse(f"hw/versions/{version}/assembly.step", "missing", f"{version} has no assembly.step")
+    elif existing:
+        release.copy(sourcing.RELEASE_CONTEXT_STEP, f"hw/versions/{version}/assembly.step", sealed["assembly.step"])
+    elif sourcing.PRODUCT_STEP not in sealed:
+        release.copy("definition/assembly.step", f"hw/versions/{version}/assembly.step", sealed["assembly.step"])
+
+
+def mates_with(parts: dict[str, dict[str, Any]], record: Path, inventory: Any) -> list[dict[str, Any]]:
+    """Each interface of the frozen snapshot with existing equipment at one end: what the product mates with,
+    listed instead of delivered."""
+    existing = {pn for pn, part in parts.items() if not sourcing.delivered(part)}
+    interfaces = _dict(_yaml(record / "interfaces.yaml")).get("interfaces")
+    found = []
+    for item in interfaces if isinstance(interfaces, list) else []:
+        if not isinstance(item, dict):
+            continue
+        ends = [item.get("from"), item.get("to")]
+        pns = [_end_pn(end, inventory) for end in ends]
+        for index, pn in enumerate(pns):
+            if pn in existing:
+                found.append({"interface": item.get("id"), "type": item.get("type"), "mates": ends[1 - index],
+                              "equipment": pn, "title": parts[pn].get("title"), "existing": parts[pn].get("existing")})
+    return found
+
+
+def _end_pn(end: Any, inventory: Any) -> Any:
+    """The part number an interface end names: an `@occurrence` resolved through the assembly inventory."""
+    if isinstance(end, str) and end.startswith("@") and inventory is not None and end[1:] in inventory:
+        return inventory.get(end[1:]).pn
+    return end
 
 
 def check_docs(release: Release) -> None:
@@ -556,10 +616,8 @@ def assemble(hw: Path, rev: str, version: str, decision: str,
     check_acceptance(release, frozen)
 
     sealed = manifest.get("files") or {}
-    if "assembly.step" in sealed:
-        release.copy("definition/assembly.step", f"hw/versions/{version}/assembly.step", sealed["assembly.step"])
-    else:
-        release.refuse(f"hw/versions/{version}/assembly.step", "missing", f"{version} has no assembly.step")
+    copy_definition(release, folder, sealed, parts)
+    release.mates_with = mates_with(parts, record, inventory)
     for name, sha in sorted(sealed.items()):
         if name.startswith("record/"):
             release.copy(f"definition/{name}", f"hw/versions/{version}/{name}", sha)
@@ -611,7 +669,7 @@ def stage(release: Release, facts: dict[str, Any]) -> Path:
         "rev": release.rev, "released_at": release.released_at,
         "frozen": facts["frozen"], "approval": release.decision, "files": files,
         "manufacturing": release.manufacturing, "bundles": release.bundles, "checks": release.checks,
-        "acceptance": release.acceptance,
+        "acceptance": release.acceptance, "mates_with": release.mates_with,
     }
     path = staged / MANIFEST
     validate.validate_document(manifest, "release-manifest.schema.json", layout.relative(hw, path), release.findings)

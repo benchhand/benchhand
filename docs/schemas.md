@@ -21,7 +21,7 @@ schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 s
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 schema-sha256 050bcaa9f4434f53535d13d127f7aa52bc9c772416535aee36518bbd22e75426 skills/cad-record/schemas/part.schema.json
 schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
-schema-sha256 94a94ac92a3a0c25ce67d7eecda0e39d90d8fb8392cf497c7745591eb308d1da skills/cad-record/schemas/release-manifest.schema.json
+schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
 schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
 schema-sha256 3f66dcd1ef22b8b40aa94f0c95919cf0f90b6b848bb0e36bffb772fa506292c1 skills/cad-record/schemas/stackup.schema.json
 schema-sha256 60c50ec2df3452d6896b33d1d2c344b7ada20e0df00ce56a800c520b9e34571f skills/cad-record/schemas/tool-settings.schema.json
@@ -6481,6 +6481,7 @@ Source: `/$defs/v3`
 | `manufacturing` | `Mapping[str, ReleaseManifestV3ManufacturingAdditionalProperties]` | yes |  | Per custom-made PN of the frozen version: its process, assembled quantity, package files, the route kinds it was assessed for and its per-component files |
 | `bundles` | `ReleaseManifestBundles` | yes |  |  |
 | `checks` | `ReleaseManifestChecks` | yes |  |  |
+| `mates_with` | `list[ReleaseManifestV3MatesWithItems]` | no |  | The existing equipment the product interfaces with (make_buy existing), one entry per interface with an existing end: listed for the fit it needs, never delivered, so absent from bom.csv, manufacturing and the product definition |
 | `acceptance` | `ReleaseManifestV3Acceptance` | yes |  | What the release is accepted for, sealed from its own package bytes: the canonical acceptance inventory and its digest (equal to frozen.evidence_sha256), the release scope, the evidence levels claimed per requirement, the approved waivers and any obligations left open within a permitted trial scope. Unknown is never a pass, and a waiver stays waived |
 
 Constraints not expressed by the type:
@@ -6567,6 +6568,28 @@ Constraints not expressed by the type:
 - `components`: propertyNames: {"pattern":"^[a-z][a-z0-9_]*$"}
 - `components`: additionalProperties.minItems: 1
 - `components`: additionalProperties.uniqueItems: true
+
+### ReleaseManifestV3MatesWithItems
+
+Source: `/$defs/v3/properties/mates_with/items`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `interface` | `str` | yes |  |  |
+| `type` | `str` | yes |  |  |
+| `mates` | `str` | yes |  | the interface's product-side end as written: a PN, @occurrence or subassembly id |
+| `equipment` | `str` | yes |  |  |
+| `title` | `str` | yes |  |  |
+| `existing` | `PartExisting` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `interface`: pattern: "^IF-[0-9]{3}$"
+- `type`: minLength: 1
+- `mates`: minLength: 1
+- `equipment`: pattern: "^[A-Z]{2,5}-[0-9]{4}$"
+- `title`: minLength: 1
 
 ## requirements.schema.json
 
