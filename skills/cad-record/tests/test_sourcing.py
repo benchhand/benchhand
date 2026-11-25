@@ -39,6 +39,9 @@ class DeliveredTests(unittest.TestCase):
         delivered = {make_buy: sourcing.delivered({"make_buy": make_buy}) for make_buy in ("make", "buy", "existing")}
         self.assertEqual(delivered, {"make": True, "buy": True, "existing": False})
 
+    def test_a_record_without_make_buy_counts_as_delivered(self) -> None:
+        self.assertTrue(sourcing.delivered({"PN": "LMP-0001"}))  # validate.py reports the missing make_buy
+
     def test_groups_of_maps_each_pn_and_lists_the_order(self) -> None:
         parts = {"LMP-0002": {"make_buy": "buy"}, "LMP-0001": {"make_buy": "make"}, "EXT-0001": {"make_buy": "existing"}}
         self.assertEqual(sourcing.groups_of(parts), {"LMP-0002": "purchased", "LMP-0001": "made", "EXT-0001": "existing"})
