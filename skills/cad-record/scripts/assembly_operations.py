@@ -449,6 +449,8 @@ def sequence(operations: Operations, inventory: Any = None, existing: frozenset[
     builds = list(dict.fromkeys(op.sub_build for op in operations.items if op.sub_build is not None))
     groups = {group.id: group.members for group in inventory.groups} if inventory is not None else {}
     claims = _claims(resolved, builds, groups)
+    if inventory is not None:  # a reference that does not resolve is no member: its operation stays unknown
+        claims = {ref: owners for ref, owners in claims.items() if ref in inventory}
     members = {build: frozenset(ref for ref, owners in claims.items() if build in owners) for build in builds}
     owned = frozenset().union(*members.values()) if members else frozenset()
     named_by: dict[str | None, list[str]] = {}

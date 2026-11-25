@@ -514,6 +514,17 @@ class SubBuildTests(unittest.TestCase):
                 self.assertIn(code, {f["code"] for f in report.findings})
                 self.assertEqual(report.outcome(f"assembly.order@op:{op_id}")["outcome"], "fail")
 
+    def test_a_mistyped_bench_receiver_leaves_its_step_unknown(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        typo = {**bond_a, "into": "TST-9999"}
+        inventory = self.inventory()
+        state = ops.sequence(ops.normalize({"operations": [typo, bond_b, cure, install]}), inventory)
+        self.assertEqual(state.sub_builds["hanger"].ground, "TST-0102")
+        self.assertNotIn("TST-9999", state.sub_builds["hanger"].members)
+        report = ops.check_order(ops.normalize({"operations": [typo, bond_b, cure, install]}), inventory)
+        self.assertEqual(report.outcome("assembly.order@op:bond-mag-a")["outcome"], "unknown")
+        self.assertEqual(report.findings, ())
+
     def test_a_cure_figure_without_a_datasheet_source_fails(self) -> None:
         for name, cure in (("supplier time", {"time": sourced(24, "h", [{"kind": "supplier", "reference": "email"}])}),
                            ("unknown temperature", {"time": sourced(24, "h"),
