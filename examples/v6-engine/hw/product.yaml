@@ -5,7 +5,7 @@ regime: iso
 # Optional; enter user-approved SPDX identifiers. Never infer from LICENSE.
 # license: {hardware: CERN-OHL-S-2.0, documentation: CC-BY-4.0}
 # The general tolerance drawings state is the user's choice: never default one; record it when Q-013 is answered.
-general_tolerance: {status: unknown, reason: not recorded yet, question: Q-013}
+general_tolerance: 0.2  # FDM limits +/-0.2 mm linear, +/-1 deg angular: an assumption, DR-006
 flow:
   stage: ground
   recheck_from: ground
@@ -99,3 +99,21 @@ use_case:
     operating_limits: {status: unknown, reason: not recorded yet, question: Q-011}
     exclusions: {status: unknown, reason: not recorded yet, question: Q-011}
   evidence_policy: {status: unknown, reason: not recorded yet, question: Q-011}
+drawing:
+  definition: model_and_drawing
+  projection: first_angle
+  standards:
+    dimensioning: ISO 129-1:2018
+    geometrical_tolerancing: ISO 1101:2017
+    datums: ISO 5459:2024
+    gps_fundamentals: ISO 8015:2011
+    general_tolerances: ISO 2768-1:1989
+    fits: ISO 286-1:2010
+    edges: ISO 13715:2017
+    surface_texture: ISO 21920-1:2021
+    threads: ISO 6410-1:1993
+    sheets: ISO 5457:1999
+  default_sheet: {sizes: [A4, A3, A2], orientation: landscape, scale: auto}
+  tolerance_policies:
+    fdm_assumed: {kind: limits, linear_mm: 0.2, angular_deg: 1, applies_to: [fdm], reference: "FDM limits +/-0.2 mm, +/-1 deg, an assumption with no measured H2D capability (DR-006)"}
+  general_tolerance_policy: fdm_assumed
