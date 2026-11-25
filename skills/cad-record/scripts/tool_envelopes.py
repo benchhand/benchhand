@@ -199,9 +199,16 @@ def _phrase(patterns: tuple[re.Pattern[str], ...], text: str) -> re.Match[str] |
     return next((match for pattern in patterns if (match := pattern.fullmatch(text))), None)
 
 
+def identity(name: str) -> str:
+    """What tool an entry names: the shipped envelope's designation (type, size and, for a socket, drive), so that
+    "3 mm hex key" and "Allen key (3 mm)" are one tool; else the text up to case, spacing and punctuation."""
+    entry = classify(name)
+    return entry.envelope.designation if entry.envelope is not None else _normal(name)
+
+
 def same_tool(a: str, b: str) -> bool:
-    """Whether two entries name one tool: the same text up to case, spacing and punctuation."""
-    return _normal(a) == _normal(b)
+    """Whether two entries name one tool (`identity`)."""
+    return identity(a) == identity(b)
 
 
 def _size(table: dict[float, Any], text: str) -> float | None:

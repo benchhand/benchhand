@@ -50,8 +50,9 @@ an access obligation. A `tool_access` entry may name a capability profile, an ap
 like `direction`), a contact point, a reach and an envelope; an envelope fact whose source carries an artifact (a STEP
 solid of the tool and holder in the operated part's model frame at the engaged pose) overrides the
 shipped envelope, and is how a special tool is checked. An entry without an approach approaches along
-the operation's direction. A `tools` name that a `tool_access` entry also names is that entry: it is checked
-once, as the `tool_access` entry says. An operation that moves no part and that nothing reaches has no access to
+the operation's direction. A `tools` entry that names the same tool as a `tool_access` entry (the same shipped
+designation, so "3 mm hex key" and "Allen key (3 mm)" are one; else the same text) is that entry: it is checked
+once, as the `tool_access` entry says, and keeps its own text for the instructions. An operation that moves no part and that nothing reaches has no access to
 check: its access is not applicable.
 
 Joints. `check_joints` judges the joint evidence of fastening, insert, press-fit, heat-set,
