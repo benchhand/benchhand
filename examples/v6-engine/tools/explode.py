@@ -20,7 +20,9 @@ import importlib.util
 import json
 import math
 import re
+import struct
 import sys
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,39 +40,25 @@ B2 = (0.0, -0.5, math.sqrt(3) / 2)  # bank B axis
 X = (1.0, 0.0, 0.0)
 # distance along the axis, mm; assembly coordinates (+Z up, crank axis X)
 STEP = {"rod": 26, "pin": 56, "piston": 92, "head": 205, "cam": 265}
+BANK_A = frozenset({"head-1", "cam-a", "cam-pulley-a"})  # plus the odd pistons, pins and rods
+# a further move in assembly coordinates, mm: the belt drive slides out along -X, the block and the bracket drop away
+SHIFT = {
+    "cam-pulley-a": (-55, 0, 0), "cam-pulley-b": (-55, 0, 0), "crank-pulley": (-65, 0, 0), "belt": (-140, 0, 0),
+    "bracket": (-35, 0, -115), "idler": (-90, 0, -115), "tensioner": (-90, 0, -115),
+    "VSE-0005": (-30, 0, 0), "VSE-0001": (0, 0, -115),
+}
 
 
 def plan(occ: str, pn: str) -> tuple[float, float, float]:
-    n = int(re.search(r"(\d+)$", occ).group(1)) if re.search(r"\d+$", occ) else 0
-    bank = B1 if occ.endswith(("1", "3", "5")) and occ.split("-")[0] in ("piston", "pin", "rod") else B2
-    if occ == "head-1" or occ == "cam-a" or occ == "cam-pulley-a":
-        bank = B1
     kind = occ.split("-")[0]
-    d = {"rod": STEP["rod"], "pin": STEP["pin"], "piston": STEP["piston"], "head": STEP["head"], "cam": STEP["cam"]}.get(kind)
-    if occ in ("cam-pulley-a", "cam-pulley-b"):
-        d = STEP["cam"]
-    off = [0.0, 0.0, 0.0]
-    if d is not None:
-        off = [bank[i] * d for i in range(3)]
-    if occ in ("cam-pulley-a", "cam-pulley-b"):
-        off[0] -= 55
-    if occ == "crank-pulley":
-        off[0] -= 65
-    if occ == "belt":
-        off[0] -= 140
-    if occ == "bracket":
-        off[0] -= 35
-    if occ in ("idler", "tensioner"):
-        off[0] -= 90
-    if occ == "VSE-0005":
-        off[0] -= 30
-    if occ == "VSE-0001":
-        off[2] -= 115  # the block drops away so the crank and rods show
-    if occ in ("bracket", "idler", "tensioner"):
-        off[2] -= 115
+    odd_row = kind in ("piston", "pin", "rod") and occ.endswith(("1", "3", "5"))
+    bank = B1 if odd_row or occ in BANK_A else B2
+    d = STEP.get(kind, 0.0)
+    shift = SHIFT.get(occ, (0, 0, 0))
+    off = [bank[i] * d + shift[i] for i in range(3)]
     # keep bank 1/2 cylinder rows apart in X on the pin and rod rows so wrists clear each other
-    if kind in ("pin",):
-        off[0] += (14 if n % 2 else -14)
+    if kind == "pin":
+        off[0] += 14 if int(occ.rsplit("-", 1)[1]) % 2 else -14
     return (off[0], off[1], off[2])
 
 
@@ -132,17 +120,15 @@ window.__done = true;
 </script>"""
 
 
-def main() -> None:
-    glb, out = Path(sys.argv[1]), Path(sys.argv[2])
+def _load_serve():
     spec = importlib.util.spec_from_file_location("serve", SERVE)
     serve = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(serve)
-    index = (RENDERER / "index.html").read_text()
-    imap = re.search(r"<script type=\"importmap\">.*?</script>", index, re.S).group(0)
-    vendor = serve.VendorCache(serve.default_cache_dir(), serve.vendor_integrity(RENDERER / "index.html"))
-    # node names -> plan
-    import struct
-    raw = glb.read_bytes()
+    return serve
+
+
+def _nodes(raw: bytes) -> dict:
+    """GLB node name -> its explode offset, label tag and short title."""
     j = json.loads(raw[20:20 + struct.unpack("<I", raw[12:16])[0]])
     nodes = {}
     for n in j["nodes"]:
@@ -153,9 +139,11 @@ def main() -> None:
         pn, title = m.group(1), m.group(2)
         occ = m.group(3) or pn
         nodes[name] = {"offset": plan(occ, pn), "tag": occ.replace("VSE-0001", "crankcase").replace("VSE-0005", "crankshaft"), "title": title.split(",")[0][:34]}
-    params = {"w": 1500, "h": 1400, "dir": (0.35, -1.4, 0.5), "nodes": nodes}
-    page_html = HTML.replace("__IMPORTMAP__", imap).encode()
-    pj = json.dumps(params).encode()
+    return nodes
+
+
+def _handler(routes: dict, vendor, vendor_failures: list[str]) -> type[BaseHTTPRequestHandler]:
+    """A request handler serving `routes` (path -> (body, content type)) and the pinned vendor modules."""
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -170,9 +158,7 @@ def main() -> None:
 
         def do_GET(self):
             p = unquote(self.path.split("?")[0])
-            if p in ("/", "/index.html"): return self._s(page_html, "text/html")
-            if p == "/params.json": return self._s(pj, "application/json")
-            if p == "/model.glb": return self._s(raw, "model/gltf-binary")
+            if p in routes: return self._s(*routes[p])
             if p.startswith("/vendor/"):
                 try: return self._s(vendor.get(p), "text/javascript")
                 except LookupError: return self._error(HTTPStatus.NOT_FOUND, f"{p} is not a pinned module")
@@ -181,36 +167,50 @@ def main() -> None:
                     return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
             self._error(HTTPStatus.NOT_FOUND, f"{p} not found")
 
+    return H
+
+
+async def _shoot(port: int, params: dict, out: Path, vendor_failures: list[str]) -> None:
+    async with async_playwright() as pw:
+        b = await pw.chromium.launch(headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
+        ctx = await b.new_context(viewport={"width": params["w"], "height": params["h"]})
+        pg = await ctx.new_page()
+        pg.on("console", lambda m: print("console:", m.text, file=sys.stderr))
+        pg.on("pageerror", lambda e: print("pageerror:", e, file=sys.stderr))
+        await pg.goto(f"http://127.0.0.1:{port}/")
+        for _ in range(180):  # one-second waits, so a vendor failure ends the run at once instead of at the timeout
+            if vendor_failures:
+                return
+            try:
+                await pg.wait_for_function("window.__done === true", timeout=1000)
+                break
+            except PlaywrightTimeoutError:
+                continue
+        else:
+            raise TimeoutError("the page did not finish in 180 s")
+        await pg.screenshot(path=str(out))
+        await b.close()
+
+
+def main() -> None:
+    glb, out = Path(sys.argv[1]), Path(sys.argv[2])
+    serve = _load_serve()
+    index = (RENDERER / "index.html").read_text()
+    imap = re.search(r"<script type=\"importmap\">.*?</script>", index, re.S).group(0)
+    vendor = serve.VendorCache(serve.default_cache_dir(), serve.vendor_integrity(RENDERER / "index.html"))
+    raw = glb.read_bytes()
+    params = {"w": 1500, "h": 1400, "dir": (0.35, -1.4, 0.5), "nodes": _nodes(raw)}
+    page_html = HTML.replace("__IMPORTMAP__", imap).encode()
+    routes = {"/": (page_html, "text/html"), "/index.html": (page_html, "text/html"),
+              "/params.json": (json.dumps(params).encode(), "application/json"), "/model.glb": (raw, "model/gltf-binary")}
     vendor_failures: list[str] = []
 
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
-    import threading
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _handler(routes, vendor, vendor_failures))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
 
-    async def run() -> None:
-        async with async_playwright() as pw:
-            b = await pw.chromium.launch(headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
-            ctx = await b.new_context(viewport={"width": params["w"], "height": params["h"]})
-            pg = await ctx.new_page()
-            pg.on("console", lambda m: print("console:", m.text, file=sys.stderr))
-            pg.on("pageerror", lambda e: print("pageerror:", e, file=sys.stderr))
-            await pg.goto(f"http://127.0.0.1:{port}/")
-            for _ in range(180):  # one-second waits, so a vendor failure ends the run at once instead of at the timeout
-                if vendor_failures:
-                    return
-                try:
-                    await pg.wait_for_function("window.__done === true", timeout=1000)
-                    break
-                except PlaywrightTimeoutError:
-                    continue
-            else:
-                raise TimeoutError("the page did not finish in 180 s")
-            await pg.screenshot(path=str(out))
-            await b.close()
-
     try:
-        asyncio.run(run())
+        asyncio.run(_shoot(port, params, out, vendor_failures))
     finally:
         srv.shutdown()
         if vendor_failures:

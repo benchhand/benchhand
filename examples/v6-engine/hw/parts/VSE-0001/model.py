@@ -88,42 +88,55 @@ def _collect(shape: cq.Shape, role) -> dict:
     return {name: {"kind": kind, "frame": "assembly_zero", "patches": patches} for name, (kind, patches) in named.items()}
 
 
+def _cylinder_role(face: cq.Face, p: dict) -> tuple[str, str]:
+    """A main seat, the crank window, or a cylinder bore named by its bank."""
+    r = _radius(face)
+    if abs(r - p["main_bore_d"] / 2.0) < 1e-6:
+        return "main_seat", "bore"
+    if abs(r - p["window_d"] / 2.0) < 1e-6:
+        return "crank_window", "bore"
+    if abs(r - p["bore_d"] / 2.0) < 1e-6:
+        axis = BRepAdaptor_Surface(face.wrapped).Cylinder().Axis().Direction()
+        return ("bank_a_bores" if axis.Y() * axis.Z() > 0 else "bank_b_bores"), "surface"
+    raise ValueError(f"unexpected cylinder r={r}")
+
+
+def _axis_plane_role(point: list, n: list, half: float) -> tuple[str, str] | None:
+    """An end face, a window wall, a case side or the base: the planes normal to X, Y or Z."""
+    if abs(n[0]) > 0.99:
+        x = point[0]
+        place = "end_face" if abs(abs(x) - half) < 1e-6 else "window_wall"
+        return f"{place}_{'pos' if x > 0 else 'neg'}", "plane_face"
+    if abs(n[1]) > 0.99:
+        return ("case_side_pos" if point[1] > 0 else "case_side_neg"), "plane_face"
+    if abs(n[2]) > 0.99:
+        return "base_face", "plane_face"
+    return None
+
+
+def _bank_plane_role(point: list, n: list, p: dict, axes: dict) -> tuple[str, str]:
+    """A deck or bore floor (normal along a bank axis) or a bank side (normal across it)."""
+    for bank, a in axes.items():
+        if abs(n[1] * a[1] + n[2] * a[2]) > 0.99:
+            s = point[1] * a[1] + point[2] * a[2]
+            return (f"bank_{bank}_deck" if abs(s - p["deck_h"]) < 1e-6 else f"bank_{bank}_bore_floors"), "surface"
+    for bank, a in axes.items():
+        if abs(n[1] * a[1] + n[2] * a[2]) < 1e-6:
+            return f"bank_{bank}_side_{'inner' if abs(point[1]) < 20.0 else 'outer'}", "surface"
+    raise ValueError(f"unexpected plane at {point} normal {n}")
+
+
 def drawing_features(params: dict, shape: cq.Shape) -> dict:
     """The block outline, the two inclined banks (deck, bore floors, sides, bores), the crank window and the main seats."""
     p = {**PARAMS, **params}
     b = math.radians(p["bank_deg"])
     axes = {"a": (0.0, math.sin(b), math.cos(b)), "b": (0.0, -math.sin(b), math.cos(b))}
-    half, wl = p["case_len"] / 2.0, p["window_len"] / 2.0
+    half = p["case_len"] / 2.0
 
     def role(face: cq.Face, patch: dict) -> tuple[str, str]:
-        point, n = patch["point_mm"], patch["normal"]
         if patch["support_type"] == "cylinder":
-            axis = BRepAdaptor_Surface(face.wrapped).Cylinder().Axis().Direction()
-            r = _radius(face)
-            if abs(r - p["main_bore_d"] / 2.0) < 1e-6:
-                return "main_seat", "bore"
-            if abs(r - p["window_d"] / 2.0) < 1e-6:
-                return "crank_window", "bore"
-            if abs(r - p["bore_d"] / 2.0) < 1e-6:
-                return ("bank_a_bores" if axis.Y() * axis.Z() > 0 else "bank_b_bores"), "surface"
-            raise ValueError(f"unexpected cylinder r={r}")
-        if abs(n[0]) > 0.99:
-            x = point[0]
-            if abs(abs(x) - half) < 1e-6:
-                return ("end_face_pos" if x > 0 else "end_face_neg"), "plane_face"
-            return ("window_wall_pos" if x > 0 else "window_wall_neg"), "plane_face"
-        if abs(n[1]) > 0.99:
-            return ("case_side_pos" if point[1] > 0 else "case_side_neg"), "plane_face"
-        if abs(n[2]) > 0.99:
-            return "base_face", "plane_face"
-        for bank, a in axes.items():
-            along = n[1] * a[1] + n[2] * a[2]
-            if abs(along) > 0.99:
-                s = point[1] * a[1] + point[2] * a[2]
-                return (f"bank_{bank}_deck" if abs(s - p["deck_h"]) < 1e-6 else f"bank_{bank}_bore_floors"), "surface"
-        for bank, a in axes.items():
-            if abs(n[1] * a[1] + n[2] * a[2]) < 1e-6:
-                return f"bank_{bank}_side_{'inner' if abs(point[1]) < 20.0 else 'outer'}", "surface"
-        raise ValueError(f"unexpected plane at {point} normal {n}")
+            return _cylinder_role(face, p)
+        point, n = patch["point_mm"], patch["normal"]
+        return _axis_plane_role(point, n, half) or _bank_plane_role(point, n, p, axes)
 
     return _collect(shape, role)

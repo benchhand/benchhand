@@ -97,6 +97,36 @@ def _collect(shape: cq.Shape, role) -> dict:
     return {name: {"kind": kind, "frame": "assembly_zero", "patches": patches} for name, (kind, patches) in named.items()}
 
 
+def _cylinder_role(face: cq.Face, p: dict, pins: dict) -> tuple[str, str]:
+    """An on-axis cylinder by its radius (nose, journal, coupling bore, web hub), else a crank pin or pin web end."""
+    surf = BRepAdaptor_Surface(face.wrapped).Cylinder()
+    r, loc = surf.Radius(), surf.Location()
+    cy, cz = loc.Y(), loc.Z()
+    if abs(cy) < 1e-6 and abs(cz) < 1e-6:
+        on_axis = (("nose_and_links", p["nose_d"] / 2.0, "shaft"), ("main_journal", p["journal_d"] / 2.0, "shaft"),
+                   ("coupling_bore", p["coupling_bore_d"] / 2.0, "bore"), ("web_hubs", p["web_r"], "shaft"))
+        for name, radius, kind in on_axis:
+            if abs(r - radius) < 1e-6:
+                return name, kind
+    for k, (py, pz) in pins.items():
+        if abs(cy - py) < 1e-6 and abs(cz - pz) < 1e-6:
+            return (f"crank_pin_{k}" if abs(r - p["pin_d"] / 2.0) < 1e-6 else f"pin_web_ends_{k}"), "shaft"
+    raise ValueError(f"unexpected cylinder r={r} at {cy}, {cz}")
+
+
+def _plane_role(x: float, n: list, p: dict, half: float) -> tuple[str, str]:
+    """An arm flank by throw and side, the nose end, the coupling floor, or an x-normal plane by its place."""
+    if abs(n[0]) < 0.99:
+        throw = round(x / p["pitch"]) + 2
+        side = "a" if (n[2] > 1e-6 or (abs(n[2]) < 1e-6 and n[1] > 0)) else "b"
+        return f"arm_flank_{throw}_{side}", ("plane_face" if abs(n[1]) < 1e-6 or abs(n[2]) < 1e-6 else "surface")
+    if abs(x + half + p["nose_len"]) < 1e-6:
+        return "nose_end", "plane_face"
+    if abs(x + half - p["coupling_bore_len"] + p["nose_len"]) < 1e-6:
+        return "coupling_floor", "plane_face"
+    return f"face_x_{'m' if x < 0 else 'p'}{abs(x):g}".replace(".", "_"), "plane_face"
+
+
 def drawing_features(params: dict, shape: cq.Shape) -> dict:
     """Nose, link shafts, main journals, crank pins, web hubs and pin ends, arm flanks and every x-normal plane by place."""
     p = {**PARAMS, **params}
@@ -104,34 +134,8 @@ def drawing_features(params: dict, shape: cq.Shape) -> dict:
     pins = {k: (p["throw_r"] * math.cos(math.radians(a)), p["throw_r"] * math.sin(math.radians(a))) for k, a in enumerate(p["pin_angles_deg"], 1)}
 
     def role(face: cq.Face, patch: dict) -> tuple[str, str]:
-        _, y, z = patch["point_mm"]
-        n = patch["normal"]
         if patch["support_type"] == "cylinder":
-            surf = BRepAdaptor_Surface(face.wrapped).Cylinder()
-            r, loc = surf.Radius(), surf.Location()
-            cy, cz = loc.Y(), loc.Z()
-            on_axis = abs(cy) < 1e-6 and abs(cz) < 1e-6
-            if on_axis and abs(r - p["nose_d"] / 2.0) < 1e-6:
-                return "nose_and_links", "shaft"
-            if on_axis and abs(r - p["journal_d"] / 2.0) < 1e-6:
-                return "main_journal", "shaft"
-            if on_axis and abs(r - p["coupling_bore_d"] / 2.0) < 1e-6:
-                return "coupling_bore", "bore"
-            if on_axis and abs(r - p["web_r"]) < 1e-6:
-                return "web_hubs", "shaft"
-            for k, (py, pz) in pins.items():
-                if abs(cy - py) < 1e-6 and abs(cz - pz) < 1e-6:
-                    return (f"crank_pin_{k}" if abs(r - p["pin_d"] / 2.0) < 1e-6 else f"pin_web_ends_{k}"), "shaft"
-            raise ValueError(f"unexpected cylinder r={r} at {cy}, {cz}")
-        x = patch["point_mm"][0]
-        if abs(n[0]) < 0.99:
-            throw = round(x / p["pitch"]) + 2
-            side = "a" if (n[2] > 1e-6 or (abs(n[2]) < 1e-6 and n[1] > 0)) else "b"
-            return f"arm_flank_{throw}_{side}", ("plane_face" if abs(n[1]) < 1e-6 or abs(n[2]) < 1e-6 else "surface")
-        if abs(x + half + p["nose_len"]) < 1e-6:
-            return "nose_end", "plane_face"
-        if abs(x + half - p["coupling_bore_len"] + p["nose_len"]) < 1e-6:
-            return "coupling_floor", "plane_face"
-        return f"face_x_{'m' if x < 0 else 'p'}{abs(x):g}".replace(".", "_"), "plane_face"
+            return _cylinder_role(face, p, pins)
+        return _plane_role(patch["point_mm"][0], patch["normal"], p, half)
 
     return _collect(shape, role)

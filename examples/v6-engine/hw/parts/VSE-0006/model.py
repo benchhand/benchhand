@@ -73,36 +73,45 @@ def _collect(shape: cq.Shape, role) -> dict:
     return {name: {"kind": kind, "frame": "part_local", "patches": patches} for name, (kind, patches) in named.items()}
 
 
+def _cylinder_role(face: cq.Face, p: dict) -> tuple[str, str]:
+    """The journal bore, a lobe pocket or a chamber wall, by radius."""
+    r = _radius(face)
+    for name, radius in (("journal_bore", p["journal_bore_d"] / 2.0), ("lobe_pockets", p["lobe_pocket_r"]), ("chamber_walls", p["chamber_d"] / 2.0)):
+        if abs(r - radius) < 1e-6:
+            return name, "bore"
+    raise ValueError(f"unexpected cylinder r={r}")
+
+
+def _plane_role(point: list, nz: float, p: dict, flanks: dict) -> tuple[str, str]:
+    """A z level (deck, top, chamber floors), a side or end face, or a lobe pocket flank."""
+    x, y, z = point
+    half = p["head_len"] / 2.0
+    levels = (("deck_face", p["deck_h"]), ("top_face", p["deck_h"] + p["head_h"]), ("chamber_floors", p["deck_h"] + p["chamber_h"]))
+    if abs(nz) > 0.99:
+        for name, level in levels:
+            if abs(z - level) < 1e-6:
+                return name, "plane_face"
+    if abs(abs(y) - p["head_w"] / 2.0) < 1e-6:
+        return ("side_face_pos" if y > 0 else "side_face_neg"), "plane_face"
+    if abs(abs(x) - half) < 1e-6:
+        return ("end_face_pos" if x > 0 else "end_face_neg"), "plane_face"
+    for name, level in flanks.items():
+        if abs(x - level) < 1e-6:
+            return name, "plane_face"
+    raise ValueError(f"unexpected plane at {x}, {y}, {z}")
+
+
 def drawing_features(params: dict, shape: cq.Shape) -> dict:
     """The six outer faces, the journal bore, the chamber walls and floor, and the lobe pocket walls and flanks."""
     p = {**PARAMS, **params}
-    half = p["head_len"] / 2.0
-    deck, top = p["deck_h"], p["deck_h"] + p["head_h"]
     flanks = {}
     for i, k in enumerate((-1, 0, 1), 1):
         c = k * p["cyl_pitch"]
         flanks[f"lobe_pocket_{i}_face_a"], flanks[f"lobe_pocket_{i}_face_b"] = c - p["lobe_pocket_w"] / 2.0, c + p["lobe_pocket_w"] / 2.0
 
     def role(face: cq.Face, patch: dict) -> tuple[str, str]:
-        x, y, z = patch["point_mm"]
         if patch["support_type"] == "cylinder":
-            r = _radius(face)
-            for name, radius in (("journal_bore", p["journal_bore_d"] / 2.0), ("lobe_pockets", p["lobe_pocket_r"]), ("chamber_walls", p["chamber_d"] / 2.0)):
-                if abs(r - radius) < 1e-6:
-                    return name, "bore"
-            raise ValueError(f"unexpected cylinder r={r}")
-        nx, ny, nz = patch["normal"]
-        if abs(nz) > 0.99:
-            for name, level in (("deck_face", deck), ("top_face", top), ("chamber_floors", deck + p["chamber_h"])):
-                if abs(z - level) < 1e-6:
-                    return name, "plane_face"
-        if abs(abs(y) - p["head_w"] / 2.0) < 1e-6:
-            return ("side_face_pos" if y > 0 else "side_face_neg"), "plane_face"
-        if abs(abs(x) - half) < 1e-6:
-            return ("end_face_pos" if x > 0 else "end_face_neg"), "plane_face"
-        for name, level in flanks.items():
-            if abs(x - level) < 1e-6:
-                return name, "plane_face"
-        raise ValueError(f"unexpected plane at {x}, {y}, {z}")
+            return _cylinder_role(face, p)
+        return _plane_role(patch["point_mm"], patch["normal"][2], p, flanks)
 
     return _collect(shape, role)
