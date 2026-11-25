@@ -1048,21 +1048,17 @@ class Measurer:
                       suffix=str(number) if len(sizes) > 1 else "", details={"angle_deg": angle})
 
     def _bevel_legs(self, face: Face) -> tuple[float, float]:
-        """A plane chamfer's legs: its extent along the normals of the two faces it joins along its long edges."""
+        """A plane chamfer's legs, in recognition's order (``feature_geometry.bevel``): its extent along the
+        normals of the two faces it joins along its long edges."""
         lengths: dict[int, float] = {}
         for edge in face.edges:
             other = self.faces.get(edge.neighbour) if edge.neighbour is not None else None
             if other is not None and other.support_type == "plane" and not fg.parallel(other.normal, face.normal):
                 lengths[other.index] = lengths.get(other.index, 0.0) + fg.norm(fg.sub(edge.points[-1], edge.points[0]))
-        joined = sorted(lengths, key=lambda i: (-lengths[i], i))[:2]
-        if len(joined) < 2 or fg.parallel(self.faces[joined[0]].normal, self.faces[joined[1]].normal):
+        found = fg.bevel(face, self.faces, lengths)
+        if found is None or fg.parallel(self.faces[found.planes[0]].normal, self.faces[found.planes[1]].normal):
             raise IntentError("invalid_drawing_intent", f"plane chamfer face {face.index} does not join two faces")
-        points = list(face.boundary_points())
-        legs = []
-        for index in sorted(joined):
-            values = [fg.dot(p, fg.unit(self.faces[index].normal)) for p in points]
-            legs.append(max(values) - min(values))
-        return legs[0], legs[1]
+        return found.legs
 
     def _round(self, feature: ResolvedFeature, frame: DatumFrame) -> None:
         sizes: dict[float, list[int]] = {}

@@ -28,6 +28,12 @@ drawing with `geometry_unaccounted`.
 Every axial end of a bore, shaft, groove or taper cylinder or cone must lie on a located plane, or
 meet a chamfer, round, taper, surface or socket face; otherwise request a `length` dimension.
 
+A plane chamfer has two legs: its extent along the normals of the two planes it joins. Its size is
+the leg along the plane that shares the longer edge with it. On equal edges, the plane with the lower
+face index comes first. Its angle is atan(other leg / size). Recognition and the sheet both use this
+order (`feature_geometry.bevel`). An unequal chamfer thus gets the same size and angle on the sheet
+as in recognition.
+
 Four or more instances of one bore or shaft that fill a regular grid inside a circle (a grille) are a
 grid (ISO 129-1 equally spaced features): one callout states the pitch, the two grid directions and the
 circle the centres lie within, and only the instance nearest their centroid is located from the

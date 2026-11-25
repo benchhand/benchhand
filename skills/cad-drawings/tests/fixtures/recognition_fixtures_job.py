@@ -7,8 +7,9 @@ long and 3 deep; ``chamfered_boss`` a 30x30x5 plate with a d6 boss 10 high whose
 0.5 mm chamfer; ``drafted_dish`` a 60 long tub whose long walls are 3 thick at the rim (z = 20) and
 drafted 3 deg wider toward the floor, a spherical dish 0.8 deep and 16 across in its 3 mm floor, and
 under the floor a dovetail 20 wide at its bed (z = -8) with 70 deg flanks; ``vcut`` a 60x40x10 plate
-with a V-cut 2 wide and 1 deep, flanks at 45 deg, in its top face. The result maps each
-fixture to its faces and recognition.
+with a V-cut 2 wide and 1 deep, flanks at 45 deg, in its top face; ``bevel_top_longer`` and
+``bevel_side_longer`` a 30x20x10 block with one 4.5 x 4.7 plane chamfer whose end is tilted so that one or
+the other of its long edges is the longer. The result maps each fixture to its faces and recognition.
 """
 
 import json
@@ -81,11 +82,23 @@ def vcut():
     return box(0, 0, 0, 60, 40, 10).cut(prism([(18, 11), (22, 11), (20, 9)], 10, 50))
 
 
+def bevelled_block(tilt_deg):
+    """A 30x20x10 block whose top edge along x has a plane chamfer 4.5 down the y = 0 side and 4.7 across the
+    top, with its +x end tilted ``tilt_deg`` about y through z = 5: positive makes the chamfer's edge on the top
+    longer than its edge on the side, negative the other way round."""
+    shape = prism([(0, 0), (20, 0), (20, 10), (4.7, 10), (0, 5.5)], 0, 40)
+    cutter = box(30, -5, -20, 60, 25, 30)
+    cutter.rotate(V(30, 0, 5), V(0, 1, 0), tilt_deg)
+    return shape.cut(cutter)
+
+
 def main():
     try:
         result = {"status": "pass", "fixtures": {}}
         for name, build in (("plate", plate), ("shell", shell), ("slotted", slotted),
-                            ("chamfered_boss", chamfered_boss), ("drafted_dish", drafted_dish), ("vcut", vcut)):
+                            ("chamfered_boss", chamfered_boss), ("drafted_dish", drafted_dish), ("vcut", vcut),
+                            ("bevel_top_longer", lambda: bevelled_block(10.0)),
+                            ("bevel_side_longer", lambda: bevelled_block(-10.0))):
             shape = build().removeSplitter()
             faces = feature_geometry.extract_faces(shape)
             recognition = feature_recognition.recognize([feature_geometry.Face.from_dict(f) for f in faces],

@@ -29,12 +29,14 @@ import feature_geometry as fg  # noqa: E402
 import freecad_runtime  # noqa: E402
 from drawing_intent import Characteristic, DatumFrame, Measured  # noqa: E402
 from feature_geometry import Binding, Face, ResolvedFeature  # noqa: E402
-from feature_recognition import Recognition  # noqa: E402
+from feature_recognition import Recognition, Recognized  # noqa: E402
 
 FREECADCMD = freecad_runtime.find_freecadcmd()
 FREECAD_PRESENT = FREECADCMD is not None and FREECADCMD.is_file()
 JOB = HERE / "fixtures" / "recognition_fixtures_job.py"
 FRAME = DatumFrame((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), False, {})
+# outward normals of the bevelled blocks' planes: the x = 0 end, the y = 0 side, the bottom and the top
+LEFT, SIDE, BOTTOM, TOP = (-1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0), (0.0, 0.0, 1.0)
 
 
 def sizes(recognition: Recognition, category: str) -> list[dict[str, float]]:
@@ -247,6 +249,52 @@ class Recognition_(unittest.TestCase):
         self.assertEqual(finding["code"], "measurement_failed")
         self.assertIn("mark", finding["message"])
         self.assertIn("under", finding["message"])
+
+    def stated_bevel(self, fixture: str, longer: tuple[float, float, float], shorter: tuple[float, float, float],
+                     ) -> tuple[Recognized, Characteristic, list[dict], bool]:
+        """Recognition's plane chamfer, the drawing's chamfer characteristic and the coverage findings of a
+        bevelled block drawn with every face its own feature; and whether the face whose shared edge with the
+        chamfer is longer (normal ``longer``) has the higher face index than the other (normal ``shorter``)."""
+        recognition, faces = self.fixtures[fixture]
+        (chamfer,) = [item for item in recognition.features if item.category == "chamfer"]
+
+        def plane(normal: tuple[float, float, float]) -> int:
+            return next(i for i, f in faces.items() if f.support_type == "plane"
+                        and all(abs(a - b) < 1e-6 for a, b in zip(f.normal, normal)))
+
+        kinds = {i: "chamfer" if i in chamfer.faces else "plane_face" if face.support_type == "plane" and any(
+            abs(abs(c) - 1.0) < 1e-9 for c in face.normal) else "surface" for i, face in faces.items()}
+        features = {f"f{i}": ResolvedFeature(f"f{i}", kind, (i,)) for i, kind in kinds.items()}
+        bound = Binding(features, {i: f"f{i}" for i in faces}, ())
+        part = {"drawing": {"type": "detail", "features": {name: {"size": "general"} for name in features},
+                            "coordinate_frame": {"origin": {"intersection": [f"f{plane(n)}" for n in (LEFT, SIDE, BOTTOM)]},
+                                                 "z": {"normal_to": f"f{plane(BOTTOM)}"},
+                                                 "x": {"normal_to": f"f{plane(LEFT)}"}}}}
+        measured = drawing_intent.measure("TST-0003", part, {}, [], bound, list(faces.values()))
+        (char,) = [c for c in measured.characteristics if c.operation == "chamfer"]
+        self.assertEqual([f for f in measured.findings if f.get("feature") == char.feature], [])
+        report = feature_coverage.check(recognition, bound, measured, faces)
+        return chamfer, char, [f for f in report.findings if f["feature"] == chamfer.id], plane(longer) > plane(shorter)
+
+    def test_an_unequal_plane_chamfer_is_drawn_as_recognised_when_face_order_and_edge_order_disagree(self) -> None:
+        """4.5 down the side, 4.7 across the top; the top's shared edge is the longer and has the higher index."""
+        chamfer, char, missing, disagree = self.stated_bevel("bevel_top_longer", longer=TOP, shorter=SIDE)
+        self.assertTrue(disagree, "premise: the face index order is not the edge length order")
+        self.assertAlmostEqual(chamfer.sizes[0].value, 4.5, places=6)   # the leg along the top's normal
+        self.assertAlmostEqual(chamfer.details["angle_deg"], 46.2, places=6)   # atan(4.7 / 4.5), to 0.1°
+        self.assertAlmostEqual(char.value, 4.5, places=6)
+        self.assertAlmostEqual(char.details["angle_deg"], 46.245, places=3)
+        self.assertEqual(missing, [])
+
+    def test_an_unequal_plane_chamfer_is_drawn_as_recognised_when_face_order_and_edge_order_agree(self) -> None:
+        """The mirrored block: the side's shared edge is the longer and has the lower index."""
+        chamfer, char, missing, disagree = self.stated_bevel("bevel_side_longer", longer=SIDE, shorter=TOP)
+        self.assertFalse(disagree, "premise: the face index order is the edge length order")
+        self.assertAlmostEqual(chamfer.sizes[0].value, 4.7, places=6)   # the leg along the side's normal
+        self.assertAlmostEqual(chamfer.details["angle_deg"], 43.8, places=6)   # atan(4.5 / 4.7), to 0.1°
+        self.assertAlmostEqual(char.value, 4.7, places=6)
+        self.assertAlmostEqual(char.details["angle_deg"], 43.755, places=3)
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

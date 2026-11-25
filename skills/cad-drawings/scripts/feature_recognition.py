@@ -537,20 +537,19 @@ class _Classifier:
         lengths = {n: sum(fg.norm(fg.sub(e.points[-1], e.points[0])) for e in
                           self.shared.get((min(face.index, n), max(face.index, n)), []))
                    for n in self.neighbours(face.index)}
-        if len(lengths) < 2:
+        found = fg.bevel(face, self.faces, lengths)
+        if found is None:
             return
-        a, b = sorted(lengths, key=lambda n: (-lengths[n], n))[:2]
+        a, b = found.planes
         fa, fb = self.faces[a], self.faces[b]
-        if (self.kind(face.index, a), self.kind(face.index, b)) != ("convex", "convex") \
-                or fa.support_type != "plane" or fb.support_type != "plane" or fg.parallel(fa.normal, fb.normal) \
+        if (self.kind(face.index, a), self.kind(face.index, b)) != ("convex", "convex") or fg.parallel(fa.normal, fb.normal) \
                 or any(fg.parallel(face.normal, f.normal) or fg.perpendicular(face.normal, f.normal) for f in (fa, fb)):
             return
-        pts = list(face.boundary_points())
-        legs = [(lambda lo_hi: lo_hi[1] - lo_hi[0])(_extent(pts, fg.unit(f.normal))) for f in (fa, fb)]
+        legs = list(found.legs)
         if max(legs) > CHAMFER_MAX_MM or max(legs) > THIN_RATIO * lengths[a]:
             return
         self.add("chamfer", [face.index], [Size("chamfer", legs[0], (face.index,))], "chamfer", face.normal,
-                 angle_deg=math.degrees(math.atan2(legs[1], legs[0])), legs=legs)
+                 angle_deg=found.angle_deg, legs=legs)
 
     def group_blends(self) -> None:
         """One round feature per radius and side, one chamfer per size and angle: a drawing states each once."""
