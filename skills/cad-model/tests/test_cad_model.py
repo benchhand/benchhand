@@ -34,6 +34,7 @@ import time
 import unittest
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
@@ -1489,21 +1490,43 @@ class ExistingEquipmentBuildTests(unittest.TestCase):
         self.assertIn(["TST-0001", "TST-0002"], pairs)
         self.assertEqual(checks["product_exports"]["status"], "pass", json.dumps(checks["product_exports"])[:2000])
 
-    def test_a_product_step_holding_the_existing_part_fails_the_product_subset(self) -> None:
+    def checked_copy(self, edit: Callable[[Path, dict], None]) -> tuple[dict, dict]:
+        """`edit(folder, manifest)` on a copy of v1, sealed again as a faulty build would; the product_exports row of
+        `cad_model check` on it, and the evidence results release reads."""
         with tempfile.TemporaryDirectory() as tmp:
             hw = Path(shutil.copytree(self.hw, Path(tmp) / "hw", symlinks=True))
             folder = hw / "versions" / "v1"
-            (folder / "product.step").unlink()
-            shutil.copyfile(folder / "assembly.step", folder / "product.step")
-            manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))  # sealed as a faulty build would
-            manifest["files"]["product.step"] = hashlib.sha256((folder / "product.step").read_bytes()).hexdigest()
+            manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+            edit(folder, manifest)
+            manifest["files"] = {name: hashlib.sha256((folder / name).read_bytes()).hexdigest() for name in manifest["files"]}
             (folder / "manifest.json").unlink()
             (folder / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
             row = cli("check", "v1", "--hw", str(hw))[1]["checks"]["product_exports"]
             assessment, _ = acceptance_fixtures().evidence.build_assessment(hw, "v1")
-            results = assessment.results()
+            return row, assessment.results()
+
+    def test_a_product_step_holding_the_existing_part_fails_the_product_subset(self) -> None:
+        def contaminate(folder: Path, _manifest: dict) -> None:
+            (folder / "product.step").unlink()
+            shutil.copyfile(folder / "assembly.step", folder / "product.step")
+
+        row, results = self.checked_copy(contaminate)
         self.assertEqual((row["status"], row["existing_in_step"]), ("fail", ["TST-0002"]))
-        self.assertEqual(results["cad.readback@TST-0001"], "fail", "the evidence release reads carries the failure")
+        self.assertEqual((results["cad.product_exports@product"], results["cad.readback@TST-0001"]), ("fail", "pass"),
+                         "the product-level obligation carries the failure; the base's own read-back is sound")
+
+    def test_sealed_product_exports_without_the_manifest_product_block_are_still_checked(self) -> None:
+        row, results = self.checked_copy(lambda _folder, manifest: manifest.pop("product"))
+        self.assertEqual((row["status"], row["blocking"], row["manifest_product_missing"]), ("fail", True, True))
+        self.assertEqual(results["cad.product_exports@product"], "fail")
+
+    def test_a_sealed_product_step_without_its_glb_fails(self) -> None:
+        def drop_glb(folder: Path, manifest: dict) -> None:
+            (folder / "product.glb").unlink()
+            del manifest["files"]["product.glb"]
+
+        row, _ = self.checked_copy(drop_glb)
+        self.assertEqual((row["status"], row["missing_exports"]), ("fail", ["product.glb"]))
 
     def test_the_sweep_measures_the_existing_part_against_the_product(self) -> None:
         worst = self.hw.parent / ".cad-work" / "sweep" / "worst.step"
@@ -1837,17 +1860,23 @@ class CheckRuleTests(unittest.TestCase):
         legacy["manufacturing"]["parts"]["TST-0001"]["checks"]["identity"]["status"] = "warn"
         self.assertEqual(outcomes(legacy, "left"), {"cad.readback@TST-0001.left": "unknown"})
 
-    def test_a_failed_product_subset_fails_every_readback_outcome(self) -> None:
-        """release reads the cad.readback packet, not the check's exit status: a product.step or product.glb that
-        does not hold exactly the delivered product fails the read-back of every part."""
-        owed = mock.Mock(id="cad.readback@TST-0001.left", family="cad.readback",
-                         subject={"PN": "TST-0001", "component": "left"}, level="cad_valid")
-        checks = {**self.readback_checks(), "product_exports": {"status": "fail", "blocking": True}}
-        [row] = check.readback_outcomes([owed], checks, {})
-        self.assertEqual(row["outcome"], "fail")
-        self.assertIn("product_exports", row["uncertainty"])
-        checks["product_exports"] = {"status": "skipped", "blocking": False}
-        self.assertEqual(check.readback_outcomes([owed], checks, {})[0]["outcome"], "pass")
+    PRODUCT_EXPORTS = mock.Mock(id="cad.product_exports@product", family="cad.product_exports", subject={"product": True},
+                                level="cad_valid")
+
+    def test_the_product_exports_obligation_follows_the_product_subset_check_alone(self) -> None:
+        """release reads the packet, not the check's exit status: the product-level cad.product_exports outcome carries
+        product_exports, a version without product exports owes none, and no part's read-back depends on it."""
+        readback = mock.Mock(id="cad.readback@TST-0001.left", family="cad.readback",
+                             subject={"PN": "TST-0001", "component": "left"}, level="cad_valid")
+
+        def outcomes(status: str, integrity: str = "pass") -> dict:
+            checks = {**self.readback_checks(integrity=integrity), "product_exports": {"status": status}}
+            return {row["obligation"]: row["outcome"] for row in check.readback_outcomes([self.PRODUCT_EXPORTS, readback], checks, {})}
+
+        self.assertEqual(outcomes("fail"), {"cad.product_exports@product": "fail", "cad.readback@TST-0001.left": "pass"})
+        self.assertEqual(outcomes("pass")["cad.product_exports@product"], "pass")
+        self.assertEqual(outcomes("skipped")["cad.product_exports@product"], "not_applicable")
+        self.assertEqual(outcomes("pass", integrity="fail")["cad.product_exports@product"], "fail")
 
     def test_product_totals_leave_existing_equipment_out_of_every_total(self) -> None:
         metrics = {"TST-0001": {"mass_g": 2.0, "volume_mm3": 10.0}, "EXT-0001": {"mass_g": None, "volume_mm3": 90.0}}

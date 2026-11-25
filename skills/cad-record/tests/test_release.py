@@ -444,6 +444,47 @@ def add_clamp_post(hw: Path) -> None:
 PRODUCT_STEP = "".join(f"#{n}=PRODUCT('LMP-00{n:02d} part','','',(#99));\n" for n in range(1, 12))
 
 
+def catalogue_only(hw: Path) -> None:
+    """Every lamp part bought from a catalogue: no made part, so the record owes no cad.readback at all."""
+    for path in sorted((hw / "parts").glob("*/part.yaml")):
+        def buy(data: dict[str, Any]) -> None:
+            for key in ("drawing", "manufacture"):
+                data.pop(key, None)
+            if data.get("make_buy") != "buy":
+                data.update(make_buy="buy", process="purchased",
+                            procurement={"mode": "catalog", "manufacturer": "TST maker",
+                                         "designation": f"TST catalogue item {data['PN']}"})
+        edit_yaml(path, buy)
+    parts = {p.parent.name: yaml.safe_load(p.read_text(encoding="utf-8")) for p in (hw / "parts").glob("*/part.yaml")}
+
+    def rows(table: list[dict[str, str]]) -> None:
+        for row in table:
+            part = parts.get(row["PN"])
+            if part is not None:
+                row.update(process=part["process"], make_buy=part["make_buy"],
+                           designation=part["procurement"].get("designation", ""),
+                           manufacturer=part["procurement"].get("manufacturer", ""))
+    edit_csv(hw / "bom.csv", rows)
+
+
+def product_exports_outcome(outcome: str) -> Callable[[dict[str, Any]], None]:
+    """A packet hook that gives cad.product_exports@product `outcome`, adding the obligation when the packet lacks it."""
+    def hook(packet: dict[str, Any]) -> None:
+        ident = "cad.product_exports@product"
+        if ident not in {item["id"] for item in packet["expected"]}:
+            packet["expected"].append({**packet["expected"][0], "id": ident, "family": "cad.product_exports",
+                                       "subject": {"product": True}, "level": "cad_valid", "stage": "layout",
+                                       "basis": "product.step and product.glb hold the delivered product"})
+            packet["outcomes"].append({"obligation": ident, "outcome": outcome, "level": "cad_valid",
+                                       "method": "TST synthetic check", "coverage": "TST fixture"})
+        for row in packet["outcomes"]:
+            if row["obligation"] == ident:
+                row.update(outcome=outcome, uncertainty="TST: product.step is not the delivered product")
+        states = {row["outcome"] for row in packet["outcomes"]}
+        packet["result"] = "fail" if "fail" in states else "unknown" if "unknown" in states else "pass"
+    return hook
+
+
 class ExistingEquipment(ReleaseCase):
     """A frozen version with existing equipment releases the delivered product only."""
 
@@ -477,19 +518,21 @@ class ExistingEquipment(ReleaseCase):
         self.assertIn(("hw/versions/v1/product.step", "release.missing"),
                       {(item["path"], item.get("code")) for item in report["findings"]})
 
-    def test_a_failed_product_subset_in_the_readback_packet_refuses(self) -> None:
-        """cad-model check fails every cad.readback outcome when product_exports fails; the release gate reads them."""
-        def failed_subset(packet: dict[str, Any]) -> None:
-            for row in packet["outcomes"]:
-                if row["obligation"].startswith("cad.readback@"):
-                    row.update(outcome="fail", uncertainty="product.step or product.glb is not the delivered product "
-                                                           "(product_exports)")
-            packet["result"] = "fail"
-        hw = self.project(before_build=add_clamp_post, product_step=PRODUCT_STEP, packet=failed_subset)
+    def test_a_catalogue_only_release_is_refused_on_a_bad_product_export(self) -> None:
+        hw = self.project(before_build=catalogue_only, product_step=PRODUCT_STEP, packet=product_exports_outcome("fail"))
+        self.assertFalse([p for p in (hw / "versions" / "v1" / "record" / "parts").glob("*/part.yaml")
+                          if yaml.safe_load(p.read_text(encoding="utf-8"))["make_buy"] != "buy"], "every part is bought")
         code, report = self.release(hw)
         self.assertEqual(code, 1)
         refused = [item["message"] for item in report["findings"] if item.get("code") == "release.acceptance"]
-        self.assertTrue(any("cad.readback@" in message for message in refused), refused)
+        self.assertTrue(any("cad.product_exports@product" in message for message in refused), report["findings"])
+
+    def test_a_sealed_product_step_needs_its_product_exports_passed(self) -> None:
+        hw = self.project(product_step=PRODUCT_STEP, packet=product_exports_outcome("not_applicable"))
+        code, report = self.release(hw)
+        self.assertEqual(code, 1)
+        self.assertIn(("hw/versions/v1/product.step", "release.product_exports"),
+                      {(item["path"], item.get("code")) for item in report["findings"]})
 
     def test_a_product_without_existing_equipment_ships_its_assembly_step_and_no_mates(self) -> None:
         hw = self.project()
