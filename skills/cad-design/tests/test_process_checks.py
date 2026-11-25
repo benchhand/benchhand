@@ -2597,5 +2597,97 @@ class CalibrationRemedyTests(Checks):
         self.assertEqual(notes[0]["severity"], "info")
 
 
+def accuracy_catalog(*limits: dict[str, Any]) -> Any:
+    """The shipped guideline sets plus one project FDM set holding `limits`, each cited to a test source."""
+    cite = [{"kind": "supplier", "reference": "TST FDM accuracy table", "url": "https://example.com/tst",
+             "accessed": "2026-11-24", "locator": "table 1"}]
+    data = {"schema_version": 1, "id": "tst.fdm.accuracy", "revision": 1, "title": "TST FDM accuracy",
+            "scope": {"process": "fdm"}, "limits": [{**limit, "citations": cite} for limit in limits]}
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp) / "manufacturing" / "guidelines"
+        folder.mkdir(parents=True)
+        (folder / "tst.fdm.accuracy.yaml").write_text(json.dumps(data), encoding="utf-8")
+        catalog = GL.discover(Path(tmp))
+    assert not catalog.refused, catalog.refused
+    return catalog
+
+
+def deviation(characteristic: str, lower: float, upper: float) -> dict[str, Any]:
+    return {"characteristic": characteristic, "operator": "between", "quantity": {"lower": lower, "upper": upper, "units": "mm"}}
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class GuidelineWithoutCalibrationTests(Checks):
+    """benchhand-c7q.30: printer calibration is never required. Without one, the guideline value governs: the check passes
+    or fails on it with basis guideline and says the value is uncalibrated. A calibration overrides it. Unknown only when
+    neither exists."""
+
+    WARP = deviation("warp", 0.0, 1.0)
+    HOLE = deviation("hole_diameter_deviation", -0.5, 0.5)
+    BED = stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]])
+
+    def warped(self, flatness: str, *, catalog: Any, calibrations: tuple = ()) -> Any:
+        documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("datum_a", "datum", criteria=[_flatness_criterion(flatness)])]
+        return self.assess(documents, geometry("TST-0101", self.BED), catalog=catalog)
+
+    def bored(self, diameter: str, *, catalog: Any, calibrations: tuple = ()) -> Any:
+        documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion(diameter)])]
+        return self.assess(documents, geometry("TST-0101", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})),
+                           catalog=catalog)
+
+    @staticmethod
+    def thermal(result: Any) -> str:
+        return next(o.id for o in result.expected if o.id.startswith("process.fdm.thermal_distortion"))
+
+    def test_a_guideline_warp_passes_a_flatness_limit_it_meets_and_says_it_is_uncalibrated(self) -> None:
+        result = self.warped("<= 1.5", catalog=accuracy_catalog(self.WARP))
+        obligation = self.thermal(result)
+        self.assertEqual(self.outcome(result, obligation), "pass")
+        self.assertIn("uncalibrated: guideline value 0..1 mm used; calibrate to tighten", result.outcome(obligation)["coverage"])
+        self.assertEqual(result.by_code("process.fdm.warp_uncalibrated"), [])
+
+    def test_a_guideline_warp_fails_a_flatness_limit_it_misses_with_basis_guideline(self) -> None:
+        result = self.warped("<= 0.5", catalog=accuracy_catalog(self.WARP))
+        self.assertEqual(self.outcome(result, self.thermal(result)), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.warp")["criterion"]["source"]["kind"], "guideline")
+
+    def test_a_warp_calibration_overrides_the_guideline_value(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.3, size=mm(15))
+        result = self.warped("<= 0.5", catalog=accuracy_catalog(self.WARP), calibrations=(warp,))
+        self.assertEqual(self.outcome(result, self.thermal(result)), "pass")
+        self.assertNotIn("uncalibrated", result.outcome(self.thermal(result))["coverage"])
+
+    def test_warp_with_neither_a_calibration_nor_a_guideline_value_is_unknown(self) -> None:
+        result = self.warped("<= 1.5", catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, self.thermal(result)), "unknown")
+        self.assertTrue(result.by_code("process.fdm.warp_uncalibrated"))
+
+    def test_a_guideline_hole_deviation_judges_the_bore_with_basis_guideline(self) -> None:
+        for diameter, expected in (("between 5.0 7.0", "pass"), ("between 5.9 6.1", "fail")):
+            with self.subTest(diameter=diameter):
+                result = self.bored(diameter, catalog=accuracy_catalog(self.HOLE))
+                self.assertEqual(self.outcome(result, GEOMETRY), expected)
+                self.assertEqual(result.by_code("process.fdm.hole_uncalibrated"), [])
+                if expected == "fail":
+                    self.assertEqual(self.finding(result, "process.fdm.hole_fit")["criterion"]["source"]["kind"], "guideline")
+                else:
+                    self.assertIn("uncalibrated: guideline value -0.5..0.5 mm used; calibrate to tighten",
+                                  result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_hole_calibration_overrides_the_guideline_value(self) -> None:
+        tight = calibration("hole_coupon", "hole_diameter_deviation", POLYMER, -0.05, 0.05)
+        result = self.bored("between 5.9 6.1", catalog=accuracy_catalog(self.HOLE), calibrations=(tight,))
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
+
+    def test_a_bore_with_neither_a_calibration_nor_a_guideline_value_is_unknown(self) -> None:
+        result = self.bored("between 5.0 7.0", catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertTrue(result.by_code("process.fdm.hole_uncalibrated"))
+
+
 if __name__ == "__main__":
     unittest.main()
