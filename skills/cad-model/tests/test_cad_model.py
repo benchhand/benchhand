@@ -1765,6 +1765,27 @@ class ProductSubsetTests(unittest.TestCase):
         glb["nodes"][0]["children"].remove(2)  # s-1's node is no longer reachable from the scene
         self.assertEqual(self.judge(glb=glb)["glb_missing_nodes"], ["s-1"])
 
+    def test_a_node_nested_under_an_occurrence_with_its_name_is_a_duplicate(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        glb = self.gltf(names)
+        glb["nodes"].append({"name": names[0], "mesh": 9})
+        glb["nodes"][1]["children"] = [len(glb["nodes"]) - 1]  # a second TST-0001 node inside the first
+        row = self.judge(glb=glb)
+        self.assertEqual((row["status"], row["glb_duplicate_nodes"]), ("fail", ["TST-0001"]))
+
+    def test_a_malformed_glb_is_a_blocking_failure_not_a_crash(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        bad_scene = {**self.gltf(names), "scene": 3}
+        bad_child = self.gltf(names)
+        bad_child["nodes"][0]["children"].append(40)
+        bad_root = {**self.gltf(names), "scenes": [{"nodes": ["0"]}]}
+        no_nodes = {**self.gltf(names), "nodes": {"0": {}}}
+        for name, glb in (("scene", bad_scene), ("child", bad_child), ("root", bad_root), ("nodes", no_nodes)):
+            with self.subTest(malformed=name):
+                row = self.judge(glb=glb)
+                self.assertEqual((row["status"], row["blocking"]), ("fail", True))
+                self.assertTrue(row["glb_malformed"])
+
     def test_existing_equipment_named_in_the_step_text_or_the_glb_fails(self) -> None:
         in_step = self.judge(text_pns={"TST-0001", "BUY-0001", "EXT-0001"})
         self.assertEqual((in_step["status"], in_step["existing_in_step"]), ("fail", ["EXT-0001"]))
