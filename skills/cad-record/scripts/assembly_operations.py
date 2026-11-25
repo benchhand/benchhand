@@ -29,7 +29,7 @@ installed twice, an occurrence two builds use fails it, and a sub-build no insta
 the main build has enclosed before the install fails `assembly.closed_before_install` at the install.
 A `hold` keeps its part in a fixture for a duration in an orientation, judged against its own build's state;
 its cure time and temperature count only as known facts with a datasheet source, and the hold must last the
-cure time. A close operation encloses its
+cure time. A hold whose duration is not a known positive time leaves its order unknown. A close operation encloses its
 `closes` parts: no later operation reaches them. `check_order` judges exactly this declared sequence:
 an operation whose receiving part is absent, whose part is enclosed or installed twice, or whose
 predecessor comes later or is missing fails `assembly.order`. Whether the part and the tools can
@@ -677,10 +677,13 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                              "inside the closed assembly", f"install {ref} before {op.id}")
         _sub_build_rules(operations, state, step, transfers, fail)
         findings.extend(mine)
-        row: dict[str, Any] = {"obligation": obligation, "outcome": "fail" if mine else "pass", "level": "process_planned",
-                               "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
+        doubt = None if mine else _hold_doubt(op)
+        row: dict[str, Any] = {"obligation": obligation, "outcome": "fail" if mine else "unknown" if doubt else "pass",
+                               "level": "process_planned", "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
         if mine:
             row["findings"] = [f["id"] for f in mine]
+        if doubt:
+            row["uncertainty"] = doubt
         outcomes.append(row)
     if inventory is not None:
         never = _never_installed(state, inventory)
@@ -794,6 +797,13 @@ def _hold_rules(op: AssemblyOperation, fail: Callable[..., None]) -> None:
         fail("assembly.hold_short", f"{op.id}: the hold lasts {measured}, the cure time is {needed:g} h",
              "the part leaves its fixture before it has cured: the bond can shift or fail",
              f"hold for at least {needed:g} h, or choose an adhesive whose datasheet cure time fits the hold")
+
+
+def _hold_doubt(op: AssemblyOperation) -> str | None:
+    """Why a hold's order outcome stays unknown, cure or not: its duration is not a known positive time."""
+    if op.kind != "hold" or _hours(op.duration, lower=True) is not None:
+        return None
+    return f"{op.id}: the hold duration is not a known positive time, so the hold may not keep the part in place"
 
 
 def _hours(fact: Any, *, lower: bool) -> float | None:
