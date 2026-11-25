@@ -776,11 +776,17 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
                                   recheck=[f"process.{kind}.geometry"], feature=feature))
             parts.append((UNKNOWN, f"{feature} not located"))
             continue
-        if feature in holes or surface.dimension_state != "as_manufactured":
+        if surface.dimension_state != "as_manufactured":
+            continue
+        criteria = ctx.surface_raw(surface).get("criteria") or ()
+        consumed = set(_judged_properties(ctx))
+        if feature in holes:
+            consumed.add("diameter")  # hole_fits judges a bore's diameter (and a bore with no criterion)
+            parts += [_unchecked(ctx, g, surface, item, findings) for item in criteria if item.get("property") not in consumed]
             continue
         characteristic = "profile_deviation" if surface.role in ("flank", "cam") else "dimensional_deviation"
+        consumed.add(characteristic)
         band, unsupported = _tolerance(ctx, surface, characteristic)
-        criteria = ctx.surface_raw(surface).get("criteria") or ()
         if band is not None:
             parts.append(_deviation(ctx, g, surface, characteristic, band, unsupported, findings))
         elif unsupported:
@@ -793,16 +799,25 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
                                   remedy=f"state the {characteristic} tolerance of {feature} (between, mm)",
                                   recheck=[f"process.{kind}.geometry"], feature=feature))
             parts.append((UNKNOWN, f"{feature} states no tolerance"))
-        judged = _judged_properties(ctx)
-        parts += [_unchecked(ctx, g, surface, item, findings) for item in criteria if item.get("property") not in judged]
+        parts += [_unchecked(ctx, g, surface, item, findings) for item in criteria if item.get("property") not in consumed]
         parts.append((NOT_APPLICABLE, ""))  # the criteria judged elsewhere (flatness, ...) have their own checks
     return parts
 
 
-# The critical-surface properties some check of a printed route reads: the deviation here, flatness in thermal
-# distortion. A bore's diameter is hole_fits'; this loop skips bores. Any other criterion is not assessed (no_check).
-JUDGED_PROPERTIES = frozenset({"dimensional_deviation", "profile_deviation", "flatness"})
+# The critical-surface properties another check of a printed route reads for every feature: flatness in thermal
+# distortion. Per feature, _critical adds the one it consumes itself: a bore's diameter (hole_fits) or the deviation of
+# its role. Every other criterion goes through _unchecked: the band-width check, else not assessed (no_check).
+JUDGED_PROPERTIES = frozenset({"flatness"})
 NO_CHECK = "no_check"  # the not_assessed reason of a criterion no check measures
+# The criterion properties that name a dimensional size of the model (a length the print can miss), so a band of one can
+# be compared with the as-printed spread: the word itself, or a property ending in `_<word>` (seat_depth, boss_height).
+# A deviation, a roughness or any other property is no size: it is not assessed (no_check).
+SIZE_WORDS = ("thickness", "depth", "height", "width", "length", "diameter", "radius", "distance", "spacing", "clearance",
+              "gap", "size")
+
+
+def _is_size(prop: str) -> bool:
+    return any(prop == word or prop.endswith(f"_{word}") for word in SIZE_WORDS)
 
 
 def _judged_properties(ctx: Context) -> frozenset[str]:
@@ -822,12 +837,12 @@ def _length_mm(ctx: Context, value: Any, units: str | None) -> float | None:
 
 
 def _unchecked(ctx: Context, g: Geometry, surface: Any, item: Mapping[str, Any], findings: list[Draft]) -> tuple[str, str]:
-    """A criterion no check measures on the model: never a pass. A linear `between` band narrower than the spread of
-    the governing deviation (calibration, else guideline, by size) fails, since no nominal holds it; anything else is
-    not assessed (no_check)."""
+    """A criterion no check measures on the model: never a pass. A `between` band of a dimensional size (SIZE_WORDS)
+    narrower than the spread of the governing deviation (calibration, else guideline, by size) fails, since no nominal
+    holds it; anything else is not assessed (no_check)."""
     kind, feature, prop = _k(ctx), surface.feature, str(item.get("property"))
     units = item.get("units")
-    if item.get("operator") == "between" and isinstance(item.get("value"), (list, tuple)):
+    if _is_size(prop) and item.get("operator") == "between" and isinstance(item.get("value"), (list, tuple)):
         low, high = (_length_mm(ctx, v, units) for v in item["value"])
         if low is not None and high is not None:
             spread = ctx.governing("dimensional_deviation", size=max(abs(low), abs(high)))
