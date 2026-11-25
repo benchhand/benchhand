@@ -267,6 +267,8 @@ WALL_PARTS = {
     "TST-0413": ("process: fdm\nmake_buy: buy\nform_class: plate\n", PLATE_08),
     "TST-0414": ("process: cnc\nmake_buy: make\nform_class: plate\n", PLATE_08),
     "TST-0419": ("process: fdm\nmake_buy: existing\nform_class: plate\n", PLATE_08),
+    # A solid cube: block-like and wall-scanned if the existing skip did not apply.
+    "TST-0420": ("process: fdm\nmake_buy: existing\n", "cq.Workplane().box(20, 20, 20)"),
     "TST-0415": (FDM_MADE + "form_class: plate\n",
                  "cq.Workplane().box(110, 110, 3).faces('>Z').workplane().rarray(10, 10, 10, 10).hole(4)"),
     # A prism with a 30-degree edge: its tip is a wedge, not a wall; the end caps are 10 mm apart.
@@ -366,9 +368,11 @@ class WallScanTests(unittest.TestCase):
                 self.assertEqual([f for f in self.report["findings"] if f["part"] == pn], [])
 
     def test_existing_equipment_has_no_form_check(self) -> None:
-        self.assertEqual(self.report["parts"]["TST-0419"]["process"], "existing")
-        self.assertEqual(self.wall("TST-0419"), {"required_mm": None})
-        self.assertEqual([f for f in self.report["findings"] if f["part"] == "TST-0419"], [])
+        for pn in ("TST-0419", "TST-0420"):
+            with self.subTest(part=pn):
+                self.assertEqual(self.report["parts"][pn]["process"], "existing")
+                self.assertEqual(self.wall(pn), {"required_mm": None})
+                self.assertEqual([f for f in self.report["findings"] if f["part"] == pn], [])
 
     def test_plate_with_100_holes_passes_within_its_time_budget(self) -> None:
         wall = self.wall("TST-0415")
