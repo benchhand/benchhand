@@ -50,7 +50,8 @@ an access obligation. A `tool_access` entry may name a capability profile, an ap
 like `direction`), a reach and an envelope; an envelope fact whose source carries an artifact (a STEP
 solid of the tool and holder in the operated part's model frame at the engaged pose) overrides the
 shipped envelope, and is how a special tool is checked. An entry without an approach approaches along
-the operation's direction. An operation that moves no part and that nothing reaches has no access to
+the operation's direction. A `tools` name that a `tool_access` entry also names is that entry: it is checked
+once, as the `tool_access` entry says. An operation that moves no part and that nothing reaches has no access to
 check: its access is not applicable.
 
 Joints. `check_joints` judges the joint evidence of fastening, insert, press-fit, heat-set,
@@ -1027,7 +1028,9 @@ def access_plan(operations: Operations, inventory: Any = None,
             unknown.append(f"{op.id} has no direction: its part path is unknown")
         if op.id in state.unresolved:
             unknown.append(state.unresolved[op.id])
+        declared = [tool.name for tool in op.tools if tool.declared]
         reaches = [reach for index, tool in enumerate(op.tools) if tool in tools
+                   if tool.declared or not any(tool_envelopes.same_tool(tool.name, name) for name in declared)
                    if (reach := _reach(op, index, tool, unknown, notes)) is not None]
         unit, operated = _unit(state, step, unknown)
         moved = unit if op.kind == "install" else frozenset({step.part})  # an install's part is a unit id, no occurrence

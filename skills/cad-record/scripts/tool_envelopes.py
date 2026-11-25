@@ -199,6 +199,11 @@ def _phrase(patterns: tuple[re.Pattern[str], ...], text: str) -> re.Match[str] |
     return next((match for pattern in patterns if (match := pattern.fullmatch(text))), None)
 
 
+def same_tool(a: str, b: str) -> bool:
+    """Whether two entries name one tool: the same text up to case, spacing and punctuation."""
+    return _normal(a) == _normal(b)
+
+
 def _size(table: dict[float, Any], text: str) -> float | None:
     value = float(text)
     return next((size for size in table if math.isclose(size, value, abs_tol=1e-9)), None)
