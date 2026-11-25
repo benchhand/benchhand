@@ -692,8 +692,9 @@ def measure(shape: Any) -> dict[str, Any]:
             convex = _dot(normal, radial) > 0.0
             radius = cylinder.Radius()
             span = umax - umin
-            cylinders.append({"location": loc, "direction": direction, "radius": radius, "convex": convex})
-            if convex and span <= BLEND_MAX_SPAN and radius <= BLEND_MAX_RADIUS:
+            cylinders.append({"location": loc, "direction": direction, "radius": radius, "convex": convex,
+                              "blend": convex and span <= BLEND_MAX_SPAN and radius <= BLEND_MAX_RADIUS})
+            if cylinders[-1]["blend"]:
                 blends += 1
                 min_convex = min(min_convex, radius)
             elif not convex and not any(face.IsSame(wall) for wall in bores):
@@ -741,10 +742,12 @@ def planar_faces(shape: Any) -> list[dict[str, Any]]:
 
 def coaxial_cylinders(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: Sequence[float]) -> list[dict[str, Any]]:
     """The cylinders parallel to the joint axis, bores (concave) and shanks (convex) alike, nearest line to the
-    origin first. Sourcing plays no part: the geometry shows which one mates."""
+    origin first. Sourcing plays no part: the geometry shows which one mates. An edge blend (see measure) rounds a
+    corner and mates nothing, even on the joint axis; a partial journal turning through more than 120 degrees, or a
+    concave one, still mates."""
     found = []
     for cylinder in cylinders:
-        if _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
+        if cylinder["blend"] or _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
             continue
         offset = _norm(_cross(_sub(origin, cylinder["location"]), cylinder["direction"]))
         found.append({"offset_mm": round(offset, 6), "radius": round(cylinder["radius"], 4),
