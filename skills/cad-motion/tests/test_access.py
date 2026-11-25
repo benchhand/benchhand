@@ -361,6 +361,19 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertIn("assembly.tool_blocked", {f["code"] for f in result["findings"]
                                                 if f["obligation"] == "assembly.access@op:hold-screw"})
 
+    def test_a_blocked_cited_tool_after_an_uncited_one_is_the_tool_blamed(self) -> None:
+        items = operations("blocked_socket.yaml", self.socket_sha)
+        valid = reordered(items, "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+        socket = copy.deepcopy(next(item for item in items if item["id"] == "fasten-cover")["tool_access"])
+        held = {"id": "hold-screw", "kind": "hold", "part": "TST-0104", "fixture": "hex socket", "orientation": [0, 0, 1],
+                "duration": fx.known(fx.quantity(10, "min")), "tools": ["spring clamp"], "tool_access": socket}
+        code, result, _ = self.run_access(self.project("mixed", [*valid, held]), *self.parts_args())
+        self.assertEqual(code, 1)
+        [blocked] = [f for f in result["findings"] if f["obligation"] == "assembly.access@op:hold-screw"
+                     and f["code"] == "assembly.tool_blocked"]
+        self.assertIn("tool '3 mm hex socket on a ratchet' collides", blocked["consequence"])
+        self.assertNotIn("spring clamp", blocked["consequence"])
+
     def test_a_declared_insertion_path_is_travelled_leg_by_leg(self) -> None:
         """The screw slid in sideways above the cover, then down: the bracket blocks the first leg, though the
         default straight path down through the bracket hole is clear."""
