@@ -483,7 +483,7 @@ FACE_TIE = 1e-9  # two faces meet an approach equally when its components along 
 
 
 def envelope_tip(low: Sequence[float], high: Sequence[float], approach: Sequence[float]) -> tuple[float, float, float] | None:
-    """The default tip of a tool on a part it drives along its path: the centre of the face of the part's box
+    """The default tip of a tool on a part it drives along its path: the center of the face of the part's box
     (`low`, `high`, model frame) that the tool arrives through, the face whose outward normal points most against
     the unit `approach`. None when two faces meet it equally (an approach at 45 degrees to both): which one the tool
     works on is not known, so the entry needs its contact point."""

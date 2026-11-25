@@ -936,7 +936,7 @@ class Reach:
     the envelope's `source` (standard: the shipped `envelope`; step: the cited solid `artifact`, path below
     hw/ and sha256), and its `approach` (receiver frame), the operation's direction when `approach_default`.
     `contact` is where a shipped envelope's tip engages (operated part's model frame); None on a part that
-    travels puts the tip on the centre of the part's leading box face."""
+    travels puts the tip on the center of the part's box face the tool arrives through."""
 
     index: int
     tool: Tool
@@ -957,7 +957,7 @@ def _reach(op: AssemblyOperation, index: int, tool: Tool, travels: bool, unknown
            notes: list[str]) -> Reach | None:
     """The reach of one tool entry; an entry that reaches nothing adds its note, if any, and gives None. A shipped
     envelope on a part that travels engages the part it drives; on a part that stays put it acts on one feature of
-    it, so it needs the declared contact point: the part's box centre is no stand-in for that feature."""
+    it, so it needs the declared contact point: the part's box center is no stand-in for that feature."""
     entry = tool_envelopes.classify(tool.name)
     artifact = tool.envelope_artifact if tool.declared else None
     if artifact is None and entry.role not in tool_envelopes.REACHING:
