@@ -24,3 +24,37 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [0.7071067811865476, 0, 0.7071067811865476, 0]}, note: "Axis vertical, flange down. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: flange_face_b, role: plane}
+    B: {feature: bore, role: axis}
+  coordinate_frame:
+    origin: {intersection: [A, B]}
+    z: {parallel_to: B, toward: flange_face_a}
+  views:
+    - {id: elevation, kind: orthographic, perpendicular_to: B}
+    - {id: end, kind: orthographic, along_axis: B, toward: flange_face_a}
+  features:
+    bore: {size: general}
+    flange_face_a: {size: general}
+    flange_face_b: {size: general}
+    hub_face_a: {size: general}
+    hub_face_b: {size: general}
+    flange_rim: {size: general}
+    tooth_root: {size: general}
+    tooth_grooves: {size: general}
+  dimensions:
+    - {id: overall_width, operation: plane_separation, features: [flange_face_b, flange_face_a], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: hub_width, operation: plane_separation, features: [hub_face_b, hub_face_a], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: flange_b_thickness, operation: thickness, features: [hub_face_b, flange_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: flange_a_thickness, operation: thickness, features: [hub_face_a, flange_face_a], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: bore_d, operation: diameter, features: [bore], tolerance: {deviation_mm: [-0.006, 0.006]}}
+    - {id: flange_d, operation: diameter, features: [flange_rim], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: root_d, operation: diameter, features: [tooth_root], tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA. The GT2 tooth grooves are printed, not machined. Deburr."}
+    - {kind: process, text: "Print with the axis vertical and flange B down."}
+  sheet: {sizes: [A4, A3], scale: auto}
