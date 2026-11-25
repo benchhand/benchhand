@@ -2762,6 +2762,65 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
                 self.assertIn(f"{what} not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
 
+    def received(self, *, catalog: Any) -> Any:
+        """An insert pressed into the 4.2 mm printed boss bore of TST-0101, whose limits are 3.0..5.0 mm."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["assembly.yaml"]["operations"] = [{"id": "insert_m3", "kind": "insert", "part": "TST-0101", "into": "TST-0101",
+                                                     "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["boss"]}}]
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("boss", "fastener", criteria=[_diameter_criterion("between 3.0 5.0")])]
+        data = facts(holes=(hole("boss", 4.2, axis=(0.0, 0.0, 1.0)),),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_a_guideline_hole_deviation_settles_a_receiving_bore_and_leaves_an_info_note(self) -> None:
+        result = self.received(catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass", self.codes(result, GEOMETRY))
+        note = self.finding(result, "process.fdm.receiving_feature")
+        self.assertEqual((note["severity"], "obligation" in note), ("info", False))
+
+    def test_a_receiving_bore_with_neither_a_calibration_nor_a_guideline_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.received(catalog=None)
+        found = self.finding(result, "process.fdm.receiving_feature")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertIn("boss retention not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_thin_wall_on_an_exempt_feature_class_without_its_own_calibration_is_a_non_blocking_advisory(self) -> None:
+        data = walled(0.3)
+        data["walls"]["features"] = ["tip"]
+        data["features"]["tip"] = {"kind": "tooth_tip", "faces": [], "mapped": True}
+        result = self.assess(guided(service="functional_demo"), geometry("TST-0101", data), catalog=SHIPPED)
+        found = self.finding(result, "process.fdm.wall_feature_class")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertIn("tooth_tip wall not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    REAM = "process.reaming.allowance@TST-0101/ream"
+
+    def reamed(self, allowance: float, *, catalog: Any) -> Any:
+        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        intent = documents["parts/TST-0101/part.yaml"]["intent"]
+        intent["route"][0]["allowances"] = [{"feature": "bore", "amount": mm(allowance), "purpose": "finish",
+                                             "source": FX.source("user")}]
+        intent["route"].append(FX.operation("ream", "reaming", "tst_reamer", targets=[{"feature": "bore"}]))
+        intent["critical_surfaces"] = [surface("bore", "bore", "after_finish")]
+        documents["manufacturing/capabilities.yaml"]["profiles"].append(FX.capability_profile("tst_reamer", "reaming"))
+        data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
+                                                         "measured": 12})
+        return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_a_ream_allowance_after_printing_is_judged_against_the_guideline_hole_deviation(self) -> None:
+        for allowance, expected in ((0.6, "pass"), (0.3, "fail")):  # the guideline puts the printed bore up to 0.5 mm oversize
+            with self.subTest(allowance=allowance):
+                result = self.reamed(allowance, catalog=SHIPPED)
+                self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
+                if expected == "fail":
+                    self.assertTrue(self.finding(result, "process.reaming.allowance_short")["uncertainty"].startswith("guideline "))
+
+    def test_a_ream_allowance_after_printing_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.reamed(0.6, catalog=None)
+        self.advisory(result, "process.reaming.allowance_unverified", self.REAM)
+
 
 if __name__ == "__main__":
     unittest.main()
