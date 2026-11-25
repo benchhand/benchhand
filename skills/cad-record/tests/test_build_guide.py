@@ -343,6 +343,25 @@ class BuildGuide(unittest.TestCase):
                                                                sources=DATASHEET)})
         self.assertIn("\n2. Hold item 1 in the bench cure jig with its +Z axis up for 24 h; cure 24 h at 23 deg_C.\n", guide)
 
+    def test_a_hold_quantity_that_does_not_parse_is_a_guide_input_error(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        path = hw / "assembly.yaml"
+        assembly = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assembly["operations"][0]["sub_build"] = "base_sub"
+        assembly["operations"].insert(1, {"id": "cure_base", "kind": "hold", "sub_build": "base_sub", "part": "LMP-0001",
+                                          "duration": {**fx.known(fx.quantity(24, "h")), "value": {"lower": 1, "units": "h"}},
+                                          "fixture": "bench cure jig", "orientation": [0, 0, 1]})
+        assembly["operations"].append({"id": "install_base", "kind": "install", "part": "base_sub", "into": "LMP-0005",
+                                       "direction": [0, 0, 1], "acceptance": {"kind": "engaged", "features": ["pin_bore"]}})
+        path.write_text(yaml.safe_dump(assembly, sort_keys=False), encoding="utf-8")
+        result = self.run_guide(hw)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("build_guide.py: assembly operation cure_base: duration", result.stderr)
+        self.assertIn("lower and an upper bound", result.stderr)
+        self.assertFalse((self.out / "index.md").exists())
+
     def test_unmeasured_standoff_step_has_readable_gap_prompt(self) -> None:
         hw = self.copy_lamp_example()
         self.make_version(hw, "v1")
