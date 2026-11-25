@@ -416,6 +416,7 @@ class HostApi(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.hw = self.tmp / "hw"
         shutil.copytree(TEMPLATE_HW, self.hw)
+        self.prepare_record()
         make_version(self.hw, "v1")
         self.port = session.free_port()
         self.host = host.Host(self.tmp / "session.json", self.port, PORTS)
@@ -428,6 +429,9 @@ class HostApi(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
+
+    def prepare_record(self) -> None:
+        """Hook: change the copied record before the version is sealed."""
 
     def request(self, method: str, route: str, body: dict | None = None,
                 headers: dict[str, str] | None = None) -> tuple[int, dict]:
@@ -584,6 +588,91 @@ class PartMapLoading(Fixture):
     def test_no_build_yet(self) -> None:
         with self.assertRaisesRegex(ViewerError, "no built version"):
             record.load_version(self.hw, "latest")
+
+
+def set_make_buy(hw: Path, pn: str, value: str) -> None:
+    path = hw / "parts" / pn / "part.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace("make_buy: buy", f"make_buy: {value}", 1), encoding="utf-8")
+
+
+def with_existing_part(hw: Path) -> None:
+    """The lamp record with LMP-0010 (a buy part in arm_sub) recorded as existing equipment."""
+    set_make_buy(hw, "LMP-0010", "existing")
+
+
+def node(pn: str) -> str:
+    return f"{pn} {record.read_yaml(TEMPLATE_HW / 'parts' / pn / 'part.yaml')['title']}"
+
+
+class SourcingTree(Fixture):
+    """The tree groups occurrences under made, purchased and existing before any subassembly.
+
+    The lamp record has make parts LMP-0001..0004, buy parts LMP-0005..0011 (LMP-0011 placed three times as
+    @ring-base, @ring-elbow, @ring-head) and, here, LMP-0010 as existing. base_sub holds LMP-0001 and LMP-0008;
+    arm_sub holds the rest.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        with_existing_part(self.hw)
+        make_version(self.hw, "v1")
+        self.version = record.load_version(self.hw)
+
+    def test_top_level_groups_and_their_members(self) -> None:
+        rings = [p.id for p in self.version.parts if p.pn == "LMP-0011"]
+        self.assertEqual(len(rings), 3)
+        self.assertEqual([(g.id, g.path, sorted(g.parts)) for g in self.version.sourcing_groups], [
+            ("made", "/lamp-arm/made", ["LMP-0001", "LMP-0002", "LMP-0003", "LMP-0004"]),
+            ("purchased", "/lamp-arm/purchased",
+             sorted(["LMP-0005", "LMP-0006", "LMP-0007", "LMP-0008", "LMP-0009", *rings])),
+            ("existing", "/lamp-arm/existing", ["LMP-0010"])])
+
+    def test_a_subassembly_nests_in_the_sourcing_group_of_each_member(self) -> None:
+        self.assertEqual(self.version.part("LMP-0001").path, f"/lamp-arm/made/base_sub/{node('LMP-0001')}")
+        self.assertEqual(self.version.part("LMP-0008").path, f"/lamp-arm/purchased/base_sub/{node('LMP-0008')}")
+        self.assertEqual(self.version.part("LMP-0002").path, f"/lamp-arm/made/arm_sub/{node('LMP-0002')}")
+        self.assertEqual(self.version.part("LMP-0010").path, f"/lamp-arm/existing/arm_sub/{node('LMP-0010')}")
+
+    def test_the_panel_model_lists_the_sourcing_groups(self) -> None:
+        model = record.panel_model(self.version, None)
+        self.assertEqual([(g["id"], len(g["parts"]), g["path"]) for g in model["sourcing_groups"]],
+                         [("made", 4, "/lamp-arm/made"), ("purchased", 8, "/lamp-arm/purchased"),
+                          ("existing", 1, "/lamp-arm/existing")])
+
+
+class SourcingEmptyGroup(Fixture):
+    def test_an_empty_sourcing_group_is_omitted(self) -> None:
+        make_version(self.hw, "v1")
+        self.assertEqual([g.id for g in record.load_version(self.hw).sourcing_groups], ["made", "purchased"])
+
+
+class SourcingClash(Fixture):
+    def test_a_subassembly_named_like_a_sourcing_group_is_refused(self) -> None:
+        path = self.hw / "assembly.yaml"
+        path.write_text(path.read_text(encoding="utf-8").replace("id: base_sub", "id: purchased", 1), encoding="utf-8")
+        make_version(self.hw, "v1")
+        with self.assertRaisesRegex(ViewerError, "purchased.*sourcing group"):
+            record.load_version(self.hw)
+
+
+class HidePurchased(unittest.TestCase):
+    setUp = HostApi.setUp  # the host stand-in setup, without HostApi's own tests
+    request = HostApi.request
+
+    def prepare_record(self) -> None:
+        with_existing_part(self.hw)
+
+    def test_hide_purchased_hides_exactly_the_purchased_paths(self) -> None:
+        version = self.host.versions["A"].version
+        self.host.parts({"action": "hide", "target": "purchased"})
+        states = self.calls[-1][1]["states"]
+        purchased = {"LMP-0005", "LMP-0006", "LMP-0007", "LMP-0008", "LMP-0009",
+                     *(p.id for p in version.parts if p.pn == "LMP-0011")}
+        self.assertEqual(len(states), 11 + 2)  # LMP-0001..0011 with the ring placed three times
+        self.assertEqual({path for path, state in states.items() if state == [0, 0]},
+                         {version.part(oid).path for oid in purchased})
+        self.assertTrue(all(state == [1, 1] for path, state in states.items()
+                            if path not in {version.part(oid).path for oid in purchased}))
 
 
 class OccurrenceInputSchema(Fixture):
