@@ -610,6 +610,20 @@ class SubBuildTests(unittest.TestCase):
                 units = [p.pointer for p in record.problems if p.code == "intent.units"]
                 self.assertEqual(units, [] if pointer is None else [pointer], [p.message for p in record.problems])
 
+    def test_a_hold_without_a_cure_needs_a_positive_duration(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        plain = {key: value for key, value in cure.items() if key != "cure"}
+        for name, duration, outcome in (("zero", sourced(0, "h"), "unknown"), ("negative", sourced(-1, "h"), "unknown"),
+                                        ("one hour", sourced(1, "h"), "pass")):
+            with self.subTest(name):
+                held = {**plain, "duration": duration}
+                report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, held, install]}), self.inventory())
+                row = report.outcome("assembly.order@op:cure-hanger")
+                self.assertEqual(row["outcome"], outcome)
+                if outcome == "unknown":
+                    self.assertIn("not a known positive time", row["uncertainty"])
+                    self.assertEqual(report.findings, ())
+
     def test_a_one_sided_interval_is_an_invalid_quantity_not_a_crash(self) -> None:
         for name, value in (("lower only", {"lower": 1, "units": "h"}), ("upper only", {"upper": 24, "units": "h"})):
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:
