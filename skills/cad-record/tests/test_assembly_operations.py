@@ -361,6 +361,23 @@ class NeverInstalledTests(unittest.TestCase):
     def test_without_an_inventory_there_is_no_occurrence_to_miss(self) -> None:
         self.assertEqual(self.check([self.SEAT], with_inventory=False).findings, ())
 
+    def test_existing_receivers_are_present_from_the_start(self) -> None:
+        # The bearing presses into one piece of existing equipment and the screw fastens into another.
+        screw = {**self.SEAT, "id": "fasten-cover", "kind": "fasten", "part": "TST-0104", "into": "TST-0103"}
+        pns = (*self.PNS, "TST-0104")
+        inventory = assembly_data.normalize({"subassemblies": [{"id": "main", "title": "Main", "parts": list(pns)}]})
+        report = ops.check_order(ops.normalize({"operations": [self.SEAT, screw]}), inventory,
+                                 existing=frozenset({"TST-0101", "TST-0103"}))
+        self.assertEqual(report.findings, ())
+        self.assertEqual(report.outcome("assembly.order@product")["outcome"], "pass")
+
+    def test_existing_equipment_does_not_take_the_products_one_base(self) -> None:
+        # TST-0101 is existing equipment. Of the product parts nobody installs, TST-0103 is the base and TST-0104 floats.
+        pns = (*self.PNS, "TST-0104")
+        inventory = assembly_data.normalize({"subassemblies": [{"id": "main", "title": "Main", "parts": list(pns)}]})
+        report = ops.check_order(ops.normalize({"operations": [self.SEAT]}), inventory, existing=frozenset({"TST-0101"}))
+        self.assertEqual([f["subject"]["PN"] for f in report.findings], ["TST-0104"])
+
 
 class NeverInstalledPacketTests(unittest.TestCase):
     """A missing installer reaches the user through the packet and the evidence assessment, not only check_order."""
