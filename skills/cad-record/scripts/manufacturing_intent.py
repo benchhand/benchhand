@@ -366,6 +366,9 @@ def quantity(data: Mapping[str, Any]) -> Quantity:
         raise IntentError(f"a quantity needs finite numbers, got {dict(data)!r}")
     if "value" in data:
         return Quantity(units, value=float(data["value"]))
+    if "lower" not in data or "upper" not in data:
+        given = "lower" if "lower" in data else "upper"
+        raise IntentError(f"an interval needs both a lower and an upper bound, got only its {given} bound")
     lower, upper = float(data["lower"]), float(data["upper"])
     if lower > upper:
         raise IntentError(f"interval {lower:g}..{upper:g} {units} is reversed")
@@ -373,7 +376,7 @@ def quantity(data: Mapping[str, Any]) -> Quantity:
 
 
 def _is_quantity(value: object) -> TypeGuard[Mapping[str, Any]]:
-    return isinstance(value, Mapping) and "units" in value and ("value" in value or "lower" in value)
+    return isinstance(value, Mapping) and "units" in value and any(key in value for key in ("value", "lower", "upper"))
 
 
 # --- facts -----------------------------------------------------------------------------------------------------
