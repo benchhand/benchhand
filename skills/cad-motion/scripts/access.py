@@ -391,7 +391,7 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
         for number, tool in enumerate(request.tools):
             if not tool.declared or tool.approach is None or (op.id, number) not in tools:
                 continue  # its reason is in request.unknown, or the envelope solid could not be read
-            if operated not in world:
+            if operated is None or operated not in world:
                 entry.unknown.append(f"{op.id}: the operated part {op.part} has no placement for tool {tool.name!r}")
                 continue
             key, _shape = tools[(op.id, number)]

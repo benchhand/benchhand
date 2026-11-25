@@ -893,7 +893,7 @@ class AccessRequest:
     unit: `moving` is its base and `unit` all its members, none of which is an obstacle to the others."""
 
     operation: AssemblyOperation
-    part: str
+    part: str | None  # None when the operated occurrence is unknown (an install whose sub-build base is gone)
     moving: str | None
     frame: str  # the occurrence whose model frame `direction` and tool approaches are in
     direction: Vec | None
@@ -917,21 +917,22 @@ def hold_reach(op: AssemblyOperation) -> tuple[tuple[Tool, ...], tuple[str, ...]
     return measured, tuple(tool.name for tool in op.tools if tool.envelope_artifact is None)
 
 
-def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozenset[str], str]:
+def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozenset[str], str | None]:
     """(the parts that move together, the operated occurrence): an install moves its sub-build's parts with the
     sub-build's base as the operated part, noting in `unknown` what the check cannot cover; any other step moves
-    its own part."""
+    its own part. An install whose base is unknown or gone has no operated occurrence (None), never a guessed id:
+    the sub-build id may name an occurrence that does not travel."""
     op = step.operation
     if op.kind != "install":
         return frozenset(), step.part
     built = state.sub_builds.get(step.part)
     if built is None or built.ground is None:
         unknown.append(f"{op.id}: sub-build {op.part} has no base occurrence: its path is unknown")
-        return (built.present if built is not None else frozenset()), step.part
+        return (built.present if built is not None else frozenset()), None
     if built.ground not in built.present:
         unknown.append(f"{op.id}: sub-build {op.part} travels without a base: its base {built.ground} is removed on the "
                        "bench before the install, so its path is unknown")
-        return built.present, step.part
+        return built.present, None
     if len(built.present) > 1:
         unknown.append(f"{op.id}: sub-build {op.part} travels as one unit; only the path of its base "
                        f"{built.ground} is checked, the other members ({', '.join(sorted(built.present - {built.ground}))}) "
@@ -969,11 +970,11 @@ def access_plan(operations: Operations, inventory: Any = None,
             if tool.approach is None:
                 unknown.append(f"tool {tool.name!r} has no approach direction")
         unit, operated = _unit(state, step, unknown)
-        moved = unit or {step.part}
+        moved = unit if op.kind == "install" else frozenset({step.part})  # an install's part is a unit id, no occurrence
         after = set(step.present) | (set(moved) if op.installs else set())
         path_obstacles = frozenset(after - moved - ({step.into} if step.into else set()))
         tool_obstacles = frozenset(after - moved)
-        requests.append(AccessRequest(op, operated, operated if travels else None, step.into or operated,
+        requests.append(AccessRequest(op, operated, operated if travels else None, step.into or operated or step.part,
                                       op.direction, op.removes, path_obstacles, tool_obstacles, tools, tuple(unknown),
                                       op.path, unit, advisory=advisory))
     return tuple(requests)
