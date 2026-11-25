@@ -657,6 +657,14 @@ class RequiredChecks(unittest.TestCase):
         record = mi.normalize_record(fx.record(parts=[fx.part("TST-0001"), stray]))
         self.assertEqual([p.message for p in record.problems if p.code == "intent.route"], [])
 
+    def test_a_non_string_candidate_part_number_is_read_without_raising(self) -> None:
+        for label, pn in (("list", ["TST-0001"]), ("mapping", {"PN": "TST-0001"})):
+            with self.subTest(label):
+                documents = fx.tst_record()
+                documents["manufacturing/selection.yaml"]["candidates"][0]["parts"][0]["PN"] = pn
+                record = mi.normalize_record(documents)
+                self.assertIsNotNone(record.selection)
+
     def test_existing_dimensions_are_checked_like_any_fact(self) -> None:
         reversed_range = fx.known(fx.quantity(lower=30.2, upper=29.8))
         undeclared = fx.known(fx.quantity(lower=29.8, upper=30.2), "assumed", assumption="ASM-099")
