@@ -656,70 +656,70 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
     """Each critical bore of the component: a finished one needs a later finishing operation; an as-made
     one needs the calibrated `characteristic` (as-made minus nominal, by build orientation when `oriented`)
     to keep the bore inside its stated diameter limits."""
-    kind = _k(ctx)
     critical = ctx.critical_features()
     parts: list[tuple[str, str]] = []
     for hole in g.holes():
         feats = set(hole.get("features") or ()) & set(critical)
-        orientation = hole_class(hole["axis"])
         if not feats:
             continue  # a non-critical hole's as-made size governs no fit; compensation stays a slicer setting
-        feature = sorted(feats)[0]
-        surface = critical[feature]
-        if surface.dimension_state != "as_manufactured":
-            later = [op for op in ctx.after() if op.kind in FINISHING_KINDS and feature in ctx.targets(op)]
-            if later:
-                parts.append((PASS, f"{feature} is finished by {later[0].id}"))
-                continue
-            findings.append(Draft(f"process.{kind}.finish_missing", "major", FAIL,
-                                  text(f"{feature} is stated {surface.dimension_state}"),
-                                  policy("finishing_operation", "equals", "a later operation that targets the feature"),
-                                  "part.yaml route", "record content only",
-                                  f"the {surface.role} {feature} is specified finished but no later operation finishes it",
-                                  remedy=f"add a reaming or finishing operation targeting {feature} with its allowance",
-                                  recheck=[f"process.{kind}.geometry", "route.operation_plan"], feature=feature))
-            parts.append((FAIL, f"{feature} has no finishing operation"))
-            continue
-        limits, unsupported = _diameter_limits(ctx, surface)
-        if not limits and not unsupported:
-            findings.append(Draft(f"process.{kind}.hole_criterion_missing", "minor", UNKNOWN, length(hole["diameter_mm"]),
-                                  unknown("no diameter criterion on the critical surface"), g.method("bore recognition"),
-                                  "the fit's diameter limits are not recorded", f"whether {feature} holds its fit is unknown",
-                                  remedy=f"record the {feature} diameter criterion (between, mm)",
-                                  recheck=[f"process.{kind}.geometry"], feature=feature))
-            parts.append((UNKNOWN, f"{feature} has no diameter criterion"))
-            continue  # a record gap stays open whatever the basis: checked before the deviation
-        cal = ctx.governing(characteristic, orientation=orientation if oriented else None, size=hole["diameter_mm"])
-        if not cal.known:
-            parts.append(_no_basis(ctx, findings, Draft(
-                f"process.{kind}.hole_uncalibrated", "major", UNKNOWN, length(hole["diameter_mm"]),
-                cal.criterion(characteristic), g.method("bore recognition"), "; ".join(cal.reasons),
-                f"the as-made size of the {surface.role} {feature}"
-                f"{' (' + HOLE_CLASSES[orientation] + ')' if oriented else ''} is unknown",
-                remedy=ctx.remedy(f"make coupons in this material{' and orientation (' + orientation + ')' if oriented else ''}"
-                                  " and record the calibration, or ream the bore", "ream the bore"),
-                recheck=[f"process.{kind}.geometry"], feature=feature),
-                f"{feature} {characteristic}", f"{feature} deviation not calibrated"))
-            continue
-        low, high = cal.bounds("mm")
-        made = (hole["diameter_mm"] + low, hole["diameter_mm"] + high)
-        broken = next((c for c in limits if _DIAMETER_BREAKS[c["operator"]](made, c["value"])), None)
-        if broken is not None:
-            findings.append(Draft(f"process.{kind}.hole_fit", "major", FAIL,
-                                  {"lower": round(made[0], 6), "upper": round(made[1], 6), "units": "mm"},
-                                  broken, g.method(f"bore recognition plus {cal.status} deviation"),
-                                  f"{cal.basis} scatter{'; ' + HOLE_CLASSES[orientation] if oriented else ''}",
-                                  f"the as-made {surface.role} {feature} cannot hold its stated diameter limits",
-                                  remedy=ctx.remedy(f"ream or machine {feature} to size, or compensate the model and re-calibrate",
-                                                    f"ream or machine {feature} to size, or compensate the model"),
-                                  alternatives=[{"text": "a purchased bushing", "tradeoffs": "adds a part and a press fit"}],
-                                  recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature))
-            parts.append((FAIL, f"{feature} outside its limits as made"))
-        elif unsupported:  # no miss on the criteria judged, but another cannot be: open, never a pass
-            parts.append((UNKNOWN, f"{feature} diameter criterion with operator {', '.join(unsupported)} is not judged"))
-        else:
-            parts.append(ctx.settle(cal, f"{feature} within its limits with the {cal.status} {characteristic}"))
+        parts += [_bore_fit(ctx, g, findings, hole, feature, critical[feature], characteristic, oriented)
+                  for feature in sorted(feats)]  # every critical surface the bore carries, each against its own limits
     return parts
+
+
+def _bore_fit(ctx: Context, g: Geometry, findings: list[Draft], hole: Mapping[str, Any], feature: str, surface: Any,
+              characteristic: str, oriented: bool) -> tuple[str, str]:
+    """One critical surface of a bore against its own diameter limits (hole_fits)."""
+    kind = _k(ctx)
+    orientation = hole_class(hole["axis"])
+    if surface.dimension_state != "as_manufactured":
+        later = [op for op in ctx.after() if op.kind in FINISHING_KINDS and feature in ctx.targets(op)]
+        if later:
+            return PASS, f"{feature} is finished by {later[0].id}"
+        findings.append(Draft(f"process.{kind}.finish_missing", "major", FAIL,
+                              text(f"{feature} is stated {surface.dimension_state}"),
+                              policy("finishing_operation", "equals", "a later operation that targets the feature"),
+                              "part.yaml route", "record content only",
+                              f"the {surface.role} {feature} is specified finished but no later operation finishes it",
+                              remedy=f"add a reaming or finishing operation targeting {feature} with its allowance",
+                              recheck=[f"process.{kind}.geometry", "route.operation_plan"], feature=feature))
+        return FAIL, f"{feature} has no finishing operation"
+    limits, unsupported = _diameter_limits(ctx, surface)
+    if not limits and not unsupported:
+        findings.append(Draft(f"process.{kind}.hole_criterion_missing", "minor", UNKNOWN, length(hole["diameter_mm"]),
+                              unknown("no diameter criterion on the critical surface"), g.method("bore recognition"),
+                              "the fit's diameter limits are not recorded", f"whether {feature} holds its fit is unknown",
+                              remedy=f"record the {feature} diameter criterion (between, mm)",
+                              recheck=[f"process.{kind}.geometry"], feature=feature))
+        return UNKNOWN, f"{feature} has no diameter criterion"  # a record gap stays open whatever the basis
+    cal = ctx.governing(characteristic, orientation=orientation if oriented else None, size=hole["diameter_mm"])
+    if not cal.known:
+        return _no_basis(ctx, findings, Draft(
+            f"process.{kind}.hole_uncalibrated", "major", UNKNOWN, length(hole["diameter_mm"]),
+            cal.criterion(characteristic), g.method("bore recognition"), "; ".join(cal.reasons),
+            f"the as-made size of the {surface.role} {feature}"
+            f"{' (' + HOLE_CLASSES[orientation] + ')' if oriented else ''} is unknown",
+            remedy=ctx.remedy(f"make coupons in this material{' and orientation (' + orientation + ')' if oriented else ''}"
+                              " and record the calibration, or ream the bore", "ream the bore"),
+            recheck=[f"process.{kind}.geometry"], feature=feature),
+            f"{feature} {characteristic}", f"{feature} deviation not calibrated")
+    low, high = cal.bounds("mm")
+    made = (hole["diameter_mm"] + low, hole["diameter_mm"] + high)
+    broken = next((c for c in limits if _DIAMETER_BREAKS[c["operator"]](made, c["value"])), None)
+    if broken is not None:
+        findings.append(Draft(f"process.{kind}.hole_fit", "major", FAIL,
+                              {"lower": round(made[0], 6), "upper": round(made[1], 6), "units": "mm"},
+                              broken, g.method(f"bore recognition plus {cal.status} deviation"),
+                              f"{cal.basis} scatter{'; ' + HOLE_CLASSES[orientation] if oriented else ''}",
+                              f"the as-made {surface.role} {feature} cannot hold its stated diameter limits",
+                              remedy=ctx.remedy(f"ream or machine {feature} to size, or compensate the model and re-calibrate",
+                                                f"ream or machine {feature} to size, or compensate the model"),
+                              alternatives=[{"text": "a purchased bushing", "tradeoffs": "adds a part and a press fit"}],
+                              recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature))
+        return FAIL, f"{feature} outside its limits as made"
+    if unsupported:  # no miss on the criteria judged, but another cannot be: open, never a pass
+        return UNKNOWN, f"{feature} diameter criterion with operator {', '.join(unsupported)} is not judged"
+    return ctx.settle(cal, f"{feature} within its limits with the {cal.status} {characteristic}")
 
 
 # Whether the as-made diameter interval (low, high) breaks a bound; `>` and `<` are strict, so the limit itself breaks them.
