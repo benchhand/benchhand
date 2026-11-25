@@ -1199,6 +1199,28 @@ class StackupCliTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 2, proc.stdout[-300:])
             self.assertIn("--replace", proc.stderr)
 
+    def test_a_bundle_sealed_before_the_guideline_basis_upgrade_is_never_reused(self) -> None:
+        """benchhand-c7q.30 changed what a printed contributor's verdict is (guideline-qualified or not_assessed instead of
+        unknown). A bundle sealed under the older basis revision is another recipe: refused without --replace, recomputed
+        with it."""
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", closing_gap_documents())
+            case = write_case(hw, "closing-gap", fixture("closing_gap.yaml"))
+            snapshot_version(hw)
+            args = [str(case), "--hw", str(hw), "--version", "v1"]
+            with unittest.mock.patch.object(stackup, "BASIS_REVISION", 0, create=True), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main(args)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                status = stackup.main(args)
+            self.assertEqual(status, 2, out.getvalue()[-300:])
+            self.assertIn("--replace", err.getvalue())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main([*args, "--replace"])
+            self.assertFalse(json.loads(out.getvalue())["reused"])
+
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory) / "project"
