@@ -2736,6 +2736,15 @@ class GuidelineWithoutCalibrationTests(Checks):
             result = self.warped("<= 1.5", catalog=SHIPPED, calibrations=(warp,))
         self.advisory(result, "process.fdm.warp_scope", self.thermal(result))
 
+    def test_a_later_warp_coupon_that_covers_the_footprint_is_used_before_any_fallback(self) -> None:
+        small = calibration("warp_small", "warp", POLYMER, 0.1, 0.2, size=mm(5))  # the footprint is 12 mm
+        large = calibration("warp_large", "warp", POLYMER, 0.0, 0.8, size=mm(20))
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):  # the project guideline (0..0.3 mm) alone would pass
+            result = self.warped("<= 0.5", catalog=accuracy_catalog(deviation("warp", 0.0, 0.3)), calibrations=(small, large))
+        self.assertEqual(self.outcome(result, self.thermal(result)), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.warp")["uncertainty"], "calibration warp_large")
+        self.assertEqual(result.by_code("process.fdm.warp_scope"), [])
+
     def test_an_undersized_warp_coupon_is_rejected_and_the_project_warp_guideline_judges_the_footprint(self) -> None:
         warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(5))  # the footprint is 12 mm
         for flatness, expected in (("<= 1.5", "pass"), ("<= 0.5", "fail")):  # the project guideline says 0..1 mm
