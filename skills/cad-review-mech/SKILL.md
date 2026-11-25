@@ -20,10 +20,11 @@ TRIGGER
 4. Review material grade, form, process state and service conditions against load, heat, wear, creep, fatigue and life criteria. Density and other materials' properties are not strength evidence.
 5. Review fits, stacks, datums, manufactured/finished states, fastener/tool access, retention and service access.
 6. Challenge structural design where evidence supports it. Consider thin contact skins, custom hardware, printed bearings/shafts versus sourced parts, monolithic machining versus sheet/hybrid designs, and splits without clear joints/datums/load paths.
-7. Check FEA loads, supports, contacts, material provenance, units, mesh, convergence and worst-case pose. Static results do not establish fatigue, creep, wear, dynamics, life or physical performance.
-8. At L2 light review, inspect the named provisional checks only. At CRITIQUE, review every assigned requirement and part. Report untested checks separately.
+7. Check that each record holds one product configuration. Two kits in one scene is a finding. So is a second station, size class or variant in one assembly. Each belongs in its own project.
+8. Check FEA loads, supports, contacts, material provenance, units, mesh, convergence and worst-case pose. Static results do not establish fatigue, creep, wear, dynamics, life or physical performance.
+9. At L2 light review, inspect the named provisional checks only. At CRITIQUE, review every assigned requirement and part. Report untested checks separately.
 MUST Use the shared verdict derivation in `cad-record/references/evidence.md`; do not independently map finding severity to verdict.
-9. Tie findings to requirements and evidence. Include subject, severity, value/units or UNKNOWN, criterion/source, method, uncertainty, consequence, remedy/alternatives and recheck. The lead owns dispositions.
+10. Tie findings to requirements and evidence. Include subject, severity, value/units or UNKNOWN, criterion/source, method, uncertainty, consequence, remedy/alternatives and recheck. The lead owns dispositions.
 
 ## Rules
 
