@@ -22,7 +22,7 @@ import unittest
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-from modload import load_module as load  # noqa: E402
+from modload import load_module as load  # noqa: E402  modload is reachable only once scripts/ is on sys.path
 
 envelopes = load("cad_record_tool_envelopes", SCRIPTS / "tool_envelopes.py")
 ops = load("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
@@ -128,7 +128,7 @@ class AccessPlanTests(unittest.TestCase):
         self.assertEqual((reach.role, reach.source, reach.approach), ("hand", "standard", (0.0, 0.0, -1.0)))
 
     def test_a_step_that_moves_and_reaches_nothing_is_not_applicable(self) -> None:
-        for tools in (["by eye"], ["on the bench", "clock"], []):
+        for tools in (["by eye"], ["on the bench", "clock"], ["hold"], []):
             with self.subTest(tools=tools):
                 request = plan(BRACKET, {**INSPECT, "tools": tools})["inspect-bracket"]
                 self.assertEqual((request.applicable, request.unknown, request.reaches), (False, (), ()))
