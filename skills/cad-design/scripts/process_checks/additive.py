@@ -682,8 +682,16 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   recheck=[f"process.{kind}.geometry", "route.operation_plan"], feature=feature))
             parts.append((FAIL, f"{feature} has no finishing operation"))
             continue
-        cal = ctx.governing(characteristic, orientation=orientation if oriented else None, size=hole["diameter_mm"])
         limits, unsupported = _diameter_limits(ctx, surface)
+        if not limits and not unsupported:
+            findings.append(Draft(f"process.{kind}.hole_criterion_missing", "minor", UNKNOWN, length(hole["diameter_mm"]),
+                                  unknown("no diameter criterion on the critical surface"), g.method("bore recognition"),
+                                  "the fit's diameter limits are not recorded", f"whether {feature} holds its fit is unknown",
+                                  remedy=f"record the {feature} diameter criterion (between, mm)",
+                                  recheck=[f"process.{kind}.geometry"], feature=feature))
+            parts.append((UNKNOWN, f"{feature} has no diameter criterion"))
+            continue  # a record gap stays open whatever the basis: checked before the deviation
+        cal = ctx.governing(characteristic, orientation=orientation if oriented else None, size=hole["diameter_mm"])
         if not cal.known:
             parts.append(_no_basis(ctx, findings, Draft(
                 f"process.{kind}.hole_uncalibrated", "major", UNKNOWN, length(hole["diameter_mm"]),
@@ -694,14 +702,6 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   " and record the calibration, or ream the bore", "ream the bore"),
                 recheck=[f"process.{kind}.geometry"], feature=feature),
                 f"{feature} {characteristic}", f"{feature} deviation not calibrated"))
-            continue
-        if not limits and not unsupported:
-            findings.append(Draft(f"process.{kind}.hole_criterion_missing", "minor", UNKNOWN, length(hole["diameter_mm"]),
-                                  unknown("no diameter criterion on the critical surface"), g.method("bore recognition"),
-                                  "the fit's diameter limits are not recorded", f"whether {feature} holds its fit is unknown",
-                                  remedy=f"record the {feature} diameter criterion (between, mm)",
-                                  recheck=[f"process.{kind}.geometry"], feature=feature))
-            parts.append((UNKNOWN, f"{feature} has no diameter criterion"))
             continue
         low, high = cal.bounds("mm")
         made = (hole["diameter_mm"] + low, hole["diameter_mm"] + high)
