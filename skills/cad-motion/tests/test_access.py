@@ -151,6 +151,21 @@ class OrderTests(unittest.TestCase):
         self.assertIn("moves no part and no tool or hand reaches it", row["uncertainty"])
         self.assertEqual(list(validator("obligation_outcome").iter_errors(row)), [])
 
+    def test_an_unknown_access_row_keeps_its_instruction_notes(self) -> None:
+        items = operations("blocked_socket.yaml")
+        items.append({"id": "adjust-bracket", "kind": "adjust", "part": "TST-0105", "tools": ["frobnicator", "3 mm hex key"],
+                      "acceptance": {"kind": "adjusted", "features": ["bracket_foot"]}})
+        request = next(r for r in ops.access_plan(ops.normalize({"operations": items}), inventory())
+                       if r.operation.id == "adjust-bracket")
+        entry = access.OperationAccess(request.operation, unknown=list(request.unknown), notes=list(request.notes),
+                                       applicable=request.applicable)
+        findings = access.access_findings(entry)
+        row = access.access_outcome(entry, findings)
+        self.assertEqual(row["outcome"], "unknown", "a note never changes the verdict")
+        self.assertIn("no approach direction", row["uncertainty"])
+        self.assertIn("frobnicator", row["uncertainty"])
+        self.assertEqual(list(validator("obligation_outcome").iter_errors(row)), [])
+
 
 def access_record(items: list[dict]) -> dict:
     """A record version 2 project of the five fixture parts with `items` as its operations."""
