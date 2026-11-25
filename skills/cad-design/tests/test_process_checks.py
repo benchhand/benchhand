@@ -2834,6 +2834,14 @@ class GuidelineWithoutCalibrationTests(Checks):
                                                    FX.criterion("depth", ">=", 2.0, "mm")])
         self.assertEqual(self.outcome(passing, GEOMETRY), "not_assessed")
 
+    def test_a_critical_bore_with_no_diameter_criterion_is_an_open_record_gap_even_without_a_basis(self) -> None:
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [surface("bore", "locating")]
+        result = self.assess(documents, geometry("TST-0101", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})))
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertEqual(self.finding(result, "process.fdm.hole_criterion_missing")["outcome"], "unknown")
+        self.assertEqual(result.by_code("process.fdm.hole_uncalibrated"), [])
+
     def bore_with(self, *extra: dict[str, Any], catalog: Any = SHIPPED) -> Any:
         """A 6 mm critical bore whose diameter limits 5.0..7.0 mm the guideline deviation meets, plus `extra` criteria."""
         documents = guided(service="functional_demo", calibrations=(CONTACT,))
