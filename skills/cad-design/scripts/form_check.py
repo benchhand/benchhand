@@ -1342,7 +1342,8 @@ def processes(hw: Path) -> dict[str, str]:
         data = loader.safe_load(record.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("process"), str):
             bought = data.get("make_buy") == "buy"   # made to drawing or catalogue: checked in its bought form
-            found[record.parent.name] = "purchased" if bought else data["process"]
+            existing = data.get("make_buy") == "existing"  # equipment the product mounts onto: never made or bought
+            found[record.parent.name] = "existing" if existing else "purchased" if bought else data["process"]
     return found
 
 
@@ -1395,6 +1396,9 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
                 findings.append({"check": "step_readback", "part": pn, "rel_error": row["readback_rel_error"],
                                  "max": READBACK_REL, "kernel_volume_mm3": kernel_v, "step_volume_mm3": volume})
         if level < 2:
+            continue
+        if row["process"] == "existing":  # no wall minimum or form heuristic applies to equipment it does not make
+            row["min_wall"] = {"required_mm": None}
             continue
         limit = wall_limit(pc, record, pn, row["process"], catalog, overrides, args.on)  # None: purchased, or no minimum
         required_wall = limit["required_mm"] if limit is not None else None
