@@ -444,6 +444,10 @@ JOINT_GEOMETRY_PARTS = {
     # A 200 mm pad tilted 0.005 degrees, 0.045 mm above its 220 mm deck at its centre: 0.0537 mm at one end.
     "TST-0612": (FDM_MADE, "cq.Workplane().box(220, 20, 10)"),
     "TST-0613": (FDM_MADE, "cq.Workplane().box(200, 10, 6).rotate((0, 0, 0), (0, 1, 0), 0.005).translate((0, 0, 8.045))"),
+    # A deck whose top face has a 10 mm pocket across x = 0: the pad on it touches two islands, 5 mm either side.
+    "TST-0620": (FDM_MADE, "cq.Workplane().box(40, 40, 10).cut(cq.Workplane().box(10, 12, 4).translate((0, 0, 4)))"),
+    # The pad with a Ø4 hole through it on z, like a head's bore opening over the deck.
+    "TST-0621": (FDM_MADE, "cq.Workplane().box(20, 10, 6).faces('>Z').workplane().hole(4).translate((0, 0, 8))"),
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -471,6 +475,14 @@ joints:
 - {id: J-615, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [3, 4, 5], min: 0, max: 0, nominal: 0}
 - {id: J-619, type: fixed, parent: TST-0605, child: TST-0614, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
 - {id: J-620, type: fixed, parent: TST-0612, child: TST-0613, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+- {id: J-622, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [1000, 0, 5], min: 0, max: 0, nominal: 0}
+- {id: J-623, type: fixed, parent: TST-0605, child: TST-0608, axis: [1, 0, 0], origin: [0, 1000, -50], min: 0, max: 0, nominal: 0}
+- {id: J-624, type: fixed, parent: TST-0620, child: TST-0608, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
+- {id: J-625, type: fixed, parent: TST-0605, child: TST-0621, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
+- {id: J-626, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [1000, 0, 5], min: 0, max: 0, nominal: 0,
+   mount: {point: [2, 1, 5]}}
+- {id: J-627, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [1000, 0, 5], min: 0, max: 0, nominal: 0,
+   mount: {point: [30, 0, 5]}}
 """
 
 
@@ -588,6 +600,48 @@ class JointGeometryTests(unittest.TestCase):
         self.assertEqual(sorted(missing), ["TST-0612", "TST-0613"])
         self.assertAlmostEqual(missing["TST-0613"]["contact"]["offset_mm"], 0.045 + 100 * math.sin(math.radians(0.005)),
                                places=5)
+
+    def unknown(self, joint: str) -> dict[str, dict]:
+        return {f["part"]: f for f in self.report["findings"] if f["check"] == "joint_contact_unknown" and f["joint"] == joint}
+
+    def test_contact_on_a_face_normal_datum_but_a_metre_from_its_origin_is_unknown(self) -> None:
+        """The datum plane z = 5 is the contact plane, but the origin is 990 mm off the pad: never a pass."""
+        self.assertEqual(self.missing("J-622"), {})
+        unknown = self.unknown("J-622")
+        self.assertEqual(sorted(unknown), ["TST-0605", "TST-0608"])
+        finding = unknown["TST-0608"]
+        self.assertEqual((finding["status"], finding["blocking"]), ("unknown", True))
+        self.assertIn("mount.point", finding["remedy"])
+        self.assertEqual(finding["contact"]["locator"], "origin")
+        self.assertAlmostEqual(finding["contact"]["locator_mm"], 990.0, places=6)
+
+    def test_contact_cut_by_an_offset_datum_a_metre_from_the_origin_is_unknown(self) -> None:
+        """The datum plane x = 0 cuts the pad, but the origin projects onto the deck plane 995 mm off it."""
+        self.assertEqual(self.missing("J-623"), {})
+        finding = self.unknown("J-623")["TST-0608"]
+        self.assertIn("mount.point", finding["remedy"])
+        self.assertEqual(finding["contact"]["locator"], "projection")
+        self.assertAlmostEqual(finding["contact"]["locator_mm"], 995.0, places=6)
+
+    def test_islands_either_side_of_the_datum_fail(self) -> None:
+        """One overlap Boolean gives two islands, each 5 mm from the datum plane x = 0: the plane runs between them."""
+        missing = self.missing("J-624")
+        self.assertEqual(sorted(missing), ["TST-0608", "TST-0620"])
+        self.assertAlmostEqual(missing["TST-0608"]["contact"]["datum_mm"], 5.0, places=6)
+
+    def test_an_offset_mount_over_an_opening_in_its_contact_passes(self) -> None:
+        """The origin projects into the pad's Ø4 hole: inside the contact's outline, as a head over its bore."""
+        self.assertEqual((self.missing("J-625"), self.unknown("J-625")), ({}, {}))
+        contact = self.found("J-625")["TST-0621"]
+        self.assertEqual((contact["kind"], contact["locator"], contact["locator_mm"], contact["datum_mm"]),
+                         ("face", "projection", 0.0, 0.0))
+
+    def test_a_declared_mount_point_locates_the_contact(self) -> None:
+        self.assertEqual((self.missing("J-626"), self.unknown("J-626")), ({}, {}))
+        self.assertEqual(self.found("J-626")["TST-0608"]["locator"], "mount")
+        missing = self.missing("J-627")
+        self.assertEqual(sorted(missing), ["TST-0605", "TST-0608"])
+        self.assertAlmostEqual(missing["TST-0608"]["contact"]["locator_mm"], 20.0, places=6)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
