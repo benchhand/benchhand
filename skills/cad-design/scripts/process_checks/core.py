@@ -195,15 +195,31 @@ def _noted(coverage: str, note: str) -> str:
 class Calibrated:
     """A capability_limit answer with its criterion form, or why there is none."""
 
-    status: str  # calibrated, unknown or refused
+    status: str  # calibrated, guideline (Context.governing only), unknown or refused
     characteristic: str
-    limits: Any  # a Quantity when calibrated
+    limits: Any  # a Quantity when calibrated or guideline
     reasons: tuple[str, ...]
     calibration: Any = None
+    resolved: Any = None  # guidelines.Resolved when the status is guideline
 
     @property
     def known(self) -> bool:
-        return self.status == "calibrated"
+        return self.status in ("calibrated", "guideline")
+
+    @property
+    def note(self) -> str:
+        """What a guideline-based outcome says about its basis; empty for a calibration."""
+        if self.status != "guideline":
+            return ""
+        lower, upper = self.limits.bounds
+        return f"uncalibrated: guideline value {lower:g}..{upper:g} {self.limits.units} used; calibrate to tighten"
+
+    @property
+    def basis(self) -> str:
+        """The calibration id, or the guideline set that gave the value."""
+        if self.status == "guideline":
+            return f"guideline {self.resolved.provenance[0].guideline}"
+        return f"calibration {self.calibration.id}"
 
     def bounds(self, units: str = "mm") -> tuple[float, float]:
         bounds: tuple[float, float] = self.limits.to(units).bounds  # manufacturing_intent.Quantity.bounds
@@ -225,6 +241,12 @@ class Calibrated:
                 value = upper if operator in (">=", ">") else lower
             else:
                 raise ValueError(f"a calibration states no criterion value for operator {operator!r}")
+        if self.status == "guideline":
+            winner = self.resolved.provenance[0]
+            return {"property": prop or self.characteristic, "operator": operator, "value": value, "units": units,
+                    "source": dict(self.resolved.source),
+                    "conditions": f"guideline {winner.guideline} ({winner.layer} layer, {winner.path}): a design guideline, "
+                                  "not a calibration of this machine and material"}
         scope = ", ".join(f"{k} {v}" for k, v in sorted(cal.scope.items()) if not isinstance(v, Mapping))
         return {"id": cal.id, "property": prop or self.characteristic, "operator": operator, "value": value,
                 "units": units, "source": source_dict(cal.source),
