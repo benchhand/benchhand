@@ -861,15 +861,27 @@ def joint_cylinders(shape: Any) -> list[dict[str, Any]]:
 
 
 def planar_faces(shape: Any) -> list[dict[str, Any]]:
-    """Each planar face with a point on it and its outward normal: the faces a flat mount can rest on."""
+    """Each planar face with a point on it, its outward normal and the corners of its tight box: the faces a flat
+    mount can rest on."""
+    from cadmodel import occ
     from OCP.GeomAbs import GeomAbs_Plane
 
     planes = []
     for face in faces_of(shape):
         adaptor, point, normal, _ = surface_sample(face)
         if adaptor.GetType() == GeomAbs_Plane:
-            planes.append({"face": face, "point": point, "normal": normal})
+            low, high = occ.bbox(face)
+            corners = list(itertools.product(*zip(low, high)))
+            planes.append({"face": face, "point": point, "normal": normal, "corners": corners})
     return planes
+
+
+def _may_touch(ours: dict[str, Any], corners: list[Sequence[float]], window: float) -> bool:
+    """False only when the child face's box (its `corners`, in the parent frame) lies wholly more than `window` from
+    the parent face's plane on one side: a conservative bound, so a long or tilted face is never ruled out by one
+    sample."""
+    heights = [_dot(_sub(corner, ours["point"]), ours["normal"]) for corner in corners]
+    return min(heights) <= window and max(heights) >= -window
 
 
 def coaxial_cylinders(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: Sequence[float]) -> list[dict[str, Any]]:
@@ -1065,9 +1077,10 @@ def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], rela
     failures = []
     for j, theirs in enumerate(child):
         normal, point = turn.apply(theirs["normal"]), relative.apply(theirs["point"])
+        corners = [relative.apply(corner) for corner in theirs["corners"]]
         for i, ours in enumerate(parent):
             if (_dot(ours["normal"], normal) >= 0.0 or _norm(_cross(ours["normal"], normal)) > AXIS_TOL
-                    or abs(_dot(_sub(point, ours["point"]), ours["normal"])) > window):
+                    or not _may_touch(ours, corners, window)):
                 continue
             try:
                 found = _pair_contact(ours, theirs["face"], normal, point, relative, pose, datum, mount, tol)
