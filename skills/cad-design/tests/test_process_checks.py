@@ -2736,45 +2736,70 @@ class GuidelineWithoutCalibrationTests(Checks):
             result = self.warped("<= 1.5", catalog=SHIPPED, calibrations=(warp,))
         self.advisory(result, "process.fdm.warp_scope", self.thermal(result))
 
-    def critical(self, role: str, *, on_bed: bool = False, catalog: Any = SHIPPED, calibrations: tuple = ()) -> Any:
+    def critical(self, role: str, *, on_bed: bool = False, catalog: Any = SHIPPED, calibrations: tuple = (),
+                 criteria: list | None = None) -> Any:
+        """TST-0101 with one critical planar feature face_a of `role` (on the bed when `on_bed`) stating `criteria`."""
         documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
         documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
-            surface("face_a", role, criteria=[_flatness_criterion("<= 1.5")])]
+            surface("face_a", role, **({"criteria": criteria} if criteria else {}))]
         data = facts(faces=(face("f1", features=("face_a",), bed=on_bed),),
                      walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
         return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
 
-    def test_a_planar_critical_feature_takes_the_guideline_dimensional_deviation(self) -> None:
-        result = self.critical("datum")
+    @staticmethod
+    def tolerance(characteristic: str, lower: float, upper: float) -> list[dict[str, Any]]:
+        return [FX.criterion(characteristic, "between", [lower, upper], "mm")]
+
+    def test_a_planar_critical_feature_passes_when_the_guideline_deviation_fits_its_tolerance(self) -> None:
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.6, 0.6))
         self.assertEqual(self.outcome(result, GEOMETRY), "pass")
-        self.assertIn("face_a dimensional_deviation", result.outcome(GEOMETRY)["coverage"])
         self.assertIn("uncalibrated: guideline value -0.5..0.5 mm used; calibrate to tighten", result.outcome(GEOMETRY)["coverage"])
         self.assertEqual(result.by_code("process.fdm.feature_uncalibrated"), [])
 
+    def test_a_planar_critical_feature_fails_when_its_tolerance_is_tighter_than_the_guideline_deviation(self) -> None:
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.3, 0.3))
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        found = self.finding(result, "process.fdm.feature_deviation")
+        self.assertEqual((found["subject"]["feature"], found["uncertainty"]), ("face_a", "guideline fdm.accuracy@1"))
+
+    def test_a_critical_feature_with_only_other_criteria_is_judged_by_those_checks_alone(self) -> None:
+        result = self.critical("datum", criteria=[_flatness_criterion("<= 1.5")])
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
+        self.assertNotIn("face_a dimensional_deviation", result.outcome(GEOMETRY)["coverage"])
+        self.assertEqual([c for c in self.codes(result, GEOMETRY) if c.startswith("process.fdm.feature")], [])
+
+    def test_a_critical_feature_with_no_criterion_is_unknown_never_a_pass(self) -> None:
+        result = self.critical("datum")
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertIn("process.fdm.feature_tolerance_missing", self.codes(result, GEOMETRY))
+
     def test_a_flank_with_neither_a_calibration_nor_a_guideline_profile_deviation_is_a_non_blocking_advisory(self) -> None:
-        result = self.critical("flank")
+        result = self.critical("flank", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
         found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
         self.assertEqual(found["subject"]["feature"], "face_a")
         self.assertIn("face_a profile_deviation not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
 
-    def test_a_profile_deviation_calibration_settles_the_flank(self) -> None:
+    def test_a_profile_deviation_calibration_is_compared_with_the_flank_tolerance(self) -> None:
         flank = calibration("flank_coupon", "profile_deviation", POLYMER, -0.1, 0.1, feature="flank")
-        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
-            result = self.critical("flank", calibrations=(flank,))
-        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
-        self.assertEqual(result.by_code("process.fdm.feature_uncalibrated"), [])
+        for upper, expected in ((0.2, "pass"), (0.05, "fail")):
+            with self.subTest(tolerance=upper), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+                result = self.critical("flank", calibrations=(flank,), criteria=self.tolerance("profile_deviation", -upper, upper))
+                self.assertEqual(self.outcome(result, GEOMETRY), expected)
+                self.assertEqual(result.by_code("process.fdm.feature_uncalibrated"), [])
 
     def test_a_bed_feature_with_no_elephant_foot_value_is_a_non_blocking_advisory(self) -> None:
-        result = self.critical("datum", on_bed=True)
+        result = self.critical("datum", on_bed=True, criteria=self.tolerance("dimensional_deviation", -0.8, 0.8))
         self.advisory(result, "process.fdm.elephant_foot", GEOMETRY)
         self.assertIn("face_a elephant_foot not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
 
-    def test_an_elephant_foot_calibration_settles_the_bed_feature(self) -> None:
-        foot = calibration("foot_coupon", "elephant_foot", POLYMER, 0.0, 0.2)
-        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
-            result = self.critical("datum", on_bed=True, calibrations=(foot,))
-        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
-        self.assertEqual(result.by_code("process.fdm.elephant_foot"), [])
+    def test_an_elephant_foot_calibration_adds_its_flare_to_the_deviation_before_the_tolerance(self) -> None:
+        foot = calibration("foot_coupon", "elephant_foot", POLYMER, 0.0, 0.2)  # 0.5 mm guideline + 0.2 mm flare = 0.7 mm
+        for upper, expected in ((0.8, "pass"), (0.6, "fail")):
+            with self.subTest(tolerance=upper), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+                result = self.critical("datum", on_bed=True, calibrations=(foot,),
+                                       criteria=self.tolerance("dimensional_deviation", -upper, upper))
+                self.assertEqual(self.outcome(result, GEOMETRY), expected, self.codes(result, GEOMETRY))
+                self.assertEqual(expected == "fail", "process.fdm.elephant_foot" in self.codes(result, GEOMETRY))
 
     def test_a_guideline_hole_deviation_judges_the_bore_with_basis_guideline(self) -> None:
         for diameter, expected in (("between 5.0 7.0", "pass"), ("between 5.9 6.1", "fail")):
@@ -2808,28 +2833,38 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
                 self.assertIn(f"{what} not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
 
-    def received(self, *, catalog: Any) -> Any:
-        """An insert pressed into the 4.2 mm printed boss bore of TST-0101, whose limits are 3.0..5.0 mm."""
+    def received(self, *, catalog: Any, critical: bool = True) -> Any:
+        """An insert pressed into the 4.2 mm printed boss bore of TST-0101: a critical bore whose limits are 3.0..5.0 mm,
+        or, without `critical`, a bore no critical surface names."""
         documents = guided(service="functional_demo", calibrations=(CONTACT,))
         documents["assembly.yaml"]["operations"] = [{"id": "insert_m3", "kind": "insert", "part": "TST-0101", "into": "TST-0101",
                                                      "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["boss"]}}]
-        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
-            surface("boss", "fastener", criteria=[_diameter_criterion("between 3.0 5.0")])]
+        if critical:
+            documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+                surface("boss", "fastener", criteria=[_diameter_criterion("between 3.0 5.0")])]
         data = facts(holes=(hole("boss", 4.2, axis=(0.0, 0.0, 1.0)),),
                      walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
         return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
 
-    def test_a_guideline_hole_deviation_settles_a_receiving_bore_and_leaves_an_info_note(self) -> None:
+    def test_a_critical_receiving_bore_is_sized_by_its_bore_check_and_retention_is_left_to_the_trial(self) -> None:
         result = self.received(catalog=SHIPPED)
         self.assertEqual(self.outcome(result, GEOMETRY), "pass", self.codes(result, GEOMETRY))
+        self.assertIn("boss within its limits with the guideline hole_diameter_deviation", result.outcome(GEOMETRY)["coverage"])
         note = self.finding(result, "process.fdm.receiving_feature")
-        self.assertEqual((note["severity"], "obligation" in note), ("info", False))
+        self.assertEqual((note["severity"], note["outcome"], "obligation" in note), ("info", "unknown", False))
+        self.assertEqual(note["recheck"]["families"], ["assembly.order", "process.fdm.trial"])
 
-    def test_a_receiving_bore_with_neither_a_calibration_nor_a_guideline_value_is_a_non_blocking_advisory(self) -> None:
+    def test_a_receiving_only_bore_never_passes_on_an_interval_alone(self) -> None:
+        result = self.received(catalog=SHIPPED, critical=False)
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        found = self.finding(result, "process.fdm.receiving_criterion_missing")
+        self.assertEqual((found["outcome"], found["subject"]["feature"]), ("unknown", "boss"))
+
+    def test_a_critical_receiving_bore_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
         result = self.received(catalog=None)
-        found = self.finding(result, "process.fdm.receiving_feature")
-        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
-        self.assertIn("boss retention not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+        found = self.finding(result, "process.fdm.hole_uncalibrated")
+        self.assertEqual((found["outcome"], found["reason"]), ("not_assessed", "no_guideline"))
+        self.assertEqual(self.finding(result, "process.fdm.receiving_feature")["severity"], "info")
 
     def test_a_thin_wall_on_an_exempt_feature_class_without_its_own_calibration_is_a_non_blocking_advisory(self) -> None:
         data = walled(0.3)
