@@ -2117,7 +2117,7 @@ class _Reader:
                 self.ref("material", scope.get("material"), path, f"{where}/scope/material")
             for key in ("size", "thickness"):
                 if key in scope:
-                    self.quantity(scope[key], path, f"{where}/scope/{key}")
+                    self.quantity(scope[key], path, f"{where}/scope/{key}", ("length",))
             result = _mapping(data.get("result"))
             limits = self.quantity(result.get("limits"), path, f"{where}/result/limits")
             uncertainty = self.quantity(result.get("uncertainty"), path, f"{where}/result/uncertainty") if "uncertainty" in result else None
@@ -2589,7 +2589,11 @@ def _scope_mismatches(calibration: Any, material: str, wanted: Mapping[str, str 
         why.append(f"{calibration.id} expired on {calibration.valid_until}")
     covered = scope.get("size")
     if size is not None and isinstance(covered, Mapping):
-        largest = quantity(covered).to("mm").bounds[1]
+        try:
+            largest = quantity(covered).to("mm").bounds[1]
+        except IntentError as error:  # a record read without its checks: refuse the scope, never crash the check
+            why.append(f"{calibration.id} size scope is not a length ({error})")
+            return why
         if size > largest + 1e-9:
             why.append(f"{calibration.id} {SIZE_SCOPE_REASON} {largest:g} mm, {size:g} mm requested")
     return why
