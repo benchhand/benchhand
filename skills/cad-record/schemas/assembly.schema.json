@@ -258,6 +258,7 @@
             "tool": {"type": "string", "minLength": 1},
             "capability": {"$ref": "manufacturing.schema.json#/$defs/profile_id"},
             "approach": {"$ref": "#/$defs/vector"},
+            "contact": {"description": "where the tool's tip engages, mm in the operated part's model frame; a shipped envelope on a part that does not move needs it", "$ref": "#/$defs/vector"},
             "reach": {"$ref": "manufacturing.schema.json#/$defs/quantity_fact"},
             "envelope": {"$ref": "manufacturing.schema.json#/$defs/text_fact"}
           }}},

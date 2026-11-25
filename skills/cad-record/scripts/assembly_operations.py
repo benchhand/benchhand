@@ -47,7 +47,7 @@ Tools. Every `tools` and `tool_access` entry keeps its text for the instructions
 entries reach nothing; a common tool named by type and size (a "3 mm hex key", a "PH2 screwdriver")
 reaches with a parametric envelope from its cited standard; anything else is an instruction note, never
 an access obligation. A `tool_access` entry may name a capability profile, an approach (receiver-local,
-like `direction`), a reach and an envelope; an envelope fact whose source carries an artifact (a STEP
+like `direction`), a contact point, a reach and an envelope; an envelope fact whose source carries an artifact (a STEP
 solid of the tool and holder in the operated part's model frame at the engaged pose) overrides the
 shipped envelope, and is how a special tool is checked. An entry without an approach approaches along
 the operation's direction. A `tools` name that a `tool_access` entry also names is that entry: it is checked
@@ -138,7 +138,7 @@ class OperationsError(ValueError):
 @dataclass(frozen=True)
 class Tool:
     """A tool that must reach the operation: a display name (`declared` False: plain `tools`) or a
-    `tool_access` entry with its optional capability, approach, reach and envelope facts."""
+    `tool_access` entry with its optional capability, approach, contact point, reach and envelope facts."""
 
     name: str
     declared: bool
@@ -146,6 +146,7 @@ class Tool:
     approach: Vec | None = None
     reach: Mapping[str, Any] | None = None
     envelope: Mapping[str, Any] | None = None
+    contact: Vec | None = None  # where the tip engages, mm in the operated part's model frame
 
     @property
     def reach_known(self) -> bool:
@@ -375,10 +376,11 @@ def _operation(raw: Any, index: int, where: str) -> AssemblyOperation:
         at = f"{where}/tool_access/{number}"
         if not isinstance(entry, Mapping):
             raise OperationsError(f"{at} must be a mapping")
-        approach = entry.get("approach")
+        approach, contact = entry.get("approach"), entry.get("contact")
         tools.append(Tool(_text(entry.get("tool"), f"{at}/tool"), declared=True, capability=entry.get("capability"),
                           approach=None if approach is None else _vector(approach, f"{at}/approach"),
-                          reach=_fact(entry, "reach"), envelope=_fact(entry, "envelope")))
+                          reach=_fact(entry, "reach"), envelope=_fact(entry, "envelope"),
+                          contact=None if contact is None else _point(contact, f"{at}/contact")))
     joint = raw.get("verify_joint")
     sub_build, cure = _bench(raw, kind, where)
     if "edge_distance" in raw and kind not in JOINING:
@@ -939,7 +941,9 @@ class AccessRequest:
 class Reach:
     """One entry that reaches the operated part: `index` in the operation's tools, its `role` (hand or tool),
     the envelope's `source` (standard: the shipped `envelope`; step: the cited solid `artifact`, path below
-    hw/ and sha256), and its `approach` (receiver frame), the operation's direction when `approach_default`."""
+    hw/ and sha256), and its `approach` (receiver frame), the operation's direction when `approach_default`.
+    `contact` is where a shipped envelope's tip engages (operated part's model frame); None on a part that
+    travels puts the tip on the centre of the part's leading box face."""
 
     index: int
     tool: Tool
@@ -949,14 +953,18 @@ class Reach:
     approach_default: bool = False
     envelope: Any = None  # tool_envelopes.Envelope when source is standard
     artifact: tuple[str, str] | None = None
+    contact: Vec | None = None
 
     @property
     def label(self) -> str:
         return self.tool.name if self.envelope is None else f"{self.tool.name} ({self.envelope.designation})"
 
 
-def _reach(op: AssemblyOperation, index: int, tool: Tool, unknown: list[str], notes: list[str]) -> Reach | None:
-    """The reach of one tool entry; an entry that reaches nothing adds its note, if any, and gives None."""
+def _reach(op: AssemblyOperation, index: int, tool: Tool, travels: bool, unknown: list[str],
+           notes: list[str]) -> Reach | None:
+    """The reach of one tool entry; an entry that reaches nothing adds its note, if any, and gives None. A shipped
+    envelope on a part that travels engages the part it drives; on a part that stays put it acts on one feature of
+    it, so it needs the declared contact point: the part's box centre is no stand-in for that feature."""
     entry = tool_envelopes.classify(tool.name)
     artifact = tool.envelope_artifact if tool.declared else None
     if artifact is None and entry.role not in tool_envelopes.REACHING:
@@ -971,7 +979,12 @@ def _reach(op: AssemblyOperation, index: int, tool: Tool, unknown: list[str], no
     role = entry.role if entry.role in tool_envelopes.REACHING else tool_envelopes.TOOL
     if artifact is not None:
         return Reach(index, tool, role, "step", approach, tool.approach is None, artifact=artifact)
-    return Reach(index, tool, role, "standard", approach, tool.approach is None, envelope=entry.envelope)
+    if tool.contact is None and not travels:
+        unknown.append(f"tool {tool.name!r} works on {op.part}, which does not move: declare where its tip engages "
+                       f"(tool_access contact, mm in {op.part}'s model frame) to place its shipped envelope")
+        return None
+    return Reach(index, tool, role, "standard", approach, tool.approach is None, envelope=entry.envelope,
+                 contact=tool.contact)
 
 
 def hold_reach(op: AssemblyOperation) -> tuple[tuple[Tool, ...], tuple[str, ...]]:
@@ -1031,7 +1044,7 @@ def access_plan(operations: Operations, inventory: Any = None,
         declared = [tool.name for tool in op.tools if tool.declared]
         reaches = [reach for index, tool in enumerate(op.tools) if tool in tools
                    if tool.declared or not any(tool_envelopes.same_tool(tool.name, name) for name in declared)
-                   if (reach := _reach(op, index, tool, unknown, notes)) is not None]
+                   if (reach := _reach(op, index, tool, travels, unknown, notes)) is not None]
         unit, operated = _unit(state, step, unknown)
         moved = unit if op.kind == "install" else frozenset({step.part})  # an install's part is a unit id, no occurrence
         after = set(step.present) | (set(moved) if op.installs else set())
