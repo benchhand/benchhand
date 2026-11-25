@@ -82,6 +82,7 @@ Standards:
 - Complexity findings `C901`, `PLR0912` and `PLR0915` may not rise above `scripts/complexity-baseline.json`.
 - Tests and scripts must not skip git hooks (`scripts/test_no_verify_guard.py`).
 - Type checking is incremental: `mypy.ini` lists the checked modules, and some are strict.
+- Printer calibration is never required (benchhand-c7q.30). A process check without a calibration judges against the shipped or project guideline value (`process_checks/core.py` `Context.governing`) and says the result is uncalibrated. A calibration overrides the guideline value. A check is UNKNOWN only when neither exists. A missing guideline value is added with a cited source, never a default. `fdm.accuracy` holds the desktop FDM dimensional and hole deviation (-0.5..0.5 mm, Protolabs Network); no shipped set states warp.
 
 Approved departures. The tracking IDs come from the bead ledger, which the repository does not hold, so the ledger facts below are unverified.
 
