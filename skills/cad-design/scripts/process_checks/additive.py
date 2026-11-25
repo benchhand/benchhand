@@ -869,11 +869,12 @@ def _reason(findings: Sequence[Draft]) -> str:
 
 
 def _largest(g: Geometry) -> float | None:
-    """The component's largest bounding-box extent (mm): an upper bound on the size of any of its features."""
+    """The diagonal of the component's bounding box (mm): no feature of it, straight or diagonal, is longer. The longest
+    box axis is no such bound for a feature that runs across the part."""
     box = g.facts.get("bbox_mm") or {}
     if not box.get("min") or not box.get("max"):
         return None
-    return max(float(high) - float(low) for low, high in zip(box["min"], box["max"]))
+    return math.sqrt(sum((float(high) - float(low)) ** 2 for low, high in zip(box["min"], box["max"])))
 
 
 def _deviation(ctx: Context, g: Geometry, surface: Any, characteristic: str, band: tuple[float, float],
