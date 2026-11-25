@@ -341,15 +341,23 @@ The piston's [second sheet](docs/images/v6-engine/09-drawing-VSE-0002-piston-she
 
 ### 8. BOM
 
-`bom.py` reconciles the roll-up against the v4 snapshot, the first five-part build: five rows, 20 instances, no mismatches. The engine's later parts, the heads, cams, pulleys, belt, idler and bracket, join the same record.
+`bom.py` reconciles the roll-up against the v29 snapshot: 13 rows, 31 instances, no mismatches.
 
 | PN | Title | Qty |
 |---|---|---|
 | VSE-0001 | Crankcase and V block | 1 |
 | VSE-0005 | Crankshaft | 1 |
 | VSE-0002 | Piston | 6 |
+| VSE-0006 | Cylinder head | 2 |
+| VSE-0010 | Timing belt GT2 6 mm, 420 mm closed loop | 1 |
+| VSE-0013 | Belt idler bracket | 1 |
+| VSE-0008 | Crank pulley, GT2 20T | 1 |
 | VSE-0004 | Connecting rod | 6 |
 | VSE-0003 | Wrist pin | 6 |
+| VSE-0011 | Camshaft, bank A | 1 |
+| VSE-0007 | Camshaft | 1 |
+| VSE-0012 | Smooth idler pulley 10 mm OD, 3 mm bore, flanged | 2 |
+| VSE-0009 | Cam pulley, GT2 40T | 2 |
 
 ### 9. Analysis
 
