@@ -588,7 +588,7 @@ SELECTION_PATH = "hw/manufacturing/selection.yaml"
 # selection.py findings that block at every stage from INTENT: the recorded selection contradicts the
 # assessment, or a candidate holding the part route the record states fails a mandatory constraint.
 _SELECTION_BLOCKING = frozenset({"selection.final_unsupported", "selection.recorded_recommendation_eliminated",
-                                 "selection.recorded_route_eliminated"})
+                                 "selection.recorded_recommendation_dropped", "selection.recorded_route_eliminated"})
 
 
 def _selection_message(item: Mapping[str, Any]) -> str:
