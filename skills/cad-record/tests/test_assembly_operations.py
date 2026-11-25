@@ -610,6 +610,20 @@ class SubBuildTests(unittest.TestCase):
                 units = [p.pointer for p in record.problems if p.code == "intent.units"]
                 self.assertEqual(units, [] if pointer is None else [pointer], [p.message for p in record.problems])
 
+    def test_a_one_sided_interval_is_an_invalid_quantity_not_a_crash(self) -> None:
+        for name, value in (("lower only", {"lower": 1, "units": "h"}), ("upper only", {"upper": 24, "units": "h"})):
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                hold = {"id": "cure", "kind": "hold", "part": "TST-0001", "fixture": "bench cure jig",
+                        "orientation": [0, 0, 1], "duration": {**fx.known(fx.quantity(1, "h")), "value": value},
+                        "cure": {"time": sourced(1, "h")}}
+                documents = fx.tst_record()
+                documents["assembly.yaml"]["operations"].append(hold)
+                record = intent.load_record(fx.write_record(Path(directory) / "hw", documents))
+                self.assertIn("operations/1/duration/value",
+                              [p.pointer for p in record.problems if p.code == "intent.number"])
+                report = ops.check_order(ops.normalize({"operations": [hold]}))
+                self.assertIn("the hold lasts unknown", report.findings[0]["measured"]["text"])
+
     def test_a_cure_time_that_is_not_a_positive_time_fails_the_hold(self) -> None:
         for name, time in (("negative", sourced(-24, "h")), ("zero", sourced(0, "h")), ("a length", sourced(24, "mm"))):
             with self.subTest(name):
