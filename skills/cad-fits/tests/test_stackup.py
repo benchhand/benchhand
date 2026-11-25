@@ -477,13 +477,13 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.state_mismatch"])
 
-    def test_off_an_fdm_capability_contributor_stays_unknown_and_names_the_missing_guideline(self) -> None:
+    def test_off_an_fdm_capability_contributor_is_not_assessed_and_names_the_missing_guideline(self) -> None:
         documents = tab_slot_documents("fdm")
         result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
-        self.assertEqual(result["outcome"], "unknown")
-        self.assertEqual(codes(result), ["stack.capability_unresolved"])
-        found = result["findings"][0]
-        self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["consequence"] + found["uncertainty"])
+        self.assertNotIn("stack.capability_unresolved", codes(result))
+        found = next(f for f in result["findings"] if f["code"] == "stack.capability_not_assessed")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["uncertainty"])
         self.assertEqual(found["remedy"], "for a tighter limit, print a test coupon on the target printer")
 
     def test_off_a_non_fdm_unresolved_capability_keeps_its_real_fix_without_printer_wording(self) -> None:
@@ -531,10 +531,23 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.limits_unqualified"])
 
-    def test_a_printed_contributor_with_neither_a_calibration_nor_a_guideline_stays_unknown(self) -> None:
+    def test_a_printed_contributor_with_neither_a_calibration_nor_a_guideline_is_not_assessed(self) -> None:
         documents, stack = self.uncalibrated_printed_slot(0.5)
+        stack["requirement"]["min"] = -2.0  # the declared limits meet it: only the missing basis keeps it open
         result = self.bound_with(documents, stack, "tab-slot", catalog=clearance_catalog(clearance_limit()))
-        self.assertEqual(codes(result), ["stack.capability_unresolved"])
+        self.assertEqual(result["outcome"], "not_assessed")
+        self.assertEqual(result["obligations"][0]["reason"], "no_guideline")
+        self.assertEqual(codes(result), ["stack.capability_not_assessed"])
+        found = result["findings"][0]
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertFalse(result["requirement"]["pass"])
+
+    def test_a_known_stack_failure_is_not_masked_by_a_not_assessed_contributor(self) -> None:
+        documents, stack = self.uncalibrated_printed_slot(0.5)  # worst case -1.05 mm against a minimum of 0
+        result = self.bound_with(documents, stack, "tab-slot", catalog=clearance_catalog(clearance_limit()))
+        self.assertEqual(result["outcome"], "fail")
+        self.assertEqual(codes(result), ["stack.capability_not_assessed", "stack.worst_case_violation"])
+        self.assertNotIn("reason", result["obligations"][0])
 
 
 def deviation_catalog() -> object:
