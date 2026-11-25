@@ -2684,7 +2684,7 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(result, GEOMETRY), "pass")
 
     def test_a_bore_with_neither_a_calibration_nor_a_guideline_value_is_unknown(self) -> None:
-        result = self.bored("between 5.0 7.0", catalog=SHIPPED)
+        result = self.bored("between 5.0 7.0", catalog=None)
         self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
         self.assertTrue(result.by_code("process.fdm.hole_uncalibrated"))
 

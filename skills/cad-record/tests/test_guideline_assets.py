@@ -25,9 +25,9 @@ fx = load("cad_record_mi_fixtures", Path(__file__).resolve().parent / "fixtures"
 registry = fx.schema_registry_module()
 gl = load("cad_record_guidelines", SKILL / "scripts" / "guidelines.py")
 SCHEMA = "manufacturing-guideline.schema.json"
-ACCESSED = {"2026-11-18", "2026-11-19", "2026-11-20"}  # the survey day, the H2D tech-specs page, and the Prusa clearance page
+ACCESSED = {"2026-11-18", "2026-11-19", "2026-11-20", "2026-11-25"}  # the survey day, the H2D tech-specs page, the Prusa clearance page, the Hubs accuracy table
 EXPECTED_IDS = {
-    "fdm.generic",
+    "fdm.generic", "fdm.accuracy",
     "fdm.nozzle.d0_2", "fdm.nozzle.d0_4", "fdm.nozzle.d0_6", "fdm.nozzle.d0_8",
     "fdm.material.pla", "fdm.material.petg", "fdm.material.abs", "fdm.material.asa", "fdm.material.tpu_95a",
     "fdm.material.tpu_85a", "fdm.material.pa", "fdm.material.pc", "fdm.material.pa_cf",
@@ -95,6 +95,15 @@ class ShippedFiles(unittest.TestCase):
 
 class ShippedValues(unittest.TestCase):
     """Expected values are the survey's figures, written out here apart from the files."""
+
+    def test_the_accuracy_set_bounds_desktop_fdm_deviation_at_half_a_millimetre_and_records_the_dispute(self) -> None:
+        """Hubs gives desktop FDM +/-0.5% with a +/-0.5 mm lower limit in one table and +/-1.0 mm in another."""
+        for characteristic in ("dimensional_deviation", "hole_diameter_deviation"):
+            with self.subTest(characteristic):
+                item = limit_of("fdm.accuracy", characteristic)
+                self.assertEqual((item["operator"], item["quantity"]), ("between", {"lower": -0.5, "upper": 0.5, "units": "mm"}))
+                self.assertTrue(item["disputed"])
+                self.assertEqual(len(item["citations"]), 2)
 
     def test_the_generic_set_carries_the_surveyed_limits(self) -> None:
         plain = [(item["characteristic"], *bare(item)) for item in limits_of("fdm.generic") if "quantity" in item]
@@ -282,14 +291,14 @@ class H2DNozzleSizes(unittest.TestCase):
 
 
 class SnapshotInventory(unittest.TestCase):
-    def test_a_version_snapshot_copies_exactly_the_18_shipped_sets(self) -> None:
+    def test_a_version_snapshot_copies_exactly_the_19_shipped_sets(self) -> None:
         """The list is typed out here, so a set a helper leaves out or adds fails here and not in a computed list."""
         by_hand = {
-            "fdm.generic", "fdm.nozzle.d0_2", "fdm.nozzle.d0_4", "fdm.nozzle.d0_6", "fdm.nozzle.d0_8",
+            "fdm.generic", "fdm.accuracy", "fdm.nozzle.d0_2", "fdm.nozzle.d0_4", "fdm.nozzle.d0_6", "fdm.nozzle.d0_8",
             "fdm.material.pla", "fdm.material.petg", "fdm.material.abs", "fdm.material.asa", "fdm.material.tpu_95a",
             "fdm.material.tpu_85a", "fdm.material.pa", "fdm.material.pc", "fdm.material.pa_cf",
             "fdm.filler.cf", "fdm.filler.gf", "fdm.compat.tpu_85a", "fdm.machine.bambu_h2d"}
-        self.assertEqual(len(by_hand), 18)
+        self.assertEqual(len(by_hand), 19)
         with tempfile.TemporaryDirectory() as hw:
             copies = gl.snapshot_files(Path(hw))
         self.assertEqual(set(copies), {f"manufacturing/guidelines/shipped--{name}.yaml" for name in by_hand})
