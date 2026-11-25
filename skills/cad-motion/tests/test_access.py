@@ -344,6 +344,14 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertEqual(self.outcomes(result)["assembly.order@op:cure-bracket"], "pass")
         self.assertEqual((result["result"], result["complete"]), ("pass", True))
         self.assert_schema_valid(result)
+        clamped = {**cure, "tools": ["spring clamp"]}
+        code, result, stderr = self.run_access(self.project("clamped", [*valid, clamped]), *self.parts_args())
+        self.assertEqual(code, 0, stderr)
+        [row] = [r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:cure-bracket"]
+        self.assertEqual((row["outcome"], row["reason"]), ("not_assessed", "no_capability_profile"))
+        self.assertIn("'spring clamp' has no cited envelope solid", row["uncertainty"])
+        self.assertEqual(result["result"], "not_assessed", "an advisory row is never a pass and blocks nothing")
+        self.assert_schema_valid(result)
         socket = copy.deepcopy(next(item for item in items if item["id"] == "fasten-cover")["tool_access"])
         held = {"id": "hold-screw", "kind": "hold", "part": "TST-0104", "fixture": "hex socket", "orientation": [0, 0, 1],
                 "duration": fx.known(fx.quantity(10, "min")), "tool_access": socket}
