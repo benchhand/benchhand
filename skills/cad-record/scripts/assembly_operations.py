@@ -66,7 +66,6 @@ distance short of its criterion is a failure; retention evidence is what support
 
 from __future__ import annotations
 
-import importlib.util
 import math
 import re
 import sys
@@ -76,19 +75,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeGuard
 
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.append(str(SCRIPTS))
+from shared_module import load_shared  # noqa: E402  the sibling loader, reached once this folder is on sys.path
 
-def _load_module(name: str, path: Path) -> Any:
-    """A standard-library sibling module loaded once by path and registered in sys.modules."""
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"{path.name} not found at {path}")
-        sys.modules[name] = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sys.modules[name])
-    return sys.modules[name]
-
-
-tool_envelopes = _load_module("cad_record_tool_envelopes", Path(__file__).resolve().parent / "tool_envelopes.py")
+tool_envelopes = load_shared("cad_record_tool_envelopes", SCRIPTS / "tool_envelopes.py")
 
 Vec = tuple[float, float, float]
 

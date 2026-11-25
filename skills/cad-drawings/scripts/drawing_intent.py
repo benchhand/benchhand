@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -32,7 +33,11 @@ from typing import Any
 
 import feature_geometry as fg
 from feature_geometry import Face, ResolvedFeature, Vector
-from shared_module import load_shared
+
+RECORD_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-record" / "scripts"
+if str(RECORD_SCRIPTS) not in sys.path:
+    sys.path.append(str(RECORD_SCRIPTS))
+from shared_module import load_shared  # noqa: E402  cad-record's loader, reached once its folder is on sys.path
 
 FITS = Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py"
 COMMODITY = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "commodity_identity.py"
