@@ -33,7 +33,7 @@
       "type": "string", "enum": ["opaque", "translucent", "transparent"]
     },
     "render": {
-      "description": "How render.py and cad-motion motion.py render draw the part by default; absent means shown. ghost draws it translucent with visible edges and never as an occluder, hidden leaves it out of the picture. A reference body that blocks the view is ghost or hidden. The --show, --ghost and --hide flags override it. A visibility target cannot be hidden",
+      "description": "How render.py and cad-motion motion.py render draw the part by default; absent means shown, except for existing equipment (make_buy existing), which is ghost. ghost draws it translucent with visible edges and never as an occluder, hidden leaves it out of the picture. A reference body that blocks the view is ghost or hidden. The --show, --ghost and --hide flags override it. A visibility target cannot be hidden",
       "type": "string", "enum": ["shown", "ghost", "hidden"]
     },
     "procurement": {"$ref": "drawing.schema.json#/$defs/procurement"},
