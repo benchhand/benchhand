@@ -14,7 +14,7 @@ drawing with `geometry_unaccounted`.
 | `kind` | Faces | Required characteristics |
 |---|---|---|
 | `plane_face` | coplanar planes | location along its frame axis (none for a datum or a plane through the origin) |
-| `bore` | inward cylinders; optional floors and drill-point cones | diameter (radius if partial), axis location, circular pattern or grid, depth when floored |
+| `bore` | inward cylinders; optional floors and drill-point cones | diameter (radius if partial, unless `interfaces.yaml` binds a fit or heat-set seat to it), axis location, circular pattern or grid, depth when floored |
 | `shaft` | outward cylinders | diameter, axis location |
 | `slot` | two opposed walls, one or two end radii, optional floor | width, length (closed), centre location or pattern, depth from a planar entry or floor elevation |
 | `groove` | root cylinder, two walls | root diameter, width, axial location |
@@ -111,6 +111,9 @@ datums. Instances with a missing or extra node keep one location each.
 `interfaces.yaml` binds interface sizes: `press_fit`, `running_fit`, `locating_fit` with `hole` and
 `shaft` endpoints `{PN, feature, region?}`; `heat_set[].feature` for the host seat; and
 `retaining_ring.feature` with `groove_d` such as `4.8 h10` for the shaft groove.
+
+An interface size is a diameter. A partial bore or shaft bound to one prints `⌀` with the fit's
+nominal and class, never a radius. On an ISO sheet that reads `⌀5 H11 (+0.075/0)`.
 
 `engagement_length_mm` is optional. It goes in four places:
 

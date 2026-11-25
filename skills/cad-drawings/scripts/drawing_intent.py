@@ -846,20 +846,24 @@ class Measurer:
     def _shaft(self, feature: ResolvedFeature, frame: DatumFrame) -> None:
         self._round_feature(feature, frame, inward=False)
 
+    def _round_size(self, feature: ResolvedFeature, instances: Sequence[Instance], inward: bool) -> None:
+        """A bore's or shaft's diameter, or a partial one's radius when no interface size binds it: a fit class,
+        heat-set seat or ring groove limits a diameter."""
+        diameter = 2 * instances[0].radius
+        tolerance = self._size_tolerance(feature, "hole" if inward else "shaft", diameter)
+        partial = all((self.faces[i].span_deg or 360.0) < 359.0 for inst in instances for i in inst.faces)
+        operation = "radius" if partial and tolerance is None else "diameter"
+        self.char(feature, operation, instances[0].radius if operation == "radius" else diameter, feature.faces,
+                  quantity=len(instances), tolerance=tolerance,
+                  details={"instances": len(instances), "regions": sorted(set(feature.regions.values())),
+                           "axis_dir": instances[0].axis_dir, "inward": inward, "ends": [inst.ends for inst in instances]})
+
     def _round_feature(self, feature: ResolvedFeature, frame: DatumFrame, inward: bool) -> None:
         instances = self._cylinders(feature, inward)
         radii = {round(inst.radius, 6) for inst in instances}
         if len(radii) > 1:
             raise IntentError("measurement_mismatch", f"instances have different diameters {sorted(2 * r for r in radii)}")
-        diameter = 2 * instances[0].radius
-        partial = all((self.faces[i].span_deg or 360.0) < 359.0 for inst in instances for i in inst.faces)
-        tolerance = self._size_tolerance(feature, "hole" if inward else "shaft", diameter)
-        operation = "radius" if partial else "diameter"
-        value = instances[0].radius if partial else diameter
-        self.char(feature, operation, value, feature.faces, quantity=len(instances), tolerance=tolerance,
-                  details={"instances": len(instances), "regions": sorted(set(feature.regions.values())),
-                           "axis_dir": instances[0].axis_dir, "inward": inward,
-                           "ends": [inst.ends for inst in instances]})
+        self._round_size(feature, instances, inward)
         self._axis_location(feature, frame, instances)
         axis = frame.axis_of(instances[0].axis_dir)
         floors = [f for f in self.own(feature) if f.support_type == "plane" and fg.parallel(f.normal, instances[0].axis_dir)]
