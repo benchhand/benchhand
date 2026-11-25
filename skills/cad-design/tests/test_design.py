@@ -17,6 +17,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -587,6 +588,64 @@ class JointGeometryTests(unittest.TestCase):
         self.assertEqual(sorted(missing), ["TST-0612", "TST-0613"])
         self.assertAlmostEqual(missing["TST-0613"]["contact"]["offset_mm"], 0.045 + 100 * math.sin(math.radians(0.005)),
                                places=5)
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
+class JointContactFailureTests(unittest.TestCase):
+    """A face-contact Boolean the kernel cannot complete leaves the joint unknown, with its reason: it is no empty
+    intersection, so the joint is not reported as missing its mating geometry."""
+
+    def test_a_failed_contact_boolean_is_unknown_not_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hw, parts_dir = build_parts(Path(tmp), {pn: JOINT_GEOMETRY_PARTS[pn] for pn in ("TST-0605", "TST-0608")})
+            (hw / "assembly.yaml").write_text(
+                "joints:\n- {id: J-701, type: fixed, parent: TST-0605, child: TST-0608, axis: [1, 0, 0], "
+                "origin: [0, 0, 0], min: 0, max: 0, nominal: 0}\n", encoding="utf-8")
+            header = re.search(r"(?ms)^# /// script$.*?^# ///$", (SCRIPTS / "form_check.py").read_text(encoding="utf-8"))
+            assert header is not None
+            wrapper = Path(tmp) / "failing_boolean.py"
+            wrapper.write_text(header.group(0) + "\n" + FAILING_BOOLEAN, encoding="utf-8")
+            code, report = run_json(["uv", "run", "--script", str(wrapper), str(SCRIPTS / "form_check.py"), "--hw", str(hw),
+                                     "--parts-dir", str(parts_dir), "--fidelity", "F1"], parse=result_payload)
+        joint = [f for f in report["findings"] if f.get("joint") == "J-701"]
+        self.assertEqual((code, sorted((f["check"], f["part"]) for f in joint)),
+                         (1, [("joint_contact_unknown", "TST-0605"), ("joint_contact_unknown", "TST-0608")]))
+        for finding in joint:
+            with self.subTest(part=finding["part"]):
+                self.assertEqual((finding["status"], finding["blocking"]), ("unknown", True))
+                self.assertIn("Boolean", finding["reason"])
+        self.assertEqual({row["kind"] for row in report["joints"]["J-701"]["parts"].values()}, {"unknown"})
+
+
+# Runs form_check (argv[1]) with every face-to-face BRepAlgoAPI_Common reporting that it did not complete.
+FAILING_BOOLEAN = '''
+import importlib.util
+import sys
+
+import OCP.BRepAlgoAPI as algo
+from OCP.TopAbs import TopAbs_FACE
+
+REAL = algo.BRepAlgoAPI_Common
+
+
+class FailingCommon:
+    def __init__(self, *shapes):
+        self.real = REAL(*shapes)
+        self.forced = len(shapes) == 2 and all(shape.ShapeType() == TopAbs_FACE for shape in shapes)
+
+    def IsDone(self):
+        return not self.forced and self.real.IsDone()
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+algo.BRepAlgoAPI_Common = FailingCommon
+spec = importlib.util.spec_from_file_location("form_check", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+sys.exit(module.main(sys.argv[2:]))
+'''
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
