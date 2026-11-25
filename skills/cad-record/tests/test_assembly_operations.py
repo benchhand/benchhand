@@ -570,6 +570,28 @@ class SubBuildTests(unittest.TestCase):
         self.assertEqual(finding["code"], "assembly.hold_short")
         self.assertIn("1.5 h, the cure time is 24 h", finding["measured"]["text"])
 
+    def test_the_record_reader_refuses_a_cure_or_duration_of_the_wrong_dimension(self) -> None:
+        def hold(**changes):
+            return {"id": "cure", "kind": "hold", "part": "TST-0001", "duration": fx.known(fx.quantity(24, "h")),
+                    "fixture": "bench cure jig", "orientation": [0, 0, 1],
+                    "cure": {"time": fx.known(fx.quantity(24, "h")), "temperature": fx.known(fx.quantity(23, "deg_C"))},
+                    **changes}
+
+        cases = {
+            "a duration in deg_C": ("operations/1/duration/value", hold(duration=fx.known(fx.quantity(24, "deg_C")))),
+            "a cure time in mm": ("operations/1/cure/time/value", hold(cure={"time": fx.known(fx.quantity(24))})),
+            "a cure temperature in h": ("operations/1/cure/temperature/value", hold(cure={
+                "time": fx.known(fx.quantity(24, "h")), "temperature": fx.known(fx.quantity(23, "h"))})),
+            "a well-formed hold": (None, hold()),
+        }
+        for label, (pointer, item) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                documents = fx.tst_record()
+                documents["assembly.yaml"]["operations"].append(item)
+                record = intent.load_record(fx.write_record(Path(directory) / "hw", documents))
+                units = [p.pointer for p in record.problems if p.code == "intent.units"]
+                self.assertEqual(units, [] if pointer is None else [pointer], [p.message for p in record.problems])
+
     def test_an_uninstalled_subassembly_member_floats_in_its_sub_build(self) -> None:
         bond_a, _bond_b, cure, install = self.items()
         report = ops.check_order(ops.normalize({"operations": [bond_a, cure, install]}), self.inventory())
