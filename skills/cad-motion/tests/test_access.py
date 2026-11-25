@@ -126,7 +126,7 @@ class OrderTests(unittest.TestCase):
         self.assertEqual([(row["obligation"], row["outcome"]) for row in report.outcomes],
                          [("intent.assembly_operations@product", "unknown")])
 
-    def test_the_access_plan_lists_obstacles_and_keeps_a_named_tool_unknown(self) -> None:
+    def test_the_access_plan_lists_obstacles_and_keeps_an_unrecognised_tool_a_note(self) -> None:
         items = operations("blocked_socket.yaml")
         items[3]["tools"] = ["torque driver"]
         plan = {request.operation.id: request for request in ops.access_plan(ops.normalize({"operations": items}),
@@ -135,8 +135,8 @@ class OrderTests(unittest.TestCase):
         self.assertEqual(plan["fit-cover"].path_obstacles, frozenset({"TST-0102"}))
         self.assertEqual(plan["fasten-cover"].tool_obstacles, frozenset({"TST-0101", "TST-0102", "TST-0103", "TST-0105"}))
         self.assertEqual(plan["fasten-cover"].frame, "TST-0103")
-        self.assertIn("tool 'torque driver' is a name only: its reach and envelope are unknown",
-                      plan["fasten-cover"].unknown)
+        self.assertEqual(plan["fasten-cover"].unknown, ())
+        self.assertTrue(any("torque driver" in note for note in plan["fasten-cover"].notes))
 
 
 def access_record(items: list[dict]) -> dict:
@@ -318,18 +318,68 @@ class GeometricAccessTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
                 self.assertIn(f"interfaces.yaml#/interfaces/1/limits/{kind}", proc.stderr)
 
-    def test_a_tool_known_by_name_only_keeps_access_unknown(self) -> None:
-        items = reordered(operations("blocked_socket.yaml", self.socket_sha),
-                          "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
-        del items[2]["tool_access"]
-        items[2]["tools"] = ["3 mm hex key"]
-        hw = self.project("named", items)
+    def valid_order(self) -> list[dict]:
+        return reordered(operations("blocked_socket.yaml", self.socket_sha),
+                         "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+
+    def test_a_named_common_tool_gets_its_standard_envelope_and_a_real_reach_result(self) -> None:
+        """Driven after the bracket is mounted: the bracket hole (r 3.5) passes a 3 mm hex key (ISO 2936 e max 3.39)
+        and a PH2 blade (ISO 8764-1, 6 mm), not an 8 mm hex key (e max 9.09)."""
+        cases = {"3 mm hex key": ("pass", "3 mm hex key"), "PH2 screwdriver": ("pass", "PH2 screwdriver"),
+                 "8 mm hex key": ("fail", "8 mm hex key")}
+        for name, (expected, designation) in cases.items():
+            with self.subTest(tool=name):
+                items = operations("blocked_socket.yaml", self.socket_sha)
+                del items[3]["tool_access"]
+                items[3]["tools"] = [name]
+                hw = self.project(f"named-{designation.replace(' ', '-')}", items)
+                code, result, _ = self.run_access(hw, *self.parts_args())
+                self.assert_schema_valid(result)
+                self.assertEqual(self.outcomes(result)["assembly.access@op:fasten-cover"], expected)
+                self.assertEqual(code, 0 if expected == "pass" else 1)
+                tool = next(p for p in result["detail"]["paths"]["fasten-cover"] if p["route"] == "standard_envelope")
+                self.assertEqual(tool["envelope"]["designation"], designation)
+                self.assertEqual(tool["status"], "clear" if expected == "pass" else "collision")
+                if expected == "fail":
+                    blocked = next(f for f in result["findings"] if f["code"] == "assembly.tool_blocked")
+                    self.assertIn("TST-0105", blocked["consequence"])
+
+    def test_a_cited_step_solid_overrides_the_standard_envelope(self) -> None:
+        """The cited socket solid is checked, not the 3 mm hex key the name would give: the bracket blocks it."""
+        items = operations("blocked_socket.yaml", self.socket_sha)
+        items[3]["tool_access"][0]["tool"] = "3 mm hex key"
+        hw = self.project("override", items)
         code, result, _ = self.run_access(hw, *self.parts_args())
-        self.assertEqual(code, 1)
-        self.assertEqual(self.outcomes(result)["assembly.access@op:fasten-cover"], "unknown")
-        self.assertEqual(result["result"], "unknown")
-        unknown = next(f for f in result["findings"] if f["code"] == "assembly.access_unknown")
-        self.assertIn("is a name only", unknown["uncertainty"])
+        self.assertEqual((code, self.outcomes(result)["assembly.access@op:fasten-cover"]), (1, "fail"))
+        routes = [p["route"] for p in result["detail"]["paths"]["fasten-cover"]]
+        self.assertEqual(routes, ["straight_default", "approach"])
+
+    def test_a_hand_step_is_checked_with_the_hand_and_a_bench_step_is_not_applicable(self) -> None:
+        items = self.valid_order()
+        items[3]["tools"] = ["by hand"]
+        items.append({"id": "inspect-bracket", "kind": "inspect", "part": "TST-0105", "tools": ["by eye", "on the bench"],
+                      "acceptance": {"kind": "inspected", "features": ["bracket_foot"]}})
+        hw = self.project("hand", items)
+        code, result, stderr = self.run_access(hw, *self.parts_args())
+        self.assert_schema_valid(result)
+        outcomes = self.outcomes(result)
+        self.assertEqual(outcomes["assembly.access@op:mount-bracket"], "pass")
+        self.assertEqual(outcomes["assembly.access@op:inspect-bracket"], "not_applicable")
+        self.assertEqual((code, result["result"]), (0, "pass"), stderr)
+        hand = next(p for p in result["detail"]["paths"]["mount-bracket"] if p["route"] == "standard_envelope")
+        self.assertEqual((hand["envelope"]["kind"], hand["status"]), ("hand", "clear"))
+
+    def test_an_unrecognised_tool_name_is_a_note_not_an_unknown_obligation(self) -> None:
+        items = self.valid_order()
+        del items[2]["tool_access"]
+        items[2]["tools"] = ["frobnicator"]
+        hw = self.project("note", items)
+        code, result, _ = self.run_access(hw, *self.parts_args())
+        row = next(r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:fasten-cover")
+        self.assertEqual((code, row["outcome"]), (0, "pass"))
+        self.assertIn("frobnicator", row["uncertainty"])
+        self.assertNotIn("assembly.access_unknown", {f["code"] for f in result["findings"]})
+        self.assertTrue(any("frobnicator" in note for note in result["detail"]["notes"]["fasten-cover"]))
 
     def test_a_tool_free_hold_is_not_applicable_and_a_declared_tool_on_a_hold_is_checked(self) -> None:
         items = operations("blocked_socket.yaml", self.socket_sha)
