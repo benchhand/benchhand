@@ -305,11 +305,14 @@ class OperationAccess:
     paths: list[Travel] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold)
+    advisory: list[str] = field(default_factory=list)  # notes on tools no check measures (assembly_operations.hold_reach)
 
     @property
     def outcome(self) -> str:
         if self.not_applicable is not None:
             return "not_applicable"
+        if self.advisory and not self.paths and not self.unknown:
+            return "not_assessed"  # D37: never a pass, and it blocks nothing
         if any(p.status == "collision" for p in self.paths):
             return "fail"
         if self.unknown or any(p.status != "clear" for p in self.paths) or not self.paths:
@@ -341,7 +344,12 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
         if request.not_applicable is not None:
             plans.append(OperationAccess(op, not_applicable=request.not_applicable))
             continue
-        entry = OperationAccess(op, unknown=list(request.unknown))
+        advisory = [f"tool {name!r} has no cited envelope solid: check by hand that it reaches {op.part}"
+                    for name in request.advisory]
+        entry = OperationAccess(op, unknown=list(request.unknown), advisory=advisory)
+        if not request.tools and advisory:
+            plans.append(entry)
+            continue
         frame = request.frame
         if frame not in world:
             entry.unknown.append(f"{op.id}: {frame} has no geometry or placement")
@@ -502,6 +510,10 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
         row["findings"] = mine
     if entry.outcome == "unknown":
         row["uncertainty"] = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
+    elif entry.advisory:
+        row["uncertainty"] = "; ".join(entry.advisory)
+    if entry.outcome == "not_assessed":
+        row["reason"] = "no_capability_profile"
     return row
 
 

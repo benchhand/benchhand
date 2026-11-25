@@ -184,12 +184,6 @@ class AssemblyOperation:
         return self.acceptance in GEOMETRIC_ACCEPTANCE
 
     @property
-    def reaches_nothing(self) -> bool:
-        """Whether `assembly.access` is not applicable: a hold moves no part, so a tool-free hold reaches nothing.
-        A hold that names a tool still has that tool's reach checked."""
-        return self.kind == "hold" and not self.tools
-
-    @property
     def tool_names(self) -> tuple[str, ...]:
         return tuple(tool.name for tool in self.tools)
 
@@ -898,6 +892,16 @@ class AccessRequest:
     path: tuple[Vec, ...] | None = None
     unit: frozenset[str] = frozenset()
     not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold); None when access applies
+    advisory: tuple[str, ...] = ()  # names of tools access cannot measure and never blocks on (see hold_reach)
+
+
+def hold_reach(op: AssemblyOperation) -> tuple[tuple[Tool, ...], tuple[str, ...]]:
+    """(the tools of a hold whose reach access measures, the names of the others, which access only advises on). A
+    hold moves no part, so only a tool reaches anything: one with a cited STEP envelope solid is measured, and any
+    other is a note for the person that never blocks. The seam for #336: a tool its shipped envelopes recognise moves
+    from the advised names to the measured tools."""
+    measured = tuple(tool for tool in op.tools if tool.envelope_artifact is not None)
+    return measured, tuple(tool.name for tool in op.tools if tool.envelope_artifact is None)
 
 
 def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozenset[str], str]:
@@ -923,13 +927,14 @@ def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozens
 
 
 def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRequest, ...]:
-    """One AccessRequest per operation, from the declared sequence (see `sequence`). A tool-free hold reaches
-    nothing: its request carries the not-applicable reason and no obstacles."""
+    """One AccessRequest per operation, from the declared sequence (see `sequence`). A hold's tools follow
+    `hold_reach`; a tool-free hold reaches nothing, so its request carries the not-applicable reason."""
     state = sequence(operations, inventory)
     requests = []
     for step in state.steps:
         op = step.operation
-        if op.reaches_nothing:
+        tools, advisory = hold_reach(op) if op.kind == "hold" else (op.tools, ())
+        if op.kind == "hold" and not op.tools:
             requests.append(AccessRequest(op, step.part, None, step.part, None, False, frozenset(), frozenset(), (), (),
                                           not_applicable=f"{op.id}: a hold moves no part and names no tool, so it "
                                                          "reaches nothing"))
@@ -940,7 +945,7 @@ def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRe
             unknown.append(f"{op.id} has no direction: its part path is unknown")
         if op.id in state.unresolved:
             unknown.append(state.unresolved[op.id])
-        for tool in op.tools:
+        for tool in tools:
             if not tool.declared:
                 unknown.append(f"tool {tool.name!r} is a name only: its reach and envelope are unknown")
                 continue
@@ -954,8 +959,8 @@ def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRe
         path_obstacles = frozenset(after - moved - ({step.into} if step.into else set()))
         tool_obstacles = frozenset(after - moved)
         requests.append(AccessRequest(op, operated, operated if travels else None, step.into or operated,
-                                      op.direction, op.removes, path_obstacles, tool_obstacles, op.tools, tuple(unknown),
-                                      op.path, unit))
+                                      op.direction, op.removes, path_obstacles, tool_obstacles, tools, tuple(unknown),
+                                      op.path, unit, advisory=advisory))
     return tuple(requests)
 
 
