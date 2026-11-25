@@ -656,8 +656,7 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   recheck=[f"process.{kind}.geometry", "route.operation_plan"], feature=feature))
             parts.append((FAIL, f"{feature} has no finishing operation"))
             continue
-        # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
-        cal = ctx.calibrated(characteristic, orientation=orientation if oriented else None)
+        cal = ctx.governing(characteristic, orientation=orientation if oriented else None)
         limits, unsupported = _diameter_limits(ctx, surface)
         if not cal.known:
             findings.append(Draft(f"process.{kind}.hole_uncalibrated", "major", UNKNOWN, length(hole["diameter_mm"]),
@@ -684,8 +683,8 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
         if broken is not None:
             findings.append(Draft(f"process.{kind}.hole_fit", "major", FAIL,
                                   {"lower": round(made[0], 6), "upper": round(made[1], 6), "units": "mm"},
-                                  broken, g.method("bore recognition plus calibrated deviation"),
-                                  f"calibration {cal.calibration.id} scatter{'; ' + HOLE_CLASSES[orientation] if oriented else ''}",
+                                  broken, g.method(f"bore recognition plus {cal.status} deviation"),
+                                  f"{cal.basis} scatter{'; ' + HOLE_CLASSES[orientation] if oriented else ''}",
                                   f"the as-made {surface.role} {feature} cannot hold its stated diameter limits",
                                   remedy=ctx.remedy(f"ream or machine {feature} to size, or compensate the model and re-calibrate",
                                                     f"ream or machine {feature} to size, or compensate the model"),
@@ -695,7 +694,9 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
         elif unsupported:  # no miss on the criteria judged, but another cannot be: open, never a pass
             parts.append((UNKNOWN, f"{feature} diameter criterion with operator {', '.join(unsupported)} is not judged"))
         else:
-            parts.append((PASS, f"{feature} within its limits with the calibrated {characteristic}"))
+            parts.append(ctx.settle(cal, f"{feature} within its limits with the {cal.status} {characteristic}", findings,
+                                    check="hole", measured={"lower": round(made[0], 6), "upper": round(made[1], 6), "units": "mm"},
+                                    criterion=cal.criterion(characteristic), method=g.method("bore recognition"), feature=feature))
     return parts
 
 
