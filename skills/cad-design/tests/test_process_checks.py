@@ -1107,6 +1107,24 @@ class PurchasedIdentityTests(Checks):
 
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class ExistingEquipmentTests(Checks):
+    """Pre-existing equipment the product mounts onto is outside the product: no process or purchase check runs on it."""
+
+    def test_existing_equipment_gets_no_outcome(self) -> None:
+        facts = {"identity": known("TST item"), "specification": known("TST spec"),
+                 "ratings": known("TST rating", "supplier_typical", [datasheet("TST item")]),
+                 "availability": known("TST stock item")}
+        clamp = part("TST-0901", [FX.operation("buy", "purchased", purchase=facts)], process="purchased", material=None,
+                     make_buy="buy", procurement={"mode": "catalog", "designation": "ISO 4762 M5x20"})
+        clamp["intent"]["material_profile"] = FX.not_applicable("catalogue item")
+        result = self.assess(FX.record(parts=[clamp, FX.existing_part("TST-0909")],
+                                       interfaces=[FX.interface("IF-001", "TST-0901", "TST-0909")],
+                                       capabilities=[], materials=materials()))
+        self.assertIn("purchase.mounting@TST-0901/buy", [o.id for o in result.expected])
+        self.assertEqual([o["obligation"] for o in result.outcomes if "TST-0909" in o["obligation"]], [])
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
 class OpticalRouteTests(Checks):
     """Decision 2: an optical requirement eliminates FDM and resin (see-through FDM is not a thing); a purchased
     transparent part needs traceable optical criteria, and cut stock must be an identified grade with a sourced

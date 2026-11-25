@@ -266,6 +266,9 @@ WALL_PARTS = {
     "TST-0412": ("process: purchased\nmake_buy: buy\nform_class: plate\n", PLATE_08),
     "TST-0413": ("process: fdm\nmake_buy: buy\nform_class: plate\n", PLATE_08),
     "TST-0414": ("process: cnc\nmake_buy: make\nform_class: plate\n", PLATE_08),
+    "TST-0419": ("process: fdm\nmake_buy: existing\nform_class: plate\n", PLATE_08),
+    # A solid cube: block-like and wall-scanned if the existing skip did not apply.
+    "TST-0420": ("process: fdm\nmake_buy: existing\n", "cq.Workplane().box(20, 20, 20)"),
     "TST-0415": (FDM_MADE + "form_class: plate\n",
                  "cq.Workplane().box(110, 110, 3).faces('>Z').workplane().rarray(10, 10, 10, 10).hole(4)"),
     # A prism with a 30-degree edge: its tip is a wedge, not a wall; the end caps are 10 mm apart.
@@ -364,6 +367,13 @@ class WallScanTests(unittest.TestCase):
                 self.assertEqual(self.wall(pn), {"required_mm": None})
                 self.assertEqual([f for f in self.report["findings"] if f["part"] == pn], [])
 
+    def test_existing_equipment_has_no_form_check(self) -> None:
+        for pn in ("TST-0419", "TST-0420"):
+            with self.subTest(part=pn):
+                self.assertEqual(self.report["parts"][pn]["process"], "existing")
+                self.assertEqual(self.wall(pn), {"required_mm": None})
+                self.assertEqual([f for f in self.report["findings"] if f["part"] == pn], [])
+
     def test_plate_with_100_holes_passes_within_its_time_budget(self) -> None:
         wall = self.wall("TST-0415")
         self.assert_passes("TST-0415", 3.0)
@@ -382,6 +392,27 @@ class WallScanTests(unittest.TestCase):
                 self.assertEqual(wall["shallow_thickness_mm"] is None, wall["shallow"] == 0, wall)
                 self.assertEqual(wall["shallow_location_mm"] is None, wall["shallow"] == 0, wall)
                 self.assertGreaterEqual(wall["seconds"], 0.0)
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
+class ExistingJointTests(unittest.TestCase):
+    """A joint endpoint on existing equipment mates through whichever cylinder it has, a bore or a shank."""
+
+    def test_existing_shaft_shank_in_a_product_bore_passes_and_a_missing_cylinder_fails(self) -> None:
+        existing = "process: fdm\nmake_buy: existing\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            hw, parts_dir = build_parts(Path(tmp), {
+                "TST-0501": (FDM_MADE + "form_class: frame\n", "cq.Workplane().box(20, 20, 10).faces('>Z').workplane().hole(10)"),
+                "TST-0502": (existing, "cq.Workplane().cylinder(30, 5)"),
+                "TST-0503": (existing, "cq.Workplane().box(20, 20, 20)")})
+            joint = "  - {{id: {}, type: revolute, parent: TST-0501, child: {}, axis: [0, 0, 1], origin: [0, 0, 0], " \
+                    "min: -10, max: 10, nominal: 0}}\n"
+            (hw / "assembly.yaml").write_text("joints:\n" + joint.format("J-001", "TST-0502")
+                                              + joint.format("J-002", "TST-0503"), encoding="utf-8")
+            code, report = form_check(parts_dir, "F2", hw)
+        missing = [(f["joint"], f["part"]) for f in report["findings"] if f["check"] == "joint_bore_missing"]
+        self.assertEqual((code, missing), (1, [("J-002", "TST-0503")]))
+        self.assertEqual(report["joints"]["J-001"]["parts"]["TST-0502"]["kind"], "shank")
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")

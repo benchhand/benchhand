@@ -870,6 +870,40 @@ def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
     return record
 
 
+def _part_number(inventory: assembly_data.Inventory | None, ref: Any) -> Any:
+    """The part number `ref` names: an @occurrence resolves through the assembly inventory; anything else is as written."""
+    if inventory is not None and isinstance(ref, str) and ref.startswith("@"):
+        try:
+            return inventory.resolve(ref).pn
+        except assembly_data.UnresolvedReference:
+            return ref
+    return ref
+
+
+def check_existing(hw: Path, record: Any, inventory: assembly_data.Inventory | None, findings: list[dict[str, Any]]) -> None:
+    """Existing equipment (make_buy existing) is what the product mounts onto: an interface joins it to a product
+    part (existing.interface_missing), and an assembly operation may install a part into it but never installs it
+    (existing.installed). An interface end or operation part named by @occurrence counts as its part number."""
+    if record.version != intent.RECORD_VERSION:
+        return
+    part_number = functools.partial(_part_number, inventory)
+    existing = {pn for pn, part in record.parts.items() if part.existing}
+    product = set(record.parts) - existing
+    for pn in sorted(existing):
+        ends = {part_number(record.interfaces[ident].raw.get(end))
+                for ident in intent.interfaces_of(record, pn, part_number) for end in ("from", "to")}
+        if not ends & product:
+            findings.append(finding(str(hw / "parts" / pn / "part.yaml"),
+                                    f"{pn} is existing equipment but no interface joins it to a product part; record the "
+                                    "interface the design mounts onto it by", code="existing.interface_missing"))
+    operations = record.assembly_operations
+    for index, operation in enumerate(() if intent.is_fact(operations) else operations):
+        if part_number(operation.get("part")) in existing:
+            findings.append(finding(f"{hw / 'assembly.yaml'}#/operations/{index}",
+                                    f"{operation.get('id')}: {operation['part']} is existing equipment, so no operation "
+                                    "installs it; name it as the operation's into", code="existing.installed"))
+
+
 def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]]) -> None:
     """A record version 2 freeze anchors its acceptance evidence: flow.frozen.evidence_sha256 is the
     acceptance digest (evidence.py) of the frozen version's inventory as it stands now. A changed ledger,
@@ -1162,6 +1196,7 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
         check_flow(documents["product.yaml"], str(hw / "product.yaml"), hw, part_records, findings)
     check_flow_profile(hw, documents, valid, part_records, findings)
     record = check_manufacturing_intent(hw, documents, part_records, verification, findings, today)
+    check_existing(hw, record, inventory, findings)
     check_acceptance_anchor(hw, record, findings)
     check_design_rules(hw, documents, valid, part_records, inventory, findings)
     check_layout(hw, documents.get("product.yaml"), part_records, findings)

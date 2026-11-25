@@ -361,7 +361,7 @@ class AssemblyState:
     floating: frozenset[str] = frozenset()  # with an inventory: the other occurrences no operation installs
 
 
-def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
+def sequence(operations: Operations, inventory: Any = None, existing: frozenset[str] = frozenset()) -> AssemblyState:
     """The assembly state before each operation, in record order. With an assembly_data Inventory,
     references resolve to occurrence ids and every occurrence counts; without one, the raw references
     stand for themselves and the base is every referenced part no operation installs."""
@@ -387,9 +387,11 @@ def sequence(operations: Operations, inventory: Any = None) -> AssemblyState:
     # The record names no base. The first uninstalled occurrence the sequence names is the base, or the first
     # occurrence of the inventory when the sequence names none (an empty known sequence). The rest float.
     ground = None
+    # existing equipment (these part numbers) is present from the start: never the product's base, never floating
+    preexisting = frozenset(o.id for o in inventory.occurrences if o.pn in existing) if inventory is not None else frozenset()
     if inventory is not None:
-        ground = next((ref for ref in (*named, *inventory.ids) if ref in base), None)
-    floating = frozenset(base - {ground}) if inventory is not None else frozenset()
+        ground = next((ref for ref in (*named, *inventory.ids) if ref in base - preexisting), None)
+    floating = frozenset(base - {ground} - preexisting) if inventory is not None else frozenset()
     present = set(base)
     closed: dict[str, str] = {}
     steps = []
@@ -457,14 +459,15 @@ class Report:
         raise KeyError(obligation)
 
 
-def check_order(operations: Operations, inventory: Any = None) -> Report:
+def check_order(operations: Operations, inventory: Any = None, existing: frozenset[str] = frozenset()) -> Report:
     """`assembly.order@op:<id>` for every operation (or `intent.assembly_operations@product` unknown when the
-    operations are unknown): pass when the declared sequence is possible, else fail with its findings."""
+    operations are unknown): pass when the declared sequence is possible, else fail with its findings. `existing`
+    names the part numbers of existing equipment, present from the start and never the product's base."""
     if operations.unknown is not None:
         return Report(({"obligation": "intent.assembly_operations@product", "outcome": "unknown", "level": "process_planned",
                         "method": ORDER_METHOD, "coverage": "no operations are recorded",
                         "uncertainty": operations.unknown},), ())
-    state = sequence(operations, inventory)
+    state = sequence(operations, inventory, existing)
     position = {op.id: op.index for op in operations.items}
     installer: dict[str, list[AssemblyOperation]] = {}
     for step in state.steps:

@@ -279,6 +279,7 @@ class _Record:
         self.interfaces = {if_id: plain(interface.raw) for if_id, interface in record.interfaces.items()}
         operations = record.assembly_operations
         self.operations = [] if mi.is_fact(operations) else [plain(op) for op in operations]
+        self._inventory: Any = None
 
     # -- part-level values --
     def intent(self, pn: str) -> Mapping[str, Any]:
@@ -331,14 +332,16 @@ class _Record:
                 {"id": op.get("id"), "post_processing": op.get("post_processing"), "allowances": op.get("allowances")}
                 for op in route]},
             "geometry": {"model": self.geometry.get(pn), "manufacture": part.get("manufacture"),
-                         "components": intent.get("components"), "critical_surfaces": intent.get("critical_surfaces")},
+                         "components": intent.get("components"), "critical_surfaces": intent.get("critical_surfaces"),
+                         **({"existing": part["existing"]["dimensions"]} if _get(part, "existing", "dimensions") else {})},
             "appearance": {"color": intent.get("color")},
             "interface": {"interfaces": [self.interfaces[i] for i in sorted(self.interfaces_of(pn))],
                           "operations": [op for op in self.operations if pn in (op.get("part"), op.get("into"))],
                           "datums": _get(part, "drawing", "datum_features")},
             "criterion": {"requirements": criteria, "policy": _get(self.use_case, "evidence_policy")},
         }
-        sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria])
+        sources = _artifacts([values["material"], values["capability"], part.get("procurement"), criteria,
+                              _get(part, "existing", "dimensions")])
         values["source"] = {path: self.record.artifacts.get(path, sha) for path, sha in sorted(sources.items())}
         digests = getattr(self.record, "guideline_digests", None) or {}
         declared = [intent.get("material_profile"), *(c.get("material_profile") for c in intent.get("components") or ()
@@ -393,6 +396,21 @@ class _Record:
                 found.add(if_id)
         return found
 
+    def part_of(self, ref: Any) -> Any:
+        """The PN an interface endpoint names: an `@id` resolved through the assembly inventory, else `ref` itself."""
+        if not (isinstance(ref, str) and ref.startswith("@")):
+            return ref
+        if self._inventory is None:
+            frames = {pn: part.get("model_frame", assembly_data.DEFAULT_FRAME) for pn, part in self.parts.items()}
+            try:
+                self._inventory = assembly_data.normalize(plain(self.record.assembly_inventory), frames)
+            except assembly_data.InventoryError:
+                return ref
+        try:
+            return self._inventory.resolve(ref).pn
+        except assembly_data.UnresolvedReference:
+            return ref
+
     def requirements_for(self, pn: str) -> list[Any]:
         intent = self.intent(pn)
         ids: set[str] = set()
@@ -413,7 +431,8 @@ class _Record:
         """The parts whose fingerprints an interface, operation, requirement or the product depends on."""
         if key in self.interfaces:
             interface = self.interfaces[key]
-            return sorted({p for p in (interface.get("from"), interface.get("to"), *(interface.get("pair") or ()))
+            return sorted({p for p in map(self.part_of, (interface.get("from"), interface.get("to"),
+                                                         *(interface.get("pair") or ())))
                            if isinstance(p, str) and p in self.parts})
         if key.startswith("op:"):
             op: Mapping[str, Any] = next((o for o in self.operations if o.get("id") == key[3:]), {})

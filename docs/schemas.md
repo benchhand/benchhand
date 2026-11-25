@@ -19,7 +19,7 @@ schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 s
 schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
 schema-sha256 373d95bcca809d496fad780d25ae37088c76685d4bc68c3b2392106c395a15ce skills/cad-record/schemas/manufacturing.schema.json
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
-schema-sha256 8b87deeeb0a24e607de8cf442708787bf4a0d40ddbf1274231705e9f73818ca1 skills/cad-record/schemas/part.schema.json
+schema-sha256 050bcaa9f4434f53535d13d127f7aa52bc9c772416535aee36518bbd22e75426 skills/cad-record/schemas/part.schema.json
 schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
 schema-sha256 94a94ac92a3a0c25ce67d7eecda0e39d90d8fb8392cf497c7745591eb308d1da skills/cad-record/schemas/release-manifest.schema.json
 schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
@@ -5100,7 +5100,7 @@ Source: schema root
 | `process` | `ManufacturingPrimaryProcess` | yes |  | The scalar label of the primary process; intent.route is the authority for the operations |
 | `finish` | `str` | yes |  |  |
 | `mass_target` | `float \| None` | yes |  | grams |
-| `make_buy` | `Literal["make", "buy"]` | yes |  |  |
+| `make_buy` | `Literal["make", "buy", "existing"]` | yes |  | Sourcing authority. existing marks equipment the product mounts onto or interfaces with that is not part of the device: it needs no SKU, no purchase and no manufacture, and is not built |
 | `supplier` | `str \| None` | no |  |  |
 | `decisions` | `list[str]` | no |  |  |
 | `model_frame` | `Literal["assembly_zero", "part_local"]` | no |  | Frame of model.py's geometry: assembly_zero (default) is assembly coordinates at the zero joint pose, one identity-placed occurrence only; part_local is the definition's own origin and axes, placed by each occurrence |
@@ -5111,10 +5111,12 @@ Source: schema root
 | `drawing` | `DrawingPartDrawing` | no |  |  |
 | `manufacture` | `PartManufacture` | no |  | How a custom-made part is manufactured relative to its installed definition (cad-record layout.json manufacturing). Absent: relationship same, compared to 1e-9 relative volume, default mesh. |
 | `intent` | `PartIntent` | no |  |  |
+| `existing` | `PartExisting` | no |  |  |
 
 Constraints not expressed by the type:
 
 - additionalProperties: false
+- if {"properties":{"make_buy":{"const":"existing"}},"required":["make_buy"]} then {"required":["existing"],"not":{"anyOf":[{"required":["procurement"]},{"required":["supplier"]},{"required":["manufacture"]},{"required":["intent"]}]}} else {"not":{"required":["existing"]}}
 - `PN`: pattern: "^[A-Z]{2,5}-[0-9]{4}$"
 - `rev`: pattern: "^(X[1-9][0-9]*\|[A-HJ-NPRTUVWY])$"
 - `title`: minLength: 1
@@ -5247,6 +5249,60 @@ Constraints not expressed by the type:
 - `recommended_hole`: exclusiveMinimum: 0
 - `material`: minLength: 1
 - `finish`: minLength: 1
+
+### PartExisting
+
+Source: `/$defs/existing`
+
+Pre-existing equipment (make_buy existing): where its interface dimensions come from. dimensions is a known range (lower and upper, never a single value) that is measured, from a standard, declared by the user, or assumed under a named assumption
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `dimensions` | `PartExistingDimensions` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### PartExistingDimensions
+
+Source: `/$defs/existing/properties/dimensions`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `Literal["known"]` | yes |  |  |
+| `value` | `PartExistingDimensionsAllOf1Value` | yes |  |  |
+| `sources` | `ManufacturingSources` | yes |  |  |
+| `basis` | `Literal["measured", "standard", "user_declared", "assumed"]` | yes |  |  |
+| `uncertainty` | `ManufacturingUncertainty` | no |  |  |
+| `conditions` | `ManufacturingText` | no |  |  |
+| `assumption` | `ManufacturingAssumptionId` | no |  |  |
+| `derivation` | `ManufacturingText` | no |  | how an allowable was derived from its sources |
+| `decision` | `ManufacturingDecision` | no |  |  |
+| `note` | `ManufacturingText` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- if {"properties":{"basis":{"const":"estimate"}}} then {"required":["uncertainty"]}
+- if {"properties":{"basis":{"const":"assumed"}}} then {"required":["assumption"]}
+- if {"properties":{"basis":{"const":"allowable"}}} then {"required":["conditions","derivation"]}
+
+### PartExistingDimensionsAllOf1Value
+
+Source: `/$defs/existing/properties/dimensions/allOf/1/properties/value`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `value` | `float` | no |  |  |
+| `lower` | `float` | yes |  |  |
+| `upper` | `float` | yes |  |  |
+| `units` | `ManufacturingUnits` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- oneOf: [{"required":["value"],"not":{"anyOf":[{"required":["lower"]},{"required":["upper"]}]}},{"required":["lower","upper"],"not":{"required":["value"]}}]
 
 ### PartInspection
 

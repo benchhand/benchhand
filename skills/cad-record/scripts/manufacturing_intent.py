@@ -29,7 +29,7 @@ import hashlib
 import math
 import re
 import types
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
@@ -673,15 +673,20 @@ class Part:
     title: str | None
     material: str | None  # the legacy declaration, never a property source
     process: str | None  # the scalar primary-process label
-    sourcing: str  # make, made_to_drawing or catalogue
+    sourcing: str  # make, made_to_drawing, catalogue or existing
     transparency: str | None
     intent: PartIntent
     raw: Mapping[str, Any]
 
     @property
     def made(self) -> bool:
-        """Custom-made (make or made_to_drawing); a catalogue buy is not."""
+        """Custom-made (make or made_to_drawing); a catalogue buy is not, nor is existing equipment."""
         return self.sourcing in ("make", "made_to_drawing")
+
+    @property
+    def existing(self) -> bool:
+        """Pre-existing equipment the product mounts onto: outside the product, never bought or made."""
+        return self.sourcing == "existing"
 
 
 @dataclass(frozen=True)
@@ -1508,7 +1513,8 @@ class _Reader:
                 self.problem(INCOMPLETE, "hw/requirements.yaml", "", f"record version 2 needs {', '.join(missing)} "
                              "(empty lists when there are none)")
         for rel in sorted(self.documents):
-            if re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and (part := self.doc(rel)) is not None and "intent" not in part:
+            if (re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and (part := self.doc(rel)) is not None and "intent" not in part
+                    and part.get("make_buy") != "existing"):  # existing equipment is outside the product and carries no intent
                 self.problem(INCOMPLETE, f"hw/{rel}", "", "record version 2 needs intent; record unknowns explicitly")
         for index, item in enumerate((self.doc("interfaces.yaml") or {}).get("interfaces") or ()):
             if isinstance(item, Mapping) and "functional" not in item:
@@ -1680,7 +1686,7 @@ class _Reader:
     def part_fields(self, pn: str, data: Mapping[str, Any], intent: PartIntent) -> Part:
         make_buy = data.get("make_buy")
         procurement = _mapping(data.get("procurement"))
-        sourcing = ("make" if make_buy == "make" else
+        sourcing = ("make" if make_buy == "make" else "existing" if make_buy == "existing" else
                     "made_to_drawing" if procurement.get("mode") == "made_to_drawing" else "catalogue")
         return Part(pn, data.get("title"), data.get("material"), data.get("process"), sourcing,
                     data.get("transparency"), intent, freeze(data))
@@ -1700,6 +1706,8 @@ class _Reader:
             intent = self.intent(pn, intent_data, path) if isinstance(intent_data, Mapping) else \
                 PartIntent.unknown("part.yaml has no intent")
             part = self.part_fields(pn, data, intent)
+            if part.existing:
+                self.fact(_mapping(data.get("existing")).get("dimensions"), path, "existing/dimensions")
             self.check_route_sourcing(part, path)
             found[part.pn] = part
         return types.MappingProxyType(found)
@@ -1917,8 +1925,8 @@ class _Reader:
 
     def check_route_sourcing(self, part: Part, path: str) -> None:
         route = part.intent.route
-        if is_fact(route):
-            return
+        if is_fact(route) or part.existing:
+            return  # existing equipment has no route; the part schema refuses one
         kinds = [op.kind for op in route]
         if part.sourcing == "catalogue":
             made = sorted({str(k) for k in kinds if k not in ("purchased", "inspection")})
@@ -2185,11 +2193,29 @@ class _Reader:
         return MaterialProfile(ident, int(item.get("revision", 0)), level, item.get("family"), grade, form,
                                state.get("conditioning", "unknown"), typical_only, tuple(properties), freeze(item))
 
+    def existing_pns(self) -> frozenset[str]:
+        """The part numbers whose part.yaml records make_buy existing."""
+        found = set()
+        for rel in self.documents:
+            if re.fullmatch(r"parts/[^/]+/part\.yaml", rel) and isinstance(data := self.doc(rel), Mapping):
+                if data.get("make_buy") == "existing" and isinstance(data.get("PN"), str):
+                    found.add(data["PN"])
+        return frozenset(found)
+
+    def candidate_part_profiles(self, part: Mapping[str, Any], path: str, where: str) -> None:
+        """The material, capability and purchase references of one selection candidate part entry."""
+        self.id_or_fact(part.get("material_profile"), "material", path, f"{where}/material_profile")
+        for j, step in enumerate(part.get("route") or ()):
+            if isinstance(step, Mapping):
+                self.id_or_fact(step.get("capability"), "capability", path, f"{where}/route/{j}/capability")
+                self.purchase(step.get("purchase"), path, f"{where}/route/{j}/purchase")
+
     def selection(self) -> Selection:
         path = "hw/manufacturing/selection.yaml"
         data = self.doc("manufacturing/selection.yaml") or {}
         candidates: dict[str, Mapping[str, Any]] = {}
         proposed: dict[str, Mapping[str, ProposedPart]] = {}
+        existing = self.existing_pns()
         for index, item in enumerate(data.get("candidates") or ()):
             if not isinstance(item, Mapping):
                 continue
@@ -2212,11 +2238,9 @@ class _Reader:
                                                       proposal.get("reason"), entries, proposal.get("transparency"))
                 else:
                     self.ref("part", part.get("PN"), path, where)
-                self.id_or_fact(part.get("material_profile"), "material", path, f"{where}/material_profile")
-                for j, step in enumerate(part.get("route") or ()):
-                    if isinstance(step, Mapping):
-                        self.id_or_fact(step.get("capability"), "capability", path, f"{where}/route/{j}/capability")
-                        self.purchase(step.get("purchase"), path, f"{where}/route/{j}/purchase")
+                pn = part.get("PN")
+                if not (isinstance(pn, str) and pn in existing):  # selection drops an existing-equipment entry unread
+                    self.candidate_part_profiles(part, path, where)
             if introduced and isinstance(ident, str):
                 proposed[ident] = types.MappingProxyType(introduced)
             for interface in item.get("interfaces") or ():
@@ -2389,7 +2413,7 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
 @dataclass(frozen=True)
 class PartRoute:
     pn: str
-    sourcing: str  # make, made_to_drawing or catalogue
+    sourcing: str  # make, made_to_drawing, catalogue or existing
     operations: tuple[Operation, ...]  # route order; empty while the route is unknown
     # An id is None only for an operation or component a schema-invalid record leaves unnamed.
     predecessors: Mapping[str | None, tuple[str | None, ...]]  # operation id -> the operations it depends on
@@ -2639,6 +2663,14 @@ def obligation_anchor(subject: Mapping[str, Any]) -> str:
     return "product"
 
 
+def interfaces_of(record: Record, pn: str, part_number: Callable[[Any], Any] | None = None) -> tuple[str, ...]:
+    """The ids of the interfaces that name part number `pn` as their from or to end, in record order. `part_number`
+    maps an end to the part number it names (an @occurrence to its PN); without it an end is compared as written."""
+    resolve = part_number or (lambda ref: ref)
+    return tuple(ident for ident, item in record.interfaces.items()
+                 if pn in (resolve(item.raw.get("from")), resolve(item.raw.get("to"))))
+
+
 def required_checks(record: Record) -> tuple[Obligation, ...]:
     """Every check obligation the record implies, enumerated before any producer runs, sorted by id:
     each made component x route operation x its kind's check families; purchase checks for bought items;
@@ -2699,6 +2731,8 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
 
 
 def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
+    if part.existing:
+        return  # outside the product: no route, purchase or process obligations, and no intent to complete
     intent = part.intent
     made = part.made
     base = {"PN": pn}

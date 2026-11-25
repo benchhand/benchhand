@@ -228,6 +228,16 @@ def part(pn: str, title: str = "TST part", *, process: str = "fdm", make_buy: st
     return data
 
 
+def existing_part(pn: str, title: str = "TST existing equipment", **extra: Any) -> dict[str, Any]:
+    """Pre-existing equipment the product mounts onto: dimensions as a user-declared range, no supplier,
+    procurement, manufacture or intent."""
+    data: dict[str, Any] = {"PN": pn, "rev": "X1", "title": title, "material": "TST existing material", "process": "other",
+                            "finish": "as found", "mass_target": None, "make_buy": "existing",
+                            "existing": {"dimensions": known(quantity(lower=29.8, upper=30.2), "user_declared")}}
+    data.update(extra)
+    return data
+
+
 def interface(ident: str, frm: str, to: str, kind: str = "mounting", functional: dict[str, Any] | None = None,
               **extra: Any) -> dict[str, Any]:
     data = {"id": ident, "from": frm, "to": to, "type": kind, "description": "TST fixture interface",

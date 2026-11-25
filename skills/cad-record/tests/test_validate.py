@@ -19,6 +19,7 @@ import tempfile
 import unittest
 import yaml
 from pathlib import Path
+from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import result_payload  # noqa: E402
 from decision_fixture import decision_path, write_test_decision  # noqa: E402
@@ -910,6 +911,73 @@ class AssemblyInventory(unittest.TestCase):
         self.assertIsNone(inventory)
         self.assertEqual([(item["path"], item["severity"], item["message"]) for item in findings],
                          [("hw/assembly.yaml", "error", "subassemblies/0 must be a mapping")])
+
+
+class ExistingEquipment(unittest.TestCase):
+    """Pre-existing equipment the product mounts onto: it interfaces with a product part, is never installed, never bought."""
+
+    def findings(self, edit: Any = None) -> list[dict[str, Any]]:
+        from modload import load_module  # noqa: PLC0415 - used by this class alone
+
+        validate = load_module("cad_record_validate", SKILL / "scripts" / "validate.py")
+        documents = fx.tst_record()
+        documents["parts/TST-0009/part.yaml"] = fx.existing_part("TST-0009", "Mount face")
+        documents["assembly.yaml"]["subassemblies"][0]["parts"].append("TST-0009")
+        documents["interfaces.yaml"]["interfaces"].append(fx.interface("IF-009", "TST-0001", "TST-0009"))
+        if edit is not None:
+            edit(documents)
+        temporary = tempfile.TemporaryDirectory(prefix="cad-record-existing-")
+        self.addCleanup(temporary.cleanup)
+        hw = Path(temporary.name) / "project" / "hw"
+        fx.write_record(hw, documents)
+        return [f for f in validate.validate_project(hw.parent) if f["severity"] == "error"]
+
+    def codes(self, edit: Any = None) -> list[str]:
+        return [str(f.get("code")) for f in self.findings(edit) if str(f.get("code")).startswith("existing.")]
+
+    def test_existing_equipment_on_a_product_interface_passes(self) -> None:
+        self.assertEqual(self.codes(), [])
+
+    def test_existing_equipment_needs_an_interface_with_a_product_part(self) -> None:
+        def no_interface(documents: dict[str, Any]) -> None:
+            documents["interfaces.yaml"]["interfaces"].pop()
+
+        def only_other_equipment(documents: dict[str, Any]) -> None:
+            documents["parts/TST-0008/part.yaml"] = fx.existing_part("TST-0008", "Tripod")
+            documents["assembly.yaml"]["subassemblies"][0]["parts"].append("TST-0008")
+            documents["interfaces.yaml"]["interfaces"][-1] = fx.interface("IF-009", "TST-0008", "TST-0009")
+
+        for label, edit, expected in (("no interface", no_interface, ["existing.interface_missing"]),
+                                      ("only other equipment", only_other_equipment,
+                                       ["existing.interface_missing", "existing.interface_missing"])):
+            with self.subTest(label):
+                self.assertEqual(self.codes(edit), expected)
+
+    def test_existing_equipment_receives_a_part_but_is_never_installed(self) -> None:
+        def operation(part: str, into: str) -> Any:
+            return lambda d: d["assembly.yaml"]["operations"].append(
+                {"id": "mount", "kind": "press_fit", "part": part, "into": into, "interface": "IF-009", "direction": [0, 0, -1],
+                 "acceptance": {"kind": "seated", "features": ["bearing_face", "seat_floor"]}})
+
+        self.assertEqual(self.codes(operation("TST-0001", "TST-0009")), [])
+        self.assertEqual(self.codes(operation("TST-0009", "TST-0001")), ["existing.installed"])
+    def test_existing_equipment_named_by_its_occurrence(self) -> None:
+        def placed(documents: dict[str, Any]) -> None:
+            documents["parts/TST-0009/part.yaml"]["model_frame"] = "part_local"
+            documents["assembly.yaml"]["occurrences"] = [{"id": "mount", "PN": "TST-0009"}]
+            group = documents["assembly.yaml"]["subassemblies"][0]
+            group["parts"].remove("TST-0009")
+            group["occurrences"] = ["@mount"]
+            documents["interfaces.yaml"]["interfaces"][-1] = fx.interface("IF-009", "TST-0001", "@mount")
+
+        def installed(documents: dict[str, Any]) -> None:
+            placed(documents)
+            documents["assembly.yaml"]["operations"].append(
+                {"id": "mount", "kind": "press_fit", "part": "@mount", "into": "TST-0001", "interface": "IF-009",
+                 "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["bearing_face", "seat_floor"]}})
+
+        self.assertEqual(self.codes(placed), [])
+        self.assertEqual(self.codes(installed), ["existing.installed"])
 
 
 class SubjectOccurrences(unittest.TestCase):

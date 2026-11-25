@@ -546,7 +546,8 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         raise AccessError(f"{assembly_path}: {error} ({error.code})") from error
     record = intent_module.load_record(record_hw, snapshot=version is not None)
     assembly, chain, definitions = pose.load_inputs(args)
-    order = operations_module.check_order(operations, chain.inventory)
+    order = operations_module.check_order(operations, chain.inventory,
+                                          frozenset(pn for pn, part in record.parts.items() if part.existing))
     outcomes, findings = list(order.outcomes), list(order.findings)
     detail: dict[str, Any] = {"operations": operations_module.summary(operations), "paths": {}, "nominal": {}}
     dependencies = {"assembly_yaml": hashlib.sha256(assembly_path.read_bytes()).hexdigest()}

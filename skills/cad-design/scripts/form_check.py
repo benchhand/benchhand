@@ -72,7 +72,8 @@ Checks (each failure is one `findings` entry):
     joint_bore_missing      F1+: a joint's parent or child has no cylinder face whose
                             axis is parallel to the joint axis and passes within
                             --joint-tol of the joint origin; made parts need a bore
-                            (concave), purchased parts a shank (convex)
+                            (concave), purchased parts a shank (convex), existing
+                            equipment either one
     block_like              F2+, made solid parts only: (axis_planar_fraction >= 0.80 or
                             blend_faces + freeform_faces == 0), with both OBB exemptions
     min_wall                F2+, a process with a minimum (the resolved fdm value, or the override):
@@ -720,15 +721,17 @@ def measure(shape: Any) -> dict[str, Any]:
 
 
 def bore_offset(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: Sequence[float],
-                kind: str) -> dict[str, Any] | None:
-    """The `kind` cylinder (bore or shank) parallel to the joint axis whose line passes closest to the origin."""
+                kind: str | None) -> dict[str, Any] | None:
+    """The `kind` cylinder (bore or shank; None: either) parallel to the joint axis whose line passes closest to the
+    origin."""
     best = None
     for cylinder in cylinders:
-        if ("shank" if cylinder["convex"] else "bore") != kind or _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
+        found = "shank" if cylinder["convex"] else "bore"
+        if kind not in (None, found) or _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
             continue
         offset = _norm(_cross(_sub(origin, cylinder["location"]), cylinder["direction"]))
         if best is None or offset < best["offset_mm"]:
-            best = {"offset_mm": round(offset, 6), "radius": round(cylinder["radius"], 4), "kind": kind}
+            best = {"offset_mm": round(offset, 6), "radius": round(cylinder["radius"], 4), "kind": found}
     return best
 
 
@@ -1342,7 +1345,8 @@ def processes(hw: Path) -> dict[str, str]:
         data = loader.safe_load(record.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("process"), str):
             bought = data.get("make_buy") == "buy"   # made to drawing or catalogue: checked in its bought form
-            found[record.parent.name] = "purchased" if bought else data["process"]
+            existing = data.get("make_buy") == "existing"  # equipment the product mounts onto: never made or bought
+            found[record.parent.name] = "existing" if existing else "purchased" if bought else data["process"]
     return found
 
 
@@ -1396,6 +1400,9 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
                                  "max": READBACK_REL, "kernel_volume_mm3": kernel_v, "step_volume_mm3": volume})
         if level < 2:
             continue
+        if row["process"] == "existing":  # no wall minimum or form heuristic applies to equipment it does not make
+            row["min_wall"] = {"required_mm": None}
+            continue
         limit = wall_limit(pc, record, pn, row["process"], catalog, overrides, args.on)  # None: purchased, or no minimum
         required_wall = limit["required_mm"] if limit is not None else None
         row["min_wall"] = {"required_mm": None}
@@ -1439,12 +1446,14 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
                 rest = (pose.Rigid.from_placement(assembly.inventory.get(oid).placement).inverse()
                         if oid in assembly.inventory else pose.Rigid.identity())
                 axis = pose.Rigid(rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis)
-                kind = "shank" if process.get(pn) == "purchased" else "bore"
+                # Existing equipment is not sourced to a bore or a shank: it mates through whichever it has.
+                sourcing = process.get(pn)
+                kind = "shank" if sourcing == "purchased" else None if sourcing == "existing" else "bore"
                 found = bore_offset(cylinders[pn], axis, rest.apply(joint.origin), kind) if pn in cylinders else None
                 row["parts"][ref] = found
                 if found is None or found["offset_mm"] > args.joint_tol:
-                    findings.append({"check": "joint_bore_missing", "joint": joint.id, "part": ref, "kind": kind,
-                                     "nearest": found, "tol_mm": args.joint_tol})
+                    findings.append({"check": "joint_bore_missing", "joint": joint.id, "part": ref,
+                                     "kind": kind or "bore or shank", "nearest": found, "tol_mm": args.joint_tol})
             joints[joint.id] = row
     for finding in findings:
         finding["blocking"] = finding["check"] in BLOCKING_CHECKS

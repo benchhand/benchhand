@@ -22,7 +22,7 @@
 # schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
 # schema-sha256 373d95bcca809d496fad780d25ae37088c76685d4bc68c3b2392106c395a15ce skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
-# schema-sha256 8b87deeeb0a24e607de8cf442708787bf4a0d40ddbf1274231705e9f73818ca1 skills/cad-record/schemas/part.schema.json
+# schema-sha256 050bcaa9f4434f53535d13d127f7aa52bc9c772416535aee36518bbd22e75426 skills/cad-record/schemas/part.schema.json
 # schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
 # schema-sha256 94a94ac92a3a0c25ce67d7eecda0e39d90d8fb8392cf497c7745591eb308d1da skills/cad-record/schemas/release-manifest.schema.json
 # schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
@@ -367,6 +367,9 @@ __all__ = [
     "PartDesignation",
     "PartDesignationOneOf0",
     "PartDesignationOneOf1",
+    "PartExisting",
+    "PartExistingDimensions",
+    "PartExistingDimensionsAllOf1Value",
     "PartInspection",
     "PartIntent",
     "PartIntentRationale",
@@ -5494,6 +5497,54 @@ class PartIntent(TypedDict):
     rationale: NotRequired[PartIntentRationale]
 
 
+class PartExistingDimensionsAllOf1Value(TypedDict):
+    """Source: skills/cad-record/schemas/part.schema.json#/$defs/existing/properties/dimensions/allOf/1/properties/value
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - oneOf: [{"required":["value"],"not":{"anyOf":[{"required":["lower"]},{"required":["upper"]}]}},{"required":["lower","upper"],"not":{"required":["value"]}}]
+    """
+    value: NotRequired[float]
+    lower: Required[float]
+    upper: Required[float]
+    units: Required[ManufacturingUnits]
+
+
+class PartExistingDimensions(TypedDict):
+    """Source: skills/cad-record/schemas/part.schema.json#/$defs/existing/properties/dimensions
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - if {"properties":{"basis":{"const":"estimate"}}} then {"required":["uncertainty"]}
+    - if {"properties":{"basis":{"const":"assumed"}}} then {"required":["assumption"]}
+    - if {"properties":{"basis":{"const":"allowable"}}} then {"required":["conditions","derivation"]}
+
+    Field notes:
+    - derivation: how an allowable was derived from its sources
+    """
+    status: Required[Literal["known"]]
+    value: Required[PartExistingDimensionsAllOf1Value]
+    sources: Required[ManufacturingSources]
+    basis: Required[Literal["measured", "standard", "user_declared", "assumed"]]
+    uncertainty: NotRequired[ManufacturingUncertainty]
+    conditions: NotRequired[ManufacturingText]
+    assumption: NotRequired[ManufacturingAssumptionId]
+    derivation: NotRequired[ManufacturingText]
+    decision: NotRequired[ManufacturingDecision]
+    note: NotRequired[ManufacturingText]
+
+
+class PartExisting(TypedDict):
+    """Pre-existing equipment (make_buy existing): where its interface dimensions come from. dimensions is a known range (lower and upper, never a single value) that is measured, from a standard, declared by the user, or assumed under a named assumption
+
+    Source: skills/cad-record/schemas/part.schema.json#/$defs/existing
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    dimensions: Required[PartExistingDimensions]
+
+
 class Part(TypedDict):
     """CAD part record
 
@@ -5501,6 +5552,7 @@ class Part(TypedDict):
 
     Not expressible as types (see the schema):
     - additionalProperties: false
+    - if {"properties":{"make_buy":{"const":"existing"}},"required":["make_buy"]} then {"required":["existing"],"not":{"anyOf":[{"required":["procurement"]},{"required":["supplier"]},{"required":["manufacture"]},{"required":["intent"]}]}} else {"not":{"required":["existing"]}}
 
     Field notes:
     - PN: pattern: "^[A-Z]{2,5}-[0-9]{4}$"
@@ -5510,6 +5562,7 @@ class Part(TypedDict):
     - process: The scalar label of the primary process; intent.route is the authority for the operations
     - finish: minLength: 1
     - mass_target: grams; maximum: 10000000; exclusiveMinimum: 0
+    - make_buy: Sourcing authority. existing marks equipment the product mounts onto or interfaces with that is not part of the device: it needs no SKU, no purchase and no manufacture, and is not built
     - supplier: minLength: 1
     - decisions: uniqueItems: true; items.pattern: "^DR-[0-9]{3}$"
     - model_frame: Frame of model.py's geometry: assembly_zero (default) is assembly coordinates at the zero joint pose, one identity-placed occurrence only; part_local is the definition's own origin and axes, placed by each occurrence
@@ -5525,7 +5578,7 @@ class Part(TypedDict):
     process: Required[ManufacturingPrimaryProcess]
     finish: Required[str]
     mass_target: Required[float | None]
-    make_buy: Required[Literal["make", "buy"]]
+    make_buy: Required[Literal["make", "buy", "existing"]]
     supplier: NotRequired[str | None]
     decisions: NotRequired[list[str]]
     model_frame: NotRequired[Literal["assembly_zero", "part_local"]]
@@ -5536,6 +5589,7 @@ class Part(TypedDict):
     drawing: NotRequired[DrawingPartDrawing]
     manufacture: NotRequired[PartManufacture]
     intent: NotRequired[PartIntent]
+    existing: NotRequired[PartExisting]
 
 
 class ProductLicense(TypedDict):

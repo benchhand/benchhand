@@ -139,7 +139,7 @@ def mounting(ctx: Context) -> Result:
     """Mounted: an interface or an operation names the part. A part placed twice or more needs an operation naming
     each occurrence as part or into, since an interface names the part number, not one placement."""
     pn = ctx.pn
-    interfaces = [i for i, item in ctx.record.interfaces.items() if pn in (item.raw.get("from"), item.raw.get("to"))]
+    interfaces = list(ctx.mi.interfaces_of(ctx.record, pn))
     operations = ctx.record.assembly_operations
     occurrence_id, placed = _occurrence_ids(ctx)
     mine = [o.id for o in placed] if len(placed) > 1 else [pn, *(o.id for o in placed)]

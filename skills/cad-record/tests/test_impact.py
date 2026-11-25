@@ -841,6 +841,61 @@ class EvidenceAndFlow(unittest.TestCase):
         self.assertEqual(result.proposed_flow, {"stage": "intent", "recheck_from": "intent"})
 
 
+class ExistingEquipmentStaleness(unittest.TestCase):
+    """The known range of existing equipment is geometry its CAD and interface checks read; it is never bought."""
+
+    SHEET = {"artifact": "hw/sources/mount.pdf", "sha256": "a" * 64}
+
+    def documents(self, lower: float = 29.8, sheet: str = "a" * 64) -> dict[str, Any]:
+        docs = documents()
+        sources = [fx.source("datasheet", "TST mount datasheet", **{**self.SHEET, "sha256": sheet})]
+        docs["parts/TST-0009/part.yaml"] = fx.existing_part(
+            "TST-0009", "Mount face",
+            existing={"dimensions": fx.known(fx.quantity(lower=lower, upper=30.2), "measured", sources=sources)})
+        docs["interfaces.yaml"]["interfaces"].append(fx.interface("IF-009", "TST-0001", "TST-0009"))
+        return docs
+
+    def compare(self, after_docs: dict[str, Any]) -> Any:
+        before = normalized(self.documents())
+        after_docs["manufacturing/evidence.yaml"] = {"entries": [
+            acceptance.entry(before, "EV-cad", {"PN": "TST-0009"}, "cad_valid", obligation="cad.readback@TST-0009",
+                             version="v1", manifest_sha256="a" * 64, geometry=GEOMETRY),
+            acceptance.entry(before, "EV-if", {"interface": "IF-009"}, "cad_valid", obligation="interface.fit@IF-009",
+                             version="v1", manifest_sha256="a" * 64, geometry=GEOMETRY)]}
+        return impact.compare(before, normalized(after_docs), before_geometry=GEOMETRY, after_geometry=GEOMETRY,
+                              since="v1", version="v2")
+
+    def test_a_changed_range_stales_cad_and_interface_evidence_and_no_purchase_check(self) -> None:
+        result = self.compare(self.documents(lower=29.5))
+        self.assertEqual(result.changed["TST-0009"], ("geometry",))
+        self.assertEqual((result.stale_evidence.get("EV-cad"), result.stale_evidence.get("EV-if")),
+                         (("geometry",), ("geometry",)))
+        self.assertEqual([o for o in result.stale_obligations if o.startswith("purchase.")], [])
+
+    def test_a_changed_range_stales_an_interface_that_names_the_part_by_occurrence(self) -> None:
+        def placed(docs: dict[str, Any]) -> dict[str, Any]:
+            docs["interfaces.yaml"]["interfaces"][-1]["to"] = "@mount"
+            docs["assembly.yaml"]["occurrences"] = [{"id": "mount", "PN": "TST-0009",
+                                                     "placement": {"translation_mm": [0, 0, 0]}}]
+            docs["assembly.yaml"]["subassemblies"][0]["occurrences"] = ["@mount"]
+            return docs
+
+        before = normalized(placed(self.documents()))
+        after_docs = placed(self.documents(lower=29.5))
+        after_docs["manufacturing/evidence.yaml"] = {"entries": [
+            acceptance.entry(before, "EV-if", {"interface": "IF-009"}, "cad_valid", obligation="interface.fit@IF-009",
+                             version="v1", manifest_sha256="a" * 64, geometry=GEOMETRY)]}
+        result = impact.compare(before, normalized(after_docs), before_geometry=GEOMETRY, after_geometry=GEOMETRY,
+                                since="v1", version="v2")
+        self.assertIn("geometry", result.changed["IF-009"])
+        self.assertEqual(result.stale_evidence.get("EV-if"), ("geometry",))
+
+    def test_a_changed_range_source_artifact_is_a_source_change(self) -> None:
+        result = self.compare(self.documents(sheet="b" * 64))
+        self.assertIn("source", result.changed["TST-0009"])
+        self.assertIn("source", result.stale_evidence.get("EV-if", ()))
+
+
 class Selection(unittest.TestCase):
     """A confirmed selection (U2's qualified polymer cover, confirmed by DR-001) against changed records."""
 

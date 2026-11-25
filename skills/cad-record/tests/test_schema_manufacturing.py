@@ -58,6 +58,11 @@ def _designate(purchase: dict, *, omit: str | None = None, family: bool = False,
     purchase["designation"] = designation
 
 
+def _dimensions(part: Any) -> Any:
+    """The existing.dimensions fact of an existing-equipment part record."""
+    return part["existing"]["dimensions"]
+
+
 class SchemaCase(unittest.TestCase):
     def assert_valid(self, name: str, document: Any) -> None:
         self.assertEqual(errors(name, document), [])
@@ -329,6 +334,28 @@ class RecordDocuments(SchemaCase):
             "scalar resin process": (lambda d: d.update(process="resin"), True),
             "scalar other process": (lambda d: d.update(process="other"), True),
             "scalar process invented": (lambda d: d.update(process="sls"), False),
+        })
+
+    def test_existing_equipment_states_a_sourced_dimension_range_and_nothing_to_buy_or_make(self) -> None:
+        base = fx.existing_part("TST-0009")
+        self.assert_cases("part.schema.json", base, {
+            "measured from a datasheet": (lambda d: d["existing"].update(dimensions=fx.known(
+                fx.quantity(lower=29.9, upper=30.1), "measured", [fx.source("datasheet")])), True),
+            "standard basis": (lambda d: _dimensions(d).update(basis="standard"), True),
+            "assumed with its assumption": (lambda d: _dimensions(d).update(basis="assumed", assumption="ASM-001"), True),
+            "assumed without an assumption": (lambda d: _dimensions(d).update(basis="assumed"), False),
+            "estimate basis": (lambda d: _dimensions(d).update(basis="estimate", uncertainty={"note": "TST"}), False),
+            "supplier typical basis": (lambda d: _dimensions(d).update(basis="supplier_typical"), False),
+            "single value, no range": (lambda d: _dimensions(d).update(value=fx.quantity(30)), False),
+            "dimensions unknown": (lambda d: d["existing"].update(dimensions=fx.unknown()), False),
+            "no dimensions": (lambda d: d["existing"].pop("dimensions"), False),
+            "no existing block": (lambda d: d.pop("existing"), False),
+            "with procurement": (lambda d: d.update(procurement={"mode": "catalog"}), False),
+            "with a supplier": (lambda d: d.update(supplier="TST supplier"), False),
+            "with a null supplier": (lambda d: d.update(supplier=None), False),
+            "with manufacture": (lambda d: d.update(manufacture={"relationship": "same"}), False),
+            "with intent": (lambda d: d.update(intent=fx.intent()), False),
+            "existing block on a made part": (lambda d: d.update(make_buy="make"), False),
         })
 
     def test_part_intent_color_is_an_optional_srgb_hex(self) -> None:

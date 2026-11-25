@@ -218,9 +218,13 @@ def _open_choice(value: Any, what: str) -> Any:
     return mi.Fact.unknown_because(f"the candidate records no {what}")
 
 
-def _candidate(ident: str, raw: Mapping[str, Any]) -> Candidate:
+def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = frozenset()) -> Candidate:
+    """A selection.yaml candidate. A part entry naming existing equipment is dropped: it is outside the product, so it
+    is never assessed, ranked or proposed a material, route or make_buy."""
     parts = []
     for entry in raw.get("parts") or ():
+        if isinstance(entry.get("PN"), str) and entry["PN"] in existing:
+            continue
         steps = [Step(step.get("kind"), _open_choice(step.get("capability"), "capability"), step.get("provider"))
                  for step in entry.get("route") or ()]
         parts.append(CandidatePart(entry.get("PN"), _open_choice(entry.get("material_profile"), "material profile"),
@@ -1216,7 +1220,8 @@ def _unknown(reason: str) -> dict[str, Any]:
 
 
 # Findings that the recorded selection contradicts the assessment: they block until selection.yaml is corrected.
-_CONTRADICTIONS = frozenset({"selection.recorded_recommendation_eliminated", "selection.final_unsupported"})
+_CONTRADICTIONS = frozenset({"selection.recorded_recommendation_eliminated", "selection.recorded_recommendation_dropped",
+                             "selection.final_unsupported"})
 
 
 def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: str | None = None) -> dict[str, Any]:
@@ -1237,7 +1242,11 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
         return report
     if not assessment.final_ready:
         _use_case_finding(findings, assessment, report["use_case"])
-    candidates = [_candidate(ident, raw) for ident, raw in record.selection.candidates.items()]
+    existing = frozenset(pn for pn, part in record.parts.items() if part.existing)
+    built = [(_candidate(ident, raw, existing), raw) for ident, raw in record.selection.candidates.items()]
+    # a candidate whose every part entry names existing equipment proposes nothing to make or buy
+    candidates = [candidate for candidate, raw in built if candidate.parts or not raw.get("parts")]
+    dropped = frozenset(candidate.id for candidate, _ in built) - {candidate.id for candidate in candidates}
     if not candidates:
         findings.add("selection.not_assessed", "selection", {"product": True}, "minor", "unknown",
                      measured=_unknown("hw/manufacturing/selection.yaml records no candidates"),
@@ -1248,6 +1257,8 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
                      remedy="record whole candidate routes (material profile, route and capability per part), including "
                             "metal, purchased, sheet and hybrid alternatives where credible", inputs=_INPUTS)
         report["coverage"] = _coverage(record, [])
+        if _dropped_findings(findings, report, dropped):
+            report["status"] = "blocked"
         return report
     assessor = _Assessor(record)
     statuses = []
@@ -1258,6 +1269,7 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
     for issue in assessor.issues:
         _issue_finding(findings, issue)
     _recorded_findings(findings, report)
+    _dropped_findings(findings, report, dropped)
     if any(f["code"] in _CONTRADICTIONS for f in findings.items):
         statuses.append("blocked")
     report["status"] = ("blocked" if "blocked" in statuses else "conditional" if "conditional" in statuses else "final_ready")
@@ -1672,6 +1684,26 @@ def _recorded_section(record: Any, current: str | None) -> dict[str, Any]:
     if selection.recommendation is not None:
         section["recommendation"] = mi.thaw(selection.recommendation)
     return section
+
+
+def _dropped_findings(findings: _Findings, report: Mapping[str, Any], dropped: frozenset[str]) -> bool:
+    """A recorded recommendation naming a candidate the assessment dropped (every part entry names existing
+    equipment) blocks: nothing assessed supports it. True when one is found."""
+    recommendation = report["recorded"].get("recommendation") or {}
+    found = False
+    for role in ("primary", "end_use", "fallback", "prototype"):
+        ident = recommendation.get(role)
+        if isinstance(ident, str) and ident in dropped:
+            found = True
+            findings.add("selection.recorded_recommendation_dropped", f"{role}_{ident}", {"product": True}, "critical", "fail",
+                         measured={"text": f"recorded {role} {ident} names only existing equipment"},
+                         criterion={"property": "recorded_recommendation", "operator": "equals", "value": "assessed",
+                                    "source": _policy_source("a recommendation names a candidate the assessment kept")},
+                         method="recorded recommendation against the assessed candidates",
+                         uncertainty="the candidate was dropped before assessment, so it has no evaluations",
+                         consequence=f"selection.yaml names {ident} as {role}, but it makes or buys nothing",
+                         remedy=f"record an assessed candidate as {role} through the approval gate", inputs=_INPUTS)
+    return found
 
 
 def _recorded_findings(findings: _Findings, report: Mapping[str, Any]) -> None:
