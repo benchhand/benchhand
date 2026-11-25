@@ -321,6 +321,8 @@ class OperationAccess:
     unknown: list[str] = field(default_factory=list)
     not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold)
     advisory: list[str] = field(default_factory=list)  # notes on tools no check measures (assembly_operations.hold_reach)
+    notes: list[str] = field(default_factory=list)  # tool entries kept as instruction notes
+    applicable: bool = True  # False: the operation moves no part and nothing reaches it
 
     @property
     def outcome(self) -> str:
@@ -330,6 +332,8 @@ class OperationAccess:
             return "not_assessed"  # D37: never a pass, and it blocks nothing
         if any(p.status == "collision" for p in self.paths):
             return "fail"
+        if not self.applicable and not self.unknown and not self.paths:
+            return "not_applicable"
         if self.unknown or any(p.status != "clear" for p in self.paths) or not self.paths:
             return "unknown"
         return "pass"
@@ -361,7 +365,8 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
             continue
         advisory = [f"tool {name!r} has no cited envelope solid: check by hand that it reaches {op.part}"
                     for name in request.advisory]
-        entry = OperationAccess(op, unknown=list(request.unknown), advisory=advisory)
+        entry = OperationAccess(op, unknown=list(request.unknown), advisory=advisory, notes=list(request.notes),
+                                applicable=request.applicable)
         if not request.tools and advisory:
             plans.append(entry)
             continue
