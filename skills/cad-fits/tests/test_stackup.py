@@ -523,7 +523,7 @@ class IntentStackContractTests(unittest.TestCase):
                 self.assertNotIn("stack.capability_unresolved", codes(result))
                 self.assertNotIn("stack.limits_unqualified", codes(result))
                 slot = next(row for row in result["contributors"] if row["id"] == "W")
-                self.assertEqual(slot["resolved"]["guideline"], "fdm.generic")
+                self.assertEqual(slot["resolved"]["guideline"], "fdm.generic@2")
 
     def test_printed_limits_tighter_than_the_guideline_deviation_stay_unqualified(self) -> None:
         documents, stack = self.uncalibrated_printed_slot(0.05)
