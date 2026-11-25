@@ -55,5 +55,9 @@ class StepPnsTests(unittest.TestCase):
                 "#5=PRODUCT_DEFINITION('TST-0009 not a product','',#2,#7);\n")
         self.assertEqual(sourcing.step_pns(text), {"TST-0001", "EXT-0002"})
 
+    def test_a_pn_leading_the_product_name_counts_when_the_id_differs(self) -> None:
+        text = "#1=PRODUCT('part-17','EXT-0003 Mount face','',(#9));\n#2=PRODUCT('it''s','TST-0004 Arm','',(#9));\n"
+        self.assertEqual(sourcing.step_pns(text), {"EXT-0003", "TST-0004"})
+
 if __name__ == "__main__":
     unittest.main()

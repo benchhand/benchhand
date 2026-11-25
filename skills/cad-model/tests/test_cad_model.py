@@ -1496,7 +1496,10 @@ class ExistingEquipmentBuildTests(unittest.TestCase):
             (folder / "product.step").unlink()
             shutil.copyfile(folder / "assembly.step", folder / "product.step")
             row = cli("check", "v1", "--hw", str(hw))[1]["checks"]["product_exports"]
+            assessment, _ = acceptance_fixtures().evidence.build_assessment(hw, "v1")
+            results = assessment.results()
         self.assertEqual((row["status"], row["existing_in_step"]), ("fail", ["TST-0002"]))
+        self.assertEqual(results["cad.readback@TST-0001"], "fail", "the evidence release reads carries the failure")
 
     def test_the_sweep_measures_the_existing_part_against_the_product(self) -> None:
         worst = self.hw.parent / ".cad-work" / "sweep" / "worst.step"
@@ -1666,6 +1669,106 @@ class ReadbackPacketGateTests(unittest.TestCase):
         self.assertEqual(self.blocking(gate, self.AGREEMENT), [("gate.unresolved", "error")])
 
 
+class ProductSubsetTests(unittest.TestCase):
+    """check.product_subset: product.step and product.glb against the delivered occurrences of the in-context scene,
+    on given components and GLB nodes; needs no OCP."""
+
+    pose = check.load_pose()
+    TURN = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    # The scene: base TST-0001, two screws BUY-0001 @s-1 and @s-2, and the existing mount EXT-0001.
+    PLACED = {"TST-0001": ("TST-0001", "TST-0001 Base", (0.0, 0.0, 0.0)),
+              "s-1": ("BUY-0001", "BUY-0001 Screw [@s-1]", (5.0, 0.0, 0.0)),
+              "s-2": ("BUY-0001", "BUY-0001 Screw [@s-2]", (-5.0, 0.0, 0.0)),
+              "EXT-0001": ("EXT-0001", "EXT-0001 Mount", (0.0, 0.0, -20.0))}
+    DEFINITIONS = {"TST-0001": ("TST-0001 Base", 1000.0), "BUY-0001": ("BUY-0001 Screw", 12.0),
+                   "EXT-0001": ("EXT-0001 Mount", 9000.0)}
+    RECORDS = {"TST-0001": {"make_buy": "make"}, "BUY-0001": {"make_buy": "buy"}, "EXT-0001": {"make_buy": "existing"}}
+    DELIVERED = ["TST-0001", "s-1", "s-2"]
+
+    def component(self, oid: str, pn: str | None = None, trans: tuple | None = None) -> Any:
+        own_pn, name, at = self.PLACED[oid]
+        tag = None if oid == own_pn else oid
+        return self.pose.Component(pn or own_pn, tag, name, self.pose.Rigid(self.TURN, trans or at), ())
+
+    def scene(self) -> list:
+        return [self.component(oid) for oid in self.PLACED]
+
+    def gltf(self, names: list[str], meshless: tuple[str, ...] = ()) -> dict:
+        nodes = [{"name": "top", "children": list(range(1, len(names) + 1))}]
+        nodes += [{"name": name, **({} if name in meshless else {"mesh": index})} for index, name in enumerate(names)]
+        return {"scene": 0, "scenes": [{"nodes": [0]}], "nodes": nodes}
+
+    def judge(self, shipped: list | None = None, *, listed: list[str] | None = None, glb: dict | None = None,
+              shipped_definitions: dict | None = None, text_pns: set[str] | None = None) -> dict:
+        shipped = [self.component(oid) for oid in self.DELIVERED] if shipped is None else shipped
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        return check.product_subset(check.delivered_occurrences(self.scene(), self.RECORDS), {"EXT-0001"},
+                                    self.scene(), self.DEFINITIONS, shipped,
+                                    self.DEFINITIONS if shipped_definitions is None else shipped_definitions,
+                                    {"TST-0001", "BUY-0001"} if text_pns is None else text_pns,
+                                    self.gltf(names) if glb is None else glb,
+                                    self.DELIVERED if listed is None else listed)
+
+    def test_the_delivered_occurrences_come_from_the_part_records(self) -> None:
+        self.assertEqual(check.delivered_occurrences(self.scene(), self.RECORDS),
+                         {"TST-0001": "TST-0001", "s-1": "BUY-0001", "s-2": "BUY-0001"})
+
+    def test_exactly_the_delivered_occurrences_in_place_pass(self) -> None:
+        self.assertEqual(self.judge()["status"], "pass")
+
+    def test_an_occurrence_missing_from_the_manifest_and_both_exports_fails(self) -> None:
+        shipped = [self.component("TST-0001"), self.component("s-1")]
+        glb = self.gltf([self.PLACED["TST-0001"][1], self.PLACED["s-1"][1]])
+        row = self.judge(shipped, listed=["TST-0001", "s-1"], glb=glb)
+        self.assertEqual((row["status"], row["missing_occurrences"], row["glb_missing_nodes"], row["manifest_mismatch"]),
+                         ("fail", ["s-2"], ["s-2"], ["s-2"]))
+
+    def test_an_occurrence_that_keeps_its_tag_and_place_but_another_delivered_pn_fails(self) -> None:
+        shipped = [self.component("TST-0001"), self.component("s-1", pn="TST-0001"), self.component("s-2")]
+        row = self.judge(shipped)
+        self.assertEqual(row["status"], "fail")
+        self.assertEqual((row["occurrences"]["s-1"]["PN"], row["occurrences"]["s-1"]["same_definition"]), ("TST-0001", False))
+
+    def test_a_moved_occurrence_fails(self) -> None:
+        shipped = [self.component("TST-0001"), self.component("s-1", trans=(5.0, 0.1, 0.0)), self.component("s-2")]
+        row = self.judge(shipped)
+        self.assertEqual(row["status"], "fail")
+        self.assertAlmostEqual(row["occurrences"]["s-1"]["placement_error_mm"], 0.1)
+
+    def test_a_definition_whose_volume_differs_fails(self) -> None:
+        row = self.judge(shipped_definitions={**self.DEFINITIONS, "BUY-0001": ("BUY-0001 Screw", 13.0)})
+        self.assertEqual((row["status"], row["occurrences"]["s-1"]["same_definition"]), ("fail", False))
+
+    def test_a_duplicate_step_component_fails(self) -> None:
+        row = self.judge([*(self.component(oid) for oid in self.DELIVERED), self.component("s-1")])
+        self.assertEqual((row["status"], row["unexpected_components"]), ("fail", ["BUY-0001 Screw [@s-1]"]))
+
+    def test_a_glb_node_without_a_mesh_fails(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        row = self.judge(glb=self.gltf(names, meshless=(names[1],)))
+        self.assertEqual((row["status"], row["glb_missing_nodes"]), ("fail", ["s-1"]))
+
+    def test_a_duplicate_or_extra_glb_mesh_node_fails(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        duplicate = self.judge(glb=self.gltf([*names, names[0]]))
+        self.assertEqual((duplicate["status"], duplicate["glb_duplicate_nodes"]), ("fail", ["TST-0001"]))
+        extra = self.judge(glb=self.gltf([*names, "stray body"]))
+        self.assertEqual((extra["status"], extra["glb_extra_nodes"]), ("fail", ["stray body"]))
+
+    def test_an_unreachable_glb_node_does_not_count(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        glb = self.gltf(names)
+        glb["nodes"][0]["children"].remove(2)  # s-1's node is no longer reachable from the scene
+        self.assertEqual(self.judge(glb=glb)["glb_missing_nodes"], ["s-1"])
+
+    def test_existing_equipment_named_in_the_step_text_or_the_glb_fails(self) -> None:
+        in_step = self.judge(text_pns={"TST-0001", "BUY-0001", "EXT-0001"})
+        self.assertEqual((in_step["status"], in_step["existing_in_step"]), ("fail", ["EXT-0001"]))
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        in_glb = self.judge(glb=self.gltf([*names, "EXT-0001 Mount"]))
+        self.assertEqual((in_glb["status"], in_glb["existing_in_glb"]), ("fail", ["EXT-0001"]))
+
+
 class CheckRuleTests(unittest.TestCase):
     """check's verdicts on given measurements; needs no OCP."""
     @staticmethod
@@ -1700,6 +1803,28 @@ class CheckRuleTests(unittest.TestCase):
         legacy = self.readback_checks()
         legacy["manufacturing"]["parts"]["TST-0001"]["checks"]["identity"]["status"] = "warn"
         self.assertEqual(outcomes(legacy, "left"), {"cad.readback@TST-0001.left": "unknown"})
+
+    def test_a_failed_product_subset_fails_every_readback_outcome(self) -> None:
+        """release reads the cad.readback packet, not the check's exit status: a product.step or product.glb that
+        does not hold exactly the delivered product fails the read-back of every part."""
+        owed = mock.Mock(id="cad.readback@TST-0001.left", family="cad.readback",
+                         subject={"PN": "TST-0001", "component": "left"}, level="cad_valid")
+        checks = {**self.readback_checks(), "product_exports": {"status": "fail", "blocking": True}}
+        [row] = check.readback_outcomes([owed], checks, {})
+        self.assertEqual(row["outcome"], "fail")
+        self.assertIn("product_exports", row["uncertainty"])
+        checks["product_exports"] = {"status": "skipped", "blocking": False}
+        self.assertEqual(check.readback_outcomes([owed], checks, {})[0]["outcome"], "pass")
+
+    def test_product_totals_leave_existing_equipment_out_of_every_total(self) -> None:
+        metrics = {"TST-0001": {"mass_g": 2.0, "volume_mm3": 10.0}, "EXT-0001": {"mass_g": None, "volume_mm3": 90.0}}
+        placed = {"TST-0001": {"PN": "TST-0001", "centre_of_mass_mm": [0.0, 0.0, 1.0]},
+                  "EXT-0001": {"PN": "EXT-0001", "centre_of_mass_mm": None}}
+        totals = build.product_totals(metrics, placed, ["TST-0001"])
+        self.assertEqual((totals["quantity"], totals["volume_mm3"], totals["mass_g"], totals["centre_of_mass_mm"]),
+                         ({"TST-0001": 1}, 10.0, 2.0, [0.0, 0.0, 1.0]))
+        self.assertEqual((totals["parts_without_density"], totals["occurrences_without_density"],
+                          totals["existing_occurrences"]), ([], [], ["EXT-0001"]))
 
     def test_export_3mf_outcomes_follow_the_part_3mf_check_and_the_sealed_files(self) -> None:
         """export.3mf follows the part.3mf check alone. A failing 3MF fails it, a part with no 3MF row stays
