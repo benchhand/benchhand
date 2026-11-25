@@ -160,7 +160,7 @@ def allowance(ctx: Context) -> Result:
         source_op, item = found[-1]
         amount = ctx.mi.quantity(item["amount"]).to("mm")
         parts.append(_cleanup(ctx, feature, source_op, amount, item, findings))
-    return combine(method, parts, findings)
+    return combine(method, parts, findings, reason="no_guideline")  # kept only when a printed predecessor left it not assessed
 
 
 def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any, findings: list[Draft]) -> tuple[str, str]:
@@ -178,24 +178,28 @@ def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any,
             return UNKNOWN, f"{feature}: as-printed orientation unknown"
         from .additive import hole_class
         orientation = hole_class(hole["axis"])
-    cal = ctx.calibrated(characteristic, profile=profile, orientation=orientation)
+    cal = ctx.governing(characteristic, profile=profile, orientation=orientation)
     kind = ctx.operation.kind
     if not cal.known:
-        findings.append(Draft(f"process.{kind}.allowance_unverified", "minor", UNKNOWN, {**amount.as_dict()},
-                              cal.criterion(characteristic), "allowance against the predecessor's calibration",
-                              "; ".join(cal.reasons), f"whether {amount} on {feature} cleans up the as-made variation is unknown",
-                              remedy=f"calibrate {characteristic} of {source_op.id}", recheck=[f"process.{kind}.allowance"], feature=feature))
-        return UNKNOWN, f"{feature} allowance unverified"
+        from .additive import _no_basis
+        return _no_basis(ctx, findings, Draft(
+            f"process.{kind}.allowance_unverified", "minor", UNKNOWN, {**amount.as_dict()},
+            cal.criterion(characteristic), "allowance against the predecessor's calibration", "; ".join(cal.reasons),
+            f"whether {amount} on {feature} cleans up the as-made variation is unknown",
+            remedy=f"calibrate {characteristic} of {source_op.id}", recheck=[f"process.{kind}.allowance"], feature=feature),
+            f"{feature} allowance", f"{feature} allowance unverified", process=source_op.kind)
     worst = cal.bounds("mm")[1]
     if amount.bounds[0] < worst - 1e-9:
         findings.append(Draft(f"process.{kind}.allowance_short", "major", FAIL, {**amount.as_dict()},
-                              cal.criterion("allowance", ">=", worst, "mm"), "allowance against the predecessor's calibration",
-                              f"calibration {cal.calibration.id}",
+                              cal.criterion("allowance", ">=", worst, "mm"), f"allowance against the predecessor's {cal.status} deviation",
+                              cal.basis,
                               f"the {amount} allowance on {feature} is smaller than {source_op.id}'s positive as-made deviation: "
                               "some parts come out oversize before finishing",
                               remedy=f"leave more stock on {feature}", recheck=[f"process.{kind}.allowance"], feature=feature))
         return FAIL, f"{feature} allowance short"
-    return PASS, f"{feature} allowance {amount} covers {source_op.id}'s deviation"
+    return ctx.settle(cal, f"{feature} allowance {amount} covers {source_op.id}'s deviation", findings, check="allowance",
+                      measured={**amount.as_dict()}, criterion=cal.criterion("allowance", ">=", worst, "mm"),
+                      method=f"allowance against the predecessor's {cal.status} deviation", feature=feature)
 
 
 # Whether a bore of `depth` mm breaks a thread-engagement minimum; `>` is strict, so a bore exactly as deep breaks it.

@@ -51,12 +51,13 @@ def _k(ctx: Context) -> str:
 
 
 def _no_basis(ctx: Context, findings: list[Draft], draft: Draft, what: str, otherwise: str,
-              why: str = "no calibration or guideline") -> tuple[str, str]:
-    """`draft`, the finding of a check that has no value to judge against, as a sub-check. On a printer a calibration is
-    optional (benchhand-c7q.30): the check is not assessed, a minor finding that blocks no gate and is never a pass. On
-    any other process it stays UNKNOWN with `otherwise` as its coverage."""
+              why: str = "no calibration or guideline", process: str | None = None) -> tuple[str, str]:
+    """`draft`, the finding of a check that has no value to judge against, as a sub-check. On a printer (the `process`
+    whose as-made result is judged, this operation's by default) a calibration is optional (benchhand-c7q.30): the check
+    is not assessed, a minor finding that blocks no gate and is never a pass. On any other process it stays UNKNOWN with
+    `otherwise` as its coverage."""
     findings.append(draft)
-    if _k(ctx) not in PRINTERS:
+    if (process or _k(ctx)) not in PRINTERS:
         return UNKNOWN, otherwise
     draft.outcome, draft.severity, draft.reason = NOT_ASSESSED, "minor", NO_BASIS
     return NOT_ASSESSED, f"{what} not assessed: {why}; print and inspect, or calibrate to assess"
@@ -575,8 +576,7 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
         {s.role for f, s in ctx.critical_features().items() if f in feats}
     exempt = sorted(c for c in classes if c in EXEMPT_CLASSES)
     if exempt:
-        # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
-        feature_cal = ctx.calibrated("min_wall", feature=exempt[0])
+        feature_cal = ctx.calibrated("min_wall", feature=exempt[0])  # a feature class is never judged against a structural guideline
         if feature_cal.known and thickness >= feature_cal.bounds("mm")[1] - 1e-9:
             findings.append(Draft(f"process.{kind}.wall_feature_class", "info", UNKNOWN, length(thickness),
                                   feature_cal.criterion("wall_thickness", ">=", feature_cal.bounds("mm")[1]),
@@ -585,14 +585,15 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                                   "thicker than it are not separated by this scan",
                                   remedy="section the structural regions to measure their walls", recheck=[f"process.{kind}.geometry"]))
             return UNKNOWN, "structural walls not separated from the exempt feature"
-        findings.append(Draft(f"process.{kind}.wall_feature_class", "minor", UNKNOWN, length(thickness),
-                              feature_cal.criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
-                              f"{exempt[0]} features are assessed apart from structural walls",
-                              f"the thinnest wall is on a {exempt[0]} feature with no calibration of its own",
-                              remedy=ctx.remedy(f"calibrate min_wall with scope feature {exempt[0]}, or justify the exception in a decision",
-                                                "justify the exception in a decision"),
-                              recheck=[f"process.{kind}.geometry"], feature=sorted(feats)[0] if feats else None))
-        return UNKNOWN, f"{exempt[0]} wall not calibrated"
+        return _no_basis(ctx, findings, Draft(
+            f"process.{kind}.wall_feature_class", "minor", UNKNOWN, length(thickness),
+            feature_cal.criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
+            f"{exempt[0]} features are assessed apart from structural walls",
+            f"the thinnest wall is on a {exempt[0]} feature with no calibration of its own",
+            remedy=ctx.remedy(f"calibrate min_wall with scope feature {exempt[0]}, or justify the exception in a decision",
+                              "justify the exception in a decision"),
+            recheck=[f"process.{kind}.geometry"], feature=sorted(feats)[0] if feats else None),
+            f"{exempt[0]} wall", f"{exempt[0]} wall not calibrated")
     location = walls.get("location_mm")
     findings.append(Draft(f"process.{kind}.wall", "major", FAIL, length(thickness),
                           cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
@@ -801,17 +802,22 @@ def _receiving(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[s
             hole = next((h for h in g.holes() if feature in (h.get("features") or ())), None)
             if hole is None:
                 continue  # the feature lies on another component or is not a bore of this one
-            # TODO(benchhand-tw6.24): no guideline covers this; with calibration off it stays unknown, naming the gap.
-            cal = ctx.calibrated("hole_diameter_deviation", orientation=hole_class(hole["axis"]))
-            findings.append(Draft(f"process.{kind}.receiving_feature", "info" if cal.known else "major",
-                                  UNKNOWN, length(hole["diameter_mm"]), cal.criterion("hole_diameter_deviation"),
-                                  g.method("bore recognition"),
-                                  "retention depends on the as-printed bore, the material's creep and the insert",
-                                  f"{item.get('kind')} {item.get('id')} into {feature}: retention is unvalidated",
-                                  remedy="test retention on a printed coupon with the actual insert or pin",
-                                  recheck=["assembly.order", f"process.{kind}.trial"], earliest_stage="release",
-                                  feature=feature, link=not cal.known))
-            parts.append((PASS if cal.known else UNKNOWN, f"{feature} receives {item.get('kind')}"))
+            cal = ctx.governing("hole_diameter_deviation", orientation=hole_class(hole["axis"]))
+            note = Draft(f"process.{kind}.receiving_feature", "info" if cal.known else "major",
+                         UNKNOWN, length(hole["diameter_mm"]), cal.criterion("hole_diameter_deviation"),
+                         g.method("bore recognition"),
+                         "retention depends on the as-printed bore, the material's creep and the insert",
+                         f"{item.get('kind')} {item.get('id')} into {feature}: retention is unvalidated",
+                         remedy="test retention on a printed coupon with the actual insert or pin",
+                         recheck=["assembly.order", f"process.{kind}.trial"], earliest_stage="release",
+                         feature=feature, link=not cal.known)
+            if not cal.known:
+                parts.append(_no_basis(ctx, findings, note, f"{feature} retention", f"{feature} receives {item.get('kind')}"))
+                continue
+            findings.append(note)
+            parts.append(ctx.settle(cal, f"{feature} receives {item.get('kind')}", findings, check="receiving",
+                                    measured=length(hole["diameter_mm"]), criterion=cal.criterion("hole_diameter_deviation"),
+                                    method=g.method("bore recognition"), feature=feature))
     return parts
 
 

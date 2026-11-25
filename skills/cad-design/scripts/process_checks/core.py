@@ -648,12 +648,13 @@ class Context:
             return Calibrated("calibrated", characteristic, found.calibration.limits, (), found.calibration)
         return Calibrated(found.status, characteristic, None, tuple(found.reasons))
 
-    def governing(self, characteristic: str, *, orientation: str | None = None, feature: str | None = None) -> Calibrated:
+    def governing(self, characteristic: str, *, profile: Any | None = None, orientation: str | None = None,
+                  feature: str | None = None) -> Calibrated:
         """The value a check judges `characteristic` against: its calibration (`calibrated`), else the guideline interval
-        for this operation's profile and material (status guideline), else unknown with every reason. Calibration is never
-        required: a guideline value governs until one exists (benchhand-c7q.30)."""
-        cal = self.calibrated(characteristic, orientation=orientation, feature=feature)
-        context = self.guideline_context()
+        for the profile (this operation's unless `profile` names another) and material (status guideline), else unknown
+        with every reason. Calibration is never required: a guideline value governs until one exists (benchhand-c7q.30)."""
+        cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature)
+        context = self.guideline_context(profile)
         if cal.known or context is None:
             return cal
         found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation, feature=feature)
@@ -708,10 +709,10 @@ class Context:
         coupon = guidelines().COUPON_REMEDY
         return f"{fix}; {coupon}" if fix else coupon
 
-    def guideline_context(self) -> Any | None:
-        """The guideline scope (guidelines.Context) of this operation's capability profile and material, or None
-        without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES."""
-        profile = self.profile
+    def guideline_context(self, profile: Any | None = None) -> Any | None:
+        """The guideline scope (guidelines.Context) of a capability profile (this operation's unless `profile` names
+        another) and material, or None without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES."""
+        profile = profile or self.profile
         if self.catalog is None or profile is None or profile.process not in guidelines().GUIDELINE_PROCESSES:
             return None
         material_id = self.stock_material_id()
