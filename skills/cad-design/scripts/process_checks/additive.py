@@ -739,8 +739,20 @@ def _diameter_limits(ctx: Context, surface: Any) -> tuple[list[dict[str, Any]], 
     return limits, unsupported
 
 
+def _tolerance(ctx: Context, surface: Any, characteristic: str) -> tuple[tuple[float, float] | None, list[str]]:
+    """The `characteristic between` tolerance a critical surface states for its as-made deviation (mm), and the operators
+    of its other criteria of that property, which this check cannot judge."""
+    items, unsupported = ctx.split_criteria(surface, characteristic, ("between",))
+    bands = [tuple(ctx.mi.convert(v, item.get("units", "mm"), "mm") for v in item["value"]) for item in items]
+    if not bands:
+        return None, unsupported
+    return (max(b[0] for b in bands), min(b[1] for b in bands)), unsupported  # every stated band must hold
+
+
 def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[str, str]]:
-    """Every critical surface that is not a bore: its feature must be located and its deviation calibrated."""
+    """Every critical surface that is not a bore: its feature must be located, and its as-made deviation (with the
+    first-layer flare of a bed feature) must stay inside the deviation tolerance it states. A surface that states only
+    other criteria is judged by their own checks; one that states none is open."""
     kind = _k(ctx)
     holes = {f for hole in g.holes() for f in hole.get("features") or ()}
     parts: list[tuple[str, str]] = []
@@ -757,41 +769,87 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
         if feature in holes or surface.dimension_state != "as_manufactured":
             continue
         characteristic = "profile_deviation" if surface.role in ("flank", "cam") else "dimensional_deviation"
-        cal = ctx.governing(characteristic, feature=surface.role if characteristic == "profile_deviation" else None)
-        on_bed = any(f.get("bed") for f in g.feature_faces(feature))
-        if on_bed:
-            foot = ctx.governing("elephant_foot")
-            if not foot.known:
-                parts.append(_no_basis(ctx, findings, Draft(
-                    f"process.{kind}.elephant_foot", "minor", UNKNOWN, unknown("first-layer flare"),
-                    foot.criterion("elephant_foot"), g.method("bed contact faces"), "; ".join(foot.reasons),
-                    f"the {surface.role} {feature} starts at the bed, where the first layer flares",
-                    remedy=ctx.remedy("calibrate the elephant foot or chamfer the bed edge of the feature",
-                                      "chamfer the bed edge of the feature"),
-                    recheck=[f"process.{kind}.geometry"], feature=feature),
-                    f"{feature} elephant_foot", f"{feature} elephant foot unknown"))
-        if cal.known:
-            parts.append(ctx.settle(cal, f"{feature} {characteristic} {cal.status}", findings, check="feature",
-                                    measured=unknown("as-made deviation"), criterion=cal.criterion(characteristic),
-                                    method=g.method("feature locators"), feature=feature))
+        band, unsupported = _tolerance(ctx, surface, characteristic)
+        if band is None:
+            if unsupported:
+                parts.append((UNKNOWN, f"{feature} {characteristic} criterion with operator {', '.join(unsupported)} is not judged"))
+            elif not ctx.surface_raw(surface).get("criteria"):
+                findings.append(Draft(f"process.{kind}.feature_tolerance_missing", "minor", UNKNOWN, unknown("no tolerance"),
+                                      unknown(f"the {characteristic} tolerance of the critical surface"),
+                                      g.method("feature locators"), "the critical surface states no criterion",
+                                      f"whether the {surface.role} {feature} holds its size as printed is unknown",
+                                      remedy=f"state the {characteristic} tolerance of {feature} (between, mm)",
+                                      recheck=[f"process.{kind}.geometry"], feature=feature))
+                parts.append((UNKNOWN, f"{feature} states no tolerance"))
+            else:
+                parts.append((NOT_APPLICABLE, ""))  # its stated criteria (flatness, roughness, ...) have their own checks
             continue
-        parts.append(_no_basis(ctx, findings, Draft(
+        parts.append(_deviation(ctx, g, surface, characteristic, band, unsupported, findings))
+    return parts
+
+
+def _deviation(ctx: Context, g: Geometry, surface: Any, characteristic: str, band: tuple[float, float],
+               unsupported: list[str], findings: list[Draft]) -> tuple[str, str]:
+    """The as-made deviation of one critical feature (its calibration, else the guideline interval) plus, on the bed,
+    the elephant foot, against its stated `band`."""
+    kind, feature = _k(ctx), surface.feature
+    cal = ctx.governing(characteristic, feature=surface.role if characteristic == "profile_deviation" else None)
+    if not cal.known:
+        return _no_basis(ctx, findings, Draft(
             f"process.{kind}.feature_uncalibrated", "major", UNKNOWN, unknown("as-made deviation"),
             cal.criterion(characteristic), g.method("feature locators"), "; ".join(cal.reasons),
             f"the as-printed accuracy of the {surface.role} {feature} is unknown",
             remedy=ctx.remedy(f"calibrate {characteristic} for this material and orientation with coupons, or finish the surface",
                               "finish the surface"),
             recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature),
-            f"{feature} {characteristic}", f"{feature} {characteristic} not calibrated"))
-    return parts
+            f"{feature} {characteristic}", f"{feature} {characteristic} not calibrated")
+    low, high = cal.bounds("mm")
+    criterion = {"property": characteristic, "operator": "between", "value": [band[0], band[1]], "units": "mm",
+                 "source": dict(next(c for c in ctx.surface_raw(surface)["criteria"] if c.get("property") == characteristic)["source"])}
+    if low < band[0] - 1e-9 or high > band[1] + 1e-9:
+        findings.append(Draft(f"process.{kind}.feature_deviation", "major", FAIL,
+                              {"lower": round(low, 6), "upper": round(high, 6), "units": "mm"}, criterion,
+                              g.method(f"feature locators plus {cal.status} deviation"), cal.basis,
+                              f"the as-printed {surface.role} {feature} can leave its {characteristic} tolerance",
+                              remedy=ctx.remedy(f"finish {feature} after printing, relax its tolerance, or calibrate a tighter {characteristic}",
+                                                f"finish {feature} after printing, or relax its tolerance"),
+                              recheck=[f"process.{kind}.geometry", "feature.fit"], feature=feature))
+        return FAIL, f"{feature} {characteristic} outside its tolerance"
+    if any(f.get("bed") for f in g.feature_faces(feature)):
+        foot = ctx.governing("elephant_foot")
+        if not foot.known:
+            return _no_basis(ctx, findings, Draft(
+                f"process.{kind}.elephant_foot", "minor", UNKNOWN, unknown("first-layer flare"),
+                foot.criterion("elephant_foot"), g.method("bed contact faces"), "; ".join(foot.reasons),
+                f"the {surface.role} {feature} starts at the bed, where the first layer flares",
+                remedy=ctx.remedy("calibrate the elephant foot or chamfer the bed edge of the feature",
+                                  "chamfer the bed edge of the feature"),
+                recheck=[f"process.{kind}.geometry"], feature=feature),
+                f"{feature} elephant_foot", f"{feature} elephant foot unknown")
+        flared = high + foot.bounds("mm")[1]
+        if flared > band[1] + 1e-9:
+            findings.append(Draft(f"process.{kind}.elephant_foot", "major", FAIL, length(flared), criterion,
+                                  g.method(f"bed contact faces plus {foot.status} first-layer flare"), f"{cal.basis}; {foot.basis}",
+                                  f"the first-layer flare takes the {surface.role} {feature} past its {characteristic} tolerance",
+                                  remedy="chamfer the bed edge of the feature, or reorient it off the bed",
+                                  recheck=[f"process.{kind}.geometry"], feature=feature))
+            return FAIL, f"{feature} elephant foot outside its tolerance"
+    if unsupported:
+        return UNKNOWN, f"{feature} {characteristic} criterion with operator {', '.join(unsupported)} is not judged"
+    return ctx.settle(cal, f"{feature} {characteristic} {cal.status} within {band[0]:g}..{band[1]:g} mm", findings, check="feature",
+                      measured={"lower": round(low, 6), "upper": round(high, 6), "units": "mm"}, criterion=criterion,
+                      method=g.method("feature locators"), feature=feature)
 
 
 def _receiving(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[str, str]]:
-    """Inserts, heat-set inserts and press fits into this component's printed features."""
+    """Inserts, heat-set inserts and press fits into this component's printed bores. A critical bore's as-made size is
+    judged by hole_fits against its diameter limits; retention itself waits for the print trial (an info note). A bore
+    no critical surface names has no limits to hold, so it is open, never a pass on an interval alone."""
     kind, mi = _k(ctx), ctx.mi
     operations = ctx.record.assembly_operations
     if mi.is_fact(operations):
         return []
+    critical = ctx.critical_features()
     parts: list[tuple[str, str]] = []
     for item in operations:
         if item.get("into") != ctx.pn or item.get("kind") not in ("press_fit", "heat_set", "insert"):
@@ -800,22 +858,23 @@ def _receiving(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[s
             hole = next((h for h in g.holes() if feature in (h.get("features") or ())), None)
             if hole is None:
                 continue  # the feature lies on another component or is not a bore of this one
-            cal = ctx.governing("hole_diameter_deviation", orientation=hole_class(hole["axis"]))
-            note = Draft(f"process.{kind}.receiving_feature", "info" if cal.known else "major",
-                         UNKNOWN, length(hole["diameter_mm"]), cal.criterion("hole_diameter_deviation"),
-                         g.method("bore recognition"),
-                         "retention depends on the as-printed bore, the material's creep and the insert",
-                         f"{item.get('kind')} {item.get('id')} into {feature}: retention is unvalidated",
-                         remedy="test retention on a printed coupon with the actual insert or pin",
-                         recheck=["assembly.order", f"process.{kind}.trial"], earliest_stage="release",
-                         feature=feature, link=not cal.known)
-            if not cal.known:
-                parts.append(_no_basis(ctx, findings, note, f"{feature} retention", f"{feature} receives {item.get('kind')}"))
+            findings.append(Draft(f"process.{kind}.receiving_feature", "info", UNKNOWN, length(hole["diameter_mm"]),
+                                  unknown("a retention test with the actual insert or pin"), g.method("bore recognition"),
+                                  "retention depends on the as-printed bore, the material's creep and the insert",
+                                  f"{item.get('kind')} {item.get('id')} into {feature}: retention is unvalidated",
+                                  remedy="test retention on a printed coupon with the actual insert or pin",
+                                  recheck=["assembly.order", f"process.{kind}.trial"], earliest_stage="release",
+                                  feature=feature, link=False))
+            if feature in critical:
+                parts.append((NOT_APPLICABLE, ""))  # hole_fits judges its size against its stated limits
                 continue
-            findings.append(note)
-            parts.append(ctx.settle(cal, f"{feature} receives {item.get('kind')}", findings, check="receiving",
-                                    measured=length(hole["diameter_mm"]), criterion=cal.criterion("hole_diameter_deviation"),
-                                    method=g.method("bore recognition"), feature=feature))
+            findings.append(Draft(f"process.{kind}.receiving_criterion_missing", "major", UNKNOWN, length(hole["diameter_mm"]),
+                                  unknown(f"the diameter limits {feature} needs for the {item.get('kind')}"),
+                                  g.method("bore recognition"), "no critical surface states this bore's limits",
+                                  f"whether {feature} holds {item.get('kind')} {item.get('id')} is unknown",
+                                  remedy=f"declare {feature} a critical bore with the diameter limits the {item.get('kind')} needs",
+                                  recheck=[f"process.{kind}.geometry", "assembly.order"], feature=feature))
+            parts.append((UNKNOWN, f"{feature} receives {item.get('kind')} with no stated limits"))
     return parts
 
 
