@@ -808,15 +808,23 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
 # distortion. Per feature, _critical adds the one it consumes itself: a bore's diameter (hole_fits) or the deviation of
 # its role. Every other criterion goes through _unchecked: the band-width check, else an explicit open finding.
 JUDGED_PROPERTIES = frozenset({"flatness"})
-# The criterion properties that name a dimensional size of the model (a length the print can miss), so a band of one can
-# be compared with the as-printed spread: the word itself, or a property ending in `_<word>` (seat_depth, boss_height).
-# A deviation, a roughness or any other property is no size: it stays an open finding.
-SIZE_WORDS = ("thickness", "depth", "height", "width", "length", "diameter", "radius", "distance", "spacing", "clearance",
-              "gap", "size")
+# The criterion properties that name a dimensional size of the model (a length the print can miss), so a band of one in
+# a length unit can be compared with the as-printed spread. The table is explicit: a name is never read as a size from
+# its suffix (roughness_height is a roughness). A deviation, roughness or flatness is never a size; any property not
+# listed stays an open finding.
+SIZE_PROPERTIES = frozenset({
+    "thickness", "wall_thickness", "depth", "seat_depth", "bore_depth", "pocket_depth", "height", "boss_height", "width",
+    "tongue_width", "slot_width", "groove_width", "length", "diameter", "radius", "distance", "spacing", "clearance",
+    "side_clearance", "gap", "size",
+})
+NOT_SIZES = ("roughness", "deviation", "flatness")  # explicitly excluded, whatever the table says
 
 
-def _is_size(prop: str) -> bool:
-    return any(prop == word or prop.endswith(f"_{word}") for word in SIZE_WORDS)
+def _is_size(ctx: Context, prop: str, units: str | None) -> bool:
+    """Whether a criterion of `prop` in `units` states a dimensional size: a listed property, none of NOT_SIZES, in a
+    length unit."""
+    return (prop in SIZE_PROPERTIES and not any(word in prop for word in NOT_SIZES)
+            and units is not None and _length_mm(ctx, 1.0, units) is not None)
 
 
 def _judged_properties(ctx: Context) -> frozenset[str]:
@@ -841,7 +849,7 @@ def _unchecked(ctx: Context, g: Geometry, surface: Any, item: Mapping[str, Any],
     else is an open (UNKNOWN) finding, since the gap is check coverage, not a printer basis."""
     kind, feature, prop = _k(ctx), surface.feature, str(item.get("property"))
     units = item.get("units")
-    if _is_size(prop) and item.get("operator") == "between" and isinstance(item.get("value"), (list, tuple)):
+    if _is_size(ctx, prop, units) and item.get("operator") == "between" and isinstance(item.get("value"), (list, tuple)):
         low, high = (_length_mm(ctx, v, units) for v in item["value"])
         if low is not None and high is not None:
             spread = ctx.governing("dimensional_deviation", size=max(abs(low), abs(high)))
