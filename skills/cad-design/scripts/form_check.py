@@ -157,6 +157,8 @@ BLEND_MAX_SPAN = math.radians(120.0)  # a fillet turns through its edge angle; a
 AXIS_TOL = 1e-4  # sine of the allowed angle between a cylinder axis and a joint axis
 CONTACT_SEARCH_MM = 1.0  # a fixed joint's nearest coplanar face pair this far apart is named in its finding
 CONTACT_MIN_AREA_MM2 = 0.01  # faces that only touch along an edge or at a point share less than this
+SAME_RADIUS_MM = 1e-6  # adjoining cylinder faces this close in radius and axis line are one surface
+TANGENT_TOL = 1e-3  # sine of the angle between two faces' normals where they meet tangentially, as a blend does
 MIN_WALL_PROCESSES = ("fdm", "cnc")  # the keys product.yaml manufacturing.min_wall_mm may set
 WALL_SPACING_FRACTION = 0.5  # sample spacing along each UV direction, as a fraction of the minimum wall
 WALL_FACE_SAMPLE_CAP = 4096  # samples per face; a larger face is sampled coarser and counted in capped_faces
@@ -675,7 +677,6 @@ def measure(shape: Any) -> dict[str, Any]:
     total = axis_planar = 0.0
     blends = freeform_count = 0
     min_convex = min_concave = math.inf
-    cylinders = []
     bores = holes.bore_walls(shape)  # a bore is drilled, not a corner a cutter leaves
     obb_extents, _ = occ.oriented_bbox(shape)
     obb_volume = math.prod(obb_extents)
@@ -699,9 +700,7 @@ def measure(shape: Any) -> dict[str, Any]:
             convex = _dot(normal, radial) > 0.0
             radius = cylinder.Radius()
             span = umax - umin
-            cylinders.append({"location": loc, "direction": direction, "radius": radius, "convex": convex,
-                              "blend": convex and span <= BLEND_MAX_SPAN and radius <= BLEND_MAX_RADIUS})
-            if cylinders[-1]["blend"]:
+            if convex and span <= BLEND_MAX_SPAN and radius <= BLEND_MAX_RADIUS:
                 blends += 1
                 min_convex = min(min_convex, radius)
             elif not convex and not any(face.IsSame(wall) for wall in bores):
@@ -730,9 +729,135 @@ def measure(shape: Any) -> dict[str, Any]:
         "freeform_faces": freeform_count,
         "min_convex_radius": None if math.isinf(min_convex) else round(min_convex, 4),
         "min_concave_radius": None if math.isinf(min_concave) else round(min_concave, 4),
-        "_cylinders": cylinders,
+        "_cylinders": joint_cylinders(shape),
         "_planes": planar_faces(shape),
     }
+
+
+class _Adjacency:
+    """The faces of a shape that meet along each of its edges, by their index in `faces`."""
+
+    def __init__(self, shape: Any, faces: list[Any]) -> None:
+        from cadmodel import occ
+        from OCP.TopAbs import TopAbs_EDGE
+        from OCP.TopExp import TopExp
+        try:  # OCP 8 binds NCollection maps under OCP.collections, as cad-motion's mesh_bound does
+            from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher as ShapeMap
+        except ImportError:  # OCP 7.9
+            from OCP.TopTools import TopTools_IndexedMapOfShape as ShapeMap
+
+        self.edges = ShapeMap()
+        TopExp.MapShapes_s(shape, TopAbs_EDGE, self.edges)
+        self.faces: dict[int, list[int]] = {}
+        for index, face in enumerate(faces):
+            for edge in occ.subshapes(face, "EDGE"):
+                members = self.faces.setdefault(self.edges.FindIndex(edge), [])
+                if index not in members:
+                    members.append(index)
+
+    def across(self, edge: Any) -> list[int]:
+        return self.faces.get(self.edges.FindIndex(edge), [])
+
+
+def _normal_along(edge: Any, face: Any) -> tuple[float, float, float] | None:
+    """`face`'s outward normal at the middle of `edge`, or None where it is not defined."""
+    from OCP.BRepAdaptor import BRepAdaptor_Curve2d, BRepAdaptor_Surface
+    from OCP.BRepLProp import BRepLProp_SLProps
+    from OCP.TopAbs import TopAbs_REVERSED
+
+    curve = BRepAdaptor_Curve2d(edge, face)
+    uv = curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2.0)
+    props = BRepLProp_SLProps(BRepAdaptor_Surface(face), uv.X(), uv.Y(), 1, 1e-6)
+    if not props.IsNormalDefined():
+        return None
+    normal = _xyz(props.Normal())
+    return (-normal[0], -normal[1], -normal[2]) if face.Orientation() == TopAbs_REVERSED else normal
+
+
+def _axis_line(face: Any) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    """The axis (a point and a direction) of a cylinder, cone or torus face; None for any other surface."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Torus
+
+    adaptor = BRepAdaptor_Surface(face)
+    getter = {GeomAbs_Cylinder: adaptor.Cylinder, GeomAbs_Cone: adaptor.Cone, GeomAbs_Torus: adaptor.Torus}.get(
+        adaptor.GetType())
+    if getter is None:
+        return None
+    axis = getter().Axis()
+    return _xyz(axis.Location()), _xyz(axis.Direction())
+
+
+def _same_line(a: tuple[Sequence[float], Sequence[float]], b: tuple[Sequence[float], Sequence[float]]) -> bool:
+    return _norm(_cross(a[1], b[1])) <= AXIS_TOL and _norm(_cross(_sub(b[0], a[0]), a[1])) <= SAME_RADIUS_MM
+
+
+def _cylinder_row(face: Any) -> dict[str, Any] | None:
+    from OCP.GeomAbs import GeomAbs_Cylinder
+
+    adaptor, point, normal, _ = surface_sample(face)
+    if adaptor.GetType() != GeomAbs_Cylinder:
+        return None
+    cylinder = adaptor.Cylinder()
+    loc, direction = _xyz(cylinder.Axis().Location()), _xyz(cylinder.Axis().Direction())
+    offset = _sub(point, loc)
+    radial = _sub(offset, tuple(_dot(offset, direction) * c for c in direction))
+    return {"location": loc, "direction": direction, "radius": cylinder.Radius(), "convex": _dot(normal, radial) > 0.0}
+
+
+def _same_cylinder(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return (a["convex"] == b["convex"] and abs(a["radius"] - b["radius"]) <= SAME_RADIUS_MM
+            and _same_line((a["location"], a["direction"]), (b["location"], b["direction"])))
+
+
+def _tangent_neighbours(edge: Any, faces: list[Any], adjacency: _Adjacency, index: int,
+                        line: tuple[Sequence[float], Sequence[float]]) -> list[int]:
+    """The faces across `edge` from face `index` that meet it tangentially and do not turn about `line`."""
+    from OCP.BRep import BRep_Tool
+
+    mine = None if BRep_Tool.Degenerated_s(edge) else _normal_along(edge, faces[index])
+    found: list[int] = []
+    if mine is None:
+        return found
+    for other in adjacency.across(edge):
+        theirs = None if other == index else _normal_along(edge, faces[other])
+        axis = _axis_line(faces[other])
+        if (theirs is not None and _dot(mine, theirs) > 0.0 and _norm(_cross(mine, theirs)) <= TANGENT_TOL
+                and not (axis is not None and _same_line(line, axis))):
+            found.append(other)
+    return found
+
+
+def joint_cylinders(shape: Any) -> list[dict[str, Any]]:
+    """The shape's cylinder patches for the joint check. Adjoining cylinder faces on one axis line with one radius and
+    side are one patch, however the kernel segments the surface. A convex patch that meets two or more faces
+    tangentially, none on its own axis, is an edge blend (`blend`): a fillet or rounded end between them, never a
+    mating cylinder. A half bore, a D-shaft or a shaft between coaxial shoulder fillets is no blend."""
+    from cadmodel import occ
+
+    faces = faces_of(shape)
+    rows = {index: row for index, face in enumerate(faces) if (row := _cylinder_row(face)) is not None}
+    adjacency = _Adjacency(shape, faces)
+    root = {index: index for index in rows}
+
+    def find(index: int) -> int:
+        while root[index] != index:
+            index = root[index]
+        return index
+
+    for members in adjacency.faces.values():
+        for i, j in itertools.combinations(members, 2):
+            if i in rows and j in rows and _same_cylinder(rows[i], rows[j]):
+                root[find(j)] = find(i)
+    tangent: dict[int, set[int]] = {}
+    for index, row in rows.items():
+        line = (row["location"], row["direction"])
+        for edge in occ.subshapes(faces[index], "EDGE"):
+            tangent.setdefault(find(index), set()).update(
+                other for other in _tangent_neighbours(occ.downcast(edge, "EDGE"), faces, adjacency, index, line)
+                if other not in rows or find(other) != find(index))
+    return [{**row, "blend": row["convex"] and len(tangent.get(index, ())) >= 2}
+            for index, row in rows.items() if find(index) == index]
 
 
 def planar_faces(shape: Any) -> list[dict[str, Any]]:
