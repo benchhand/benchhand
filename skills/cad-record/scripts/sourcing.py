@@ -29,7 +29,9 @@ PRODUCT_STEP = "product.step"
 PRODUCT_GLB = "product.glb"
 RELEASE_PRODUCT_STEP = f"definition/{PRODUCT_STEP}"
 RELEASE_CONTEXT_STEP = "context/assembly.step"
-_STEP_PRODUCT = re.compile(r"(?<![A-Z_])PRODUCT\s*\(\s*'([A-Z]{2,5}-[0-9]{4})(?![0-9])")
+_STEP_STRING = r"'((?:[^']|'')*)'"
+_STEP_PRODUCT = re.compile(rf"(?<![A-Z_])PRODUCT\s*\(\s*{_STEP_STRING}\s*,\s*{_STEP_STRING}")  # PRODUCT(id, name, ...)
+_PN = re.compile(r"([A-Z]{2,5}-[0-9]{4})(?![0-9])")
 _BY_MAKE_BUY = {"make": "made", "buy": "purchased", EXISTING: "existing"}
 
 
@@ -58,6 +60,7 @@ def groups_of(parts: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
 
 
 def step_pns(text: str) -> set[str]:
-    """The part numbers that lead the PRODUCT names of a STEP file's text: what a product export holds, read
-    without a CAD kernel."""
-    return set(_STEP_PRODUCT.findall(text))
+    """The part numbers that lead the id or the name of a PRODUCT entity in a STEP file's text: what a product
+    export holds, read without a CAD kernel."""
+    return {match.group(1) for fields in _STEP_PRODUCT.findall(text) for field in fields
+            if (match := _PN.match(field.replace("''", "'")))}
