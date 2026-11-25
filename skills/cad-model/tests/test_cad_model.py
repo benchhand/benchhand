@@ -1786,6 +1786,14 @@ class ProductSubsetTests(unittest.TestCase):
                 self.assertEqual((row["status"], row["blocking"]), ("fail", True))
                 self.assertTrue(row["glb_malformed"])
 
+    def test_an_unnumbered_leaf_in_the_product_step_fails(self) -> None:
+        shipped = [self.component(oid) for oid in self.DELIVERED]
+        row = check.product_subset(check.delivered_occurrences(self.scene(), self.RECORDS), {"EXT-0001"}, self.scene(),
+                                   self.DEFINITIONS, shipped, self.DEFINITIONS, {"TST-0001", "BUY-0001"},
+                                   self.gltf([self.PLACED[oid][1] for oid in self.DELIVERED]), self.DELIVERED,
+                                   unnumbered=["Body001"])
+        self.assertEqual((row["status"], row["unnumbered_leaves"]), ("fail", ["Body001"]))
+
     def test_existing_equipment_named_in_the_step_text_or_the_glb_fails(self) -> None:
         in_step = self.judge(text_pns={"TST-0001", "BUY-0001", "EXT-0001"})
         self.assertEqual((in_step["status"], in_step["existing_in_step"]), ("fail", ["EXT-0001"]))
