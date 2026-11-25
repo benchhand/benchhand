@@ -300,28 +300,26 @@ def support(ctx: Context) -> Result:
             if feats & contacts:
                 planned.append((face, reason))
                 continue
-            findings.append(Draft(f"process.{kind}.overhang_uncalibrated", "minor", UNKNOWN,
-                                  angle(down.get("max_angle_deg") or 0.0), limit,
-                                  g.method("sampled down-facing normals"),
-                                  "; ".join(overhang.reasons + bridge.reasons) or "not calibrated",
-                                  "which down-facing surfaces need support is unknown",
-                                  remedy=ctx.remedy("calibrate the unsupported overhang angle and bridge span for this material and machine, "
-                                                    "or plan supports on this surface", "plan supports on this surface"),
-                                  recheck=[f"process.{kind}.support"], earliest_stage="detail", feature=_one(feats)))
-            parts.append((UNKNOWN, f"face {face.get('id')} overhang not calibrated"))
+            parts.append(_no_basis(ctx, findings, Draft(
+                f"process.{kind}.overhang_uncalibrated", "minor", UNKNOWN, angle(down.get("max_angle_deg") or 0.0), limit,
+                g.method("sampled down-facing normals"), "; ".join(overhang.reasons + bridge.reasons) or "not calibrated",
+                "which down-facing surfaces need support is unknown",
+                remedy=ctx.remedy("calibrate the unsupported overhang angle and bridge span for this material and machine, "
+                                  "or plan supports on this surface", "plan supports on this surface"),
+                recheck=[f"process.{kind}.support"], earliest_stage="detail", feature=_one(feats)),
+                f"face {face.get('id')} overhang", f"face {face.get('id')} overhang not calibrated"))
             continue
         if reason == "undecided" and not covered:
             for feature in sorted(set(hit + start_hit) - reported):
                 reported.add(feature)
-                findings.append(Draft(f"process.{kind}.support_on_critical_unknown", "major", UNKNOWN,
-                                      angle(down.get("max_angle_deg") or 0.0), limit,
-                                      g.method("sampled down-facing normals"), "; ".join(overhang.reasons + bridge.reasons),
-                                      f"whether supports touch the {critical[feature].role} surface {feature} is unknown",
-                                      remedy=ctx.remedy("calibrate the unsupported overhang angle and bridge span, or reorient so "
-                                                        f"{feature} faces up or sideways",
-                                                        f"reorient so {feature} faces up or sideways"), recheck=[f"process.{kind}.support"],
-                                      earliest_stage="detail", feature=feature))
-                parts.append((UNKNOWN, f"support on critical {feature} undecided"))
+                parts.append(_no_basis(ctx, findings, Draft(
+                    f"process.{kind}.support_on_critical_unknown", "major", UNKNOWN, angle(down.get("max_angle_deg") or 0.0),
+                    limit, g.method("sampled down-facing normals"), "; ".join(overhang.reasons + bridge.reasons),
+                    f"whether supports touch the {critical[feature].role} surface {feature} is unknown",
+                    remedy=ctx.remedy("calibrate the unsupported overhang angle and bridge span, or reorient so "
+                                      f"{feature} faces up or sideways", f"reorient so {feature} faces up or sideways"),
+                    recheck=[f"process.{kind}.support"], earliest_stage="detail", feature=feature),
+                    f"support on critical {feature}", f"support on critical {feature} undecided"))
             continue
         if hit or start_hit:
             for feature in sorted(set(hit + start_hit) - reported):
@@ -378,7 +376,7 @@ def support(ctx: Context) -> Result:
     if not needing and not undecided:
         parts.append(_graded(ctx, g, judged, "no down-facing surface beyond the unsupported limits", findings))
     return combine(method, parts, findings,
-                   uncertainty="sampled normals and rays; support toolpaths and removal are not simulated")
+                   uncertainty="sampled normals and rays; support toolpaths and removal are not simulated", reason=NO_BASIS)
 
 
 def _judge(down: Any, overhang: Limit, bridge: Limit, judged: dict[str, tuple[Limit, dict[str, Any]]]) -> None:
@@ -547,16 +545,16 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
     walls = g.facts.get("walls") or {}
     cal = ctx.limit("min_wall", MINIMUM)
     if not cal.known:
-        findings.append(Draft(f"process.{kind}.wall_uncalibrated", "minor", UNKNOWN,
-                              length(walls["thickness_mm"]) if walls.get("thickness_mm") is not None else unknown("not measured"),
-                              cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
-                              "; ".join(cal.reasons), "the structural wall criterion is unknown",
-                              remedy=ctx.remedy("calibrate the minimum reliable wall for this material, process and orientation, "
-                                                "or record the nozzle diameter or line width a guideline needs",
-                                                "record the nozzle diameter or line width a guideline needs"),
-                              recheck=[f"process.{kind}.geometry"],
-                              earliest_stage="parts"))
-        return UNKNOWN, "wall criterion not calibrated"
+        return _no_basis(ctx, findings, Draft(
+            f"process.{kind}.wall_uncalibrated", "minor", UNKNOWN,
+            length(walls["thickness_mm"]) if walls.get("thickness_mm") is not None else unknown("not measured"),
+            cal.criterion("wall_thickness", "mm"), g.method("minimum-wall scan"),
+            "; ".join(cal.reasons), "the structural wall criterion is unknown",
+            remedy=ctx.remedy("calibrate the minimum reliable wall for this material, process and orientation, "
+                              "or record the nozzle diameter or line width a guideline needs",
+                              "record the nozzle diameter or line width a guideline needs"),
+            recheck=[f"process.{kind}.geometry"], earliest_stage="parts"),
+            "structural walls", "wall criterion not calibrated")
     need = cal.threshold("mm")
     floor_only = "; the profile states no nozzle or line width, so min_wall is the plain floor" \
         if cal.status == "guideline" and cal.base_mm is None else ""
