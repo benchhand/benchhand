@@ -788,46 +788,75 @@ def datum_distance(patch: Any, datum: tuple[Sequence[float], Sequence[float]]) -
     return 0.0 if low <= 0.0 <= high else min(abs(low), abs(high))
 
 
+class Contact(NamedTuple):
+    """face_contact's answer: the best facing pair (None: none overlaps) and whether it mates at the joint."""
+
+    best: dict[str, Any] | None
+    at_joint: bool
+
+
+def _onto_plane(ours: dict[str, Any], normal: Sequence[float], point: Sequence[float], pose: Any) -> Any:
+    """The rigid motion that lays a child face (outward `normal`, through `point`, both in the parent frame) on the
+    parent face's plane: a turn by its residual tilt about `point`, then a move along the parent normal. Within
+    AXIS_TOL of tilt it is the face's orthogonal projection to r (1 - cos tilt), under 5 nm at r = 1 m."""
+    target = tuple(-c for c in ours["normal"])
+    axis = _cross(normal, target)
+    sine = _norm(axis)
+    turn = (pose.Rigid.rotation(tuple(c / sine for c in axis), math.degrees(math.atan2(sine, _dot(normal, target))),
+                                tuple(point)) if sine > 1e-15 else pose.Rigid.identity())
+    drop = _dot(_sub(point, ours["point"]), ours["normal"])
+    return pose.Rigid.translation(ours["normal"], -drop) @ turn
+
+
+def separation(patch: Any, ours: dict[str, Any], normal: Sequence[float], point: Sequence[float]) -> tuple[float, float]:
+    """The least and greatest distance, along the parent normal, from the contact patch (on the parent plane) to the
+    child face's own plane (outward `normal`, through `point`). It is linear across the plane, so the patch's extent
+    along its gradient bounds it exactly. Positive: apart; negative: overlapping."""
+    n, base = ours["normal"], ours["point"]
+    facing = _dot(normal, n)
+    centre = _dot(normal, _sub(point, base)) / facing
+    gradient = tuple(-c / facing for c in normal)
+    along = _sub(gradient, tuple(_dot(gradient, n) * c for c in n))
+    slope = _norm(along)
+    if slope < 1e-15:
+        return centre, centre
+    low, high = _extent(patch, base, tuple(c / slope for c in along))
+    return centre + slope * low, centre + slope * high
+
+
 def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], relative: Any, pose: Any,
-                 datum: tuple[Sequence[float], Sequence[float]], tol: float, window: float) -> dict[str, Any] | None:
-    """The planar face pair of two parts that mates them at the joint: outward normals opposite, planes at most
-    `window` mm apart, overlapping by at least CONTACT_MIN_AREA_MM2 once the child face is moved onto the parent's
-    plane. `relative` takes child-frame points into the parent frame; `datum` is the joint origin and axis in the parent
-    frame. offset_mm is the distance between the planes, area_mm2 their overlap and datum_mm the patch's distance from
-    the joint's datum plane (datum_distance). A pair within `tol` on both counts wins, then the nearest."""
+                 datum: tuple[Sequence[float], Sequence[float]], tol: float, window: float) -> Contact:
+    """The planar face pair of two parts that mates them at the joint: outward normals opposite within AXIS_TOL, planes
+    at most `window` mm apart, and an overlap of at least CONTACT_MIN_AREA_MM2 once the child face is laid on the
+    parent's plane (_onto_plane). `relative` takes child-frame points into the parent frame; `datum` is the joint origin
+    and axis in the parent frame. offset_mm is the largest separation across the overlap (separation), area_mm2 the
+    overlap and datum_mm its distance from the joint's datum plane (datum_distance). A pair within `tol` on both
+    counts, compared before rounding, wins; then the nearest."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
-    from OCP.gp import gp_Trsf, gp_Vec
 
     turn = pose.Rigid(relative.rot, (0.0, 0.0, 0.0))
-    best: dict[str, Any] | None = None
+    best: tuple[tuple[bool, float, float, float], dict[str, Any]] | None = None
     for theirs in child:
         normal, point = turn.apply(theirs["normal"]), relative.apply(theirs["point"])
-        moved = None
         for ours in parent:
             if _dot(ours["normal"], normal) >= 0.0 or _norm(_cross(ours["normal"], normal)) > AXIS_TOL:
                 continue
-            gap = _dot(_sub(point, ours["point"]), ours["normal"])  # > 0: apart, < 0: overlapping
-            if abs(gap) > window:
+            if abs(_dot(_sub(point, ours["point"]), ours["normal"])) > window:
                 continue
-            if moved is None:
-                moved = BRepBuilderAPI_Transform(theirs["face"], pose.to_trsf(relative), True).Shape()
-            onto = gp_Trsf()
-            onto.SetTranslation(gp_Vec(*(-gap * c for c in ours["normal"])))
-            common = BRepAlgoAPI_Common(ours["face"], BRepBuilderAPI_Transform(moved, onto, True).Shape())
+            laid = BRepBuilderAPI_Transform(theirs["face"], pose.to_trsf(_onto_plane(ours, normal, point, pose) @ relative),
+                                            True).Shape()
+            common = BRepAlgoAPI_Common(ours["face"], laid)
             area = sum(face_area(face) for face in faces_of(common.Shape())) if common.IsDone() else 0.0
             if area < CONTACT_MIN_AREA_MM2:
                 continue
-            found: dict[str, Any] = {"offset_mm": round(abs(gap), 6), "area_mm2": round(area, 4),
-                                     "datum_mm": round(datum_distance(common.Shape(), datum), 6), "kind": "face"}
-            if best is None or _contact_rank(found, tol) < _contact_rank(best, tol):
-                best = found
-    return best
-
-
-def _contact_rank(contact: dict[str, Any], tol: float) -> tuple[bool, float, float, float]:
-    at_joint = contact["offset_mm"] <= tol and contact["datum_mm"] <= tol
-    return not at_joint, contact["offset_mm"], contact["datum_mm"], -contact["area_mm2"]
+            gap = max(abs(end) for end in separation(common.Shape(), ours, normal, point))
+            off = datum_distance(common.Shape(), datum)
+            rank = (not (gap <= tol and off <= tol), gap, off, -area)
+            if best is None or rank < best[0]:
+                best = rank, {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6),
+                              "kind": "face"}
+    return Contact(None, False) if best is None else Contact(best[1], not best[0][0])
 
 
 def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list[dict[str, Any]]],
@@ -853,15 +882,15 @@ def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list
         datum = (parent_rest.apply(joint.origin), pose.Rigid(parent_rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis))
         contact = face_contact(planes[parent_pn], planes[child_pn], parent_rest @ child_rest.inverse(), pose,
                                datum, tol, max(CONTACT_SEARCH_MM, tol))
-        if contact is not None and not _contact_rank(contact, tol)[0]:
-            parts.update(dict.fromkeys(missing, contact))
+        if contact.at_joint:
+            parts.update(dict.fromkeys(missing, contact.best))
             return parts, []
     findings = []
     for ref in missing:
         finding = {"check": "joint_bore_missing", "joint": joint.id, "part": ref,
                    "kind": "bore, shank or face contact" if fixed else "bore or shank", "nearest": parts[ref]}
         if fixed:
-            finding["contact"] = contact
+            finding["contact"] = contact.best if contact is not None else None
         findings.append({**finding, "tol_mm": tol})
     return parts, findings
 
