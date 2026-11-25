@@ -20,5 +20,5 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from cadmodel.motion import load_pose  # noqa: E402
 
 pose = load_pose()
-json.dump({path: {c.name: list(c.trail) for c in pose.read_assembly_step(Path(path)).components} for path in sys.argv[1:]},
+json.dump({path: {c.name: list(c.path) for c in pose.read_assembly_step(Path(path)).components} for path in sys.argv[1:]},
           sys.stdout)

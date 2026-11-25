@@ -29,8 +29,9 @@ run   executes every hw/parts/<PN>/model.py in its declared kernel's own uv envi
                           the in-context scene, existing equipment (make_buy existing) included
         assembly.glb      binary glTF of assembly.step, metres, +Y up, one node per occurrence, under
                           a made, purchased or existing group node by the part's make_buy
-        product.step      assembly.step without existing equipment: the delivered product
-        product.glb       binary glTF of product.step, grouped as assembly.glb
+        product.step      assembly.step without existing equipment: the delivered product, each
+                          component under a made or purchased group product
+        product.glb       binary glTF of product.step, with its group nodes
         part-map.json     occurrence -> assembly.glb nodes and meshes, plus the PN aggregate
         metrics.json      per PN: volume, area, bbox, solids, holes, mass from its material profile's
                           density, unknown without one;
