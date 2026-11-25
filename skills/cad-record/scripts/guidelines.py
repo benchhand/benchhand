@@ -207,6 +207,9 @@ def _limit_problems(mi: Any, index: int, limit: Mapping[str, Any]) -> list[str]:
         problems.extend(_quantity_problems(mi, f"limits/{index}/quantity", limit["quantity"]))
     if "quantities" in limit:
         problems.extend(_sizes_problems(mi, f"limits/{index}/quantities", limit["quantities"]))
+    bound = (limit.get("applies_to") or {}).get("max_size")
+    if bound is not None:
+        problems.extend(_max_size_problems(mi, f"limits/{index}/applies_to/max_size", bound))
     relative = limit.get("relative")
     if relative is None:
         return problems
@@ -237,6 +240,21 @@ def _sizes_problems(mi: Any, where: str, items: Sequence[Mapping[str, Any]]) -> 
         else:
             seen[round(exact)] = position
     return problems
+
+
+def _max_size_problems(mi: Any, where: str, data: Any) -> list[str]:
+    """Why a max_size bound cannot bound a feature size: not a quantity the resolver reads, not a length, or not a
+    finite positive value."""
+    problems = _quantity_problems(mi, where, data)
+    if problems:
+        return problems
+    bound = mi.quantity(data)
+    if bound.dimension != "length":
+        return [f"{where}: a size bound is a length, not {bound.units}"]
+    value = bound.to("mm").value
+    if value is None or not math.isfinite(value) or value <= 0:
+        return [f"{where}: {value} is not a finite positive length"]
+    return []
 
 
 def _quantity_problems(mi: Any, where: str, data: Any) -> list[str]:
