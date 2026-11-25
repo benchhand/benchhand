@@ -806,12 +806,11 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
 
 # The critical-surface properties another check of a printed route reads for every feature: flatness in thermal
 # distortion. Per feature, _critical adds the one it consumes itself: a bore's diameter (hole_fits) or the deviation of
-# its role. Every other criterion goes through _unchecked: the band-width check, else not assessed (no_check).
+# its role. Every other criterion goes through _unchecked: the band-width check, else an explicit open finding.
 JUDGED_PROPERTIES = frozenset({"flatness"})
-NO_CHECK = "no_check"  # the not_assessed reason of a criterion no check measures
 # The criterion properties that name a dimensional size of the model (a length the print can miss), so a band of one can
 # be compared with the as-printed spread: the word itself, or a property ending in `_<word>` (seat_depth, boss_height).
-# A deviation, a roughness or any other property is no size: it is not assessed (no_check).
+# A deviation, a roughness or any other property is no size: it stays an open finding.
 SIZE_WORDS = ("thickness", "depth", "height", "width", "length", "diameter", "radius", "distance", "spacing", "clearance",
               "gap", "size")
 
@@ -837,9 +836,9 @@ def _length_mm(ctx: Context, value: Any, units: str | None) -> float | None:
 
 
 def _unchecked(ctx: Context, g: Geometry, surface: Any, item: Mapping[str, Any], findings: list[Draft]) -> tuple[str, str]:
-    """A criterion no check measures on the model: never a pass. A `between` band of a dimensional size (SIZE_WORDS)
-    narrower than the spread of the governing deviation (calibration, else guideline, by size) fails, since no nominal
-    holds it; anything else is not assessed (no_check)."""
+    """A criterion no check measures on the model: never a pass. A `between` band of a dimensional size narrower than the
+    spread of the governing deviation (calibration, else guideline, by size) fails, since no nominal holds it; anything
+    else is an open (UNKNOWN) finding, since the gap is check coverage, not a printer basis."""
     kind, feature, prop = _k(ctx), surface.feature, str(item.get("property"))
     units = item.get("units")
     if _is_size(prop) and item.get("operator") == "between" and isinstance(item.get("value"), (list, tuple)):
@@ -859,12 +858,13 @@ def _unchecked(ctx: Context, g: Geometry, surface: Any, item: Mapping[str, Any],
                                                             f"widen the {prop} band, or finish {feature} after printing"),
                                           recheck=[f"process.{kind}.geometry"], feature=feature))
                     return FAIL, f"{feature} {prop} band narrower than the as-printed spread"
-    findings.append(Draft(f"process.{kind}.criterion_not_assessed", "minor", NOT_ASSESSED, unknown("not measured on the model"),
+    # a check-coverage gap, not a missing printer basis: the finding is explicit and the obligation stays open (UNKNOWN)
+    findings.append(Draft(f"process.{kind}.criterion_unchecked", "major", UNKNOWN, unknown("not measured on the model"),
                           {**item}, g.method("feature locators"), f"no check measures {prop} on the model",
-                          f"whether the {surface.role} {feature} meets its {prop} criterion is not assessed",
+                          f"whether the {surface.role} {feature} meets its {prop} criterion is not checked",
                           remedy=f"print and inspect {feature} for {prop}, or state it as a tolerance a check reads",
-                          recheck=[f"process.{kind}.geometry"], feature=feature, reason=NO_CHECK))
-    return NOT_ASSESSED, f"{feature} {prop} not assessed: no check measures it"
+                          recheck=[f"process.{kind}.geometry"], feature=feature))
+    return UNKNOWN, f"{feature} {prop} not checked: no check measures it"
 
 
 def _reason(findings: Sequence[Draft]) -> str:
