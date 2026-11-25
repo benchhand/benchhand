@@ -5,8 +5,9 @@
 """VSE-0013 Belt idler bracket: CadQuery 2.8, part_local frame, one occurrence on the crankcase end face (DR-005).
 
 The v9 connection check found the idler 8.88 mm and the tensioner 4.75 mm off the crankcase, so nothing held them.
-Local origin: the crankcase end face (x = 0), crank axis along X. The plate lies at local x -2..0 and spans y -13..13, z 10..76.
-Two 3 g6 stub axles (2.995 mm) run to local x -12.75: one at (y 0, z 70) for the idler, one at (y -10.7, z 30) for the tensioner roller.
+Local origin: the crankcase end face (x = 0), crank axis along X. The plate lies at local x -2..0 and spans y -15..15, z 10..76.
+Two 3 g6 stub axles (2.995 mm) run to local x -12.75: one at (y 0, z 70) for the idler, one at (y -12.6, z 30) for the tensioner roller,
+where the 360 mm belt (VSE-0010) is taut.
 The 3.0 mm roller bore rides on them with 0.005 mm radial clearance; the v10 connection check flagged 0.03 mm as floating.
 """
 
@@ -18,13 +19,13 @@ from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 KERNEL = "cadquery"
 PARAMS = {
     "plate_t": 2.0,
-    "plate_y": 26.0,
+    "plate_y": 30.0,
     "plate_z0": 10.0,
     "plate_z1": 76.0,
     "axle_d": 2.995,  # 3 g6 mid-limit (2.992..2.998)
     "axle_len": 12.75,
     "idler_yz": (0.0, 70.0),
-    "tensioner_yz": (-10.7, 30.0),
+    "tensioner_yz": (-12.6, 30.0),
 }
 
 

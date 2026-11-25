@@ -193,7 +193,7 @@ occurrences:
 - id: tensioner
   PN: VSE-0012
   placement:
-    translation_mm: [-68.75, -10.7, 30.0]
+    translation_mm: [-68.75, -12.6, 30.0]
     rotation:
       axis: [1, 0, 0]
       angle_deg: 0.0
@@ -502,14 +502,13 @@ joints:
   min: 0
   max: 0
   nominal: 0
-# WORKAROUND (belt mount): a belt is positioned by the pulleys it wraps, not by a rigid mount. A fixed joint needs touching parts
-# and the belt envelope does not touch the crankcase (5.75 mm), so the belt hangs on a zero-range revolute joint on the crank axis.
+# The belt envelope runs on the back of the idler roller, so a fixed joint holds it there; it does not travel with the crank.
 - id: J-423
-  type: revolute
-  parent: VSE-0001
+  type: fixed
+  parent: '@idler'
   child: '@belt'
   axis: [1, 0, 0]
-  origin: [-68.75, 0, 0]
+  origin: [-68.75, 0, 70.0]
   min: 0
   max: 0
   nominal: 0
@@ -527,7 +526,7 @@ joints:
   parent: '@bracket'
   child: '@tensioner'
   axis: [1, 0, 0]
-  origin: [-68.75, -10.7, 30.0]
+  origin: [-68.75, -12.6, 30.0]
   min: 0
   max: 0
   nominal: 0

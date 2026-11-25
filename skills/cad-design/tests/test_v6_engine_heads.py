@@ -95,9 +95,10 @@ class BeltPathTests(unittest.TestCase):
     def test_the_stock_belt_length_lies_within_the_tensioner_travel(self) -> None:  # DR-005
         belt = params("VSE-0010")
         # DR-005 path: crank r 6.37 at (0, 0), cams r 12.73 at (+/-45, 77.94), back-side idler r 5 at (0, 70),
-        # back-side tensioner r 5 at z = 30; its travel y -30..-6 spans 411.2..424.3 mm of pitch length.
-        self.assertGreaterEqual(belt["length_mm"], 411.2)
-        self.assertLessEqual(belt["length_mm"], 424.3)
+        # back-side tensioner r 5 at z = 30, both rollers 5.376 mm to the pitch line; its travel y -30..-6 spans
+        # 352.4..365.9 mm of pitch length.
+        self.assertGreaterEqual(belt["length_mm"], 352.4)
+        self.assertLessEqual(belt["length_mm"], 365.9)
 
 
 if __name__ == "__main__":

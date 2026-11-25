@@ -31,7 +31,9 @@ REPO = HERE.parents[2]
 EXAMPLE_HW = REPO / "examples" / "v6-engine" / "hw"
 CLI = HERE.parents[1] / "cad-model" / "scripts" / "cad_model.py"
 sys.path.insert(0, str(REPO / "scripts"))  # modload lives in scripts/, which is no package: the path must exist before the import
-from modload import result_payload  # noqa: E402  (late import on purpose: E402 flags it because of the sys.path line above)
+from modload import load_module, result_payload  # noqa: E402  (late import on purpose: E402 flags it because of the sys.path line above)
+
+pose = load_module("cad_motion_pose", HERE.parents[1] / "cad-motion" / "scripts" / "pose.py")
 
 CRANK_AXIS = (1.0, 0.0, 0.0)
 CYLINDERS = range(1, 7)
@@ -55,7 +57,7 @@ class JointAxisTests(unittest.TestCase):
     def test_the_crank_is_the_one_independent_joint_about_x(self) -> None:
         crank = self.joints["J-001"]
         self.assertEqual((crank["type"], crank["axis"], crank["origin"]), ("revolute", [1, 0, 0], [0, 0, 0]))
-        self.assertEqual([j["id"] for j in self.joints.values() if "coupling" not in j and j["type"] == "revolute"], ["J-001"])
+        self.assertEqual([j.id for j in pose.load_assembly(EXAMPLE_HW).independent], ["J-001"])
 
     def test_each_piston_slides_along_its_bank_axis(self) -> None:
         for n in CYLINDERS:
