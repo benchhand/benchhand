@@ -272,6 +272,10 @@ class CommodityProcurement(unittest.TestCase):
         vendor = {"rev": "A", "make_buy": "buy", "supplier": None, "procurement": {"mode": "catalog"}}
         self.assertTrue(any("supplier" in b["message"] for b in completeness.release_blockers(vendor)))
 
+    def test_a_designation_with_a_manufacturer_part_number_still_needs_a_supplier(self) -> None:
+        record = catalogue_screw(manufacturer="TST Maker", manufacturer_part_number="TST-4762-M4")
+        self.assertTrue(any("supplier" in b["message"] for b in completeness.release_blockers(record)))
+
     def test_the_table_shows_the_designation_of_a_designation_only_screw(self) -> None:
         table = drawing.procurement_table(catalogue_screw())
         self.assertIn("ISO 4762 M4x20, 8.8", dict(table.rows)["Designation"])

@@ -455,6 +455,33 @@ class BuildGuide(unittest.TestCase):
         self.assertNotEqual(lines["TST-NUT-A"], lines["TST-NUT-B"], "two manufacturer items are two rows")
         self.assertNotIn("any supplier (commodity)", "".join(lines["TST-NUT-A"] + lines["TST-NUT-B"]))
 
+    def record_bom_identity(self, hw: Path, pn: str, manufacturer: str, part_number: str) -> None:
+        """Name the manufacturer in bom.csv only: the part record stays designation-only."""
+        path = hw / "bom.csv"
+        with path.open(newline="", encoding="utf-8") as stream:
+            reader = csv.DictReader(stream)
+            fields = list(reader.fieldnames or [])
+            rows = list(reader)
+        for row in rows:
+            if row["PN"] == pn:
+                row["manufacturer"], row["manufacturer_part_number"] = manufacturer, part_number
+        with path.open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def test_bom_only_manufacturer_part_numbers_keep_their_identities(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        for pn, mpn in (("LMP-0008", "BOM-NUT-A"), ("LMP-0009", "BOM-NUT-B")):
+            self.designate(hw, pn, self.NUT)
+            self.record_bom_identity(hw, pn, "TST Maker", mpn)
+        buy = self.generate(hw).split("## Parts to buy")[1].split("## Tools")[0]
+        lines = {mpn: [line for line in buy.splitlines() if mpn in line] for mpn in ("BOM-NUT-A", "BOM-NUT-B")}
+        self.assertEqual({mpn: len(found) for mpn, found in lines.items()}, {"BOM-NUT-A": 1, "BOM-NUT-B": 1})
+        self.assertNotEqual(lines["BOM-NUT-A"], lines["BOM-NUT-B"], "two manufacturer items are two rows")
+        self.assertNotIn("any supplier (commodity)", "".join(lines["BOM-NUT-A"] + lines["BOM-NUT-B"]))
+
     def test_commodity_rows_with_the_same_supplier_and_order_code_merge(self) -> None:
         bound = {"supplier": "TST Supply Co", "order_code": "TST-4032-A"}
         rows = self.nut_rows(bound, bound)
