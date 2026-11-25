@@ -581,6 +581,18 @@ class MaxSize(Directories):
                 self.assertEqual(found.status, "unknown")
                 self.assertTrue(any("up to 100 mm" in r and why in r for r in found.reasons), found.reasons)
 
+    def test_a_max_size_that_is_not_a_finite_positive_length_is_refused_at_discovery(self) -> None:
+        for name, bound in (("angle", {"value": 30, "units": "deg"}), ("zero", {"value": 0, "units": "mm"}),
+                            ("negative", {"value": -5, "units": "mm"}), ("infinite", {"value": float("inf"), "units": "mm"})):
+            with self.subTest(name):
+                bounded = limit("dimensional_deviation", "between", quantity=fx.quantity(lower=-0.5, upper=0.5),
+                                applies_to={"max_size": bound})
+                put(self.project, "g", guideline("tst.sized", [bounded]))
+                catalog = self.catalog()
+                self.assertNotIn("tst.sized", catalog.guidelines)
+                self.assertEqual([r.path for r in catalog.refused], ["manufacturing/guidelines/g.yaml"])
+                self.assertTrue(any("max_size" in p for p in catalog.refused[0].problems), catalog.refused[0].problems)
+
 
 class EndpointStrictness(Directories):
     """Endpoint openness survives intersection and containment (benchhand-lch, round 4)."""
