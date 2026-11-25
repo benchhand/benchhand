@@ -1693,7 +1693,7 @@ def _dropped_findings(findings: _Findings, report: Mapping[str, Any], dropped: f
     found = False
     for role in ("primary", "end_use", "fallback", "prototype"):
         ident = recommendation.get(role)
-        if ident in dropped:
+        if isinstance(ident, str) and ident in dropped:
             found = True
             findings.add("selection.recorded_recommendation_dropped", f"{role}_{ident}", {"product": True}, "critical", "fail",
                          measured={"text": f"recorded {role} {ident} names only existing equipment"},
