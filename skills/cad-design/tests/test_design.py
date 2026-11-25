@@ -617,30 +617,28 @@ class JointContactFailureTests(unittest.TestCase):
         self.assertEqual({row["kind"] for row in report["joints"]["J-701"]["parts"].values()}, {"unknown"})
 
 
-# Runs form_check (argv[1]) with every face-to-face BRepAlgoAPI_Common reporting that it did not complete.
+# Runs form_check (argv[1]) with every face-to-face BOPAlgo Boolean reporting a kernel error, as cad-model's
+# occ.boolean reads it.
 FAILING_BOOLEAN = '''
 import importlib.util
 import sys
 
-import OCP.BRepAlgoAPI as algo
+import OCP.BOPAlgo as bop
 from OCP.TopAbs import TopAbs_FACE
 
-REAL = algo.BRepAlgoAPI_Common
+
+class FailingBOP(bop.BOPAlgo_BOP):
+    forced = False
+
+    def SetArguments(self, shapes):
+        self.forced = all(shape.ShapeType() == TopAbs_FACE for shape in shapes)
+        super().SetArguments(shapes)
+
+    def HasErrors(self):
+        return self.forced or super().HasErrors()
 
 
-class FailingCommon:
-    def __init__(self, *shapes):
-        self.real = REAL(*shapes)
-        self.forced = len(shapes) == 2 and all(shape.ShapeType() == TopAbs_FACE for shape in shapes)
-
-    def IsDone(self):
-        return not self.forced and self.real.IsDone()
-
-    def __getattr__(self, name):
-        return getattr(self.real, name)
-
-
-algo.BRepAlgoAPI_Common = FailingCommon
+bop.BOPAlgo_BOP = FailingBOP
 spec = importlib.util.spec_from_file_location("form_check", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
