@@ -452,6 +452,7 @@ JOINT_GEOMETRY_PARTS = {
     "TST-0622": (FDM_MADE, "cq.Workplane().add(cq.Solid.makeCylinder(5, 30, cq.Vector(0, 0, -15), cq.Vector(0, 0, 1), 90)"
                            ".fuse(*[cq.Solid.makeCylinder(5, 30, cq.Vector(0, 0, -15), cq.Vector(0, 0, 1), 90)"
                            ".rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), turn) for turn in (90, 180, 270)]))"),
+    "TST-0623": (FDM_MADE, PAD + ".translate((0, 0, 8.0500004))"),  # 0.0500004 mm above the deck: 0.05 when rounded
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -488,6 +489,7 @@ joints:
 - {id: J-627, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [1000, 0, 5], min: 0, max: 0, nominal: 0,
    mount: {point: [30, 0, 5]}}
 - {id: J-628, type: revolute, parent: TST-0602, child: TST-0622, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
+- {id: J-629, type: fixed, parent: TST-0605, child: TST-0623, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
 """
 
 
@@ -611,6 +613,12 @@ class JointGeometryTests(unittest.TestCase):
         self.assertEqual(sorted(missing), ["TST-0612", "TST-0613"])
         self.assertAlmostEqual(missing["TST-0613"]["contact"]["offset_mm"], 0.045 + 100 * math.sin(math.radians(0.005)),
                                places=5)
+
+    def test_a_gap_that_rounds_to_the_tolerance_still_fails(self) -> None:
+        """0.0500004 mm reports as 0.05, the tolerance itself; the check compares the unrounded gap."""
+        missing = self.missing("J-629")
+        self.assertEqual(sorted(missing), ["TST-0605", "TST-0623"])
+        self.assertEqual(missing["TST-0623"]["contact"]["offset_mm"], 0.05)
 
     def unknown(self, joint: str) -> dict[str, dict]:
         return {f["part"]: f for f in self.report["findings"] if f["check"] == "joint_contact_unknown" and f["joint"] == joint}
