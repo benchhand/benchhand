@@ -94,6 +94,16 @@ function setStatus(state, text) {
   statusEl.textContent = text;
 }
 
+// A ghosted part, and the ghosted-context fallback of a close-up: translucent, never writing depth.
+const GHOST = { opacity: 0.22, edgeOpacity: 0.6, edgeColor: 0x8a94a0, edgeAngleDeg: 30 };
+function ghostMaterial(material) {
+  const ghost = material.clone();
+  ghost.transparent = true;
+  ghost.opacity = GHOST.opacity;
+  ghost.depthWrite = false;
+  return ghost;
+}
+
 function physicalMaterial(spec) {
   const params = {};
   for (const [key, value] of Object.entries(spec.pbr)) {
@@ -305,19 +315,36 @@ async function boot() {
   // part definition: every occurrence of a PN carries its PN's material spec.
   const parts = new Map();
   const owned = new Set();
+  const hiddenIds = new Set(scene.hidden ?? []);
+  const ghostIds = new Set(scene.ghosted ?? []);
   for (const part of scene.parts) {
     const material = physicalMaterial(part.material);
     const nodes = await Promise.all(part.node_indices.map((i) => gltf.parser.getDependency("node", i)));
     const meshes = [];
     for (const node of nodes) node.traverse((o) => { if (o.isMesh) meshes.push(o); });
     if (!meshes.length) throw new Error(`${part.ref}: no mesh under GLB nodes ${part.node_indices.join(", ")}`);
+    const ghosted = ghostIds.has(part.id);
+    const drawn = ghosted ? ghostMaterial(material) : material;
+    const edges = [];
     for (const mesh of meshes) {
-      mesh.material = material;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.material = drawn;
+      // A ghost is see-through: it casts and takes no shadow, and its edges keep its shape readable.
+      mesh.castShadow = !ghosted;
+      mesh.receiveShadow = !ghosted;
       owned.add(mesh);
+      if (ghosted) {
+        const lines = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, GHOST.edgeAngleDeg),
+          new THREE.LineBasicMaterial({ color: GHOST.edgeColor, transparent: true, opacity: GHOST.edgeOpacity }));
+        lines.castShadow = false;
+        lines.receiveShadow = false;
+        mesh.add(lines);
+        edges.push(lines);
+      }
     }
-    parts.set(part.id, { pn: part.pn, nodes, meshes, material, rest: nodes.map((n) => ({
+    // A hidden occurrence stays invisible: every view restores nodes to `rest.visible`.
+    if (hiddenIds.has(part.id)) nodes.forEach((n) => { n.visible = false; });
+    parts.set(part.id, { pn: part.pn, nodes, meshes, material, ghosted, edges, hidden: hiddenIds.has(part.id),
+      rest: nodes.map((n) => ({
       parent: n.parent, position: n.position.clone(), quaternion: n.quaternion.clone(), scale: n.scale.clone(),
       visible: n.visible,
     })) });
@@ -325,7 +352,11 @@ async function boot() {
   const unmapped = [];
   root.traverse((o) => { if (o.isMesh && !owned.has(o)) unmapped.push(o.name); });
 
-  const restBox = new THREE.Box3().setFromObject(root);
+  // The studio floor sits under the drawn parts: a hidden part sets neither it nor the shadow framing.
+  const hiddenMeshes = new Set([...parts.values()].filter((part) => part.hidden).flatMap((part) => part.meshes));
+  const restBox = new THREE.Box3();
+  root.traverse((o) => { if (o.isMesh && !hiddenMeshes.has(o)) restBox.expandByObject(o); });
+  if (restBox.isEmpty()) restBox.setFromObject(root);
   const groundY = restBox.min.y;
   // The floor: a square under the scene (placed per pose by stage) that shows only the baked
   // shadow: the softbox term in `occlusion`, the contact term in `contact` (blurred through
@@ -414,6 +445,10 @@ async function boot() {
   gtao.output = GTAOPass.OUTPUT.Default;
   gtao.blendIntensity = 1.0;
   composer.addPass(gtao);
+  // GTAO re-draws the scene's depth and normals with its own opaque material, so a ghost would shade the
+  // parts behind it. It composites onto the beauty pass already in the buffer: leave the ghosts out of it.
+  const gtaoRender = gtao.render.bind(gtao);
+  gtao.render = (...args) => withObjectsHidden(ghostObjects(() => true), () => gtaoRender(...args));
   composer.addPass(new OutputPass());
 
   const maskTarget = new THREE.WebGLRenderTarget(width, height);
@@ -566,29 +601,8 @@ async function boot() {
     bakeScene.add(root, ground);
     renderer.setClearColor(0x000000, 0);
     try {
-      aimFloorCamera(floor, half, true);
-      renderer.setRenderTarget(heights);
-      withMaterials(() => heightMaterial, null, () => renderer.render(bakeScene, bakeCamera));
-      const blur = contactBlur.material.uniforms;
-      blur.contactHeight.value = radius * STUDIO.contactHeight;
-      for (const [source, weigh, dx, dy, target] of [[heights, true, 1, 0, contactPass], [contactPass, false, 0, 1, contact]]) {
-        blur.source.value = source.texture;
-        blur.weigh.value = weigh;
-        blur.texel.value.set(dx / STUDIO.contactMapSize, dy / STUDIO.contactMapSize);
-        renderer.setRenderTarget(target);
-        contactBlur.render(renderer);
-      }
-      aimFloorCamera(floor, half, false);
-      renderer.setRenderTarget(occlusion);
-      renderer.clear();
-      renderer.autoClear = false;
-      ground.receiveShadow = true;
-      withMaterials(() => castOnly, bakeShadow, () => {
-        for (let i = 0; i < STUDIO.groundSamples; i += 1) {
-          aimShadowLight(bakeLight, centre, coneDirection(i, STUDIO.groundSamples, cone), radius);
-          renderer.render(bakeScene, bakeCamera);
-        }
-      });
+      // A ghost is see-through: it casts no shadow and sets no contact height on the floor.
+      withObjectsHidden(ghostObjects(() => true), () => bakeFloorMaps(floor, half, centre, radius, cone));
     } finally {
       ground.receiveShadow = false;
       renderer.autoClear = true;
@@ -596,6 +610,33 @@ async function boot() {
       renderer.shadowMap.type = beautyShadowType;
       world.add(root, ground);
     }
+  }
+
+  // The three bake passes of bakeFloor: part heights, the blurred contact term, the softbox occlusion.
+  function bakeFloorMaps(floor, half, centre, radius, cone) {
+    aimFloorCamera(floor, half, true);
+    renderer.setRenderTarget(heights);
+    withMaterials(() => heightMaterial, null, () => renderer.render(bakeScene, bakeCamera));
+    const blur = contactBlur.material.uniforms;
+    blur.contactHeight.value = radius * STUDIO.contactHeight;
+    for (const [source, weigh, dx, dy, target] of [[heights, true, 1, 0, contactPass], [contactPass, false, 0, 1, contact]]) {
+      blur.source.value = source.texture;
+      blur.weigh.value = weigh;
+      blur.texel.value.set(dx / STUDIO.contactMapSize, dy / STUDIO.contactMapSize);
+      renderer.setRenderTarget(target);
+      contactBlur.render(renderer);
+    }
+    aimFloorCamera(floor, half, false);
+    renderer.setRenderTarget(occlusion);
+    renderer.clear();
+    renderer.autoClear = false;
+    ground.receiveShadow = true;
+    withMaterials(() => castOnly, bakeShadow, () => {
+      for (let i = 0; i < STUDIO.groundSamples; i += 1) {
+        aimShadowLight(bakeLight, centre, coneDirection(i, STUDIO.groundSamples, cone), radius);
+        renderer.render(bakeScene, bakeCamera);
+      }
+    });
   }
 
   // Points the key and the fill at the sphere (centre, radius).
@@ -633,6 +674,26 @@ async function boot() {
     return radius;
   }
 
+  // Runs `body` with `objects` invisible, then gives each back the visibility it had.
+  function withObjectsHidden(objects, body) {
+    const before = objects.map((object) => object.visible);
+    objects.forEach((object) => { object.visible = false; });
+    try { return body(); }
+    finally { objects.forEach((object, i) => { object.visible = before[i]; }); }
+  }
+
+  // The meshes of the ghosted parts that `ghostedMesh(id)` accepts, and every ghost edge (an edge hides with
+  // its mesh, but a ghosted subject's edges must go too: they are no surface of its own).
+  function ghostObjects(ghostedMesh) {
+    const found = [];
+    for (const [id, part] of parts) {
+      if (!part.ghosted) continue;
+      found.push(...part.edges);
+      if (ghostedMesh(id)) found.push(...part.meshes);
+    }
+    return found;
+  }
+
   // One mask pass into maskTarget: each part drawn by partMaterial(id), the floor by floorMaterial
   // (left out when null). Returns the RGBA bytes in bottom-up rows; maskClass reads a pixel's class.
   function readMask(partMaterial, floorMaterial) {
@@ -640,12 +701,15 @@ async function boot() {
     world.background = null;
     const toneMapping = renderer.toneMapping;
     renderer.toneMapping = THREE.NoToneMapping;
-    withMaterials(partMaterial, floorMaterial, () => {
-      renderer.setRenderTarget(maskTarget);
-      renderer.setClearColor(0x000000, 1);
-      renderer.clear();
-      renderer.render(world, camera);
-      renderer.readRenderTargetPixels(maskTarget, 0, 0, width, height, rgba);
+    // A ghosted part is see-through: it, and every ghost edge, stays out of the mask unless it is the subject.
+    withObjectsHidden(ghostObjects((id) => partMaterial(id) !== maskSubject), () => {
+      withMaterials(partMaterial, floorMaterial, () => {
+        renderer.setRenderTarget(maskTarget);
+        renderer.setClearColor(0x000000, 1);
+        renderer.clear();
+        renderer.render(world, camera);
+        renderer.readRenderTargetPixels(maskTarget, 0, 0, width, height, rgba);
+      });
     });
     renderer.setRenderTarget(null);
     renderer.toneMapping = toneMapping;
@@ -680,11 +744,7 @@ async function boot() {
       if (subject.has(id)) continue;
       for (const mesh of part.meshes) {
         saved.set(mesh, mesh.material);
-        const ghost = mesh.material.clone();
-        ghost.transparent = true;
-        ghost.opacity = 0.22;
-        ghost.depthWrite = false;
-        mesh.material = ghost;
+        mesh.material = ghostMaterial(mesh.material);
       }
     }
     try { return body(); }
@@ -724,7 +784,9 @@ async function boot() {
     const unknown = drawn.filter((id) => !parts.has(id));
     if (unknown.length) throw new Error(`visibility check names unknown occurrences ${unknown.join(", ")}`);
     const seeThrough = new Set(check.see_through);
-    const fit = fitCamera(camera, vertexSample(drawn.flatMap((id) => parts.get(id).meshes)), check.direction, 1, check.up);
+    const framed = drawn.filter((id) => !parts.get(id).hidden);  // a hidden window part is not in the picture
+    const fit = fitCamera(camera, vertexSample((framed.length ? framed : drawn).flatMap((id) => parts.get(id).meshes)),
+      check.direction, 1, check.up);
     const nearestPixels = (target, shown) => withIsolatedSubject(shown, () => {
       const rgba = readMask((id) => (id === target ? maskSubject : maskOther), null);
       let count = 0;
@@ -780,7 +842,7 @@ async function boot() {
     renderer.autoClear = true;
     renderer.setClearColor(0x000000, 0);
     applyExplode(view.explode);
-    const subject = new Set(view.subject ?? [...parts.keys()]);
+    const subject = new Set(view.subject ?? [...parts].filter(([, part]) => !part.hidden).map(([id]) => id));
     const isolated = view.isolated || options.isolated === true;
     for (const [id, part] of parts) {
       for (let i = 0; i < part.nodes.length; i += 1) part.nodes[i].visible = part.rest[i].visible;
@@ -846,7 +908,7 @@ async function boot() {
   // holds still while the parts move. The floor shadow is a 128-map bake per pose, so motion frames
   // leave the floor out; the key light still shades the parts onto each other.
   const unitScale = new THREE.Vector3(1, 1, 1);
-  const allMeshes = [...parts.values()].flatMap((part) => part.meshes);
+  const allMeshes = [...parts.values()].filter((part) => !part.hidden).flatMap((part) => part.meshes);
 
   function depth(node) {
     let count = 0;

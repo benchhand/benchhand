@@ -105,6 +105,15 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - `validate.py` is listed in `GATE_ONLY` in `skills/cad-motion/scripts/code_shas.py`: a gate that decides refuse or allow, and changes no output, stays out of the manufacturing output key. `test_mfg_key_location` `OutputKeyInputTests` pins both sides: a validator edit leaves the key, an edit to `manufacturing_intent.py` changes it.
 - The commit check reads the index only: the product, the part records (`tree_parts`) and the decision records (`tree_decisions`) come from the staged tree, or from HEAD with `--committed`. A decision that is accepted in the work tree but proposed in the index does not pass. Do not add a work-tree read to it.
 
+## Hiding and ghosting parts in renders
+
+`render.py` and `motion.py render` take repeatable `--hide`, `--ghost` and `--show` (a PN or an occurrence id). The optional `part.yaml` field `render: shown|ghost|hidden` (`part.schema.json`) sets a part's default, and the flags override it.
+
+- Owner: `render_states` in `skills/cad-render/scripts/render.py` resolves the lists; `skills/cad-render/assets/renderer/render.js` draws them. A ghost reuses the ghosted-context material of the close-up fallback (`ghostMaterial`) and adds edge lines. The viewer's `parts` action (`skills/cad-viewer`) is a separate browser-side tool and is not reused.
+- A ghost is never an occluder: the mask pass and the floor bake leave it out, and requirement visibility counts a ghosted or hidden window part as see-through. A hidden visibility target is an error.
+- `render.json` and `motion-render.json` list `hidden` and `ghosted`. Both enter the cache key and every view's `render_inputs`, so a change re-renders. `motion.py` adds them to the bundle recipe.
+- `make_buy: existing` (benchhand-pcy) is not on main (the `make_buy` enum is `make|buy`), so no default ghost comes from it yet.
+
 ## Feature flags
 
 Environment flags follow `CAD_REQUIRE_FREECAD` (`skills/cad-flow/scripts/preflight.py`): only the string `1` turns one on.

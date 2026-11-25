@@ -363,13 +363,17 @@ def command_plan(args: argparse.Namespace) -> int:
 
 
 def _recipe(ctx: Context, effective: Mapping[str, Any], outputs: list[str], size: list[int],
-            crosscheck: str | None) -> dict[str, Any]:
-    """Every input that makes another bundle; the frame size and renderer only when frames are rendered."""
+            crosscheck: str | None, *, hide: Sequence[str] = (), ghost: Sequence[str] = (),
+            show: Sequence[str] = ()) -> dict[str, Any]:
+    """Every input that makes another bundle; the frame size, the renderer and the --hide, --ghost and --show
+    refs only when frames are rendered."""
     recipe: dict[str, Any] = {"operation": "motion_render", "case": effective["case"], "plan": dict(effective),
                               "outputs": outputs, "attach": list(ctx.manifest.get("attach") or []),
                               "tools": {"motion_render": RECIPE_VERSION}, "inputs_sha256": pose.input_sha256(ctx.folder)}
     if {"sheet", "video", "frames"} & set(outputs):
         recipe["size"] = size
+        if hide or ghost or show:
+            recipe["parts"] = {"hide": sorted(hide), "ghost": sorted(ghost), "show": sorted(show)}
         recipe["tools"]["renderer"] = _load("cad_render_render", RENDER_PY).renderer_sha256()
     if "video" in outputs:
         recipe["tools"]["encoder"] = {"imageio-ffmpeg": scriptenv.pinned(HERE, "imageio-ffmpeg"), "codec": "libx264",
@@ -403,6 +407,7 @@ def command_render(args: argparse.Namespace) -> int:
     wall = time.monotonic()
     ctx = Context(args.hw, args.version)
     outputs, size = parse_outputs(args.outputs), parse_size(args.size)
+    _require_images_for_part_flags(args, outputs)
     effective, source = select_plan(args, ctx)
     if args.plan is not None and args.out_dir is None:
         raise pose.MotionError("a --plan file renders to scratch: pass --out-dir under .cad-work")
@@ -412,7 +417,7 @@ def command_render(args: argparse.Namespace) -> int:
         raise Failed({"status": "fail", "version": ctx.version, "case": effective["case"],
                       "summary": plan.summary_line(report), "coverage": report})
     out_dir = None if args.out_dir is None else _scratch_target(ctx.hw, args.out_dir, "--out-dir")
-    recipe = _recipe(ctx, effective, outputs, size, args.crosscheck)
+    recipe = _recipe(ctx, effective, outputs, size, args.crosscheck, hide=args.hide, ghost=args.ghost, show=args.show)
     params = {"V": ctx.version, "S": effective["case"]}
     if out_dir is None:
         reused = LAYOUT.reusable(ctx.hw, "bundle.motion", params, recipe, replace=args.replace)
@@ -466,13 +471,14 @@ def command_render(args: argparse.Namespace) -> int:
             render_dir = work / "render"
             code, summary = _run_json(
                 scriptenv.script_command(RENDER_PY, str(ctx.hw), "--version", ctx.version, "--motion", str(spec_path),
-                                         "--out-dir", str(render_dir), "--size", f"{size[0]}x{size[1]}"),
+                                         "--out-dir", str(render_dir), "--size", f"{size[0]}x{size[1]}",
+                                         *_part_flags(args)),
                 work / "render.log", RENDER_TIMEOUT_S, "cad-render render.py")
             if code == 2:
                 raise pose.MotionError(f"cad-render failed: {summary.get('error') or summary}")
             metadata = json.loads((render_dir / "motion-render.json").read_text(encoding="utf-8"))
             result["render"] = {k: metadata[k] for k in ("image", "frames_rendered", "groups", "sheet", "parity",
-                                                         "renderer", "floor_shadow")}
+                                                         "renderer", "floor_shadow", "hidden", "ghosted")}
             if code == 1:
                 raise Failed({"status": "fail", "error": "rendered placements differ from the Chain",
                               "parity": metadata["parity"], "work": str(work)})
@@ -496,6 +502,21 @@ def command_render(args: argparse.Namespace) -> int:
     result["timings_s"] = {**timings, "total": round(time.monotonic() - wall, 3)}
     _emit(result, ctx.hw, "render", 0, args.json)
     return 0
+
+
+def _require_images_for_part_flags(args: argparse.Namespace, outputs: Sequence[str]) -> None:
+    """--hide, --ghost and --show change rendered images only: refuse them when none is asked for."""
+    if {"sheet", "video", "frames"} & set(outputs):
+        return
+    for flag in ("hide", "ghost", "show"):
+        if getattr(args, flag):
+            raise pose.MotionError(f"--{flag} changes rendered images: add sheet, video or frames to --outputs "
+                                   f"(got {','.join(outputs)})")
+
+
+def _part_flags(args: argparse.Namespace) -> list[str]:
+    """cad-render's --hide, --ghost and --show arguments for the refs of this command line."""
+    return [item for flag in ("hide", "ghost", "show") for ref in getattr(args, flag) for item in (f"--{flag}", ref)]
 
 
 def _emit(result: Mapping[str, Any], hw: Path | None, command: str, code: int, json_flag: bool,
@@ -545,6 +566,11 @@ def build_parser() -> argparse.ArgumentParser:
     plan_cmd.add_argument("--frames-out", type=Path, help="write the expanded frames (JSON) under .cad-work")
     render_cmd.add_argument("--outputs", default=DEFAULT_OUTPUTS, help=f"comma list of {', '.join(OUTPUTS)}")
     render_cmd.add_argument("--size", default=DEFAULT_SIZE, help="frame size WIDTHxHEIGHT")
+    for flag, effect in (("hide", "leave out of the frames and the contact sheet"),
+                         ("ghost", "draw translucent with edges, never as an occluder"),
+                         ("show", "draw in full where part.yaml `render` says ghost or hidden")):
+        render_cmd.add_argument(f"--{flag}", action="append", default=[], metavar="PN|ID",
+                                help=f"{effect}: a PN (every occurrence) or an occurrence id (repeatable)")
     render_cmd.add_argument("--crosscheck", choices=("freecad",), help="cross-check the couplings in FreeCAD")
     render_cmd.add_argument("--replace", action="store_true", help="retain and replace a different recipe")
     render_cmd.add_argument("--out-dir", type=Path, help="scratch output directory under .cad-work")

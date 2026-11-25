@@ -15,7 +15,7 @@
 
 
 Usage:
-    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-render/scripts/render.py HW [--version latest|vN] [--views iso front side exploded dir-X-Y-Z[-closeup-REF|-part-REF]] [--subject S]
+    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-render/scripts/render.py HW [--version latest|vN] [--views iso front side exploded dir-X-Y-Z[-closeup-REF|-part-REF]] [--subject S] [--hide PN|ID] [--ghost PN|ID] [--show PN|ID]
     uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-render/scripts/render.py HW --version vN --motion SPEC.json
         --out-dir .cad-work/PATH [--size 1280x720] [--cache-dir DIR]
 
@@ -30,6 +30,12 @@ PN. A close-up or part view names one occurrence: `closeup-@ring-head`, or `clos
 PN placed once; a bare PN placed several times is ambiguous and refused.
 Each frame is graded from its pixels and subject mask. BLANK, CLIPPED, and close-up OCCLUDED (less than 25% of the subject's isolated visible pixels remain visible) make a view unusable; NO_SHADOW and INVERTED_SHADOW are cosmetic warnings, with NO_SHADOW considered only when the camera frustum intersects the ground plane.
 A custom view uses `dir-pX-mY-Z`, with signed decimal components encoded as p/m and d for the decimal point; its direction is normalized, and `-closeup-REF` or `-part-REF` optionally names a subject.
+
+Hiding and ghosting: a part's part.yaml `render` (shown, ghost or hidden) is its default; repeatable `--show`,
+`--ghost` and `--hide` (a PN, or an occurrence id) override it. A hidden occurrence is left out of every view and of
+the framing; a ghosted one is drawn translucent with edges and never occludes the subject or a visibility target.
+An unknown id, one id under two flags, a hidden close-up or part subject and a hidden visibility target are errors.
+render.json and motion-render.json list `hidden` and `ghosted`, and every view's `render_inputs` holds both.
 
 Requirement visibility: every `visibility` binding of the selected version's requirements (read through
 cad-record design_rules.py) is checked on that version at its built (nominal) pose. A version built by
@@ -81,7 +87,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable, Sequence, TypedDict, cast
 from urllib.parse import unquote, urlsplit
 
 HERE = Path(__file__).resolve()
@@ -685,9 +691,38 @@ def parse_views(tokens: list[str], occurrences: dict[str, str]) -> list[str]:
     return views
 
 
+def named_occurrences(ref: str, by_pn: dict[str, str], flag: str) -> list[str]:
+    """The occurrence ids a --show, --ghost or --hide `ref` names in `by_pn` (id -> PN): `@id` or an id, one
+    occurrence; a PN, every occurrence of it. An unknown ref is an error naming it."""
+    oid = ref[1:] if ref.startswith("@") else ref
+    if oid in by_pn:
+        return [oid]
+    found = [o for o, pn in by_pn.items() if pn == ref]
+    if not found:
+        raise InfraError(f"--{flag}: no part or occurrence {ref} in this version")
+    return found
+
+
+def render_states(by_pn: dict[str, str], records: dict[str, dict[str, Any]], *, hide: Sequence[str],
+                  ghost: Sequence[str], show: Sequence[str]) -> tuple[list[str], list[str]]:
+    """(hidden, ghosted) occurrence ids, in `by_pn` order. Each part starts at its part.yaml `render`
+    (default shown); --show, --ghost and --hide then set the occurrences they name. One id under two
+    flags is an error."""
+    state = {oid: records[pn].get("render", "shown") for oid, pn in by_pn.items()}
+    named: dict[str, str] = {}
+    for flag, value, refs in (("hide", "hidden", hide), ("ghost", "ghost", ghost), ("show", "shown", show)):
+        for ref in refs:
+            for oid in named_occurrences(ref, by_pn, flag):
+                if named.setdefault(oid, flag) != flag:
+                    raise InfraError(f"{oid} is named by both --{named[oid]} and --{flag}")
+                state[oid] = value
+    return ([oid for oid in by_pn if state[oid] == "hidden"], [oid for oid in by_pn if state[oid] == "ghost"])
+
+
 def build_scene(hw: Path, version: Version, views: list[str], size: tuple[int, int],
                 table: Any,
-                requirements: Path | None = None) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+                requirements: Path | None = None, *, hide: Sequence[str] = (), ghost: Sequence[str] = (),
+                show: Sequence[str] = ()) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Returns (scene payload for the page, materials per PN, cache key).
 
     Scene parts are occurrences, keyed by occurrence id; materials are per PN. The key's source
@@ -717,11 +752,18 @@ def build_scene(hw: Path, version: Version, views: list[str], size: tuple[int, i
                               {oid: version.metrics["parts"][o.pn]["bbox_mm"] for oid, o in occurrences.items()},
                               DIRECTIONS["exploded"])
     by_pn = {oid: o.pn for oid, o in occurrences.items()}
-    checks, requirements_sha = visibility_checks(requirements, by_pn, records) if requirements else ([], None)
+    hidden, ghosted = render_states(by_pn, records, hide=hide, ghost=ghost, show=show)
+    if len(hidden) == len(by_pn):
+        raise InfraError("every part is hidden, so nothing is left to render; show or ghost one (--show, --ghost, "
+                         "or part.yaml render)")
+    checks, requirements_sha = (visibility_checks(requirements, by_pn, records, hidden, ghosted)
+                                if requirements else ([], None))
     view_specs = []
     for name in views:
         subject_kind = view_kind(name)
         direction = view_direction(name)
+        if subject_kind in {"closeup", "part"} and view_subject(name, by_pn) in hidden:
+            raise InfraError(f"{name}: {view_subject(name, by_pn)} is hidden; show or ghost it to view it")
         view_specs.append({"name": name, "direction": to_glb(direction),
                            "up": list(camera_up_reference(direction)),
                            "subject": [view_subject(name, by_pn)] if subject_kind in {"closeup", "part"} else None,
@@ -735,6 +777,7 @@ def build_scene(hw: Path, version: Version, views: list[str], size: tuple[int, i
                   for oid, o in occurrences.items()],
         "views": view_specs,
         "explode": {oid: to_glb(offsets[oid], 0.001) for oid in occurrences if oid in offsets},
+        "hidden": hidden, "ghosted": ghosted,
     }
     assembly_sha = sha256(assembly_raw)
     sources = {name: sha256(version.files[name].read_bytes()) for name in SOURCE_FILES}
@@ -746,11 +789,12 @@ def build_scene(hw: Path, version: Version, views: list[str], size: tuple[int, i
         "views": {name: list(view_direction(name)) for name in views},
         "parity": parity_policy.cache_key(),
         "visibility": checks,
+        "hidden": hidden, "ghosted": ghosted,
     }
     extra = {"explode_offsets_mm": {oid: [round(c, 3) for c in offsets[oid]] for oid in occurrences if oid in offsets},
              "assembly_yaml_sha256": assembly_sha,
              "assembly_yaml_matches_version": assembly_sha == version.manifest.get("assembly_yaml_sha256"),
-             "glb_sha256": sources["glb"], "visibility": checks, "requirements_yaml_sha256": requirements_sha}
+             "glb_sha256": sources["glb"], "visibility": checks, "hidden": hidden, "ghosted": ghosted, "requirements_yaml_sha256": requirements_sha}
     return scene, materials, {"key": key, **extra}
 
 def cache_hit(out_dir: Path, key: dict[str, Any], views: list[str]) -> dict[str, Any] | None:
@@ -890,7 +934,8 @@ def view_inputs(version: Version, scene: dict[str, Any], keyed: dict[str, Any],
     scene part, material and explode offset: it re-renders when any occurrence changes. Every view
     also depends on its own spec, the image size, the renderer and the parity policy."""
     key = keyed["key"]
-    common = {"image": key["image"], "renderer_sha256": key["renderer_sha256"], "parity": key["parity"]}
+    common = {"image": key["image"], "renderer_sha256": key["renderer_sha256"], "parity": key["parity"],
+              "hidden": scene["hidden"], "ghosted": scene["ghosted"]}
     assembly_sha = sha256(canonical({"glb": keyed["glb_sha256"], "parts": scene["parts"], "explode": scene["explode"]}))
     subjects = sorted({spec["subject"][0] for spec in scene["views"] if spec["isolated"]})
     meshes = (mesh_digests(version.files["glb"], {oid: version.occurrences[oid].node_indices for oid in subjects})
@@ -966,14 +1011,16 @@ def requirements_input(version: Version) -> tuple[Path, str]:
     return version.record / "requirements.yaml", "version_snapshot"
 
 
-def visibility_checks(path: Path, occurrences: dict[str, str],
-                      records: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+def visibility_checks(path: Path, occurrences: dict[str, str], records: dict[str, dict[str, Any]],
+                      hidden: Sequence[str] = (), ghosted: Sequence[str] = ()
+                      ) -> tuple[list[dict[str, Any]], str | None]:
     """The visibility bindings of the requirements file `path` (`requirements_input`), resolved against
     this version's occurrences (id -> PN) and part records, and the file's sha256; ([], None) without the file.
 
     A check carries its camera direction and up in the GLB frame, its window and target occurrences,
-    and `see_through`: the drawn occurrences whose part.yaml declares `transparency: transparent`.
-    Opaque and translucent parts occlude."""
+    and `see_through`: the drawn occurrences whose part.yaml declares `transparency: transparent`, and the
+    ghosted or hidden ones (a render draws them translucent or not at all, so they never occlude). Opaque
+    and translucent parts occlude. A hidden target is an error."""
     if not path.is_file():
         return [], None
     raw = path.read_bytes()
@@ -993,12 +1040,16 @@ def visibility_checks(path: Path, occurrences: dict[str, str],
             raise InfraError(f"{where}: view {binding.view!r} is not iso, front, side or dir-X-Y-Z")
         window = list(dict.fromkeys(occurrence_of(ref, occurrences, where) for ref in binding.window))
         targets = list(dict.fromkeys(occurrence_of(ref, occurrences, where) for ref in binding.targets))
+        for oid in targets:
+            if oid in hidden:
+                raise InfraError(f"{where}: target {oid} cannot be hidden; ghost or show it")
         direction = view_direction(binding.view)
         checks.append({"requirement": binding.requirement, "index": binding.index, "view": binding.view,
                        "direction": to_glb(direction), "up": list(camera_up_reference(direction)),
                        "window": window, "targets": targets,
                        "see_through": [oid for oid in dict.fromkeys([*window, *targets])
-                                       if records[occurrences[oid]].get("transparency") == "transparent"],
+                                       if oid in hidden or oid in ghosted
+                                       or records[occurrences[oid]].get("transparency") == "transparent"],
                        "min_visible_fraction": binding.min_visible_fraction})
     return checks, sha256(raw)
 
@@ -1441,6 +1492,18 @@ def motion_parity(spec: dict[str, Any], worlds: dict[int, dict[str, Any]]) -> di
             "worst": worst}
 
 
+class PartFlags(TypedDict):
+    """The --hide, --ghost and --show refs of the command line: build_scene's keyword arguments."""
+
+    hide: list[str]
+    ghost: list[str]
+    show: list[str]
+
+
+def render_flags(args: argparse.Namespace) -> PartFlags:
+    return {"hide": args.hide, "ghost": args.ghost, "show": args.show}
+
+
 def run_motion(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     """`--motion SPEC`: scratch frames, contact sheet and motion-render.json for cad-motion motion.py."""
     wall = time.monotonic()
@@ -1463,7 +1526,7 @@ def run_motion(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         table = material_rules.MaterialTable.load()
     except material_rules.MaterialsError as exc:
         raise InfraError(str(exc)) from exc
-    scene, materials, keyed = build_scene(hw, version, [], size, table)
+    scene, materials, keyed = build_scene(hw, version, [], size, table, **render_flags(args))
     server = make_server(scene, version.files["glb"], args.cache_dir or default_cache_dir())
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
     thread.start()
@@ -1489,6 +1552,7 @@ def run_motion(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "sheet": None if captured["sheet"] is None else {"tiles": captured["sheet"]["tiles"],
                                                          "size": captured["sheet"]["size"]},
         "parity": parity, "floor_shadow": "omitted: the static renderer bakes it per pose",
+        "hidden": scene["hidden"], "ghosted": scene["ghosted"],
         "materials": {pn: {k: m[k] for k in ("part_material", "part_finish", "rule")} for pn, m in materials.items()},
         "renderer": {"name": "cad-render three.js PBR", "sha256": renderer_sha256(), "three": THREE_VERSION,
                      "three_revision": info.get("three"), "playwright": importlib.metadata.version("playwright"),
@@ -1537,7 +1601,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     except material_rules.MaterialsError as exc:
         raise InfraError(str(exc)) from exc
     requirements, requirements_source = requirements_input(version)
-    scene, materials, keyed = build_scene(hw, version, views, size, table, requirements)
+    scene, materials, keyed = build_scene(hw, version, views, size, table, requirements, **render_flags(args))
     checks = keyed["visibility"]
     recipe: dict[str, Any] = {"views": views, "size": [*size], "renderer": {"name": "cad-render", "version": renderer_sha256()},
               "inputs": {"version_manifest_sha256": sha256(version.files["manifest"].read_bytes()),
@@ -1584,7 +1648,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     metadata = {
         "version": version.label,
         "status": "fail" if not passed else ("warn" if any(r["quality"]["warnings"] for r in view_records.values()) else "pass"),
-        "views": view_records, "materials": materials,
+        "views": view_records, "materials": materials, "hidden": scene["hidden"], "ghosted": scene["ghosted"],
         "retry": {name: record["retry"] for name, record in view_records.items()},
         "visibility": visibility,
         "renderer": {"name": "cad-render three.js PBR", "three": THREE_VERSION, "three_revision": info["three"],
@@ -1646,6 +1710,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replace", action="store_true", help="retain and replace a conflicting bundle")
     parser.add_argument("--cache-dir", type=Path, help="pinned three.js module cache (default: cad-concept's)")
     parser.add_argument("--json", action="store_true", help="print the full JSON result whatever CAD_OUTPUT says")
+    for flag, effect in (("hide", "leave out of the picture"),
+                         ("ghost", "draw translucent with edges, never as an occluder"),
+                         ("show", "draw in full even where part.yaml `render` says ghost or hidden")):
+        parser.add_argument(f"--{flag}", action="append", default=[], metavar="PN|ID",
+                            help=f"{effect}: a PN (every occurrence) or an occurrence id (repeatable)")
     parser.add_argument("--motion", type=Path, metavar="SPEC",
                         help="cad-motion motion.py frames spec: render its frames and contact sheet into --out-dir")
     try:

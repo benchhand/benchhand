@@ -34,6 +34,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 import box_version  # noqa: E402 - kernel-free sealed box versions
+import png_pixels  # noqa: E402 - PNG reader and camera projection for pixel tests
 
 SKILL = Path(__file__).resolve().parent.parent
 RENDER_PY = SKILL / "scripts" / "render.py"
@@ -846,6 +847,9 @@ PART_VIEW = f"part-{TARGET}"
 BOXES = {WINDOW: ((-30.0, -22.0, 0.0), (30.0, -20.0, 40.0)),
          TARGET: ((-10.0, -5.0, 5.0), (10.0, 5.0, 25.0)),
          OTHER: ((40.0, -10.0, 0.0), (60.0, 10.0, 20.0))}
+BELOW, WALL = "TST-0004", "TST-0005"
+BELOW_BOX = ((-10.0, -10.0, -30.0), (10.0, 10.0, -20.0))  # under the assembly's floor
+WALL_BOX = ((11.0, -10.0, 5.0), (30.0, -5.0, 25.0))  # 5 mm proud of the target face, 1 mm to its right
 GROWN_TARGET = ((-10.0, -5.0, 5.0), (10.0, 5.0, 30.0))
 GROWN_OTHER = ((40.0, -10.0, 0.0), (70.0, 10.0, 25.0))
 
@@ -958,6 +962,109 @@ class VisibilityChecks(unittest.TestCase):
                     self.version.manifest["record_version"] = record_version
                 with self.assertRaisesRegex(render.InfraError, "record_version"):
                     render.requirements_input(self.version)
+
+
+class PartRenderState(unittest.TestCase):
+    """Which occurrences a render hides or ghosts: part.yaml `render`, then --show, --ghost, --hide (no browser)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.hw = Path(self.tmp.name) / "hw"
+
+    def write(self, defaults: dict[str, str] | None = None) -> None:
+        parts = box_parts()
+        for pn, value in (defaults or {}).items():
+            parts[pn]["render"] = value
+        box_version.write(self.hw, "v1", BOXES, parts, record_version=2)
+        self.version = render.resolve_version(self.hw, "v1")
+
+    def scene(self, *views: str, **flags: list[str]) -> dict:
+        return render.build_scene(self.hw, self.version, list(views) or ["front"], (400, 300),
+                                  materials.MaterialTable.load(), **flags)[0]
+
+    def test_without_a_default_or_a_flag_everything_is_shown(self) -> None:
+        self.write()
+        scene = self.scene()
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([], []))
+
+    def test_the_part_yaml_default_applies_to_the_part(self) -> None:
+        self.write({OTHER: "ghost", WINDOW: "hidden"})
+        scene = self.scene()
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([WINDOW], [OTHER]))
+
+    def test_the_flags_override_the_part_yaml_default(self) -> None:
+        self.write({OTHER: "ghost", WINDOW: "hidden"})
+        scene = self.scene(show=[WINDOW], hide=[OTHER])
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([OTHER], []))
+        scene = self.scene(show=[OTHER], ghost=[WINDOW])
+        self.assertEqual((scene["hidden"], scene["ghosted"]), ([], [WINDOW]))
+
+    def test_an_id_names_a_pn_or_an_occurrence(self) -> None:
+        self.write()
+        self.assertEqual(self.scene(hide=[f"@{OTHER}"])["hidden"], [OTHER])
+        self.assertEqual(self.scene(ghost=[OTHER, TARGET])["ghosted"], [TARGET, OTHER])
+
+    def test_a_pn_names_every_occurrence_placed(self) -> None:
+        by_pn = {"a": "P-1", "b": "P-1", "c": "P-2"}
+        records = {"P-1": {}, "P-2": {}}
+        self.assertEqual(render.render_states(by_pn, records, hide=["P-1"], ghost=["@c"], show=[]),
+                         (["a", "b"], ["c"]))
+
+    def test_an_unknown_id_is_an_error_naming_it(self) -> None:
+        self.write()
+        for flag in ("hide", "ghost", "show"):
+            with self.subTest(flag=flag), self.assertRaisesRegex(render.InfraError, f"--{flag}: no part or occurrence TST-9999"):
+                self.scene(**{flag: ["TST-9999"]})
+
+    def test_one_id_in_two_flags_is_an_error(self) -> None:
+        self.write()
+        with self.assertRaisesRegex(render.InfraError, f"{OTHER} is named by both --hide and --ghost"):
+            self.scene(hide=[OTHER], ghost=[f"@{OTHER}"])
+
+    def test_a_render_whose_flags_hide_every_part_is_refused(self) -> None:
+        self.write()
+        for hide in ([WINDOW, TARGET, f"@{OTHER}"], [WINDOW, TARGET, OTHER]):
+            with self.subTest(hide=hide), self.assertRaisesRegex(render.InfraError, "every part is hidden"):
+                self.scene(hide=hide)
+
+    def test_a_render_whose_part_yaml_and_flags_hide_every_part_is_refused(self) -> None:
+        self.write({WINDOW: "hidden", TARGET: "hidden"})
+        with self.assertRaisesRegex(render.InfraError, "every part is hidden"):
+            self.scene(hide=[OTHER])
+        self.assertEqual(self.scene(show=[TARGET])["hidden"], [WINDOW])  # one shown part is enough
+
+    def test_a_view_cannot_name_a_hidden_part_as_its_subject(self) -> None:
+        self.write()
+        with self.assertRaisesRegex(render.InfraError, f"closeup-{OTHER}: {OTHER} is hidden"):
+            self.scene(f"closeup-{OTHER}", hide=[OTHER])
+
+    def test_hidden_and_ghosted_parts_enter_the_cache_key_and_the_view_inputs(self) -> None:
+        self.write()
+        def built(**flags: list[str]) -> tuple[dict, dict]:
+            scene, by_pn_material, keyed = render.build_scene(self.hw, self.version, ["front", PART_VIEW], (400, 300),
+                                                              materials.MaterialTable.load(), **flags)
+            return keyed["key"], render.view_inputs(self.version, scene, keyed, by_pn_material)
+        keys, inputs = zip(*(built(**flags) for flags in ({}, {"hide": [OTHER]}, {"ghost": [OTHER]})))
+        self.assertEqual(len({json.dumps(k, sort_keys=True) for k in keys}), 3)
+        for name in ("front", PART_VIEW):
+            self.assertEqual(len({json.dumps(i[name], sort_keys=True) for i in inputs}), 3, name)
+
+    def test_a_hidden_visibility_target_is_an_error(self) -> None:
+        self.write()
+        path = requirements(self.hw, FRONT)
+        with self.assertRaisesRegex(render.InfraError, f"REQ-001 visibility 0: target {TARGET} cannot be hidden"):
+            render.build_scene(self.hw, self.version, ["front"], (400, 300), materials.MaterialTable.load(), path,
+                               hide=[TARGET])
+
+    def test_ghosted_and_hidden_window_parts_are_see_through_and_a_ghosted_target_is_not_dropped(self) -> None:
+        self.write()
+        path = requirements(self.hw, FRONT)
+        for flags, see_through in (({}, []), ({"ghost": [WINDOW]}, [WINDOW]), ({"hide": [WINDOW]}, [WINDOW])):
+            with self.subTest(flags=flags):
+                checks = render.build_scene(self.hw, self.version, ["front"], (400, 300), materials.MaterialTable.load(),
+                                            path, **flags)[2]["visibility"]
+                self.assertEqual((checks[0]["see_through"], checks[0]["targets"]), (see_through, [TARGET]))
 
 
 class VisibilityGrade(unittest.TestCase):
@@ -1152,6 +1259,136 @@ class BrowserRender(unittest.TestCase):
         self.assertEqual((clear_code, clear["visible_px"], clear["status"]), (0, clear["silhouette_px"], "pass"))
         self.assertEqual(opaque_summary, {"REQ-001/0": {"status": "fail", "visible_fraction": {TARGET: 0.0}}})
         self.assertEqual(clear_summary, {"REQ-001/0": {"status": "pass", "visible_fraction": {TARGET: 1.0}}})
+
+    def scratch_render(self, label: str, *args: str) -> tuple[int, dict, dict]:
+        """render.py to scratch: (exit code, summary, render.json)."""
+        code, summary = self.render("--out-dir", str(self.hw.parent / ".cad-work" / label), *args)
+        metadata = json.loads((Path(summary["out_dir"]) / "render.json").read_text(encoding="utf-8"))
+        return code, summary, metadata
+
+    def test_a_hidden_part_leaves_no_pixels_and_render_json_lists_it(self) -> None:
+        box_version.write(self.hw, "v1", BOXES, box_parts(), record_version=2)
+        without = {pn: box for pn, box in BOXES.items() if pn != OTHER}
+        box_version.write(self.hw, "v2", without, {pn: r for pn, r in box_parts().items() if pn != OTHER},
+                          record_version=2)
+        views = ("--views", "front", "iso")
+        _, _, shown = self.scratch_render("shown", "--version", "v1", *views)
+        _, hidden_summary, hidden = self.scratch_render("hidden", "--version", "v1", "--hide", OTHER, *views)
+        _, absent_summary, absent = self.scratch_render("absent", "--version", "v2", *views)
+        self.assertEqual((hidden["hidden"], hidden["ghosted"]), ([OTHER], []))
+        self.assertEqual((shown["hidden"], shown["ghosted"]), ([], []))
+        for view in ("front", "iso"):
+            png = Path(hidden_summary["pngs"][view]).read_bytes()
+            self.assertEqual(png, Path(absent_summary["pngs"][view]).read_bytes(), view)
+            self.assertEqual(hidden["views"][view]["render_inputs"]["hidden"], [OTHER])
+
+    def test_a_ghosted_part_is_drawn_but_never_occludes_a_target_behind_it(self) -> None:
+        self.hw.mkdir(parents=True, exist_ok=True)
+        requirements(self.hw, FRONT)
+        box_version.write(self.hw, "v1", BOXES, box_parts("opaque"), record_version=2)
+        fractions = {}
+        pngs = {}
+        for label, flags in (("opaque", ()), ("ghost", ("--ghost", WINDOW)), ("hide", ("--hide", WINDOW))):
+            code, summary, metadata = self.scratch_render(label, "--version", "v1", "--views", "front", *flags)
+            target = metadata["visibility"][0]["targets"][0]
+            fractions[label] = (code, target["silhouette_px"], target["visible_px"])
+            pngs[label] = Path(summary["pngs"]["front"]).read_bytes()
+        # A ghost stays in the picture, so the camera frames the window as it does for the opaque one; a hidden
+        # window is not framed, so the target fills more of the frame.
+        silhouette, hidden_silhouette = fractions["opaque"][1], fractions["hide"][1]
+        self.assertGreater(silhouette, 1000)
+        self.assertEqual(fractions["opaque"], (1, silhouette, 0))
+        self.assertEqual(fractions["ghost"], (0, silhouette, silhouette))
+        self.assertEqual(fractions["hide"], (0, hidden_silhouette, hidden_silhouette))
+        self.assertGreater(hidden_silhouette, silhouette)
+        self.assertEqual(len(set(pngs.values())), 3)  # the ghost is drawn: neither the opaque nor the hidden picture
+
+    def test_the_part_yaml_default_hides_and_show_brings_the_part_back(self) -> None:
+        parts = box_parts()
+        parts[OTHER]["render"] = "hidden"
+        box_version.write(self.hw, "v1", BOXES, parts, record_version=2)
+        _, _, defaulted = self.scratch_render("default", "--version", "v1", "--views", "front")
+        _, _, shown = self.scratch_render("show", "--version", "v1", "--views", "front", "--show", OTHER)
+        self.assertEqual((defaulted["hidden"], shown["hidden"]), ([OTHER], []))
+
+    def test_a_hidden_part_below_the_floor_does_not_move_the_floor_or_the_framing(self) -> None:
+        low = {"title": "Low", "material": "Aluminum 6061-T6", "finish": "Machined"}
+        box_version.write(self.hw, "v1", {**BOXES, BELOW: BELOW_BOX}, {**box_parts(), BELOW: low}, record_version=2)
+        box_version.write(self.hw, "v2", BOXES, box_parts(), record_version=2)
+        views = ("--views", "front", "iso")
+        _, hidden_summary, _ = self.scratch_render("hidden", "--version", "v1", "--hide", BELOW, *views)
+        _, absent_summary, _ = self.scratch_render("absent", "--version", "v2", *views)
+        _, shown_summary, _ = self.scratch_render("shown", "--version", "v1", *views)
+        for view in ("front", "iso"):
+            hidden_png = Path(hidden_summary["pngs"][view]).read_bytes()
+            self.assertEqual(hidden_png, Path(absent_summary["pngs"][view]).read_bytes(), view)
+            self.assertNotEqual(hidden_png, Path(shown_summary["pngs"][view]).read_bytes(), view)  # the fixture does reach the floor
+
+    def test_a_large_hidden_window_does_not_set_the_visibility_camera(self) -> None:
+        self.hw.mkdir(parents=True, exist_ok=True)
+        boxes = {**BOXES, WINDOW: ((-300.0, -22.0, -300.0), (300.0, -20.0, 300.0))}
+        silhouettes = {}
+        for label, binding, flags in (("hidden", FRONT, ("--hide", WINDOW)),
+                                      ("alone", {**FRONT, "window": [TARGET]}, ())):
+            requirements(self.hw, binding)
+            box_version.write(self.hw, "v1" if label == "hidden" else "v2", boxes, box_parts("opaque"), record_version=2)
+            _, _, metadata = self.scratch_render(label, "--version", "v1" if label == "hidden" else "v2",
+                                                 "--views", "front", *flags)
+            silhouettes[label] = metadata["visibility"][0]["targets"][0]["silhouette_px"]
+        self.assertGreater(silhouettes["alone"], 1000)
+        self.assertEqual(silhouettes["hidden"], silhouettes["alone"])
+
+    def test_a_ghosted_visibility_target_keeps_its_silhouette_and_is_seen_through_a_clear_window(self) -> None:
+        self.hw.mkdir(parents=True, exist_ok=True)
+        requirements(self.hw, FRONT)
+        box_version.write(self.hw, "v1", BOXES, box_parts("transparent"), record_version=2)
+        box_version.write(self.hw, "v2", BOXES, box_parts("opaque"), record_version=2)
+        measured = {}
+        for label, version, flags in (("plain", "v1", ()), ("clear", "v1", ("--ghost", TARGET)),
+                                      ("blocked", "v2", ("--ghost", TARGET))):
+            code, _, metadata = self.scratch_render(label, "--version", version, "--views", "front", *flags)
+            target = metadata["visibility"][0]["targets"][0]
+            measured[label] = (code, target["silhouette_px"], target["visible_px"], target["visible_fraction"])
+            self.assertEqual(metadata["ghosted"], [TARGET] if flags else [])
+        silhouette = measured["plain"][1]
+        self.assertGreater(silhouette, 1000)
+        self.assertEqual(measured["plain"], (0, silhouette, silhouette, 1.0))
+        self.assertEqual(measured["clear"], (0, silhouette, silhouette, 1.0))
+        self.assertEqual(measured["blocked"], (1, silhouette, 0, 0.0))
+
+    def test_a_ghost_beside_a_part_adds_no_ambient_occlusion_to_it(self) -> None:
+        wall = {"title": "Wall", "material": "Aluminum 6061-T6", "finish": "Machined"}
+        boxes = {TARGET: BOXES[TARGET], OTHER: BOXES[OTHER], WALL: WALL_BOX}
+        box_version.write(self.hw, "v1", boxes, {**{pn: r for pn, r in box_parts().items() if pn != WINDOW}, WALL: wall},
+                          record_version=2)
+        _, ghost_summary, ghost = self.scratch_render("ghost", "--version", "v1", "--ghost", WALL, "--views", "front")
+        _, hide_summary, hide = self.scratch_render("hide", "--version", "v1", "--hide", WALL, "--views", "front")
+        width, height, channels, ghost_rows = png_pixels.decode(Path(ghost_summary["pngs"]["front"]).read_bytes())
+        _, _, _, hide_rows = png_pixels.decode(Path(hide_summary["pngs"]["front"]).read_bytes())
+        # The ghost's left edge, with a margin: left of it every pixel is the target's, the floor's or the backdrop's.
+        edge = png_pixels.column_of(ghost["views"]["front"]["camera"], (WALL_BOX[0][0], WALL_BOX[0][1], WALL_BOX[0][2]), width)
+        columns = int(edge) - 3
+        self.assertGreater(columns, 100)
+        differing = sum(
+            1 for y in range(height) for x in range(columns)
+            if any(ghost_rows[(y * width + x) * channels + c] != hide_rows[(y * width + x) * channels + c]
+                   for c in range(3)))
+        # Exact on purpose. Measured here: two renders of the fixed code differ in 0 of these pixels, the renderer
+        # that let the ghost into GTAO's depth pass in 11, every one within 4 of 255 levels, so a tolerance would hide it.
+        self.assertEqual(differing, 0, f"pixels changed, of {columns * height}, left of the wall")
+
+    def test_a_changed_hide_or_ghost_list_recaptures_and_an_unchanged_one_is_copied(self) -> None:
+        views = ("--views", "iso", PART_VIEW)
+        for label in ("v1", "v2", "v3"):
+            box_version.write(self.hw, label, BOXES, box_parts(), record_version=2)
+        code, first = self.render("--version", "v1", *views)
+        self.assertEqual((code, first["reused"]), (0, {}))
+        code, ghosted = self.render("--version", "v2", "--ghost", OTHER, *views)
+        self.assertEqual((code, ghosted["reused"]), (0, {}))
+        self.assertEqual(sorted(name for name in ghosted["view_wall_s"] if not name.endswith("_s")), sorted(["iso", PART_VIEW]))
+        code, third = self.render("--version", "v3", *views)
+        self.assertEqual((code, third["reused"]), (0, {"iso": "v1", PART_VIEW: "v1"}))
+        self.assertEqual(sorted(name for name in third["view_wall_s"] if not name.endswith("_s")), [])
 
     def test_an_unchanged_part_view_is_copied_and_a_changed_one_rendered(self) -> None:
         views = ("--views", "iso", PART_VIEW)
