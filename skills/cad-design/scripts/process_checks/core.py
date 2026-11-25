@@ -649,15 +649,17 @@ class Context:
         return Calibrated(found.status, characteristic, None, tuple(found.reasons))
 
     def governing(self, characteristic: str, *, profile: Any | None = None, orientation: str | None = None,
-                  feature: str | None = None) -> Calibrated:
+                  feature: str | None = None, size: float | None = None) -> Calibrated:
         """The value a check judges `characteristic` against: its calibration (`calibrated`), else the guideline interval
-        for the profile (this operation's unless `profile` names another) and material (status guideline), else unknown
-        with every reason. Calibration is never required: a guideline value governs until one exists (benchhand-c7q.30)."""
+        for the profile (this operation's unless `profile` names another) and material, for a feature of `size` mm (status
+        guideline), else unknown with every reason. Calibration is never required: a guideline value governs until one
+        exists (benchhand-c7q.30)."""
         cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature)
         context = self.guideline_context(profile)
         if cal.known or context is None:
             return cal
-        found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation, feature=feature)
+        found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation, feature=feature,
+                                                size=size)
         self.consulted.append(found)
         if found not in self.resolutions:
             self.resolutions.append(found)

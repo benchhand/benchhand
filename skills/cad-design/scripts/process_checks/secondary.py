@@ -170,15 +170,15 @@ def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any,
     if characteristic is None:
         return UNKNOWN, f"{feature}: no as-made deviation contract for {source_op.kind}"
     profile = ctx.record.capabilities.get(source_op.capability) if isinstance(source_op.capability, str) else None
-    orientation = None
+    orientation = size = None
     if source_op.kind in ("fdm", "resin"):
         geometry = ctx.geometries.get((ctx.pn, ctx.component))
         hole = next((h for h in (geometry.holes() if geometry else ()) if feature in (h.get("features") or ())), None)
         if hole is None:
             return UNKNOWN, f"{feature}: as-printed orientation unknown"
         from .additive import hole_class
-        orientation = hole_class(hole["axis"])
-    cal = ctx.governing(characteristic, profile=profile, orientation=orientation)
+        orientation, size = hole_class(hole["axis"]), hole["diameter_mm"]
+    cal = ctx.governing(characteristic, profile=profile, orientation=orientation, size=size)
     kind = ctx.operation.kind
     if not cal.known:
         from .additive import _no_basis

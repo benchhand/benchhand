@@ -672,7 +672,7 @@ def hole_fits(ctx: Context, g: Geometry, findings: list[Draft], characteristic: 
                                   recheck=[f"process.{kind}.geometry", "route.operation_plan"], feature=feature))
             parts.append((FAIL, f"{feature} has no finishing operation"))
             continue
-        cal = ctx.governing(characteristic, orientation=orientation if oriented else None)
+        cal = ctx.governing(characteristic, orientation=orientation if oriented else None, size=hole["diameter_mm"])
         limits, unsupported = _diameter_limits(ctx, surface)
         if not cal.known:
             parts.append(_no_basis(ctx, findings, Draft(
@@ -788,12 +788,21 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
     return parts
 
 
+def _largest(g: Geometry) -> float | None:
+    """The component's largest bounding-box extent (mm): an upper bound on the size of any of its features."""
+    box = g.facts.get("bbox_mm") or {}
+    if not box.get("min") or not box.get("max"):
+        return None
+    return max(float(high) - float(low) for low, high in zip(box["min"], box["max"]))
+
+
 def _deviation(ctx: Context, g: Geometry, surface: Any, characteristic: str, band: tuple[float, float],
                unsupported: list[str], findings: list[Draft]) -> tuple[str, str]:
     """The as-made deviation of one critical feature (its calibration, else the guideline interval) plus, on the bed,
     the elephant foot, against its stated `band`."""
     kind, feature = _k(ctx), surface.feature
-    cal = ctx.governing(characteristic, feature=surface.role if characteristic == "profile_deviation" else None)
+    cal = ctx.governing(characteristic, feature=surface.role if characteristic == "profile_deviation" else None,
+                        size=_largest(g))
     if not cal.known:
         return _no_basis(ctx, findings, Draft(
             f"process.{kind}.feature_uncalibrated", "major", UNKNOWN, unknown("as-made deviation"),
@@ -891,7 +900,7 @@ def thermal_distortion(ctx: Context) -> Result:
     bed = g.facts.get("bed") or {}
     extent = bed.get("contact_extent")  # exact contact-face extents, apart from the sampled stability hull
     footprint = max(extent["max"][i] - extent["min"][i] for i in (0, 1)) if extent else 0.0
-    warp = ctx.governing("warp")
+    warp = ctx.governing("warp", size=footprint)
     if not warp.known:
         parts.append(_no_basis(ctx, findings, Draft(
             f"process.{kind}.warp_uncalibrated", "minor", UNKNOWN, length(footprint), warp.criterion("warp"),

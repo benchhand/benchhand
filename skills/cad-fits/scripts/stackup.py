@@ -763,21 +763,26 @@ class _IntentStack:
                                                        f"not {profile_id}", "cite the capability of the operation")
         resolution = None if (not self.calibration and profile.process in GUIDELINES.GUIDELINE_PROCESSES) else \
             intent.capability_limit(profile, capability["characteristic"], material=material, on=self.on, feature=None)
+        why: tuple[str, ...] = ()
         if resolution is None or resolution.status != "calibrated":
-            guideline = self.guideline_deviation(profile, capability["characteristic"], material)
-            if guideline is not None:  # benchhand-c7q.30: calibration is never required; the guideline value governs
-                self.qualify_limits(intent, item, capability["characteristic"], guideline.value, f"guideline {guideline.provenance[0].guideline}'s value",
+            guideline = self.guideline_deviation(profile, capability["characteristic"], material, abs(item.nominal))
+            if guideline is not None and guideline.status == "guideline" and guideline.operator == "between":
+                # benchhand-c7q.30: calibration is never required; the guideline value governs
+                self.qualify_limits(intent, item, capability["characteristic"], guideline.value,
+                                    f"guideline {guideline.provenance[0].guideline}'s value",
                                     {"guideline": guideline.provenance[0].guideline})
                 return
+            why = tuple(guideline.reasons) if guideline is not None else ()
         if resolution is None:
             self.not_assessed("stack.capability_not_assessed", item,
                               f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no "
-                              f"guideline value covers {capability['characteristic']}", GUIDELINES.COUPON_REMEDY)
+                              f"guideline value covers {capability['characteristic']}" + "".join(f"; {w}" for w in why),
+                              GUIDELINES.COUPON_REMEDY)
             return
         if resolution.status != "calibrated" and profile.process in PRINTERS:
             self.not_assessed("stack.capability_not_assessed", item,
                               f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}, and no guideline "
-                              f"value covers it: " + "; ".join(resolution.reasons),
+                              f"value covers it: " + "; ".join((*resolution.reasons, *why)),
                               "print and inspect the part, or calibrate the capability for this material and scope")
             return
         if resolution.status != "calibrated":
@@ -791,13 +796,14 @@ class _IntentStack:
         self.qualify_limits(intent, item, capability["characteristic"], calibration.limits, f"calibration {calibration.id}'s demonstrated deviation",
                             {"calibration": calibration.id})
 
-    def guideline_deviation(self, profile: Any, characteristic: str, material: str) -> Any | None:
-        """The guideline interval (guidelines.Resolved) of `characteristic` for a printed profile, or None."""
+    def guideline_deviation(self, profile: Any, characteristic: str, material: str, size: float) -> Any | None:
+        """The guideline resolution (guidelines.Resolved) of `characteristic` for a printed profile and a feature of
+        `size` mm, or None when no guideline set can cover the profile."""
         if self.catalog is None or profile.process not in GUIDELINES.GUIDELINE_PROCESSES:
             return None
         found = GUIDELINES.resolve_guidelines(self.catalog, GUIDELINES.context_for(profile, self.record.materials.get(material)),
-                                              characteristic)
-        return found if found.status == "guideline" and found.operator == "between" else None
+                                              characteristic, size=size)
+        return found
 
     def qualify_limits(self, intent: Any, item: _Contributor, characteristic: str, limits: Any, basis: str,
                        resolved: dict[str, Any]) -> None:

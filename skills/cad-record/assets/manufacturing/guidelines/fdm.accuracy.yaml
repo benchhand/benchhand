@@ -4,7 +4,7 @@
 
 schema_version: 1
 id: fdm.accuracy
-revision: 1
+revision: 2
 title: FDM desktop dimensional accuracy
 scope:
   process: fdm
@@ -15,6 +15,10 @@ limits:
     lower: -0.5
     upper: 0.5
     units: mm
+  applies_to:
+    max_size:
+      value: 100
+      units: mm
   citations:
   - kind: supplier
     reference: Protolabs Network (Hubs), What is FDM 3D printing?
@@ -33,6 +37,10 @@ limits:
     lower: -0.5
     upper: 0.5
     units: mm
+  applies_to:
+    max_size:
+      value: 100
+      units: mm
   citations:
   - kind: supplier
     reference: Protolabs Network (Hubs), What is FDM 3D printing?

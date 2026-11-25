@@ -784,24 +784,36 @@ def _statement(bound: _Bound, mi: Any) -> tuple[str, Any]:
     return "between", mi.Quantity(bound.units, lower=lower, upper=upper)
 
 
-def _applies(limit: Mapping[str, Any], orientation: str | None, feature: str | None) -> int | None:
-    """None when the limit's applies_to excludes the request, else how many of its keys the request matched."""
-    wanted = limit.get("applies_to", {})
+def _applies(limit: Mapping[str, Any], orientation: str | None, feature: str | None, size: float | None,
+             sized: list[str] | None = None) -> int | None:
+    """None when the limit's applies_to excludes the request, else how many of its keys the request matched. A
+    max_size bound excludes a feature of unknown size or a larger one, and says so in `sized`."""
+    wanted = dict(limit.get("applies_to", {}))
+    bound = wanted.pop("max_size", None)
     asked = {"orientation": orientation, "feature": feature}
     if any(asked[key] != value for key, value in wanted.items()):
         return None
+    if bound is not None:
+        largest = _intent().quantity(bound).to("mm").value
+        if size is None or size > largest + MICROMETRE_TOLERANCE:
+            if sized is not None:
+                shown = "the feature size is unknown" if size is None else f"the feature is {size:g} mm"
+                sized.append(f"{limit['characteristic']} holds up to {largest:g} mm and {shown}")
+            return None
+        return len(wanted) + 1
     return len(wanted)
 
 
 def _candidates_of(guideline: Guideline, defined: Guideline, distance: int, context: Context, characteristic: str,
-                   orientation: str | None, feature: str | None, notes: tuple[list[str], list[str]]) -> list[_Candidate]:
+                   orientation: str | None, feature: str | None, notes: tuple[list[str], list[str], list[str]],
+                   size: float | None = None) -> list[_Candidate]:
     """The candidates `defined`'s limits give when read through `guideline`, `distance` sets above it in its extends chain
     (0 for its own limits). A requirement under an unknown scope fact adds to notes[0] (uncertain), a numeric limit under
     one adds to notes[1] (warnings)."""
     matched = _matches(guideline.scope, context)
     found: list[_Candidate] = []
     for limit in defined.limits:
-        depth = _applies(limit, orientation, feature) if limit["characteristic"] == characteristic else None
+        depth = _applies(limit, orientation, feature, size, notes[2]) if limit["characteristic"] == characteristic else None
         if depth is None:
             continue
         if matched is not None:
@@ -837,17 +849,19 @@ def _prepare(candidates: list[_Candidate], context: Context, characteristic: str
 
 
 def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, *, orientation: str | None = None,
-                       feature: str | None = None) -> Resolved:
-    """The guideline limit of `characteristic` for `context` (steps 2 to 5 of the module docstring)."""
+                       feature: str | None = None, size: float | None = None) -> Resolved:
+    """The guideline limit of `characteristic` for `context` (steps 2 to 5 of the module docstring). `size` is the
+    feature's size in mm, which a limit with applies_to max_size needs."""
     warnings: list[str] = pin_warnings(catalog, context)
     uncertain: list[str] = []
+    sized: list[str] = []
     candidates: list[_Candidate] = []
     try:
         for guideline in applicable(catalog, context):
             chain = _closure(catalog, guideline.id, context=context)
             for position, defined in enumerate(chain):
                 candidates.extend(_candidates_of(guideline, defined, len(chain) - 1 - position, context, characteristic,
-                                                 orientation, feature, (uncertain, warnings)))
+                                                 orientation, feature, (uncertain, warnings, sized), size))
     except GuidelineError as error:
         return Resolved(characteristic, "unknown", reasons=(str(error),))
     if uncertain:
@@ -856,7 +870,7 @@ def resolve_guidelines(catalog: Catalog, context: Context, characteristic: str, 
     ready, unresolved = _prepare(candidates, context, characteristic)
     if not ready:
         return Resolved(characteristic, "unknown", warnings=tuple(warnings),
-                        reasons=tuple(why for _, why in unresolved) or (f"no applicable guideline states {characteristic}",))
+                        reasons=(*(why for _, why in unresolved), *sized) or (f"no applicable guideline states {characteristic}",))
     return _fold(characteristic, ready, unresolved, warnings, _intent())
 
 
@@ -980,7 +994,7 @@ def _plain(value: Any) -> Any:
 # --- the API the checks call -----------------------------------------------------------------------------------
 
 def resolve(record: Any, op: Any, characteristic: str, *, catalog: Catalog, material: str | None = None, on: Any = None,
-            orientation: str | None = None, feature: str | None = None) -> Resolved:
+            orientation: str | None = None, feature: str | None = None, size: float | None = None) -> Resolved:
     """The limit of `characteristic` for route operation `op` of `record` on `material` (a material profile id).
 
     A calibration of the operation's capability profile (L4) beats every guideline and resolves as
@@ -999,7 +1013,7 @@ def resolve(record: Any, op: Any, characteristic: str, *, catalog: Catalog, mate
                             (Provenance(calibration.limits.as_dict(), calibration.limits.units, "L4", calibration.id or profile.id,
                                         f"hw/manufacturing/capabilities.yaml#{profile.id}", (source,), "calibrated"),))
     context = context_for(profile, record.materials.get(material) if material is not None else None)
-    return resolve_guidelines(catalog, context, characteristic, orientation=orientation, feature=feature)
+    return resolve_guidelines(catalog, context, characteristic, orientation=orientation, feature=feature, size=size)
 
 
 # --- the resolution trace --------------------------------------------------------------------------------------

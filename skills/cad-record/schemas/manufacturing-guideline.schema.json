@@ -36,7 +36,11 @@
       "type": "object", "additionalProperties": false, "minProperties": 1,
       "properties": {
         "orientation": {"$ref": "manufacturing.schema.json#/$defs/semantic_id"},
-        "feature": {"$ref": "manufacturing.schema.json#/$defs/semantic_id"}
+        "feature": {"$ref": "manufacturing.schema.json#/$defs/semantic_id"},
+        "max_size": {
+          "description": "the largest feature size the limit holds for: a feature of unknown size, or a larger one, takes no value from it",
+          "allOf": [{"$ref": "manufacturing.schema.json#/$defs/quantity"}], "required": ["value"]
+        }
       }
     },
     "relative": {

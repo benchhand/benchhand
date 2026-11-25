@@ -17,7 +17,7 @@
 # schema-sha256 6ef27bc4c8273de006b8606504ea0897de10da12688d904197b43c3d8dc84e72 skills/cad-record/schemas/manufacturing-check-result.schema.json
 # schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b skills/cad-record/schemas/manufacturing-evidence.schema.json
 # schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
-# schema-sha256 c9a2ba7204fcf8065d3fc9a1c052dce71da9552ab8690a434f71da458d20e83a skills/cad-record/schemas/manufacturing-guideline.schema.json
+# schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 # schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 # schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
 # schema-sha256 efeefdd70e4d4ae4fd6c7f20a3cc52623414a54473e55825f63fded7b9e62ff2 skills/cad-record/schemas/manufacturing.schema.json
@@ -274,6 +274,7 @@ __all__ = [
     "ManufacturingFunctionEntry",
     "ManufacturingGuideline",
     "ManufacturingGuidelineAppliesTo",
+    "ManufacturingGuidelineAppliesToMaxSize",
     "ManufacturingGuidelineId",
     "ManufacturingGuidelineLimit",
     "ManufacturingGuidelineLimitQuantitiesItems",
@@ -4323,15 +4324,34 @@ class ManufacturingGuidelineLimitQuantitiesItems(TypedDict):
     units: Required[Literal["mm", "m", "um"]]
 
 
+class ManufacturingGuidelineAppliesToMaxSize(TypedDict):
+    """the largest feature size the limit holds for: a feature of unknown size, or a larger one, takes no value from it
+
+    Source: skills/cad-record/schemas/manufacturing-guideline.schema.json#/$defs/applies_to/properties/max_size
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - oneOf: [{"required":["value"],"not":{"anyOf":[{"required":["lower"]},{"required":["upper"]}]}},{"required":["lower","upper"],"not":{"required":["value"]}}]
+    """
+    value: Required[float]
+    lower: NotRequired[float]
+    upper: NotRequired[float]
+    units: Required[ManufacturingUnits]
+
+
 class ManufacturingGuidelineAppliesTo(TypedDict):
     """Source: skills/cad-record/schemas/manufacturing-guideline.schema.json#/$defs/applies_to
 
     Not expressible as types (see the schema):
     - minProperties: 1
     - additionalProperties: false
+
+    Field notes:
+    - max_size: the largest feature size the limit holds for: a feature of unknown size, or a larger one, takes no value from it
     """
     orientation: NotRequired[ManufacturingSemanticId]
     feature: NotRequired[ManufacturingSemanticId]
+    max_size: NotRequired[ManufacturingGuidelineAppliesToMaxSize]
 
 
 class ManufacturingGuidelineRelaxes(TypedDict):
