@@ -841,23 +841,20 @@ def _pair_contact(ours: dict[str, Any], face: Any, normal: Sequence[float], poin
                   pose: Any, datum: tuple[Sequence[float], Sequence[float]],
                   tol: float) -> tuple[tuple[bool, float, float, float], dict[str, Any]] | None:
     """One facing pair's (rank, contact) for face_contact; None when it overlaps by less than CONTACT_MIN_AREA_MM2.
-    Raises ContactFailure when the kernel Boolean does not complete."""
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    Raises ContactFailure when cad-model's occ.boolean reports a kernel error."""
+    from cadmodel import occ
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
 
     laid = BRepBuilderAPI_Transform(face, pose.to_trsf(_onto_plane(ours, normal, point, pose) @ relative), True).Shape()
     try:
-        common = BRepAlgoAPI_Common(ours["face"], laid)
-        done = common.IsDone()
-    except Exception as error:  # OCP raises a kernel Standard_Failure as a Python exception
-        raise ContactFailure(f"the overlap Boolean raised {type(error).__name__}: {error}") from error
-    if not done:
-        raise ContactFailure("the overlap Boolean (BRepAlgoAPI_Common) did not complete")
-    area = sum(face_area(found) for found in faces_of(common.Shape()))
+        overlap = occ.boolean("common", ours["face"], [laid])
+    except occ.GeometryError as error:
+        raise ContactFailure(f"the overlap Boolean failed: {error}") from error
+    area = sum(face_area(found) for found in faces_of(overlap))
     if area < CONTACT_MIN_AREA_MM2:
         return None
-    gap = max(abs(end) for end in separation(common.Shape(), ours, normal, point))
-    off = datum_distance(common.Shape(), datum)
+    gap = max(abs(end) for end in separation(overlap, ours, normal, point))
+    off = datum_distance(overlap, datum)
     return ((not (gap <= tol and off <= tol), gap, off, -area),
             {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6), "kind": "face"})
 
