@@ -3536,10 +3536,11 @@ class ManufacturingInputCacheTests(unittest.TestCase):
                          ("hw/checks/v1/cad", "pass", True))
         packet = json.loads((self.hw / "checks" / "v1" / "cad" / "result.json").read_text(encoding="utf-8"))
         self.assertEqual([(o["obligation"], o["outcome"]) for o in packet["outcomes"]],
-                         [("cad.glb_step_agreement@TST-0001", "pass"), ("cad.readback@TST-0001", "pass"),
-                          ("export.3mf@TST-0001", "pass")])
+                         [("cad.glb_step_agreement@TST-0001", "pass"), ("cad.product_exports@product", "pass"),
+                          ("cad.readback@TST-0001", "pass"), ("export.3mf@TST-0001", "pass")])
         self.assertEqual([o["id"] for o in packet["expected"]],
-                         ["cad.glb_step_agreement@TST-0001", "cad.readback@TST-0001", "export.3mf@TST-0001"])
+                         ["cad.glb_step_agreement@TST-0001", "cad.product_exports@product", "cad.readback@TST-0001",
+                          "export.3mf@TST-0001"])
         sealed = self.hw / "versions" / "v1" / "manufacturing" / "TST-0001" / "part.3mf"
         sealed_sha = hashlib.sha256(sealed.read_bytes()).hexdigest()
         self.assertEqual(json.loads((self.hw / "checks" / "v1" / "cad" / "evidence" / "check.json").read_text(encoding="utf-8"))["artifacts"],
