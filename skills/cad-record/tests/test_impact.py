@@ -872,6 +872,24 @@ class ExistingEquipmentStaleness(unittest.TestCase):
                          (("geometry",), ("geometry",)))
         self.assertEqual([o for o in result.stale_obligations if o.startswith("purchase.")], [])
 
+    def test_a_changed_range_stales_an_interface_that_names_the_part_by_occurrence(self) -> None:
+        def placed(docs: dict[str, Any]) -> dict[str, Any]:
+            docs["interfaces.yaml"]["interfaces"][-1]["to"] = "@mount"
+            docs["assembly.yaml"]["occurrences"] = [{"id": "mount", "PN": "TST-0009",
+                                                     "placement": {"translation_mm": [0, 0, 0]}}]
+            docs["assembly.yaml"]["subassemblies"][0]["occurrences"] = ["@mount"]
+            return docs
+
+        before = normalized(placed(self.documents()))
+        after_docs = placed(self.documents(lower=29.5))
+        after_docs["manufacturing/evidence.yaml"] = {"entries": [
+            acceptance.entry(before, "EV-if", {"interface": "IF-009"}, "cad_valid", obligation="interface.fit@IF-009",
+                             version="v1", manifest_sha256="a" * 64, geometry=GEOMETRY)]}
+        result = impact.compare(before, normalized(after_docs), before_geometry=GEOMETRY, after_geometry=GEOMETRY,
+                                since="v1", version="v2")
+        self.assertIn("geometry", result.changed["IF-009"])
+        self.assertEqual(result.stale_evidence.get("EV-if"), ("geometry",))
+
     def test_a_changed_range_source_artifact_is_a_source_change(self) -> None:
         result = self.compare(self.documents(sheet="b" * 64))
         self.assertIn("source", result.changed["TST-0009"])
