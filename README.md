@@ -304,6 +304,35 @@ The assembly drawing sheet (VSE-ASM) lists the five items with their quantities 
 
 ![Assembly drawing sheet](docs/images/v6-engine/09-drawing-assembly-sheet.webp)
 
+### Parts gallery
+
+Each thumbnail is the iso render of one part on built version v29. Click it to open the part's dimensioned drawing sheet, or the full render where no sheet exists.
+
+| | | | |
+|---|---|---|---|
+| [![VSE-0001 Crankcase and V block](docs/images/v6-engine/thumbs/VSE-0001.webp)](docs/images/v6-engine/02-part-VSE-0001-crankcase.webp)<br>**VSE-0001** | [![VSE-0002 Piston](docs/images/v6-engine/thumbs/VSE-0002.webp)](docs/images/v6-engine/09-drawing-VSE-0002-piston.webp)<br>**VSE-0002** | [![VSE-0003 Wrist pin](docs/images/v6-engine/thumbs/VSE-0003.webp)](docs/images/v6-engine/09-drawing-VSE-0003-wrist-pin.webp)<br>**VSE-0003** | [![VSE-0004 Connecting rod](docs/images/v6-engine/thumbs/VSE-0004.webp)](docs/images/v6-engine/09-drawing-VSE-0004-connecting-rod.webp)<br>**VSE-0004** |
+| [![VSE-0005 Crankshaft](docs/images/v6-engine/thumbs/VSE-0005.webp)](docs/images/v6-engine/09-drawing-VSE-0005-crankshaft.webp)<br>**VSE-0005** | [![VSE-0006 Cylinder head](docs/images/v6-engine/thumbs/VSE-0006.webp)](docs/images/v6-engine/09-drawing-VSE-0006-cylinder-head.webp)<br>**VSE-0006** | [![VSE-0007 Camshaft, bank B](docs/images/v6-engine/thumbs/VSE-0007.webp)](docs/images/v6-engine/09-drawing-VSE-0007-camshaft-b.webp)<br>**VSE-0007** | [![VSE-0011 Camshaft, bank A](docs/images/v6-engine/thumbs/VSE-0011.webp)](docs/images/v6-engine/09-drawing-VSE-0011-camshaft-a.webp)<br>**VSE-0011** |
+| [![VSE-0008 Crank pulley, GT2 20T](docs/images/v6-engine/thumbs/VSE-0008.webp)](docs/images/v6-engine/09-drawing-VSE-0008-crank-pulley.webp)<br>**VSE-0008** | [![VSE-0009 Cam pulley, GT2 40T](docs/images/v6-engine/thumbs/VSE-0009.webp)](docs/images/v6-engine/09-drawing-VSE-0009-cam-pulley.webp)<br>**VSE-0009** | [![VSE-0010 Timing belt GT2 6 mm, 420 mm loop](docs/images/v6-engine/thumbs/VSE-0010.webp)](docs/images/v6-engine/02-part-VSE-0010-timing-belt.webp)<br>**VSE-0010** | [![VSE-0012 Smooth idler pulley, 10 mm OD](docs/images/v6-engine/thumbs/VSE-0012.webp)](docs/images/v6-engine/02-part-VSE-0012-idler.webp)<br>**VSE-0012** |
+| [![VSE-0013 Belt idler bracket](docs/images/v6-engine/thumbs/VSE-0013.webp)](docs/images/v6-engine/09-drawing-VSE-0013-bracket.webp)<br>**VSE-0013** |  |  |  |
+
+Every sheet states the general tolerance ±0.2 mm, ±1° from DR-006. DR-006 records it as an FDM assumption with no measured H2D capability behind it. `drawing.py` passed each sheet. None is release-ready, because the revision is X1 and the general surface texture is open.
+
+- **VSE-0001 Crankcase and V block**. No sheet yet. `drawing.py` cannot locate the six bores of the 60° V. An inclined cylinder has no controlled-model fallback, and its axis is not parallel to a frame axis. The part already has its `drawing_features` hook.
+- **VSE-0002 Piston** (A4, 2:1, two sheets). The skirt is Ø23.6 ±0.1 in the 24 mm bore, and the pin bore is Ø6.012 0/−0.012 (6 H7). The second sheet is a section through the hollow skirt, 7.4 mm deep. The route lists a gauge inspection of the pin bore.
+- **VSE-0003 Wrist pin** (A4, 5:1). A 20 ±0.2 mm tube with a Ø6 g6 journal (−0.004/−0.012), a Ø3 lumen and four 0.3 × 45° edge breaks. The route lists a gauge inspection of the journal.
+- **VSE-0004 Connecting rod** (A3, 2:1). The bore axes sit 48 mm apart. The small bore is Ø6.1 ±0.05 on the pin, and the big bore is Ø12.2 ±0.1 on the crank pin. Section D-D shows the 1.5 mm lightening pockets in the 7 mm web.
+- **VSE-0005 Crankshaft** (A3, 1:2). The main journals are Ø13.97 +0.014/−0.004 (14 f7). Three Ø12 pins, 20 mm long, sit between 2 mm webs. No frame axis is normal to the inclined web arms, so a 0.3 mm profile controls them.
+- **VSE-0006 Cylinder head** (A3, 1:2). The block is 108 × 42 × 28 mm. The cam bore is Ø8.04 0/−0.04, 14 mm above the deck. Three Ø26 chambers are 3 mm deep, and three 7 mm lobe pockets show in section D-D.
+- **VSE-0007 Camshaft, bank B** (A3, 1:1). 156 mm long, with four Ø7.987 0/−0.015 journals (8 f7) and three lobes on an R5.5 base. A 0.3 mm profile holds the printed cam noses.
+- **VSE-0011 Camshaft, bank A** (A3, 1:1). The same cam layout, 21 mm shorter at 135 mm. Its pulley sits 10.5 mm inboard, in the shared belt plane.
+- **VSE-0008 Crank pulley, GT2 20T** (A4, 5:1). Twenty R0.55 tooth grooves on a Ø12.27 circle, and flanges Ø15.73 on an 8 mm width. The bore is Ø10.015 0/−0.015 (10 H7) for the crank nose.
+- **VSE-0009 Cam pulley, GT2 40T** (A3, 5:1). Forty grooves on a Ø25 circle, and flanges Ø28.46. The bore is Ø6.006 ±0.006 (6 H7). The crank pulley has half the teeth, so the cams turn once per two crank turns.
+- **VSE-0010 Timing belt GT2 6 mm, 420 mm loop**. A bought part. The BOM orders it by designation, so no sheet exists.
+- **VSE-0012 Smooth idler pulley, 10 mm OD**. A bought, flanged part with a 3 mm bore. It runs on the bracket's 3 g6 axle.
+- **VSE-0013 Belt idler bracket** (A4, 1:1). The plate is 66 × 26 × 2 mm. Each of its two axles is Ø3 g6 (−0.002/−0.008), 10.75 mm long, and carries one roller.
+
+The piston's [second sheet](docs/images/v6-engine/09-drawing-VSE-0002-piston-sheet2.webp) holds the section view.
+
 ### 8. BOM
 
 `bom.py` reconciles the roll-up against the v4 snapshot: five rows, 20 instances, no mismatches.
