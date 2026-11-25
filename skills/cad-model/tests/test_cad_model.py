@@ -1495,6 +1495,10 @@ class ExistingEquipmentBuildTests(unittest.TestCase):
             folder = hw / "versions" / "v1"
             (folder / "product.step").unlink()
             shutil.copyfile(folder / "assembly.step", folder / "product.step")
+            manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))  # sealed as a faulty build would
+            manifest["files"]["product.step"] = hashlib.sha256((folder / "product.step").read_bytes()).hexdigest()
+            (folder / "manifest.json").unlink()
+            (folder / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
             row = cli("check", "v1", "--hw", str(hw))[1]["checks"]["product_exports"]
             assessment, _ = acceptance_fixtures().evidence.build_assessment(hw, "v1")
             results = assessment.results()
