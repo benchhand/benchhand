@@ -396,12 +396,14 @@ class BuildGuide(unittest.TestCase):
            "property_class": "8", "finish": "zinc plated"}
 
     def designate(self, hw: Path, pn: str, designation: dict, *, supplier: str | None = None,
-                  order_code: str | None = None) -> None:
+                  order_code: str | None = None, manufacturer_part_number: str | None = None) -> None:
         """Re-record `pn` as bought by structured designation: no manufacturer, part number or designation text.
         A supplier or an order code binds the row to a vendor."""
         part_path = hw / "parts" / pn / "part.yaml"
         part = yaml.safe_load(part_path.read_text(encoding="utf-8"))
-        part["procurement"] = {"mode": "catalog", **({"supplier_part_number": order_code} if order_code else {})}
+        part["procurement"] = {"mode": "catalog", **({"supplier_part_number": order_code} if order_code else {}),
+                               **({"manufacturer": "TST Maker", "manufacturer_part_number": manufacturer_part_number}
+                                  if manufacturer_part_number else {})}
         part["supplier"] = supplier
         purchase = part["intent"]["route"][0]["purchase"]
         purchase.pop("identity", None)
@@ -441,6 +443,17 @@ class BuildGuide(unittest.TestCase):
     def test_commodity_rows_with_different_order_codes_stay_separate(self) -> None:
         rows = self.nut_rows({"order_code": "TST-4032-A"}, {"order_code": "TST-4032-B"})
         self.assertEqual(len(rows), 2, rows)
+
+    def test_rows_with_different_manufacturer_part_numbers_keep_their_identities(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        self.designate(hw, "LMP-0008", self.NUT, manufacturer_part_number="TST-NUT-A")
+        self.designate(hw, "LMP-0009", self.NUT, manufacturer_part_number="TST-NUT-B")
+        buy = self.generate(hw).split("## Parts to buy")[1].split("## Tools")[0]
+        lines = {mpn: [line for line in buy.splitlines() if mpn in line] for mpn in ("TST-NUT-A", "TST-NUT-B")}
+        self.assertEqual({mpn: len(found) for mpn, found in lines.items()}, {"TST-NUT-A": 1, "TST-NUT-B": 1})
+        self.assertNotEqual(lines["TST-NUT-A"], lines["TST-NUT-B"], "two manufacturer items are two rows")
+        self.assertNotIn("any supplier (commodity)", "".join(lines["TST-NUT-A"] + lines["TST-NUT-B"]))
 
     def test_commodity_rows_with_the_same_supplier_and_order_code_merge(self) -> None:
         bound = {"supplier": "TST Supply Co", "order_code": "TST-4032-A"}
