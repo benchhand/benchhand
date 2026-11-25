@@ -32,10 +32,6 @@ GUIDELINES_MODULE = "cad_record_guidelines"  # the shared name manufacturing_int
 COMMODITY_IDENTITY_PATH = INTENT_PATH.with_name("commodity_identity.py")
 COMMODITY_IDENTITY_MODULE = "cad_record_commodity_identity"  # the shared name cad-bom and cad-record load it under
 
-# The service classes whose checks take a guideline value as a pass (the user's rule). Every other class, unknown
-# included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
-GUIDELINE_PASS_CLASSES = frozenset({"appearance_concept", "fit_assembly", "functional_demo"})
-
 class HandlerError(RuntimeError):
     """A handler broke the packet contract: a failing finding linked to an obligation it did not fail, a stray outcome,
     or a missing or misplaced not_assessed reason."""
@@ -43,7 +39,7 @@ class HandlerError(RuntimeError):
 
 PASS, FAIL, UNKNOWN, NOT_APPLICABLE, NOT_ASSESSED = "pass", "fail", "unknown", "not_applicable", "not_assessed"
 OUTCOME_ORDER = (FAIL, UNKNOWN, NOT_ASSESSED, PASS)  # worst first: the order check, part and packet results take (D37)
-NOT_ASSESSED_REASONS = ("calibration_off", "no_capability_profile")  # why a check was not assessed (manufacturing.schema.json)
+NOT_ASSESSED_REASONS = ("calibration_off", "no_capability_profile", "no_guideline", "no_check")  # why a check was not assessed (manufacturing.schema.json)
 IMPLICIT = "main"  # the component id of a sole solid (cad-model components.IMPLICIT)
 PROBE_FORMAT = 1  # the probe facts form_check.py writes; bump when a key's meaning changes
 DIRECTIONS = {"+x": (1.0, 0.0, 0.0), "-x": (-1.0, 0.0, 0.0), "+y": (0.0, 1.0, 0.0), "-y": (0.0, -1.0, 0.0),
@@ -195,15 +191,31 @@ def _noted(coverage: str, note: str) -> str:
 class Calibrated:
     """A capability_limit answer with its criterion form, or why there is none."""
 
-    status: str  # calibrated, unknown or refused
+    status: str  # calibrated, guideline (Context.governing only), unknown or refused
     characteristic: str
-    limits: Any  # a Quantity when calibrated
+    limits: Any  # a Quantity when calibrated or guideline
     reasons: tuple[str, ...]
     calibration: Any = None
+    resolved: Any = None  # guidelines.Resolved when the status is guideline
 
     @property
     def known(self) -> bool:
-        return self.status == "calibrated"
+        return self.status in ("calibrated", "guideline")
+
+    @property
+    def note(self) -> str:
+        """What a guideline-based outcome says about its basis; empty for a calibration."""
+        if self.status != "guideline":
+            return ""
+        lower, upper = self.limits.bounds
+        return f"uncalibrated: guideline value {lower:g}..{upper:g} {self.limits.units} used; calibrate to tighten"
+
+    @property
+    def basis(self) -> str:
+        """The calibration id, or the guideline set that gave the value."""
+        if self.status == "guideline":
+            return f"guideline {self.resolved.provenance[0].guideline}"
+        return f"calibration {self.calibration.id}"
 
     def bounds(self, units: str = "mm") -> tuple[float, float]:
         bounds: tuple[float, float] = self.limits.to(units).bounds  # manufacturing_intent.Quantity.bounds
@@ -225,6 +237,12 @@ class Calibrated:
                 value = upper if operator in (">=", ">") else lower
             else:
                 raise ValueError(f"a calibration states no criterion value for operator {operator!r}")
+        if self.status == "guideline":
+            winner = self.resolved.provenance[0]
+            return {"property": prop or self.characteristic, "operator": operator, "value": value, "units": units,
+                    "source": dict(self.resolved.source),
+                    "conditions": f"guideline {winner.guideline} ({winner.layer} layer, {winner.path}): a design guideline, "
+                                  "not a calibration of this machine and material"}
         scope = ", ".join(f"{k} {v}" for k, v in sorted(cal.scope.items()) if not isinstance(v, Mapping))
         return {"id": cal.id, "property": prop or self.characteristic, "operator": operator, "value": value,
                 "units": units, "source": source_dict(cal.source),
@@ -606,7 +624,8 @@ class Context:
 
     # capability ---------------------------------------------------------------------------------------------------
     def calibrated(self, characteristic: str, *, profile: Any | None = None, material: str | None = None,
-                   orientation: str | None = None, feature: str | None = None, tool: str | None = None) -> Calibrated:
+                   orientation: str | None = None, feature: str | None = None, tool: str | None = None,
+                   size: float | None = None) -> Calibrated:
         """The calibration of `characteristic` on this operation's capability profile for its material:
         never a machine parameter, a nominal resolution or another material's calibration."""
         profile = profile or self.profile
@@ -616,7 +635,7 @@ class Context:
         if material is None:
             return Calibrated("unknown", characteristic, None, (f"{self.label}: the material profile is unknown",))
         found = self.mi.capability_limit(profile, characteristic, material=material, on=self.today,
-                                         orientation=orientation, feature=feature, tool=tool)
+                                         orientation=orientation, feature=feature, tool=tool, size=size)
         if self.calibration_off(profile):
             if found.status == "calibrated" and found.calibration.id not in self.ignored:
                 self.ignored.append(found.calibration.id)
@@ -625,6 +644,43 @@ class Context:
         if found.status == "calibrated":
             return Calibrated("calibrated", characteristic, found.calibration.limits, (), found.calibration)
         return Calibrated(found.status, characteristic, None, tuple(found.reasons))
+
+    def governing(self, characteristic: str, *, profile: Any | None = None, orientation: str | None = None,
+                  feature: str | None = None, size: float | None = None) -> Calibrated:
+        """The value a check judges `characteristic` against: its calibration (`calibrated`), else the guideline interval
+        for the profile (this operation's unless `profile` names another) and material, for a feature of `size` mm (status
+        guideline), else unknown with every reason. Calibration is never required: a guideline value governs until one
+        exists (benchhand-c7q.30)."""
+        cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature, size=size)
+        if cal.known:
+            return cal
+        return self.guideline_value(characteristic, cal, profile=profile, orientation=orientation, feature=feature, size=size)
+
+    def guideline_value(self, characteristic: str, instead: Calibrated, *, profile: Any | None = None,
+                        orientation: str | None = None, feature: str | None = None, size: float | None = None) -> Calibrated:
+        """The guideline interval of `characteristic` (status guideline) in place of `instead`, a calibration that is
+        missing or that the check rejected; else `instead` with the guideline's reasons added."""
+        context = self.guideline_context(profile)
+        if context is None:
+            return instead
+        found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation, feature=feature,
+                                                size=size)
+        self.consulted.append(found)
+        if found not in self.resolutions:
+            self.resolutions.append(found)
+        if found.status == "guideline" and found.operator == "between":
+            return Calibrated("guideline", characteristic, found.value, (), None, found)
+        why = found.reasons or ((f"the guideline {characteristic} limit is {found.operator}, not an interval",)
+                                if found.status == "guideline" else (f"no guideline states {characteristic}",))
+        status = instead.status if not instead.known else "unknown"
+        return Calibrated(status, characteristic, None, (*instead.reasons, *why))
+
+    @staticmethod
+    def settle(cal: Calibrated, coverage: str) -> tuple[str, str]:
+        """A sub-check that met `cal`: PASS under either calibration flag and in every service class, since an applicable
+        printer guideline settles a check and a calibration only tightens it (benchhand-c7q.30). A guideline value is
+        noted as uncalibrated."""
+        return PASS, _noted(coverage, cal.note) if cal.note else coverage
 
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""
@@ -641,10 +697,10 @@ class Context:
         coupon = guidelines().COUPON_REMEDY
         return f"{fix}; {coupon}" if fix else coupon
 
-    def guideline_context(self) -> Any | None:
-        """The guideline scope (guidelines.Context) of this operation's capability profile and material, or None
-        without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES."""
-        profile = self.profile
+    def guideline_context(self, profile: Any | None = None) -> Any | None:
+        """The guideline scope (guidelines.Context) of a capability profile (this operation's unless `profile` names
+        another) and material, or None without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES."""
+        profile = profile or self.profile
         if self.catalog is None or profile is None or profile.process not in guidelines().GUIDELINE_PROCESSES:
             return None
         material_id = self.stock_material_id()
@@ -669,27 +725,13 @@ class Context:
         fact = self.record.use_case.service_class
         return str(fact.value) if fact.known else None
 
-    def grade(self, limit: Limit, coverage: str, findings: list[Draft], *, check: str, measured: Mapping[str, Any],
-              prop: str, units: str, method: str, feature: str | None = None) -> tuple[str, str]:
-        """A sub-check that met `limit`: a pass for a calibrated limit, or a guideline value when the service class is one
-        of GUIDELINE_PASS_CLASSES. A guideline value in another class is unknown, with a finding a calibration or an
-        approved waiver settles. An unknown limit is unknown too (its callers report why)."""
-        service = self.service_class
-        if limit.status == "calibrated" or (limit.status == "guideline" and (service in GUIDELINE_PASS_CLASSES
-                                                                             or self.calibration_off())):
-            return PASS, coverage
+    @staticmethod
+    def grade(limit: Limit, coverage: str) -> tuple[str, str]:
+        """A sub-check that met `limit`: PASS for a calibrated or guideline limit under either flag and in every service
+        class (a calibration only tightens). An unknown limit is UNKNOWN (its callers report why)."""
         if limit.status == "unknown":
             return UNKNOWN, _noted(coverage, "limit unknown")
-        kind = self.operation.kind
-        findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
-                              limit.criterion(prop, units), method,
-                              f"{limit.characteristic} is a design-guideline value, not a calibration of this machine and material",
-                              f"a {service or 'unknown'} service class needs a calibrated or waived {limit.characteristic}: "
-                              "a guideline value alone does not pass it",
-                              remedy=f"calibrate {limit.characteristic} for this material and machine, or waive this finding "
-                                     "with an approved decision",
-                              recheck=[f"process.{kind}"], feature=feature))
-        return UNKNOWN, _noted(coverage, "guideline value only")
+        return PASS, coverage
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:
         """UNKNOWN or FAIL when the operation has no usable capability profile of its own kind."""

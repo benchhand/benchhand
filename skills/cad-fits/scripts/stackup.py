@@ -119,6 +119,9 @@ RESULT_DECIMALS = 6
 PRODUCER = "cad-fits stackup.py"
 
 INTENT_VERSION = 2
+# The revision of how a contributor's limits are qualified, sealed in the recipe: a bundle of another revision (or of none,
+# before benchhand-c7q.30 let a guideline value qualify a printed contributor) is never reused. Bump it when a verdict can change.
+BASIS_REVISION = 1
 CATEGORIES = ("manufacture", "assembly", "thermal", "moisture", "wear", "deformation", "coating", "adhesive", "joining")
 STATES = ("as_manufactured", "after_finish", "assembled")
 CONSEQUENCES = ("collision", "binding", "loss_of_function", "critical_fit", "performance", "appearance", "other")
@@ -127,6 +130,8 @@ GOVERNING_METHODS = ("worst_case", "justified_rss")
 QUALIFYING_SOURCES = frozenset(("calibration", "test", "supplier", "datasheet", "standard"))
 SHEET_CUTTING = frozenset(("laser", "waterjet", "plasma"))
 FINISHING = frozenset(("drilling", "reaming", "tapping", "finishing", "coating", "joining"))
+PRINTERS = frozenset(("fdm", "resin"))  # printer calibration is optional on these (benchhand-c7q.30)
+NO_BASIS = "no_guideline"  # the not_assessed reason of a printed contributor with no calibration or guideline value
 EFFECT_FINISHES = {"coating": "coating", "joining": "joining"}  # finishes counted by their own effect contributor
 STACK_KEYS = frozenset(("intent_version", "id", "title", "units", "subject", "requirements", "dimension_state",
                         "consequence", "relevant", "requirement", "statistics", "contributors", "clearance", "note"))
@@ -322,6 +327,7 @@ class _IntentStack:
         self.calibration = calibration
         self.findings: list[dict[str, Any]] = []
         self.unknown_reasons: list[str] = []
+        self.not_assessed_reasons: list[str] = []  # a missing printer basis: open, never a pass, never masking a fail
         self.critical = False
         self.required_evidence: list[dict[str, Any]] = []
         self.limits = list(LIMITS)
@@ -489,7 +495,7 @@ class _IntentStack:
     def finding(self, code: str, suffix: str, *, severity: str, outcome: str, measured: Mapping[str, Any],
                 consequence: str, remedy: str, uncertainty: str, subject: Mapping[str, Any] | None = None,
                 criterion: Mapping[str, Any] | None = None, alternatives: list[dict[str, str]] | None = None,
-                inputs: list[str] | None = None) -> str:
+                inputs: list[str] | None = None, reason: str | None = None) -> str:
         ident = base = f"{_slug(self.id)}_{_slug(suffix)}"
         taken = {item["id"] for item in self.findings}
         number = 2
@@ -504,6 +510,8 @@ class _IntentStack:
             "recheck": {"families": ["interface.stack" if self.subject.get("interface") else "feature.fit"],
                         "earliest_stage": "detail", **({"inputs": inputs} if inputs else {})},
         }
+        if reason is not None:
+            data["reason"] = reason
         if self.obligation_id():
             data["obligation"] = self.obligation_id()
         if self.requirements:
@@ -521,6 +529,15 @@ class _IntentStack:
                      severity=self.severity(), outcome="unknown", measured={"status": "unknown", "reason": reason},
                      subject=subject, consequence=consequence or "the clearance remaining after tolerances is not established",
                      remedy=remedy, uncertainty=reason, inputs=inputs)
+
+    def not_assessed(self, code: str, contributor: _Contributor, reason: str, remedy: str) -> None:
+        """A printed contributor whose limits neither a calibration nor a guideline value qualifies (benchhand-c7q.30):
+        a minor not_assessed finding. The stack outcome is not_assessed only where the declared limits would pass."""
+        self.not_assessed_reasons.append(reason)
+        self.finding(code, f"{code.split('.')[-1]}_{contributor.id}", severity="minor", outcome="not_assessed",
+                     measured={"status": "unknown", "reason": reason}, subject=contributor.subject or None,
+                     consequence=f"{contributor.id}'s declared limits are not qualified: print and inspect it, or calibrate to assess",
+                     remedy=remedy, uncertainty=reason, reason=NO_BASIS)
 
     def severity(self) -> str:
         return "critical" if self.critical or self.consequence in WORST_CASE_GOVERNED else "major"
@@ -747,31 +764,63 @@ class _IntentStack:
         if producer is not None and producer.capability != profile_id:
             self.unknown("stack.record_mismatch", item, f"{item.id}: operation {producer.id} uses {producer.capability}, "
                                                        f"not {profile_id}", "cite the capability of the operation")
-        if not self.calibration and profile.process in GUIDELINES.GUIDELINE_PROCESSES:
-            # TODO(benchhand-tw6.24): no guideline states a manufacture deviation, so this stays unknown until the not-assessed grade.
-            self.unknown("stack.capability_unresolved", item,
-                         f"{item.id}: {profile_id} {capability['characteristic']}: printer calibration is off, and no guideline "
-                         f"value covers {capability['characteristic']}", GUIDELINES.COUPON_REMEDY)
+        resolution = None if (not self.calibration and profile.process in GUIDELINES.GUIDELINE_PROCESSES) else \
+            intent.capability_limit(profile, capability["characteristic"], material=material, on=self.on, feature=None)
+        if resolution is None or resolution.status != "calibrated":
+            self.uncalibrated(intent, item, capability, profile, material, resolution)
             return
-        resolution = intent.capability_limit(profile, capability["characteristic"], material=material, on=self.on,
-                                             feature=None)
-        if resolution.status != "calibrated":
+        calibration = resolution.calibration
+        self.qualify_limits(intent, item, capability["characteristic"], calibration.limits, f"calibration {calibration.id}'s demonstrated deviation",
+                            {"calibration": calibration.id})
+
+    def uncalibrated(self, intent: Any, item: _Contributor, capability: Mapping[str, Any], profile: Any, material: str,
+                     resolution: Any | None) -> None:
+        """A contributor with no usable calibration (`resolution` None when the printer flag is off): the guideline
+        deviation qualifies it (benchhand-c7q.30: calibration is never required), else a printer's is not assessed and any
+        other process's is unknown."""
+        characteristic, profile_id = capability["characteristic"], profile.id
+        guideline = self.guideline_deviation(profile, characteristic, material, abs(item.nominal))
+        if guideline is not None and guideline.status == "guideline" and guideline.operator == "between":
+            self.qualify_limits(intent, item, characteristic, guideline.value, f"guideline {guideline.provenance[0].guideline}'s value",
+                                {"guideline": guideline.provenance[0].guideline})
+            return
+        why = tuple(guideline.reasons) if guideline is not None else ()
+        if resolution is None:
+            self.not_assessed("stack.capability_not_assessed", item,
+                              f"{item.id}: {profile_id} {characteristic}: printer calibration is off, and no "
+                              f"guideline value covers {characteristic}" + "".join(f"; {w}" for w in why),
+                              GUIDELINES.COUPON_REMEDY)
+        elif profile.process in PRINTERS:
+            self.not_assessed("stack.capability_not_assessed", item,
+                              f"{item.id}: {profile_id} {characteristic} is {resolution.status}, and no guideline "
+                              f"value covers it: " + "; ".join((*resolution.reasons, *why)),
+                              "print and inspect the part, or calibrate the capability for this material and scope")
+        else:
             self.unknown("stack.capability_unresolved", item,
-                         f"{item.id}: {profile_id} {capability['characteristic']} is {resolution.status}: "
+                         f"{item.id}: {profile_id} {characteristic} is {resolution.status}: "
                          + "; ".join(resolution.reasons), "calibrate the capability for this material and scope" if self.calibration
                          else "record evidence of the capability for this material and scope "
                               "(test pieces, a capability study or supplier evidence)")
-            return
-        calibration = resolution.calibration
-        limits = calibration.limits
-        item.resolved = {"calibration": calibration.id, "limits": {"lower": limits.lower, "upper": limits.upper,
-                                                                    "value": limits.value, "units": limits.units}}
-        if capability["characteristic"].endswith("deviation") and limits.lower is not None:
+
+    def guideline_deviation(self, profile: Any, characteristic: str, material: str, size: float) -> Any | None:
+        """The guideline resolution (guidelines.Resolved) of `characteristic` for a printed profile and a feature of
+        `size` mm, or None when no guideline set can cover the profile."""
+        if self.catalog is None or profile.process not in GUIDELINES.GUIDELINE_PROCESSES:
+            return None
+        found = GUIDELINES.resolve_guidelines(self.catalog, GUIDELINES.context_for(profile, self.record.materials.get(material)),
+                                              characteristic, size=size)
+        return found
+
+    def qualify_limits(self, intent: Any, item: _Contributor, characteristic: str, limits: Any, basis: str,
+                       resolved: dict[str, Any]) -> None:
+        """Record what qualified the contributor; limits tighter than a deviation interval stay unqualified."""
+        item.resolved = {**resolved, "limits": {"lower": limits.lower, "upper": limits.upper, "value": limits.value,
+                                                "units": limits.units}}
+        if characteristic.endswith("deviation") and limits.lower is not None:
             low, high = intent.convert(limits.lower, limits.units, "mm"), intent.convert(limits.upper, limits.units, "mm")
             if low < -item.minus - 1e-12 or high > item.plus + 1e-12:
                 self.unknown("stack.limits_unqualified", item,
-                             f"{item.id}'s limits -{item.minus}/+{item.plus} mm are tighter than calibration "
-                             f"{calibration.id}'s demonstrated deviation {low}..{high} mm",
+                             f"{item.id}'s limits -{item.minus}/+{item.plus} mm are tighter than {basis} {low}..{high} mm",
                              "use the demonstrated limits, or a finishing operation and inspection that achieve them")
 
     # ---------------------------------------------------------------- statistics
@@ -931,17 +980,9 @@ class _IntentStack:
                                f"approved statistical interval governs this {self.consequence} consequence")
         if clearance is not None and clearance.failed:
             outcome = "fail"  # a nominal gap below a guideline minimum is a miss; a met one never raises the outcome
-        obligation = self.obligation_id()
-        coverage = (f"declared contributors {', '.join(c.id for c in self.contributors)} over effects "
-                    f"{', '.join(self.relevant)}; " + "; ".join(LIMITS))
-        outcome_row = {"obligation": obligation, "outcome": outcome, "level": "process_planned",
-                       "method": "1D worst-case tolerance stack" if governing == "worst_case"
-                       else "1D justified statistical tolerance stack",
-                       "coverage": coverage, "findings": [f["id"] for f in self.findings]}
-        if self.unknown_reasons:
-            outcome_row["uncertainty"] = "; ".join(self.unknown_reasons)
-        if not outcome_row["findings"]:
-            del outcome_row["findings"]
+        if outcome == "pass" and self.not_assessed_reasons:
+            outcome = "not_assessed"  # the declared limits pass but a printed contributor's are not qualified: never a pass
+        outcome_row = self.outcome_row(outcome, governing)
         result: dict[str, Any] = {
             "intent_version": INTENT_VERSION, "id": self.id, "title": self.title, "units": "mm",
             "subject": json.loads(json.dumps(self.subject)), "requirements": self.requirements,
@@ -962,6 +1003,23 @@ class _IntentStack:
         if clearance is not None:
             result["clearance"] = clearance.row
         return result
+
+    def outcome_row(self, outcome: str, governing: str) -> dict[str, Any]:
+        """The stack obligation's outcome row: an unknown or not_assessed one says why."""
+        coverage = (f"declared contributors {', '.join(c.id for c in self.contributors)} over effects "
+                    f"{', '.join(self.relevant)}; " + "; ".join(LIMITS))
+        row: dict[str, Any] = {"obligation": self.obligation_id(), "outcome": outcome, "level": "process_planned",
+                               "method": "1D worst-case tolerance stack" if governing == "worst_case"
+                               else "1D justified statistical tolerance stack",
+                               "coverage": coverage, "findings": [f["id"] for f in self.findings]}
+        if self.unknown_reasons:
+            row["uncertainty"] = "; ".join(self.unknown_reasons)
+        elif outcome == "not_assessed":
+            row["reason"] = NO_BASIS
+            row["uncertainty"] = "; ".join(self.not_assessed_reasons)
+        if not row["findings"]:
+            del row["findings"]
+        return row
 
     def check_clearance(self, nominal: float | None) -> _ClearanceResult | None:
         """The stack's sliding-clearance check, or None when the stack asks for none. It is no contributor: the gap
@@ -1336,7 +1394,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.out is not None:
                 raise StackError("--out is only allowed for standalone scratch output")
             options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS, "intent_version": INTENT_VERSION, "case": case,
-                                       "method": (stack.get("requirement") or {}).get("method", "worst_case")}
+                                       "method": (stack.get("requirement") or {}).get("method", "worst_case"),
+                                       "basis_revision": BASIS_REVISION}
             recipe = {"source_yaml_sha256": hashlib.sha256(stack_path.read_bytes()).hexdigest(), "options": options,
                       **GUIDELINES.calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
             reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
@@ -1367,9 +1426,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         if status != "pass":
             governing = result["requirement"].get("governing", result["requirement"].get("method"))
-            print(f"stackup: requirement {'not met' if status == 'fail' else 'not established'} ({governing})",
-                  file=sys.stderr)
-        return 0 if status == "pass" else 1
+            said = {"fail": "not met", "not_assessed": "not assessed"}.get(status, "not established")
+            print(f"stackup: requirement {said} ({governing})", file=sys.stderr)
+        return 0 if status in ("pass", "not_assessed") else 1  # not_assessed blocks no gate (D37)
     except OSError as error:
         print(f"stackup: cannot read {args.stack}: {error}", file=sys.stderr)
         return 2

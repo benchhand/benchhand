@@ -20,6 +20,7 @@ import copy
 import hashlib
 import importlib.util
 import itertools
+import io
 import json
 import math
 import os
@@ -318,10 +319,14 @@ class BedStabilityTests(Checks):
         data["centre_mm"] = [5.0 + 0.0007, 5.0 + 0.0007, 10.0]  # 1 micrometre beyond x + y = 10
         self.assertEqual(self.outcome(self.orient(data), self.OBLIGATION), "fail")
 
-    def test_an_uncalibrated_contact_area_is_unknown_never_pass(self) -> None:
+    def test_an_uncalibrated_contact_area_is_a_non_blocking_advisory_never_a_pass(self) -> None:
         result = self.orient(stable([2.0, 2.0], TRIANGLE), calibrations=[])
-        self.assertEqual(self.outcome(result, self.OBLIGATION), "unknown")
-        self.assertEqual(self.finding(result, "process.fdm.contact_area_uncalibrated")["criterion"]["status"], "unknown")
+        self.assertEqual(self.outcome(result, self.OBLIGATION), "not_assessed")
+        self.assertEqual(result.outcome(self.OBLIGATION)["reason"], "no_guideline")
+        found = self.finding(result, "process.fdm.contact_area_uncalibrated")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertEqual(found["criterion"]["status"], "unknown")
+        self.assertIn("bed contact area not assessed: no calibration or guideline", result.outcome(self.OBLIGATION)["coverage"])
 
     def test_the_warp_footprint_is_the_larger_extent_of_the_contact_hull(self) -> None:
         warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(15))
@@ -382,11 +387,19 @@ class SupportPolicyTests(Checks):
         self.assertEqual((found["criterion"]["source"]["kind"], found["criterion"]["source"]["reference"],
                           found["criterion"]["source"]["revision"]), ("guideline", "fdm.generic", "2"))
 
-    def test_without_a_calibration_or_a_catalog_the_need_for_support_is_unknown_never_a_universal_angle(self) -> None:
+    def test_without_a_calibration_or_a_catalog_the_need_for_support_is_not_assessed_never_a_universal_angle(self) -> None:
         result = self.assess(printed("TST-0101", {"strategy": "none"}, calibrations=[]), geometry("TST-0101", SHELF))
-        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0101/print"), "unknown")
+        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0101/print"), "not_assessed")
         found = self.finding(result, "process.fdm.overhang_uncalibrated")
         self.assertEqual(found["criterion"]["status"], "unknown")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+
+    def test_support_on_a_critical_surface_with_no_overhang_basis_is_not_assessed(self) -> None:
+        result = self.assess(printed("TST-0102", {"strategy": "none"}, calibrations=[], critical=SEAT_SURFACE),
+                             geometry("TST-0102", SEAT))
+        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0102/print"), "not_assessed")
+        found = self.finding(result, "process.fdm.support_on_critical_unknown")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
 
     def test_an_absent_support_strategy_is_unknown_never_none(self) -> None:
         documents = printed("TST-0101", None)
@@ -1604,7 +1617,6 @@ def _diameter_criterion(text: str) -> dict[str, Any]:
 
 # --- contract -------------------------------------------------------------------------------------------------------
 
-LENIENT = {"appearance_concept", "fit_assembly", "functional_demo"}  # the user's rule, written out apart from the code
 NOZZLE_04 = {"nozzle_diameter": known(mm(0.4), "supplier_typical", [datasheet("TST printer datasheet")])} if DEPS else {}
 GEOMETRY = "process.fdm.geometry@TST-0101/print"
 SUPPORT = "process.fdm.support@TST-0101/print"
@@ -1646,8 +1658,8 @@ def underside(angle: float, kind: str = "overhang", span: float | None = None) -
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
 class GuidelineLimitTests(Checks):
-    """Without a calibration the FDM checks judge against the shipped guideline sets, and a guideline pass counts only
-    for the appearance_concept, fit_assembly and functional_demo service classes."""
+    """Without a calibration the FDM checks judge against the shipped guideline sets. An applicable guideline settles a
+    check in every service class under either calibration flag: a calibration only tightens it."""
 
     def judged(self, data: dict[str, Any], **options: Any) -> Any:
         return self.assess(guided(**options), geometry("TST-0101", data), catalog=SHIPPED)
@@ -1671,25 +1683,16 @@ class GuidelineLimitTests(Checks):
                 self.assertEqual((criterion["source"]["kind"], criterion["source"]["reference"], criterion["source"]["revision"],
                                   criterion["source"]["sha256"]), ("guideline", ref, str(SHIPPED.guidelines[ref].revision), SHIPPED.guidelines[ref].sha256))
 
-    def test_a_guideline_pass_counts_only_for_three_service_classes(self) -> None:
+    def test_a_guideline_pass_counts_in_every_service_class_under_either_flag(self) -> None:
         cases = {"wall": (walled(3.0), GEOMETRY), "small_feature": (walled(3.0, pins=(3.0,)), GEOMETRY),
                  "small_hole": (walled(3.0, holes=(3.0,)), GEOMETRY), "support": (underside(30.0), SUPPORT)}
-        for service in MI.SERVICE_CLASSES:
-            for check, (data, obligation) in cases.items():
-                with self.subTest(service=service, check=check):
-                    result = self.judged(data, service=service)
-                    only = f"process.fdm.{check}_guideline_only"
-                    if service in LENIENT:
-                        self.assertEqual(self.outcome(result, obligation), "pass")
-                        self.assertNotIn(only, self.codes(result))
-                    else:
-                        self.assertEqual(self.outcome(result, obligation), "unknown")
-                        self.assertEqual(self.finding(result, only)["criterion"]["source"]["kind"], "guideline")
-
-    def test_an_unknown_service_class_takes_no_guideline_pass(self) -> None:
-        result = self.judged(walled(3.0))
-        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
-        self.assertIn("process.fdm.wall_guideline_only", self.codes(result))
+        for flag in ("0", "1"):
+            for service in (*MI.SERVICE_CLASSES, None):
+                for check, (data, obligation) in cases.items():
+                    with self.subTest(flag=flag, service=service, check=check), \
+                            mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                        result = self.judged(data, service=service)
+                        self.assertEqual(self.outcome(result, obligation), "pass", self.codes(result, obligation))
 
     def test_a_guideline_fail_fails_in_every_service_class(self) -> None:
         for service in (*MI.SERVICE_CLASSES, None):
@@ -1701,7 +1704,6 @@ class GuidelineLimitTests(Checks):
         wall = calibration("wall_study", "min_wall", POLYMER, 0.8, 1.0)
         result = self.judged(walled(1.1), calibrations=(wall,))
         self.assertEqual(self.outcome(result, GEOMETRY), "pass")
-        self.assertNotIn("process.fdm.wall_guideline_only", self.codes(result))
 
     def test_a_refused_calibration_lets_the_guideline_apply_and_keeps_its_reasons(self) -> None:
         other = calibration("wall_study", "min_wall", ALU, 0.4, 0.5)
@@ -1718,10 +1720,25 @@ class GuidelineLimitTests(Checks):
         failed = self.judged(walled(0.7), parameters={})
         self.assertEqual(self.finding(failed, "process.fdm.wall")["criterion"]["value"], 0.8)
 
-    def test_without_a_catalog_only_calibrations_count(self) -> None:
+    def test_without_a_catalog_or_a_calibration_the_wall_is_not_assessed(self) -> None:
         result = self.assess(guided(service="functional_demo"), geometry("TST-0101", walled(3.0)))
-        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
-        self.assertEqual(self.finding(result, "process.fdm.wall_uncalibrated")["criterion"]["status"], "unknown")
+        self.assertEqual(self.outcome(result, GEOMETRY), "not_assessed")
+        found = self.finding(result, "process.fdm.wall_uncalibrated")
+        self.assertEqual(found["criterion"]["status"], "unknown")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+
+    def test_a_resin_wall_with_no_calibration_is_not_assessed_and_a_known_miss_still_fails(self) -> None:
+        documents = shaped("resin", [], material=POLYMER, supports={"strategy": "none"})
+        obligation = "process.resin.geometry@TST-0902/form"
+        result = self.assess(documents, geometry("TST-0902", walled(3.0)))
+        self.assertEqual(self.outcome(result, obligation), "not_assessed")
+        self.assertEqual(self.finding(result, "process.resin.wall_uncalibrated")["reason"], "no_guideline")
+        bore = [surface("bore", "locating", criteria=[_diameter_criterion("between 5.9 6.1")])]
+        documents = shaped("resin", [calibration("hole_coupon", "hole_diameter_deviation", POLYMER, -0.3, 0.3, orientation="XY")],
+                           material=POLYMER, critical=bore, supports={"strategy": "none"})
+        missed = self.assess(documents, geometry("TST-0902", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})))
+        self.assertEqual(self.outcome(missed, obligation), "fail")
+        self.assertIn("process.resin.hole_fit", self.codes(missed, obligation))
 
     def test_the_packet_depends_on_every_guideline_set_its_limits_can_come_from(self) -> None:
         packet = self.judged(walled(3.0)).packet({"version_manifest": "0" * 64})
@@ -1729,15 +1746,6 @@ class GuidelineLimitTests(Checks):
         for ref, key in (("fdm.generic", "guideline_fdm_generic_r2"), ("fdm.nozzle.d0_4", "guideline_fdm_nozzle_d0_4_r1")):
             self.assertEqual(packet["dependencies"][key], SHIPPED.guidelines[ref].sha256)
         self.assertNotIn("guideline_fdm_nozzle_d0_6_r1", packet["dependencies"], "a 0.6 mm set cannot apply to a 0.4 mm nozzle")
-
-    def test_the_guideline_only_note_is_stated_once_when_an_overhang_and_a_bridge_are_both_judged(self) -> None:
-        strict = sorted(set(MI.SERVICE_CLASSES) - LENIENT)[0]
-        data = facts(faces=(bed_face(), face("f10", features=("underside",), down_=down(60.0, 200.0)),
-                            face("f11", features=("bridge",), down_=down(90.0, 200.0, "bridge", span=4.0))),
-                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
-        planned = {"strategy": "reachable_noncritical", "contact_regions": [{"feature": "underside"}], "removal": REMOVAL}
-        coverage = self.judged(data, service=strict, supports=planned).outcome(SUPPORT)["coverage"]
-        self.assertEqual(coverage.count("(guideline value only)"), 1, coverage)
 
     def test_the_probe_plan_scans_walls_at_the_guideline_minimum(self) -> None:
         record = load(self, guided())
@@ -1752,14 +1760,11 @@ class GuidelineLimitTests(Checks):
             with self.subTest(name):
                 self.assertEqual(self.outcome(self.judged(data, service="functional_demo"), obligation), "pass")
 
-    def test_planned_supports_keep_the_guideline_grade(self) -> None:
+    def test_planned_supports_pass_on_the_guideline_grade_in_every_service_class(self) -> None:
         planned = {"strategy": "reachable_noncritical", "contact_regions": [{"feature": "underside"}], "removal": REMOVAL}
-        strict = sorted(set(MI.SERVICE_CLASSES) - LENIENT)[0]
-        for service, outcome in (("functional_demo", "pass"), (strict, "unknown")):
+        for service in ("functional_demo", "working_prototype", "production"):
             with self.subTest(service=service):
-                result = self.judged(underside(60.0), service=service, supports=planned)
-                self.assertEqual(self.outcome(result, SUPPORT), outcome)
-                self.assertEqual("process.fdm.support_guideline_only" in self.codes(result), outcome == "unknown")
+                self.assertEqual(self.outcome(self.judged(underside(60.0), service=service, supports=planned), SUPPORT), "pass")
 
     def test_an_unknown_recorded_limit_grades_unknown_once_without_a_guideline_only_finding(self) -> None:
         """No catalog and no calibration: the overhang limit is unknown, and a flat down-facing face (nothing beyond
@@ -1767,7 +1772,6 @@ class GuidelineLimitTests(Checks):
         result = self.assess(guided(service="functional_demo"), geometry("TST-0101", underside(0.0)))
         self.assertEqual(self.outcome(result, SUPPORT), "unknown")
         self.assertEqual(result.outcome(SUPPORT)["coverage"].count("(limit unknown)"), 1, result.outcome(SUPPORT)["coverage"])
-        self.assertEqual([c for c in self.codes(result) if c.endswith("_guideline_only")], [])
 
     def test_a_resolver_warning_reaches_the_finding_that_cites_the_limit(self) -> None:
         result = self.judged(walled(1.0), pin=("fdm.generic@7",))
@@ -1807,25 +1811,6 @@ class GuidelineLimitTests(Checks):
             outcomes.append((self.outcome(result, "process.resin.geometry@TST-0902/form"), self.codes(result)))
         self.assertEqual(outcomes[0], outcomes[1])
         self.assertEqual([c for c in outcomes[1][1] if "small_hole" in c], [])
-
-    def test_the_guideline_pass_classes_are_known_service_classes(self) -> None:
-        self.assertLessEqual(set(pc.GUIDELINE_PASS_CLASSES), set(MI.SERVICE_CLASSES) - {"unknown"})
-
-    def test_an_approved_waiver_of_the_guideline_only_finding_waives_the_obligation(self) -> None:
-        evidence = _module("cad_record_evidence", SKILLS / "cad-record" / "scripts" / "evidence.py")
-        acceptance = _module("cad_record_acceptance_fixtures", SKILLS / "cad-record" / "tests" / "fixtures" / "acceptance.py")
-        found = self.finding(self.judged(walled(3.0)), "process.fdm.wall_guideline_only")
-        waiver = acceptance.waiver(found["subject"], obligation=GEOMETRY)
-        disposition = {"finding": found["id"], "producer": {"bundle": "hw/checks/v1/process", "manifest_sha256": "b" * 64},
-                       "status": "accepted_waiver", "reason": "TST", "decision": "DR-002", "waiver": waiver}
-        documents = guided(dispositions=(disposition,))
-        record = load(self, documents)
-        packet = pc.assess(record, geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED).packet(
-            {"version_manifest": "0" * 64})
-        result = evidence.assess(record, version="v1", manifest_sha256="0" * 64, today=TODAY,
-                                 packets=[evidence.ProducerPacket("hw/checks/v1/process", "b" * 64, packet)],
-                                 approved=lambda decision: decision in ("DR-001", "DR-002"))
-        self.assertEqual(result.statuses[GEOMETRY].result, "waived")
 
 
 TPU_WALL_SET = """\
@@ -2364,6 +2349,28 @@ class FormCheckPacketExitTests(unittest.TestCase):
     def test_a_failing_fidelity_check_still_exits_1_on_a_not_assessed_packet(self) -> None:
         self.assertEqual(self.form_check.packet_code(True, self.packet("not_assessed")), 1)
 
+    def finished(self, blocking: bool, packet: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        report: dict[str, Any] = {"status": "fail" if blocking else "pass", "fidelity": "F2", "parts": {}, "findings": []}
+        code = self.form_check.finish(report, blocking, packet, Path("bundle"), False)
+        return code, report
+
+    def test_the_report_status_carries_the_manufacturing_verdict_over_a_clean_fidelity_check(self) -> None:
+        cases = (("not_assessed", False, "not_assessed", 0), ("unknown", False, "unknown", 1), ("fail", False, "fail", 1),
+                 ("pass", False, "pass", 0), ("not_assessed", True, "fail", 1))
+        for result, blocking, status, exit_code in cases:
+            with self.subTest(packet=result, fidelity_fails=blocking):
+                code, report = self.finished(blocking, self.packet(result, ("o.a", result, "no_guideline" if result == "not_assessed" else None)))
+                self.assertEqual((report["status"], code, report["manufacturing"]["status"]), (status, exit_code, result))
+
+    def test_the_envelope_and_the_compact_headline_say_not_assessed(self) -> None:
+        code, report = self.finished(False, self.packet("not_assessed", ("o.a", "not_assessed", "no_guideline")))
+        emit = self.form_check.emit
+        self.assertEqual(json.loads(emit.envelope_text(report, emit.SCHEMA))["status"], "not_assessed")
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", {emit.ENV: "compact"}):
+            emit.emit(report, tool="form_check", name="form_check", code=code, scratch=Path(tmp), stream=out)
+        self.assertTrue(out.getvalue().startswith("form_check: not_assessed (exit 0)"), out.getvalue()[:200])
+
 
 @unittest.skipUnless(UV and DEPS, "uv, pyyaml and jsonschema are required for the kernel build")
 class FlagSealDirectionTests(unittest.TestCase):
@@ -2428,12 +2435,10 @@ class CalibrationFlagTests(Checks):
                     self.assertEqual(self.outcome(result, obligation), "pass")
                     self.assertEqual([c for c in self.codes(result, obligation) if c.endswith(("_guideline_only", "_uncalibrated"))], [])
 
-    def test_on_a_guideline_pass_in_an_unknown_service_class_stays_unknown(self) -> None:
+    def test_on_a_guideline_pass_still_passes_in_an_unknown_service_class(self) -> None:
         for check, (data, obligation) in self.CASES.items():
             with self.subTest(check=check):
-                result = self.judged(data, True)
-                self.assertEqual(self.outcome(result, obligation), "unknown")
-                self.assertIn(f"process.fdm.{check}_guideline_only", self.codes(result))
+                self.assertEqual(self.outcome(self.judged(data, True), obligation), "pass")
 
     def test_off_a_guideline_fail_still_fails(self) -> None:
         result = self.judged(walled(1.0), False)
@@ -2448,11 +2453,12 @@ class CalibrationFlagTests(Checks):
                 asked = [f["code"] for f in result.findings if "calibrat" in f.get("remedy", "").lower()]
                 self.assertEqual(asked, [])
 
-    def test_off_a_check_without_a_guideline_stays_unknown_and_names_the_missing_guideline(self) -> None:
+    def test_off_a_check_without_a_guideline_is_not_assessed_and_names_the_missing_guideline(self) -> None:
         recorded = (calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2),)
         result = self.judged(walled(3.0), False, calibrations=recorded)
         found = [f for f in result.findings if f["code"] == "process.fdm.warp_uncalibrated"]
         self.assertTrue(found, self.codes(result))
+        self.assertEqual(found[0]["outcome"], "not_assessed")
         self.assertIn("no guideline value covers warp", found[0]["uncertainty"])
         self.assertNotIn("calibrat", found[0]["remedy"].lower())
 
@@ -2595,6 +2601,477 @@ class CalibrationRemedyTests(Checks):
         self.assertIn("overhang_coupon", notes[0]["measured"]["text"])
         self.assertIn("wall_coupon", notes[0]["measured"]["text"])
         self.assertEqual(notes[0]["severity"], "info")
+
+
+def accuracy_catalog(*limits: dict[str, Any]) -> Any:
+    """The shipped guideline sets plus one project FDM set holding `limits`, each cited to a test source."""
+    cite = [{"kind": "supplier", "reference": "TST FDM accuracy table", "url": "https://example.com/tst",
+             "accessed": "2026-11-24", "locator": "table 1"}]
+    data = {"schema_version": 1, "id": "tst.fdm.accuracy", "revision": 1, "title": "TST FDM accuracy",
+            "scope": {"process": "fdm"}, "limits": [{**limit, "citations": cite} for limit in limits]}
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp) / "manufacturing" / "guidelines"
+        folder.mkdir(parents=True)
+        (folder / "tst.fdm.accuracy.yaml").write_text(json.dumps(data), encoding="utf-8")
+        catalog = GL.discover(Path(tmp))
+    assert not catalog.refused, catalog.refused
+    return catalog
+
+
+def deviation(characteristic: str, lower: float, upper: float) -> dict[str, Any]:
+    return {"characteristic": characteristic, "operator": "between", "quantity": {"lower": lower, "upper": upper, "units": "mm"}}
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class GuidelineWithoutCalibrationTests(Checks):
+    """benchhand-c7q.30: printer calibration is never required. Without one, the guideline value governs: the check passes
+    or fails on it with basis guideline and says the value is uncalibrated. A calibration overrides it. Unknown only when
+    neither exists."""
+
+    WARP = deviation("warp", 0.0, 1.0)
+    HOLE = deviation("hole_diameter_deviation", -0.5, 0.5)
+    BED = stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]])
+
+    def warped(self, flatness: str, *, catalog: Any, calibrations: tuple = ()) -> Any:
+        documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("datum_a", "datum", criteria=[_flatness_criterion(flatness)])]
+        return self.assess(documents, geometry("TST-0101", self.BED), catalog=catalog)
+
+    def bored(self, diameter: str, *, catalog: Any, calibrations: tuple = ()) -> Any:
+        documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion(diameter)])]
+        return self.assess(documents, geometry("TST-0101", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})),
+                           catalog=catalog)
+
+    @staticmethod
+    def thermal(result: Any) -> str:
+        return next(o.id for o in result.expected if o.id.startswith("process.fdm.thermal_distortion"))
+
+    def test_a_guideline_warp_passes_a_flatness_limit_it_meets_and_says_it_is_uncalibrated(self) -> None:
+        result = self.warped("<= 1.5", catalog=accuracy_catalog(self.WARP))
+        obligation = self.thermal(result)
+        self.assertEqual(self.outcome(result, obligation), "pass")
+        self.assertIn("uncalibrated: guideline value 0..1 mm used; calibrate to tighten", result.outcome(obligation)["coverage"])
+        self.assertEqual(result.by_code("process.fdm.warp_uncalibrated"), [])
+
+    def test_a_guideline_warp_fails_a_flatness_limit_it_misses_with_basis_guideline(self) -> None:
+        result = self.warped("<= 0.5", catalog=accuracy_catalog(self.WARP))
+        self.assertEqual(self.outcome(result, self.thermal(result)), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.warp")["uncertainty"], "guideline tst.fdm.accuracy@1")
+
+    def test_a_warp_calibration_overrides_the_guideline_value(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.3, size=mm(15))
+        result = self.warped("<= 0.5", catalog=accuracy_catalog(self.WARP), calibrations=(warp,))
+        self.assertEqual(self.outcome(result, self.thermal(result)), "pass")
+        self.assertNotIn("uncalibrated", result.outcome(self.thermal(result))["coverage"])
+
+    def advisory(self, result: Any, code: str, obligation: str) -> dict[str, Any]:
+        """The non-blocking advisory of a printer check with neither a calibration nor a guideline value: not assessed
+        (never a pass, never a blocking unknown), with a minor finding that says so."""
+        self.assertEqual(self.outcome(result, obligation), "not_assessed")
+        self.assertEqual(result.outcome(obligation)["reason"], "no_guideline")
+        found = self.finding(result, code)
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        return found
+
+    def test_warp_with_neither_a_calibration_nor_a_guideline_value_is_a_non_blocking_advisory(self) -> None:
+        for flag in ("0", "1"):
+            with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                result = self.warped("<= 1.5", catalog=SHIPPED)
+                obligation = self.thermal(result)
+                self.advisory(result, "process.fdm.warp_uncalibrated", obligation)
+                self.assertIn("warp not assessed: no calibration or guideline; print and inspect, or calibrate to assess",
+                              result.outcome(obligation)["coverage"])
+
+    def test_a_footprint_beyond_the_warp_calibration_is_the_same_advisory_as_no_calibration(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(5))  # the footprint is 12 mm
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+            result = self.warped("<= 1.5", catalog=SHIPPED, calibrations=(warp,))
+        self.advisory(result, "process.fdm.warp_scope", self.thermal(result))
+
+    def test_a_later_warp_coupon_that_covers_the_footprint_is_used_before_any_fallback(self) -> None:
+        small = calibration("warp_small", "warp", POLYMER, 0.1, 0.2, size=mm(5))  # the footprint is 12 mm
+        large = calibration("warp_large", "warp", POLYMER, 0.0, 0.8, size=mm(20))
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):  # the project guideline (0..0.3 mm) alone would pass
+            result = self.warped("<= 0.5", catalog=accuracy_catalog(deviation("warp", 0.0, 0.3)), calibrations=(small, large))
+        self.assertEqual(self.outcome(result, self.thermal(result)), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.warp")["uncertainty"], "calibration warp_large")
+        self.assertEqual(result.by_code("process.fdm.warp_scope"), [])
+
+    def test_an_undersized_warp_coupon_is_rejected_and_the_project_warp_guideline_judges_the_footprint(self) -> None:
+        warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(5))  # the footprint is 12 mm
+        for flatness, expected in (("<= 1.5", "pass"), ("<= 0.5", "fail")):  # the project guideline says 0..1 mm
+            with self.subTest(flatness=flatness), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+                result = self.warped(flatness, catalog=accuracy_catalog(self.WARP), calibrations=(warp,))
+                obligation = self.thermal(result)
+                self.assertEqual(self.outcome(result, obligation), expected, self.codes(result, obligation))
+                note = self.finding(result, "process.fdm.warp_scope")
+                self.assertEqual((note["severity"], note["outcome"], "obligation" in note), ("info", "unknown", False))
+                if expected == "fail":
+                    self.assertEqual(self.finding(result, "process.fdm.warp")["uncertainty"], "guideline tst.fdm.accuracy@1")
+                else:
+                    self.assertIn("uncalibrated: guideline value 0..1 mm used", result.outcome(obligation)["coverage"])
+
+    def critical(self, role: str, *, on_bed: bool = False, catalog: Any = SHIPPED, calibrations: tuple = (),
+                 criteria: list | None = None, size: float = 30.0, box: tuple[float, float, float] | None = None) -> Any:
+        """TST-0101, `size` mm at its largest (or `box` mm on its three axes), with one critical planar feature face_a of
+        `role` (on the bed when `on_bed`) stating `criteria`."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("face_a", role, **({"criteria": criteria} if criteria else {}))]
+        data = facts(faces=(face("f1", features=("face_a",), bed=on_bed),),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        data["bbox_mm"] = {"min": [0, 0, 0], "max": list(box) if box else [size, 20, 30]}
+        return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_a_part_whose_diagonal_exceeds_100_mm_takes_no_shipped_deviation(self) -> None:
+        """No axis of an 80 x 80 x 10 mm part reaches 100 mm, but a feature across it can be 113 mm long."""
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.6, 0.6), box=(80.0, 80.0, 10.0))
+        found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
+        self.assertIn("up to 100 mm", found["uncertainty"])
+
+    def test_a_feature_of_a_part_over_100_mm_takes_no_shipped_deviation_and_is_not_assessed(self) -> None:
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.6, 0.6), size=160.0)
+        found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
+        self.assertIn("up to 100 mm", found["uncertainty"])
+
+    @staticmethod
+    def tolerance(characteristic: str, lower: float, upper: float) -> list[dict[str, Any]]:
+        return [FX.criterion(characteristic, "between", [lower, upper], "mm")]
+
+    def test_a_planar_critical_feature_passes_when_the_guideline_deviation_fits_its_tolerance(self) -> None:
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.6, 0.6))
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
+        self.assertIn("uncalibrated: guideline value -0.5..0.5 mm used; calibrate to tighten", result.outcome(GEOMETRY)["coverage"])
+        self.assertEqual(result.by_code("process.fdm.feature_uncalibrated"), [])
+
+    def test_a_planar_critical_feature_fails_when_its_tolerance_is_tighter_than_the_guideline_deviation(self) -> None:
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.3, 0.3))
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        found = self.finding(result, "process.fdm.feature_deviation")
+        self.assertEqual((found["subject"]["feature"], found["uncertainty"]), ("face_a", "guideline fdm.accuracy@2"))
+
+    def test_a_critical_feature_with_only_other_criteria_is_judged_by_those_checks_alone(self) -> None:
+        result = self.critical("datum", criteria=[_flatness_criterion("<= 1.5")])
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
+        self.assertNotIn("face_a dimensional_deviation", result.outcome(GEOMETRY)["coverage"])
+        self.assertEqual([c for c in self.codes(result, GEOMETRY) if c.startswith("process.fdm.feature")], [])
+
+    def test_a_critical_feature_with_no_criterion_is_unknown_never_a_pass(self) -> None:
+        result = self.critical("datum")
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertIn("process.fdm.feature_tolerance_missing", self.codes(result, GEOMETRY))
+
+    def unchecked(self, result: Any) -> list[dict[str, Any]]:
+        return [f for f in result.findings if f["code"] == "process.fdm.criterion_unchecked"]
+
+    def test_a_criterion_no_check_reads_is_an_explicit_open_finding_never_a_pass(self) -> None:
+        """A check-coverage gap is no missing printer basis: the finding is explicit and the obligation stays UNKNOWN."""
+        for prop, operator, value, units in (("tongue_width", ">=", 3.0, "mm"), ("seat_depth", "<=", 4.0, "mm"),
+                                             ("surface_roughness", "<=", 3.2, "um")):
+            with self.subTest(prop=prop):
+                result = self.critical("datum", criteria=[FX.criterion(prop, operator, value, units)])
+                self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+                self.assertNotIn("reason", result.outcome(GEOMETRY))
+                found = self.unchecked(result)
+                self.assertEqual([(f["outcome"], f["severity"], f["criterion"]["property"], "reason" in f) for f in found],
+                                 [("unknown", "major", prop, False)])
+                self.assertIn(f"face_a {prop} not checked: no check measures it", result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_linear_band_narrower_than_the_guideline_spread_fails(self) -> None:
+        """fdm.accuracy spreads a printed dimension over 1.0 mm (-0.5..0.5): no nominal holds a 0.2 mm band."""
+        result = self.critical("datum", criteria=[FX.criterion("thickness", "between", [2.9, 3.1], "mm")])
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        found = self.finding(result, "process.fdm.criterion_band")
+        self.assertEqual((found["outcome"], found["criterion"]["property"], found["uncertainty"]),
+                         ("fail", "thickness", "guideline fdm.accuracy@2"))
+
+    def test_a_linear_band_that_holds_the_spread_stays_open_since_the_model_is_not_measured(self) -> None:
+        for criteria, catalog in (([FX.criterion("thickness", "between", [2.0, 4.0], "mm")], SHIPPED),
+                                  ([FX.criterion("thickness", "between", [2.9, 3.1], "mm")], None),  # no guideline: no miss known
+                                  ([FX.criterion("boss_height", "between", [149.0, 151.0], "mm")], SHIPPED)):  # over 100 mm
+            with self.subTest(criteria=criteria[0]["value"], catalog=catalog is not None):
+                result = self.critical("datum", criteria=criteria, catalog=catalog)
+                self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+                self.assertEqual([f["outcome"] for f in self.unchecked(result)], ["unknown"])
+
+    def test_an_unchecked_criterion_does_not_mask_a_known_failure_or_turn_a_pass_into_one(self) -> None:
+        failing = self.critical("datum", criteria=[*self.tolerance("dimensional_deviation", -0.3, 0.3),
+                                                   FX.criterion("depth", ">=", 2.0, "mm")])
+        self.assertEqual(self.outcome(failing, GEOMETRY), "fail")
+        passing = self.critical("datum", criteria=[*self.tolerance("dimensional_deviation", -0.6, 0.6),
+                                                   FX.criterion("depth", ">=", 2.0, "mm")])
+        self.assertEqual(self.outcome(passing, GEOMETRY), "unknown")
+
+    def test_a_critical_bore_with_no_diameter_criterion_is_an_open_record_gap_even_without_a_basis(self) -> None:
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [surface("bore", "locating")]
+        result = self.assess(documents, geometry("TST-0101", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})))
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertEqual(self.finding(result, "process.fdm.hole_criterion_missing")["outcome"], "unknown")
+        self.assertEqual(result.by_code("process.fdm.hole_uncalibrated"), [])
+
+    def bore_with(self, *extra: dict[str, Any], catalog: Any = SHIPPED) -> Any:
+        """A 6 mm critical bore whose diameter limits 5.0..7.0 mm the guideline deviation meets, plus `extra` criteria."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion("between 5.0 7.0"), *extra])]
+        return self.assess(documents, geometry("TST-0101", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})),
+                           catalog=catalog)
+
+    def test_a_passing_bore_diameter_does_not_hide_its_other_criteria(self) -> None:
+        narrow = self.bore_with(FX.criterion("depth", "between", [9.9, 10.1], "mm"))
+        self.assertEqual(self.outcome(narrow, GEOMETRY), "fail")
+        self.assertEqual(self.finding(narrow, "process.fdm.criterion_band")["criterion"]["property"], "depth")
+        wide = self.bore_with(FX.criterion("depth", "between", [8.0, 12.0], "mm"))  # a printer basis applies; the depth is unmeasured
+        self.assertEqual(self.outcome(wide, GEOMETRY), "unknown")
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(wide)], [("depth", "unknown")])
+
+    def test_every_critical_surface_linked_to_one_bore_is_judged(self) -> None:
+        """One 6 mm bore carries two critical features: bore_a (5..7 mm) passes, bore_b needs 10..11 mm and fails."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore_a", "locating", criteria=[_diameter_criterion("between 5.0 7.0")]),
+            surface("bore_b", "locating", criteria=[_diameter_criterion("between 10.0 11.0")])]
+        shared = hole("bore_a", 6.0)
+        shared["features"] = ["bore_a", "bore_b"]
+        result = self.assess(documents, geometry("TST-0101", facts(holes=(shared,), walls={"thickness_mm": 3.0})), catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        self.assertEqual([f["subject"]["feature"] for f in result.by_code("process.fdm.hole_fit")], ["bore_b"])
+
+    def test_an_angular_calibration_size_scope_is_refused_not_raised_under_either_flag(self) -> None:
+        """A schema-valid size scope in degrees reaches the resolver when a record is read without its checks; the bore is
+        then judged on the guideline, never a crash."""
+        odd = calibration("hole_coupon", "hole_diameter_deviation", POLYMER, -0.05, 0.05, orientation="XY", size=mm(30, units="deg"))
+        documents = guided(service="functional_demo", calibrations=(CONTACT, odd))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion("between 5.0 7.0")])]
+        record = MI.normalize_record(documents)
+        data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
+                                                         "measured": 12})
+        for flag in (False, True):
+            with self.subTest(flag=flag):
+                result = pc.assess(record, geometry("TST-0101", data), today=TODAY, catalog=SHIPPED, calibration=flag)
+                self.assertEqual(packet_errors(result.packet({"version_manifest": "0" * 64})), [])
+                self.assertEqual(result.outcome(GEOMETRY)["outcome"], "pass", self.codes(result, GEOMETRY))
+                self.assertIn("uncalibrated: guideline value", result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_criterion_of_another_role_is_not_dropped(self) -> None:
+        """A datum reads dimensional_deviation; its profile_deviation criterion is no deviation tolerance a check reads."""
+        result = self.critical("datum", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(result)],
+                         [("profile_deviation", "unknown")])
+
+    def test_the_band_width_check_applies_only_to_a_dimensional_size(self) -> None:
+        """A 3.2..6.3 um roughness band is no size: the dimensional spread says nothing about it."""
+        result = self.critical("datum", criteria=[FX.criterion("surface_roughness", "between", [3.2, 6.3], "um")])
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertEqual(result.by_code("process.fdm.criterion_band"), [])
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(result)],
+                         [("surface_roughness", "unknown")])
+
+    def test_size_semantics_come_from_a_declared_table_and_a_length_unit_not_a_suffix(self) -> None:
+        """roughness_height is a roughness in mm, not a size: no band check. Declared sizes in a length unit get one."""
+        rough = self.critical("datum", criteria=[FX.criterion("roughness_height", "between", [0.0032, 0.0063], "mm")])
+        self.assertEqual(rough.by_code("process.fdm.criterion_band"), [])
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(rough)], [("roughness_height", "unknown")])
+        for prop in ("seat_depth", "tongue_width"):
+            with self.subTest(prop=prop):
+                narrow = self.critical("datum", criteria=[FX.criterion(prop, "between", [9.9, 10.1], "mm")])
+                self.assertEqual(self.finding(narrow, "process.fdm.criterion_band")["criterion"]["property"], prop)
+        angular = self.critical("datum", criteria=[FX.criterion("thickness", "between", [1.0, 1.1], "deg")])
+        self.assertEqual(angular.by_code("process.fdm.criterion_band"), [])
+
+    def test_a_flank_with_neither_a_calibration_nor_a_guideline_profile_deviation_is_a_non_blocking_advisory(self) -> None:
+        result = self.critical("flank", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
+        found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
+        self.assertEqual(found["subject"]["feature"], "face_a")
+        self.assertIn("face_a profile_deviation not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_profile_deviation_calibration_is_compared_with_the_flank_tolerance(self) -> None:
+        flank = calibration("flank_coupon", "profile_deviation", POLYMER, -0.1, 0.1, feature="flank")
+        for upper, expected in ((0.2, "pass"), (0.05, "fail")):
+            with self.subTest(tolerance=upper), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+                result = self.critical("flank", calibrations=(flank,), criteria=self.tolerance("profile_deviation", -upper, upper))
+                self.assertEqual(self.outcome(result, GEOMETRY), expected)
+                self.assertEqual(result.by_code("process.fdm.feature_uncalibrated"), [])
+
+    def test_a_bed_feature_with_no_elephant_foot_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.critical("datum", on_bed=True, criteria=self.tolerance("dimensional_deviation", -0.8, 0.8))
+        self.advisory(result, "process.fdm.elephant_foot", GEOMETRY)
+        self.assertIn("face_a elephant_foot not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    def test_an_elephant_foot_calibration_adds_its_flare_to_the_deviation_before_the_tolerance(self) -> None:
+        foot = calibration("foot_coupon", "elephant_foot", POLYMER, 0.0, 0.2)  # 0.5 mm guideline + 0.2 mm flare = 0.7 mm
+        for upper, expected in ((0.8, "pass"), (0.6, "fail")):
+            with self.subTest(tolerance=upper), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+                result = self.critical("datum", on_bed=True, calibrations=(foot,),
+                                       criteria=self.tolerance("dimensional_deviation", -upper, upper))
+                self.assertEqual(self.outcome(result, GEOMETRY), expected, self.codes(result, GEOMETRY))
+                self.assertEqual(expected == "fail", "process.fdm.elephant_foot" in self.codes(result, GEOMETRY))
+
+    def test_a_guideline_hole_deviation_judges_the_bore_with_basis_guideline(self) -> None:
+        for diameter, expected in (("between 5.0 7.0", "pass"), ("between 5.9 6.1", "fail")):
+            with self.subTest(diameter=diameter):
+                result = self.bored(diameter, catalog=accuracy_catalog(self.HOLE))
+                self.assertEqual(self.outcome(result, GEOMETRY), expected)
+                self.assertEqual(result.by_code("process.fdm.hole_uncalibrated"), [])
+                if expected == "fail":
+                    self.assertTrue(self.finding(result, "process.fdm.hole_fit")["uncertainty"].startswith("guideline "))
+                else:
+                    self.assertIn("uncalibrated: guideline value -0.5..0.5 mm used; calibrate to tighten",
+                                  result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_hole_calibration_overrides_the_guideline_value(self) -> None:
+        tight = calibration("hole_coupon", "hole_diameter_deviation", POLYMER, -0.05, 0.05, orientation="XY")
+        result = self.bored("between 5.9 6.1", catalog=accuracy_catalog(self.HOLE), calibrations=(tight,))
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass")
+
+    def test_a_bore_with_neither_a_calibration_nor_a_guideline_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.bored("between 5.0 7.0", catalog=None)  # no catalog: the wall has no value either, so the obligation stays open
+        found = self.finding(result, "process.fdm.hole_uncalibrated")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertIn("bore hole_diameter_deviation not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    def test_a_small_pin_or_hole_with_neither_a_calibration_nor_a_guideline_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.assess(guided(), geometry("TST-0101", walled(3.0, pins=(1.0,), holes=(1.0,))))
+        for code, what in (("process.fdm.small_feature_uncalibrated", "small pins and bosses"),
+                           ("process.fdm.small_hole_uncalibrated", "small holes")):
+            with self.subTest(code=code):
+                found = self.finding(result, code)
+                self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+                self.assertIn(f"{what} not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    def received(self, *, catalog: Any, critical: bool = True) -> Any:
+        """An insert pressed into the 4.2 mm printed boss bore of TST-0101: a critical bore whose limits are 3.0..5.0 mm,
+        or, without `critical`, a bore no critical surface names."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["assembly.yaml"]["operations"] = [{"id": "insert_m3", "kind": "insert", "part": "TST-0101", "into": "TST-0101",
+                                                     "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["boss"]}}]
+        if critical:
+            documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+                surface("boss", "fastener", criteria=[_diameter_criterion("between 3.0 5.0")])]
+        data = facts(holes=(hole("boss", 4.2, axis=(0.0, 0.0, 1.0)),),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_a_critical_receiving_bore_is_sized_by_its_bore_check_and_retention_is_left_to_the_trial(self) -> None:
+        result = self.received(catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "pass", self.codes(result, GEOMETRY))
+        self.assertIn("boss within its limits with the guideline hole_diameter_deviation", result.outcome(GEOMETRY)["coverage"])
+        note = self.finding(result, "process.fdm.receiving_feature")
+        self.assertEqual((note["severity"], note["outcome"], "obligation" in note), ("info", "unknown", False))
+        self.assertEqual(note["recheck"]["families"], ["assembly.order", "process.fdm.trial"])
+
+    def test_a_receiving_only_bore_never_passes_on_an_interval_alone(self) -> None:
+        result = self.received(catalog=SHIPPED, critical=False)
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        found = self.finding(result, "process.fdm.receiving_criterion_missing")
+        self.assertEqual((found["outcome"], found["subject"]["feature"]), ("unknown", "boss"))
+
+    def test_a_critical_receiving_bore_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.received(catalog=None)
+        found = self.finding(result, "process.fdm.hole_uncalibrated")
+        self.assertEqual((found["outcome"], found["reason"]), ("not_assessed", "no_guideline"))
+        self.assertEqual(self.finding(result, "process.fdm.receiving_feature")["severity"], "info")
+
+    def test_a_thin_wall_on_an_exempt_feature_class_below_its_own_calibrated_minimum_fails(self) -> None:
+        data = walled(0.3)
+        data["walls"]["features"] = ["tip"]
+        data["features"]["tip"] = {"kind": "tooth_tip", "faces": [], "mapped": True}
+        tip = calibration("tip_coupon", "min_wall", POLYMER, 0.4, 0.5, feature="tooth_tip")
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+            result = self.assess(guided(service="functional_demo", calibrations=(tip,)), geometry("TST-0101", data), catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        found = self.finding(result, "process.fdm.wall_feature_class")
+        self.assertEqual((found["outcome"], found["severity"], found["criterion"]["value"]), ("fail", "major", 0.5))
+        self.assertNotIn("reason", found)
+
+    def test_an_exempt_wall_that_meets_the_structural_minimum_still_answers_to_its_own_calibration(self) -> None:
+        data = walled(0.30)
+        data["walls"]["features"] = ["tip"]
+        data["features"]["tip"] = {"kind": "tooth_tip", "faces": [], "mapped": True}
+        structural = calibration("wall_coupon", "min_wall", POLYMER, 0.2, 0.25)
+        tip = calibration("tip_coupon", "min_wall", POLYMER, 0.45, 0.5, feature="tooth_tip")
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+            result = self.assess(guided(service="functional_demo", calibrations=(structural, tip)), geometry("TST-0101", data),
+                                 catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        self.assertEqual(self.finding(result, "process.fdm.wall_feature_class")["criterion"]["value"], 0.5)
+
+    def test_a_wall_on_several_feature_classes_answers_to_every_class_minimum(self) -> None:
+        """The chamfer's 0.2 mm minimum (first alphabetically) is met; the tooth tip's 0.5 mm one is missed."""
+        data = walled(0.30)
+        data["walls"]["features"] = ["edge", "tip"]
+        data["features"]["edge"] = {"kind": "chamfer", "faces": [], "mapped": True}
+        data["features"]["tip"] = {"kind": "tooth_tip", "faces": [], "mapped": True}
+        structural = calibration("wall_coupon", "min_wall", POLYMER, 0.2, 0.25)
+        chamfer = calibration("chamfer_coupon", "min_wall", POLYMER, 0.15, 0.2, feature="chamfer")
+        tip = calibration("tip_coupon", "min_wall", POLYMER, 0.45, 0.5, feature="tooth_tip")
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+            result = self.assess(guided(service="functional_demo", calibrations=(structural, chamfer, tip)),
+                                 geometry("TST-0101", data), catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        found = self.finding(result, "process.fdm.wall_feature_class")
+        self.assertEqual((found["criterion"]["value"], found["outcome"]), (0.5, "fail"))
+        self.assertIn("tooth_tip", found["consequence"])
+
+    def test_a_thin_wall_on_an_exempt_feature_class_without_its_own_calibration_is_a_non_blocking_advisory(self) -> None:
+        data = walled(0.3)
+        data["walls"]["features"] = ["tip"]
+        data["features"]["tip"] = {"kind": "tooth_tip", "faces": [], "mapped": True}
+        result = self.assess(guided(service="functional_demo"), geometry("TST-0101", data), catalog=SHIPPED)
+        found = self.finding(result, "process.fdm.wall_feature_class")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertIn("tooth_tip wall not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
+
+    REAM = "process.reaming.allowance@TST-0101/ream"
+
+    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo") -> Any:
+        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size."""
+        documents = guided(service=service, calibrations=(CONTACT,))
+        intent = documents["parts/TST-0101/part.yaml"]["intent"]
+        intent["route"][0]["allowances"] = [{"feature": "bore", "amount": mm(allowance), "purpose": "finish",
+                                             "source": FX.source("user")}]
+        intent["route"].append(FX.operation("ream", "reaming", "tst_reamer", targets=[{"feature": "bore"}]))
+        intent["critical_surfaces"] = [surface("bore", "bore", "after_finish")]
+        documents["manufacturing/capabilities.yaml"]["profiles"].append(FX.capability_profile("tst_reamer", "reaming"))
+        data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
+                                                         "measured": 12})
+        return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_a_ream_allowance_after_printing_is_judged_against_the_guideline_hole_deviation(self) -> None:
+        for allowance, expected in ((0.6, "pass"), (0.3, "fail")):  # the guideline puts the printed bore up to 0.5 mm oversize
+            with self.subTest(allowance=allowance):
+                result = self.reamed(allowance, catalog=SHIPPED)
+                self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
+                if expected == "fail":
+                    self.assertTrue(self.finding(result, "process.reaming.allowance_short")["uncertainty"].startswith("guideline "))
+
+    def test_a_ream_allowance_after_printing_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
+        result = self.reamed(0.6, catalog=None)
+        self.advisory(result, "process.reaming.allowance_unverified", self.REAM)
+
+    def test_a_sufficient_ream_allowance_after_printing_passes_in_a_strict_service_class_under_either_flag(self) -> None:
+        for flag in ("0", "1"):
+            with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                result = self.reamed(0.6, catalog=SHIPPED, service="working_prototype")
+                self.assertEqual(self.outcome(result, self.REAM), "pass", self.codes(result, self.REAM))
+
+    def test_a_conforming_working_prototype_bore_passes_on_the_guideline_under_either_flag(self) -> None:
+        """A calibration only tightens: with the flag on and no coupon, the applicable printer guideline settles the bore."""
+        documents = guided(service="working_prototype", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion("between 5.0 7.0")])]
+        data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
+                                                         "measured": 12})
+        for flag in ("0", "1"):
+            with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                result = self.assess(documents, geometry("TST-0101", data), catalog=SHIPPED)
+                self.assertEqual(self.outcome(result, GEOMETRY), "pass", self.codes(result, GEOMETRY))
 
 
 if __name__ == "__main__":

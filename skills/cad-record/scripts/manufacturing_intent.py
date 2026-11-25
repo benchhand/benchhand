@@ -2117,7 +2117,7 @@ class _Reader:
                 self.ref("material", scope.get("material"), path, f"{where}/scope/material")
             for key in ("size", "thickness"):
                 if key in scope:
-                    self.quantity(scope[key], path, f"{where}/scope/{key}")
+                    self.quantity(scope[key], path, f"{where}/scope/{key}", ("length",))
             result = _mapping(data.get("result"))
             limits = self.quantity(result.get("limits"), path, f"{where}/result/limits")
             uncertainty = self.quantity(result.get("uncertainty"), path, f"{where}/result/uncertainty") if "uncertainty" in result else None
@@ -2546,25 +2546,25 @@ class CapabilityResolution:
     reasons: tuple[str, ...]
 
 
+# The reason capability_limit gives for a calibration whose size scope is smaller than the request.
+SIZE_SCOPE_REASON = "covers sizes up to"
+
+
 def capability_limit(profile: CapabilityProfile, characteristic: str, *, material: str, on: date | None = None,
-                     tool: str | None = None, orientation: str | None = None, feature: str | None = None) -> CapabilityResolution:
+                     tool: str | None = None, orientation: str | None = None, feature: str | None = None,
+                     size: float | None = None) -> CapabilityResolution:
     """The calibration that demonstrates `characteristic` for `material` (and the tool, orientation and
-    feature when given), valid on `on`. Machine parameters and nominal resolution never answer it."""
+    feature when given), valid on `on`, whose size scope (when it states one) covers `size` mm. The first that fits
+    wins, so a smaller coupon listed first never hides a larger one. Machine parameters and nominal resolution never
+    answer it."""
     if profile.template:
         return CapabilityResolution("refused", profile.id, characteristic, None, (f"{profile.id} is a template, not a capability",))
     reasons = []
+    wanted = {"tool": tool, "orientation": orientation, "feature": feature}
     for calibration in profile.calibrations:
         if calibration.characteristic != characteristic:
             continue
-        scope = calibration.scope
-        why = []
-        if scope.get("material") != material:
-            why.append(f"{calibration.id} is for {scope.get('material')}")
-        for key, wanted in (("tool", tool), ("orientation", orientation), ("feature", feature)):
-            if wanted is not None and scope.get(key) != wanted:
-                why.append(f"{calibration.id} {key} is {scope.get(key) or 'not stated'}, {wanted} requested")
-        if on is not None and calibration.valid_until and calibration.valid_until < on.isoformat():
-            why.append(f"{calibration.id} expired on {calibration.valid_until}")
+        why = _scope_mismatches(calibration, material, wanted, on, size)
         if why:
             reasons.extend(why)
             continue
@@ -2573,6 +2573,30 @@ def capability_limit(profile: CapabilityProfile, characteristic: str, *, materia
         reasons.append(f"{profile.id} has no calibration of {characteristic}")
         return CapabilityResolution("unknown", profile.id, characteristic, None, tuple(reasons))
     return CapabilityResolution("refused", profile.id, characteristic, None, tuple(reasons))
+
+
+def _scope_mismatches(calibration: Calibration, material: str, wanted: Mapping[str, str | None], on: date | None,
+                      size: float | None) -> list[str]:
+    """Why `calibration` does not demonstrate the request: another material, tool, orientation or feature, an expiry
+    before `on`, or a size scope smaller than `size` mm."""
+    scope, why = calibration.scope, []
+    if scope.get("material") != material:
+        why.append(f"{calibration.id} is for {scope.get('material')}")
+    for key, value in wanted.items():
+        if value is not None and scope.get(key) != value:
+            why.append(f"{calibration.id} {key} is {scope.get(key) or 'not stated'}, {value} requested")
+    if on is not None and calibration.valid_until and calibration.valid_until < on.isoformat():
+        why.append(f"{calibration.id} expired on {calibration.valid_until}")
+    covered = scope.get("size")
+    if size is not None and isinstance(covered, Mapping):
+        try:
+            largest = quantity(covered).to("mm").bounds[1]
+        except IntentError as error:  # a record read without its checks: refuse the scope, never crash the check
+            why.append(f"{calibration.id} size scope is not a length ({error})")
+            return why
+        if size > largest + 1e-9:
+            why.append(f"{calibration.id} {SIZE_SCOPE_REASON} {largest:g} mm, {size:g} mm requested")
+    return why
 
 
 # --- required checks -------------------------------------------------------------------------------------------

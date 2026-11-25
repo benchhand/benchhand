@@ -36,7 +36,11 @@
       "type": "object", "additionalProperties": false, "minProperties": 1,
       "properties": {
         "orientation": {"$ref": "manufacturing.schema.json#/$defs/semantic_id"},
-        "feature": {"$ref": "manufacturing.schema.json#/$defs/semantic_id"}
+        "feature": {"$ref": "manufacturing.schema.json#/$defs/semantic_id"},
+        "max_size": {
+          "description": "the largest feature size the limit holds for: a feature of unknown size, or a larger one, takes no value from it",
+          "allOf": [{"$ref": "manufacturing.schema.json#/$defs/quantity"}], "required": ["value"]
+        }
       }
     },
     "relative": {
@@ -59,7 +63,7 @@
     "limit": {
       "type": "object", "additionalProperties": false, "required": ["characteristic", "operator", "citations"],
       "properties": {
-        "characteristic": {"description": "only a characteristic whose quantity the capability schema bounds, so no limit holds an unbounded value", "enum": ["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "sliding_clearance", "enclosure", "nozzle_material"]},
+        "characteristic": {"description": "only a characteristic whose quantity the capability schema bounds, so no limit holds an unbounded value", "enum": ["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "warp", "sliding_clearance", "enclosure", "nozzle_material"]},
         "operator": {"enum": [">=", "<=", ">", "<", "between", "equals", "one_of"]},
         "quantity": {"description": "the limit as a value (>=, <=) or an interval (between), in one unit", "$ref": "manufacturing.schema.json#/$defs/quantity"},
         "relative": {"$ref": "#/$defs/relative"},
@@ -101,7 +105,7 @@
          "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_hole"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_min_hole"}}}}}},
         {"if": {"properties": {"characteristic": {"const": "sliding_clearance"}}, "required": ["characteristic"]},
          "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"}}}}}},
-        {"if": {"properties": {"characteristic": {"enum": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation"]}}, "required": ["characteristic"]},
+        {"if": {"properties": {"characteristic": {"enum": ["hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "warp"]}}, "required": ["characteristic"]},
          "then": {"properties": {"quantity": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_deviation"}, "relative": {"properties": {"floor": {"$ref": "manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}},
         {"if": {"properties": {"characteristic": {"enum": ["enclosure", "nozzle_material"]}}, "required": ["characteristic"]},
          "then": {"properties": {"operator": {"enum": ["equals", "one_of"]}}}},

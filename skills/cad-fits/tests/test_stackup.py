@@ -477,13 +477,13 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.state_mismatch"])
 
-    def test_off_an_fdm_capability_contributor_stays_unknown_and_names_the_missing_guideline(self) -> None:
+    def test_off_an_fdm_capability_contributor_is_not_assessed_and_names_the_missing_guideline(self) -> None:
         documents = tab_slot_documents("fdm")
         result = self.bound_with(documents, fixture("laser_tab_slot.yaml"), "tab-slot", calibration=False)
-        self.assertEqual(result["outcome"], "unknown")
-        self.assertEqual(codes(result), ["stack.capability_unresolved"])
-        found = result["findings"][0]
-        self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["consequence"] + found["uncertainty"])
+        self.assertNotIn("stack.capability_unresolved", codes(result))
+        found = next(f for f in result["findings"] if f["code"] == "stack.capability_not_assessed")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertIn("printer calibration is off, and no guideline value covers slot_width_deviation", found["uncertainty"])
         self.assertEqual(found["remedy"], "for a tighter limit, print a test coupon on the target printer")
 
     def test_off_a_non_fdm_unresolved_capability_keeps_its_real_fix_without_printer_wording(self) -> None:
@@ -503,6 +503,82 @@ class IntentStackContractTests(unittest.TestCase):
         result = self.bound(documents, fixture("laser_tab_slot.yaml"), "tab-slot")
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.capability_unresolved"])
+
+    def uncalibrated_printed_slot(self, tol: float) -> tuple[dict, dict]:
+        """The tab-slot stack with a printed slot plate whose profile has no calibration, its width citing the
+        guideline dimensional_deviation with +/-`tol` mm limits."""
+        documents = tab_slot_documents("fdm")
+        documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibrations"] = []
+        stack = fixture("laser_tab_slot.yaml")
+        contributor(stack, "W")["capability"]["characteristic"] = "dimensional_deviation"
+        contributor(stack, "W")["tol"] = tol
+        return documents, stack
+
+    def test_an_uncalibrated_printed_contributor_takes_the_guideline_deviation(self) -> None:
+        """benchhand-c7q.30: a printed contributor needs no calibration; the guideline interval qualifies its limits."""
+        documents, stack = self.uncalibrated_printed_slot(0.5)
+        for calibration in (True, False):
+            with self.subTest(calibration=calibration):
+                result = self.bound_with(documents, stack, "tab-slot", catalog=deviation_catalog(), calibration=calibration)
+                self.assertNotIn("stack.capability_unresolved", codes(result))
+                self.assertNotIn("stack.limits_unqualified", codes(result))
+                slot = next(row for row in result["contributors"] if row["id"] == "W")
+                self.assertEqual(slot["resolved"]["guideline"], "fdm.generic@2")
+
+    def test_printed_limits_tighter_than_the_guideline_deviation_stay_unqualified(self) -> None:
+        documents, stack = self.uncalibrated_printed_slot(0.05)
+        result = self.bound_with(documents, stack, "tab-slot", catalog=deviation_catalog())
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(codes(result), ["stack.limits_unqualified"])
+
+    def test_a_printed_contributor_with_neither_a_calibration_nor_a_guideline_is_not_assessed(self) -> None:
+        documents, stack = self.uncalibrated_printed_slot(0.5)
+        stack["requirement"]["min"] = -2.0  # the declared limits meet it: only the missing basis keeps it open
+        result = self.bound_with(documents, stack, "tab-slot", catalog=clearance_catalog(clearance_limit()))
+        self.assertEqual(result["outcome"], "not_assessed")
+        self.assertEqual(result["obligations"][0]["reason"], "no_guideline")
+        self.assertEqual(codes(result), ["stack.capability_not_assessed"])
+        found = result["findings"][0]
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+        self.assertFalse(result["requirement"]["pass"])
+
+    def sized_printed_slot(self, width: float) -> tuple[dict, dict]:
+        """The uncalibrated printed slot at `width` mm against a tab 0.1 mm narrower, with limits the stack meets."""
+        documents, stack = self.uncalibrated_printed_slot(0.5)
+        contributor(stack, "W")["nominal"] = width
+        contributor(stack, "T")["nominal"] = width - 0.1
+        stack["requirement"]["min"] = -2.0
+        return documents, stack
+
+    def test_the_shipped_accuracy_guideline_qualifies_a_printed_contributor_up_to_100_mm(self) -> None:
+        documents, stack = self.sized_printed_slot(50.0)
+        result = self.bound_with(documents, stack, "tab-slot", catalog=GL.discover(None))
+        self.assertEqual(result["outcome"], "pass", codes(result))
+        self.assertEqual(next(r for r in result["contributors"] if r["id"] == "W")["resolved"]["guideline"], "fdm.accuracy@2")
+
+    def test_a_160_mm_printed_contributor_is_not_qualified_at_the_100_mm_floor(self) -> None:
+        """0.5% of 160 mm is 0.8 mm: the cited 0.5 mm floor does not hold there, so the contributor is not assessed."""
+        documents, stack = self.sized_printed_slot(160.0)
+        result = self.bound_with(documents, stack, "tab-slot", catalog=GL.discover(None))
+        self.assertEqual(result["outcome"], "not_assessed")
+        self.assertEqual(codes(result), ["stack.capability_not_assessed"])
+        self.assertIn("up to 100 mm", result["findings"][0]["uncertainty"])
+
+    def test_a_known_stack_failure_is_not_masked_by_a_not_assessed_contributor(self) -> None:
+        documents, stack = self.uncalibrated_printed_slot(0.5)  # worst case -1.05 mm against a minimum of 0
+        result = self.bound_with(documents, stack, "tab-slot", catalog=clearance_catalog(clearance_limit()))
+        self.assertEqual(result["outcome"], "fail")
+        self.assertEqual(codes(result), ["stack.capability_not_assessed", "stack.worst_case_violation"])
+        self.assertNotIn("reason", result["obligations"][0])
+
+
+def deviation_catalog() -> object:
+    """fdm.generic holding only a dimensional_deviation interval of -0.5..0.5 mm."""
+    limit = {"characteristic": "dimensional_deviation", "operator": "between",
+             "quantity": {"lower": -0.5, "upper": 0.5, "units": "mm"},
+             "citations": [{"kind": "supplier", "reference": "TST accuracy table", "accessed": "2026-11-25"}]}
+    return GL.Catalog({"fdm.generic": GL.Guideline("fdm.generic", 2, "TST generic", (), False, {"process": "fdm"}, (limit,),
+                                                   "manufacturing/guidelines/fdm.generic.yaml", "shipped", "ab" * 32)})
 
 
 GL = stackup.GUIDELINES
@@ -1047,6 +1123,24 @@ class StackupCliTests(unittest.TestCase):
             self.assertEqual(manifest["recipe"]["options"]["intent_version"], 2)
             self.assertEqual(output["check_bundle"], "hw/checks/v1/stack-closing-gap")
 
+    def test_a_not_assessed_stack_publishes_its_verdict_and_exits_0(self) -> None:
+        """A missing printer basis blocks no gate: the bundle records not_assessed and the run exits 0."""
+        stack = fixture("laser_tab_slot.yaml")
+        stack["requirement"]["min"] = -1.0  # the declared limits meet it
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", tab_slot_documents("fdm"))
+            case = write_case(hw, "tab-slot", stack)
+            snapshot_version(hw)
+            out, err = io.StringIO(), io.StringIO()
+            with unittest.mock.patch.dict("os.environ"), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                os.environ.pop(stackup.GUIDELINES.CALIBRATION_FLAG, None)
+                status = stackup.main([str(case), "--hw", str(hw), "--version", "v1"])
+            self.assertEqual(status, 0, err.getvalue())
+            self.assertEqual(json.loads(out.getvalue())["outcome"], "not_assessed")
+            manifest = json.loads((hw / "analysis" / "v1" / "tab-slot" / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["status"], "not_assessed")
+            self.assertIn("requirement not assessed", err.getvalue())
+
     def assembly_stack(self) -> dict:
         """A PN-subject stack of two sourced assembly contributors that passes: 0.2 mm +/- 0.1 against 0.0 to 0.4."""
         source = {"kind": "user", "reference": "TST stack input", "origin": "TST fixture user"}
@@ -1104,6 +1198,28 @@ class StackupCliTests(unittest.TestCase):
                                        "--version", "v1"], capture_output=True, text=True, check=False, timeout=300)
             self.assertEqual(proc.returncode, 2, proc.stdout[-300:])
             self.assertIn("--replace", proc.stderr)
+
+    def test_a_bundle_sealed_before_the_guideline_basis_upgrade_is_never_reused(self) -> None:
+        """benchhand-c7q.30 changed what a printed contributor's verdict is (guideline-qualified or not_assessed instead of
+        unknown). A bundle sealed under the older basis revision is another recipe: refused without --replace, recomputed
+        with it."""
+        with tempfile.TemporaryDirectory() as directory:
+            hw = fx.write_record(Path(directory) / "project" / "hw", closing_gap_documents())
+            case = write_case(hw, "closing-gap", fixture("closing_gap.yaml"))
+            snapshot_version(hw)
+            args = [str(case), "--hw", str(hw), "--version", "v1"]
+            with unittest.mock.patch.object(stackup, "BASIS_REVISION", 0, create=True), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main(args)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                status = stackup.main(args)
+            self.assertEqual(status, 2, out.getvalue()[-300:])
+            self.assertIn("--replace", err.getvalue())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                stackup.main([*args, "--replace"])
+            self.assertFalse(json.loads(out.getvalue())["reused"])
 
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

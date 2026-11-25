@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 Sjors Robroek
+#
+# SPDX-License-Identifier: MPL-2.0
+
+schema_version: 1
+id: fdm.accuracy
+revision: 2
+title: FDM desktop dimensional accuracy
+scope:
+  process: fdm
+limits:
+- characteristic: dimensional_deviation
+  operator: between
+  quantity:
+    lower: -0.5
+    upper: 0.5
+    units: mm
+  applies_to:
+    max_size:
+      value: 100
+      units: mm
+  citations:
+  - kind: supplier
+    reference: Protolabs Network (Hubs), What is FDM 3D printing?
+    url: https://www.hubs.com/knowledge-base/what-is-fdm-3d-printing/
+    accessed: '2026-11-25'
+    locator: 'FDM characteristics table: Dimensional Accuracy +/- 0.5% (lower limit +/- 0.5 mm) - desktop; the lower limit governs features up to 100 mm'
+  - kind: supplier
+    reference: Protolabs Network (Hubs), What is FDM 3D printing?
+    url: https://www.hubs.com/knowledge-base/what-is-fdm-3d-printing/
+    accessed: '2026-11-25'
+    locator: 'Industrial versus desktop FDM table: Standard accuracy +/- 0.5% (lower limit: +/- 1.0 mm) - desktop'
+  disputed: true
+- characteristic: hole_diameter_deviation
+  operator: between
+  quantity:
+    lower: -0.5
+    upper: 0.5
+    units: mm
+  applies_to:
+    max_size:
+      value: 100
+      units: mm
+  citations:
+  - kind: supplier
+    reference: Protolabs Network (Hubs), What is FDM 3D printing?
+    url: https://www.hubs.com/knowledge-base/what-is-fdm-3d-printing/
+    accessed: '2026-11-25'
+    locator: 'FDM characteristics table: Dimensional Accuracy +/- 0.5% (lower limit +/- 0.5 mm) - desktop; the lower limit governs features up to 100 mm'
+  - kind: supplier
+    reference: Protolabs Network (Hubs), What is FDM 3D printing?
+    url: https://www.hubs.com/knowledge-base/what-is-fdm-3d-printing/
+    accessed: '2026-11-25'
+    locator: 'Industrial versus desktop FDM table: Standard accuracy +/- 0.5% (lower limit: +/- 1.0 mm) - desktop'
+  disputed: true

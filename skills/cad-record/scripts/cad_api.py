@@ -10,17 +10,17 @@
 # schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
 # schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 # schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
-# schema-sha256 62259bc66f295ded3cb5cf144bcfaadd85547baffee0471acc8793352efa5dbe skills/cad-record/schemas/finding.schema.json
+# schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
 # schema-sha256 4b1f107ed3be3c46a1a68c1b4cb81f1625f3053f3a29f95bd6b0de2bd02f02af skills/cad-record/schemas/interfaces.schema.json
 # schema-sha256 5d04c1dd2745de30144da9fe4080e55cea79e23c3a207b3474601dd6eb8e9125 skills/cad-record/schemas/layout.schema.json
 # schema-sha256 2af936cbacdc55c0cf3789c97db7ef72a6e230ad2ab0a5a968862238ab75fcad skills/cad-record/schemas/manufacturing-capabilities.schema.json
 # schema-sha256 6ef27bc4c8273de006b8606504ea0897de10da12688d904197b43c3d8dc84e72 skills/cad-record/schemas/manufacturing-check-result.schema.json
 # schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b skills/cad-record/schemas/manufacturing-evidence.schema.json
 # schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
-# schema-sha256 3a70ff36a1ebb40d1485b7fa0008051dcdacfaa1d05651ac1694cf02f3ab6f83 skills/cad-record/schemas/manufacturing-guideline.schema.json
+# schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 # schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 # schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
-# schema-sha256 373d95bcca809d496fad780d25ae37088c76685d4bc68c3b2392106c395a15ce skills/cad-record/schemas/manufacturing.schema.json
+# schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 # schema-sha256 050bcaa9f4434f53535d13d127f7aa52bc9c772416535aee36518bbd22e75426 skills/cad-record/schemas/part.schema.json
 # schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
@@ -274,6 +274,7 @@ __all__ = [
     "ManufacturingFunctionEntry",
     "ManufacturingGuideline",
     "ManufacturingGuidelineAppliesTo",
+    "ManufacturingGuidelineAppliesToMaxSize",
     "ManufacturingGuidelineId",
     "ManufacturingGuidelineLimit",
     "ManufacturingGuidelineLimitQuantitiesItems",
@@ -2316,8 +2317,8 @@ class Finding(TypedDict):
     Field notes:
     - code: A stable finding code such as process.fdm.overhang or fit_unverified: lower-case words joined by underscores, optionally dotted into a namespace; pattern: "^[a-z][a-z0-9_]*(\\\\.[a-z][a-z0-9_]*)*$"
     - severity: How bad the finding is, not whether it blocks: one shared blocking rule that every gate calls decides that, and under it minor and info are the non-blocking set. Canonical words only. Target mapping for the producers: error to major, layout stage to major or minor by layout_strict, no severity to major, warning to minor (warning is retired). That mapping keeps today's blocking effect only once the shared rule and the producers have migrated. Until then the only stand-alone same-effect mapping is warning to info
-    - outcome: A check's result; unknown is never a pass, and not_assessed (calibration off, or no capability profile) is not a pass either
-    - reason: Why a not_assessed finding was not assessed: its calibration is off, or no capability profile exists for it. Only a not_assessed finding carries one
+    - outcome: A check's result; unknown is never a pass, and not_assessed (calibration off, no capability profile, or no calibration and no guideline value) is not a pass either
+    - reason: Why a not_assessed finding was not assessed: its calibration is off, no capability profile exists for it, neither a calibration nor a guideline value covers it (no_guideline), or no check measures its criterion (no_check). Only a not_assessed finding carries one
     - subject: The part and feature the finding is about
     - location: Where in the project the finding applies: a project-relative file and, when known, a 1-based line
     - message: What is wrong, in one sentence; minLength: 1
@@ -2329,7 +2330,7 @@ class Finding(TypedDict):
     code: Required[str]
     severity: NotRequired[Literal["critical", "major", "minor", "info"]]
     outcome: NotRequired[Literal["pass", "fail", "unknown", "not_applicable", "not_assessed"]]
-    reason: NotRequired[Literal["calibration_off", "no_capability_profile"]]
+    reason: NotRequired[Literal["calibration_off", "no_capability_profile", "no_guideline", "no_check"]]
     subject: NotRequired[FindingSubject]
     location: NotRequired[FindingLocation]
     message: Required[str]
@@ -3838,10 +3839,10 @@ class ManufacturingObligation(TypedDict):
 ManufacturingOutcome = Literal["pass", "fail", "unknown", "not_applicable", "not_assessed"]
 
 
-# Why a check was not assessed: its calibration is off, or no capability profile exists for it
+# Why a check was not assessed: its calibration is off, no capability profile exists for it, neither a calibration nor a guideline value covers it (no_guideline), or no check measures its criterion (no_check)
 #
 # Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/not_assessed_reason
-ManufacturingNotAssessedReason = Literal["calibration_off", "no_capability_profile"]
+ManufacturingNotAssessedReason = Literal["calibration_off", "no_capability_profile", "no_guideline", "no_check"]
 
 
 class ManufacturingObligationOutcome(TypedDict):
@@ -4323,15 +4324,34 @@ class ManufacturingGuidelineLimitQuantitiesItems(TypedDict):
     units: Required[Literal["mm", "m", "um"]]
 
 
+class ManufacturingGuidelineAppliesToMaxSize(TypedDict):
+    """the largest feature size the limit holds for: a feature of unknown size, or a larger one, takes no value from it
+
+    Source: skills/cad-record/schemas/manufacturing-guideline.schema.json#/$defs/applies_to/properties/max_size
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - oneOf: [{"required":["value"],"not":{"anyOf":[{"required":["lower"]},{"required":["upper"]}]}},{"required":["lower","upper"],"not":{"required":["value"]}}]
+    """
+    value: Required[float]
+    lower: NotRequired[float]
+    upper: NotRequired[float]
+    units: Required[ManufacturingUnits]
+
+
 class ManufacturingGuidelineAppliesTo(TypedDict):
     """Source: skills/cad-record/schemas/manufacturing-guideline.schema.json#/$defs/applies_to
 
     Not expressible as types (see the schema):
     - minProperties: 1
     - additionalProperties: false
+
+    Field notes:
+    - max_size: the largest feature size the limit holds for: a feature of unknown size, or a larger one, takes no value from it
     """
     orientation: NotRequired[ManufacturingSemanticId]
     feature: NotRequired[ManufacturingSemanticId]
+    max_size: NotRequired[ManufacturingGuidelineAppliesToMaxSize]
 
 
 class ManufacturingGuidelineRelaxes(TypedDict):
@@ -4364,7 +4384,7 @@ class ManufacturingGuidelineLimit(TypedDict):
     - if {"properties":{"characteristic":{"const":"min_feature"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_feature"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_feature"}}}}}
     - if {"properties":{"characteristic":{"const":"min_hole"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_hole"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_min_hole"}}}}}
     - if {"properties":{"characteristic":{"const":"sliding_clearance"}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_clearance_per_side"}}}}}
-    - if {"properties":{"characteristic":{"enum":["hole_diameter_deviation","dimensional_deviation","profile_deviation"]}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}
+    - if {"properties":{"characteristic":{"enum":["hole_diameter_deviation","dimensional_deviation","profile_deviation","warp"]}},"required":["characteristic"]} then {"properties":{"quantity":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"},"relative":{"properties":{"floor":{"$ref":"manufacturing-capabilities.schema.json#/$defs/qty_deviation"}}}}}
     - if {"properties":{"characteristic":{"enum":["enclosure","nozzle_material"]}},"required":["characteristic"]} then {"properties":{"operator":{"enum":["equals","one_of"]}}}
     - if {"properties":{"characteristic":{"const":"enclosure"}},"required":["characteristic"]} then {"properties":{"value":{"description":"a boolean fact: the requirement is true or false","anyOf":[{"type":"boolean"},{"type":"array","items":{"type":"boolean"}}]}}}
     - if {"properties":{"characteristic":{"const":"nozzle_material"}},"required":["characteristic"]} then {"properties":{"value":{"description":"lowercase, like the scope names and the material facts","anyOf":[{"type":"string","pattern":"^[a-z0-9][a-z0-9_.-]*$"},{"type":"array","items":{"type":"string","pattern":"^[a-z0-9][a-z0-9_.-]*$"}}]}}}
@@ -4376,7 +4396,7 @@ class ManufacturingGuidelineLimit(TypedDict):
     - value: the categorical requirement of equals and one_of, such as enclosure true or nozzle_material hardened_steel; no default; minItems: 1; uniqueItems: true; items.minLength: 1
     - disputed: true when the cited sources disagree; the stricter value applies
     """
-    characteristic: Required[Literal["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "sliding_clearance", "enclosure", "nozzle_material"]]
+    characteristic: Required[Literal["bridge_span", "overhang_angle", "min_wall", "min_feature", "min_hole", "nozzle_diameter", "hole_diameter_deviation", "dimensional_deviation", "profile_deviation", "warp", "sliding_clearance", "enclosure", "nozzle_material"]]
     operator: Required[Literal[">=", "<=", ">", "<", "between", "equals", "one_of"]]
     quantity: NotRequired[ManufacturingQuantity]
     relative: NotRequired[ManufacturingGuidelineRelative]

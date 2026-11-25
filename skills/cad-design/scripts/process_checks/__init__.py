@@ -15,10 +15,10 @@ Policy this package applies (a plugin rule, not a product fact):
   calibrations of the actual equipment (`manufacturing_intent.capability_limit`); machine parameters,
   nominal resolution and general-tolerance labels never answer them. For FDM overhang, bridge, wall, small
   feature and small hole, a missing calibration falls back to the guideline sets of the profile and material
-  (cad-record guidelines.py, given as `assess(catalog=)`). A guideline fail fails; a guideline pass counts only
-  for GUIDELINE_PASS_CLASSES and is UNKNOWN for every other service class until calibrated or waived.
+  (cad-record guidelines.py, given as `assess(catalog=)`). A guideline fail fails; a guideline pass counts in every
+  service class under either calibration flag, since a calibration only tightens a limit (benchhand-c7q.30).
   While the calibration flag is off (guidelines.CALIBRATION_FLAG, the release behaviour) a recorded FDM calibration is
-  ignored and a guideline pass counts in every service class.
+  ignored.
   block_like and build-volume fit stay form_check diagnostics.
 - Supports: on reachable non-critical surfaces they are accepted; an overhang beyond the unsupported limit
   is a planning finding when a support or bridge plan covers it; unplanned contact on a precision or running
@@ -33,14 +33,14 @@ Policy this package applies (a plugin rule, not a product fact):
 
 Public API: `expected(record)`, `assess(record, geometry, today=, catalog=)` -> `Assessment` (`outcomes`, `findings`,
 `complete`, `result`, `packet(dependencies)`), `probe_plan(record, PN, component, catalog=)`, `component_contexts`, `guideline_scope`, `Geometry`,
-`TABLE`, `owned`, `NotAssessable`, `HandlerError`, `PRODUCER`, `PROBE_FORMAT`, `GUIDELINE_PASS_CLASSES`, `guidelines`.
+`TABLE`, `owned`, `NotAssessable`, `HandlerError`, `PRODUCER`, `PROBE_FORMAT`, `guidelines`.
 """
 
-from .core import (GUIDELINE_PASS_CLASSES, IMPLICIT, PROBE_FORMAT, Geometry, HandlerError, component_contexts, guideline_scope, guidelines,
+from .core import (IMPLICIT, PROBE_FORMAT, Geometry, HandlerError, component_contexts, guideline_scope, guidelines,
                    intent)
 from .dispatch import (PRODUCER, TABLE, Assessment, NotAssessable, assess, code_sha256, expected,
                        handler_for, owned, probe_plan)
 
-__all__ = ["GUIDELINE_PASS_CLASSES", "IMPLICIT", "PROBE_FORMAT", "PRODUCER", "TABLE", "Assessment", "Geometry", "HandlerError",
+__all__ = ["IMPLICIT", "PROBE_FORMAT", "PRODUCER", "TABLE", "Assessment", "Geometry", "HandlerError",
            "NotAssessable", "assess", "code_sha256", "component_contexts", "expected", "guideline_scope", "guidelines",
            "handler_for", "intent", "owned", "probe_plan"]
