@@ -24,3 +24,53 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: end_face_neg, role: plane}
+    B: {feature: core, role: axis}
+  coordinate_frame:
+    origin: {intersection: [A, B]}
+    z: {parallel_to: B, toward: end_face_pos}
+  views:
+    - {id: elevation, kind: orthographic, perpendicular_to: B}
+    - {id: end, kind: orthographic, along_axis: B, toward: end_face_neg}
+  features:
+    core: {size: general}
+    journals: {size: general}
+    lobe_bases: {size: general}
+    end_face_neg: {size: general}
+    end_face_pos: {size: general}
+    journal_1_face_a: {size: general}
+    journal_1_face_b: {size: general}
+    journal_2_face_a: {size: general}
+    journal_2_face_b: {size: general}
+    journal_3_face_a: {size: general}
+    journal_3_face_b: {size: general}
+    journal_4_face_a: {size: general}
+    journal_4_face_b: {size: general}
+    lobe_1_face_a: {size: general}
+    lobe_1_face_b: {size: general}
+    lobe_2_face_a: {size: general}
+    lobe_2_face_b: {size: general}
+    lobe_3_face_a: {size: general}
+    lobe_3_face_b: {size: general}
+    lobe_noses: {profile: controlled_model, profile_tolerance_mm: 0.3}
+  dimensions:
+    - {id: overall_length, operation: plane_separation, features: [end_face_neg, end_face_pos], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: journal_d, operation: diameter, features: [journals], tolerance: {deviation_mm: [-0.015, 0.0]}}
+    - {id: core_d, operation: diameter, features: [core], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_base_d, operation: diameter, features: [lobe_bases], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: journal_1_w, operation: plane_separation, features: [journal_1_face_a, journal_1_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: journal_2_w, operation: plane_separation, features: [journal_2_face_a, journal_2_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: journal_3_w, operation: plane_separation, features: [journal_3_face_a, journal_3_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: journal_4_w, operation: plane_separation, features: [journal_4_face_a, journal_4_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_1_w, operation: plane_separation, features: [lobe_1_face_a, lobe_1_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_2_w, operation: plane_separation, features: [lobe_2_face_a, lobe_2_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_3_w, operation: plane_separation, features: [lobe_3_face_a, lobe_3_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA. The four journals are sanded or reamed to 8 f7 where they run in the head bores (8 H7). The cam noses are printed, not machined. Deburr."}
+    - {kind: process, text: "Print with the axis flat on the bed."}
+  sheet: {sizes: [A4, A3], scale: auto}

@@ -9,6 +9,9 @@ cylinders (36 mm pitch). The 6 mm stub at the -X end (local x -67.5..-59.5) puts
 """
 
 import cadquery as cq
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 
 KERNEL = "cadquery"
 PARAMS = {
@@ -39,3 +42,56 @@ def build(params: dict) -> cq.Shape:
         nose = cq.Workplane("YZ").workplane(offset=x - p["lobe_w"] / 2.0).center(0, p["lobe_base_r"]).ellipse(p["lobe_base_r"] * 0.45, p["lobe_lift"] + 0.0).extrude(p["lobe_w"])
         body = body.union(lobe).union(nose)
     return body.val()
+
+
+def _witness(face: cq.Face) -> dict:
+    """A final-surface witness: the centre of the face's largest mesh triangle, projected onto the face."""
+    vertices, triangles = face.tessellate(0.01, 0.2)
+    a, b, c = max(((vertices[i], vertices[j], vertices[k]) for i, j, k in triangles),
+                  key=lambda t: (t[1] - t[0]).cross(t[2] - t[0]).Length)
+    near = GeomAPI_ProjectPointOnSurf(((a + b + c) * (1.0 / 3.0)).toPnt(), BRep_Tool.Surface_s(face.wrapped)).NearestPoint()
+    point = cq.Vector(near.X(), near.Y(), near.Z())
+    kind = {"PLANE": "plane", "CYLINDER": "cylinder", "CONE": "cone", "SPHERE": "sphere", "TORUS": "torus", "EXTRUSION": "extrusion"}.get(face.geomType(), "other")
+    return {"support_type": kind, "point_mm": list(point.toTuple()), "normal": list(face.normalAt(point).normalized().toTuple())}
+
+
+def _radius(face: cq.Face) -> float:
+    return BRepAdaptor_Surface(face.wrapped).Cylinder().Radius()
+
+
+def _collect(shape: cq.Shape, role) -> dict:
+    """role(face, patch) -> (name, kind); faces with the same name join one locator."""
+    named: dict[str, tuple[str, list]] = {}
+    for face in shape.Faces():
+        patch = _witness(face)
+        name, kind = role(face, patch)
+        named.setdefault(name, (kind, []))[1].append(patch)
+    return {name: {"kind": kind, "frame": "part_local", "patches": patches} for name, (kind, patches) in named.items()}
+
+
+def drawing_features(params: dict, shape: cq.Shape) -> dict:
+    """The core, journals and lobe bases as one feature each, the lobe noses, and every shoulder plane by its place."""
+    p = {**PARAMS, **params}
+    half = p["length"] / 2.0
+    levels = {"end_face_neg": -half, "end_face_pos": half}
+    for i, x in enumerate(p["journal_x"], 1):
+        levels[f"journal_{i}_face_a"], levels[f"journal_{i}_face_b"] = x - p["journal_w"] / 2.0, x + p["journal_w"] / 2.0
+    for i, x in enumerate(p["lobe_x"], 1):
+        levels[f"lobe_{i}_face_a"], levels[f"lobe_{i}_face_b"] = x - p["lobe_w"] / 2.0, x + p["lobe_w"] / 2.0
+
+    def role(face: cq.Face, patch: dict) -> tuple[str, str]:
+        if patch["support_type"] == "cylinder":
+            r = _radius(face)
+            for name, radius in (("core", 3.0), ("journals", p["journal_d"] / 2.0), ("lobe_bases", p["lobe_base_r"])):
+                if abs(r - radius) < 1e-6:
+                    return name, "shaft"
+            raise ValueError(f"unexpected cylinder r={r}")
+        if patch["support_type"] != "plane":
+            return "lobe_noses", "surface"
+        x = patch["point_mm"][0]
+        for name, level in levels.items():
+            if abs(x - level) < 1e-6:
+                return name, "plane_face"
+        raise ValueError(f"unexpected plane x={x}")
+
+    return _collect(shape, role)
