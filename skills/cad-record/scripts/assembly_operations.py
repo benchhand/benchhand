@@ -911,6 +911,10 @@ def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozens
     if built is None or built.ground is None:
         unknown.append(f"{op.id}: sub-build {op.part} has no base occurrence: its path is unknown")
         return (built.present if built is not None else frozenset()), step.part
+    if built.ground not in built.present:
+        unknown.append(f"{op.id}: sub-build {op.part} travels without a base: its base {built.ground} is removed on the "
+                       "bench before the install, so its path is unknown")
+        return built.present, step.part
     if len(built.present) > 1:
         unknown.append(f"{op.id}: sub-build {op.part} travels as one unit; only the path of its base "
                        f"{built.ground} is checked, the other members ({', '.join(sorted(built.present - {built.ground}))}) "
