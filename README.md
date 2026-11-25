@@ -218,13 +218,17 @@ A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:
 <!-- slopvac-allow: rule=prose-promotion.promotional-verbs reason=domain-term -->
 ## Showcase
 
-[`examples/v6-engine`](examples/v6-engine/README.md) takes a 3D-printable desktop V6 engine through the flow, from the project-start questions to a release attempt. The finished model has 13 parts: 11 printed in ASA and 2 bought. Six pistons, rods and pins sit on a 60° V around one crankshaft. Two cylinder heads carry a camshaft each.
+[`examples/v6-engine`](examples/v6-engine/README.md) takes a 3D-printable desktop V6 engine through the flow, from the project-start questions to a release attempt. The finished model has 13 distinct part numbers and 31 instances: 11 part numbers are ASA prints and 2 are bought parts. Six pistons, rods and pins sit on a 60° V around one crankshaft. Two cylinder heads carry a camshaft each.
 
 A GT2 timing belt links a 20-tooth crank pulley to a 40-tooth pulley on each cam. The cams turn once per two crank turns. A bracket with two idler rollers tensions the belt. The record lives in `examples/v6-engine/hw`. Every number below comes from tool output.
 
+The belt model follows its real path: the tooth side wraps the three pulleys, and the back runs over both rollers. The model check measures 0.000 mm and no interference between the belt and each roller, the contact the design intends.
+
+![The cam drive: the GT2 belt over the crank pulley, both cam pulleys and the two rollers](docs/images/v6-engine/05-cam-drive-belt.webp)
+
 The story starts with the questions and the requirements ([Ground](#1-ground), [Intent](#2-intent), [Specify](#3-specify)). Three concepts compete ([Concept](#4-concept)).
 
-The crank and the six-piston layout follow, and the first checks find real overlaps ([Layout](#5-layout)). Each part gets a form check and a dimensioned drawing sheet ([Parts](#6-parts), [Detail](#7-detail), [Parts gallery](#parts-gallery)). The bill of materials, the motion sweep and an exploratory FEA come next ([BOM](#8-bom), [Analysis](#9-analysis)). Two critique reviews return open findings ([Critique](#10-critique)). The release stays blocked until the user decides ([Release](#11-release)).
+The crank and the six-piston layout follow, and the first checks find real overlaps ([Layout](#5-layout)). Each part gets a form check, and 10 of the 13 part numbers get a dimensioned drawing sheet ([Parts](#6-parts), [Detail](#7-detail), [Parts gallery](#parts-gallery)). The bill of materials, the motion sweep and an exploratory FEA come next ([BOM](#8-bom), [Analysis](#9-analysis)). Two critique reviews return open findings ([Critique](#10-critique)). The release stays blocked until the user decides ([Release](#11-release)).
 
 ```mermaid
 flowchart LR
@@ -268,7 +272,7 @@ use_case:
 
 ### 2. Intent
 
-The user confirmed two decisions on 2026-11-23. DR-001 records the project-start answers in `flow.profile`: FEA on, stack-up on, critique full, results out of git. DR-002 prints every custom part in ASA on a Bambu H2D class printer. It names no filament grade, so the material profile holds no sourced properties.
+The user confirmed two decisions on 2026-11-23. DR-001 records the project-start answers in `flow.profile`: FEA on, stack-up on, full critique. DR-002 prints every custom part in ASA on a Bambu H2D class printer. It names no filament grade, so the material profile holds no sourced properties.
 
 ### 3. Specify
 
@@ -312,36 +316,36 @@ The assembly drawing sheet (VSE-ASM) of the first build lists the five items wit
 
 ### Parts gallery
 
-Each thumbnail is the iso render of one part on built version v29. Click it to open the part's dimensioned drawing sheet, or the full render where no sheet exists.
+Each thumbnail is the iso render of one part on built version v29, or v30 for VSE-0006, VSE-0010 and VSE-0013. Click it to open the part's dimensioned drawing sheet. Three entries have no sheet (VSE-0001, VSE-0010 and VSE-0012), and their thumbnails open the full render.
 
 | | | | |
 |---|---|---|---|
 | [![VSE-0001 Crankcase and V block](docs/images/v6-engine/thumbs/VSE-0001.webp)](docs/images/v6-engine/02-part-VSE-0001-crankcase.webp)<br>**VSE-0001** | [![VSE-0002 Piston](docs/images/v6-engine/thumbs/VSE-0002.webp)](docs/images/v6-engine/09-drawing-VSE-0002-piston.webp)<br>**VSE-0002** | [![VSE-0003 Wrist pin](docs/images/v6-engine/thumbs/VSE-0003.webp)](docs/images/v6-engine/09-drawing-VSE-0003-wrist-pin.webp)<br>**VSE-0003** | [![VSE-0004 Connecting rod](docs/images/v6-engine/thumbs/VSE-0004.webp)](docs/images/v6-engine/09-drawing-VSE-0004-connecting-rod.webp)<br>**VSE-0004** |
 | [![VSE-0005 Crankshaft](docs/images/v6-engine/thumbs/VSE-0005.webp)](docs/images/v6-engine/09-drawing-VSE-0005-crankshaft.webp)<br>**VSE-0005** | [![VSE-0006 Cylinder head](docs/images/v6-engine/thumbs/VSE-0006.webp)](docs/images/v6-engine/09-drawing-VSE-0006-cylinder-head.webp)<br>**VSE-0006** | [![VSE-0007 Camshaft, bank B](docs/images/v6-engine/thumbs/VSE-0007.webp)](docs/images/v6-engine/09-drawing-VSE-0007-camshaft-b.webp)<br>**VSE-0007** | [![VSE-0011 Camshaft, bank A](docs/images/v6-engine/thumbs/VSE-0011.webp)](docs/images/v6-engine/09-drawing-VSE-0011-camshaft-a.webp)<br>**VSE-0011** |
-| [![VSE-0008 Crank pulley, GT2 20T](docs/images/v6-engine/thumbs/VSE-0008.webp)](docs/images/v6-engine/09-drawing-VSE-0008-crank-pulley.webp)<br>**VSE-0008** | [![VSE-0009 Cam pulley, GT2 40T](docs/images/v6-engine/thumbs/VSE-0009.webp)](docs/images/v6-engine/09-drawing-VSE-0009-cam-pulley.webp)<br>**VSE-0009** | [![VSE-0010 Timing belt GT2 6 mm, 420 mm loop](docs/images/v6-engine/thumbs/VSE-0010.webp)](docs/images/v6-engine/02-part-VSE-0010-timing-belt.webp)<br>**VSE-0010** | [![VSE-0012 Smooth idler pulley, 10 mm OD](docs/images/v6-engine/thumbs/VSE-0012.webp)](docs/images/v6-engine/02-part-VSE-0012-idler.webp)<br>**VSE-0012** |
+| [![VSE-0008 Crank pulley, GT2 20T](docs/images/v6-engine/thumbs/VSE-0008.webp)](docs/images/v6-engine/09-drawing-VSE-0008-crank-pulley.webp)<br>**VSE-0008** | [![VSE-0009 Cam pulley, GT2 40T](docs/images/v6-engine/thumbs/VSE-0009.webp)](docs/images/v6-engine/09-drawing-VSE-0009-cam-pulley.webp)<br>**VSE-0009** | [![VSE-0010 Timing belt GT2 6 mm, 360 mm loop](docs/images/v6-engine/thumbs/VSE-0010.webp)](docs/images/v6-engine/02-part-VSE-0010-timing-belt.webp)<br>**VSE-0010** | [![VSE-0012 Smooth idler pulley, 10 mm OD](docs/images/v6-engine/thumbs/VSE-0012.webp)](docs/images/v6-engine/02-part-VSE-0012-idler.webp)<br>**VSE-0012** |
 | [![VSE-0013 Belt idler bracket](docs/images/v6-engine/thumbs/VSE-0013.webp)](docs/images/v6-engine/09-drawing-VSE-0013-bracket.webp)<br>**VSE-0013** |  |  |  |
 
-Every sheet states the general tolerance ±0.2 mm, ±1° from DR-006. DR-006 records it as an FDM assumption with no measured H2D capability behind it. `drawing.py` passed each sheet. None is release-ready, because the revision is X1 and the general surface texture is open.
+Every detail sheet states the general tolerance ±0.2 mm, ±1° from DR-006. The assembly sheet, drawn on v7, leaves its general-tolerance field blank. DR-006 records it as an FDM assumption with no measured H2D capability behind it. `drawing.py` passed each sheet. None is release-ready, because the revision is X1 and the general surface texture is open.
 
 - **VSE-0001 Crankcase and V block**. No drawing sheet yet. Benchhand cannot place a dimension on the inclined bores of the 60° V, because it needs an axis parallel to a frame axis. The thumbnail opens the full render instead.
 - **VSE-0002 Piston** (A4, 2:1, two sheets). The skirt is Ø23.6 ±0.1 in the 24 mm bore, and the pin bore is Ø6.012 0/−0.012 (6 H7). The second sheet is a section through the hollow skirt, 7.4 mm deep. The route lists a gauge inspection of the pin bore.
 - **VSE-0003 Wrist pin** (A4, 5:1). A 20 ±0.2 mm tube with a Ø6 g6 journal (−0.004/−0.012), a Ø3 lumen and four 0.3 × 45° edge breaks. The route lists a gauge inspection of the journal.
 - **VSE-0004 Connecting rod** (A3, 2:1). The bore axes sit 48 mm apart. The small bore is Ø6.1 ±0.05 on the pin, and the big bore is Ø12.2 ±0.1 on the crank pin. Section D-D shows the 1.5 mm lightening pockets in the 7 mm web.
 - **VSE-0005 Crankshaft** (A3, 1:2). The main journals are Ø13.97 +0.014/−0.004 (14 f7). Three Ø12 pins, 20 mm long, sit between 2 mm webs. No frame axis is normal to the inclined web arms, so a 0.3 mm profile controls them.
-- **VSE-0006 Cylinder head** (A3, 1:2). The block is 108 × 42 × 28 mm. The cam bore is Ø8.04 0/−0.04, 14 mm above the deck. Three Ø26 chambers are 3 mm deep, and three 7 mm lobe pockets show in section D-D.
+- **VSE-0006 Cylinder head** (A3, 1:2). The block is 108 × 42 × 28 mm. The cam bore is Ø8 H7 (+0.015/0), 14 mm above the deck. Three Ø26 chambers are 3 mm deep, and three 7 mm lobe pockets show in section D-D.
 - **VSE-0007 Camshaft, bank B** (A3, 1:1). 156 mm long, with four Ø7.987 0/−0.015 journals (8 f7) and three lobes on an R5.5 base. A 0.3 mm profile holds the printed cam noses.
 - **VSE-0011 Camshaft, bank A** (A3, 1:1). The same cam layout, 21 mm shorter at 135 mm. Its pulley sits 10.5 mm inboard, in the shared belt plane.
 - **VSE-0008 Crank pulley, GT2 20T** (A4, 5:1). Twenty R0.55 tooth grooves on a Ø12.27 circle, and flanges Ø15.73 on an 8 mm width. The bore is Ø10.015 0/−0.015 (10 H7) for the crank nose.
 - **VSE-0009 Cam pulley, GT2 40T** (A3, 5:1). Forty grooves on a Ø25 circle, and flanges Ø28.46. The bore is Ø6.006 ±0.006 (6 H7). The crank pulley has half the teeth, so the cams turn once per two crank turns.
-- **VSE-0010 Timing belt GT2 6 mm, 420 mm loop**. A bought part. The BOM orders it by designation, so no sheet exists.
+- **VSE-0010 Timing belt GT2 6 mm, 360 mm loop** (180 teeth). A bought part. The BOM orders it by designation, so no sheet exists. Its path measures 352.4 to 365.9 mm of pitch length over the tensioner travel, and the bracket sets the tensioner where the 360 mm loop is taut.
 - **VSE-0012 Smooth idler pulley, 10 mm OD**. A bought, flanged part with a 3 mm bore. It runs on the bracket's 3 g6 axle.
-- **VSE-0013 Belt idler bracket** (A4, 1:1). The plate is 66 × 26 × 2 mm. Each of its two axles is Ø3 g6 (−0.002/−0.008), 10.75 mm long, and carries one roller.
+- **VSE-0013 Belt idler bracket** (A4, 1:1). The plate is 66 × 30 × 2 mm. Each of its two axles is Ø3 g6 (−0.002/−0.008), 10.75 mm long, and carries one roller.
 
 The piston's [second sheet](docs/images/v6-engine/09-drawing-VSE-0002-piston-sheet2.webp) holds the section view.
 
 ### 8. BOM
 
-`bom.py` reconciles the roll-up against the v29 snapshot: 13 rows, 31 instances, no mismatches.
+`bom.py` reconciles the roll-up against the v30 snapshot: 13 rows, 31 instances, no mismatches.
 
 | PN | Title | Qty |
 |---|---|---|
@@ -349,7 +353,7 @@ The piston's [second sheet](docs/images/v6-engine/09-drawing-VSE-0002-piston-she
 | VSE-0005 | Crankshaft | 1 |
 | VSE-0002 | Piston | 6 |
 | VSE-0006 | Cylinder head | 2 |
-| VSE-0010 | Timing belt GT2 6 mm, 420 mm closed loop | 1 |
+| VSE-0010 | Timing belt GT2 6 mm, 360 mm closed loop | 1 |
 | VSE-0013 | Belt idler bracket | 1 |
 | VSE-0008 | Crank pulley, GT2 20T | 1 |
 | VSE-0004 | Connecting rod | 6 |
@@ -361,7 +365,7 @@ The piston's [second sheet](docs/images/v6-engine/09-drawing-VSE-0002-piston-she
 
 ### 9. Analysis
 
-The first 720° sweep on v1 found six collisions between the crankshaft and the rods ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v1-sweep-collisions.json)). The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm. That is partial evidence only. The sweep excludes the 19 pairs that a joint connects, enforces no pair minima, and leaves the between-sample check incomplete. REQ-001 therefore reads `not_assessed` in `verification.csv`. The tool limit behind this is known: benchhand-c7q.10.
+The first 720° sweep on v1 found six collisions between the crankshaft and the rods ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v1-sweep-collisions.json)). The central journal (radius 7 mm) ran through every rod big end. Version v2 replaced it with two link shafts between the throws. The next sweep over 145 poses found 0 collisions and a smallest gap of 0.052 mm, which is partial evidence only. The sweep excludes the 19 pairs that a joint connects, enforces no pair minima, and leaves the between-sample check incomplete. REQ-001 therefore reads `not_assessed` in `verification.csv`.
 
 ![The crank turning through 720 degrees](docs/images/v6-engine/04-motion-sweep.gif)
 
@@ -383,7 +387,7 @@ MECH-01 was a real fail: the crank web faces sat on the block window walls, 0.00
 
 ### 11. Release
 
-The release is blocked, and the dry run shows why. `release.py hw --rev A --version v7 --decision DR-004` refuses with 21 findings ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json)). Four of them. Five more `release.changed` findings name the evidence excerpts themselves, which were added after v7 was built:
+The release is blocked, and the dry run shows why. `release.py hw --rev A --version v7 --decision DR-004` refuses with 21 findings ([excerpt](examples/v6-engine/hw/manufacturing/sources/showcase-evidence/v7-release-dry-run.json)). These four findings show what blocks it:
 
 ```text
 release.decision  DR-004 has status proposed, not the user's approval (accepted)

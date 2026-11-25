@@ -25,8 +25,8 @@ Chosen option: "Camshaft stubs of different length per bank", because it is the 
 
 ### Consequences
 
-- Belt path in the belt plane (y, z from the crank axis): crank pulley (0, 0) r 6.37; cam pulleys (±45, 77.94) r 12.73; idler (0, 70) r 5, back side; tensioner at z = 30, back side, travel y -30 to -6. On the back side the pitch line runs 0.376 mm inside the belt, so each roller adds 5.376 mm of pitch radius. The pitch length runs from 352.4 mm to 365.9 mm over the travel. A 360 mm GT2 closed loop (180 teeth) sits at y = -12.66; the bracket axle at y = -12.6 stretches it by 0.04 mm.
-- Correction: an earlier revision of this record gave 411.2 mm to 424.3 mm and chose a 420 mm loop (210 teeth) at y = -10.7. That path cannot reach 420 mm: the routed belt model (VSE-0010) measures the path above, and the 420 mm loop would hang about 55 mm slack.
+- Belt path in the belt plane (y, z from the crank axis): crank pulley (0, 0) r 6.37; cam pulleys (±45, 77.94) r 12.73; idler (0, 70) r 5, back side; tensioner at z = 30, back side, travel y -30 to -6. On the back side the pitch line runs 0.376 mm inside the belt, so each roller adds 5.376 mm of pitch radius. The pitch length runs from 352.4 mm to 365.9 mm over the travel. A 360 mm GT2 closed loop (180 teeth) sits at y = -12.66. The bracket axle at y = -12.6 stretches it by 0.04 mm.
+- Correction: an earlier revision of this record gave 411.2 mm to 424.3 mm and chose a 420 mm loop (210 teeth) at y = -10.7. The routed belt model (VSE-0010) measures the path above. On it, the 420 mm loop would hang about 55 mm slack.
 - Two camshaft part numbers instead of one.
 - One belt, one tensioner and one idler instead of two belts.
 - Reversible: if the bank A stub proves too long or too weak, fall back to two crank pulleys.

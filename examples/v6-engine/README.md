@@ -20,5 +20,5 @@ This example takes a 3D-printable desktop V6 engine through the Benchhand flow. 
 
 ## Known limits of the tools
 
-- The 720 degree sweep skips pairs that a joint connects, so only the commit-time check found the piston and rod overlap (benchhand-c7q.10).
+- The 720 degree sweep skips pairs that a joint connects, so only the commit-time check found the piston and rod overlap.
 - The static FEA case is exploratory. It has no retained solver bundle, so REQ-004 reads `not_assessed`.
