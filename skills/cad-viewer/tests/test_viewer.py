@@ -564,7 +564,7 @@ class PartMapLoading(Fixture):
         self.assertEqual((version.label, version.product_id), ("v1", "lamp-arm"))
         self.assertEqual([g.id for g in version.groups], ["base_sub", "arm_sub"])
         lower = version.part("LMP-0002")
-        self.assertEqual(lower.path, "/lamp-arm/arm_sub/LMP-0002 Lower link")
+        self.assertEqual(lower.path, "/lamp-arm/made/arm_sub/LMP-0002 Lower link")
         # Colours are cad-render's rule for material AND finish: machined, not anodised, aluminium.
         rules = json.loads((SKILL.parent / "cad-render" / "assets" / "materials.json").read_text(encoding="utf-8"))
         colour = {r["id"]: r["pbr"]["color"] for r in rules["rules"]}

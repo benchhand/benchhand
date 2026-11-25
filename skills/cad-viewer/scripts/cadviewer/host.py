@@ -297,9 +297,13 @@ class Host:
         def leaf(part: record.Part) -> Any:
             return OCP_Part(loaded.shapes[part.id], name=part.product, color=Color(part.colour, self.view.alpha(part.id)))
 
-        children: list[Any] = [OCP_PartGroup([leaf(version.part(oid)) for oid in g.parts], name=g.id)
-                               for g in version.groups]
-        children += [leaf(p) for p in version.parts if p.group is None]
+        children: list[Any] = []
+        for top in version.sourcing_groups:
+            members = [version.part(oid) for oid in top.parts]
+            inner = [OCP_PartGroup([leaf(p) for p in members if p.group == g.id], name=g.id)
+                     for g in version.groups if any(p.group == g.id for p in members)]
+            inner += [leaf(p) for p in members if p.group is None]
+            children.append(OCP_PartGroup(inner, name=top.id))
         return OCP_PartGroup(children, name=version.product_id)
 
     def _push(self, slot: Slot, key: str, camera: Any = None, audiences: tuple[str, ...] = AUDIENCES,

@@ -304,7 +304,8 @@ function renderParts(version) {
     return;
   }
   if (!version.groups.length) groups.append(el("li", { class: "empty", text: "No subassemblies in assembly.yaml." }));
-  for (const group of version.groups) {
+  const sourcing = (version.sourcing_groups || []).map((group) => ({ ...group, title: "Sourcing group" }));
+  for (const group of [...sourcing, ...version.groups]) {
     const actions = rowActions(group.id, group.id, group.parts, view);
     groups.append(el("li", { class: "item", dataset: { isolated: String(actions.isolated), hidden: String(actions.hidden) } },
       el("span", { class: "swatch", "aria-hidden": "true", style: "visibility: hidden" }),
