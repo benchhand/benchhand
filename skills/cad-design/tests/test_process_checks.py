@@ -386,11 +386,19 @@ class SupportPolicyTests(Checks):
         self.assertEqual((found["criterion"]["source"]["kind"], found["criterion"]["source"]["reference"],
                           found["criterion"]["source"]["revision"]), ("guideline", "fdm.generic", "2"))
 
-    def test_without_a_calibration_or_a_catalog_the_need_for_support_is_unknown_never_a_universal_angle(self) -> None:
+    def test_without_a_calibration_or_a_catalog_the_need_for_support_is_not_assessed_never_a_universal_angle(self) -> None:
         result = self.assess(printed("TST-0101", {"strategy": "none"}, calibrations=[]), geometry("TST-0101", SHELF))
-        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0101/print"), "unknown")
+        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0101/print"), "not_assessed")
         found = self.finding(result, "process.fdm.overhang_uncalibrated")
         self.assertEqual(found["criterion"]["status"], "unknown")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+
+    def test_support_on_a_critical_surface_with_no_overhang_basis_is_not_assessed(self) -> None:
+        result = self.assess(printed("TST-0102", {"strategy": "none"}, calibrations=[], critical=SEAT_SURFACE),
+                             geometry("TST-0102", SEAT))
+        self.assertEqual(self.outcome(result, "process.fdm.support@TST-0102/print"), "not_assessed")
+        found = self.finding(result, "process.fdm.support_on_critical_unknown")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
 
     def test_an_absent_support_strategy_is_unknown_never_none(self) -> None:
         documents = printed("TST-0101", None)
@@ -1722,10 +1730,25 @@ class GuidelineLimitTests(Checks):
         failed = self.judged(walled(0.7), parameters={})
         self.assertEqual(self.finding(failed, "process.fdm.wall")["criterion"]["value"], 0.8)
 
-    def test_without_a_catalog_only_calibrations_count(self) -> None:
+    def test_without_a_catalog_or_a_calibration_the_wall_is_not_assessed(self) -> None:
         result = self.assess(guided(service="functional_demo"), geometry("TST-0101", walled(3.0)))
-        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
-        self.assertEqual(self.finding(result, "process.fdm.wall_uncalibrated")["criterion"]["status"], "unknown")
+        self.assertEqual(self.outcome(result, GEOMETRY), "not_assessed")
+        found = self.finding(result, "process.fdm.wall_uncalibrated")
+        self.assertEqual(found["criterion"]["status"], "unknown")
+        self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
+
+    def test_a_resin_wall_with_no_calibration_is_not_assessed_and_a_known_miss_still_fails(self) -> None:
+        documents = shaped("resin", [], material=POLYMER, supports={"strategy": "none"})
+        obligation = "process.resin.geometry@TST-0902/form"
+        result = self.assess(documents, geometry("TST-0902", walled(3.0)))
+        self.assertEqual(self.outcome(result, obligation), "not_assessed")
+        self.assertEqual(self.finding(result, "process.resin.wall_uncalibrated")["reason"], "no_guideline")
+        bore = [surface("bore", "locating", criteria=[_diameter_criterion("between 5.9 6.1")])]
+        documents = shaped("resin", [calibration("hole_coupon", "hole_diameter_deviation", POLYMER, -0.3, 0.3, orientation="XY")],
+                           material=POLYMER, critical=bore, supports={"strategy": "none"})
+        missed = self.assess(documents, geometry("TST-0902", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})))
+        self.assertEqual(self.outcome(missed, obligation), "fail")
+        self.assertIn("process.resin.hole_fit", self.codes(missed, obligation))
 
     def test_the_packet_depends_on_every_guideline_set_its_limits_can_come_from(self) -> None:
         packet = self.judged(walled(3.0)).packet({"version_manifest": "0" * 64})
