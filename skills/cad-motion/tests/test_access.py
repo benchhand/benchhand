@@ -354,6 +354,26 @@ class GeometricAccessTests(unittest.TestCase):
         routes = [p["route"] for p in result["detail"]["paths"]["fasten-cover"]]
         self.assertEqual(routes, ["straight_default", "approach"])
 
+    def test_a_tool_is_placed_at_its_declared_contact_not_the_part_centre(self) -> None:
+        """A 3 mm hex key adjusts the cover (60 x 60, centred on the axis) from above, after the bracket is mounted:
+        at the cover's centre it clears everything; at x 30, under the bracket's solid plate (x 14 to 40, y -8 to 8,
+        z 40 to 44), the bracket blocks it, though the cover's box centre is clear."""
+        items = self.valid_order()
+        for ident, x in (("adjust-off-centre", 30), ("adjust-centre", 0)):
+            items.append({"id": ident, "kind": "adjust", "part": "TST-0103",
+                          "acceptance": {"kind": "adjusted", "features": ["cover_top"]},
+                          "tool_access": [{"tool": "3 mm hex key", "approach": [0, 0, -1], "contact": [x, 0, 24]}]})
+        hw = self.project("contact", items)
+        code, result, stderr = self.run_access(hw, *self.parts_args())
+        self.assert_schema_valid(result)
+        outcomes = self.outcomes(result)
+        self.assertEqual((outcomes["assembly.access@op:adjust-off-centre"], outcomes["assembly.access@op:adjust-centre"]),
+                         ("fail", "pass"), stderr)
+        self.assertEqual(code, 1)
+        blocked = [f for f in result["findings"] if f["code"] == "assembly.tool_blocked"]
+        self.assertEqual([f["subject"] for f in blocked], [{"assembly_operation": "adjust-off-centre"}])
+        self.assertIn("TST-0105", blocked[0]["consequence"])
+
     def test_a_hand_step_is_checked_with_the_hand_and_a_bench_step_is_not_applicable(self) -> None:
         items = self.valid_order()
         items[3]["tools"] = ["by hand"]

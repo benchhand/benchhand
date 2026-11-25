@@ -177,6 +177,25 @@ class AccessPlanTests(unittest.TestCase):
         self.assertEqual(request.reaches, ())
         self.assertIn("tool '3 mm hex key' has no approach direction", request.unknown)
 
+    def test_a_shipped_envelope_on_a_part_that_does_not_move_needs_its_contact_point(self) -> None:
+        adjust = {"id": "adjust-bracket", "kind": "adjust", "part": "TST-0105",
+                  "acceptance": {"kind": "adjusted", "features": ["bracket_foot"]}}
+        for entry in ({"tool": "3 mm hex key", "approach": [0, 0, -1]}, {"tool": "by hand", "approach": [0, 0, -1]}):
+            with self.subTest(tool=entry["tool"]):
+                request = plan(BRACKET, {**adjust, "tool_access": [entry]})["adjust-bracket"]
+                self.assertEqual(request.reaches, ())
+                [reason] = request.unknown
+                self.assertIn(f"tool {entry['tool']!r}", reason)
+                self.assertIn("contact", reason)
+
+    def test_a_declared_contact_point_places_the_tool(self) -> None:
+        adjust = {"id": "adjust-bracket", "kind": "adjust", "part": "TST-0105",
+                  "acceptance": {"kind": "adjusted", "features": ["bracket_foot"]},
+                  "tool_access": [{"tool": "3 mm hex key", "approach": [0, 0, -1], "contact": [30, 0, 44]}]}
+        request = plan(BRACKET, adjust)["adjust-bracket"]
+        [reach] = request.reaches
+        self.assertEqual((reach.contact, request.unknown), ((30.0, 0.0, 44.0), ()))
+
 
 if __name__ == "__main__":
     unittest.main()
