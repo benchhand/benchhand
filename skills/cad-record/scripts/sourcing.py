@@ -20,7 +20,8 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 GROUPS = ("made", "purchased", "existing")  # export group order
-_BY_MAKE_BUY = {"make": "made", "buy": "purchased", "existing": "existing"}
+EXISTING = "existing"  # the make_buy value outside the delivered product
+_BY_MAKE_BUY = {"make": "made", "buy": "purchased", EXISTING: "existing"}
 
 
 class SourcingError(ValueError):
@@ -37,8 +38,9 @@ def group(part: Mapping[str, Any]) -> str:
 
 
 def delivered(part: Mapping[str, Any]) -> bool:
-    """True when the part belongs to the delivered product: made or bought, never existing equipment."""
-    return group(part) != "existing"
+    """True when the part belongs to the delivered product: made or bought, never existing equipment.
+    A record without a schema make_buy counts as delivered; validate.py reports it."""
+    return part.get("make_buy") != EXISTING
 
 
 def groups_of(parts: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
