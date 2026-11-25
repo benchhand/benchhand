@@ -40,6 +40,11 @@ CYLINDERS = range(1, 7)
 FDM_MIN_WALL_MM = 1.2  # the FDM guideline, from the record's process profile and DR-002
 FORM_PARTS = ("VSE-0001", "VSE-0002")  # the crankcase window and the piston, both measured below 1.2 mm before the fix
 GENERATED = ("versions", "checks", "motion", "renders", "drawings", ".cad", "analysis")
+JOINT_TOL_MM = 0.05  # form_check's --joint-tol default: a joint axis this close to a cylinder axis lies on it
+SHANK_ENDPOINTS = frozenset({"@belt", "@idler", "@tensioner"})  # bought parts: the checker matches their outer cylinder
+BELT_ROUTE = HERE / "v6_belt_route.py"
+BELT_LENGTH_MM = 360.0  # VSE-0010: the GT2 closed loop the record buys
+CONTACT_TOL_MM = 1e-6  # the exact pair measure reports touching faces as 0.0 mm
 
 
 def load_assembly() -> dict:
@@ -140,20 +145,41 @@ class BuiltCrankTrainTests(unittest.TestCase):
                 self.assertEqual(wall["required_mm"], FDM_MIN_WALL_MM)
                 self.assertGreaterEqual(wall["thickness_mm"], FDM_MIN_WALL_MM, f"{pn} thinnest wall {wall['thickness_mm']} mm at {wall['location_mm']}")
 
-    def test_every_joint_has_a_bore_on_its_axis_in_each_part(self) -> None:
+    def test_every_joint_has_a_bore_or_shank_on_its_axis_in_each_part(self) -> None:
         joints = self.form_check["joints"]
         self.assertEqual(sorted(joints), sorted(j["id"] for j in load_assembly()["joints"]))
         for joint_id, joint in joints.items():
             for part, found in joint["parts"].items():
                 with self.subTest(joint=joint_id, part=part):
                     self.assertIsNotNone(found, "no cylinder face on the joint axis")
-                    self.assertEqual(found["kind"], "bore")
+                    self.assertEqual(found["kind"], "shank" if part in SHANK_ENDPOINTS else "bore")
+                    self.assertLessEqual(found["offset_mm"], JOINT_TOL_MM)
 
     def test_the_form_check_reports_no_missing_joint_bore(self) -> None:
         self.assertEqual([f for f in self.form_check["findings"] if f["check"] == "joint_bore_missing"], [], self.form_proc.stderr[-1000:])
 
     def test_every_pair_check_passes(self) -> None:
         self.assertEqual(self.check["checks"]["interference"]["status"], "pass", json.dumps(self.check["blocking_failures"]))
+
+    def test_the_installed_belt_route_measures_the_stretched_360_mm_loop(self) -> None:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(BELT_ROUTE), str(self.hw / "versions" / "v1")],
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        measured = json.loads(proc.stdout)["pitch_length_mm"]
+        # DR-005: the built pulleys and rollers at the record's placements give 360.047 mm (360.043 mm from the
+        # rounded PARAMS of VSE-0010/model.py); the 360 mm loop is taut when the route is at most 0.1 mm longer.
+        self.assertAlmostEqual(measured, 360.047, delta=0.005)
+        self.assertGreaterEqual(measured - BELT_LENGTH_MM, 0.0)
+        self.assertLessEqual(measured - BELT_LENGTH_MM, 0.1)
+
+    def test_the_belt_back_touches_both_rollers(self) -> None:
+        by_refs = {frozenset(p["refs"]): p for p in self.pairs()}
+        for roller in ("@idler", "@tensioner"):
+            pair = by_refs[frozenset(("@belt", roller))]
+            with self.subTest(roller=roller):
+                self.assertEqual(pair["method"], "exact")
+                self.assertEqual(pair["interference_mm3"], 0.0)  # no overlap
+                self.assertLessEqual(pair["clearance_mm"], CONTACT_TOL_MM)  # no gap
 
 
 if __name__ == "__main__":

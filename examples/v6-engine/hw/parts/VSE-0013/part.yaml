@@ -24,9 +24,16 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [0.7071067811865476, 0, 0.7071067811865476, 0]}, note: "Plate flat on the bed. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+    - id: sand_axles
+      kind: finishing
+      title: Turn or sand the two axles to 3 g6
+      capability: {status: unknown, reason: "no turning or sanding tool or capability profile is recorded", question: Q-010}
+      input_state: printed
+      output_state: finished
+      targets: [{feature: axle_idler}, {feature: axle_tensioner}]
       inspection:
-        - {id: gauge_axle_idler, feature: axle_idler, method: "Gauge the sanded idler axle against the 3 g6 limits before assembly", instrument: micrometer, state: as_manufactured}
-        - {id: gauge_axle_tensioner, feature: axle_tensioner, method: "Gauge the sanded tensioner axle against the 3 g6 limits before assembly", instrument: micrometer, state: as_manufactured}
+        - {id: gauge_axle_idler, feature: axle_idler, method: "Gauge the sanded idler axle against the 3 g6 limits before assembly", instrument: micrometer, state: after_finish}
+        - {id: gauge_axle_tensioner, feature: axle_tensioner, method: "Gauge the sanded tensioner axle against the 3 g6 limits before assembly", instrument: micrometer, state: after_finish}
 drawing:
   type: detail
   datum_features:

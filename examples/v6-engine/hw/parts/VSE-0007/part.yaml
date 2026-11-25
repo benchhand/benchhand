@@ -24,8 +24,15 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+    - id: sand_journals
+      kind: finishing
+      title: Sand the four journals to 8 f7
+      capability: {status: unknown, reason: "no sanding tool or capability profile is recorded", question: Q-010}
+      input_state: printed
+      output_state: finished
+      targets: [{feature: journals}]
       inspection:
-        - {id: gauge_journals, feature: journals, method: "Gauge the four journals against the 8 f7 limits before assembly", instrument: micrometer, state: as_manufactured}
+        - {id: gauge_journals, feature: journals, method: "Gauge the four journals against the 8 f7 limits before assembly", instrument: micrometer, state: after_finish}
 drawing:
   type: detail
   datum_features:
