@@ -453,6 +453,9 @@ JOINT_GEOMETRY_PARTS = {
                            ".fuse(*[cq.Solid.makeCylinder(5, 30, cq.Vector(0, 0, -15), cq.Vector(0, 0, 1), 90)"
                            ".rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), turn) for turn in (90, 180, 270)]))"),
     "TST-0623": (FDM_MADE, PAD + ".translate((0, 0, 8.0500004))"),  # 0.0500004 mm above the deck: 0.05 when rounded
+    # A 30 m pad tilted 0.005 degrees, its centre 15 m off; 0.0209 mm above the deck at x = 0, 1.3 mm at its centre.
+    "TST-0624": (FDM_MADE, "cq.Workplane().box(30000, 10, 6).rotate((0, 0, 0), (0, 1, 0), 0.005)"
+                           f".translate((14990, 0, {5.0209 - 14990 * math.sin(math.radians(0.005)) + 3 * math.cos(math.radians(0.005))!r}))"),
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -490,6 +493,7 @@ joints:
    mount: {point: [30, 0, 5]}}
 - {id: J-628, type: revolute, parent: TST-0602, child: TST-0622, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 - {id: J-629, type: fixed, parent: TST-0605, child: TST-0623, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+- {id: J-630, type: fixed, parent: TST-0605, child: TST-0624, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
 """
 
 
@@ -619,6 +623,14 @@ class JointGeometryTests(unittest.TestCase):
         missing = self.missing("J-629")
         self.assertEqual(sorted(missing), ["TST-0605", "TST-0623"])
         self.assertEqual(missing["TST-0623"]["contact"]["offset_mm"], 0.05)
+
+    def test_a_long_tilted_face_is_not_skipped_by_its_midpoint(self) -> None:
+        """The pad's midpoint is 1.3 mm off the deck, beyond the 1 mm search; its overlap is 0.0209 + 10 sin(0.005 deg)
+        mm off at most."""
+        self.assertEqual(self.missing("J-630"), {})
+        contact = self.found("J-630")["TST-0624"]
+        self.assertEqual(contact["kind"], "face")
+        self.assertAlmostEqual(contact["offset_mm"], 0.0209 + 10 * math.sin(math.radians(0.005)), places=5)
 
     def unknown(self, joint: str) -> dict[str, dict]:
         return {f["part"]: f for f in self.report["findings"] if f["check"] == "joint_contact_unknown" and f["joint"] == joint}
