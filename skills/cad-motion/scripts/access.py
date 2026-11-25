@@ -304,9 +304,12 @@ class OperationAccess:
     operation: Any
     paths: list[Travel] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
+    not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold)
 
     @property
     def outcome(self) -> str:
+        if self.not_applicable is not None:
+            return "not_applicable"
         if any(p.status == "collision" for p in self.paths):
             return "fail"
         if self.unknown or any(p.status != "clear" for p in self.paths) or not self.paths:
@@ -335,6 +338,9 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
     plans = []
     for request in requests:
         op = request.operation
+        if request.not_applicable is not None:
+            plans.append(OperationAccess(op, not_applicable=request.not_applicable))
+            continue
         entry = OperationAccess(op, unknown=list(request.unknown))
         frame = request.frame
         if frame not in world:
@@ -489,7 +495,8 @@ def access_findings(entry: OperationAccess) -> list[dict[str, Any]]:
 
 def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     row: dict[str, Any] = {"obligation": f"assembly.access@op:{entry.operation.id}", "outcome": entry.outcome,
-                           "level": "geometrically_manufacturable", "method": ACCESS_METHOD, "coverage": ACCESS_COVERAGE}
+                           "level": "geometrically_manufacturable", "method": ACCESS_METHOD,
+                           "coverage": entry.not_applicable or ACCESS_COVERAGE}
     mine = [f["id"] for f in findings if f.get("obligation") == row["obligation"]]
     if mine:
         row["findings"] = mine

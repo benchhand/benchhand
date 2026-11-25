@@ -554,20 +554,21 @@ class SubBuildTests(unittest.TestCase):
         self.assertEqual(report.outcome("assembly.order@op:bond-mag-a")["outcome"], "unknown")
         self.assertEqual(report.findings, ())
 
-    def test_a_tool_free_hold_owes_no_access_check_and_a_tool_on_it_does(self) -> None:
+    def test_a_tool_free_hold_reaches_nothing_and_a_tool_on_it_is_planned(self) -> None:
         hold = {"id": "cure", "kind": "hold", "part": "TST-0001", "duration": fx.known(fx.quantity(24, "h")),
                 "fixture": "bench cure jig", "orientation": [0, 0, 1]}
-        for label, item, owed in (("tool-free", hold, False), ("named tool", {**hold, "tools": ["spring clamp"]}, True),
-                                  ("declared tool", {**hold, "tool_access": [{"tool": "spring clamp"}]}, True)):
+        for label, item, applies in (("tool-free", hold, False), ("named tool", {**hold, "tools": ["spring clamp"]}, True),
+                                     ("declared tool", {**hold, "tool_access": [{"tool": "spring clamp"}]}, True)):
             with self.subTest(label), tempfile.TemporaryDirectory() as directory:
                 documents = fx.tst_record()
                 documents["assembly.yaml"]["operations"].append(item)
                 record = intent.load_record(fx.write_record(Path(directory) / "hw", documents))
                 access = {o.id for o in intent.required_checks(record) if o.family == "assembly.access"}
-                self.assertEqual("assembly.access@op:cure" in access, owed)
-                planned = {r.operation.id for r in ops.access_plan(ops.normalize(documents["assembly.yaml"]))}
-                self.assertEqual("cure" in planned, owed, "the access plan and the obligations agree")
-                self.assertIn("fit_bearing", planned)
+                self.assertIn("assembly.access@op:cure", access, "the obligation stays; not applicable is explicit")
+                plan = {r.operation.id: r for r in ops.access_plan(ops.normalize(documents["assembly.yaml"]))}
+                self.assertEqual(plan["cure"].not_applicable is None, applies)
+                self.assertEqual(len(plan["cure"].tools), int(applies))
+                self.assertIsNone(plan["fit_bearing"].not_applicable)
 
     def test_a_cure_figure_without_a_datasheet_source_fails(self) -> None:
         for name, cure in (("supplier time", {"time": sourced(24, "h", [{"kind": "supplier", "reference": "email"}])}),

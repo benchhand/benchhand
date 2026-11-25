@@ -184,10 +184,10 @@ class AssemblyOperation:
         return self.acceptance in GEOMETRIC_ACCEPTANCE
 
     @property
-    def owes_access(self) -> bool:
-        """Whether an `assembly.access` check applies: a hold moves no part, so a tool-free hold has nothing to reach
-        (manufacturing_intent.required_checks applies the same rule)."""
-        return self.kind != "hold" or bool(self.tools)
+    def reaches_nothing(self) -> bool:
+        """Whether `assembly.access` is not applicable: a hold moves no part, so a tool-free hold reaches nothing.
+        A hold that names a tool still has that tool's reach checked."""
+        return self.kind == "hold" and not self.tools
 
     @property
     def tool_names(self) -> tuple[str, ...]:
@@ -887,6 +887,7 @@ class AccessRequest:
     unknown: tuple[str, ...]
     path: tuple[Vec, ...] | None = None
     unit: frozenset[str] = frozenset()
+    not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold); None when access applies
 
 
 def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozenset[str], str]:
@@ -908,13 +909,16 @@ def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozens
 
 
 def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRequest, ...]:
-    """One AccessRequest per operation that owes an access check (all but a tool-free hold), from the declared
-    sequence (see `sequence`)."""
+    """One AccessRequest per operation, from the declared sequence (see `sequence`). A tool-free hold reaches
+    nothing: its request carries the not-applicable reason and no obstacles."""
     state = sequence(operations, inventory)
     requests = []
     for step in state.steps:
         op = step.operation
-        if not op.owes_access:
+        if op.reaches_nothing:
+            requests.append(AccessRequest(op, step.part, None, step.part, None, False, frozenset(), frozenset(), (), (),
+                                          not_applicable=f"{op.id}: a hold moves no part and names no tool, so it "
+                                                         "reaches nothing"))
             continue
         unknown: list[str] = []
         travels = op.kind in JOINING or op.kind in ("close", "disassemble", "install")

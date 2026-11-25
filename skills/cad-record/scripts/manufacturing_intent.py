@@ -2738,10 +2738,8 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
             if isinstance(ident, str):
                 add("assembly.order", {"assembly_operation": ident}, "process_planned", "detail",
                     f"assembly operation {ident}: installation order and closure")
-                # a hold moves no part: only its tools must reach (cad-record assembly_operations.owes_access)
-                if operation.get("kind") != "hold" or operation.get("tools") or operation.get("tool_access"):
-                    add("assembly.access", {"assembly_operation": ident}, "geometrically_manufacturable", "detail",
-                        f"assembly operation {ident}: part path and tool reach")
+                add("assembly.access", {"assembly_operation": ident}, "geometrically_manufacturable", "detail",
+                    f"assembly operation {ident}: part path and tool reach")
                 if operation.get("kind") in JOINING_KINDS:
                     add("assembly.joint", {"assembly_operation": ident}, "process_planned", "detail",
                         f"assembly operation {ident}: engagement, edge distance, retention, torque and host suitability")
