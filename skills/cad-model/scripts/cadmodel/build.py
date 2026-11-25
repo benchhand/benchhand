@@ -464,6 +464,16 @@ def totals(metrics: Mapping[str, Any], placed: Mapping[str, Any], quantity: Mapp
             "occurrences_without_density": sorted(oid for oid, o in placed.items() if metrics[o["PN"]]["mass_g"] is None)}
 
 
+def product_totals(metrics: Mapping[str, Any], placed: Mapping[str, Any], delivered: Iterable[str]) -> dict[str, Any]:
+    """`totals` over the delivered occurrences (cad-record sourcing.delivered) and their PNs only, with the
+    occurrences of existing equipment named under `existing_occurrences`."""
+    shipped = {oid: placed[oid] for oid in delivered}
+    pns = {occurrence["PN"] for occurrence in shipped.values()}
+    quantity = {pn: sum(1 for o in shipped.values() if o["PN"] == pn) for pn in sorted(pns)}
+    return {**totals({pn: m for pn, m in metrics.items() if pn in pns}, shipped, quantity),
+            "existing_occurrences": [oid for oid in placed if oid not in shipped]}
+
+
 def write_json(path: Path, data: Any) -> None:
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
@@ -617,7 +627,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
                            for pn in {*parts, *(chain.pn(oid) for oid in chain.ids)}}
         except sourcing.SourcingError as error:
             raise UsageError(f"hw/parts: {error}") from error
-        delivered = [oid for oid in chain.ids if group_of_pn[chain.pn(oid)] != sourcing.EXISTING]
+        delivered = [oid for oid in chain.ids if sourcing.delivered(snapshot.parts.get(chain.pn(oid)) or {})]
         pose.write_assembly_step(work / "assembly.step", top, parts, [chain.inventory.get(i) for i in chain.ids],
                                  transforms)
         # the new product exports are grouped in the STEP too; assembly.step keeps its flat tree, whose component
@@ -639,7 +649,6 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
         placed = {oid: occurrence_metrics(chain.pn(oid), parts[chain.pn(oid)].shape, transforms[oid],
                                           metrics[chain.pn(oid)]) for oid in chain.ids}
         quantity = {pn: sum(1 for oid in chain.ids if chain.pn(oid) == pn) for pn in parts}
-        product_quantity = {pn: count for pn, count in quantity.items() if group_of_pn[pn] != sourcing.EXISTING}
         write_json(work / "metrics.json", {
             "schema_version": SCHEMA_VERSION, "label": label,
             "frame": ("parts: each PN's model_frame (assembly_zero: assembly coordinates at the zero pose); "
@@ -648,8 +657,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
             "mass_source": "material_profiles",
             "parts": metrics,
             "occurrences": placed,
-            "totals": {**totals(metrics, {oid: placed[oid] for oid in delivered}, product_quantity),
-                       "existing_occurrences": [oid for oid in chain.ids if oid not in delivered]},
+            "totals": product_totals(metrics, placed, delivered),
         })
         features = {pn: built[pn][1]["drawing_features"] for pn in sorted(parts)
                     if built[pn][1]["drawing_features"] is not None}
