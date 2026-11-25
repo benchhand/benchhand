@@ -514,6 +514,18 @@ class SubBuildTests(unittest.TestCase):
                 self.assertIn(code, {f["code"] for f in report.findings})
                 self.assertEqual(report.outcome(f"assembly.order@op:{op_id}")["outcome"], "fail")
 
+    def test_a_main_closure_before_the_unit_install_fails_the_install_of_each_enclosed_member(self) -> None:
+        for enclosed in ("@mag-a", "TST-0102"):
+            with self.subTest(enclosed):
+                lid = {"id": "close-lid", "kind": "close", "part": "TST-0104", "into": "TST-0101", "closes": [enclosed]}
+                report = ops.check_order(ops.normalize({"operations": [lid, *self.items()]}),
+                                         self.inventory(extra=("TST-0104",)))
+                [finding] = report.findings
+                self.assertEqual((finding["code"], finding["obligation"]),
+                                 ("assembly.closed_before_install", "assembly.order@op:install-hanger"))
+                self.assertIn(f"{enclosed.lstrip('@')}, which close-lid encloses", finding["measured"]["text"])
+                self.assertEqual(report.outcome("assembly.order@op:close-lid")["outcome"], "pass")
+
     def test_an_occurrence_named_like_a_sub_build_is_not_its_install(self) -> None:
         record = {"occurrences": [*({"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")),
                                   {"id": "hanger", "PN": "TST-0105"}],

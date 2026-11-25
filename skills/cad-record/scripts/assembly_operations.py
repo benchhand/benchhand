@@ -24,7 +24,8 @@ such occurrence the sequence names, as the record designates none). Any other un
 Sub-builds. An operation with `sub_build` belongs to a bench sub-build (a subassembly id, or a new id), with
 its own base, state and closure, judged by the same rules. An `install` operation puts the finished sub-build
 into the main build as one unit; it fails `assembly.order` when the sub-build is unknown, unfinished or
-installed twice, an occurrence two builds use fails it, and a sub-build no install puts in place fails it.
+installed twice, an occurrence two builds use fails it, and a sub-build no install puts in place fails it. A member
+the main build has enclosed before the install fails `assembly.closed_before_install` at the install.
 A `hold` keeps its part in a fixture for a duration in an orientation, judged against its own build's state;
 its cure time and temperature count only as known facts with a datasheet source, and the hold must last the
 cure time. A close operation encloses its
@@ -630,7 +631,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                 fail("assembly.order_impossible", f"{op.id} comes before its predecessor {predecessor} in the sequence",
                      f"{op.id} cannot be carried out in the declared sequence",
                      f"move {op.id} after {predecessor}, or correct its predecessors")
-        reached = (step.into,) if op.kind == "install" else (step.part, step.into)  # an install's part is a unit
+        reached = (step.into, *_transferred(state, step)) if op.kind == "install" else (step.part, step.into)
         enclosed = [ref for ref in reached if ref is not None and ref in step.closed
                     and not (op.kind == "close" and ref == step.into)]
         for ref in enclosed:
@@ -643,8 +644,9 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                                 "tradeoffs": "check that nothing else needs the open state after it"},
                                {"text": f"split the closing part so {ref} stays reachable",
                                 "tradeoffs": "adds a joint, fasteners and a tolerance stack"}])
-        if step.into is not None and step.into not in step.present and not enclosed:
-            later = [other.id for other in installer.get(step.into, []) if other.index > op.index]
+        if step.into is not None and step.into not in step.present and not (
+                step.into in enclosed if op.kind == "install" else enclosed):
+            later = [other.id for other in installer.get((step.build, step.into), []) if other.index > op.index]
             fail("assembly.into_absent",
                  f"{op.id} puts {op.part} into {op.into}, which is not in place yet" +
                  (f" (installed later by {', '.join(later)})" if later else " (removed earlier)"),
@@ -660,7 +662,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
         if op.kind == "close":
             for ref in step.closes:
                 if ref not in step.present and ref != step.part:
-                    later = [other.id for other in installer.get(ref, []) if other.index > op.index]
+                    later = [other.id for other in installer.get((step.build, ref), []) if other.index > op.index]
                     if not later:  # an enclosed part installed later fails at that later step instead
                         fail("assembly.part_absent", f"{op.id} encloses {ref}, which is not in place", f"{ref} is missing "
                              "inside the closed assembly", f"install {ref} before {op.id}")
@@ -686,18 +688,30 @@ def _build_name(build: str | None) -> str:
     return "the main build" if build is None else f"sub-build {build}"
 
 
-def _installers(state: AssemblyState) -> tuple[dict[str, list[AssemblyOperation]], dict[str, list[AssemblyOperation]]]:
-    """(occurrence -> the operations that install it, sub-build id -> the install operations that transfer it), in
-    record order. Kept apart, so an occurrence whose id is a sub-build id is never taken for the unit."""
-    occurrences: dict[str, list[AssemblyOperation]] = {}
+Installers = dict[tuple[str | None, str], list[AssemblyOperation]]
+
+
+def _installers(state: AssemblyState) -> tuple[Installers, dict[str, list[AssemblyOperation]]]:
+    """((build, occurrence) -> the operations that put it in place in that build, sub-build id -> the install
+    operations that transfer it), in record order. In the main build an install puts every member of its unit in
+    place. Kept apart, so an occurrence whose id is a sub-build id is never taken for the unit."""
+    occurrences: Installers = {}
     transfers: dict[str, list[AssemblyOperation]] = {}
     for step in state.steps:
         op = step.operation
         if op.kind == "install":
             transfers.setdefault(step.part, []).append(op)
+            for ref in _transferred(state, step):
+                occurrences.setdefault((None, ref), []).append(op)
         elif op.installs:
-            occurrences.setdefault(step.part, []).append(op)
+            occurrences.setdefault((step.build, step.part), []).append(op)
     return occurrences, transfers
+
+
+def _transferred(state: AssemblyState, step: Step) -> tuple[str, ...]:
+    """The occurrences an install step puts into the main build: its sub-build's members in place; none otherwise."""
+    unit = state.sub_builds.get(step.part) if step.operation.kind == "install" else None
+    return tuple(sorted(unit.present)) if unit is not None else ()
 
 
 def _claimed(step: Step) -> list[tuple[str | None, str | None]]:
