@@ -2840,6 +2840,23 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(result, GEOMETRY), "fail")
         self.assertEqual([f["subject"]["feature"] for f in result.by_code("process.fdm.hole_fit")], ["bore_b"])
 
+    def test_an_angular_calibration_size_scope_is_refused_not_raised_under_either_flag(self) -> None:
+        """A schema-valid size scope in degrees reaches the resolver when a record is read without its checks; the bore is
+        then judged on the guideline, never a crash."""
+        odd = calibration("hole_coupon", "hole_diameter_deviation", POLYMER, -0.05, 0.05, orientation="XY", size=mm(30, units="deg"))
+        documents = guided(service="functional_demo", calibrations=(CONTACT, odd))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion("between 5.0 7.0")])]
+        record = MI.normalize_record(documents)
+        data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
+                                                         "measured": 12})
+        for flag in (False, True):
+            with self.subTest(flag=flag):
+                result = pc.assess(record, geometry("TST-0101", data), today=TODAY, catalog=SHIPPED, calibration=flag)
+                self.assertEqual(packet_errors(result.packet({"version_manifest": "0" * 64})), [])
+                self.assertEqual(result.outcome(GEOMETRY)["outcome"], "pass", self.codes(result, GEOMETRY))
+                self.assertIn("uncalibrated: guideline value", result.outcome(GEOMETRY)["coverage"])
+
     def test_a_criterion_of_another_role_is_not_dropped(self) -> None:
         """A datum reads dimensional_deviation; its profile_deviation criterion is no deviation tolerance a check reads."""
         result = self.critical("datum", criteria=self.tolerance("profile_deviation", -0.2, 0.2))

@@ -251,6 +251,8 @@ class Normalization(unittest.TestCase):
             "template used as a capability": (lambda d: capability(d, 0).update(template=True, guidance=["x"], calibrations=[]), "intent.profile"),
             "laser profile on a print": (lambda d: route(d)[0].update(capability="tst_laser"), "intent.profile"),
             "calibration from an estimate": (lambda d: capability(d, 0)["calibrations"][0].update(source=fx.source("estimate")), "intent.profile"),
+            "calibration size scope in degrees": (lambda d: capability(d, 0)["calibrations"][0]["scope"].update(size=fx.quantity(30, "deg")),
+                                                  "intent.units"),
             "calibration from a guideline": (lambda d: capability(d, 0)["calibrations"][0].update(
                 source=fx.source("guideline", "fdm.generic", revision="1", sha256="a" * 64)), "intent.profile"),
             "unknown route kind": (lambda d: route(d).append(fx.operation("sinter", "sintering")), "intent.coverage"),
@@ -573,6 +575,16 @@ class Capabilities(unittest.TestCase):
         documents["manufacturing/capabilities.yaml"]["profiles"][0]["template"] = True
         template = mi.normalize_record(documents).capabilities["tst_printer"]
         self.assertEqual(mi.capability_limit(template, "hole_diameter_deviation", material="tst_polymer_printed").status, "refused")
+
+    def test_a_size_scope_that_is_not_a_length_is_refused_with_its_reason_never_raised(self) -> None:
+        documents = fx.tst_record()
+        calibration = documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibrations"][0]
+        calibration["scope"]["size"] = fx.quantity(30, "deg")
+        printer = mi.normalize_record(documents).capabilities["tst_printer"]
+        found = mi.capability_limit(printer, calibration["characteristic"], material="tst_polymer_printed", orientation="XY",
+                                    size=6.0)
+        self.assertEqual(found.status, "refused")
+        self.assertTrue(any("size scope is not a length" in r for r in found.reasons), found.reasons)
 
 
 # The obligations of fx.tst_record(), a record with no loaded structural interface, as origin/main a7d007e3 enumerates them
