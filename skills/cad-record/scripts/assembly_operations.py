@@ -9,7 +9,7 @@
 """Assembly operations: the one normalizer of a record's installation, closure, fastening, adjustment,
 inspection and service operations, and their pure order, closure and joint checks. Stdlib only, no
 record file reads and no CAD kernel: callers pass the parsed assembly.yaml mapping or a normalized record.
-A hold's times go through manufacturing_intent's shared quantity parser, loaded by path when a hold is judged.
+A hold's times go through the shared quantity parser (quantities.py), loaded by path when a hold is judged.
 
 Authority. Operations live in assembly.yaml top-level `operations` (a list, or an unknown fact).
 `normalize` reads only that; a `drawing.operations` list is refused (`intent.dual_authority`), and no
@@ -812,30 +812,31 @@ def _hold_doubt(op: AssemblyOperation) -> str | None:
 
 
 def _hours(fact: Any, *, lower: bool) -> float | None:
-    """A known time quantity fact in hours, read by the shared manufacturing_intent quantity parser: its lower end
+    """A known time quantity fact in hours, read by the shared quantity parser (quantities.py): its lower end
     when `lower`, else its upper end; None when it is not a known time or its lower end is not positive."""
     if not isinstance(fact, Mapping) or fact.get("status") != "known" or not isinstance(fact.get("value"), Mapping):
         return None
-    intent = _intent()
+    shared = _quantities()
     try:
-        quantity = intent.quantity(fact["value"])
+        quantity = shared.quantity(fact["value"])
         if quantity.dimension != "time":
             return None
         low, high = quantity.to("h").bounds
-    except intent.IntentError:
+    except shared.IntentError:
         return None
     if low <= 0:
         return None
     return float(low if lower else high)
 
 
-def _intent() -> Any:
-    """cad-record manufacturing_intent, the shared quantity parser, loaded once by path under its shared name."""
-    name = "cad_record_manufacturing_intent"
+def _quantities() -> Any:
+    """cad-record quantities.py, the shared quantity parser, loaded once by path under its shared name. It needs only
+    the standard library, so this module keeps no dependency of manufacturing_intent's."""
+    name = "cad_record_quantities"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "manufacturing_intent.py")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "quantities.py")
         if spec is None or spec.loader is None:
-            raise ImportError(f"manufacturing_intent.py not found beside {Path(__file__).name}")
+            raise ImportError(f"quantities.py not found beside {Path(__file__).name}")
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         try:

@@ -412,7 +412,8 @@ class ValidateProject(unittest.TestCase):
         validator_copy.parent.mkdir(parents=True)
         shutil.copy2(VALIDATOR, validator_copy)
         for sibling in ("assembly_data.py", "assembly_operations.py", "design_rules.py", "layout.py",
-                        "manufacturing_intent.py", "evidence.py", "evidence_paths.py", "impact.py", "selection.py",
+                        "manufacturing_intent.py", "quantities.py", "evidence.py", "evidence_paths.py", "impact.py",
+                        "selection.py",
                         "schema_registry.py", "yaml_loader.py", "emit.py", "decision_records.py", "guidelines.py",
                         "flow_profile_gate.py", "stages.py", "commodity_identity.py"):
             shutil.copy2(VALIDATOR.with_name(sibling), validator_copy.with_name(sibling))
