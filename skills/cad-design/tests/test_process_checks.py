@@ -2989,6 +2989,23 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(result, GEOMETRY), "fail")
         self.assertEqual(self.finding(result, "process.fdm.wall_feature_class")["criterion"]["value"], 0.5)
 
+    def test_a_wall_on_several_feature_classes_answers_to_every_class_minimum(self) -> None:
+        """The chamfer's 0.2 mm minimum (first alphabetically) is met; the tooth tip's 0.5 mm one is missed."""
+        data = walled(0.30)
+        data["walls"]["features"] = ["edge", "tip"]
+        data["features"]["edge"] = {"kind": "chamfer", "faces": [], "mapped": True}
+        data["features"]["tip"] = {"kind": "tooth_tip", "faces": [], "mapped": True}
+        structural = calibration("wall_coupon", "min_wall", POLYMER, 0.2, 0.25)
+        chamfer = calibration("chamfer_coupon", "min_wall", POLYMER, 0.15, 0.2, feature="chamfer")
+        tip = calibration("tip_coupon", "min_wall", POLYMER, 0.45, 0.5, feature="tooth_tip")
+        with mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "1"}):
+            result = self.assess(guided(service="functional_demo", calibrations=(structural, chamfer, tip)),
+                                 geometry("TST-0101", data), catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        found = self.finding(result, "process.fdm.wall_feature_class")
+        self.assertEqual((found["criterion"]["value"], found["outcome"]), (0.5, "fail"))
+        self.assertIn("tooth_tip", found["consequence"])
+
     def test_a_thin_wall_on_an_exempt_feature_class_without_its_own_calibration_is_a_non_blocking_advisory(self) -> None:
         data = walled(0.3)
         data["walls"]["features"] = ["tip"]
