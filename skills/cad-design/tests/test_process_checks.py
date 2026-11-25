@@ -2884,9 +2884,9 @@ class GuidelineWithoutCalibrationTests(Checks):
 
     REAM = "process.reaming.allowance@TST-0101/ream"
 
-    def reamed(self, allowance: float, *, catalog: Any) -> Any:
+    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo") -> Any:
         """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size."""
-        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents = guided(service=service, calibrations=(CONTACT,))
         intent = documents["parts/TST-0101/part.yaml"]["intent"]
         intent["route"][0]["allowances"] = [{"feature": "bore", "amount": mm(allowance), "purpose": "finish",
                                              "source": FX.source("user")}]
@@ -2908,6 +2908,15 @@ class GuidelineWithoutCalibrationTests(Checks):
     def test_a_ream_allowance_after_printing_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
         result = self.reamed(0.6, catalog=None)
         self.advisory(result, "process.reaming.allowance_unverified", self.REAM)
+
+    def test_a_sufficient_ream_allowance_is_graded_by_the_printer_flag_in_a_strict_service_class(self) -> None:
+        """The guideline value comes from the printer's profile, so the printer's calibration flag grades it: off, the
+        guideline passes in every class; on, a strict class needs a calibration or a waiver."""
+        for flag, expected in (("0", "pass"), ("1", "unknown")):
+            with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                result = self.reamed(0.6, catalog=SHIPPED, service="working_prototype")
+                self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
+                self.assertEqual(flag == "1", "process.reaming.allowance_guideline_only" in self.codes(result, self.REAM))
 
 
 if __name__ == "__main__":
