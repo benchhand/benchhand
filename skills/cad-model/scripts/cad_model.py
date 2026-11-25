@@ -25,12 +25,17 @@ run   executes every hw/parts/<PN>/model.py in its declared kernel's own uv envi
         parts/<PN>.step   AP242, one product named "<PN> <title>": the definition, in the
                           part's model_frame
         assembly.step     AP242, top product "<product id> vN" with one product per PN and one
-                          component per occurrence at the joints' nominal pose (cad-motion pose.py)
-        assembly.glb      binary glTF of assembly.step, metres, +Y up, one node per occurrence
-        part-map.json     occurrence -> glTF nodes and meshes, plus the PN aggregate
+                          component per occurrence at the joints' nominal pose (cad-motion pose.py):
+                          the in-context scene, existing equipment (make_buy existing) included
+        assembly.glb      binary glTF of assembly.step, metres, +Y up, one node per occurrence, under
+                          a made, purchased or existing group node by the part's make_buy
+        product.step      assembly.step without existing equipment: the delivered product
+        product.glb       binary glTF of product.step, grouped as assembly.glb
+        part-map.json     occurrence -> assembly.glb nodes and meshes, plus the PN aggregate
         metrics.json      per PN: volume, area, bbox, solids, holes, mass from its material profile's
                           density, unknown without one;
                           per occurrence: placement, placed bbox, centre and holes; totals by quantity
+                          over the delivered occurrences, naming the existing ones
         manifest.json     per PN: kernel, model frame, model path, source and record sha256, params,
                           kernel volume; occurrences with rest placements; tool versions; pose
                           (values, placements, motions); joints and joint pairs; the record

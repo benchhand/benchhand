@@ -33,6 +33,7 @@ TRIGGER
 - `level` 0 is a numbered top assembly; each child is parent + 1. Children of an unnumbered top assembly start at 1. The record validator uses the same rule, including accepting a numbered assembly row without `part.yaml` when it has child rows.
 - `qty` counts instances per one parent. A repeated subassembly is one row with its qty; its children appear once beneath it. `total_qty` in the JSON multiplies through.
 - An assembly product without a PN is a phantom group; its children merge into the nearest numbered parent.
+- Existing equipment (`make_buy: existing`) gets no row, and its part.yaml is never `missing_in_step`. Its children merge like a phantom's. `product.step` and `assembly.step` give the same BOM.
 - Assemblies need no part.yaml; leaf parts do. `mass` copies `mass_target` (grams).
 - `unit` is `pcs`: `qty` counts STEP instances. `designation`, `manufacturer`,
   `manufacturer_part_number` and `supplier_part_number` copy part.yaml `procurement`;

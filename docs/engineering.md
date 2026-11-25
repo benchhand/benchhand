@@ -113,7 +113,7 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - Owner: `render_states` in `skills/cad-render/scripts/render.py` resolves the lists; `skills/cad-render/assets/renderer/render.js` draws them. A ghost reuses the ghosted-context material of the close-up fallback (`ghostMaterial`) and adds edge lines. The viewer's `parts` action (`skills/cad-viewer`) is a separate browser-side tool and is not reused.
 - A ghost is never an occluder: the mask pass and the floor bake leave it out, and requirement visibility counts a ghosted or hidden window part as see-through. A hidden visibility target is an error.
 - `render.json` and `motion-render.json` list `hidden` and `ghosted`. Both enter the cache key and every view's `render_inputs`, so a change re-renders. `motion.py` adds them to the bundle recipe.
-- `make_buy: existing` (benchhand-pcy) sets no default ghost yet.
+- An existing part (`make_buy: existing`) with no `render` value defaults to ghost (`sourcing.delivered`).
 
 ## Existing equipment
 
@@ -125,7 +125,26 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - `impact.py`: `existing.dimensions` is part of its `geometry` fingerprint domain, and the artifacts that the range's sources cite are part of `source`. A range change makes its `cad.*` and `interface.*` evidence stale. It has no `purchase.*` check to go stale.
 - `cad-design` `form_check.py`: its process is `existing`. It gets B-rep validity and the STEP read-back, but no minimum-wall scan and no form heuristic.
 - `validate.py` `check_existing`: `existing.interface_missing` when no interface joins it to a product part, and `existing.installed` when an assembly operation names it as `part`. It may be an operation's `into`. An `@occurrence` end or part counts as the part number the assembly inventory resolves it to. `validate.py` and `cad-design` `process_checks/purchased.py` find its interfaces with `manufacturing_intent.interfaces_of`.
-- Not yet covered: BOM and release treatment, and margins and stack-up against its range (bead benchhand-pcy, later PRs).
+- `skills/cad-record/scripts/sourcing.py` owns the delivered-product rule:
+  - `sourcing.delivered` is false only for `make_buy: existing`. Every product export asks it, and no other code tests `make_buy` for this.
+  - `sourcing.group` names the export group: `made`, `purchased` or `existing`.
+  - It holds the export file names (`PRODUCT_STEP`, `PRODUCT_GLB`, `RELEASE_PRODUCT_STEP`, `RELEASE_CONTEXT_STEP`). `layout.json` lists them too, so a rename is one edit in each file.
+  - The record has no other reference-only kind. The author records a reference body, such as a harness bundle stub, as existing equipment.
+- cad-model `build.py`:
+  - `assembly.step` and `assembly.glb` stay the in-context scene. Every check, sweep, render and viewer reads them.
+  - `product.step` and `product.glb` hold the delivered occurrences only, with the same placements and definitions.
+  - The `metrics.json` totals count the delivered occurrences only.
+  - `mesh.group_glb` puts the occurrence nodes of both GLBs under `made`, `purchased` and `existing` nodes. It adds the group nodes at the end, so the part-map indices hold.
+  - The STEP tree has no group nodes. A group node would change the product path of every component that `pose.read_assembly_step` returns.
+- cad-model `check.py` `product_exports` fails when `product.step` differs from the delivered occurrences of `assembly.step` in placement or definition name. It also fails when a product name or `product.glb` node starts with an existing PN. It compares each definition by name and read-back volume.
+- cad-bom `bom.py` writes no row for existing equipment and never reports it in `missing_in_step`. Its children merge like a phantom's. `release.py` `check_bom` refuses a BOM row for it.
+- `release.py`:
+  - It ships `definition/product.step`.
+  - With existing equipment in the record, it adds the in-context `assembly.step` under `context/`. It lists each interface with an existing end under `mates_with`.
+  - It refuses a `product.step` that names existing equipment. It refuses a version with existing equipment and no `product.step`.
+  - For a version without `product.step` and without existing equipment, it ships `definition/assembly.step`.
+- cad-render `render_states` draws existing equipment with no `render` value as a ghost. The cad-viewer tree uses the same three groups. `parts hide|iso made|purchased|existing` acts on a whole group.
+- Not yet covered: margins and stack-up against its range (bead benchhand-pcy, later PRs).
 
 ## Assembly sub-builds
 

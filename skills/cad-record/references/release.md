@@ -26,6 +26,14 @@ The run holds the revision's lock from start to end, from the first check of the
 
 Record v2 release writes **manifest schema v3**. It copies the frozen assembly definition and record snapshot, specification artifacts referenced by purchased parts, manufacturing outputs for each custom-made PN, every declared part or assembly drawing, every analysis bundle for a case under `hw/analysis/cases/<case>/`, every bundle cited by `verification.csv`, the current BOM and verification matrix, docs, and the acceptance inventory under `acceptance/`. Check, drawing, motion, render and capture bundle route kinds and manufacturing output files are defined by the generated canonical [layout table](layout.md); a route with no output contract blocks release. All supported process kinds' files go under `manufacturing/<PN>/`, not into separate per-process package folders.
 
+The package holds the delivered product only. `release.py` asks cad-record `sourcing.delivered` and leaves existing equipment (`make_buy: existing`) out of the definition, the BOM and the manufacturing outputs:
+
+- `definition/product.step` is the version's `product.step`. When a product name in it starts with the PN of existing equipment, the release refuses it (`release.contaminated`). It also refuses a version that has existing equipment but no `product.step` (`release.missing`).
+- With existing equipment, `context/assembly.step` holds the in-context scene for fit review.
+- `mates_with` lists each interface with an existing end. An entry names the interface and its type, the product-side end, and the equipment's PN, title and `existing` record.
+- A version built before `product.step`, and without existing equipment, ships `definition/assembly.step` as before.
+- `bom.csv` must not list existing equipment.
+
 `flow.frozen` must name vN, the version manifest's `manifest_sha256`, the output of `evidence.py digest --hw hw --version vN` in `evidence_sha256`, and the approving DESIGN-freeze decision. The release approval is a separate DR passed as `--decision`. Required evidence and selection must pass the release gate; unknown never passes. See [evidence.md](evidence.md) for the acceptance inventory and [manufacturing-intent.md](manufacturing-intent.md) for record policy.
 
 To plan pruning after release, run the release command above with `--prune`; it prints a digest-bound plan without removing anything. Review `keep` reasons and the `remove` list, then apply only with the exact digest printed by the plan:

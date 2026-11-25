@@ -1488,6 +1488,15 @@ class ExistingEquipmentBuildTests(unittest.TestCase):
             row = cli("check", "v1", "--hw", str(hw))[1]["checks"]["product_exports"]
         self.assertEqual((row["status"], row["existing_in_step"]), ("fail", ["TST-0002"]))
 
+    def test_the_sweep_measures_the_existing_part_against_the_product(self) -> None:
+        worst = self.hw.parent / ".cad-work" / "sweep" / "worst.step"
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(HERE.parents[1] / "cad-motion" / "scripts" / "sweep.py"),
+                               "--hw", str(self.hw), "--version", "v1", "--worst-step", str(worst), "--steps", "3",
+                               "--grid", "0", "--include-pair", "TST-0001:TST-0002", "--no-cache"],
+                              capture_output=True, text=True, check=False)
+        result = json.loads(proc.stdout)
+        self.assertIn(["TST-0001", "TST-0002"], result["pairs"]["checked"], proc.stderr[-2000:])
+
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class PairClearanceBuildTests(unittest.TestCase):

@@ -91,7 +91,7 @@ view is about. Hide or ghost it; never write a custom renderer for that.
 - `--ghost <PN|occurrence-id>` draws the part translucent with visible edges. It never occludes the subject or a visibility target.
 - `--hide <PN|occurrence-id>` leaves the part out of every view and of the framing.
 - Both repeat. A PN names every occurrence of it, an id (`@ring-a` or `ring-a`) one. `--show <id>` forces a part visible that its default hides or ghosts.
-- `part.yaml` `render: shown|ghost|hidden` sets the default for a part (shown when absent); the flags override it.
+- `part.yaml` `render: shown|ghost|hidden` sets the default for a part. The flags override it. Without `render`, the renderer shows a part and ghosts existing equipment (`make_buy: existing`).
 - An unknown id, one id under two flags, a hidden `closeup-` or `part-` subject and a hidden visibility target exit 2.
 - A hidden or ghosted window part is see-through to the visibility check, like `transparency: transparent`.
 - `render.json` lists `hidden` and `ghosted`, and each view's `render_inputs` holds both, so a change re-renders a view that a prior version would otherwise supply.
