@@ -24,3 +24,53 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: deck_face, role: plane}
+    B: {feature: end_face_neg, role: plane}
+    C: {feature: side_face_neg, role: plane}
+  coordinate_frame:
+    origin: {intersection: [A, B, C]}
+    z: {normal_to: A}
+    x: {normal_to: B}
+  views:
+    - {id: principal, kind: orthographic, normal_to: A}
+    - {id: front, kind: orthographic, normal_to: C}
+    - {id: side, kind: orthographic, normal_to: B}
+    - {id: section_cam, kind: section, normal_axis: y, through: journal_bore}
+  features:
+    deck_face: {size: general}
+    top_face: {size: general}
+    side_face_pos: {size: general}
+    side_face_neg: {size: general}
+    end_face_pos: {size: general}
+    end_face_neg: {size: general}
+    journal_bore: {size: general}
+    lobe_pockets: {size: general}
+    chamber_walls: {size: general}
+    chamber_floors: {size: general}
+    lobe_pocket_1_face_a: {size: general}
+    lobe_pocket_1_face_b: {size: general}
+    lobe_pocket_2_face_a: {size: general}
+    lobe_pocket_2_face_b: {size: general}
+    lobe_pocket_3_face_a: {size: general}
+    lobe_pocket_3_face_b: {size: general}
+  dimensions:
+    - {id: head_length, operation: plane_separation, features: [end_face_neg, end_face_pos], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: head_width, operation: plane_separation, features: [side_face_neg, side_face_pos], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: head_height, operation: plane_separation, features: [deck_face, top_face], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: cam_axis_height, operation: distance, features: [deck_face, journal_bore], tolerance: {deviation_mm: [-0.1, 0.1]}}
+    - {id: journal_bore_d, operation: diameter, features: [journal_bore], tolerance: {deviation_mm: [-0.04, 0.0]}}
+    - {id: chamber_d, operation: diameter, features: [chamber_walls], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: chamber_depth, operation: plane_separation, features: [deck_face, chamber_floors], presentation: section, tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_pocket_d, operation: diameter, features: [lobe_pockets], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_pocket_1_w, operation: plane_separation, features: [lobe_pocket_1_face_a, lobe_pocket_1_face_b], presentation: section, tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_pocket_2_w, operation: plane_separation, features: [lobe_pocket_2_face_a, lobe_pocket_2_face_b], presentation: section, tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: lobe_pocket_3_w, operation: plane_separation, features: [lobe_pocket_3_face_a, lobe_pocket_3_face_b], presentation: section, tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA. The journal bore is reamed to 8 H7 for the 8 f7 camshaft journals. Deburr."}
+    - {kind: process, text: "Print with the deck face down on the bed."}
+  sheet: {sizes: [A3], scale: "1:2"}

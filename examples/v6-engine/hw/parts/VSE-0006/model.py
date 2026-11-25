@@ -9,6 +9,9 @@ The cam axis runs along X, cam_h above the deck face, through an 8 mm journal bo
 """
 
 import cadquery as cq
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 from cadmodel.safe import safe_cut
 
 KERNEL = "cadquery"
@@ -43,3 +46,63 @@ def build(params: dict) -> cq.Shape:
         lobe_pocket = cq.Solid.makeCylinder(p["lobe_pocket_r"], p["lobe_pocket_w"], cq.Vector(x, 0, p["deck_h"] + p["cam_h"]), cq.Vector(1, 0, 0))
         body = safe_cut(body, cq.Workplane(obj=lobe_pocket))
     return body.val()
+
+
+def _witness(face: cq.Face) -> dict:
+    """A final-surface witness: the centre of the face's largest mesh triangle, projected onto the face."""
+    vertices, triangles = face.tessellate(0.01, 0.2)
+    a, b, c = max(((vertices[i], vertices[j], vertices[k]) for i, j, k in triangles),
+                  key=lambda t: (t[1] - t[0]).cross(t[2] - t[0]).Length)
+    near = GeomAPI_ProjectPointOnSurf(((a + b + c) * (1.0 / 3.0)).toPnt(), BRep_Tool.Surface_s(face.wrapped)).NearestPoint()
+    point = cq.Vector(near.X(), near.Y(), near.Z())
+    kind = {"PLANE": "plane", "CYLINDER": "cylinder", "CONE": "cone", "SPHERE": "sphere", "TORUS": "torus"}.get(face.geomType(), "other")
+    return {"support_type": kind, "point_mm": list(point.toTuple()), "normal": list(face.normalAt(point).normalized().toTuple())}
+
+
+def _radius(face: cq.Face) -> float:
+    return BRepAdaptor_Surface(face.wrapped).Cylinder().Radius()
+
+
+def _collect(shape: cq.Shape, role) -> dict:
+    """role(face, patch) -> (name, kind); faces with the same name join one locator."""
+    named: dict[str, tuple[str, list]] = {}
+    for face in shape.Faces():
+        patch = _witness(face)
+        name, kind = role(face, patch)
+        named.setdefault(name, (kind, []))[1].append(patch)
+    return {name: {"kind": kind, "frame": "part_local", "patches": patches} for name, (kind, patches) in named.items()}
+
+
+def drawing_features(params: dict, shape: cq.Shape) -> dict:
+    """The six outer faces, the journal bore, the chamber walls and floor, and the lobe pocket walls and flanks."""
+    p = {**PARAMS, **params}
+    half = p["head_len"] / 2.0
+    deck, top = p["deck_h"], p["deck_h"] + p["head_h"]
+    flanks = {}
+    for i, k in enumerate((-1, 0, 1), 1):
+        c = k * p["cyl_pitch"]
+        flanks[f"lobe_pocket_{i}_face_a"], flanks[f"lobe_pocket_{i}_face_b"] = c - p["lobe_pocket_w"] / 2.0, c + p["lobe_pocket_w"] / 2.0
+
+    def role(face: cq.Face, patch: dict) -> tuple[str, str]:
+        x, y, z = patch["point_mm"]
+        if patch["support_type"] == "cylinder":
+            r = _radius(face)
+            for name, radius in (("journal_bore", p["journal_bore_d"] / 2.0), ("lobe_pockets", p["lobe_pocket_r"]), ("chamber_walls", p["chamber_d"] / 2.0)):
+                if abs(r - radius) < 1e-6:
+                    return name, "bore"
+            raise ValueError(f"unexpected cylinder r={r}")
+        nx, ny, nz = patch["normal"]
+        if abs(nz) > 0.99:
+            for name, level in (("deck_face", deck), ("top_face", top), ("chamber_floors", deck + p["chamber_h"])):
+                if abs(z - level) < 1e-6:
+                    return name, "plane_face"
+        if abs(abs(y) - p["head_w"] / 2.0) < 1e-6:
+            return ("side_face_pos" if y > 0 else "side_face_neg"), "plane_face"
+        if abs(abs(x) - half) < 1e-6:
+            return ("end_face_pos" if x > 0 else "end_face_neg"), "plane_face"
+        for name, level in flanks.items():
+            if abs(x - level) < 1e-6:
+                return name, "plane_face"
+        raise ValueError(f"unexpected plane at {x}, {y}, {z}")
+
+    return _collect(shape, role)
