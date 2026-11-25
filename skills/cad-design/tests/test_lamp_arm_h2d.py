@@ -201,10 +201,11 @@ class H2dEnvelopeTests(unittest.TestCase):
                 found = [f for f in result.by_code("process.fdm.envelope") if f.get("obligation") == obligation]
                 self.assertEqual(found[0]["criterion"]["value"], 325.0)
 
-    def test_the_unpublished_bed_contact_minimum_stays_unknown_as_uncalibrated(self) -> None:
+    def test_the_unpublished_bed_contact_minimum_is_a_non_blocking_advisory(self) -> None:
         result = self.orient(PRINTED[0], (50.0, 50.0, 50.0))
         obligation = f"process.fdm.orientation@{PRINTED[0]}/print"
-        self.assertEqual(result.outcome(obligation)["outcome"], "unknown")
+        self.assertEqual(result.outcome(obligation)["outcome"], "not_assessed")
+        self.assertEqual(result.outcome(obligation)["reason"], "no_guideline")
         self.assertIn("process.fdm.contact_area_uncalibrated", codes(result, obligation))
         self.assertNotIn("process.fdm.capability_unknown", codes(result, obligation))
 

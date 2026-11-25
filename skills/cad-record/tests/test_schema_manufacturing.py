@@ -189,7 +189,7 @@ class SharedDefinitions(SchemaCase):
                 ("finding", {**finding, "outcome": "not_assessed", "reason": "calibration_off"}, {"remedy": "x"}),
                 ("obligation_outcome", outcome, {})):
             bare = {k: v for k, v in base.items() if k != "reason"}
-            self.assert_shared(definition, {f"reason {r}": {**base, "reason": r} for r in ("calibration_off", "no_capability_profile")}
+            self.assert_shared(definition, {f"reason {r}": {**base, "reason": r} for r in ("calibration_off", "no_capability_profile", "no_guideline")}
                                | {"unknown without a reason": {**bare, "outcome": "unknown", **unknown}}, {
                 "not_assessed without a reason": bare,
                 "unknown reason": {**base, "reason": "vibes"},
