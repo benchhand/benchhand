@@ -620,15 +620,17 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
         delivered = [oid for oid in chain.ids if group_of_pn[chain.pn(oid)] != sourcing.EXISTING]
         pose.write_assembly_step(work / "assembly.step", top, parts, [chain.inventory.get(i) for i in chain.ids],
                                  transforms)
-        pose.write_assembly_step(work / sourcing.PRODUCT_STEP, top, parts, [chain.inventory.get(i) for i in delivered],
-                                 transforms)
+        # the new product exports are grouped in the STEP too; assembly.step keeps its flat tree, whose component
+        # paths its readers rely on (pose.read_assembly_step), until they resolve occurrences by name
+        grouped = sorted(delivered, key=lambda oid: sourcing.GROUPS.index(group_of_pn[chain.pn(oid)]))
+        pose.write_assembly_step(work / sourcing.PRODUCT_STEP, top, parts, [chain.inventory.get(i) for i in grouped],
+                                 transforms, {oid: group_of_pn[chain.pn(oid)] for oid in delivered})
         mark = time.perf_counter()
         glb_info = mesh.write_glb(work / "assembly.step", work / "assembly.glb")
         mesh.write_glb(work / sourcing.PRODUCT_STEP, work / sourcing.PRODUCT_GLB)
         node_groups = {name: group_of_pn[chain.pn(oid)]
                        for oid, name in mesh.instance_names(chain, {pn: by_pn[pn].product for pn in parts}).items()}
-        mesh.group_glb(work / "assembly.glb", node_groups)
-        mesh.group_glb(work / sourcing.PRODUCT_GLB, node_groups)
+        mesh.group_glb(work / "assembly.glb", node_groups)  # product.glb takes its groups from product.step
         mapping = mesh.part_map(work / "assembly.glb", chain, {pn: by_pn[pn].product for pn in parts})
         timings["glb_s"] = round(time.perf_counter() - mark, 3)
         write_json(work / "part-map.json", {"schema_version": SCHEMA_VERSION, **mapping})

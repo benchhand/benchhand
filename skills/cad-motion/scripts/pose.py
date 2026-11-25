@@ -1299,9 +1299,11 @@ def write_part_step(path: Path, part: Part) -> None:
 
 
 def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Part], occurrences: Iterable[Any],
-                        placements: Mapping[str, Rigid]) -> None:
+                        placements: Mapping[str, Rigid], groups: Mapping[str, str] | None = None) -> None:
     """Write AP242: one product per PN definition and, under the top product `top_name`, one component per
     occurrence at `placements[occurrence.id]`. An explicit occurrence's component is named `<product> [@id]`.
+    With `groups` (occurrence id -> group name), each occurrence goes under an unplaced group product of that
+    name below the top, the groups in the order their first occurrence comes; placements stay in the top's frame.
 
     A definition has no location of its own: the placement belongs on the component. The writer raises
     MotionError for a located definition, because its validation properties would vanish."""
@@ -1311,6 +1313,18 @@ def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Par
     top = tool.NewShape()
     _set_name(top, top_name)
     labels: dict[str, Any] = {}
+    parents: dict[str, Any] = {}
+
+    def parent_of(occurrence: Any) -> Any:
+        if groups is None:
+            return top
+        name = groups[occurrence.id]
+        if name not in parents:
+            parents[name] = tool.NewShape()
+            _set_name(parents[name], name)
+            _set_name(tool.AddComponent(top, parents[name], TopLoc_Location()), name)
+        return parents[name]
+
     for occurrence in occurrences:
         part = definitions[occurrence.pn]
         if occurrence.pn not in labels:
@@ -1319,7 +1333,8 @@ def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Par
                                   f"definition and put the placement on the component")
             labels[occurrence.pn] = _add_shape(tool, part.shape)
             _set_name(labels[occurrence.pn], part.name)
-        component = tool.AddComponent(top, labels[occurrence.pn], TopLoc_Location(to_trsf(placements[occurrence.id])))
+        component = tool.AddComponent(parent_of(occurrence), labels[occurrence.pn],
+                                      TopLoc_Location(to_trsf(placements[occurrence.id])))
         tag = component_name(part, occurrence)
         if tag is not None:
             _set_name(component, tag)
