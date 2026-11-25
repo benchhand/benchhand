@@ -484,6 +484,23 @@ class SubBuildTests(unittest.TestCase):
         self.assertEqual(request.unit, frozenset({"mag-a", "mag-b"}))
         self.assertTrue(any("TST-0102 is removed" in reason for reason in request.unknown), request.unknown)
 
+    def test_existing_equipment_stays_in_the_main_build_and_off_the_bench(self) -> None:
+        mount = "TST-0109"  # existing equipment the hanger's subassembly lists and the main build mounts onto
+        record = {"occurrences": [{"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0]]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1], mount],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        inventory = assembly_data.normalize(record, {self.MAGNET: "part_local"})
+        operations = ops.normalize({"operations": self.items()})
+        existing = frozenset({mount})
+        state = ops.sequence(operations, inventory, existing)
+        self.assertNotIn(mount, state.sub_builds["hanger"].members, "existing equipment is never built on the bench")
+        self.assertIn(mount, state.base)
+        self.assertEqual(ops.check_order(operations, inventory, existing).findings, ())
+        plan = {r.operation.id: r for r in ops.access_plan(operations, inventory, existing)}
+        self.assertNotIn(mount, plan["bond-mag-a"].tool_obstacles, "the bench does not hold the existing equipment")
+        self.assertIn(mount, plan["install-hanger"].path_obstacles, "the unit travels past the existing equipment")
+
     def test_the_cure_hold_sees_only_its_sub_build(self) -> None:
         clamped = {**self.CURE, "tools": ["spring clamp"]}
         items = [self.bond("mag-a"), self.bond("mag-b"), clamped, dict(self.INSTALL)]
