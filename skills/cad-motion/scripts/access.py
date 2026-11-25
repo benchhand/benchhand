@@ -154,6 +154,7 @@ class Travel:
     collisions: list[dict[str, Any]] = field(default_factory=list)
     unproven: list[dict[str, Any]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    tool: str | None = None  # the name of the tool whose envelope travels; None for a part path
     engaged_mm: dict[str, float] = field(default_factory=dict)  # obstacle -> path length of its engagement from the installed pose
 
     def report(self) -> dict[str, Any]:
@@ -395,7 +396,7 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
                 continue
             key, _shape = tools[(op.id, number)]
             entry.paths.append(Travel(f"{op.id}/tool/{number}", key, world[operated], _rotate(rotation, tool.approach),
-                                     obstacles(request.tool_obstacles, None), route="approach"))
+                                     obstacles(request.tool_obstacles, None), route="approach", tool=tool.name))
         plans.append(entry)
     return plans
 
@@ -464,10 +465,10 @@ def access_findings(entry: OperationAccess) -> list[dict[str, Any]]:
     for path in entry.paths:
         if path.status != "collision":
             continue
-        tool = "/tool/" in path.label
+        tool = path.tool is not None
         hits = sorted({c["obstacle"] for c in path.collisions})
         worst = max(path.collisions, key=lambda c: c["overlap_mm3"])
-        what = f"tool {op.tools[int(path.label.rsplit('/', 1)[1])].name!r}" if tool else f"{op.part}"
+        what = f"tool {path.tool!r}" if tool else f"{op.part}"
         findings.append({
             "id": f"{_slug(op.id)}_{'tool' if tool else 'part'}_path_{len(findings) + 1}",
             "code": "assembly.tool_blocked" if tool else "assembly.part_path_blocked", **base, "severity": "critical",
