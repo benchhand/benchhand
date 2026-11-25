@@ -567,7 +567,8 @@ def access_findings(entry: OperationAccess) -> list[dict[str, Any]]:
             "outcome": "unknown", "measured": {"status": "unknown", "reason": "; ".join(reasons)},
             "criterion": criterion, "uncertainty": "; ".join(reasons),
             "consequence": f"whether the part and tools of {op.id} reach their positions is not established",
-            "remedy": "record the direction, and each tool's approach and sourced envelope solid, then rerun",
+            "remedy": "record the direction, and each tool's approach, then rerun; for a special tool, cite a STEP "
+                      "solid of it as its tool_access envelope",
         })
     return findings
 
@@ -581,8 +582,11 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
         row["findings"] = mine
     if entry.outcome == "unknown":
         row["uncertainty"] = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
-    elif entry.advisory:
-        row["uncertainty"] = "; ".join(entry.advisory)
+    elif entry.outcome == "not_applicable":
+        row["uncertainty"] = "; ".join([f"{entry.operation.id} moves no part and no tool or hand reaches it: "
+                                        "there is no access to check", *entry.notes])
+    elif entry.advisory or entry.notes:
+        row["uncertainty"] = "; ".join([*entry.advisory, *entry.notes])
     if entry.outcome == "not_assessed":
         row["reason"] = "no_capability_profile"
     return row
@@ -639,7 +643,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     existing = frozenset(pn for pn, part in record.parts.items() if part.existing)
     order = operations_module.check_order(operations, chain.inventory, existing)
     outcomes, findings = list(order.outcomes), list(order.findings)
-    detail: dict[str, Any] = {"operations": operations_module.summary(operations), "paths": {}, "nominal": {}}
+    detail: dict[str, Any] = {"operations": operations_module.summary(operations), "paths": {}, "notes": {}, "nominal": {}}
     dependencies = {"assembly_yaml": hashlib.sha256(assembly_path.read_bytes()).hexdigest()}
     interfaces_path = record_hw / "interfaces.yaml"
     if interfaces_path.is_file():
@@ -655,6 +659,9 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         values = chain.complete({})
         world = chain.transforms(values)
         detail["nominal"] = {jid: value for jid, value in values.items()}
+        standard, standard_problems = standard_envelopes(requests, chain, world, definitions)
+        tools.update(standard)
+        tool_problems.update(standard_problems)
         plans = plan_paths(requests, chain, world, definitions, caps, tools)
         for entry in plans:
             entry.unknown.extend(reason for (op_id, _), reason in sorted(tool_problems.items())
@@ -665,16 +672,19 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
             findings.extend(mine)
             outcomes.append(access_outcome(entry, mine))
             detail["paths"][entry.operation.id] = [p.report() for p in entry.paths]
+            detail["notes"][entry.operation.id] = list(entry.notes)
     detail["limits"] = [ACCESS_COVERAGE, "the order check covers the declared sequence only"]
     expected = [o for o in intent_module.required_checks(record) if o.family in FAMILIES]
     return check_packet.build(record, expected, PRODUCER, outcomes, findings, dependencies), detail
 
 
 def policy_digest() -> str:
-    """The sha256 of the access policy sources. The pair evaluator's rule digest covers neither, so a changed policy
-    must reach the recipe, or the next run would reuse a packet from before the change."""
+    """The sha256 of the access policy sources: this file, the engagement rule, and cad-record's reach planning and
+    shipped envelope tables. The pair evaluator's rule digest covers none of them, so a changed policy must reach the
+    recipe, or the next run would reuse a packet from before the change."""
     digest = hashlib.sha256()
-    for source in (Path(__file__), Path(engagement_module.__file__)):
+    for source in (Path(__file__), Path(engagement_module.__file__), Path(operations_module.__file__),
+                   Path(operations_module.tool_envelopes.__file__)):
         digest.update(source.name.encode() + b"\0" + hashlib.sha256(source.read_bytes()).digest())
     return digest.hexdigest()
 
