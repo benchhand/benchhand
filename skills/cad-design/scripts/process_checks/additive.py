@@ -583,6 +583,15 @@ def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, s
                                   "thicker than it are not separated by this scan",
                                   remedy="section the structural regions to measure their walls", recheck=[f"process.{kind}.geometry"]))
             return UNKNOWN, "structural walls not separated from the exempt feature"
+        if feature_cal.known:  # a calibrated miss fails: the advisory below is only for absent evidence
+            need = feature_cal.bounds("mm")[1]
+            findings.append(Draft(f"process.{kind}.wall_feature_class", "major", FAIL, length(thickness),
+                                  feature_cal.criterion("wall_thickness", ">=", need), g.method("minimum-wall scan"),
+                                  "sampled scan: the true minimum can be up to the sample spacing thinner",
+                                  f"the {exempt[0]} wall {thickness:.3f} mm thick is below its own calibrated minimum {need:g} mm",
+                                  remedy=f"thicken the {exempt[0]} feature", recheck=[f"process.{kind}.geometry"],
+                                  feature=sorted(feats)[0] if feats else None))
+            return FAIL, f"{exempt[0]} wall below its calibrated minimum"
         return _no_basis(ctx, findings, Draft(
             f"process.{kind}.wall_feature_class", "minor", UNKNOWN, length(thickness),
             feature_cal.criterion("wall_thickness", ">="), g.method("minimum-wall scan"),
