@@ -589,7 +589,8 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
     if mine:
         row["findings"] = mine
     if entry.outcome == "unknown":
-        row["uncertainty"] = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
+        reason = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
+        row["uncertainty"] = "; ".join([reason, *entry.notes])
     elif entry.outcome == "not_applicable":
         row["uncertainty"] = "; ".join([f"{entry.operation.id} moves no part and no tool or hand reaches it: "
                                         "there is no access to check", *entry.notes])
