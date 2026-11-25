@@ -7,7 +7,7 @@ schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 s
 schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
 schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
-schema-sha256 087b3e4b0071cbe7967a1d3fbd532067c069e0b8b1d105ba28cc52ec8f2b0adb skills/cad-record/schemas/finding.schema.json
+schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
 schema-sha256 4b1f107ed3be3c46a1a68c1b4cb81f1625f3053f3a29f95bd6b0de2bd02f02af skills/cad-record/schemas/interfaces.schema.json
 schema-sha256 5d04c1dd2745de30144da9fe4080e55cea79e23c3a207b3474601dd6eb8e9125 skills/cad-record/schemas/layout.schema.json
 schema-sha256 2af936cbacdc55c0cf3789c97db7ef72a6e230ad2ab0a5a968862238ab75fcad skills/cad-record/schemas/manufacturing-capabilities.schema.json
@@ -17,7 +17,7 @@ schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 s
 schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
-schema-sha256 efeefdd70e4d4ae4fd6c7f20a3cc52623414a54473e55825f63fded7b9e62ff2 skills/cad-record/schemas/manufacturing.schema.json
+schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 skills/cad-record/schemas/manufacturing.schema.json
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 schema-sha256 050bcaa9f4434f53535d13d127f7aa52bc9c772416535aee36518bbd22e75426 skills/cad-record/schemas/part.schema.json
 schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
@@ -1649,7 +1649,7 @@ One finding as a CAD tool reports it in the tool-result envelope. The stable `co
 | `code` | `str` | yes |  | A stable finding code such as process.fdm.overhang or fit_unverified: lower-case words joined by underscores, optionally dotted into a namespace |
 | `severity` | `Literal["critical", "major", "minor", "info"]` | no |  | How bad the finding is, not whether it blocks: one shared blocking rule that every gate calls decides that, and under it minor and info are the non-blocking set. Canonical words only. Target mapping for the producers: error to major, layout stage to major or minor by layout_strict, no severity to major, warning to minor (warning is retired). That mapping keeps today's blocking effect only once the shared rule and the producers have migrated. Until then the only stand-alone same-effect mapping is warning to info |
 | `outcome` | `Literal["pass", "fail", "unknown", "not_applicable", "not_assessed"]` | no |  | A check's result; unknown is never a pass, and not_assessed (calibration off, no capability profile, or no calibration and no guideline value) is not a pass either |
-| `reason` | `Literal["calibration_off", "no_capability_profile", "no_guideline"]` | no |  | Why a not_assessed finding was not assessed: its calibration is off, no capability profile exists for it, or neither a calibration nor a guideline value covers it (no_guideline). Only a not_assessed finding carries one |
+| `reason` | `Literal["calibration_off", "no_capability_profile", "no_guideline", "no_check"]` | no |  | Why a not_assessed finding was not assessed: its calibration is off, no capability profile exists for it, neither a calibration nor a guideline value covers it (no_guideline), or no check measures its criterion (no_check). Only a not_assessed finding carries one |
 | `subject` | `FindingSubject` | no |  | The part and feature the finding is about |
 | `location` | `FindingLocation` | no |  | Where in the project the finding applies: a project-relative file and, when known, a 1-based line |
 | `message` | `str` | yes |  | What is wrong, in one sentence |
@@ -4523,9 +4523,9 @@ Constraints not expressed by the type:
 
 Source: `/$defs/not_assessed_reason`
 
-Why a check was not assessed: its calibration is off, no capability profile exists for it, or neither a calibration nor a guideline value covers it (no_guideline)
+Why a check was not assessed: its calibration is off, no capability profile exists for it, neither a calibration nor a guideline value covers it (no_guideline), or no check measures its criterion (no_check)
 
-Alias of `Literal["calibration_off", "no_capability_profile", "no_guideline"]`
+Alias of `Literal["calibration_off", "no_capability_profile", "no_guideline", "no_check"]`
 
 ### ManufacturingNotAssessedRule
 

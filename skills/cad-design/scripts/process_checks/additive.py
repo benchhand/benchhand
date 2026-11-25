@@ -28,7 +28,7 @@ Calibration (or guideline) characteristics read (scope: material, and orientatio
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .core import (FAIL, MAXIMUM, MINIMUM, NOT_APPLICABLE, NOT_ASSESSED, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Limit,
@@ -534,7 +534,8 @@ def geometry(ctx: Context) -> Result:
     parts += hole_fits(ctx, g, findings)
     parts += _critical(ctx, g, findings)
     parts += _receiving(ctx, g, findings)
-    return combine(method, parts, findings, uncertainty="sampled wall scan; calibration scatter as recorded", reason=NO_BASIS)
+    return combine(method, parts, findings, uncertainty="sampled wall scan; calibration scatter as recorded",
+                   reason=_reason(findings))
 
 
 def wall_check(ctx: Context, g: Geometry, findings: list[Draft]) -> tuple[str, str]:
@@ -760,8 +761,8 @@ def _tolerance(ctx: Context, surface: Any, characteristic: str) -> tuple[tuple[f
 
 def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[str, str]]:
     """Every critical surface that is not a bore: its feature must be located, and its as-made deviation (with the
-    first-layer flare of a bed feature) must stay inside the deviation tolerance it states. A surface that states only
-    other criteria is judged by their own checks; one that states none is open."""
+    first-layer flare of a bed feature) must stay inside the deviation tolerance it states. A criterion no check reads
+    is not assessed (no_check), or fails when its band is narrower than the as-printed spread; one that states none is open."""
     kind = _k(ctx)
     holes = {f for hole in g.holes() for f in hole.get("features") or ()}
     parts: list[tuple[str, str]] = []
@@ -779,22 +780,81 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
             continue
         characteristic = "profile_deviation" if surface.role in ("flank", "cam") else "dimensional_deviation"
         band, unsupported = _tolerance(ctx, surface, characteristic)
-        if band is None:
-            if unsupported:
-                parts.append((UNKNOWN, f"{feature} {characteristic} criterion with operator {', '.join(unsupported)} is not judged"))
-            elif not ctx.surface_raw(surface).get("criteria"):
-                findings.append(Draft(f"process.{kind}.feature_tolerance_missing", "minor", UNKNOWN, unknown("no tolerance"),
-                                      unknown(f"the {characteristic} tolerance of the critical surface"),
-                                      g.method("feature locators"), "the critical surface states no criterion",
-                                      f"whether the {surface.role} {feature} holds its size as printed is unknown",
-                                      remedy=f"state the {characteristic} tolerance of {feature} (between, mm)",
-                                      recheck=[f"process.{kind}.geometry"], feature=feature))
-                parts.append((UNKNOWN, f"{feature} states no tolerance"))
-            else:
-                parts.append((NOT_APPLICABLE, ""))  # its stated criteria (flatness, roughness, ...) have their own checks
-            continue
-        parts.append(_deviation(ctx, g, surface, characteristic, band, unsupported, findings))
+        criteria = ctx.surface_raw(surface).get("criteria") or ()
+        if band is not None:
+            parts.append(_deviation(ctx, g, surface, characteristic, band, unsupported, findings))
+        elif unsupported:
+            parts.append((UNKNOWN, f"{feature} {characteristic} criterion with operator {', '.join(unsupported)} is not judged"))
+        elif not criteria:
+            findings.append(Draft(f"process.{kind}.feature_tolerance_missing", "minor", UNKNOWN, unknown("no tolerance"),
+                                  unknown(f"the {characteristic} tolerance of the critical surface"),
+                                  g.method("feature locators"), "the critical surface states no criterion",
+                                  f"whether the {surface.role} {feature} holds its size as printed is unknown",
+                                  remedy=f"state the {characteristic} tolerance of {feature} (between, mm)",
+                                  recheck=[f"process.{kind}.geometry"], feature=feature))
+            parts.append((UNKNOWN, f"{feature} states no tolerance"))
+        judged = _judged_properties(ctx)
+        parts += [_unchecked(ctx, g, surface, item, findings) for item in criteria if item.get("property") not in judged]
+        parts.append((NOT_APPLICABLE, ""))  # the criteria judged elsewhere (flatness, ...) have their own checks
     return parts
+
+
+# The critical-surface properties some check of a printed route reads: the deviation here, flatness in thermal
+# distortion. A bore's diameter is hole_fits'; this loop skips bores. Any other criterion is not assessed (no_check).
+JUDGED_PROPERTIES = frozenset({"dimensional_deviation", "profile_deviation", "flatness"})
+NO_CHECK = "no_check"  # the not_assessed reason of a criterion no check measures
+
+
+def _judged_properties(ctx: Context) -> frozenset[str]:
+    """JUDGED_PROPERTIES plus join_distortion when a later joining operation judges the surface as made."""
+    joined = any(op.kind == "joining" for op in ctx.after())
+    return JUDGED_PROPERTIES | ({"join_distortion"} if joined else frozenset())
+
+
+def _length_mm(ctx: Context, value: Any, units: str | None) -> float | None:
+    """`value` in mm when `units` is a length, else None."""
+    if units is None:
+        return None
+    try:
+        return float(ctx.mi.convert(value, units, "mm"))
+    except Exception:  # noqa: BLE001 - any unit the converter refuses is not a length
+        return None
+
+
+def _unchecked(ctx: Context, g: Geometry, surface: Any, item: Mapping[str, Any], findings: list[Draft]) -> tuple[str, str]:
+    """A criterion no check measures on the model: never a pass. A linear `between` band narrower than the spread of
+    the governing deviation (calibration, else guideline, by size) fails, since no nominal holds it; anything else is
+    not assessed (no_check)."""
+    kind, feature, prop = _k(ctx), surface.feature, str(item.get("property"))
+    units = item.get("units")
+    if item.get("operator") == "between" and isinstance(item.get("value"), (list, tuple)):
+        low, high = (_length_mm(ctx, v, units) for v in item["value"])
+        if low is not None and high is not None:
+            spread = ctx.governing("dimensional_deviation", size=max(abs(low), abs(high)))
+            if spread.known:
+                lower, upper = spread.bounds("mm")
+                if high - low < upper - lower - 1e-9:
+                    findings.append(Draft(f"process.{kind}.criterion_band", "major", FAIL,
+                                          {"value": round(high - low, 6), "units": "mm"}, {**item},
+                                          g.method(f"band width against the {spread.status} deviation spread"), spread.basis,
+                                          f"the {prop} band of {feature} ({high - low:g} mm) is narrower than the as-printed "
+                                          f"spread ({upper - lower:g} mm): no model size holds it",
+                                          remedy=ctx.remedy(f"widen the {prop} band, finish {feature} after printing, or calibrate "
+                                                            "a tighter dimensional_deviation",
+                                                            f"widen the {prop} band, or finish {feature} after printing"),
+                                          recheck=[f"process.{kind}.geometry"], feature=feature))
+                    return FAIL, f"{feature} {prop} band narrower than the as-printed spread"
+    findings.append(Draft(f"process.{kind}.criterion_not_assessed", "minor", NOT_ASSESSED, unknown("not measured on the model"),
+                          {**item}, g.method("feature locators"), f"no check measures {prop} on the model",
+                          f"whether the {surface.role} {feature} meets its {prop} criterion is not assessed",
+                          remedy=f"print and inspect {feature} for {prop}, or state it as a tolerance a check reads",
+                          recheck=[f"process.{kind}.geometry"], feature=feature, reason=NO_CHECK))
+    return NOT_ASSESSED, f"{feature} {prop} not assessed: no check measures it"
+
+
+def _reason(findings: Sequence[Draft]) -> str:
+    """The not_assessed reason of a check result: the first not-assessed finding's, else no_guideline."""
+    return next((f.reason for f in findings if f.outcome == NOT_ASSESSED and f.reason), NO_BASIS)
 
 
 def _largest(g: Geometry) -> float | None:

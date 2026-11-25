@@ -159,7 +159,7 @@
       "enum": ["cad_valid", "geometrically_manufacturable", "process_planned", "simulation_supported", "physically_validated"]
     },
     "outcome": {"description": "A check obligation's result; unknown is never a pass", "enum": ["pass", "fail", "unknown", "not_applicable", "not_assessed"]},
-    "not_assessed_reason": {"description": "Why a check was not assessed: its calibration is off, no capability profile exists for it, or neither a calibration nor a guideline value covers it (no_guideline)", "enum": ["calibration_off", "no_capability_profile", "no_guideline"]},
+    "not_assessed_reason": {"description": "Why a check was not assessed: its calibration is off, no capability profile exists for it, neither a calibration nor a guideline value covers it (no_guideline), or no check measures its criterion (no_check)", "enum": ["calibration_off", "no_capability_profile", "no_guideline", "no_check"]},
     "not_assessed_rule": {
       "description": "A not_assessed outcome carries its reason; no other outcome does",
       "if": {"properties": {"outcome": {"const": "not_assessed"}}, "required": ["outcome"]},

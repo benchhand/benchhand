@@ -43,7 +43,7 @@ class HandlerError(RuntimeError):
 
 PASS, FAIL, UNKNOWN, NOT_APPLICABLE, NOT_ASSESSED = "pass", "fail", "unknown", "not_applicable", "not_assessed"
 OUTCOME_ORDER = (FAIL, UNKNOWN, NOT_ASSESSED, PASS)  # worst first: the order check, part and packet results take (D37)
-NOT_ASSESSED_REASONS = ("calibration_off", "no_capability_profile", "no_guideline")  # why a check was not assessed (manufacturing.schema.json)
+NOT_ASSESSED_REASONS = ("calibration_off", "no_capability_profile", "no_guideline", "no_check")  # why a check was not assessed (manufacturing.schema.json)
 IMPLICIT = "main"  # the component id of a sole solid (cad-model components.IMPLICIT)
 PROBE_FORMAT = 1  # the probe facts form_check.py writes; bump when a key's meaning changes
 DIRECTIONS = {"+x": (1.0, 0.0, 0.0), "-x": (-1.0, 0.0, 0.0), "+y": (0.0, 1.0, 0.0), "-y": (0.0, -1.0, 0.0),
