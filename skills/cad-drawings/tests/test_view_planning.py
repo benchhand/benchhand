@@ -365,6 +365,15 @@ class InterfaceSizeOnABore(unittest.TestCase):
         self.assertEqual((char.operation, char.value), ("radius", 2.5))
         self.assertEqual(sheet._callout_text(char, "iso"), "R2.5")
 
+    def test_a_heat_set_seat_without_hole_tol_is_refused_not_drawn_with_zero_limits(self) -> None:
+        seat = {"heat_set": [{"pair": ["TST-0006", "TST-0008"], "feature": "bore", "hole_d": 5.7, "insert": "M3 x 5.7",
+                              "source": "https://example.com/m3-insert"}]}
+        measured = self.measure(360.0, 5.7, seat)
+        self.assertEqual([c for c in measured.characteristics if c.feature == "bore" and c.operation == "diameter"], [])
+        (refusal,) = [f for f in measured.findings if f["code"] == "tolerance_missing"]
+        self.assertEqual(refusal["feature"], "bore")
+        self.assertIn("hole_tol", refusal["message"])
+
 
 def strip(index: int, ends: tuple, normal) -> Face:
     """A plane face 40 long along x through the two YZ points ``ends``."""

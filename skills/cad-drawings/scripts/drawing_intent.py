@@ -804,12 +804,7 @@ class Measurer:
                 found.append(Tolerance("fit", limits_.lower * micron, limits_.upper * micron, nominal=nominal,
                                        designation=cls, source=f"{interface['id']} {key} {fit['fit']}"))
             if side == "hole":
-                for heat in limits.get("heat_set") or []:
-                    if heat["pair"][0] == self.pn and heat.get("feature") == feature.id:
-                        low, high = heat.get("hole_tol", (0.0, 0.0))
-                        found.append(Tolerance("heat_set", Decimal(str(low)), Decimal(str(high)),
-                                               nominal=Decimal(str(heat["hole_d"])), designation=None,
-                                               source=f"{interface['id']} heat_set {heat['insert']}"))
+                found += self._heat_set_tolerances(interface, feature)
             ring = limits.get("retaining_ring")
             if side == "shaft" and isinstance(ring, Mapping) and ring.get("pair", [None])[0] == self.pn \
                     and ring.get("feature") == feature.id:
@@ -832,6 +827,21 @@ class Measurer:
         self._post_process_check(feature, tolerance)
         return tolerance
 
+    def _heat_set_tolerances(self, interface: Mapping[str, Any], feature: ResolvedFeature) -> list[Tolerance]:
+        """The limits of each heat-set seat ``interface`` binds to the feature: ``hole_d`` and ``hole_tol``."""
+        found = []
+        for heat in (interface.get("limits") or {}).get("heat_set") or []:
+            if heat["pair"][0] != self.pn or heat.get("feature") != feature.id:
+                continue
+            if "hole_tol" not in heat:
+                raise IntentError("tolerance_missing", f"{interface['id']} heat_set {heat['insert']} states hole_d "
+                                  f"{heat['hole_d']} and no hole_tol, so the seat's limits are unknown; state the "
+                                  f"insert maker's hole tolerance as hole_tol [lower, upper] in mm")
+            low, high = heat["hole_tol"]
+            found.append(Tolerance("heat_set", Decimal(str(low)), Decimal(str(high)), nominal=Decimal(str(heat["hole_d"])),
+                                   designation=None, source=f"{interface['id']} heat_set {heat['insert']}"))
+        return found
+
     def _post_process_check(self, feature: ResolvedFeature, tolerance: Tolerance) -> None:
         """Whether the drawn fit is planned to be achieved: the feature's own route operations and
         inspection (finished_state_findings)."""
@@ -848,9 +858,13 @@ class Measurer:
 
     def _round_size(self, feature: ResolvedFeature, instances: Sequence[Instance], inward: bool) -> None:
         """A bore's or shaft's diameter, or a partial one's radius when no interface size binds it: a fit class,
-        heat-set seat or ring groove limits a diameter."""
+        heat-set seat or ring groove limits a diameter. An interface size with unknown limits is refused."""
         diameter = 2 * instances[0].radius
-        tolerance = self._size_tolerance(feature, "hole" if inward else "shaft", diameter)
+        try:
+            tolerance = self._size_tolerance(feature, "hole" if inward else "shaft", diameter)
+        except IntentError as exc:
+            self.add(finding(exc.code, f"{feature.id}: {exc}", feature=feature.id))
+            return
         partial = all((self.faces[i].span_deg or 360.0) < 359.0 for inst in instances for i in inst.faces)
         operation = "radius" if partial and tolerance is None else "diameter"
         self.char(feature, operation, instances[0].radius if operation == "radius" else diameter, feature.faces,

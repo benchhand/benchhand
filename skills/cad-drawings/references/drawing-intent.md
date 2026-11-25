@@ -115,6 +115,10 @@ datums. Instances with a missing or extra node keep one location each.
 An interface size is a diameter. A partial bore or shaft bound to one prints `⌀` with the fit's
 nominal and class, never a radius. On an ISO sheet that reads `⌀5 H11 (+0.075/0)`.
 
+A `heat_set` seat takes its limits from `hole_d` and `hole_tol`. Without `hole_tol`, nothing states
+the seat's limits. The sheet leaves out the seat's diameter. The drawing fails with
+`tolerance_missing`, which names `hole_tol`. No zero tolerance or general tolerance stands in for it.
+
 `engagement_length_mm` is optional. It goes in four places:
 
 - `press_fit`
