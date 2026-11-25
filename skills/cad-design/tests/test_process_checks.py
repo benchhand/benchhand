@@ -2828,6 +2828,18 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(wide, GEOMETRY), "not_assessed")
         self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(wide)], [("depth", "no_check")])
 
+    def test_every_critical_surface_linked_to_one_bore_is_judged(self) -> None:
+        """One 6 mm bore carries two critical features: bore_a (5..7 mm) passes, bore_b needs 10..11 mm and fails."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore_a", "locating", criteria=[_diameter_criterion("between 5.0 7.0")]),
+            surface("bore_b", "locating", criteria=[_diameter_criterion("between 10.0 11.0")])]
+        shared = hole("bore_a", 6.0)
+        shared["features"] = ["bore_a", "bore_b"]
+        result = self.assess(documents, geometry("TST-0101", facts(holes=(shared,), walls={"thickness_mm": 3.0})), catalog=SHIPPED)
+        self.assertEqual(self.outcome(result, GEOMETRY), "fail")
+        self.assertEqual([f["subject"]["feature"] for f in result.by_code("process.fdm.hole_fit")], ["bore_b"])
+
     def test_a_criterion_of_another_role_is_not_dropped(self) -> None:
         """A datum reads dimensional_deviation; its profile_deviation criterion is no deviation tolerance a check reads."""
         result = self.critical("datum", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
