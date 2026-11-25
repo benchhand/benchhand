@@ -140,9 +140,12 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - cad-model `check.py` `product_exports`:
   - The frozen part records decide which occurrences of `assembly.step` ship (`delivered_occurrences`, through `sourcing.delivered`). The manifest's `product.occurrences` must list the same set; the check never takes it on trust.
   - `product_subset` matches components by occurrence name, never by tree path. Each delivered occurrence ships once, with the PN, definition (name and read-back volume) and placement that `assembly.step` gives it.
-  - In `product.glb`, each delivered occurrence has exactly one node reachable from the scene with a mesh in its subtree. Any other reachable mesh node fails.
-  - A STEP product id or name, or a GLB node name, that starts with an existing PN fails.
-  - A failure fails every `cad.readback` outcome of the published packet, so the evidence that `release.py` reads carries it.
+  - In `product.glb`, each delivered occurrence has exactly one node reachable from the scene with a mesh in its subtree. The walk descends below an occurrence node too, so a nested node with the same name is a duplicate. Any other reachable mesh node fails. A malformed node tree (a bad scene, root or child index) fails without a crash.
+  - A STEP product id or name, or a GLB node name, that starts with an existing PN fails. So does a leaf product without a PN in `product.step`: `pose.read_assembly_step` lists such leaves under `unnumbered`. Group products without a PN, such as `made`, are allowed.
+  - It reads the exact paths `release.py` ships (`sourcing.PRODUCT_STEP`, `PRODUCT_GLB`). It skips only a version with neither file. A missing export, a manifest without its `product` block and an unreadable export fail.
+  - Its verdict is the product-level obligation `cad.product_exports@product` (`manufacturing_intent.required_checks`), which every record owes, a catalogue-only one included. A version without product exports gets `not_applicable`. `release.py` refuses a version that seals `product.step` unless that outcome is `pass`.
+  - `check` parses the frozen snapshot once (`build.read_snapshot`) for both the subset and the published packet.
+- cad-drawings `assembly_check.reconcile` takes the existing PNs (from the part records through `sourcing.delivered`). Existing equipment needs no parts-list item, balloon or BOM row, and an item for it is refused. It stays an operation target: a note names it by its product name. `assembly_techdraw_job.py` draws it in a view of its own at the same direction and scale. Its edges go into the view's `reference` layer, drawn with ISO 128-2 line type 05 (`drawing_document.PHANTOM_DASH`). It never occludes a delivered part and gets no balloon anchor.
 - cad-bom `bom.py` writes no row for existing equipment and never reports it in `missing_in_step`. Its children merge like a phantom's. `release.py` `check_bom` refuses a BOM row for it.
 - `release.py`:
   - It ships `definition/product.step`.

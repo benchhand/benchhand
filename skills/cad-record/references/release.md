@@ -28,7 +28,7 @@ Record v2 release writes **manifest schema v3**. It copies the frozen assembly d
 
 The package holds the delivered product only. `release.py` asks cad-record `sourcing.delivered` and leaves existing equipment (`make_buy: existing`) out of the definition, the BOM and the manufacturing outputs:
 
-- `definition/product.step` is the version's `product.step`. When a product name in it starts with the PN of existing equipment, the release refuses it (`release.contaminated`). It also refuses a version that has existing equipment but no `product.step` (`release.missing`).
+- `definition/product.step` is the version's `product.step`. When a product name in it starts with the PN of existing equipment, the release refuses it (`release.contaminated`). It also refuses a version that has existing equipment but no `product.step` (`release.missing`). A version that seals `product.step` needs `cad.product_exports@product` passed in its evidence; anything else, `not_applicable` included, refuses (`release.product_exports`).
 - With existing equipment, `context/assembly.step` holds the in-context scene for fit review.
 - `mates_with` lists each interface with an existing end. An entry names the interface and its type, the product-side end, and the equipment's PN, title and `existing` record.
 - A version built before `product.step`, and without existing equipment, ships `definition/assembly.step` as before.
