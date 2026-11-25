@@ -249,7 +249,7 @@ class GeometricAccessTests(unittest.TestCase):
         self.assertEqual(result["findings"], [])
         coverage = next(row["coverage"] for row in result["outcomes"]
                         if row["obligation"] == "assembly.access@op:fasten-cover")
-        self.assertIn("curved paths, tool posture, hands, forces and other poses are not covered", coverage)
+        self.assertIn("curved paths, tool swing and posture, the hand's grip, forces and other poses are not covered", coverage)
         bundle = hw / "checks" / "v1" / "assembly-access"
         packet = json.loads((bundle / "result.json").read_text(encoding="utf-8"))
         self.assertEqual(list(validator("https://srobroek.com/cad/schemas/manufacturing-check-result.schema.json")
