@@ -295,7 +295,9 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
             emit(child, level + 1, count, qty * multiplier)
 
     for root in roots:
-        if root.pn is None and root.is_assembly:  # unnumbered top assembly: its children stay at level 1
+        if outside(root):  # existing equipment at the top: no row, its children stay at level 1
+            in_step.add(root.pn)  # type: ignore[arg-type]  # outside() saw a PN
+        if outside(root) or (root.pn is None and root.is_assembly):  # unnumbered top assembly: children at level 1
             for child, count in numbered_children(root, 1):
                 emit(child, 1, count, 1)
         else:
