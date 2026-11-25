@@ -592,6 +592,22 @@ class SubBuildTests(unittest.TestCase):
                 units = [p.pointer for p in record.problems if p.code == "intent.units"]
                 self.assertEqual(units, [] if pointer is None else [pointer], [p.message for p in record.problems])
 
+    def test_a_cure_time_that_is_not_a_positive_time_fails_the_hold(self) -> None:
+        for name, time in (("negative", sourced(-24, "h")), ("zero", sourced(0, "h")), ("a length", sourced(24, "mm"))):
+            with self.subTest(name):
+                bond_a, bond_b, cure, install = self.items()
+                held = {**cure, "duration": sourced(1, "s"), "cure": {"time": time}}
+                report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, held, install]}), self.inventory())
+                self.assertEqual([f["code"] for f in report.findings], ["assembly.hold_short"])
+                self.assertIn("not a known positive time", report.findings[0]["measured"]["text"])
+
+    def test_a_hold_that_is_not_a_positive_time_is_short(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        held = {**cure, "duration": sourced(-48, "h")}
+        report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, held, install]}), self.inventory())
+        [finding] = report.findings
+        self.assertIn("the hold lasts unknown, the cure time is 24 h", finding["measured"]["text"])
+
     def test_an_uninstalled_subassembly_member_floats_in_its_sub_build(self) -> None:
         bond_a, _bond_b, cure, install = self.items()
         report = ops.check_order(ops.normalize({"operations": [bond_a, cure, install]}), self.inventory())

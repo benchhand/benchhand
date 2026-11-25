@@ -8,7 +8,8 @@
 # ///
 """Assembly operations: the one normalizer of a record's installation, closure, fastening, adjustment,
 inspection and service operations, and their pure order, closure and joint checks. Stdlib only, no
-file reads and no CAD kernel: callers pass the parsed assembly.yaml mapping or a normalized record.
+record file reads and no CAD kernel: callers pass the parsed assembly.yaml mapping or a normalized record.
+A hold's times go through manufacturing_intent's shared quantity parser, loaded by path when a hold is judged.
 
 Authority. Operations live in assembly.yaml top-level `operations` (a list, or an unknown fact).
 `normalize` reads only that; a `drawing.operations` list is refused (`intent.dual_authority`), and no
@@ -58,11 +59,14 @@ distance short of its criterion is a failure; retention evidence is what support
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import re
+import sys
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, TypeGuard
 
 Vec = tuple[float, float, float]
@@ -82,7 +86,6 @@ REQUIRED = {  # schema: assembly.schema.json#/$defs/assembly_operation allOf
     "install": ("into", "direction", "acceptance"), "hold": ("duration", "fixture", "orientation"),
 }
 SUB_BUILD_ID = re.compile(r"^[a-z][a-z0-9_-]*$")  # schema: assembly.schema.json#/$defs/sub_build_id
-TIME_H = {"s": 1 / 3600, "min": 1 / 60, "h": 1.0, "d": 24.0}  # manufacturing.schema.json time units, in hours
 CURE_SOURCES = frozenset(("datasheet",))  # a cure time or temperature counts only from the adhesive's datasheet
 QUALIFYING_SOURCES = frozenset(("test", "supplier", "datasheet", "standard", "calibration"))
 HOST_TEMPERATURE_KINDS = frozenset(("heat_set", "insert", "press_fit"))
@@ -775,7 +778,12 @@ def _hold_rules(op: AssemblyOperation, fail: Callable[..., None]) -> None:
                  f"record the cure {name} from the adhesive's datasheet, with the datasheet as its source", severity="major")
     held = _hours(op.duration, lower=True)
     needed = _hours(op.cure.get("time"), lower=False)
-    if needed is not None and (held is None or held < needed):
+    if needed is None:
+        if _mapping(op.cure.get("time")).get("status") == "known":  # an unknown time is cure_unsourced already
+            fail("assembly.hold_short", f"{op.id}: the cure time is not a known positive time, so the hold cannot be "
+                 "shown to last it", "the part may leave its fixture before it has cured: the bond can shift or fail",
+                 "record the datasheet cure time as a positive time (s, min, h or d)")
+    elif held is None or held < needed:
         measured = "unknown" if held is None else f"{held:g} h"
         fail("assembly.hold_short", f"{op.id}: the hold lasts {measured}, the cure time is {needed:g} h",
              "the part leaves its fixture before it has cured: the bond can shift or fail",
@@ -783,14 +791,38 @@ def _hold_rules(op: AssemblyOperation, fail: Callable[..., None]) -> None:
 
 
 def _hours(fact: Any, *, lower: bool) -> float | None:
-    """A known time quantity fact in hours: its lower end when `lower`, else its upper end; None otherwise."""
-    if not isinstance(fact, Mapping) or fact.get("status") != "known":
+    """A known time quantity fact in hours, read by the shared manufacturing_intent quantity parser: its lower end
+    when `lower`, else its upper end; None when it is not a known time or its lower end is not positive."""
+    if not isinstance(fact, Mapping) or fact.get("status") != "known" or not isinstance(fact.get("value"), Mapping):
         return None
-    quantity = _mapping(fact.get("value"))
-    units = quantity.get("units")
-    scale = TIME_H.get(units) if isinstance(units, str) else None
-    value = quantity.get("value") if _number(quantity.get("value")) else quantity.get("lower" if lower else "upper")
-    return value * scale if scale is not None and _number(value) else None
+    intent = _intent()
+    try:
+        quantity = intent.quantity(fact["value"])
+        if quantity.dimension != "time":
+            return None
+        low, high = quantity.to("h").bounds
+    except intent.IntentError:
+        return None
+    if low <= 0:
+        return None
+    return float(low if lower else high)
+
+
+def _intent() -> Any:
+    """cad-record manufacturing_intent, the shared quantity parser, loaded once by path under its shared name."""
+    name = "cad_record_manufacturing_intent"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "manufacturing_intent.py")
+        if spec is None or spec.loader is None:
+            raise ImportError(f"manufacturing_intent.py not found beside {Path(__file__).name}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[name]
+            raise
+    return sys.modules[name]
 
 
 def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any]]:
