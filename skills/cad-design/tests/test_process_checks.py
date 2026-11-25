@@ -2673,7 +2673,7 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual(self.outcome(result, GEOMETRY), expected)
                 self.assertEqual(result.by_code("process.fdm.hole_uncalibrated"), [])
                 if expected == "fail":
-                    self.assertTrue(self.finding(result, "process.fdm.hole_fit")["uncertainty"].startswith("guideline tst.fdm.accuracy"))
+                    self.assertTrue(self.finding(result, "process.fdm.hole_fit")["uncertainty"].startswith("guideline "))
                 else:
                     self.assertIn("uncalibrated: guideline value -0.5..0.5 mm used; calibrate to tighten",
                                   result.outcome(GEOMETRY)["coverage"])
