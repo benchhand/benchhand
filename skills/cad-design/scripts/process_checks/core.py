@@ -648,6 +648,51 @@ class Context:
             return Calibrated("calibrated", characteristic, found.calibration.limits, (), found.calibration)
         return Calibrated(found.status, characteristic, None, tuple(found.reasons))
 
+    def governing(self, characteristic: str, *, orientation: str | None = None, feature: str | None = None) -> Calibrated:
+        """The value a check judges `characteristic` against: its calibration (`calibrated`), else the guideline interval
+        for this operation's profile and material (status guideline), else unknown with every reason. Calibration is never
+        required: a guideline value governs until one exists (benchhand-c7q.30)."""
+        cal = self.calibrated(characteristic, orientation=orientation, feature=feature)
+        context = self.guideline_context()
+        if cal.known or context is None:
+            return cal
+        found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation, feature=feature)
+        self.consulted.append(found)
+        if found not in self.resolutions:
+            self.resolutions.append(found)
+        if found.status == "guideline" and found.operator == "between":
+            return Calibrated("guideline", characteristic, found.value, (), None, found)
+        why = found.reasons or ((f"the guideline {characteristic} limit is {found.operator}, not an interval",)
+                                if found.status == "guideline" else (f"no guideline states {characteristic}",))
+        return Calibrated(cal.status, characteristic, None, (*cal.reasons, *why))
+
+    def counts(self, status: str) -> bool:
+        """Whether a limit of `status` settles a check: a calibration always; a guideline value with the calibration flag
+        off, or in a service class of GUIDELINE_PASS_CLASSES."""
+        return status == "calibrated" or (status == "guideline" and (self.service_class in GUIDELINE_PASS_CLASSES
+                                                                     or self.calibration_off()))
+
+    def settle(self, cal: Calibrated, coverage: str, findings: list[Draft], *, check: str, measured: Mapping[str, Any],
+               criterion: Mapping[str, Any], method: str, feature: str | None = None) -> tuple[str, str]:
+        """A sub-check that met `cal` (calibrated or guideline): PASS, noted as uncalibrated for a guideline value, or
+        UNKNOWN with the guideline-only finding where `counts` refuses the guideline value."""
+        if self.counts(cal.status):
+            return PASS, _noted(coverage, cal.note) if cal.note else coverage
+        self._guideline_only(check, cal.characteristic, measured, criterion, method, feature, findings)
+        return UNKNOWN, _noted(coverage, "guideline value only")
+
+    def _guideline_only(self, check: str, characteristic: str, measured: Mapping[str, Any], criterion: Mapping[str, Any],
+                        method: str, feature: str | None, findings: list[Draft]) -> None:
+        kind = self.operation.kind
+        service = self.service_class
+        findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured, criterion, method,
+                              f"{characteristic} is a design-guideline value, not a calibration of this machine and material",
+                              f"a {service or 'unknown'} service class needs a calibrated or waived {characteristic}: "
+                              "a guideline value alone does not pass it",
+                              remedy=f"calibrate {characteristic} for this material and machine, or waive this finding "
+                                     "with an approved decision",
+                              recheck=[f"process.{kind}"], feature=feature))
+
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""
         profile = profile or self.profile
@@ -696,21 +741,11 @@ class Context:
         """A sub-check that met `limit`: a pass for a calibrated limit, or a guideline value when the service class is one
         of GUIDELINE_PASS_CLASSES. A guideline value in another class is unknown, with a finding a calibration or an
         approved waiver settles. An unknown limit is unknown too (its callers report why)."""
-        service = self.service_class
-        if limit.status == "calibrated" or (limit.status == "guideline" and (service in GUIDELINE_PASS_CLASSES
-                                                                             or self.calibration_off())):
+        if self.counts(limit.status):
             return PASS, coverage
         if limit.status == "unknown":
             return UNKNOWN, _noted(coverage, "limit unknown")
-        kind = self.operation.kind
-        findings.append(Draft(f"process.{kind}.{check}_guideline_only", "minor", UNKNOWN, measured,
-                              limit.criterion(prop, units), method,
-                              f"{limit.characteristic} is a design-guideline value, not a calibration of this machine and material",
-                              f"a {service or 'unknown'} service class needs a calibrated or waived {limit.characteristic}: "
-                              "a guideline value alone does not pass it",
-                              remedy=f"calibrate {limit.characteristic} for this material and machine, or waive this finding "
-                                     "with an approved decision",
-                              recheck=[f"process.{kind}"], feature=feature))
+        self._guideline_only(check, limit.characteristic, measured, limit.criterion(prop, units), method, feature, findings)
         return UNKNOWN, _noted(coverage, "guideline value only")
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:
