@@ -36,7 +36,8 @@ drawing:
     y: {normal_to: C}
     z: {normal_to: B}
   views:
-    - {id: principal, kind: orthographic, normal_to: A}
+    - {id: principal, kind: orthographic, normal_to: axle_face}
+    - {id: back, kind: orthographic, normal_to: A}
     - {id: side, kind: orthographic, normal_to: C}
   features:
     mount_face: {size: general}
@@ -45,8 +46,8 @@ drawing:
     bottom_edge: {size: general}
     side_face_low: {size: general}
     side_face_high: {size: general}
-    axle_idler: {size: interface}
-    axle_tensioner: {size: interface}
+    axle_idler: {size: general}
+    axle_tensioner: {size: general}
     axle_end_idler: {size: general}
     axle_end_tensioner: {size: general}
   dimensions:
@@ -55,8 +56,8 @@ drawing:
     - {id: plate_height, operation: plane_separation, features: [bottom_edge, top_edge], tolerance: {deviation_mm: [-0.2, 0.2]}}
     - {id: axle_idler_d, operation: diameter, features: [axle_idler], tolerance: {deviation_mm: [-0.008, -0.002]}}
     - {id: axle_tensioner_d, operation: diameter, features: [axle_tensioner], tolerance: {deviation_mm: [-0.008, -0.002]}}
-    - {id: axle_idler_len, operation: length, features: [axle_face, axle_end_idler], tolerance: {deviation_mm: [-0.2, 0.2]}}
-    - {id: axle_tensioner_len, operation: length, features: [axle_face, axle_end_tensioner], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: axle_idler_len, operation: plane_separation, features: [axle_face, axle_end_idler], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: axle_tensioner_len, operation: plane_separation, features: [axle_face, axle_end_tensioner], tolerance: {deviation_mm: [-0.2, 0.2]}}
   edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
   surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
   notes:
