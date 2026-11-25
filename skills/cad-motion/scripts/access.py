@@ -527,8 +527,8 @@ def standard_envelopes(requests: Iterable[Any], chain: Any, world: Mapping[str, 
                 problems[(op_id, reach.index)] = f"tool {reach.tool.name!r}: the operated part {operated} has no geometry or placement"
                 continue
             approach = _unrotate(world[operated], _rotate(world[request.frame], reach.approach))
-            tip = reach.contact if reach.contact is not None else envelope_tip(
-                *pose.box_corners(definitions[chain.pn(operated)].shape), approach)
+            low, high = pose.box_corners(definitions[chain.pn(operated)].shape)
+            tip = reach.contact if reach.contact is not None else envelope_tip(low, high, approach)
             if tip is None:
                 problems[(op_id, reach.index)] = (
                     f"tool {reach.tool.name!r}: its approach meets two faces of {operated}'s box equally, so the face it "
