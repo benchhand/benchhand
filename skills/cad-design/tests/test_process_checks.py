@@ -2715,16 +2715,22 @@ class GuidelineWithoutCalibrationTests(Checks):
                     self.assertIn("uncalibrated: guideline value 0..1 mm used", result.outcome(obligation)["coverage"])
 
     def critical(self, role: str, *, on_bed: bool = False, catalog: Any = SHIPPED, calibrations: tuple = (),
-                 criteria: list | None = None, size: float = 30.0) -> Any:
-        """TST-0101, `size` mm at its largest, with one critical planar feature face_a of `role` (on the bed when
-        `on_bed`) stating `criteria`."""
+                 criteria: list | None = None, size: float = 30.0, box: tuple[float, float, float] | None = None) -> Any:
+        """TST-0101, `size` mm at its largest (or `box` mm on its three axes), with one critical planar feature face_a of
+        `role` (on the bed when `on_bed`) stating `criteria`."""
         documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
         documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
             surface("face_a", role, **({"criteria": criteria} if criteria else {}))]
         data = facts(faces=(face("f1", features=("face_a",), bed=on_bed),),
                      walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
-        data["bbox_mm"] = {"min": [0, 0, 0], "max": [size, 20, 30]}
+        data["bbox_mm"] = {"min": [0, 0, 0], "max": list(box) if box else [size, 20, 30]}
         return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_a_part_whose_diagonal_exceeds_100_mm_takes_no_shipped_deviation(self) -> None:
+        """No axis of an 80 x 80 x 10 mm part reaches 100 mm, but a feature across it can be 113 mm long."""
+        result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.6, 0.6), box=(80.0, 80.0, 10.0))
+        found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
+        self.assertIn("up to 100 mm", found["uncertainty"])
 
     def test_a_feature_of_a_part_over_100_mm_takes_no_shipped_deviation_and_is_not_assessed(self) -> None:
         result = self.critical("datum", criteria=self.tolerance("dimensional_deviation", -0.6, 0.6), size=160.0)
