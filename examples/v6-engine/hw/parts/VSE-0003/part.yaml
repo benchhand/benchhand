@@ -24,3 +24,28 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: end_face_a, role: plane}
+    B: {feature: journal, role: axis}
+  coordinate_frame:
+    origin: {intersection: [A, B]}
+    z: {parallel_to: B, toward: end_face_b}
+  views:
+    - {id: elevation, kind: orthographic, perpendicular_to: B}
+    - {id: end, kind: orthographic, along_axis: B, toward: end_face_a}
+  features:
+    journal: {size: interface}
+    lumen: {size: general}
+    end_face_a: {size: general}
+    end_face_b: {size: general}
+    edge_chamfers: {size: general}
+  dimensions:
+    - {id: pin_length, operation: plane_separation, features: [end_face_a, end_face_b], tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA, journal sanded or reamed to 6 g6 where it runs in the 6 H7 piston bore. Deburr."}
+    - {kind: process, text: "Print with the axis flat on the bed."}
+  sheet: {sizes: [A4, A3], scale: auto}
