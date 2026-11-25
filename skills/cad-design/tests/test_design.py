@@ -391,6 +391,27 @@ class WallScanTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
+class ExistingJointTests(unittest.TestCase):
+    """A joint endpoint on existing equipment mates through whichever cylinder it has, a bore or a shank."""
+
+    def test_existing_shaft_shank_in_a_product_bore_passes_and_a_missing_cylinder_fails(self) -> None:
+        existing = "process: fdm\nmake_buy: existing\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            hw, parts_dir = build_parts(Path(tmp), {
+                "TST-0501": (FDM_MADE + "form_class: frame\n", "cq.Workplane().box(20, 20, 10).faces('>Z').workplane().hole(10)"),
+                "TST-0502": (existing, "cq.Workplane().cylinder(30, 5)"),
+                "TST-0503": (existing, "cq.Workplane().box(20, 20, 20)")})
+            joint = "  - {{id: {}, type: revolute, parent: TST-0501, child: {}, axis: [0, 0, 1], origin: [0, 0, 0], " \
+                    "min: -10, max: 10, nominal: 0}}\n"
+            (hw / "assembly.yaml").write_text("joints:\n" + joint.format("J-001", "TST-0502")
+                                              + joint.format("J-002", "TST-0503"), encoding="utf-8")
+            code, report = form_check(parts_dir, "F2", hw)
+        missing = [(f["joint"], f["part"]) for f in report["findings"] if f["check"] == "joint_bore_missing"]
+        self.assertEqual((code, missing), (1, [("J-002", "TST-0503")]))
+        self.assertEqual(report["joints"]["J-001"]["parts"]["TST-0502"]["kind"], "shank")
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
 class WallOverrideTests(unittest.TestCase):
     """product.yaml manufacturing.min_wall_mm gives a process a minimum, and an invalid one stops the check."""
 
