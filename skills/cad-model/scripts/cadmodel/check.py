@@ -183,47 +183,108 @@ def step_readback(folder: Path, manifest: dict[str, Any], parts: dict[str, Any],
             "occurrences": placed_rows}
 
 
-def product_exports(folder: Path, manifest: Mapping[str, Any], part_map: Mapping[str, Any], step: Any) -> dict[str, Any]:
-    """product.step and product.glb against the in-context assembly.step: one component per delivered occurrence
-    (manifest `product.occurrences`) at the placement and with the definition name and volume assembly.step gives
-    it, one GLB node per delivered occurrence, and no product name or node led by an existing PN. A version built
-    before the product exports is skipped."""
+def delivered_occurrences(scene: Iterable[Any], records: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    """Occurrence id -> PN of every component of the in-context scene that belongs to the delivered product, as the
+    frozen part records decide (cad-record sourcing.delivered); a PN without a record counts as delivered."""
+    sourcing = load_sourcing()
+    return {(c.occurrence or c.pn): c.pn for c in scene if sourcing.delivered(records.get(c.pn) or {})}
+
+
+def _glb_occurrence_nodes(gltf: Mapping[str, Any], owner: Mapping[str, str]) -> tuple[dict[str, list[bool]], list[str]]:
+    """Walking the nodes reachable from the GLB's scene: per occurrence of `owner` (node name -> occurrence id) whether
+    each node named for it carries a mesh in its subtree, and the names of the mesh nodes no occurrence owns."""
+    nodes = gltf.get("nodes", [])
+    scene = (gltf.get("scenes") or [{}])[gltf.get("scene", 0)]
+    found: dict[str, list[bool]] = {oid: [] for oid in owner.values()}
+    extra: list[str] = []
+    visited: set[int] = set()
+
+    def has_mesh(index: int) -> bool:
+        node = nodes[index]
+        return "mesh" in node or any(has_mesh(child) for child in node.get("children", []))
+
+    def walk(index: int) -> None:
+        if index in visited:
+            return
+        visited.add(index)
+        node = nodes[index]
+        name = node.get("name", "")
+        if name in owner:
+            found[owner[name]].append(has_mesh(index))
+            return
+        if "mesh" in node:
+            extra.append(name or f"node {index}")
+        for child in node.get("children", []):
+            walk(child)
+
+    for root in scene.get("nodes", []):
+        walk(root)
+    return found, extra
+
+
+def product_subset(expected: Mapping[str, str], existing: set[str], scene: Iterable[Any],
+                   scene_definitions: Mapping[str, tuple[str, float]], shipped: Iterable[Any],
+                   shipped_definitions: Mapping[str, tuple[str, float]], text_pns: set[str], gltf: Mapping[str, Any],
+                   listed: Iterable[str]) -> dict[str, Any]:
+    """product.step (`shipped` components, `shipped_definitions` PN -> (name, volume), `text_pns` the PNs its PRODUCT
+    entities name) and product.glb (`gltf`) against `expected`, the delivered occurrences of the in-context scene
+    (`scene` components, `scene_definitions`). Components match by occurrence name, never by tree path. Each expected
+    occurrence ships once, with the PN, definition and placement the scene gives it, as exactly one reachable GLB node
+    with a mesh; nothing else ships, no name leads with an `existing` PN, and the manifest's `listed` occurrences are
+    the expected ones."""
+    pose = load_pose()
+    by_id = {(c.occurrence or c.pn): c for c in scene}
+    components = list(shipped)
+    found: dict[str, Any] = {}
+    unexpected: list[str] = []
+    for component in components:
+        oid = component.occurrence or component.pn
+        if oid not in expected or oid in found:
+            unexpected.append(component.name)
+            continue
+        reference = by_id[oid]
+        error_mm = max(abs(a - b) for a, b in zip(component.location.trans, reference.location.trans))
+        error_rot = max(abs(a - b) for ra, rb in zip(component.location.rot, reference.location.rot) for a, b in zip(ra, rb))
+        name, volume = shipped_definitions[component.pn]
+        want_name, want_volume = scene_definitions[expected[oid]]
+        found[oid] = {"PN": component.pn, "placement_error_mm": error_mm, "rotation_error": error_rot,
+                      "same_definition": component.pn == expected[oid] and name == want_name
+                      and _rel(volume, want_volume) <= READBACK_REL}
+        found[oid]["ok"] = error_mm <= PLACEMENT_MM and error_rot <= pose.PLACEMENT_TOL_ROT and found[oid]["same_definition"]
+    nodes, extra = _glb_occurrence_nodes(gltf, {by_id[oid].name: oid for oid in expected})
+    names = [node.get("name", "") for node in gltf.get("nodes", [])]
+    result = {"occurrences": found, "unexpected_components": unexpected,
+              "missing_occurrences": sorted(set(expected) - set(found)),
+              "manifest_mismatch": sorted(set(expected) ^ set(listed)),
+              "existing_in_step": sorted((text_pns | {c.pn for c in components}) & existing),
+              "existing_in_glb": sorted({pn for name in names for pn in existing if name.startswith(pn)}),
+              "glb_missing_nodes": sorted(oid for oid, meshes in nodes.items() if not any(meshes)),
+              "glb_duplicate_nodes": sorted(oid for oid, meshes in nodes.items() if len(meshes) > 1),
+              "glb_extra_nodes": sorted(extra)}
+    ok = all(not value for key, value in result.items() if key != "occurrences") and all(
+        row["ok"] for row in found.values())
+    return {"status": _status(ok), "blocking": True, **result}
+
+
+def product_exports(folder: Path, manifest: Mapping[str, Any], step: Any,
+                    records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """product.step and product.glb against the delivered occurrences of the in-context assembly.step, which the
+    frozen part `records` decide (`delivered_occurrences`, `product_subset`). A version built before the product
+    exports is skipped."""
     product = manifest.get("product")
     if not isinstance(product, Mapping):
         return {"status": "skipped", "blocking": False, "reason": "the version predates product.step and product.glb"}
     pose, sourcing = load_pose(), load_sourcing()
-    delivered = set(product["occurrences"])
-    existing = {entry["PN"] for oid, entry in part_map["occurrences"].items() if oid not in delivered}
-    existing -= {part_map["occurrences"][oid]["PN"] for oid in delivered}
-    scene = {(c.occurrence or c.pn): c for c in step.components}
+    existing = {pn for pn, record in records.items() if not sourcing.delivered(record)}
     shipped = pose.read_assembly_step(folder / product["step"])
-    found: dict[str, Any] = {}
-    unexpected: list[str] = []
-    for component in shipped.components:
-        oid = component.occurrence or component.pn
-        reference = scene.get(oid)
-        if oid not in delivered or reference is None or oid in found:
-            unexpected.append(component.name)
-            continue
-        error_mm = max(abs(a - b) for a, b in zip(component.location.trans, reference.location.trans))
-        error_rot = max(abs(a - b) for ra, rb in zip(component.location.rot, reference.location.rot) for a, b in zip(ra, rb))
-        definition, original = shipped.definitions[component.pn], step.definitions[component.pn]
-        found[oid] = {"placement_error_mm": error_mm, "rotation_error": error_rot,
-                      "same_definition": definition.name == original.name
-                      and _rel(occ.volume(definition.shape), occ.volume(original.shape)) <= READBACK_REL}
-        found[oid]["ok"] = (error_mm <= PLACEMENT_MM and error_rot <= pose.PLACEMENT_TOL_ROT
-                            and found[oid]["same_definition"])
-    in_step = sorted(sourcing.step_pns((folder / product["step"]).read_text(encoding="utf-8", errors="replace")) & existing)
-    nodes = [node.get("name", "") for node in mesh.gltf_json(folder / product["glb"]).get("nodes", [])]
-    wanted = {name for oid in delivered for name in part_map["occurrences"][oid]["nodes"]}
-    in_glb = sorted({name[:len(pn)] for name in nodes for pn in existing if name.startswith(pn)})
-    missing = sorted(delivered - set(found))
-    glb_missing = sorted(wanted - set(nodes))
-    ok = (not unexpected and not missing and not in_step and not in_glb and not glb_missing
-          and all(row["ok"] for row in found.values()))
-    return {"status": _status(ok), "blocking": True, "occurrences": found, "unexpected_components": unexpected,
-            "missing_occurrences": missing, "existing_in_step": in_step, "existing_in_glb": in_glb,
-            "glb_missing_nodes": glb_missing}
+    text = (folder / product["step"]).read_text(encoding="utf-8", errors="replace")
+
+    def facts(definitions: Mapping[str, Any]) -> dict[str, tuple[str, float]]:
+        return {pn: (part.name, occ.volume(part.shape)) for pn, part in definitions.items()}
+
+    return product_subset(delivered_occurrences(step.components, records), existing, step.components,
+                          facts(step.definitions), shipped.components, facts(shipped.definitions),
+                          sourcing.step_pns(text), mesh.gltf_json(folder / product["glb"]), product["occurrences"])
 
 
 def brep_validity(parts: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
@@ -647,6 +708,16 @@ def _record_yaml(path: Path, what: str, missing: Any = None) -> Any:
         raise build.UsageError(f"{path}: cannot read {what}: {error}") from error
 
 
+def part_records(record: Path) -> dict[str, Any]:
+    """PN -> part.yaml mapping of every part record of a record folder (a version's snapshot, else hw/)."""
+    parts = {}
+    for path in sorted((record / "parts").glob("*/part.yaml")):
+        data = _record_yaml(path, "the part record")
+        if isinstance(data, dict):
+            parts[path.parent.name] = data
+    return parts
+
+
 BUILD_VOLUME_NOTE = ("a diagnostic: fitting an envelope is geometry only, never process feasibility; the part's "
                      "route, capability profile and approved orientation decide whether it can be made")
 
@@ -904,6 +975,7 @@ DIMENSION_METHOD = ("cad-model check of the sealed version: the hole_d a heat-se
                     "against the bore diameters the version's metrics.json records for the host")
 DIMENSION_COVERAGE = "the declared hole diameter against the host's recorded bores only: depth and position are not checked"
 SEALED_FILES_CHANGED = "the version's sealed files no longer match its manifest (artifact_integrity)"
+PRODUCT_EXPORTS_FAILED = "product.step or product.glb does not hold exactly the delivered product (product_exports)"
 
 
 def _oracle_outcome(obligation: Any, failed: list[str], unknown: list[str], method: str, coverage: str) -> dict[str, Any]:
@@ -974,8 +1046,9 @@ def _export_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any
 
 def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> list[dict[str, Any]]:
     """One cad.readback outcome per expected obligation (manufacturing_intent Obligations, PN[.COMP]) from
-    this check's rows: fail when the B-rep is invalid, the STEP read-back differs, the sealed files changed
-    or a manufacturing state, identity, STEP or binding check fails; unknown while one of them is missing
+    this check's rows: fail when the B-rep is invalid, the STEP read-back differs, the sealed files changed,
+    the product exports do not hold exactly the delivered product, or a manufacturing state, identity, STEP or
+    binding check fails; unknown while one of them is missing
     or not passed (a part with no manufacturing output, a legacy unbound identity); else pass. The export.3mf,
     cad.glb_step_agreement and cad.declared_dimensions obligations take their own rows. `occurrences` maps each
     occurrence id of the version to its PN."""
@@ -997,6 +1070,8 @@ def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any], occurr
         unknown: list[str] = []
         if checks["artifact_integrity"]["status"] == "fail":
             failed.append("the version's sealed files no longer match its manifest (artifact_integrity)")
+        if (checks.get("product_exports") or {}).get("status") == "fail":
+            failed.append(PRODUCT_EXPORTS_FAILED)  # release reads this packet, not the check's exit status
         if pn not in brep or pn not in readback:
             unknown.append(f"{pn} has no B-rep validity or STEP read-back row")
         else:
@@ -1204,7 +1279,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                                                  set(occurrences) - in_scope),
         "declared_dimensions": declared_dimensions(
             heat_sets, {oid: o.pn for oid, o in occurrences.items()}, build.read_json(folder / "metrics.json")["parts"]),
-        "product_exports": product_exports(folder, manifest, part_map, step),
+        "product_exports": product_exports(folder, manifest, step, part_records(record)),
         "artifact_integrity": artifact_integrity(folder),
         "manufacturing": manufacturing,
     }
