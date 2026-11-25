@@ -72,6 +72,13 @@ class ClassificationTests(unittest.TestCase):
         envelope = envelopes.classify("8 mm socket with 1/2-inch drive").envelope
         self.assertEqual(segments(envelope), [(0.0, 40.0, 12.0)])
 
+    def test_a_metric_drive_is_read_by_its_value_not_its_digits(self) -> None:
+        for name in ("10 mm socket, 10 mm drive", "10 mm socket, 10.0 mm drive", "10 mm socket, 10,0 mm drive"):
+            with self.subTest(name=name):
+                entry = envelopes.classify(name)
+                self.assertEqual((entry.role, entry.envelope and entry.envelope.designation),
+                                 ("tool", "10 mm socket, 10 mm square drive"))
+
     def test_only_hand_and_sized_tools_carry_an_envelope(self) -> None:
         for name in ("by eye", "on the bench", "frobnicator", "hex key"):
             with self.subTest(name=name):
