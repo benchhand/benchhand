@@ -351,6 +351,11 @@ def acceptance_text(acceptance: str | None, names: Sequence[str], measured: Mapp
     return None
 
 
+def _into(op: ResolvedOperation) -> str:
+    """What an operation installs into: its item, or existing equipment, which has none, by its product name."""
+    return f"item {op.into_item}" if op.into_item is not None else f"{op.into_name} (existing)"
+
+
 def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: str) -> str:
     """One assembly note: what goes where, which way, how it is known to be seated, and the interface data.
 
@@ -364,15 +369,13 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
         return regime_text(regime, text)
 
     operation, limit = op.operation, op.limit
-    # existing equipment has no item: the note names it by its product name
-    into = f"item {op.into_item}" if op.into_item is not None else f"{op.into_name} (existing)"
     until = acceptance_text(operation.acceptance, operation.features, measured, regime)
     data = None
     if operation.kind == "press_fit":
-        action = words(f"Press item {op.part_item} into {into}")
+        action = words(f"Press item {op.part_item} into {_into(op)}")
         data = words("fit ") + str(limit["fit"])
     elif operation.kind == "heat_set":
-        action = words(f"Heat-set item {op.part_item} into {into}")
+        action = words(f"Heat-set item {op.part_item} into {_into(op)}")
         lower, upper = limit.get("hole_tol", (0.0, 0.0))
         tolerance = f" ±{_number(upper)}" if lower == -upper and upper else (
             f" {lower:+g}/{upper:+g}" if lower or upper else "")
@@ -380,14 +383,14 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
         if "depth_min" in limit:
             data += words(f", depth min {_number(limit['depth_min'])}")
     elif operation.kind == "retaining_ring":
-        action = words(f"Fit ring item {op.part_item} onto {into}")
+        action = words(f"Fit ring item {op.part_item} onto {_into(op)}")
         data = str(limit["ring"])
         if "groove_d" in limit and "groove_w" in limit:
             data += words(", groove ") + f"⌀{limit['groove_d']} x {limit['groove_w']}"
     else:
         verbs = {"insert": "Insert item {p} into {i}", "fasten": "Fasten item {p} into {i}",
                  "join": "Join item {p} to {i}", "close": "Close {i} with item {p}"}
-        action = words(verbs[operation.kind].format(p=op.part_item, i=into))
+        action = words(verbs[operation.kind].format(p=op.part_item, i=_into(op)))
     text = action
     if op.direction is not None:
         text += words(" along ") + direction_text(op.direction)

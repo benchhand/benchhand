@@ -493,6 +493,17 @@ def check_docs(release: Release) -> None:
     release.checks["docs"] = "pass"
 
 
+def check_product_exports(release: Release, assessment: Any, sealed: dict[str, Any]) -> None:
+    """A version that seals product.step ships it only with cad.product_exports passed; not_applicable is no pass."""
+    if sourcing.PRODUCT_STEP not in sealed:
+        return
+    shown = assessment.results().get(intent.PRODUCT_EXPORTS_OBLIGATION)
+    if shown != "pass":
+        release.refuse(f"hw/versions/{release.version}/{sourcing.PRODUCT_STEP}", "product_exports",
+                       f"{intent.PRODUCT_EXPORTS_OBLIGATION} is {shown or 'not assessed'}, not pass: run cad_model.py "
+                       f"check {release.version} so the product exports are judged before they ship")
+
+
 def check_acceptance(release: Release, frozen: Any, sealed: dict[str, Any] | None = None) -> None:
     """The intent acceptance of a record version 2 release, a domain apart from output integrity: the
     freeze's evidence_sha256 is the acceptance digest of the current inventory, and the evidence
@@ -519,12 +530,7 @@ def check_acceptance(release: Release, frozen: Any, sealed: dict[str, Any] | Non
     if digest != frozen["evidence_sha256"]:
         release.refuse("hw/product.yaml", "acceptance", f"flow.frozen.evidence_sha256 is not the acceptance digest as it "
                        f"stands ({digest}): the evidence changed after the freeze; freeze again or open a change")
-    if sourcing.PRODUCT_STEP in (sealed or {}):
-        shown = assessment.results().get(intent.PRODUCT_EXPORTS_OBLIGATION)
-        if shown != "pass":
-            release.refuse(f"hw/versions/{release.version}/{sourcing.PRODUCT_STEP}", "product_exports",
-                           f"{intent.PRODUCT_EXPORTS_OBLIGATION} is {shown or 'not assessed'}, not pass: run cad_model.py "
-                           f"check {release.version} so the product exports are judged before they ship")
+    check_product_exports(release, assessment, sealed or {})
     blocking = [item for item in assessment.gate("release") if item.severity == "error"]
     for item in blocking:
         release.findings.append(validate.finding(item.path, f"{item.code}: {item.message}", code="release.acceptance"))

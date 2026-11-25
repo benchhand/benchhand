@@ -469,16 +469,21 @@ def _bind_items(binding: _Binding, intent: Intent, bom: Mapping[str, Mapping[str
                                         f"{occurrences[oid].ref} belongs to items {item_of[oid]} and {entry.item}"))
             item_of[oid] = entry.item
         items[entry.item] = (entry.pn, ids)
-        row = bom.get(entry.pn)
-        if row is None:
-            findings.append(finding("bom_geometry_mismatch", f"item {entry.item}: {entry.pn} has no bom.csv row",
-                                    item=entry.item))
-        elif entry.pn not in bom_children and (row["qty"] != counts.get(entry.pn, 0) or len(ids) != counts.get(entry.pn, 0)):
-            findings.append(finding("bom_geometry_mismatch",
-                                    f"item {entry.item}: {entry.pn} has bom.csv quantity {row['qty']}, "
-                                    f"{counts.get(entry.pn, 0)} occurrences in the assembly STEP and {len(ids)} in the item",
-                                    item=entry.item))
+        findings.extend(_bom_row_findings(entry, ids, bom, bom_children, counts))
     return items, item_of
+
+
+def _bom_row_findings(entry: Any, ids: Sequence[str], bom: Mapping[str, Mapping[str, Any]], bom_children: set[str],
+                      counts: Mapping[str, int]) -> list[dict[str, Any]]:
+    """An item's bom.csv row: present, and with the quantity of the occurrences placed and listed."""
+    row = bom.get(entry.pn)
+    if row is None:
+        return [finding("bom_geometry_mismatch", f"item {entry.item}: {entry.pn} has no bom.csv row", item=entry.item)]
+    if entry.pn not in bom_children and (row["qty"] != counts.get(entry.pn, 0) or len(ids) != counts.get(entry.pn, 0)):
+        return [finding("bom_geometry_mismatch", f"item {entry.item}: {entry.pn} has bom.csv quantity {row['qty']}, "
+                        f"{counts.get(entry.pn, 0)} occurrences in the assembly STEP and {len(ids)} in the item",
+                        item=entry.item)]
+    return []
 
 
 def _check_coverage(binding: _Binding, item_of: Mapping[str, int], bom: Mapping[str, Mapping[str, Any]],

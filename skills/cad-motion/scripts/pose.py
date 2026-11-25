@@ -1050,6 +1050,14 @@ def rigid_from_trsf(trsf: Any, where: str) -> Rigid:
     return Rigid(tuple(tuple(row[:3]) for row in rows), tuple(row[3] for row in rows))  # type: ignore[arg-type]
 
 
+def _label_name(label: Any) -> str:
+    """An XCAF label's TDataStd_Name, or "" without one."""
+    from OCP.TDataStd import TDataStd_Name
+
+    attribute = TDataStd_Name()
+    return attribute.Get().ToExtString() if label.FindAttribute(TDataStd_Name.GetID_s(), attribute) else ""
+
+
 def read_assembly_step(path: Path) -> StepAssembly:
     """Read an assembly STEP through XCAF: each PN's definition from its referred product label, and
     every component placing it, with its cumulative location and its product path from the root.
@@ -1061,7 +1069,6 @@ def read_assembly_step(path: Path) -> StepAssembly:
     from OCP.IFSelect import IFSelect_RetDone
     from OCP.STEPCAFControl import STEPCAFControl_Reader
     from OCP.TCollection import TCollection_ExtendedString
-    from OCP.TDataStd import TDataStd_Name
     from OCP.TDF import TDF_Label
     from OCP.TDocStd import TDocStd_Document
     from OCP.TopLoc import TopLoc_Location
@@ -1079,11 +1086,7 @@ def read_assembly_step(path: Path) -> StepAssembly:
         if not reader.Transfer(doc):
             raise MotionError(f"STEP transfer failed for {path}")
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
-
-    def name(label: Any) -> str:
-        attribute = TDataStd_Name()
-        return attribute.Get().ToExtString() if label.FindAttribute(TDataStd_Name.GetID_s(), attribute) else ""
-
+    name = _label_name
     definitions: dict[str, Part] = {}
     labels: dict[str, Any] = {}
     components: list[Component] = []

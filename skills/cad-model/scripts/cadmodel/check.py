@@ -191,58 +191,61 @@ def delivered_occurrences(scene: Iterable[Any], records: Mapping[str, Mapping[st
     return {(c.occurrence or c.pn): c.pn for c in scene if sourcing.delivered(records.get(c.pn) or {})}
 
 
+def _glb_indices(values: Any, count: int, where: str, malformed: list[str]) -> list[int]:
+    """The node indices of `values` that name one of `count` nodes; why the others do not, added to `malformed`."""
+    if not isinstance(values, list):
+        malformed.append(f"{where} is not a list of node indices")
+        return []
+    good = [v for v in values if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < count]
+    if len(good) != len(values):
+        malformed.append(f"{where} names nodes that do not exist: {[v for v in values if v not in good]}")
+    return good
+
+
+def _glb_tree(gltf: Mapping[str, Any]) -> tuple[list[Mapping[str, Any]], list[int], list[str]]:
+    """The GLB's nodes, the root indices of its scene and why its node tree is malformed (no roots then)."""
+    nodes, scenes, index = gltf.get("nodes", []), gltf.get("scenes", []), gltf.get("scene", 0)
+    if not isinstance(nodes, list) or not all(isinstance(node, Mapping) for node in nodes):
+        return [], [], ["nodes is not a list of node objects"]
+    scene_count = len(scenes) if isinstance(scenes, list) else 0
+    if not isinstance(index, int) or not 0 <= index < scene_count or not isinstance(scenes[index], Mapping):
+        return nodes, [], [f"scene {index!r} is not one of its {scene_count} scenes"]
+    malformed: list[str] = []
+    return nodes, _glb_indices(scenes[index].get("nodes", []), len(nodes), f"scene {index} nodes", malformed), malformed
+
+
 def _glb_occurrence_nodes(gltf: Mapping[str, Any],
                           owner: Mapping[str, str]) -> tuple[dict[str, list[bool]], list[str], list[str]]:
     """Walking every node reachable from the GLB's scene: per occurrence of `owner` (node name -> occurrence id)
     whether each node named for it, at any depth, carries a mesh in its subtree; the mesh nodes outside every
     occurrence node; and why the node tree is malformed (a bad scene, root or child index), whose bad entries the
     walk skips."""
-    malformed: list[str] = []
-    nodes = gltf.get("nodes", [])
-    scenes = gltf.get("scenes", [])
-    if not isinstance(nodes, list) or not all(isinstance(node, Mapping) for node in nodes):
-        return {oid: [] for oid in owner.values()}, [], ["nodes is not a list of node objects"]
-    scene_index = gltf.get("scene", 0)
-    if not isinstance(scenes, list) or not isinstance(scene_index, int) or not 0 <= scene_index < len(scenes) \
-            or not isinstance(scenes[scene_index], Mapping):
-        return {oid: [] for oid in owner.values()}, [], [f"scene {scene_index!r} is not one of its {len(scenes) if isinstance(scenes, list) else 0} scenes"]
-
-    def indices(values: Any, where: str) -> list[int]:
-        if not isinstance(values, list):
-            malformed.append(f"{where} is not a list of node indices")
-            return []
-        good = [v for v in values if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < len(nodes)]
-        if len(good) != len(values):
-            malformed.append(f"{where} names nodes that do not exist: {[v for v in values if v not in good]}")
-        return good
-
+    nodes, roots, malformed = _glb_tree(gltf)
     found: dict[str, list[bool]] = {oid: [] for oid in owner.values()}
     extra: list[str] = []
     visited: set[int] = set()
 
+    def children(index: int) -> list[int]:
+        return _glb_indices(nodes[index].get("children", []), len(nodes), f"node {index} children", malformed)
+
     def has_mesh(index: int, seen: set[int]) -> bool:
-        if index in seen:
-            return False
         seen.add(index)
-        node = nodes[index]
-        return "mesh" in node or any(has_mesh(child, seen) for child in indices(node.get("children", []), f"node {index} children"))
+        return "mesh" in nodes[index] or any(has_mesh(child, seen) for child in children(index) if child not in seen)
 
     def walk(index: int, inside: bool) -> None:
-        if index in visited:
-            return
         visited.add(index)
-        node = nodes[index]
-        name = node.get("name", "")
-        mine = name in owner
-        if mine:
+        name = nodes[index].get("name", "")
+        if name in owner:
             found[owner[name]].append(has_mesh(index, set()))
-        elif "mesh" in node and not inside:
+        elif "mesh" in nodes[index] and not inside:
             extra.append(name or f"node {index}")
-        for child in indices(node.get("children", []), f"node {index} children"):
-            walk(child, inside or mine)
+        for child in children(index):
+            if child not in visited:
+                walk(child, inside or name in owner)
 
-    for root in indices(scenes[scene_index].get("nodes", []), f"scene {scene_index} nodes"):
-        walk(root, False)
+    for root in roots:
+        if root not in visited:
+            walk(root, False)
     return found, extra, sorted(set(malformed))
 
 
