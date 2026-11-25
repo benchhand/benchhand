@@ -438,6 +438,11 @@ JOINT_GEOMETRY_PARTS = {
     "TST-0617": (FDM_MADE, "cq.Workplane().box(20, 20, 10).translate((10, 0, 0)).cut(cq.Workplane().cylinder(12, 5))"),
     # A D-shaft: a flat 4 mm off the axis leaves a 286-degree convex face of radius 5.
     "TST-0618": (FDM_MADE, SHAFT + ".cut(cq.Workplane().box(10, 10, 30).translate((9, 0, 0)))"),
+    # A 20 mm pad tilted 0.003 degrees about y, 0.02 mm above the deck at its centre: within tolerance everywhere.
+    "TST-0614": (FDM_MADE, "cq.Workplane().box(20, 20, 6).rotate((0, 0, 0), (0, 1, 0), 0.003).translate((0, 0, 8.02))"),
+    # A 200 mm pad tilted 0.005 degrees, 0.045 mm above its 220 mm deck at its centre: 0.0537 mm at one end.
+    "TST-0612": (FDM_MADE, "cq.Workplane().box(220, 20, 10)"),
+    "TST-0613": (FDM_MADE, "cq.Workplane().box(200, 10, 6).rotate((0, 0, 0), (0, 1, 0), 0.005).translate((0, 0, 8.045))"),
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -463,6 +468,8 @@ joints:
 - {id: J-613, type: fixed, parent: TST-0605, child: TST-0608, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
 - {id: J-614, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [0, 0, 20], min: 0, max: 0, nominal: 0}
 - {id: J-615, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [3, 4, 5], min: 0, max: 0, nominal: 0}
+- {id: J-619, type: fixed, parent: TST-0605, child: TST-0614, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+- {id: J-620, type: fixed, parent: TST-0612, child: TST-0613, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
 """
 
 
@@ -565,6 +572,21 @@ class JointGeometryTests(unittest.TestCase):
         missing = self.missing("J-614")
         self.assertEqual(sorted(missing), ["TST-0605", "TST-0608"])
         self.assertAlmostEqual(missing["TST-0608"]["contact"]["datum_mm"], 15.0, places=6)
+
+    def test_a_slightly_tilted_pad_within_tolerance_passes(self) -> None:
+        """Its largest separation, at the pad's edge, is 0.02 + 10 sin(0.003 deg) mm."""
+        self.assertEqual(self.missing("J-619"), {})
+        contact = self.found("J-619")["TST-0614"]
+        self.assertEqual(contact["kind"], "face")
+        self.assertAlmostEqual(contact["offset_mm"], 0.02 + 10 * math.sin(math.radians(0.003)), places=5)
+        self.assertAlmostEqual(contact["area_mm2"], 400.0, delta=0.01)
+
+    def test_separation_is_checked_across_the_whole_patch(self) -> None:
+        """0.045 mm at the centre is within tolerance; 0.045 + 100 sin(0.005 deg) mm at the far end is not."""
+        missing = self.missing("J-620")
+        self.assertEqual(sorted(missing), ["TST-0612", "TST-0613"])
+        self.assertAlmostEqual(missing["TST-0613"]["contact"]["offset_mm"], 0.045 + 100 * math.sin(math.radians(0.005)),
+                               places=5)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
