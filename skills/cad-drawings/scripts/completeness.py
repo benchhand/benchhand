@@ -36,6 +36,7 @@ from typing import Any
 import feature_coverage
 import section_hatch
 from drawing_document import CoverageReport
+import drawing_intent
 from drawing_intent import FIT_KEYS, Characteristic, Measured, finding
 from feature_geometry import Binding, Face
 from feature_recognition import Recognition
@@ -187,7 +188,7 @@ def release_blockers(part: Mapping[str, Any]) -> list[dict[str, Any]]:
     blockers = []
     if str(part["rev"]).startswith("X"):
         blockers.append(finding("revision_unreleased", f"revision {part['rev']} is a prototype revision"))
-    if part.get("make_buy") == "buy" and not part.get("supplier"):
+    if part.get("make_buy") == "buy" and not part.get("supplier") and drawing_intent.commodity_label(part) is None:
         blockers.append(finding("procurement_incomplete", "no supplier is selected"))
     for field, reason in sorted(((part.get("procurement") or {}).get("open") or {}).items()):
         blockers.append(finding("procurement_incomplete", f"{field} is open: {reason}"))
