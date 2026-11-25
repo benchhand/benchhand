@@ -565,8 +565,8 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         raise AccessError(f"{assembly_path}: {error} ({error.code})") from error
     record = intent_module.load_record(record_hw, snapshot=version is not None)
     assembly, chain, definitions = pose.load_inputs(args)
-    order = operations_module.check_order(operations, chain.inventory,
-                                          frozenset(pn for pn, part in record.parts.items() if part.existing))
+    existing = frozenset(pn for pn, part in record.parts.items() if part.existing)
+    order = operations_module.check_order(operations, chain.inventory, existing)
     outcomes, findings = list(order.outcomes), list(order.findings)
     detail: dict[str, Any] = {"operations": operations_module.summary(operations), "paths": {}, "nominal": {}}
     dependencies = {"assembly_yaml": hashlib.sha256(assembly_path.read_bytes()).hexdigest()}
@@ -576,7 +576,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     if version is not None:
         dependencies["version_manifest"] = pose.input_sha256(args.version_dir)
     if operations.unknown is None:
-        requests = operations_module.access_plan(operations, chain.inventory)
+        requests = operations_module.access_plan(operations, chain.inventory, existing)
         tools, tool_problems, digests = read_tools(requests, record_hw, args.hw)
         for index, (artifact, sha) in enumerate(sorted(digests.items())):
             dependencies[f"tool_envelope_{index + 1}"] = sha

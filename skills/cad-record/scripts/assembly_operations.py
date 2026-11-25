@@ -453,8 +453,11 @@ def sequence(operations: Operations, inventory: Any = None, existing: frozenset[
     builds = list(dict.fromkeys(op.sub_build for op in operations.items if op.sub_build is not None))
     groups = {group.id: group.members for group in inventory.groups} if inventory is not None else {}
     claims = _claims(resolved, builds, groups)
+    # existing equipment (these part numbers) is present from the start: never the product's base, never floating,
+    # never built on the bench
+    preexisting = frozenset(o.id for o in inventory.occurrences if o.pn in existing) if inventory is not None else frozenset()
     if inventory is not None:  # a reference that does not resolve is no member: its operation stays unknown
-        claims = {ref: owners for ref, owners in claims.items() if ref in inventory}
+        claims = {ref: owners for ref, owners in claims.items() if ref in inventory and ref not in preexisting}
     members = {build: frozenset(ref for ref, owners in claims.items() if build in owners) for build in builds}
     owned = frozenset().union(*members.values()) if members else frozenset()
     named_by: dict[str | None, list[str]] = {}
@@ -470,8 +473,6 @@ def sequence(operations: Operations, inventory: Any = None, existing: frozenset[
     # The record names no base. The first uninstalled occurrence the build names is its base, or the first
     # occurrence of the inventory (of the subassembly, for a sub-build) when it names none. The rest float.
     ground = None
-    # existing equipment (these part numbers) is present from the start: never the product's base, never floating
-    preexisting = frozenset(o.id for o in inventory.occurrences if o.pn in existing) if inventory is not None else frozenset()
     if inventory is not None:
         ground = next((ref for ref in (*named, *inventory.ids) if ref in base - preexisting), None)
     floating = frozenset(base - {ground} - preexisting) if inventory is not None else frozenset()
@@ -938,10 +939,12 @@ def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozens
     return built.present, built.ground
 
 
-def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRequest, ...]:
-    """One AccessRequest per operation, from the declared sequence (see `sequence`). A hold's tools follow
-    `hold_reach`; a tool-free hold reaches nothing, so its request carries the not-applicable reason."""
-    state = sequence(operations, inventory)
+def access_plan(operations: Operations, inventory: Any = None,
+                existing: frozenset[str] = frozenset()) -> tuple[AccessRequest, ...]:
+    """One AccessRequest per operation, from the declared sequence (see `sequence`; `existing` as in check_order).
+    A hold's tools follow `hold_reach`; a tool-free hold reaches nothing, so its request carries the not-applicable
+    reason."""
+    state = sequence(operations, inventory, existing)
     requests = []
     for step in state.steps:
         op = step.operation
