@@ -459,6 +459,10 @@ joints:
 - {id: J-616, type: revolute, parent: TST-0616, child: TST-0615, axis: [0, 0, 1], origin: [7, 7, 0], min: -10, max: 10, nominal: 0}
 - {id: J-617, type: revolute, parent: TST-0617, child: TST-0601, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 - {id: J-618, type: revolute, parent: TST-0602, child: TST-0618, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
+- {id: J-612, type: fixed, parent: TST-0605, child: TST-0608, axis: [1, 0, 0], origin: [1000, 1000, 1000], min: 0, max: 0, nominal: 0}
+- {id: J-613, type: fixed, parent: TST-0605, child: TST-0608, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
+- {id: J-614, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [0, 0, 20], min: 0, max: 0, nominal: 0}
+- {id: J-615, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [3, 4, 5], min: 0, max: 0, nominal: 0}
 """
 
 
@@ -540,6 +544,27 @@ class JointGeometryTests(unittest.TestCase):
                 self.assertEqual(self.missing(joint), {})
                 found = self.found(joint)[part]
                 self.assertEqual((found["kind"], found["radius"], found["offset_mm"]), (kind, 5.0, 0.0))
+
+    def test_face_contact_far_from_the_joint_fails(self) -> None:
+        """The pad sits flush on the deck, but the joint's datum plane (x = 1000) is 990 mm from the contact."""
+        missing = self.missing("J-612")
+        self.assertEqual(sorted(missing), ["TST-0605", "TST-0608"])
+        contact = missing["TST-0608"]["contact"]
+        self.assertEqual((contact["kind"], contact["offset_mm"]), ("face", 0.0))
+        self.assertAlmostEqual(contact["datum_mm"], 990.0, places=6)
+
+    def test_face_contact_at_the_joint_datum_passes(self) -> None:
+        """An offset datum (x = 0, framed 55 mm below the deck, as a V6 head on the crank axis) cuts the contact; a
+        datum normal to the contact (z = 5) lies in it."""
+        for joint in ("J-613", "J-615"):
+            with self.subTest(joint=joint):
+                self.assertEqual(self.missing(joint), {})
+                self.assertEqual(self.found(joint)["TST-0608"]["datum_mm"], 0.0)
+
+    def test_a_datum_parallel_to_the_contact_but_off_it_fails(self) -> None:
+        missing = self.missing("J-614")
+        self.assertEqual(sorted(missing), ["TST-0605", "TST-0608"])
+        self.assertAlmostEqual(missing["TST-0608"]["contact"]["datum_mm"], 15.0, places=6)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
