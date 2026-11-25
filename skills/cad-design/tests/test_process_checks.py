@@ -2857,6 +2857,14 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(result)],
                          [("profile_deviation", "no_check")])
 
+    def test_the_band_width_check_applies_only_to_a_dimensional_size(self) -> None:
+        """A 3.2..6.3 um roughness band is no size: the dimensional spread says nothing about it."""
+        result = self.critical("datum", criteria=[FX.criterion("surface_roughness", "between", [3.2, 6.3], "um")])
+        self.assertEqual(self.outcome(result, GEOMETRY), "not_assessed")
+        self.assertEqual(result.by_code("process.fdm.criterion_band"), [])
+        self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(result)],
+                         [("surface_roughness", "no_check")])
+
     def test_a_flank_with_neither_a_calibration_nor_a_guideline_profile_deviation_is_a_non_blocking_advisory(self) -> None:
         result = self.critical("flank", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
         found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
