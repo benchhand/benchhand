@@ -107,16 +107,18 @@ DRAWING = {"sheet-1.svg": "svg\n", "sheet-1.pdf": "pdf\n", "sheet-1.png": "png\n
 
 
 def build_version(hw: Path, omit: tuple[tuple[str, str], ...] = (), failed: dict[str, str] | None = None,
-                  attach: tuple[str, ...] = (), label: str = "v1") -> None:
+                  attach: tuple[str, ...] = (), label: str = "v1", product_step: str | None = None) -> None:
     """hw/versions/<label> as cad-model run seals it: the record snapshot the layout's version.record set
     names, installed STEP per modelled part and the manufacturing outputs of every custom-made part. `omit`
     leaves (PN, file) out; `failed` marks a part's named manufacturing check failed; `attach` lists its
-    `--attach REF=PARENT_REF` options."""
+    `--attach REF=PARENT_REF` options; `product_step` is the text of a product.step, written when given."""
     folder = hw / "versions" / label
     pns = [p.parent.name for p in sorted((hw / "parts").glob("*/part.yaml"))]
     acceptance.write_version_record(hw, folder, pns)
     for name in ("assembly.step", "assembly.glb", "part-map.json", "metrics.json"):
         write(folder / name, f"{name}\n")
+    if product_step is not None:
+        write(folder / "product.step", product_step)
     parts, made = {}, {}
     for model in sorted((hw / "parts").glob("*/model.py")):
         pn = model.parent.name
@@ -150,14 +152,14 @@ def frozen_lamp(hw: Path, *, before_build: Callable[[Path], None] | None = None,
                 label: str = "v1", older: tuple[str, ...] = (), service_class: str = "appearance_concept",
                 ledger: Callable[[Path, Any, list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
                 anchor: bool = True, packet: Callable[[dict[str, Any]], None] | None = None,
-                stated: dict[str, str] | None = None) -> None:
+                stated: dict[str, str] | None = None, product_step: str | None = None) -> None:
     """The lamp example migrated to record version 2 and reconciled for release (released revisions, a
     confirmed `service_class` use case and explicit routes, every software check of `label` passed by a
     sealed producer packet, verification passed with accepted ledger evidence), built as `label`, frozen at
     it with its acceptance digest (unless not `anchor`), every required bundle published, and DR-005
     approving it. Each `older` version is built first, with a check and a render bundle of its own;
     `ledger` may rewrite the accepted entries before the freeze, `packet` the producer packet before it is sealed and
-    `stated` the verification.csv result of a requirement (default pass)."""
+    `stated` the verification.csv result of a requirement (default pass); `product_step` is passed to build_version."""
     fx.migrated_copy(LAMP, hw)
     for part in sorted((hw / "parts").glob("*/part.yaml")):
         edit_yaml(part, lambda data: data.update(rev="A"))
@@ -173,7 +175,7 @@ def frozen_lamp(hw: Path, *, before_build: Callable[[Path], None] | None = None,
         build_version(hw, label=old)
         publish(hw, "checks", "static", {"result.json": f'{{"status": "pass", "label": "{old}"}}\n'}, version=old)
         publish(hw, "renders", "iso", {"iso.png": f"{old} render\n"}, version=old)
-    build_version(hw, omit, failed, attach, label)
+    build_version(hw, omit, failed, attach, label, product_step)
     record = impact.read_record(hw)
     producer = acceptance.producer_packet(record)
     if packet:
@@ -422,6 +424,63 @@ class Release(ReleaseCase):
 # what pruning after release A of v3 removes from Pruning.released(), in order: each version's bundle
 # roots in layout bundle-kind order, then the version itself
 SUPERSEDED = ["hw/checks/v1", "hw/renders/v1", "hw/versions/v1", "hw/checks/v2", "hw/renders/v2", "hw/versions/v2"]
+
+
+def add_clamp_post(hw: Path) -> None:
+    """EXT-0001, the desk clamp post the base mounts onto: existing equipment with a model for the fit checks,
+    fixed to the base plate and joined to it by IF-099, with no bom.csv row."""
+    write(hw / "parts" / "EXT-0001" / "part.yaml",
+          yaml.safe_dump(fx.existing_part("EXT-0001", "Desk clamp post"), sort_keys=False))
+    write(hw / "parts" / "EXT-0001" / "model.py", "# the post as measured\n")
+    edit_yaml(hw / "interfaces.yaml", lambda data: data["interfaces"].append(fx.interface("IF-099", "LMP-0001", "EXT-0001")))
+    edit_yaml(hw / "assembly.yaml", lambda data: data["joints"].append(
+        {"id": "J-099", "type": "fixed", "parent": "LMP-0001", "child": "EXT-0001", "axis": [0, 0, 1], "origin": [0, 0, 0],
+         "min": 0, "max": 0, "nominal": 0}))
+
+
+PRODUCT_STEP = "".join(f"#{n}=PRODUCT('LMP-00{n:02d} part','','',(#99));\n" for n in range(1, 12))
+
+
+class ExistingEquipment(ReleaseCase):
+    """A frozen version with existing equipment releases the delivered product only."""
+
+    def test_the_release_holds_the_product_and_lists_the_equipment_under_mates_with(self) -> None:
+        hw = self.project(before_build=add_clamp_post, product_step=PRODUCT_STEP)
+        code, report = self.release(hw)
+        self.assertEqual((code, report["status"]), (0, "released"), report.get("findings"))
+        package = hw / "releases" / "A"
+        manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["files"]["definition/product.step"]["original"], "hw/versions/v1/product.step")
+        self.assertEqual(manifest["files"]["context/assembly.step"]["original"], "hw/versions/v1/assembly.step")
+        self.assertNotIn("definition/assembly.step", manifest["files"])
+        self.assertNotIn("EXT-0001", manifest["manufacturing"])
+        with (package / "bom.csv").open(encoding="utf-8", newline="") as handle:
+            self.assertNotIn("EXT-0001", {row["PN"] for row in csv.DictReader(handle)})
+        self.assertEqual(manifest["mates_with"], [{
+            "interface": "IF-099", "type": "mounting", "mates": "LMP-0001", "equipment": "EXT-0001",
+            "title": "Desk clamp post", "existing": fx.existing_part("EXT-0001")["existing"]}])
+
+    def test_a_product_step_naming_existing_equipment_refuses(self) -> None:
+        hw = self.project(before_build=add_clamp_post, product_step=PRODUCT_STEP + "#12=PRODUCT('EXT-0001 post','','',(#99));\n")
+        code, report = self.release(hw)
+        self.assertEqual(code, 1)
+        self.assertIn(("hw/versions/v1/product.step", "release.contaminated"),
+                      {(item["path"], item.get("code")) for item in report["findings"]})
+
+    def test_a_version_with_existing_equipment_and_no_product_step_refuses(self) -> None:
+        hw = self.project(before_build=add_clamp_post)
+        code, report = self.release(hw)
+        self.assertEqual(code, 1)
+        self.assertIn(("hw/versions/v1/product.step", "release.missing"),
+                      {(item["path"], item.get("code")) for item in report["findings"]})
+
+    def test_a_product_without_existing_equipment_ships_its_assembly_step_and_no_mates(self) -> None:
+        hw = self.project()
+        self.assertEqual(self.release(hw)[0], 0)
+        manifest = json.loads((hw / "releases" / "A" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["mates_with"], [])
+        self.assertIn("definition/assembly.step", manifest["files"])
+        self.assertFalse([name for name in manifest["files"] if name.startswith("context/")])
 
 
 class Pruning(ReleaseCase):
