@@ -2834,6 +2834,29 @@ class GuidelineWithoutCalibrationTests(Checks):
                                                    FX.criterion("depth", ">=", 2.0, "mm")])
         self.assertEqual(self.outcome(passing, GEOMETRY), "not_assessed")
 
+    def bore_with(self, *extra: dict[str, Any], catalog: Any = SHIPPED) -> Any:
+        """A 6 mm critical bore whose diameter limits 5.0..7.0 mm the guideline deviation meets, plus `extra` criteria."""
+        documents = guided(service="functional_demo", calibrations=(CONTACT,))
+        documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
+            surface("bore", "locating", criteria=[_diameter_criterion("between 5.0 7.0"), *extra])]
+        return self.assess(documents, geometry("TST-0101", facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0})),
+                           catalog=catalog)
+
+    def test_a_passing_bore_diameter_does_not_hide_its_other_criteria(self) -> None:
+        narrow = self.bore_with(FX.criterion("depth", "between", [9.9, 10.1], "mm"))
+        self.assertEqual(self.outcome(narrow, GEOMETRY), "fail")
+        self.assertEqual(self.finding(narrow, "process.fdm.criterion_band")["criterion"]["property"], "depth")
+        wide = self.bore_with(FX.criterion("depth", "between", [8.0, 12.0], "mm"))
+        self.assertEqual(self.outcome(wide, GEOMETRY), "not_assessed")
+        self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(wide)], [("depth", "no_check")])
+
+    def test_a_criterion_of_another_role_is_not_dropped(self) -> None:
+        """A datum reads dimensional_deviation; its profile_deviation criterion is no deviation tolerance a check reads."""
+        result = self.critical("datum", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
+        self.assertEqual(self.outcome(result, GEOMETRY), "not_assessed")
+        self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(result)],
+                         [("profile_deviation", "no_check")])
+
     def test_a_flank_with_neither_a_calibration_nor_a_guideline_profile_deviation_is_a_non_blocking_advisory(self) -> None:
         result = self.critical("flank", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
         found = self.advisory(result, "process.fdm.feature_uncalibrated", GEOMETRY)
