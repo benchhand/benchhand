@@ -13,7 +13,7 @@ import struct
 from pathlib import Path
 from typing import Any, Mapping
 
-from cadmodel import occ, threemf
+from cadmodel import occ, record, threemf
 from cadmodel.motion import load_pose
 
 # Preview tessellation: chord deviation relative to the assembly diagonal, clamped; angular deflection in rad.
@@ -127,6 +127,38 @@ def gltf_json(glb: Path) -> dict[str, Any]:
         raise occ.GeometryError(f"{glb} is not a binary glTF file")
     gltf: dict[str, Any] = json.loads(data[20:20 + chunk_length])
     return gltf
+
+
+def grouped(gltf: dict[str, Any], groups: Mapping[str, str]) -> dict[str, Any]:
+    """`gltf` with each node named in `groups` (instance name -> group) moved under a node of that group,
+    in cad-record sourcing.GROUPS order, below the parent it had. The group nodes are appended, so every
+    other node keeps its index (part-map.json); they carry no transform, so every world placement stays."""
+    nodes = gltf["nodes"]
+    parents = {child: index for index, node in enumerate(nodes) for child in node.get("children", [])}
+    roots = gltf["scenes"][gltf.get("scene", 0)]["nodes"]
+    order = record.load_sourcing().GROUPS
+    for parent in sorted({parents.get(i) for i, node in enumerate(nodes) if node.get("name") in groups},
+                         key=lambda p: -1 if p is None else p):
+        children = roots if parent is None else nodes[parent]["children"]
+        members = {name: [c for c in children if groups.get(nodes[c].get("name")) == name] for name in order}
+        kept = [c for c in children if nodes[c].get("name") not in groups]
+        for name in order:
+            if members[name]:
+                nodes.append({"name": name, "children": members[name]})
+                kept.append(len(nodes) - 1)
+        children[:] = kept
+    return gltf
+
+
+def group_glb(glb: Path, groups: Mapping[str, str]) -> None:
+    """Rewrite `glb` in place with its nodes `grouped`; the binary chunk is kept byte for byte."""
+    data = glb.read_bytes()
+    length = struct.unpack_from("<I", data, 12)[0]
+    body = json.dumps(grouped(gltf_json(glb), groups), separators=(",", ":")).encode("utf-8")
+    body += b" " * (-len(body) % 4)
+    rest = data[20 + length:]
+    glb.write_bytes(struct.pack("<4sII", b"glTF", 2, 20 + len(body) + len(rest))
+                    + struct.pack("<I4s", len(body), b"JSON") + body + rest)
 
 
 def instance_names(chain: Any, products: Mapping[str, str]) -> dict[str, str]:

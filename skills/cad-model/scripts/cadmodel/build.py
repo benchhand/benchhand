@@ -611,10 +611,24 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
                        "findings": [finding(pn, "manufacture", manufacture.failure_message(row), "ManufactureError")
                                     for pn, row in unmade.items()]}
         top = f"{pose.product_id(hw)} {label}"
+        sourcing = record.load_sourcing()
+        try:
+            group_of_pn = {pn: sourcing.group(snapshot.parts.get(pn) or {"PN": pn})
+                           for pn in {*parts, *(chain.pn(oid) for oid in chain.ids)}}
+        except sourcing.SourcingError as error:
+            raise UsageError(f"hw/parts: {error}") from error
+        delivered = [oid for oid in chain.ids if group_of_pn[chain.pn(oid)] != sourcing.EXISTING]
         pose.write_assembly_step(work / "assembly.step", top, parts, [chain.inventory.get(i) for i in chain.ids],
+                                 transforms)
+        pose.write_assembly_step(work / sourcing.PRODUCT_STEP, top, parts, [chain.inventory.get(i) for i in delivered],
                                  transforms)
         mark = time.perf_counter()
         glb_info = mesh.write_glb(work / "assembly.step", work / "assembly.glb")
+        mesh.write_glb(work / sourcing.PRODUCT_STEP, work / sourcing.PRODUCT_GLB)
+        node_groups = {name: group_of_pn[chain.pn(oid)]
+                       for oid, name in mesh.instance_names(chain, {pn: by_pn[pn].product for pn in parts}).items()}
+        mesh.group_glb(work / "assembly.glb", node_groups)
+        mesh.group_glb(work / sourcing.PRODUCT_GLB, node_groups)
         mapping = mesh.part_map(work / "assembly.glb", chain, {pn: by_pn[pn].product for pn in parts})
         timings["glb_s"] = round(time.perf_counter() - mark, 3)
         write_json(work / "part-map.json", {"schema_version": SCHEMA_VERSION, **mapping})
@@ -623,6 +637,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
         placed = {oid: occurrence_metrics(chain.pn(oid), parts[chain.pn(oid)].shape, transforms[oid],
                                           metrics[chain.pn(oid)]) for oid in chain.ids}
         quantity = {pn: sum(1 for oid in chain.ids if chain.pn(oid) == pn) for pn in parts}
+        product_quantity = {pn: count for pn, count in quantity.items() if group_of_pn[pn] != sourcing.EXISTING}
         write_json(work / "metrics.json", {
             "schema_version": SCHEMA_VERSION, "label": label,
             "frame": ("parts: each PN's model_frame (assembly_zero: assembly coordinates at the zero pose); "
@@ -631,7 +646,8 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
             "mass_source": "material_profiles",
             "parts": metrics,
             "occurrences": placed,
-            "totals": totals(metrics, placed, quantity),
+            "totals": {**totals(metrics, {oid: placed[oid] for oid in delivered}, product_quantity),
+                       "existing_occurrences": [oid for oid in chain.ids if oid not in delivered]},
         })
         features = {pn: built[pn][1]["drawing_features"] for pn in sorted(parts)
                     if built[pn][1]["drawing_features"] is not None}
@@ -668,6 +684,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
                                    for j in chain.joints), key=lambda entry: (entry["pair"], entry["joint"])),
             "ground": chain.root,
             "glb": glb_info,
+            "product": {"step": sourcing.PRODUCT_STEP, "glb": sourcing.PRODUCT_GLB, "occurrences": delivered},
             "tools": {"orchestrator": orchestrator_tools(),  # a kernel whose parts were all reused did not start
                       **{k: dict(results[k]["tools"] if k in results else runtimes[k]["tools"]) for k in groups}},
             "parts": {pn: {
@@ -749,6 +766,9 @@ def latest_pointer(label: str, manifest: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("drawing_features", "manufacturing_features"):
         if manifest.get(key):
             latest[key] = f"{rel}/{manifest[key]}"
+    if manifest.get("product"):
+        latest["product_step"] = f"{rel}/{manifest['product']['step']}"
+        latest["product_glb"] = f"{rel}/{manifest['product']['glb']}"
     made = {pn: f"{rel}/{entry['path']}" for pn, entry in sorted((manifest.get("manufacturing") or {}).items())
             if entry.get("path")}
     if made:

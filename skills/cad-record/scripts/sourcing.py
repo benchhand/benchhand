@@ -17,10 +17,19 @@ such as a harness bundle stub is recorded as make_buy existing and falls under t
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 GROUPS = ("made", "purchased", "existing")  # export group order
 EXISTING = "existing"  # the make_buy value outside the delivered product
+# The product exports a version writes beside the in-context assembly.step and assembly.glb, and where a release
+# package puts the product and the in-context scene. The names are still under review: change them here only
+# (and in layout.json).
+PRODUCT_STEP = "product.step"
+PRODUCT_GLB = "product.glb"
+RELEASE_PRODUCT_STEP = f"definition/{PRODUCT_STEP}"
+RELEASE_CONTEXT_STEP = "context/assembly.step"
+_STEP_PRODUCT = re.compile(r"(?<![A-Z_])PRODUCT\s*\(\s*'([A-Z]{2,5}-[0-9]{4})(?![0-9])")
 _BY_MAKE_BUY = {"make": "made", "buy": "purchased", EXISTING: "existing"}
 
 
@@ -46,3 +55,9 @@ def delivered(part: Mapping[str, Any]) -> bool:
 def groups_of(parts: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
     """PN -> export group for every part record."""
     return {pn: group(part) for pn, part in parts.items()}
+
+
+def step_pns(text: str) -> set[str]:
+    """The part numbers that lead the PRODUCT names of a STEP file's text: what a product export holds, read
+    without a CAD kernel."""
+    return set(_STEP_PRODUCT.findall(text))
