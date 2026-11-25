@@ -89,7 +89,7 @@ class FindingSchema(unittest.TestCase):
                 self.assertEqual(errors(mutated(outcome=word)), [])
 
     def test_a_not_assessed_finding_is_accepted_with_each_reason(self) -> None:
-        for reason in ("calibration_off", "no_capability_profile", "no_guideline"):
+        for reason in ("calibration_off", "no_capability_profile", "no_guideline", "no_check"):
             with self.subTest(reason=reason):
                 self.assertEqual(errors(mutated(outcome="not_assessed", reason=reason)), [])
 
