@@ -168,6 +168,48 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
     return "\n".join(lines)
 
 
+def fact_text(fact: Any) -> str:
+    """A quantity fact as guide text: its value or range with units, else its status and reason."""
+    if not isinstance(fact, Mapping):
+        return "not recorded"
+    value = fact.get("value")
+    if fact.get("status") == "known" and isinstance(value, Mapping) and value.get("units"):
+        number = value.get("value")
+        amount = f"{number:g}" if isinstance(number, (int, float)) else f"{value.get('lower'):g}..{value.get('upper'):g}"
+        return f"{amount} {value['units']}"
+    return f"{fact.get('status') or 'unknown'} ({fact.get('reason') or 'no reason recorded'})"
+
+
+def bench_note(operation: Any, items: Mapping[str, Any], regime: str) -> tuple[str, str]:
+    """(step text, tools-table items) of a hold or a sub-build install. No drawing calls either out, so the step
+    names the drawing items it touches (a part without an item keeps its record reference) and the sub-build by id."""
+    def words(value: str) -> str:
+        return str(assembly_sheet.regime_text(regime, value))
+
+    def label(ref: str) -> tuple[str, str]:
+        number = items.get(ref)
+        return (f"item {number}", str(number)) if number is not None else (ref, ref)
+
+    if operation.kind == "hold":
+        part, column = label(operation.part)
+        note = (words(f"Hold {part} in the {operation.fixture} with its ")
+                + assembly_sheet.direction_text(operation.orientation) + words(" axis up for ") + fact_text(operation.duration))
+        cure = operation.cure or {}
+        if "time" in cure:
+            note += words("; cure ") + fact_text(cure["time"])
+            if "temperature" in cure:
+                note += words(" at ") + fact_text(cure["temperature"])
+        return note + ".", column
+    into, column = label(operation.into)
+    note = words(f"Install sub-build {operation.part} into {into}")
+    if operation.direction is not None:
+        note += words(" along ") + assembly_sheet.direction_text(operation.direction)
+    until = assembly_sheet.acceptance_text(operation.acceptance, operation.features, {}, regime)
+    if until is not None:
+        note += words(" until ") + until
+    return note + ".", f"{operation.part} into {column}"
+
+
 def relative_path(source: Path, out: Path) -> str:
     return Path(os.path.relpath(source, out)).as_posix()
 
@@ -580,27 +622,31 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
     resolved = plan.sheets[0].operations if plan is not None else ()
     measurements = guide_measurements(hw, version_dir, version, str(product_id or ""),
                                       {operation.operation.id for operation in resolved})
+    regime = str(product.get("regime") or "iso")
+    drawn = {resolved_operation.operation.id: resolved_operation for resolved_operation in resolved}
     steps: list[str] = []
-    for number, resolved_operation in enumerate(resolved, start=1):
-        operation = resolved_operation.operation
-        try:
-            note = assembly_sheet.operation_note(resolved_operation, measurements.get(operation.id, {}),
-                                                 str(product.get("regime") or "iso"))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise GuideError(f"cannot format assembly operation {operation.id}: {exc}") from exc
-        if operation.acceptance == "standoff" and measurements.get(operation.id, {}).get("gap") is None:
-            note = note.replace("gap not measured", f"gap not measured: run the assembly drawing for {version}")
-        steps.append(f"{number}. {text(note)}")
-
     tool_rows = []
-    for step_number, resolved_operation in enumerate(resolved, start=1):
-        names = [*resolved_operation.operation.tools, *resolved_operation.operation.consumables]
-        if names:
+    for item in operations.items:  # record order; a hold and a unit install are guide steps without a drawing callout
+        resolved_operation = drawn.get(item.id)
+        if resolved_operation is not None:
             operation = resolved_operation.operation
+            try:
+                note = assembly_sheet.operation_note(resolved_operation, measurements.get(operation.id, {}), regime)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise GuideError(f"cannot format assembly operation {operation.id}: {exc}") from exc
+            if operation.acceptance == "standoff" and measurements.get(operation.id, {}).get("gap") is None:
+                note = note.replace("gap not measured", f"gap not measured: run the assembly drawing for {version}")
             relation = "onto" if operation.kind == "retaining_ring" else "into"
-            tool_rows.append((step_number,
-                              f"{resolved_operation.part_item} {relation} {resolved_operation.into_item}",
-                              "; ".join(names)))
+            items_text = f"{resolved_operation.part_item} {relation} {resolved_operation.into_item}"
+            names = [*operation.tools, *operation.consumables]
+        elif item.kind in ("hold", "install"):
+            note, items_text = bench_note(item, items, regime)
+            names = [*item.tool_names, *([item.fixture] if item.fixture else []), *item.consumables]
+        else:
+            continue
+        steps.append(f"{len(steps) + 1}. {text(note)}")
+        if names:
+            tool_rows.append((len(steps), items_text, "; ".join(names)))
     sections = [
         "## Overview\n\n" + table(("Field", "Value"), overview),
         "## Parts to make\n\n" + table(("Item no.", "PN", "Title", "Qty", "Material", "Process", "Manufacturing file"),
