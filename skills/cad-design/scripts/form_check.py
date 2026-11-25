@@ -121,7 +121,7 @@ LAYOUT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "
 CHECK_PACKET_PATH = LAYOUT_PATH.with_name("check_packet.py")
 GUIDELINES_PATH = LAYOUT_PATH.with_name("guidelines.py")  # the guideline resolver, hashed into producer_code
 PROCESS_SUBJECT = "process"  # hw/checks/<V>/process: this producer's bundle subject
-BLOCKING_CHECKS = frozenset({"brep_invalid", "step_readback", "joint_bore_missing"})  # the rest are diagnostics
+BLOCKING_CHECKS = frozenset({"brep_invalid", "step_readback", "joint_bore_missing", "joint_contact_unknown"})  # the rest are diagnostics
 
 POSE_PATH = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "pose.py"
 CAD_MODEL_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-model" / "scripts"
@@ -789,10 +789,16 @@ def datum_distance(patch: Any, datum: tuple[Sequence[float], Sequence[float]]) -
 
 
 class Contact(NamedTuple):
-    """face_contact's answer: the best facing pair (None: none overlaps) and whether it mates at the joint."""
+    """face_contact's answer: the best facing pair (None: none overlaps), whether it mates at the joint, and the face
+    pairs whose kernel Boolean failed. A failure leaves the contact unknown, never an empty intersection."""
 
     best: dict[str, Any] | None
     at_joint: bool
+    failures: list[str]
+
+
+class ContactFailure(RuntimeError):
+    """The kernel could not compute one face pair's overlap."""
 
 
 def _onto_plane(ours: dict[str, Any], normal: Sequence[float], point: Sequence[float], pose: Any) -> Any:
@@ -824,6 +830,31 @@ def separation(patch: Any, ours: dict[str, Any], normal: Sequence[float], point:
     return centre + slope * low, centre + slope * high
 
 
+def _pair_contact(ours: dict[str, Any], face: Any, normal: Sequence[float], point: Sequence[float], relative: Any,
+                  pose: Any, datum: tuple[Sequence[float], Sequence[float]],
+                  tol: float) -> tuple[tuple[bool, float, float, float], dict[str, Any]] | None:
+    """One facing pair's (rank, contact) for face_contact; None when it overlaps by less than CONTACT_MIN_AREA_MM2.
+    Raises ContactFailure when the kernel Boolean does not complete."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+
+    laid = BRepBuilderAPI_Transform(face, pose.to_trsf(_onto_plane(ours, normal, point, pose) @ relative), True).Shape()
+    try:
+        common = BRepAlgoAPI_Common(ours["face"], laid)
+        done = common.IsDone()
+    except Exception as error:  # OCP raises a kernel Standard_Failure as a Python exception
+        raise ContactFailure(f"the overlap Boolean raised {type(error).__name__}: {error}") from error
+    if not done:
+        raise ContactFailure("the overlap Boolean (BRepAlgoAPI_Common) did not complete")
+    area = sum(face_area(found) for found in faces_of(common.Shape()))
+    if area < CONTACT_MIN_AREA_MM2:
+        return None
+    gap = max(abs(end) for end in separation(common.Shape(), ours, normal, point))
+    off = datum_distance(common.Shape(), datum)
+    return ((not (gap <= tol and off <= tol), gap, off, -area),
+            {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6), "kind": "face"})
+
+
 def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], relative: Any, pose: Any,
                  datum: tuple[Sequence[float], Sequence[float]], tol: float, window: float) -> Contact:
     """The planar face pair of two parts that mates them at the joint: outward normals opposite within AXIS_TOL, planes
@@ -832,31 +863,23 @@ def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], rela
     and axis in the parent frame. offset_mm is the largest separation across the overlap (separation), area_mm2 the
     overlap and datum_mm its distance from the joint's datum plane (datum_distance). A pair within `tol` on both
     counts, compared before rounding, wins; then the nearest."""
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
-
     turn = pose.Rigid(relative.rot, (0.0, 0.0, 0.0))
     best: tuple[tuple[bool, float, float, float], dict[str, Any]] | None = None
-    for theirs in child:
+    failures = []
+    for j, theirs in enumerate(child):
         normal, point = turn.apply(theirs["normal"]), relative.apply(theirs["point"])
-        for ours in parent:
-            if _dot(ours["normal"], normal) >= 0.0 or _norm(_cross(ours["normal"], normal)) > AXIS_TOL:
+        for i, ours in enumerate(parent):
+            if (_dot(ours["normal"], normal) >= 0.0 or _norm(_cross(ours["normal"], normal)) > AXIS_TOL
+                    or abs(_dot(_sub(point, ours["point"]), ours["normal"])) > window):
                 continue
-            if abs(_dot(_sub(point, ours["point"]), ours["normal"])) > window:
+            try:
+                found = _pair_contact(ours, theirs["face"], normal, point, relative, pose, datum, tol)
+            except ContactFailure as failure:
+                failures.append(f"parent planar face {i} with child planar face {j}: {failure}")
                 continue
-            laid = BRepBuilderAPI_Transform(theirs["face"], pose.to_trsf(_onto_plane(ours, normal, point, pose) @ relative),
-                                            True).Shape()
-            common = BRepAlgoAPI_Common(ours["face"], laid)
-            area = sum(face_area(face) for face in faces_of(common.Shape())) if common.IsDone() else 0.0
-            if area < CONTACT_MIN_AREA_MM2:
-                continue
-            gap = max(abs(end) for end in separation(common.Shape(), ours, normal, point))
-            off = datum_distance(common.Shape(), datum)
-            rank = (not (gap <= tol and off <= tol), gap, off, -area)
-            if best is None or rank < best[0]:
-                best = rank, {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6),
-                              "kind": "face"}
-    return Contact(None, False) if best is None else Contact(best[1], not best[0][0])
+            if found is not None and (best is None or found[0] < best[0]):
+                best = found
+    return Contact(None, False, failures) if best is None else Contact(best[1], not best[0][0], failures)
 
 
 def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list[dict[str, Any]]],
@@ -885,14 +908,29 @@ def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list
         if contact.at_joint:
             parts.update(dict.fromkeys(missing, contact.best))
             return parts, []
+    return parts, _mating_findings(joint.id, missing, parts, contact, fixed, tol)
+
+
+def _mating_findings(joint_id: str, missing: list[str], parts: dict[str, Any], contact: Contact | None, fixed: bool,
+                     tol: float) -> list[dict[str, Any]]:
+    """A finding per endpoint without mating geometry: joint_contact_unknown (status unknown, with the reason) when a
+    face-contact Boolean failed, since the contact can then be neither shown nor ruled out; else joint_bore_missing."""
     findings = []
+    if contact is not None and contact.failures:
+        reason = (f"{len(contact.failures)} face-contact Boolean(s) failed, so the contact is unknown; first: "
+                  f"{contact.failures[0]}")
+        for ref in missing:
+            findings.append({"check": "joint_contact_unknown", "joint": joint_id, "part": ref, "status": "unknown",
+                             "reason": reason, "nearest": parts[ref], "contact": contact.best, "tol_mm": tol})
+            parts[ref] = {"kind": "unknown", "reason": reason}
+        return findings
     for ref in missing:
-        finding = {"check": "joint_bore_missing", "joint": joint.id, "part": ref,
+        finding = {"check": "joint_bore_missing", "joint": joint_id, "part": ref,
                    "kind": "bore, shank or face contact" if fixed else "bore or shank", "nearest": parts[ref]}
         if fixed:
             finding["contact"] = contact.best if contact is not None else None
         findings.append({**finding, "tol_mm": tol})
-    return parts, findings
+    return findings
 
 
 # --- manufacturing-state probe (process_checks facts, record version 2) -----------------------------------------
