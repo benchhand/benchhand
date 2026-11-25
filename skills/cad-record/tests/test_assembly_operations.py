@@ -473,6 +473,17 @@ class SubBuildTests(unittest.TestCase):
         self.assertNotEqual(list(check.iter_errors({**self.bond("mag-a"), "duration": sourced(1, "h")})), [],
                             "only a hold has a duration")
 
+    def test_an_install_whose_base_was_removed_on_the_bench_has_an_unknown_path(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        strip = {"id": "strip-hanger", "kind": "disassemble", "sub_build": "hanger", "part": "TST-0102", "into": "@mag-a",
+                 "direction": [0, 0, 1]}
+        operations = ops.normalize({"operations": [bond_a, bond_b, cure, strip, install]})
+        plan = {r.operation.id: r for r in ops.access_plan(operations, self.inventory())}
+        request = plan["install-hanger"]
+        self.assertNotEqual(request.moving, "TST-0102", "the removed base does not travel")
+        self.assertEqual(request.unit, frozenset({"mag-a", "mag-b"}))
+        self.assertTrue(any("TST-0102 is removed" in reason for reason in request.unknown), request.unknown)
+
     def test_the_cure_hold_sees_only_its_sub_build(self) -> None:
         clamped = {**self.CURE, "tools": ["spring clamp"]}
         items = [self.bond("mag-a"), self.bond("mag-b"), clamped, dict(self.INSTALL)]
