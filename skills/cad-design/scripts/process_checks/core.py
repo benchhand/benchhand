@@ -669,17 +669,19 @@ class Context:
                                 if found.status == "guideline" else (f"no guideline states {characteristic}",))
         return Calibrated(cal.status, characteristic, None, (*cal.reasons, *why))
 
-    def counts(self, status: str) -> bool:
+    def counts(self, status: str, profile: Any | None = None) -> bool:
         """Whether a limit of `status` settles a check: a calibration always; a guideline value with the calibration flag
-        off, or in a service class of GUIDELINE_PASS_CLASSES."""
+        off for the profile it came from (this operation's unless `profile` names another), or in a service class of
+        GUIDELINE_PASS_CLASSES."""
         return status == "calibrated" or (status == "guideline" and (self.service_class in GUIDELINE_PASS_CLASSES
-                                                                     or self.calibration_off()))
+                                                                     or self.calibration_off(profile)))
 
     def settle(self, cal: Calibrated, coverage: str, findings: list[Draft], *, check: str, measured: Mapping[str, Any],
-               criterion: Mapping[str, Any], method: str, feature: str | None = None) -> tuple[str, str]:
-        """A sub-check that met `cal` (calibrated or guideline): PASS, noted as uncalibrated for a guideline value, or
-        UNKNOWN with the guideline-only finding where `counts` refuses the guideline value."""
-        if self.counts(cal.status):
+               criterion: Mapping[str, Any], method: str, feature: str | None = None,
+               profile: Any | None = None) -> tuple[str, str]:
+        """A sub-check that met `cal` (calibrated or guideline, from `profile` when not this operation's): PASS, noted
+        as uncalibrated for a guideline value, or UNKNOWN with the guideline-only finding where `counts` refuses it."""
+        if self.counts(cal.status, profile):
             return PASS, _noted(coverage, cal.note) if cal.note else coverage
         self._guideline_only(check, cal.characteristic, measured, criterion, method, feature, findings)
         return UNKNOWN, _noted(coverage, "guideline value only")

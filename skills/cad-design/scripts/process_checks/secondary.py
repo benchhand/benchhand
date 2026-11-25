@@ -199,7 +199,7 @@ def _cleanup(ctx: Context, feature: str, source_op: Any, amount: Any, item: Any,
         return FAIL, f"{feature} allowance short"
     return ctx.settle(cal, f"{feature} allowance {amount} covers {source_op.id}'s deviation", findings, check="allowance",
                       measured={**amount.as_dict()}, criterion=cal.criterion("allowance", ">=", worst, "mm"),
-                      method=f"allowance against the predecessor's {cal.status} deviation", feature=feature)
+                      method=f"allowance against the predecessor's {cal.status} deviation", feature=feature, profile=profile)
 
 
 # Whether a bore of `depth` mm breaks a thread-engagement minimum; `>` is strict, so a bore exactly as deep breaks it.
