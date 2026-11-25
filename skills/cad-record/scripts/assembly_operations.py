@@ -791,13 +791,14 @@ def _hold_rules(op: AssemblyOperation, fail: Callable[..., None]) -> None:
             fail("assembly.cure_unsourced", f"{op.id}: the cure {name} is not a known fact with a datasheet source",
                  "the hold may end before the adhesive or potting has cured: the bond can shift or fail in service",
                  f"record the cure {name} from the adhesive's datasheet, with the datasheet as its source", severity="major")
+    if not cure_sourced(op.cure.get("time")):
+        return  # only a datasheet cure time can show a hold short; cure_unsourced reports the rest
     held = _hours(op.duration, lower=True)
     needed = _hours(op.cure.get("time"), lower=False)
     if needed is None:
-        if _mapping(op.cure.get("time")).get("status") == "known":  # an unknown time is cure_unsourced already
-            fail("assembly.hold_short", f"{op.id}: the cure time is not a known positive time, so the hold cannot be "
-                 "shown to last it", "the part may leave its fixture before it has cured: the bond can shift or fail",
-                 "record the datasheet cure time as a positive time (s, min, h or d)")
+        fail("assembly.hold_short", f"{op.id}: the cure time is not a known positive time, so the hold cannot be "
+             "shown to last it", "the part may leave its fixture before it has cured: the bond can shift or fail",
+             "record the datasheet cure time as a positive time (s, min, h or d)")
     elif held is None or held < needed:
         measured = "unknown" if held is None else f"{held:g} h"
         fail("assembly.hold_short", f"{op.id}: the hold lasts {measured}, the cure time is {needed:g} h",
