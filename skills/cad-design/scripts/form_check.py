@@ -69,11 +69,14 @@ Checks (each failure is one `findings` entry):
                             a STEP read-back can heal an unorientable face)
     step_readback           any fidelity: readback_rel_error above cad-model's 1e-6;
                             loose fillet edges (0.01 to 0.1 mm tolerance) move it ~1e-5
-    joint_bore_missing      F1+: a joint's parent or child has no cylinder face whose
-                            axis is parallel to the joint axis and passes within
-                            --joint-tol of the joint origin; made parts need a bore
-                            (concave), purchased parts a shank (convex), existing
-                            equipment either one
+    joint_bore_missing      F1+: a joint endpoint (made, bought or existing) without mating geometry: no
+                            cylinder face, a bore (concave) or a shank (convex), whose axis is parallel to
+                            the joint axis and passes within --joint-tol of the joint origin. The joint's
+                            `parts` row names the kind found. A fixed joint's endpoint without one mates by
+                            face contact instead (`kind: face`, a flat mount): a planar face of each part,
+                            outward normals opposite, planes within --joint-tol and overlapping by at least
+                            0.01 mm2 (offset_mm, area_mm2). Its finding names the nearest such pair within
+                            1 mm (`contact`, else null)
     block_like              F2+, made solid parts only: (axis_planar_fraction >= 0.80 or
                             blend_faces + freeform_faces == 0), with both OBB exemptions
     min_wall                F2+, a process with a minimum (the resolved fdm value, or the override):
@@ -145,6 +148,8 @@ BLOCK_MAX_THICKNESS_FRACTION = 0.10
 BLEND_MAX_RADIUS = 10.0
 BLEND_MAX_SPAN = math.radians(120.0)  # a fillet turns through its edge angle; a lug end turns 180 degrees
 AXIS_TOL = 1e-4  # sine of the allowed angle between a cylinder axis and a joint axis
+CONTACT_SEARCH_MM = 1.0  # a fixed joint's nearest coplanar face pair this far apart is named in its finding
+CONTACT_MIN_AREA_MM2 = 0.01  # faces that only touch along an edge or at a point share less than this
 MIN_WALL_PROCESSES = ("fdm", "cnc")  # the keys product.yaml manufacturing.min_wall_mm may set
 WALL_SPACING_FRACTION = 0.5  # sample spacing along each UV direction, as a fraction of the minimum wall
 WALL_FACE_SAMPLE_CAP = 4096  # samples per face; a larger face is sampled coarser and counted in capped_faces
@@ -718,22 +723,116 @@ def measure(shape: Any) -> dict[str, Any]:
         "min_convex_radius": None if math.isinf(min_convex) else round(min_convex, 4),
         "min_concave_radius": None if math.isinf(min_concave) else round(min_concave, 4),
         "_cylinders": cylinders,
+        "_planes": planar_faces(shape),
     }
 
 
-def bore_offset(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: Sequence[float],
-                kind: str | None) -> dict[str, Any] | None:
-    """The `kind` cylinder (bore or shank; None: either) parallel to the joint axis whose line passes closest to the
-    origin."""
-    best = None
+def planar_faces(shape: Any) -> list[dict[str, Any]]:
+    """Each planar face with a point on it and its outward normal: the faces a flat mount can rest on."""
+    from OCP.GeomAbs import GeomAbs_Plane
+
+    planes = []
+    for face in faces_of(shape):
+        adaptor, point, normal, _ = surface_sample(face)
+        if adaptor.GetType() == GeomAbs_Plane:
+            planes.append({"face": face, "point": point, "normal": normal})
+    return planes
+
+
+def coaxial_cylinders(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: Sequence[float]) -> list[dict[str, Any]]:
+    """The cylinders parallel to the joint axis, bores (concave) and shanks (convex) alike, nearest line to the
+    origin first. Sourcing plays no part: the geometry shows which one mates."""
+    found = []
     for cylinder in cylinders:
-        found = "shank" if cylinder["convex"] else "bore"
-        if kind not in (None, found) or _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
+        if _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
             continue
         offset = _norm(_cross(_sub(origin, cylinder["location"]), cylinder["direction"]))
-        if best is None or offset < best["offset_mm"]:
-            best = {"offset_mm": round(offset, 6), "radius": round(cylinder["radius"], 4), "kind": found}
+        found.append({"offset_mm": round(offset, 6), "radius": round(cylinder["radius"], 4),
+                      "kind": "shank" if cylinder["convex"] else "bore"})
+    return sorted(found, key=lambda row: row["offset_mm"])
+
+
+def mating_cylinders(parent: list[dict[str, Any]], child: list[dict[str, Any]],
+                     tol: float) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Each endpoint's cylinder: of those on the axis, the bore and shank pair whose radii are closest (a shaft in
+    its bore, not a roller's outside); else each endpoint's nearest cylinder."""
+    pairs = [(abs(a["radius"] - b["radius"]), i, j, a, b)
+             for i, a in enumerate(parent) if a["offset_mm"] <= tol
+             for j, b in enumerate(child) if b["offset_mm"] <= tol and a["kind"] != b["kind"]]
+    if pairs:
+        _, _, _, a, b = min(pairs, key=lambda pair: pair[:3])
+        return a, b
+    return (parent[0] if parent else None), (child[0] if child else None)
+
+
+def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], relative: Any, pose: Any,
+                 window: float) -> dict[str, Any] | None:
+    """The planar face pair of two parts that faces each other closest (outward normals opposite, planes at most
+    `window` mm apart) and overlaps by at least CONTACT_MIN_AREA_MM2 once the child face is moved onto the parent's
+    plane. `relative` takes child-frame points into the parent frame. offset_mm is the distance between the planes,
+    area_mm2 their overlap."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.gp import gp_Trsf, gp_Vec
+
+    turn = pose.Rigid(relative.rot, (0.0, 0.0, 0.0))
+    best: dict[str, Any] | None = None
+    for theirs in child:
+        normal, point = turn.apply(theirs["normal"]), relative.apply(theirs["point"])
+        moved = None
+        for ours in parent:
+            if _dot(ours["normal"], normal) >= 0.0 or _norm(_cross(ours["normal"], normal)) > AXIS_TOL:
+                continue
+            gap = _dot(_sub(point, ours["point"]), ours["normal"])  # > 0: apart, < 0: overlapping
+            if abs(gap) > window or (best is not None and abs(gap) > best["offset_mm"]):
+                continue
+            if moved is None:
+                moved = BRepBuilderAPI_Transform(theirs["face"], pose.to_trsf(relative), True).Shape()
+            onto = gp_Trsf()
+            onto.SetTranslation(gp_Vec(*(-gap * c for c in ours["normal"])))
+            common = BRepAlgoAPI_Common(ours["face"], BRepBuilderAPI_Transform(moved, onto, True).Shape())
+            area = sum(face_area(face) for face in faces_of(common.Shape())) if common.IsDone() else 0.0
+            if area < CONTACT_MIN_AREA_MM2:
+                continue
+            found: dict[str, Any] = {"offset_mm": round(abs(gap), 6), "area_mm2": round(area, 4), "kind": "face"}
+            if best is None or (found["offset_mm"], -found["area_mm2"]) < (best["offset_mm"], -best["area_mm2"]):
+                best = found
     return best
+
+
+def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list[dict[str, Any]]],
+                 planes: dict[str, list[dict[str, Any]]], tol: float) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Each endpoint's mating geometry for one joint, and a joint_bore_missing finding per endpoint without it. Every
+    endpoint (made, bought or existing) mates through the bore or shank its geometry has on the joint axis. An
+    endpoint of a fixed joint without one mates by planar face contact with the other part instead: a flat mount."""
+    ends = []
+    for oid in (joint.parent, joint.child):
+        pn = assembly.pn(oid)
+        ref = assembly.inventory.get(oid).ref if oid in assembly.inventory else pn
+        # The joint frame is in assembly coordinates; a placed occurrence's geometry is in its PN's frame.
+        rest = (pose.Rigid.from_placement(assembly.inventory.get(oid).placement).inverse()
+                if oid in assembly.inventory else pose.Rigid.identity())
+        axis = pose.Rigid(rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis)
+        ends.append((ref, pn, rest, coaxial_cylinders(cylinders.get(pn, []), axis, rest.apply(joint.origin))))
+    (parent_ref, parent_pn, parent_rest, _), (child_ref, child_pn, child_rest, _) = ends
+    parts = dict(zip((parent_ref, child_ref), mating_cylinders(ends[0][3], ends[1][3], tol)))
+    missing = [ref for ref, found in parts.items() if found is None or found["offset_mm"] > tol]
+    fixed = joint.type == "fixed"
+    contact = None
+    if fixed and missing and parent_pn in planes and child_pn in planes:
+        contact = face_contact(planes[parent_pn], planes[child_pn], parent_rest @ child_rest.inverse(), pose,
+                               max(CONTACT_SEARCH_MM, tol))
+        if contact is not None and contact["offset_mm"] <= tol:
+            parts.update(dict.fromkeys(missing, contact))
+            return parts, []
+    findings = []
+    for ref in missing:
+        finding = {"check": "joint_bore_missing", "joint": joint.id, "part": ref,
+                   "kind": "bore, shank or face contact" if fixed else "bore or shank", "nearest": parts[ref]}
+        if fixed:
+            finding["contact"] = contact
+        findings.append({**finding, "tol_mm": tol})
+    return parts, findings
 
 
 # --- manufacturing-state probe (process_checks facts, record version 2) -----------------------------------------
@@ -1375,9 +1474,11 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
     findings: list[dict[str, Any]] = []
     parts: dict[str, Any] = {}
     cylinders: dict[str, list[dict[str, Any]]] = {}
+    planes: dict[str, list[dict[str, Any]]] = {}
     for pn, part in sorted(loaded.items()):
         metrics = measure(part.shape)
         cylinders[pn] = metrics.pop("_cylinders")
+        planes[pn] = metrics.pop("_planes")
         obb_volume = metrics.pop("_obb_volume_mm3")
         thickness_fraction = metrics.pop("_obb_thickness_fraction")
         volume = shape_volume(part.shape)
@@ -1439,23 +1540,10 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
     joints: dict[str, Any] = {}
     if level >= 1:
         for joint in assembly.joints:
-            row = {"type": joint.type, "axis": list(joint.axis), "origin": list(joint.origin), "parts": {}}
-            for oid in (joint.parent, joint.child):
-                pn = assembly.pn(oid)
-                ref = assembly.inventory.get(oid).ref if oid in assembly.inventory else pn
-                # The joint frame is in assembly coordinates; a placed occurrence's bores are in its PN's frame.
-                rest = (pose.Rigid.from_placement(assembly.inventory.get(oid).placement).inverse()
-                        if oid in assembly.inventory else pose.Rigid.identity())
-                axis = pose.Rigid(rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis)
-                # Existing equipment is not sourced to a bore or a shank: it mates through whichever it has.
-                sourcing = process.get(pn)
-                kind = "shank" if sourcing == "purchased" else None if sourcing == "existing" else "bore"
-                found = bore_offset(cylinders[pn], axis, rest.apply(joint.origin), kind) if pn in cylinders else None
-                row["parts"][ref] = found
-                if found is None or found["offset_mm"] > args.joint_tol:
-                    findings.append({"check": "joint_bore_missing", "joint": joint.id, "part": ref,
-                                     "kind": kind or "bore or shank", "nearest": found, "tol_mm": args.joint_tol})
-            joints[joint.id] = row
+            parts_found, missing = joint_mating(joint, assembly, pose, cylinders, planes, args.joint_tol)
+            joints[joint.id] = {"type": joint.type, "axis": list(joint.axis), "origin": list(joint.origin),
+                                "parts": parts_found}
+            findings.extend(missing)
     for finding in findings:
         finding["blocking"] = finding["check"] in BLOCKING_CHECKS
     blocking = any(finding["blocking"] for finding in findings)

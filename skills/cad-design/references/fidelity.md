@@ -63,6 +63,20 @@ These form examples do not define material/process combinations or universal lim
 
 `form_check.py` reports sampled minimum walls and `block_like`/oriented-box descriptors as geometric form diagnostics. These findings do not set a universal FDM threshold or set a process limit. A wall sample can identify a region for review. Sampling limits apply; consult the command result and implementation. The build-envelope check reports geometric fit. It does not evaluate a process route. The route-check producer owns process pass/fail criteria.
 
+## Joint mating geometry
+
+From F1, `form_check.py` checks each joint end for the geometry that mates it. The part's geometry counts, not its sourcing. A made, bought or existing part passes with a bore or a shaft on the joint axis. The cylinder axis is parallel to the joint axis and passes within `--joint-tol` (0.05 mm) of the joint origin. Of the cylinders on the axis, the check names the bore and shaft pair with the closest radii, so a roller on a stub axle names its bore, not its outside. The joint's `parts` row gives `kind` (`bore` or `shank`), `radius` and `offset_mm`.
+
+A fixed joint between parts mounted flat, such as a head bolted to a deck, may have no cylinder on its axis. Such a joint passes by face contact instead. The contact needs:
+
+- one planar face on each part, with opposite normals
+- planes within `--joint-tol`
+- an overlap of at least 0.01 mm²
+
+Its row gives `kind: face`, `offset_mm` (the gap) and `area_mm2` (the overlap). Revolute and prismatic joints still need a cylinder.
+
+An end with neither is a blocking `joint_bore_missing` finding. Its `nearest` field holds the closest cylinder on the axis. On a fixed joint, its `contact` field holds the closest facing pair within 1 mm, or null.
+
 ## Render self-check: appearance only
 
 - Samples: each face gets a uniform UV grid. Where the surface stretches most, samples are at most half the minimum apart, with at most 4096 per face (`capped_faces` counts faces sampled coarser). The grid covers the face's full UV range, so a bore seam does not determine sample locations. Samples within four B-rep tolerances (at least 0.1 µm) of a trim boundary are skipped. A seam is not a boundary.

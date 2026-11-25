@@ -415,6 +415,111 @@ class ExistingJointTests(unittest.TestCase):
         self.assertEqual(report["joints"]["J-001"]["parts"]["TST-0502"]["kind"], "shank")
 
 
+BOUGHT = "process: purchased\nmake_buy: buy\n"
+SHAFT = "cq.Workplane().cylinder(30, 5)"
+BORED = "cq.Workplane().box(20, 20, 10).faces('>Z').workplane().hole(10)"
+PAD = "cq.Workplane().box(20, 10, 6)"  # 6 mm tall: on the deck (top z = 5) when its centre is at z = 8
+JOINT_GEOMETRY_PARTS = {
+    "TST-0601": (FDM_MADE, SHAFT),
+    "TST-0602": (BOUGHT, BORED),
+    "TST-0603": (FDM_MADE + "form_class: frame\n", BORED),
+    "TST-0604": (BOUGHT, SHAFT),
+    "TST-0605": (FDM_MADE, "cq.Workplane().box(40, 40, 10)"),
+    "TST-0606": (FDM_MADE + "model_frame: part_local\n", PAD),  # placed on the deck by its occurrence
+    "TST-0607": (FDM_MADE, PAD + ".translate((0, 0, 8.5))"),  # 0.5 mm above the deck
+    "TST-0608": (FDM_MADE, PAD + ".translate((0, 0, 8))"),
+    "TST-0609": (FDM_MADE, SHAFT + ".translate((0.2, 0, 0))"),
+    "TST-0610": (BOUGHT, "cq.Workplane().cylinder(10, 8).faces('>Z').workplane().hole(6)"),  # a roller: Ø16 over a Ø6 bore
+    "TST-0611": (FDM_MADE, "cq.Workplane().cylinder(20, 3)"),  # its stub axle
+}
+JOINT_GEOMETRY_ASSEMBLY = """\
+occurrences:
+- id: pad
+  PN: TST-0606
+  placement:
+    translation_mm: [3, 2, 8]
+    rotation: {axis: [0, 0, 1], angle_deg: 90}
+subassemblies:
+- {id: fixture, title: Joint geometry fixture, parts: [], occurrences: ['@pad']}
+joints:
+- {id: J-601, type: revolute, parent: TST-0602, child: TST-0601, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
+- {id: J-602, type: revolute, parent: TST-0603, child: TST-0604, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
+- {id: J-603, type: fixed, parent: TST-0605, child: '@pad', axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+- {id: J-604, type: fixed, parent: TST-0605, child: TST-0607, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+- {id: J-605, type: revolute, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
+- {id: J-606, type: revolute, parent: TST-0602, child: TST-0609, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
+- {id: J-607, type: fixed, parent: TST-0611, child: TST-0610, axis: [0, 0, 1], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+"""
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
+class JointGeometryTests(unittest.TestCase):
+    """The joint check reads each endpoint's mating geometry, not its sourcing: a bore or a shank on the joint axis,
+    or, for a fixed joint, planar face contact between the two parts."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        hw, parts_dir = build_parts(Path(cls.tmp.name), JOINT_GEOMETRY_PARTS)
+        (hw / "assembly.yaml").write_text(JOINT_GEOMETRY_ASSEMBLY, encoding="utf-8")
+        cls.code, cls.report = form_check(parts_dir, "F1", hw)
+
+    def found(self, joint: str) -> dict:
+        return self.report["joints"][joint]["parts"]
+
+    def missing(self, joint: str) -> dict[str, dict]:
+        return {f["part"]: f for f in self.report["findings"] if f["check"] == "joint_bore_missing" and f["joint"] == joint}
+
+    def test_a_made_shaft_in_a_bought_bore_passes(self) -> None:
+        found = self.found("J-601")
+        self.assertEqual(self.missing("J-601"), {})
+        self.assertEqual((found["TST-0601"]["kind"], found["TST-0602"]["kind"]), ("shank", "bore"))
+        self.assertEqual((found["TST-0601"]["offset_mm"], found["TST-0602"]["offset_mm"]), (0.0, 0.0))
+
+    def test_a_made_bore_with_a_bought_shank_passes(self) -> None:
+        found = self.found("J-602")
+        self.assertEqual(self.missing("J-602"), {})
+        self.assertEqual((found["TST-0603"]["kind"], found["TST-0604"]["kind"]), ("bore", "shank"))
+
+    def test_a_flat_mounted_fixed_joint_passes_by_face_contact(self) -> None:
+        self.assertEqual(self.missing("J-603"), {})
+        for ref in ("TST-0605", "@pad"):
+            with self.subTest(part=ref):
+                contact = self.found("J-603")[ref]
+                self.assertEqual(contact["kind"], "face")
+                self.assertLessEqual(contact["offset_mm"], 1e-6)
+                self.assertAlmostEqual(contact["area_mm2"], 200.0, places=3)
+
+    def test_a_fixed_joint_with_a_gap_and_no_cylinder_fails(self) -> None:
+        missing = self.missing("J-604")
+        self.assertEqual(sorted(missing), ["TST-0605", "TST-0607"])
+        finding = missing["TST-0607"]
+        self.assertEqual((finding["kind"], finding["nearest"], finding["blocking"]), ("bore, shank or face contact", None, True))
+        self.assertAlmostEqual(finding["contact"]["offset_mm"], 0.5, places=6)
+        self.assertAlmostEqual(finding["contact"]["area_mm2"], 200.0, places=3)
+
+    def test_a_revolute_joint_without_a_cylinder_fails_despite_face_contact(self) -> None:
+        missing = self.missing("J-605")
+        self.assertEqual(sorted(missing), ["TST-0605", "TST-0608"])
+        self.assertEqual({f["kind"] for f in missing.values()}, {"bore or shank"})
+        self.assertEqual({"contact" in f for f in missing.values()}, {False})
+
+    def test_a_misaligned_cylinder_fails(self) -> None:
+        missing = self.missing("J-606")
+        self.assertEqual(sorted(missing), ["TST-0609"])
+        nearest = missing["TST-0609"]["nearest"]
+        self.assertEqual(nearest["kind"], "shank")
+        self.assertAlmostEqual(nearest["offset_mm"], 0.2, places=6)
+        self.assertEqual(self.code, 1)
+
+    def test_a_roller_on_its_axle_names_the_bore_not_its_outside(self) -> None:
+        found = self.found("J-607")
+        self.assertEqual(self.missing("J-607"), {})
+        self.assertEqual((found["TST-0611"]["kind"], found["TST-0611"]["radius"]), ("shank", 3.0))
+        self.assertEqual((found["TST-0610"]["kind"], found["TST-0610"]["radius"]), ("bore", 3.0))
+
+
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
 class WallOverrideTests(unittest.TestCase):
     """product.yaml manufacturing.min_wall_mm gives a process a minimum, and an invalid one stops the check."""
