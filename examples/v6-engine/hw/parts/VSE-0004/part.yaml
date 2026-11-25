@@ -24,3 +24,49 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: rod_face_pos, role: plane}
+    B: {feature: small_bore, role: axis}
+    C: {feature: web_side_pos, role: plane}
+  coordinate_frame:
+    origin: {intersection: [A, B]}
+    x: {normal_to: A}
+    y: {normal_to: C}
+  views:
+    - {id: principal, kind: orthographic, normal_to: A}
+    - {id: side, kind: orthographic, normal_to: C}
+    - {id: section_mid, kind: section, normal_axis: y, through: small_bore}
+  features:
+    small_bore: {size: general}
+    big_bore: {size: general}
+    small_end_rim: {size: general}
+    big_end_rim: {size: general}
+    rod_face_pos: {size: general}
+    rod_face_neg: {size: general}
+    web_side_pos: {size: general}
+    web_side_neg: {size: general}
+    pocket_floor_pos: {size: general}
+    pocket_floor_neg: {size: general}
+    pocket_side_pos: {size: general}
+    pocket_side_neg: {size: general}
+    pocket_end_small: {size: general}
+    pocket_end_big: {size: general}
+  dimensions:
+    - {id: rod_thickness, operation: plane_separation, features: [rod_face_pos, rod_face_neg], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: web_width, operation: width, features: [web_side_pos, web_side_neg], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: small_bore_d, operation: diameter, features: [small_bore], tolerance: {deviation_mm: [-0.05, 0.05]}}
+    - {id: big_bore_d, operation: diameter, features: [big_bore], tolerance: {deviation_mm: [-0.1, 0.1]}}
+    - {id: small_rim_d, operation: diameter, features: [small_end_rim], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: big_rim_d, operation: diameter, features: [big_end_rim], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pocket_depth_pos, presentation: section, operation: plane_separation, features: [rod_face_pos, pocket_floor_pos], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pocket_depth_neg, presentation: section, operation: plane_separation, features: [rod_face_neg, pocket_floor_neg], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pocket_width, operation: width, features: [pocket_side_neg, pocket_side_pos], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pocket_length, operation: plane_separation, features: [pocket_end_small, pocket_end_big], tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA. Both bores are reamed after printing: the small end runs on the 6 g6 wrist pin, the big end on the 12 mm crank pin. Deburr."}
+    - {kind: process, text: "Print with the rod flat on the bed, one face down."}
+  sheet: {sizes: [A4, A3], scale: auto}
