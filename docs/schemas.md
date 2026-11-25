@@ -19,7 +19,7 @@ schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 s
 schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
 schema-sha256 373d95bcca809d496fad780d25ae37088c76685d4bc68c3b2392106c395a15ce skills/cad-record/schemas/manufacturing.schema.json
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
-schema-sha256 0f2b807b64f486e53c4390370a0bd8cc756ca03b0fd15e8d006045b8400155f6 skills/cad-record/schemas/part.schema.json
+schema-sha256 8b87deeeb0a24e607de8cf442708787bf4a0d40ddbf1274231705e9f73818ca1 skills/cad-record/schemas/part.schema.json
 schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
 schema-sha256 94a94ac92a3a0c25ce67d7eecda0e39d90d8fb8392cf497c7745591eb308d1da skills/cad-record/schemas/release-manifest.schema.json
 schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
@@ -5192,6 +5192,62 @@ Constraints not expressed by the type:
 - `interfaces`: uniqueItems: true
 - `criteria`: minItems: 1
 
+### PartDesignation
+
+Source: `/$defs/designation`
+
+A commodity item identified by standard or family instead of a vendor part number. standard_designation names the standard (ISO 4762, ISO 7380, ISO 4032, ISO 7089, ISO 8734 ...), size, length, property class or material and finish; family_designation covers items no ISO standard defines, such as a heat-set insert (thread, length, outside diameter, recommended hole)
+
+Alias of `PartDesignationOneOf0 | PartDesignationOneOf1`
+
+### PartDesignationOneOf0
+
+Source: `/$defs/designation/oneOf/0`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `kind` | `Literal["standard_designation"]` | yes |  |  |
+| `standard` | `str` | yes |  |  |
+| `size` | `str` | yes |  |  |
+| `length` | `Literal["not_applicable"] \| float` | yes |  | mm; `not_applicable` for an item without a length (nut, washer) |
+| `property_class` | `str` | yes |  | strength class or material, e.g. 8.8, A2-70, 300 HV |
+| `finish` | `str` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `standard`: pattern: "^(ISO\|DIN\|EN\|ASME\|ANSI\|JIS)\\s\\S.*$"
+- `size`: minLength: 1
+- `length`: oneOf[0].exclusiveMinimum: 0
+- `property_class`: minLength: 1
+- `finish`: minLength: 1
+
+### PartDesignationOneOf1
+
+Source: `/$defs/designation/oneOf/1`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `kind` | `Literal["family_designation"]` | yes |  |  |
+| `family` | `str` | yes |  |  |
+| `thread` | `str` | yes |  |  |
+| `length` | `float` | yes |  |  |
+| `outside_diameter` | `float` | yes |  |  |
+| `recommended_hole` | `float` | yes |  |  |
+| `material` | `str` | no |  |  |
+| `finish` | `str` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `family`: minLength: 1
+- `thread`: minLength: 1
+- `length`: exclusiveMinimum: 0
+- `outside_diameter`: exclusiveMinimum: 0
+- `recommended_hole`: exclusiveMinimum: 0
+- `material`: minLength: 1
+- `finish`: minLength: 1
+
 ### PartInspection
 
 Source: `/$defs/inspection`
@@ -5423,17 +5479,36 @@ Traceable purchase criteria: the identity, specification and ratings that make a
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `identity` | `ManufacturingTextFact` | yes |  | manufacturer and part number, or a standard designation |
+| `identity` | `ManufacturingTextFact` | no |  | manufacturer and part number (kind manufacturer_pn), or a free-text identification |
+| `designation` | `PartDesignation` | no |  |  |
+| `reference_catalogue` | `list[PartPurchaseReferenceCatalogueItems]` | no |  | Non-binding example listings of a commodity item (vendor, part number, URL). They show where the item can be found and never restrict the supplier |
 | `specification` | `ManufacturingTextFact` | yes |  | material grade, standard or datasheet the item conforms to |
 | `ratings` | `ManufacturingTextFact` | yes |  | load, speed, temperature or other ratings |
 | `optical` | `ManufacturingTextFact` | no |  | optical grade and transmission, for a transparent item |
 | `thickness` | `ManufacturingQuantityFact` | no |  |  |
-| `availability` | `ManufacturingTextFact` | no |  |  |
+| `availability` | `ManufacturingTextFact` | no |  | a named supplier, or `commodity` (any supplier) for a standard or family designation |
 | `supplier_evidence` | `ManufacturingSources` | no |  |  |
 
 Constraints not expressed by the type:
 
 - additionalProperties: false
+- anyOf: [{"required":["identity"]},{"required":["designation"]}]
+- `reference_catalogue`: minItems: 1
+
+### PartPurchaseReferenceCatalogueItems
+
+Source: `/$defs/purchase/properties/reference_catalogue/items`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `vendor` | `ManufacturingText` | yes |  |  |
+| `part_number` | `ManufacturingText` | yes |  |  |
+| `url` | `str` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `url`: pattern: "^https?://"
 
 ### PartSetup
 
