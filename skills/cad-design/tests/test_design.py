@@ -448,6 +448,10 @@ JOINT_GEOMETRY_PARTS = {
     "TST-0620": (FDM_MADE, "cq.Workplane().box(40, 40, 10).cut(cq.Workplane().box(10, 12, 4).translate((0, 0, 4)))"),
     # The pad with a Ø4 hole through it on z, like a head's bore opening over the deck.
     "TST-0621": (FDM_MADE, "cq.Workplane().box(20, 10, 6).faces('>Z').workplane().hole(4).translate((0, 0, 8))"),
+    # An R5 shank made of four 90-degree faces: four quarter cylinders fused without merging their faces.
+    "TST-0622": (FDM_MADE, "cq.Workplane().add(cq.Solid.makeCylinder(5, 30, cq.Vector(0, 0, -15), cq.Vector(0, 0, 1), 90)"
+                           ".fuse(*[cq.Solid.makeCylinder(5, 30, cq.Vector(0, 0, -15), cq.Vector(0, 0, 1), 90)"
+                           ".rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), turn) for turn in (90, 180, 270)]))"),
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -483,6 +487,7 @@ joints:
    mount: {point: [2, 1, 5]}}
 - {id: J-627, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [1000, 0, 5], min: 0, max: 0, nominal: 0,
    mount: {point: [30, 0, 5]}}
+- {id: J-628, type: revolute, parent: TST-0602, child: TST-0622, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 """
 
 
@@ -564,6 +569,12 @@ class JointGeometryTests(unittest.TestCase):
                 self.assertEqual(self.missing(joint), {})
                 found = self.found(joint)[part]
                 self.assertEqual((found["kind"], found["radius"], found["offset_mm"]), (kind, 5.0, 0.0))
+
+    def test_a_shank_split_into_four_90_degree_faces_mates(self) -> None:
+        """Its faces join tangentially into one coaxial R5 cylinder: a shank, however the kernel segments it."""
+        self.assertEqual(self.missing("J-628"), {})
+        found = self.found("J-628")["TST-0622"]
+        self.assertEqual((found["kind"], found["radius"], found["offset_mm"]), ("shank", 5.0, 0.0))
 
     def test_face_contact_far_from_the_joint_fails(self) -> None:
         """The pad sits flush on the deck, but the joint's datum plane (x = 1000) is 990 mm from the contact."""
