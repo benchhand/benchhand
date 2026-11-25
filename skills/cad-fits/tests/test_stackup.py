@@ -504,6 +504,47 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "unknown")
         self.assertEqual(codes(result), ["stack.capability_unresolved"])
 
+    def uncalibrated_printed_slot(self, tol: float) -> tuple[dict, dict]:
+        """The tab-slot stack with a printed slot plate whose profile has no calibration, its width citing the
+        guideline dimensional_deviation with +/-`tol` mm limits."""
+        documents = tab_slot_documents("fdm")
+        documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibrations"] = []
+        stack = fixture("laser_tab_slot.yaml")
+        contributor(stack, "W")["capability"]["characteristic"] = "dimensional_deviation"
+        contributor(stack, "W")["tol"] = tol
+        return documents, stack
+
+    def test_an_uncalibrated_printed_contributor_takes_the_guideline_deviation(self) -> None:
+        """benchhand-c7q.30: a printed contributor needs no calibration; the guideline interval qualifies its limits."""
+        documents, stack = self.uncalibrated_printed_slot(0.5)
+        for calibration in (True, False):
+            with self.subTest(calibration=calibration):
+                result = self.bound_with(documents, stack, "tab-slot", catalog=deviation_catalog(), calibration=calibration)
+                self.assertNotIn("stack.capability_unresolved", codes(result))
+                self.assertNotIn("stack.limits_unqualified", codes(result))
+                slot = next(row for row in result["contributors"] if row["id"] == "W")
+                self.assertEqual(slot["resolved"]["guideline"], "fdm.generic")
+
+    def test_printed_limits_tighter_than_the_guideline_deviation_stay_unqualified(self) -> None:
+        documents, stack = self.uncalibrated_printed_slot(0.05)
+        result = self.bound_with(documents, stack, "tab-slot", catalog=deviation_catalog())
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(codes(result), ["stack.limits_unqualified"])
+
+    def test_a_printed_contributor_with_neither_a_calibration_nor_a_guideline_stays_unknown(self) -> None:
+        documents, stack = self.uncalibrated_printed_slot(0.5)
+        result = self.bound_with(documents, stack, "tab-slot", catalog=clearance_catalog(clearance_limit()))
+        self.assertEqual(codes(result), ["stack.capability_unresolved"])
+
+
+def deviation_catalog() -> object:
+    """fdm.generic holding only a dimensional_deviation interval of -0.5..0.5 mm."""
+    limit = {"characteristic": "dimensional_deviation", "operator": "between",
+             "quantity": {"lower": -0.5, "upper": 0.5, "units": "mm"},
+             "citations": [{"kind": "supplier", "reference": "TST accuracy table", "accessed": "2026-11-25"}]}
+    return GL.Catalog({"fdm.generic": GL.Guideline("fdm.generic", 2, "TST generic", (), False, {"process": "fdm"}, (limit,),
+                                                   "manufacturing/guidelines/fdm.generic.yaml", "shipped", "ab" * 32)})
+
 
 GL = stackup.GUIDELINES
 GENERIC_SHA = "ab" * 32
