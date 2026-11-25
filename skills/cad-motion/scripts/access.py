@@ -407,15 +407,16 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
                                          obstacles(request.path_obstacles, moving),
                                          engagement=partners(request.path_obstacles, moving)))
         operated = request.part
-        for number, tool in enumerate(request.tools):
-            if not tool.declared or tool.approach is None or (op.id, number) not in tools:
-                continue  # its reason is in request.unknown, or the envelope solid could not be read
+        for reach in request.reaches:
+            if (op.id, reach.index) not in tools:
+                continue  # the cited envelope solid could not be read: its reason is in the tool problems
             if operated is None or operated not in world:
-                entry.unknown.append(f"{op.id}: the operated part {op.part} has no placement for tool {tool.name!r}")
+                entry.unknown.append(f"{op.id}: the operated part {op.part} has no placement for tool {reach.tool.name!r}")
                 continue
-            key, _shape = tools[(op.id, number)]
-            entry.paths.append(Travel(f"{op.id}/tool/{number}", key, world[operated], _rotate(rotation, tool.approach),
-                                     obstacles(request.tool_obstacles, None), route="approach", tool=tool.name))
+            key, _shape, envelope = tools[(op.id, reach.index)]
+            entry.paths.append(Travel(f"{op.id}/tool/{reach.index}", key, world[operated], _rotate(rotation, reach.approach),
+                                     obstacles(request.tool_obstacles, None), envelope=envelope, tool=reach.tool.name,
+                                     route="approach" if reach.source == "step" else "standard_envelope"))
         plans.append(entry)
     return plans
 
