@@ -13,6 +13,9 @@ The wrap centres are the occurrence placements in the version's record snapshot.
 measured on the built STEP of its part: the middle of the three cylinders coaxial with the part axis (bore, running
 surface, flange). GT2 puts the pitch line 0.254 mm outside a pulley's tooth tips, and 0.376 mm inside the belt back
 (0.63 mm land less 0.254 mm), so a back-side roller adds 0.376 mm to its outer radius.
+`contacts` gives, per back-side roller, the 3D distance from the placed belt to the roller's running cylinder and to
+the whole roller. A roller shifted along its axis can touch the belt with a flange alone: then only the whole-part
+distance is 0.
 """
 
 import json
@@ -75,7 +78,25 @@ def main() -> None:
         pitch = running + PULLEY_PLD_MM if side > 0 else running + BACK_PITCH_MM
         wraps.append(((y, z), side * pitch))
         report[oid] = {"centre_yz_mm": [y, z], "running_radius_mm": running, "pitch_radius_mm": round(pitch, 6)}
-    print(json.dumps({"pitch_length_mm": round(loop_length(wraps), 4), "wraps": report}))
+    belt = placed(version / "parts" / "VSE-0010.step", occurrences["belt"]["placement"])
+    contacts = {}
+    for oid, pn, side in ROUTE:
+        if side > 0:
+            continue
+        roller = placed(version / "parts" / f"{pn}.step", occurrences[oid]["placement"])
+        running = [f for f in roller.Faces() if f.geomType() == "CYLINDER"
+                   and abs(f._geomAdaptor().Cylinder().Radius() - report[oid]["running_radius_mm"]) < 1e-6]
+        contacts[oid] = {"running_surface_mm": round(min(belt.distance(f) for f in running), 6),
+                         "whole_part_mm": round(belt.distance(roller), 6)}
+    print(json.dumps({"pitch_length_mm": round(loop_length(wraps), 4), "wraps": report, "contacts": contacts}))
+
+
+def placed(step: Path, placement: dict) -> cq.Shape:
+    """The part's STEP shape at its occurrence placement, so distances keep the axial (X) coordinate."""
+    rotation = placement.get("rotation", {})
+    location = cq.Location(cq.Vector(*placement["translation_mm"]), cq.Vector(*rotation.get("axis", [1, 0, 0])),
+                           rotation.get("angle_deg", 0.0))
+    return cq.importers.importStep(str(step)).val().moved(location)
 
 
 main()

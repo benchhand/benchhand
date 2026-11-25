@@ -45,6 +45,12 @@ SHANK_ENDPOINTS = frozenset({"@belt", "@idler", "@tensioner"})  # bought parts: 
 BELT_ROUTE = HERE / "v6_belt_route.py"
 BELT_LENGTH_MM = 360.0  # VSE-0010: the GT2 closed loop the record buys
 CONTACT_TOL_MM = 1e-6  # the exact pair measure reports touching faces as 0.0 mm
+FLANGE_SHIFT_MM = 7.0  # VSE-0012: half its 8 mm width plus the belt's 3 mm half-width, so only a flange face meets the belt
+
+
+def belt_contact_gap_mm(contact: dict) -> float:
+    """The gap that decides belt contact with a roller: to its running cylinder, not to the whole part (a flange)."""
+    return contact["running_surface_mm"]
 
 
 def load_assembly() -> dict:
@@ -161,25 +167,43 @@ class BuiltCrankTrainTests(unittest.TestCase):
     def test_every_pair_check_passes(self) -> None:
         self.assertEqual(self.check["checks"]["interference"]["status"], "pass", json.dumps(self.check["blocking_failures"]))
 
-    def test_the_installed_belt_route_measures_the_stretched_360_mm_loop(self) -> None:
-        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(BELT_ROUTE), str(self.hw / "versions" / "v1")],
+    def route(self, version: Path) -> dict:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(BELT_ROUTE), str(version)],
                               capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
-        measured = json.loads(proc.stdout)["pitch_length_mm"]
+        return json.loads(proc.stdout)
+
+    def test_the_installed_belt_route_measures_the_stretched_360_mm_loop(self) -> None:
+        measured = self.route(self.hw / "versions" / "v1")["pitch_length_mm"]
         # DR-005: the built pulleys and rollers at the record's placements give 360.047 mm (360.043 mm from the
         # rounded PARAMS of VSE-0010/model.py); the 360 mm loop is taut when the route is at most 0.1 mm longer.
         self.assertAlmostEqual(measured, 360.047, delta=0.005)
         self.assertGreaterEqual(measured - BELT_LENGTH_MM, 0.0)
         self.assertLessEqual(measured - BELT_LENGTH_MM, 0.1)
 
-    def test_the_belt_back_touches_both_rollers(self) -> None:
+    def test_the_belt_back_runs_on_both_rollers(self) -> None:
         by_refs = {frozenset(p["refs"]): p for p in self.pairs()}
+        contacts = self.route(self.hw / "versions" / "v1")["contacts"]
         for roller in ("@idler", "@tensioner"):
             pair = by_refs[frozenset(("@belt", roller))]
             with self.subTest(roller=roller):
                 self.assertEqual(pair["method"], "exact")
-                self.assertEqual(pair["interference_mm3"], 0.0)  # no overlap
-                self.assertLessEqual(pair["clearance_mm"], CONTACT_TOL_MM)  # no gap
+                self.assertEqual(pair["interference_mm3"], 0.0)  # no overlap of the whole parts
+                self.assertLessEqual(belt_contact_gap_mm(contacts[roller.removeprefix("@")]), CONTACT_TOL_MM)  # no gap
+
+    def test_a_flange_only_contact_is_not_belt_contact(self) -> None:
+        version = Path(self.tmp.name) / "tensioner-shifted"
+        (version / "record").mkdir(parents=True)
+        (version / "parts").symlink_to(self.hw / "versions" / "v1" / "parts")
+        record = yaml.safe_load((self.hw / "versions" / "v1" / "record" / "assembly.yaml").read_text(encoding="utf-8"))
+        tensioner = next(o for o in record["occurrences"] if o["id"] == "tensioner")
+        tensioner["placement"]["translation_mm"][0] += FLANGE_SHIFT_MM
+        (version / "record" / "assembly.yaml").write_text(yaml.safe_dump(record), encoding="utf-8")
+        contact = self.route(version)["contacts"]["tensioner"]
+        self.assertLessEqual(contact["whole_part_mm"], CONTACT_TOL_MM)  # the inner flange face touches the belt edge
+        self.assertGreater(belt_contact_gap_mm(contact), CONTACT_TOL_MM)
+        # the running cylinder now starts 1 mm (one flange thickness) past the belt edge
+        self.assertAlmostEqual(contact["running_surface_mm"], 1.0, delta=0.001)
 
 
 if __name__ == "__main__":
