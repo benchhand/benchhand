@@ -182,6 +182,24 @@ The module:
 
 `skills/cad-record/scripts/quantities.py` holds the record's units table and the one quantity parser. `Quantity` and `IntentError` live there too. It needs only the standard library. `manufacturing_intent.py` loads it by path and re-exports every name. `assembly_operations.py` loads it directly, so `assembly_operations.py` and `cad-drawings` `assembly_check.py` stay free of PyYAML and jsonschema (`scripts/test_script_dependencies.py`). It runs on FreeCAD's Python 3.11, so `scripts/freecad_job_modules.txt` lists it.
 
+## Tool and hand envelopes
+
+The assembly access check never asks the user to model a tool or a hand.
+
+- Owner: `skills/cad-record/scripts/tool_envelopes.py`, stdlib only. It classifies each `tools` or `tool_access` entry as hand, observe, bench, tool or note, and returns the shipped envelope of hand work and of sized common tools. `assembly_operations.py` `access_plan` turns the entries into `reaches` and `notes`. `skills/cad-motion/scripts/access.py` builds each envelope as coaxial cylinders in the operated part's frame. The tip sits on the part's box face that the tool arrives from.
+- Sources, copied into the tables with their table numbers:
+  - hex keys: ISO 2936:2014 Table 1
+  - Phillips PH1 to PH3: ISO 8764-1:2004 blade diameter and ISO 8764-2:2004 Table 1 series B length
+  - wrench heads: ISO 3318:2016 Table 1
+  - sockets: ISO 2725-1:2017 Tables 1 to 3
+  - engineer's pliers: ISO 5746:2021 Table 1
+  - hand: ISO 15534-3:2000 Table 1
+- Values that no standard gives, each named in the envelope's sources:
+  - Phillips handle diameter and length come from the FACOM ISORYL AP catalogue (supplier).
+  - Wrench head thickness is an estimate, 0.4 s + 2 mm.
+- A cited STEP solid in `tool_access` overrides the shipped envelope. A name that matches no envelope is an instruction note in the outcome's uncertainty.
+- Changes to `tool_envelopes.py` or `assembly_operations.py` change the access policy digest (`access.py` `policy_digest`), so the next run does not reuse a published packet.
+
 ## Feature flags
 
 Environment flags follow `CAD_REQUIRE_FREECAD` (`skills/cad-flow/scripts/preflight.py`): only the string `1` turns one on.
