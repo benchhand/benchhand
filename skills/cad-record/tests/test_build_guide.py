@@ -409,6 +409,7 @@ class BuildGuide(unittest.TestCase):
         purchase.pop("identity", None)
         purchase["designation"] = copy.deepcopy(designation)
         part_path.write_text(yaml.safe_dump(part, sort_keys=False), encoding="utf-8")
+        self.record_bom_identity(hw, pn, "", "")  # the BOM is rebuilt from the record: it no longer names a maker
 
     def bom_quantity(self, hw: Path, pn: str) -> int:
         with (hw / "bom.csv").open(newline="", encoding="utf-8") as stream:

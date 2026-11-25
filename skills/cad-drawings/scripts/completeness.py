@@ -183,12 +183,19 @@ def evaluate(pn: str, part: Mapping[str, Any], interfaces: Sequence[Mapping[str,
                           features=features)
 
 
+def designation_only(part: Mapping[str, Any]) -> bool:
+    """A bought item identified by an eligible designation alone: a manufacturer or part number makes it a vendor item."""
+    procurement = part.get("procurement") or {}
+    named = procurement.get("manufacturer") or procurement.get("manufacturer_part_number")
+    return drawing_intent.commodity_label(part) is not None and not named
+
+
 def release_blockers(part: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Release readiness (§8.1 stage 10): reported beside the gate, never folded into a passing content check."""
     blockers = []
     if str(part["rev"]).startswith("X"):
         blockers.append(finding("revision_unreleased", f"revision {part['rev']} is a prototype revision"))
-    if part.get("make_buy") == "buy" and not part.get("supplier") and drawing_intent.commodity_label(part) is None:
+    if part.get("make_buy") == "buy" and not part.get("supplier") and not designation_only(part):
         blockers.append(finding("procurement_incomplete", "no supplier is selected"))
     for field, reason in sorted(((part.get("procurement") or {}).get("open") or {}).items()):
         blockers.append(finding("procurement_incomplete", f"{field} is open: {reason}"))
