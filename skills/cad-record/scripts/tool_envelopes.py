@@ -136,8 +136,8 @@ PLIERS = {125: (132.0, 31.0, 20.0, 9.0), 140: (149.0, 34.0, 23.0, 10.0), 160: (1
 PLIERS_HANDLE_SPAN_MM = 65.0  # ISO 5746:2021 Figure 1: 50 +15 -5 mm across the handles
 # ISO 15534-3:2000 Table 1.
 FINGER_BREADTH_MM, FINGER_LENGTH_MM, HAND_BREADTH_MM, HAND_LENGTH_MM = 23.0, 59.0, 97.0, 152.0
-# ISO 2725-1:2017 drive squares: the inch designation and the nominal mm size, both as written.
-DRIVES = {"1/4": 6.3, "6.3": 6.3, "3/8": 10.0, "10": 10.0, "1/2": 12.5, "12.5": 12.5}
+# ISO 2725-1:2017 drive squares by inch designation; a metric drive is matched by its value against SOCKETS.
+DRIVES = {"1/4": 6.3, "3/8": 10.0, "1/2": 12.5}
 
 
 def _standard(reference: str) -> dict[str, str]:
@@ -249,11 +249,12 @@ def _wrench(name: str, match: re.Match[str]) -> Entry:
 
 def _socket(name: str, match: re.Match[str]) -> Entry:
     value = float(match["size"])
-    drive = match["inch"] or match["drive_mm"]
-    if drive is not None and drive not in DRIVES:
+    named = DRIVES.get(match["inch"]) if match["inch"] else (
+        _size(SOCKETS, match["drive_mm"]) if match["drive_mm"] else None)
+    if named is None and (match["inch"] or match["drive_mm"]):
         return Entry(name, NOTE, note=f"{name!r}: ISO 2725-1 Tables 1 to 3 give the 1/4, 3/8 and 1/2 inch "
                                      "(6.3, 10 and 12.5 mm) square drives only")
-    drives = sorted(SOCKETS) if drive is None else [DRIVES[drive]]
+    drives = sorted(SOCKETS) if named is None else [named]
     for drive in drives:
         size = _size(SOCKETS[drive], str(value))
         if size is not None:
