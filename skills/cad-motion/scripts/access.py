@@ -28,21 +28,29 @@ operation (the parts present then):
     travel over which the interfering surface still overlaps its partner: for a press fit the bore depth, an
     entry chamfer may be ignored, and for a heat-set the embedded length of the insert. Interference elsewhere on the path is a collision. An engagement with no declared length keeps the path unknown.
     A running or locating fit never exempts interference.
-  - each tool: a `tool_access` entry whose envelope fact cites an artifact, a STEP solid of the tool
-    and holder in the operated part's model frame at the engaged pose, moves along its `approach`
-    (receiving occurrence's frame) to that pose, past every present part except the operated one.
+  - each tool and hand that reaches the operated part (assembly_operations `reaches`): its envelope, in the
+    operated part's model frame at the engaged pose, moves along its `approach` (receiving occurrence's frame;
+    the operation's direction when none is given) to that pose, past every present part except the operated
+    one. A `tool_access` envelope fact that cites an artifact (a STEP solid of the tool and holder) is that
+    envelope; otherwise hand work and a common tool named by type and size get their shipped standard
+    envelope (cad-record tool_envelopes.py), built here, with its tip on the operated part's box face that
+    the tool comes from, centred on the box, the tool axis along the approach.
 A path is measured with cad-motion's pair evaluator at sampled positions, leg by leg. A translation moves
 every point by the same distance, so a distance d_i at s_i and d_j at s_j prove the segment clear when
 d_i + d_j > |s_j - s_i|; segments not proven are halved down to --min-step-mm. Exact-box gaps prove
 most samples without the kernel; ambiguous ones are kernel-measured. A shared volume above pose's
-interference threshold is a collision. A segment still unproven, a tool known by name only, an
-envelope without a solid, a missing direction or geometry keeps the operation unknown, never a
-pass. Not covered: curved motion between declared points, part or tool rotation and posture, hands,
-forces, deflection, and any joint pose but the nominal. No path planner: the path is the declared one.
+interference threshold is a collision. A segment still unproven, a cited envelope that cannot be read, a
+missing direction or geometry keeps the operation unknown, never a pass. A visual, timed or bench entry
+reaches nothing; a tool name that matches no shipped envelope is an instruction note in the outcome's
+uncertainty, never an unknown; an operation that moves no part and that nothing reaches is not applicable.
+Not covered: curved motion between declared points, part or tool rotation, tool swing and posture, the
+hand's grip, forces, deflection, and any joint pose but the nominal. No path planner: the path is the
+declared one.
 
 With --version the packet is published to hw/checks/<V>/assembly-access/ (bundle.checks): result.json
 (schemas/manufacturing-check-result.schema.json) and evidence/access.json (every path and sample). A rerun reuses
-the bundle only when the inputs, the options and the sources of this policy (access.py, engagement.py) are the same.
+the bundle only when the inputs, the options and the sources of this policy (access.py, engagement.py, cad-record
+assembly_operations.py and tool_envelopes.py) are the same.
 Exit 0 = every obligation passes, 1 = a failure or an unknown, 2 = usage or input error.
 """
 
@@ -88,15 +96,17 @@ SUBJECT = "assembly-access"
 FAMILIES = ("assembly.order", "assembly.access", "intent.assembly_operations")
 SEPARATION_MARGIN_MM = 1.0
 ACCESS_METHOD = ("part paths (the declared insertion legs, else the default straight line along the direction) and tool "
-                 "approaches at the nominal pose, against the parts present in the declared sequence, sampled with a "
-                 "translation (1-Lipschitz) bound between samples (cad-motion access.py)")
+                 "and hand approaches (a cited STEP envelope, else the shipped standard envelope) at the nominal pose, "
+                 "against the parts present in the declared sequence, sampled with a translation (1-Lipschitz) bound "
+                 "between samples (cad-motion access.py)")
 ACCESS_COVERAGE = ("the part's declared insertion path, else the default straight line along its direction from the "
-                   "separating plane, and each tool envelope's approach, in the declared assembly state at the nominal joint "
+                   "separating plane, and each tool or hand envelope's approach, in the declared assembly state at the nominal joint "
                    "pose; contact with the receiving part and the operated part, and with a press-fit or heat-set partner over "
-                   "its declared engagement length, is by design and not checked; a declared path's start is taken as reachable; curved paths, tool "
-                   "posture, hands, forces and other poses are not covered")
+                   "its declared engagement length, is by design and not checked; a declared path's start is taken as reachable; "
+                   "a standard envelope is the standard's maximum outline swept about the tool axis; curved paths, tool "
+                   "swing and posture, the hand's grip, forces and other poses are not covered")
 ROUTES = {"straight_default": "the default straight path along the direction", "declared_path": "the declared insertion path",
-          "approach": "the declared tool approach"}
+          "approach": "the declared tool approach", "standard_envelope": "the standard envelope's approach"}
 RULE_SOURCE = {"kind": "policy", "reference": "cad-motion access path clearance rule", "origin": "benchhand",
                "document": "skills/cad-motion/scripts/access.py"}
 
@@ -156,15 +166,19 @@ class Travel:
     failures: list[str] = field(default_factory=list)
     tool: str | None = None  # the name of the tool whose envelope travels; None for a part path
     engaged_mm: dict[str, float] = field(default_factory=dict)  # obstacle -> path length of its engagement from the installed pose
+    envelope: Mapping[str, Any] | None = None  # the standard envelope a tool or hand path carries
 
     def report(self) -> dict[str, Any]:
-        return {"label": self.label, "route": self.route, "moving": self.moving,
-                "direction": [round(v, 9) + 0.0 for v in self.direction],
-                "travel_mm": round(self.travel_mm, 6), "obstacles": [o for o, _, _ in self.obstacles],
-                "status": self.status, "samples": self.samples, "collisions": self.collisions,
-                "unproven": self.unproven, "failures": self.failures,
-                "engagement": {o: {"declared_mm": cap, "engaged_to_mm": self.engaged_mm.get(o)}
-                               for o, cap in self.engagement.items()}}
+        row = {"label": self.label, "route": self.route, "moving": self.moving,
+               "direction": [round(v, 9) + 0.0 for v in self.direction],
+               "travel_mm": round(self.travel_mm, 6), "obstacles": [o for o, _, _ in self.obstacles],
+               "status": self.status, "samples": self.samples, "collisions": self.collisions,
+               "unproven": self.unproven, "failures": self.failures,
+               "engagement": {o: {"declared_mm": cap, "engaged_to_mm": self.engaged_mm.get(o)}
+                              for o, cap in self.engagement.items()}}
+        if self.envelope is not None:
+            row["envelope"] = dict(self.envelope)
+        return row
 
 
 def separation_travel(measurer: Any, path: Travel) -> float:
