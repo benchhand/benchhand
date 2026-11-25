@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import itertools
 import json
 import math
 import sys
@@ -467,6 +468,52 @@ def read_tools(requests: Iterable[Any], record_hw: Path, hw: Path) -> tuple[dict
             shapes[(request.operation.id, number)] = (key, pose.read_shape(target), None)
             digests[artifact] = sha
     return shapes, problems, digests
+
+
+def _unrotate(rigid: Any, vector: Sequence[float]) -> tuple[float, float, float]:
+    rot = rigid.rot
+    x, y, z = (sum(rot[i][k] * vector[i] for i in range(3)) for k in range(3))
+    return (x, y, z)
+
+
+def envelope_shape(envelope: Any, part_shape: Any, approach: Sequence[float]) -> Any:
+    """A standard envelope's coaxial cylinders in the operated part's model frame: the tip on the face of the part's
+    box that the tool arrives from, centred on the box, the tool axis running back along -`approach` (unit, model frame)."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+    low, high = pose.box_corners(part_shape)
+    centre = [(a + b) / 2 for a, b in zip(low, high)]
+    back = (-approach[0], -approach[1], -approach[2])
+    depth = max(_dot([c - m for c, m in zip(corner, centre)], back) for corner in itertools.product(*zip(low, high)))
+    tip = [m + back[i] * depth for i, m in enumerate(centre)]
+    shape = None
+    for segment in envelope.segments:
+        origin = gp_Pnt(*(tip[i] + back[i] * segment.start_mm for i in range(3)))
+        cylinder = BRepPrimAPI_MakeCylinder(gp_Ax2(origin, gp_Dir(*back)), segment.radius_mm, segment.length_mm).Shape()
+        shape = cylinder if shape is None else BRepAlgoAPI_Fuse(shape, cylinder).Shape()
+    return shape
+
+
+def standard_envelopes(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], definitions: Mapping[str, Any]
+                       ) -> tuple[dict[tuple[str, int], ToolShape], dict[tuple[str, int], str]]:
+    """(key, shape and report per (operation id, tool index) of each shipped standard envelope, the reason one could
+    not be placed). The approach is rotated from the receiving occurrence's frame into the operated part's model frame."""
+    shapes: dict[tuple[str, int], ToolShape] = {}
+    problems: dict[tuple[str, int], str] = {}
+    for request in requests:
+        op_id, operated = request.operation.id, request.part
+        for reach in request.reaches:
+            if reach.envelope is None:
+                continue
+            if request.frame not in world or operated not in world or chain.pn(operated) not in definitions:
+                problems[(op_id, reach.index)] = f"tool {reach.tool.name!r}: the operated part {operated} has no geometry or placement"
+                continue
+            approach = _unrotate(world[operated], _rotate(world[request.frame], reach.approach))
+            shape = envelope_shape(reach.envelope, definitions[chain.pn(operated)].shape, approach)
+            shapes[(op_id, reach.index)] = (f"tool:{op_id}:{reach.index}", shape, reach.envelope.report())
+    return shapes, problems
 
 
 # --------------------------------------------------------------------------- findings and the packet
