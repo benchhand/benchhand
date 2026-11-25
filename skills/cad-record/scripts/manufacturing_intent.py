@@ -2592,11 +2592,18 @@ def interfaces_of(record: Record, pn: str, part_number: Callable[[Any], Any] | N
                  if pn in (resolve(item.raw.get("from")), resolve(item.raw.get("to"))))
 
 
+# The product-level check that the product exports (cad-model product.step and product.glb) hold exactly the delivered
+# product; release requires it passed for a version that seals them.
+PRODUCT_EXPORTS_FAMILY = "cad.product_exports"
+PRODUCT_EXPORTS_OBLIGATION = f"{PRODUCT_EXPORTS_FAMILY}@product"
+
+
 def required_checks(record: Record) -> tuple[Obligation, ...]:
     """Every check obligation the record implies, enumerated before any producer runs, sorted by id:
     each made component x route operation x its kind's check families; purchase checks for bought items;
-    function-driven engineering checks; critical interface fit, stack, acceptance, contact and play (play for
-    every critical interface that declares it or rotates or slides); assembly order (per operation and for the
+    function-driven engineering checks; the product exports holding exactly the delivered product; critical interface
+    fit, stack, acceptance, contact and play (play for every critical interface that declares it or rotates or slides);
+    assembly order (per operation and for the
     whole product) and access, and joint evidence for every joining operation; requirement evidence levels;
     and an intent.* obligation for every unknown
     input that hides checks. A producer cannot shrink this list by omission; an unknown route kind gets
@@ -2613,6 +2620,8 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
     use_case = record.use_case
     add("intent.use_case", {"product": True}, "process_planned", "intent",
         "a final material and process recommendation needs a confirmed use case")
+    add(PRODUCT_EXPORTS_FAMILY, {"product": True}, "cad_valid", "layout",
+        "product.step and product.glb hold exactly the delivered product (cad-record sourcing.delivered)")
     for pn, part in sorted(record.parts.items()):
         _part_checks(record, pn, part, add)
     for if_id, interface in sorted(record.interfaces.items()):

@@ -493,12 +493,13 @@ def check_docs(release: Release) -> None:
     release.checks["docs"] = "pass"
 
 
-def check_acceptance(release: Release, frozen: Any) -> None:
+def check_acceptance(release: Release, frozen: Any, sealed: dict[str, Any] | None = None) -> None:
     """The intent acceptance of a record version 2 release, a domain apart from output integrity: the
     freeze's evidence_sha256 is the acceptance digest of the current inventory, and the evidence
     assessment of the frozen version passes the release gate of the use case's service class. The
     inventory is copied under acceptance/ and the scope, claims, waivers and open obligations become the
-    manifest's acceptance block. Unknown never passes; a waiver stays waived."""
+    manifest's acceptance block. Unknown never passes; a waiver stays waived. A version whose `sealed` files hold
+    product.step needs its cad.product_exports obligation passed: not_applicable is no pass for the product it ships."""
     hw = release.hw
     if not isinstance(frozen, dict):
         return  # assemble already refused the missing anchor
@@ -518,6 +519,12 @@ def check_acceptance(release: Release, frozen: Any) -> None:
     if digest != frozen["evidence_sha256"]:
         release.refuse("hw/product.yaml", "acceptance", f"flow.frozen.evidence_sha256 is not the acceptance digest as it "
                        f"stands ({digest}): the evidence changed after the freeze; freeze again or open a change")
+    if sourcing.PRODUCT_STEP in (sealed or {}):
+        shown = assessment.results().get(intent.PRODUCT_EXPORTS_OBLIGATION)
+        if shown != "pass":
+            release.refuse(f"hw/versions/{release.version}/{sourcing.PRODUCT_STEP}", "product_exports",
+                           f"{intent.PRODUCT_EXPORTS_OBLIGATION} is {shown or 'not assessed'}, not pass: run cad_model.py "
+                           f"check {release.version} so the product exports are judged before they ship")
     blocking = [item for item in assessment.gate("release") if item.severity == "error"]
     for item in blocking:
         release.findings.append(validate.finding(item.path, f"{item.code}: {item.message}", code="release.acceptance"))
@@ -613,7 +620,7 @@ def assemble(hw: Path, rev: str, version: str, decision: str,
     check_evidence(release, verification, version_sha)
     bom = validate.read_csv(hw / "bom.csv", validate.CSV_COLUMNS["bom.csv"], release.findings)
     check_bom(release, bom, quantities, parts)
-    check_acceptance(release, frozen)
+    check_acceptance(release, frozen, manifest.get("files") or {})
 
     sealed = manifest.get("files") or {}
     copy_definition(release, folder, sealed, parts)

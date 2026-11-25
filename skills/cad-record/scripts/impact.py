@@ -108,6 +108,8 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     # The `occurrences` domain of an interface that declares a heat set: all of interfaces.yaml, all of assembly.yaml and
     # every part's geometry, since the host is a reference the inventory resolves.
     ("cad.declared_dimensions", frozenset({"occurrences"})),
+    # The product exports read every delivered occurrence and its part's geometry, as the agreement does.
+    ("cad.product_exports", frozenset({"geometry", "occurrences"})),
     ("route.", _JUDGED | {"process", "route", "capability", "setup", "orientation", "finish", "material", "condition"}),
     ("process.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                            "condition"}),

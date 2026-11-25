@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import math
+import struct
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -292,24 +293,40 @@ def product_subset(expected: Mapping[str, str], existing: set[str], scene: Itera
 
 def product_exports(folder: Path, manifest: Mapping[str, Any], step: Any,
                     records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """product.step and product.glb against the delivered occurrences of the in-context assembly.step, which the
-    frozen part `records` decide (`delivered_occurrences`, `product_subset`). A version built before the product
-    exports is skipped."""
-    product = manifest.get("product")
-    if not isinstance(product, Mapping):
-        return {"status": "skipped", "blocking": False, "reason": "the version predates product.step and product.glb"}
+    """The product exports at the exact paths release.py ships (cad-record sourcing PRODUCT_STEP, PRODUCT_GLB)
+    against the delivered occurrences of the in-context assembly.step, which the frozen part `records` decide
+    (`delivered_occurrences`, `product_subset`). Skipped only when neither file is sealed or present; a missing one, a
+    manifest without its `product` block or naming other files, and an export that cannot be read all fail."""
     pose, sourcing = load_pose(), load_sourcing()
+    sealed = manifest.get("files") or {}
+    names = (sourcing.PRODUCT_STEP, sourcing.PRODUCT_GLB)
+    if not any(name in sealed or (folder / name).is_file() for name in names):
+        return {"status": "skipped", "blocking": False, "reason": "the version predates product.step and product.glb"}
+    block = manifest.get("product")
+    problems = {"missing_exports": sorted(name for name in names if not (folder / name).is_file()),
+                "manifest_product_missing": not isinstance(block, Mapping),
+                "manifest_names_other_files": isinstance(block, Mapping)
+                and (block.get("step"), block.get("glb")) != names}
+    listed = block.get("occurrences") or [] if isinstance(block, Mapping) else []
+    expected = delivered_occurrences(step.components, records)
+    if problems["missing_exports"]:
+        return {"status": "fail", "blocking": True, **problems, "missing_occurrences": sorted(expected)}
     existing = {pn for pn, record in records.items() if not sourcing.delivered(record)}
-    shipped = pose.read_assembly_step(folder / product["step"])
-    text = (folder / product["step"]).read_text(encoding="utf-8", errors="replace")
+    try:
+        shipped = pose.read_assembly_step(folder / sourcing.PRODUCT_STEP)
+        gltf = mesh.gltf_json(folder / sourcing.PRODUCT_GLB)
+    except (pose.MotionError, occ.GeometryError, OSError, ValueError, struct.error) as error:
+        return {"status": "fail", "blocking": True, **problems, "unreadable": str(error)}
+    text = (folder / sourcing.PRODUCT_STEP).read_text(encoding="utf-8", errors="replace")
 
     def facts(definitions: Mapping[str, Any]) -> dict[str, tuple[str, float]]:
         return {pn: (part.name, occ.volume(part.shape)) for pn, part in definitions.items()}
 
-    return product_subset(delivered_occurrences(step.components, records), existing, step.components,
-                          facts(step.definitions), shipped.components, facts(shipped.definitions),
-                          sourcing.step_pns(text), mesh.gltf_json(folder / product["glb"]), product["occurrences"],
-                          unnumbered=shipped.unnumbered)
+    result = product_subset(expected, existing, step.components, facts(step.definitions), shipped.components,
+                            facts(shipped.definitions), sourcing.step_pns(text), gltf, listed,
+                            unnumbered=shipped.unnumbered)
+    failed = result["status"] == "fail" or problems["manifest_product_missing"] or problems["manifest_names_other_files"]
+    return {**result, **problems, "status": _status(not failed)}
 
 
 def brep_validity(parts: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
@@ -733,16 +750,6 @@ def _record_yaml(path: Path, what: str, missing: Any = None) -> Any:
         raise build.UsageError(f"{path}: cannot read {what}: {error}") from error
 
 
-def part_records(record: Path) -> dict[str, Any]:
-    """PN -> part.yaml mapping of every part record of a record folder (a version's snapshot, else hw/)."""
-    parts = {}
-    for path in sorted((record / "parts").glob("*/part.yaml")):
-        data = _record_yaml(path, "the part record")
-        if isinstance(data, dict):
-            parts[path.parent.name] = data
-    return parts
-
-
 BUILD_VOLUME_NOTE = ("a diagnostic: fitting an envelope is geometry only, never process feasibility; the part's "
                      "route, capability profile and approved orientation decide whether it can be made")
 
@@ -980,7 +987,8 @@ READBACK_FAMILY = "cad.readback"
 EXPORT_FAMILY = "export.3mf"  # judged by the same sealed-version check, so published in the same packet
 AGREEMENT_FAMILY = "cad.glb_step_agreement"  # glb_step_agreement, per made part over its occurrences
 DIMENSION_FAMILY = "cad.declared_dimensions"  # declared_dimensions, per heat-set declaration of an interface
-READBACK_FAMILIES = (READBACK_FAMILY, EXPORT_FAMILY, AGREEMENT_FAMILY, DIMENSION_FAMILY)
+PRODUCT_EXPORTS_FAMILY = "cad.product_exports"  # product_exports, once per product (manufacturing_intent)
+READBACK_FAMILIES = (READBACK_FAMILY, EXPORT_FAMILY, AGREEMENT_FAMILY, DIMENSION_FAMILY, PRODUCT_EXPORTS_FAMILY)
 READBACK_SUBJECT = "cad"  # hw/checks/<V>/cad/: this check's required-check packet
 READBACK_PRODUCER = "cad-model check"
 READBACK_METHOD = ("cad-model check of the sealed version: kernel and STEP read-back B-rep validity, the STEP read-back's "
@@ -1000,7 +1008,10 @@ DIMENSION_METHOD = ("cad-model check of the sealed version: the hole_d a heat-se
                     "against the bore diameters the version's metrics.json records for the host")
 DIMENSION_COVERAGE = "the declared hole diameter against the host's recorded bores only: depth and position are not checked"
 SEALED_FILES_CHANGED = "the version's sealed files no longer match its manifest (artifact_integrity)"
-PRODUCT_EXPORTS_FAILED = "product.step or product.glb does not hold exactly the delivered product (product_exports)"
+PRODUCT_EXPORTS_METHOD = ("cad-model check product_exports: product.step and product.glb against the delivered "
+                          "occurrences of the sealed assembly.step, which the frozen part records decide")
+PRODUCT_EXPORTS_COVERAGE = ("the occurrences, PNs, definitions and placements of product.step and the reachable mesh nodes "
+                            "of product.glb; not the meshes' shape, which glb_step_agreement judges on assembly.glb")
 
 
 def _oracle_outcome(obligation: Any, failed: list[str], unknown: list[str], method: str, coverage: str) -> dict[str, Any]:
@@ -1069,13 +1080,27 @@ def _export_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any
     return outcome
 
 
+def _product_exports_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any]:
+    """The cad.product_exports outcome: the product_exports row decides; a version without product exports owes
+    none (not_applicable), and sealed files that changed fail it."""
+    row = checks.get("product_exports") or {}
+    if row.get("status") == "skipped" and checks["artifact_integrity"]["status"] != "fail":
+        return {"obligation": obligation.id, "outcome": "not_applicable", "level": obligation.level,
+                "method": PRODUCT_EXPORTS_METHOD, "coverage": PRODUCT_EXPORTS_COVERAGE,
+                "uncertainty": row.get("reason") or "the version has no product exports"}
+    failed = [SEALED_FILES_CHANGED] if checks["artifact_integrity"]["status"] == "fail" else []
+    if row.get("status") == "fail":
+        failed.append("product.step or product.glb does not hold exactly the delivered product (product_exports)")
+    unknown = [] if row.get("status") in ("pass", "fail") else [f"product_exports is {row.get('status') or 'missing'}"]
+    return _oracle_outcome(obligation, failed, unknown, PRODUCT_EXPORTS_METHOD, PRODUCT_EXPORTS_COVERAGE)
+
+
 def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> list[dict[str, Any]]:
     """One cad.readback outcome per expected obligation (manufacturing_intent Obligations, PN[.COMP]) from
-    this check's rows: fail when the B-rep is invalid, the STEP read-back differs, the sealed files changed,
-    the product exports do not hold exactly the delivered product, or a manufacturing state, identity, STEP or
-    binding check fails; unknown while one of them is missing
+    this check's rows: fail when the B-rep is invalid, the STEP read-back differs, the sealed files changed
+    or a manufacturing state, identity, STEP or binding check fails; unknown while one of them is missing
     or not passed (a part with no manufacturing output, a legacy unbound identity); else pass. The export.3mf,
-    cad.glb_step_agreement and cad.declared_dimensions obligations take their own rows. `occurrences` maps each
+    cad.glb_step_agreement, cad.declared_dimensions and cad.product_exports obligations take their own rows. `occurrences` maps each
     occurrence id of the version to its PN."""
     brep, readback = checks["brep_validity"]["parts"], checks["step_readback"]["parts"]
     made = checks["manufacturing"]["parts"]
@@ -1090,13 +1115,14 @@ def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any], occurr
         if obligation.family == DIMENSION_FAMILY:
             rows.append(_dimension_outcome(obligation, checks))
             continue
+        if obligation.family == PRODUCT_EXPORTS_FAMILY:
+            rows.append(_product_exports_outcome(obligation, checks))
+            continue
         pn, component = obligation.subject["PN"], obligation.subject.get("component")
         failed: list[str] = []
         unknown: list[str] = []
         if checks["artifact_integrity"]["status"] == "fail":
             failed.append("the version's sealed files no longer match its manifest (artifact_integrity)")
-        if (checks.get("product_exports") or {}).get("status") == "fail":
-            failed.append(PRODUCT_EXPORTS_FAILED)  # release reads this packet, not the check's exit status
         if pn not in brep or pn not in readback:
             unknown.append(f"{pn} has no B-rep validity or STEP read-back row")
         else:
@@ -1168,19 +1194,18 @@ def _code_shas() -> Any:
     return _script("cad_motion_code_shas", SKILLS / "cad-motion" / "scripts" / "code_shas.py")
 
 
-def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
+def publish_readback(hw: Path, label: str, folder: Path, snapshot: Any,
                      checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> dict[str, Any] | None:
     """Publish the cad.readback packet of a record version 2 version to hw/checks/<V>/cad/ (bundle.checks,
     the one place cad-record evidence.py reads producer packets) and return {bundle, reused, result,
-    complete}; None for a version without a snapshot. `occurrences` maps each occurrence id to its PN. The packet is
+    complete}; None for a version without a snapshot. `snapshot` is its record snapshot as build.read_snapshot parsed it. `occurrences` maps each occurrence id to its PN. The packet is
     recomputed by every check and replaces the one an earlier check sealed when it differs, so a changed
     verdict is never hidden behind a reused bundle. A changed-only check's packet therefore reads unknown for the
     agreement of each occurrence it left out, until a full check publishes again."""
     if snapshot is None:
         return None
-    found, _ = build.read_snapshot(read_folder(snapshot))
     intent = load_intent()
-    record = found.intent
+    record = snapshot.intent
     expected = [o for o in intent.required_checks(record) if o.family in READBACK_FAMILIES]
     packets = _script("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
     layout = load_layout()
@@ -1245,6 +1270,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
     # Declarations, margins, fit and process come from the record the version was built from.
     snapshot = folder / "record" if (folder / "record").is_dir() else None
     record = snapshot or hw
+    frozen = build.read_snapshot(read_folder(snapshot))[0] if snapshot is not None else None  # parsed once, shared
     assembly = pose.load_assembly(record, record)
     declared = declared_press_fits(record, assembly)
     heat_sets = declared_heat_sets(record, assembly)
@@ -1304,7 +1330,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                                                  set(occurrences) - in_scope),
         "declared_dimensions": declared_dimensions(
             heat_sets, {oid: o.pn for oid, o in occurrences.items()}, build.read_json(folder / "metrics.json")["parts"]),
-        "product_exports": product_exports(folder, manifest, step, part_records(record)),
+        "product_exports": product_exports(folder, manifest, step, frozen.parts if frozen is not None else {}),
         "artifact_integrity": artifact_integrity(folder),
         "manufacturing": manufacturing,
     }
@@ -1324,7 +1350,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                             "kernel_evaluations": counters.kernel_evaluations, "exact_hits": counters.exact_hits,
                             "decision_hits": counters.decision_hits, "bucket_hits": counters.bucket_hits,
                             "cleared": dict(counters.cleared), "reevaluations": counters.reevaluations}}
-    packet = publish_readback(hw, label, folder, snapshot, checks, occurrence_pns)
+    packet = publish_readback(hw, label, folder, frozen, checks, occurrence_pns)
     if packet is not None:
         result["packet"] = packet  # the cad.readback required-check packet (record version 2)
     return (1 if blocking else 0), result
