@@ -768,14 +768,19 @@ def _sub_build_rules(operations: Operations, state: AssemblyState, step: Step,
              f"add an install operation with part {step.build} after {op.id}")
 
 
+def cure_sourced(fact: Any) -> bool:
+    """Whether a cure time or temperature counts: a known fact with a datasheet source (CURE_SOURCES). The order
+    check and the build guide both judge cure figures by this rule."""
+    return (isinstance(fact, Mapping) and fact.get("status") == "known"
+            and any(isinstance(source, Mapping) and source.get("kind") in CURE_SOURCES for source in fact.get("sources") or ()))
+
+
 def _hold_rules(op: AssemblyOperation, fail: Callable[..., None]) -> None:
     """A cure hold's time and temperature are datasheet facts, and the part stays in its fixture for the cure time."""
     if op.cure is None:
         return
     for name in ("time", "temperature"):
-        fact = _mapping(op.cure.get(name))
-        if name in op.cure and not (fact.get("status") == "known" and any(
-                isinstance(source, Mapping) and source.get("kind") in CURE_SOURCES for source in fact.get("sources") or ())):
+        if name in op.cure and not cure_sourced(op.cure.get(name)):
             fail("assembly.cure_unsourced", f"{op.id}: the cure {name} is not a known fact with a datasheet source",
                  "the hold may end before the adhesive or potting has cured: the bond can shift or fail in service",
                  f"record the cure {name} from the adhesive's datasheet, with the datasheet as its source", severity="major")

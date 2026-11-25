@@ -196,9 +196,18 @@ def bench_note(operation: Any, items: Mapping[str, Any], regime: str) -> tuple[s
                 + assembly_sheet.direction_text(operation.orientation) + words(" axis up for ") + fact_text(operation.duration))
         cure = operation.cure or {}
         if "time" in cure:
-            note += words("; cure ") + fact_text(cure["time"])
-            if "temperature" in cure:
-                note += words(" at ") + fact_text(cure["temperature"])
+            unsourced = [name for name in ("time", "temperature") if name in cure and not OPERATIONS.cure_sourced(cure[name])]
+            time = fact_text(cure["time"]) if "time" not in unsourced else None
+            if "temperature" not in cure:
+                note += words("; cure ") + (time or words("per the adhesive datasheet"))
+            elif time is None:
+                note += words("; cure per the adhesive datasheet")
+            else:
+                temperature = ("temperature" not in unsourced and fact_text(cure["temperature"])
+                               or words("a temperature per the adhesive datasheet"))
+                note += words("; cure ") + time + words(" at ") + temperature
+            if unsourced:
+                note += f" (MISSING: a datasheet-sourced cure {' and '.join(unsourced)} for {operation.id})"
         return note + ".", column
     into, column = label(operation.into)
     note = words(f"Install sub-build {operation.part} into {into}")
