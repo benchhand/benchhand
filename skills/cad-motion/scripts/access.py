@@ -154,6 +154,7 @@ class Travel:
     collisions: list[dict[str, Any]] = field(default_factory=list)
     unproven: list[dict[str, Any]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    tool: str | None = None  # the name of the tool whose envelope travels; None for a part path
     engaged_mm: dict[str, float] = field(default_factory=dict)  # obstacle -> path length of its engagement from the installed pose
 
     def report(self) -> dict[str, Any]:
@@ -304,9 +305,15 @@ class OperationAccess:
     operation: Any
     paths: list[Travel] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
+    not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold)
+    advisory: list[str] = field(default_factory=list)  # notes on tools no check measures (assembly_operations.hold_reach)
 
     @property
     def outcome(self) -> str:
+        if self.not_applicable is not None:
+            return "not_applicable"
+        if self.advisory and not self.paths and not self.unknown:
+            return "not_assessed"  # D37: never a pass, and it blocks nothing
         if any(p.status == "collision" for p in self.paths):
             return "fail"
         if self.unknown or any(p.status != "clear" for p in self.paths) or not self.paths:
@@ -335,7 +342,15 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
     plans = []
     for request in requests:
         op = request.operation
-        entry = OperationAccess(op, unknown=list(request.unknown))
+        if request.not_applicable is not None:
+            plans.append(OperationAccess(op, not_applicable=request.not_applicable))
+            continue
+        advisory = [f"tool {name!r} has no cited envelope solid: check by hand that it reaches {op.part}"
+                    for name in request.advisory]
+        entry = OperationAccess(op, unknown=list(request.unknown), advisory=advisory)
+        if not request.tools and advisory:
+            plans.append(entry)
+            continue
         frame = request.frame
         if frame not in world:
             entry.unknown.append(f"{op.id}: {frame} has no geometry or placement")
@@ -376,12 +391,12 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
         for number, tool in enumerate(request.tools):
             if not tool.declared or tool.approach is None or (op.id, number) not in tools:
                 continue  # its reason is in request.unknown, or the envelope solid could not be read
-            if operated not in world:
+            if operated is None or operated not in world:
                 entry.unknown.append(f"{op.id}: the operated part {op.part} has no placement for tool {tool.name!r}")
                 continue
             key, _shape = tools[(op.id, number)]
             entry.paths.append(Travel(f"{op.id}/tool/{number}", key, world[operated], _rotate(rotation, tool.approach),
-                                     obstacles(request.tool_obstacles, None), route="approach"))
+                                     obstacles(request.tool_obstacles, None), route="approach", tool=tool.name))
         plans.append(entry)
     return plans
 
@@ -450,10 +465,10 @@ def access_findings(entry: OperationAccess) -> list[dict[str, Any]]:
     for path in entry.paths:
         if path.status != "collision":
             continue
-        tool = "/tool/" in path.label
+        tool = path.tool is not None
         hits = sorted({c["obstacle"] for c in path.collisions})
         worst = max(path.collisions, key=lambda c: c["overlap_mm3"])
-        what = f"tool {op.tools[int(path.label.rsplit('/', 1)[1])].name!r}" if tool else f"{op.part}"
+        what = f"tool {path.tool!r}" if tool else f"{op.part}"
         findings.append({
             "id": f"{_slug(op.id)}_{'tool' if tool else 'part'}_path_{len(findings) + 1}",
             "code": "assembly.tool_blocked" if tool else "assembly.part_path_blocked", **base, "severity": "critical",
@@ -489,12 +504,17 @@ def access_findings(entry: OperationAccess) -> list[dict[str, Any]]:
 
 def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     row: dict[str, Any] = {"obligation": f"assembly.access@op:{entry.operation.id}", "outcome": entry.outcome,
-                           "level": "geometrically_manufacturable", "method": ACCESS_METHOD, "coverage": ACCESS_COVERAGE}
+                           "level": "geometrically_manufacturable", "method": ACCESS_METHOD,
+                           "coverage": entry.not_applicable or ACCESS_COVERAGE}
     mine = [f["id"] for f in findings if f.get("obligation") == row["obligation"]]
     if mine:
         row["findings"] = mine
     if entry.outcome == "unknown":
         row["uncertainty"] = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
+    elif entry.advisory:
+        row["uncertainty"] = "; ".join(entry.advisory)
+    if entry.outcome == "not_assessed":
+        row["reason"] = "no_capability_profile"
     return row
 
 
@@ -546,8 +566,8 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         raise AccessError(f"{assembly_path}: {error} ({error.code})") from error
     record = intent_module.load_record(record_hw, snapshot=version is not None)
     assembly, chain, definitions = pose.load_inputs(args)
-    order = operations_module.check_order(operations, chain.inventory,
-                                          frozenset(pn for pn, part in record.parts.items() if part.existing))
+    existing = frozenset(pn for pn, part in record.parts.items() if part.existing)
+    order = operations_module.check_order(operations, chain.inventory, existing)
     outcomes, findings = list(order.outcomes), list(order.findings)
     detail: dict[str, Any] = {"operations": operations_module.summary(operations), "paths": {}, "nominal": {}}
     dependencies = {"assembly_yaml": hashlib.sha256(assembly_path.read_bytes()).hexdigest()}
@@ -557,7 +577,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
     if version is not None:
         dependencies["version_manifest"] = pose.input_sha256(args.version_dir)
     if operations.unknown is None:
-        requests = operations_module.access_plan(operations, chain.inventory)
+        requests = operations_module.access_plan(operations, chain.inventory, existing)
         tools, tool_problems, digests = read_tools(requests, record_hw, args.hw)
         for index, (artifact, sha) in enumerate(sorted(digests.items())):
             dependencies[f"tool_envelope_{index + 1}"] = sha

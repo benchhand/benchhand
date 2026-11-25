@@ -326,6 +326,31 @@ def _number(value: float) -> str:
     return f"{value:g}"
 
 
+def acceptance_text(acceptance: str | None, names: Sequence[str], measured: Mapping[str, Any], regime: str) -> str | None:
+    """How an operation is known to be done, the clause after "until" (None without an acceptance); a standoff
+    states the gap measured on the assembled model."""
+    def words(text: str) -> str:
+        return regime_text(regime, text)
+
+    features = [words(_words(f)) for f in names]
+    if acceptance == "seated":
+        return words("its ") + features[0] + words(" seats against the ") + features[1]
+    if acceptance == "standoff":
+        gap = measured.get("gap")
+        if gap is None:
+            return (words("its ") + features[0] + words(" stands off the ") + features[1] +
+                    words(" by the modelled gap; gap not measured"))
+        return (words("its ") + features[0] + words(" stands ") + f"{round(gap, 2):g} mm" +
+                words(" off the ") + features[1] + words(", as modelled"))
+    if acceptance == "flush":
+        return words("its ") + features[0] + words(" is flush with the ") + features[1]
+    if acceptance == "engaged":
+        return words("it is fully engaged in the ") + features[0]
+    if acceptance is not None:
+        return words(f"its {_words(acceptance)} ") + features[0] + words(" is recorded")
+    return None
+
+
 def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: str) -> str:
     """One assembly note: what goes where, which way, how it is known to be seated, and the interface data.
 
@@ -339,25 +364,7 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
         return regime_text(regime, text)
 
     operation, limit = op.operation, op.limit
-    features = [words(_words(f)) for f in operation.features]
-    if operation.acceptance == "seated":
-        until = words("its ") + features[0] + words(" seats against the ") + features[1]
-    elif operation.acceptance == "standoff":
-        gap = measured.get("gap")
-        if gap is None:
-            until = (words("its ") + features[0] + words(" stands off the ") + features[1] +
-                     words(" by the modelled gap; gap not measured"))
-        else:
-            until = (words("its ") + features[0] + words(" stands ") + f"{round(gap, 2):g} mm" +
-                     words(" off the ") + features[1] + words(", as modelled"))
-    elif operation.acceptance == "flush":
-        until = words("its ") + features[0] + words(" is flush with the ") + features[1]
-    elif operation.acceptance == "engaged":
-        until = words("it is fully engaged in the ") + features[0]
-    elif operation.acceptance is not None:
-        until = words(f"its {_words(operation.acceptance)} ") + features[0] + words(" is recorded")
-    else:
-        until = None
+    until = acceptance_text(operation.acceptance, operation.features, measured, regime)
     data = None
     if operation.kind == "press_fit":
         action = words(f"Press item {op.part_item} into item {op.into_item}")

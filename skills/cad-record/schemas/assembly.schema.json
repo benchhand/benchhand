@@ -219,14 +219,18 @@
         "subassembly_sheets": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"}}
       }
     },
+    "sub_build_id": {"description": "A bench sub-build: a subassembly id, or a new id that only operations name", "type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
     "assembly_operation": {
-      "description": "One assembly operation. An installation step puts `part` into `into` along `direction` (in the receiving part's model frame) until the acceptance holds; the fit, insert or ring comes from the interface limit of the same kind. predecessors name the operations that must come first, closes the parts it encloses, and tool_access the tools that must reach. A tool name alone is display text: its reach stays unknown. path, when given, is the part's insertion path; without it the part travels in a straight line along direction, and checks report that default. edge_distance is a fastener, insert or heat-set joint's distance from its hole to the nearest edge against its sourced criterion",
+      "description": "One assembly operation. An installation step puts `part` into `into` along `direction` (in the receiving part's model frame) until the acceptance holds; the fit, insert or ring comes from the interface limit of the same kind. predecessors name the operations that must come first, closes the parts it encloses, and tool_access the tools that must reach. A tool name alone is display text: its reach stays unknown. path, when given, is the part's insertion path; without it the part travels in a straight line along direction, and checks report that default. edge_distance is a fastener, insert or heat-set joint's distance from its hole to the nearest edge against its sourced criterion. sub_build puts the operation in a bench sub-build with its own base, state and closure; an install operation puts that sub-build (its part is the sub-build id) into the main build as one unit. A hold keeps its part in a fixture for a duration in an orientation; a cure hold's time and temperature come from the adhesive's datasheet",
       "type": "object", "additionalProperties": false,
       "required": ["id", "kind", "part"],
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
-        "kind": {"enum": ["press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "adjust", "inspect", "disassemble"]},
-        "part": {"$ref": "#/$defs/part_ref"},
+        "kind": {"enum": ["press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "adjust", "inspect", "disassemble",
+                          "install", "hold"]},
+        "part": {"description": "The part the operation moves or works on; for an install, the sub-build it installs",
+                 "anyOf": [{"$ref": "#/$defs/part_ref"}, {"$ref": "#/$defs/sub_build_id"}]},
+        "sub_build": {"$ref": "#/$defs/sub_build_id"},
         "into": {"$ref": "#/$defs/part_ref"},
         "interface": {"type": "string", "pattern": "^IF-[0-9]{3}$"},
         "direction": {"$ref": "#/$defs/vector"},
@@ -274,19 +278,34 @@
             "via": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/vector"}}
           }
         },
-        "inspection": {"type": "string", "minLength": 1}
+        "inspection": {"type": "string", "minLength": 1},
+        "duration": {"description": "hold: how long the part stays in its fixture, a time", "$ref": "manufacturing.schema.json#/$defs/quantity_fact"},
+        "fixture": {"description": "hold: what holds the part", "type": "string", "minLength": 1},
+        "orientation": {"description": "hold: the part's up direction during the hold, in its own model frame", "$ref": "#/$defs/vector"},
+        "cure": {
+          "description": "hold: the cure time and temperature of the adhesive or potting. Each counts only as a known fact with a datasheet source, and the hold lasts at least the cure time",
+          "type": "object", "additionalProperties": false, "required": ["time"],
+          "properties": {
+            "time": {"$ref": "manufacturing.schema.json#/$defs/quantity_fact"},
+            "temperature": {"$ref": "manufacturing.schema.json#/$defs/quantity_fact"}
+          }
+        }
       },
       "allOf": [
         {"if": {"properties": {"kind": {"enum": ["press_fit", "heat_set", "retaining_ring"]}}},
          "then": {"required": ["into", "interface", "direction", "acceptance"]}},
-        {"if": {"properties": {"kind": {"enum": ["insert", "fasten", "join"]}}}, "then": {"required": ["into", "direction", "acceptance"]}},
+        {"if": {"properties": {"kind": {"enum": ["insert", "fasten", "join", "install"]}}}, "then": {"required": ["into", "direction", "acceptance"]}},
+        {"if": {"properties": {"kind": {"const": "hold"}}}, "then": {"required": ["duration", "fixture", "orientation"]},
+         "else": {"properties": {"duration": false, "fixture": false, "orientation": false, "cure": false}}},
+        {"if": {"properties": {"kind": {"const": "install"}}}, "then": {"properties": {"part": {"$ref": "#/$defs/sub_build_id"}, "sub_build": false}},
+         "else": {"properties": {"part": {"$ref": "#/$defs/part_ref"}}}},
         {"if": {"properties": {"kind": {"const": "close"}}}, "then": {"required": ["into", "closes"]}},
         {"if": {"properties": {"kind": {"enum": ["adjust", "inspect"]}}}, "then": {"required": ["acceptance"]}},
         {"if": {"properties": {"kind": {"const": "disassemble"}}}, "then": {"required": ["into", "direction"]}},
-        {"if": {"properties": {"kind": {"enum": ["close", "adjust", "inspect", "disassemble"]}}},
+        {"if": {"properties": {"kind": {"enum": ["close", "adjust", "inspect", "disassemble", "install", "hold"]}}},
          "then": {"not": {"required": ["edge_distance"]}}},
         {"if": {"required": ["path"]}, "then": {"required": ["direction"],
-                                                "properties": {"kind": {"enum": ["press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close"]}}}}
+                                                "properties": {"kind": {"enum": ["press_fit", "heat_set", "retaining_ring", "insert", "fasten", "join", "close", "install"]}}}}
       ]
     }
   }

@@ -20,15 +20,16 @@ skills/cad-drawings/scripts/feature_recognition.py
 skills/cad-drawings/scripts/drawing_intent.py
 skills/cad-drawings/scripts/shared_module.py
 skills/cad-fits/scripts/fits.py
-# Nothing in cad-drawings loads the next three any more (drawing_intent dropped its cad-record loader).
-# They stay for two guards: scripts/test_script_floors.py allows manufacturing_intent.py its
-# requires-python >=3.10 only while it is listed, and harness/test-requirements-freecad.txt pins
-# pyyaml and jsonschema only for these modules (scripts/test_test_requirements.py). Drop all three
+# Nothing in cad-drawings loads the next four any more (drawing_intent dropped its cad-record loader).
+# They stay for two guards: scripts/test_script_floors.py allows manufacturing_intent.py and quantities.py
+# their requires-python >=3.10 only while they are listed, and harness/test-requirements-freecad.txt pins
+# pyyaml and jsonschema only for these modules (scripts/test_test_requirements.py). Drop all four
 # together with the floor raise to 3.12 and the two pins.
 skills/cad-record/scripts/manufacturing_intent.py
-# manufacturing_intent loads these two by path.
+# manufacturing_intent loads these three by path.
 skills/cad-record/scripts/yaml_loader.py
 skills/cad-record/scripts/schema_registry.py
+skills/cad-record/scripts/quantities.py
 
 # The job that fea_static.py generates imports these and runs fea_solvers.resolve_in_freecad;
 # fea_solvers_job imports fea_solvers too.

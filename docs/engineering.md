@@ -127,6 +127,12 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - `validate.py` `check_existing`: `existing.interface_missing` when no interface joins it to a product part, and `existing.installed` when an assembly operation names it as `part`. It may be an operation's `into`. An `@occurrence` end or part counts as the part number the assembly inventory resolves it to. `validate.py` and `cad-design` `process_checks/purchased.py` find its interfaces with `manufacturing_intent.interfaces_of`.
 - Not yet covered: BOM and release treatment, and margins and stack-up against its range (bead benchhand-pcy, later PRs).
 
+## Assembly sub-builds
+
+`skills/cad-record/scripts/assembly_operations.py` owns assembly order. An operation with `sub_build` belongs to a bench sub-build with its own base, state and closure; an `install` operation puts it into the main build as one unit. A `hold` cure figure counts only with a `datasheet` source (`CURE_SOURCES`). `access_plan` takes obstacles from each operation's own build. cad-drawings `assembly_check.drawing_operations` leaves install operations out of the item steps. Records without these fields give the same results as before (`SubBuildTests` in `skills/cad-record/tests/test_assembly_operations.py`).
+
+`skills/cad-record/scripts/quantities.py` holds the record's units table and the one quantity parser. `Quantity` and `IntentError` live there too. It needs only the standard library. `manufacturing_intent.py` loads it by path and re-exports every name. `assembly_operations.py` loads it directly, so `assembly_operations.py` and `cad-drawings` `assembly_check.py` stay free of PyYAML and jsonschema (`scripts/test_script_dependencies.py`). It runs on FreeCAD's Python 3.11, so `scripts/freecad_job_modules.txt` lists it.
+
 ## Feature flags
 
 Environment flags follow `CAD_REQUIRE_FREECAD` (`skills/cad-flow/scripts/preflight.py`): only the string `1` turns one on.

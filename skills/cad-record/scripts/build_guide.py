@@ -65,6 +65,14 @@ if "cad_record_assembly_operations" not in sys.modules:
     _OPERATIONS_SPEC.loader.exec_module(OPERATIONS)
 else:
     OPERATIONS = sys.modules["cad_record_assembly_operations"]
+QUANTITIES_PATH = SKILL / "scripts" / "quantities.py"
+if "cad_record_quantities" not in sys.modules:  # the one quantity parser, shared with the record reader
+    _QUANTITIES_SPEC = importlib.util.spec_from_file_location("cad_record_quantities", QUANTITIES_PATH)
+    if _QUANTITIES_SPEC is None or _QUANTITIES_SPEC.loader is None:
+        raise ImportError(f"{QUANTITIES_PATH} not found")
+    sys.modules["cad_record_quantities"] = importlib.util.module_from_spec(_QUANTITIES_SPEC)
+    _QUANTITIES_SPEC.loader.exec_module(sys.modules["cad_record_quantities"])
+QUANTITIES = sys.modules["cad_record_quantities"]
 COMMODITY_PATH = SKILL / "scripts" / "commodity_identity.py"
 if "cad_record_commodity_identity" not in sys.modules:  # the shared decision on which designations identify a commodity item
     _COMMODITY_SPEC = importlib.util.spec_from_file_location("cad_record_commodity_identity", COMMODITY_PATH)
@@ -166,6 +174,61 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     lines.extend("| " + " | ".join(text(value) for value in row) + " |" for row in rows)
     return "\n".join(lines)
+
+
+def fact_text(fact: Any, where: str) -> str:
+    """A quantity fact as guide text: its value or range with units (read by quantities.py), else its status and
+    reason; GuideError, naming `where`, for a known value that is not a valid quantity."""
+    if not isinstance(fact, Mapping):
+        return "not recorded"
+    value = fact.get("value")
+    if fact.get("status") == "known" and isinstance(value, Mapping):
+        try:
+            return str(QUANTITIES.quantity(value))
+        except QUANTITIES.IntentError as exc:
+            raise GuideError(f"{where} is not a valid quantity: {exc}") from exc
+    return f"{fact.get('status') or 'unknown'} ({fact.get('reason') or 'no reason recorded'})"
+
+
+def bench_note(operation: Any, items: Mapping[str, Any], regime: str) -> tuple[str, str]:
+    """(step text, tools-table items) of a hold or a sub-build install. No drawing calls either out, so the step
+    names the drawing items it touches (a part without an item keeps its record reference) and the sub-build by id."""
+    def words(value: str) -> str:
+        return str(assembly_sheet.regime_text(regime, value))
+
+    def label(ref: str) -> tuple[str, str]:
+        number = items.get(ref)
+        return (f"item {number}", str(number)) if number is not None else (ref, ref)
+
+    if operation.kind == "hold":
+        part, column = label(operation.part)
+        where = f"assembly operation {operation.id}"
+        note = (words(f"Hold {part} in the {operation.fixture} with its ")
+                + assembly_sheet.direction_text(operation.orientation) + words(" axis up for ")
+                + fact_text(operation.duration, f"{where}: duration"))
+        cure = operation.cure or {}
+        if "time" in cure:
+            unsourced = [name for name in ("time", "temperature") if name in cure and not OPERATIONS.cure_sourced(cure[name])]
+            time = fact_text(cure["time"], f"{where}: cure time") if "time" not in unsourced else None
+            if "temperature" not in cure:
+                note += words("; cure ") + (time or words("per the adhesive datasheet"))
+            elif time is None:
+                note += words("; cure per the adhesive datasheet")
+            else:
+                temperature = ("temperature" not in unsourced and fact_text(cure["temperature"], f"{where}: cure temperature")
+                               or words("a temperature per the adhesive datasheet"))
+                note += words("; cure ") + time + words(" at ") + temperature
+            if unsourced:
+                note += f" (MISSING: a datasheet-sourced cure {' and '.join(unsourced)} for {operation.id})"
+        return note + ".", column
+    into, column = label(operation.into)
+    note = words(f"Install sub-build {operation.part} into {into}")
+    if operation.direction is not None:
+        note += words(" along ") + assembly_sheet.direction_text(operation.direction)
+    until = assembly_sheet.acceptance_text(operation.acceptance, operation.features, {}, regime)
+    if until is not None:
+        note += words(" until ") + until
+    return note + ".", f"{operation.part} into {column}"
 
 
 def relative_path(source: Path, out: Path) -> str:
@@ -580,27 +643,31 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
     resolved = plan.sheets[0].operations if plan is not None else ()
     measurements = guide_measurements(hw, version_dir, version, str(product_id or ""),
                                       {operation.operation.id for operation in resolved})
+    regime = str(product.get("regime") or "iso")
+    drawn = {resolved_operation.operation.id: resolved_operation for resolved_operation in resolved}
     steps: list[str] = []
-    for number, resolved_operation in enumerate(resolved, start=1):
-        operation = resolved_operation.operation
-        try:
-            note = assembly_sheet.operation_note(resolved_operation, measurements.get(operation.id, {}),
-                                                 str(product.get("regime") or "iso"))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise GuideError(f"cannot format assembly operation {operation.id}: {exc}") from exc
-        if operation.acceptance == "standoff" and measurements.get(operation.id, {}).get("gap") is None:
-            note = note.replace("gap not measured", f"gap not measured: run the assembly drawing for {version}")
-        steps.append(f"{number}. {text(note)}")
-
     tool_rows = []
-    for step_number, resolved_operation in enumerate(resolved, start=1):
-        names = [*resolved_operation.operation.tools, *resolved_operation.operation.consumables]
-        if names:
+    for item in operations.items:  # record order; a hold and a unit install are guide steps without a drawing callout
+        resolved_operation = drawn.get(item.id)
+        if resolved_operation is not None:
             operation = resolved_operation.operation
+            try:
+                note = assembly_sheet.operation_note(resolved_operation, measurements.get(operation.id, {}), regime)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise GuideError(f"cannot format assembly operation {operation.id}: {exc}") from exc
+            if operation.acceptance == "standoff" and measurements.get(operation.id, {}).get("gap") is None:
+                note = note.replace("gap not measured", f"gap not measured: run the assembly drawing for {version}")
             relation = "onto" if operation.kind == "retaining_ring" else "into"
-            tool_rows.append((step_number,
-                              f"{resolved_operation.part_item} {relation} {resolved_operation.into_item}",
-                              "; ".join(names)))
+            items_text = f"{resolved_operation.part_item} {relation} {resolved_operation.into_item}"
+            names = [*operation.tools, *operation.consumables]
+        elif item.kind in ("hold", "install"):
+            note, items_text = bench_note(item, items, regime)
+            names = [*item.tool_names, *([item.fixture] if item.fixture else []), *item.consumables]
+        else:
+            continue
+        steps.append(f"{len(steps) + 1}. {text(note)}")
+        if names:
+            tool_rows.append((len(steps), items_text, "; ".join(names)))
     sections = [
         "## Overview\n\n" + table(("Field", "Value"), overview),
         "## Parts to make\n\n" + table(("Item no.", "PN", "Title", "Qty", "Material", "Process", "Manufacturing file"),

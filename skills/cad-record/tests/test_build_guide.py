@@ -38,6 +38,7 @@ def _fixtures():
 
 
 fx = _fixtures()
+DATASHEET = [fx.source("datasheet", "Loctite EA 9466 TDS", url="https://example.com/ea9466.pdf", accessed="2026-11-24")]
 COVERAGE = {"rows": [
     {"kind": "assembly_operation", "operation": operation, "measured": {"gap": 0.3}}
     for operation in ("press_base_pin", "press_elbow_pin", "press_head_pin")
@@ -299,6 +300,67 @@ class BuildGuide(unittest.TestCase):
         self.assertIn(prepared, (self.out / "din-spec-3105-1-checklist.md").read_text(encoding="utf-8"))
         okh = tomllib.loads((self.out / "okh.toml").read_text(encoding="utf-8"))["okhv"]
         self.assertEqual((okh["version"], okh["release"], okh["release_date"]), ("v1", "A", "2026-11-02"))
+
+    def bench_hold_guide(self, cure: dict) -> str:
+        """The guide of the lamp example with heat-set 1 on a bench sub-build, a cure hold and the unit install."""
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        path = hw / "assembly.yaml"
+        assembly = yaml.safe_load(path.read_text(encoding="utf-8"))
+        operations = assembly["operations"]
+        operations[0]["sub_build"] = "base_sub"
+        operations.insert(1, {"id": "cure_base", "kind": "hold", "sub_build": "base_sub", "part": "LMP-0001",
+                              "duration": fx.known(fx.quantity(24, "h")), "fixture": "bench cure jig",
+                              "orientation": [0, 0, 1], "cure": cure})
+        operations.append({"id": "install_base", "kind": "install", "part": "base_sub", "into": "LMP-0005",
+                           "direction": [0, 0, 1], "acceptance": {"kind": "engaged", "features": ["pin_bore"]}})
+        path.write_text(yaml.safe_dump(assembly, sort_keys=False), encoding="utf-8")
+        return self.generate(hw)
+
+    def test_a_bench_hold_and_the_sub_build_install_are_steps_in_record_order(self) -> None:
+        guide = self.bench_hold_guide({"time": fx.known(fx.quantity(24, "h")),
+                                       "temperature": fx.known(fx.quantity(23, "deg_C"))})
+        self.assertIn("## Assembly steps\n\n1. Heat-set item 8 into item 1", guide)
+        self.assertIn("\n2. Hold item 1 in the bench cure jig with its +Z axis up for 24 h; cure per the adhesive "
+                      "datasheet (MISSING: a datasheet-sourced cure time and temperature for cure_base).\n"
+                      "3. Heat-set item 9 into item 4", guide, "a user-stated cure figure is no instruction")
+        self.assertNotIn("23 deg_C", guide)
+        self.assertIn("\n11. Install sub-build base_sub into item 5 along +Z until it is fully engaged in the pin bore.",
+                      guide)
+        self.assertIn("| 2 | 1 | bench cure jig |", guide)
+        self.assertIn("| 5 | 5 into 2 | Arbor press or pin punch |", guide, "the drawn steps keep their record numbers")
+
+    def test_a_datasheet_cure_time_prints_beside_an_unsourced_temperature(self) -> None:
+        guide = self.bench_hold_guide({"time": fx.known(fx.quantity(24, "h"), "supplier_typical", sources=DATASHEET),
+                                       "temperature": fx.known(fx.quantity(23, "deg_C"))})
+        self.assertIn("\n2. Hold item 1 in the bench cure jig with its +Z axis up for 24 h; cure 24 h at a temperature "
+                      "per the adhesive datasheet (MISSING: a datasheet-sourced cure temperature for cure_base).\n",
+                      guide)
+
+    def test_datasheet_cure_figures_print_in_the_hold_step(self) -> None:
+        guide = self.bench_hold_guide({"time": fx.known(fx.quantity(24, "h"), "supplier_typical", sources=DATASHEET),
+                                       "temperature": fx.known(fx.quantity(23, "deg_C"), "supplier_typical",
+                                                               sources=DATASHEET)})
+        self.assertIn("\n2. Hold item 1 in the bench cure jig with its +Z axis up for 24 h; cure 24 h at 23 deg_C.\n", guide)
+
+    def test_a_hold_quantity_that_does_not_parse_is_a_guide_input_error(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        path = hw / "assembly.yaml"
+        assembly = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assembly["operations"][0]["sub_build"] = "base_sub"
+        assembly["operations"].insert(1, {"id": "cure_base", "kind": "hold", "sub_build": "base_sub", "part": "LMP-0001",
+                                          "duration": {**fx.known(fx.quantity(24, "h")), "value": {"lower": 1, "units": "h"}},
+                                          "fixture": "bench cure jig", "orientation": [0, 0, 1]})
+        assembly["operations"].append({"id": "install_base", "kind": "install", "part": "base_sub", "into": "LMP-0005",
+                                       "direction": [0, 0, 1], "acceptance": {"kind": "engaged", "features": ["pin_bore"]}})
+        path.write_text(yaml.safe_dump(assembly, sort_keys=False), encoding="utf-8")
+        result = self.run_guide(hw)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("build_guide.py: assembly operation cure_base: duration", result.stderr)
+        self.assertIn("lower and an upper bound", result.stderr)
+        self.assertFalse((self.out / "index.md").exists())
 
     def test_unmeasured_standoff_step_has_readable_gap_prompt(self) -> None:
         hw = self.copy_lamp_example()

@@ -416,6 +416,318 @@ class NeverInstalledPacketTests(unittest.TestCase):
         self.assertEqual(result.statuses["assembly.order@product"].result, "pass")
 
 
+DATASHEET = [{"kind": "datasheet", "reference": "Loctite EA 9466 TDS, cure schedule", "url": "https://example.com/ea9466.pdf",
+              "accessed": "2026-11-24"}]
+
+
+def sourced(value: float, units: str, sources: list | None = None) -> dict:
+    return {"status": "known", "value": {"value": value, "units": units}, "basis": "supplier_typical",
+            "sources": DATASHEET if sources is None else sources}
+
+
+class SubBuildTests(unittest.TestCase):
+    """A bench sub-build has its own ground, sequence and state; one install operation puts its output in place."""
+
+    PNS = ("TST-0101", "TST-0102")  # housing, hanger
+    MAGNET = "TST-0103"
+
+    def inventory(self, extra: tuple[str, ...] = ()):
+        record = {"occurrences": [{"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0], *extra]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1]],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        return assembly_data.normalize(record, {self.MAGNET: "part_local"})
+
+    @staticmethod
+    def bond(magnet: str) -> dict:
+        return {"id": f"bond-{magnet}", "kind": "join", "sub_build": "hanger", "part": f"@{magnet}", "into": "TST-0102",
+                "direction": [0, 0, -1], "acceptance": {"kind": "flush", "features": ["magnet_face", "pocket_rim"]},
+                "consumables": ["epoxy"]}
+
+    CURE = {"id": "cure-hanger", "kind": "hold", "sub_build": "hanger", "part": "TST-0102",
+            "duration": sourced(24, "h"), "fixture": "bench cure jig", "orientation": [0, 0, 1],
+            "cure": {"time": sourced(24, "h"), "temperature": sourced(23, "deg_C")}}
+    INSTALL = {"id": "install-hanger", "kind": "install", "part": "hanger", "into": "TST-0101", "direction": [0, 0, -1],
+               "acceptance": {"kind": "engaged", "features": ["hinge_pin"]}}
+
+    def items(self) -> list[dict]:
+        return [self.bond("mag-a"), self.bond("mag-b"), dict(self.CURE), dict(self.INSTALL)]
+
+    def test_magnets_bonded_on_the_bench_then_the_hanger_installed_is_clean(self) -> None:
+        operations = ops.normalize({"operations": self.items()})
+        state = ops.sequence(operations, self.inventory())
+        self.assertEqual(state.ground, "TST-0101")
+        self.assertEqual(state.floating, frozenset())
+        hanger = state.sub_builds["hanger"]
+        self.assertEqual((hanger.ground, hanger.floating), ("TST-0102", frozenset()))
+        report = ops.check_order(operations, self.inventory())
+        self.assertEqual(report.findings, ())
+        self.assertEqual({row["outcome"] for row in report.outcomes}, {"pass"})
+        self.assertEqual(report.outcome("assembly.order@op:cure-hanger")["outcome"], "pass")
+
+    def test_the_bench_record_is_valid_against_the_schema(self) -> None:
+        check = fx.ref_validator("https://srobroek.com/cad/schemas/assembly.schema.json#/$defs/assembly_operation")
+        for item in self.items():
+            self.assertEqual(list(check.iter_errors(item)), [], item["id"])
+        self.assertNotEqual(list(check.iter_errors({**self.INSTALL, "part": "TST-0102"})), [], "an install names a sub-build")
+        self.assertNotEqual(list(check.iter_errors({**self.bond("mag-a"), "duration": sourced(1, "h")})), [],
+                            "only a hold has a duration")
+
+    def test_an_install_whose_base_was_removed_on_the_bench_has_an_unknown_path(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        strip = {"id": "strip-hanger", "kind": "disassemble", "sub_build": "hanger", "part": "TST-0102", "into": "@mag-a",
+                 "direction": [0, 0, 1]}
+        operations = ops.normalize({"operations": [bond_a, bond_b, cure, strip, install]})
+        plan = {r.operation.id: r for r in ops.access_plan(operations, self.inventory())}
+        request = plan["install-hanger"]
+        self.assertNotEqual(request.moving, "TST-0102", "the removed base does not travel")
+        self.assertEqual(request.unit, frozenset({"mag-a", "mag-b"}))
+        self.assertTrue(any("TST-0102 is removed" in reason for reason in request.unknown), request.unknown)
+
+    def test_existing_equipment_stays_in_the_main_build_and_off_the_bench(self) -> None:
+        mount = "TST-0109"  # existing equipment the hanger's subassembly lists and the main build mounts onto
+        record = {"occurrences": [{"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0]]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1], mount],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        inventory = assembly_data.normalize(record, {self.MAGNET: "part_local"})
+        operations = ops.normalize({"operations": self.items()})
+        existing = frozenset({mount})
+        state = ops.sequence(operations, inventory, existing)
+        self.assertNotIn(mount, state.sub_builds["hanger"].members, "existing equipment is never built on the bench")
+        self.assertIn(mount, state.base)
+        self.assertEqual(ops.check_order(operations, inventory, existing).findings, ())
+        plan = {r.operation.id: r for r in ops.access_plan(operations, inventory, existing)}
+        self.assertNotIn(mount, plan["bond-mag-a"].tool_obstacles, "the bench does not hold the existing equipment")
+        self.assertIn(mount, plan["install-hanger"].path_obstacles, "the unit travels past the existing equipment")
+
+    def test_a_removed_base_never_moves_an_occurrence_named_like_the_sub_build(self) -> None:
+        record = {"occurrences": [*({"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")),
+                                  {"id": "hanger", "PN": "TST-0105"}],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0]], "occurrences": ["@hanger"]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1]],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        inventory = assembly_data.normalize(record, {self.MAGNET: "part_local", "TST-0105": "part_local"})
+        bond_a, bond_b, cure, install = self.items()
+        strip = {"id": "strip-hanger", "kind": "disassemble", "sub_build": "hanger", "part": "TST-0102", "into": "@mag-a",
+                 "direction": [0, 0, 1]}
+        operations = ops.normalize({"operations": [bond_a, bond_b, cure, strip, install]})
+        request = {r.operation.id: r for r in ops.access_plan(operations, inventory, frozenset({"TST-0105"}))}["install-hanger"]
+        self.assertEqual((request.moving, request.part), (None, None), "the existing occurrence hanger stays put")
+        self.assertIn("hanger", request.path_obstacles)
+        self.assertTrue(any("TST-0102 is removed" in reason for reason in request.unknown), request.unknown)
+
+    def test_the_cure_hold_sees_only_its_sub_build(self) -> None:
+        clamped = {**self.CURE, "tools": ["spring clamp"]}
+        items = [self.bond("mag-a"), self.bond("mag-b"), clamped, dict(self.INSTALL)]
+        plan = {request.operation.id: request
+                for request in ops.access_plan(ops.normalize({"operations": items}), self.inventory())}
+        cure = plan["cure-hanger"]
+        self.assertEqual(cure.tool_obstacles, frozenset({"mag-a", "mag-b"}), "the housing is not there during the cure")
+        install = plan["install-hanger"]
+        self.assertEqual((install.moving, install.frame, install.unit), ("TST-0102", "TST-0101",
+                                                                         frozenset({"TST-0102", "mag-a", "mag-b"})))
+        self.assertEqual(install.path_obstacles, frozenset(), "the magnets travel with the hanger")
+
+    def test_installing_a_sub_build_before_its_own_steps_finish_is_an_order_error(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        report = ops.check_order(ops.normalize({"operations": [bond_a, install, bond_b, cure]}), self.inventory())
+        [finding] = [f for f in report.findings if f["code"] == "assembly.sub_build_unfinished"]
+        self.assertEqual(finding["obligation"], "assembly.order@op:install-hanger")
+        self.assertIn("bond-mag-b, cure-hanger", finding["measured"]["text"])
+        self.assertEqual(report.outcome("assembly.order@op:install-hanger")["outcome"], "fail")
+
+    def test_a_part_used_in_two_sub_builds_is_an_error(self) -> None:
+        tab = {**self.bond("mag-b"), "id": "bond-tab", "sub_build": "tab", "into": "TST-0104"}
+        install_tab = {**self.INSTALL, "id": "install-tab", "part": "tab"}
+        report = ops.check_order(ops.normalize({"operations": [*self.items(), tab, install_tab]}),
+                                 self.inventory(extra=("TST-0104",)))
+        [finding] = [f for f in report.findings if f["code"] == "assembly.sub_build_shared"]
+        self.assertEqual(finding["obligation"], "assembly.order@op:bond-tab")
+        self.assertIn("@mag-b", finding["measured"]["text"])
+        self.assertIn("sub-build hanger", finding["measured"]["text"])
+
+    def test_install_names_a_sub_build_that_exists_and_every_sub_build_is_installed(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        for name, items, code, op_id in (
+                ("unknown unit", [bond_a, bond_b, cure, install, {**install, "id": "install-lid", "part": "lid"}],
+                 "assembly.sub_build_unknown", "install-lid"),
+                ("never installed", [bond_a, bond_b, cure], "assembly.sub_build_not_installed", "cure-hanger"),
+                ("installed twice", [bond_a, bond_b, cure, install, {**install, "id": "again"}],
+                 "assembly.installed_twice", "again")):
+            with self.subTest(name):
+                report = ops.check_order(ops.normalize({"operations": items}), self.inventory())
+                self.assertIn(code, {f["code"] for f in report.findings})
+                self.assertEqual(report.outcome(f"assembly.order@op:{op_id}")["outcome"], "fail")
+
+    def test_a_main_closure_before_the_unit_install_fails_the_install_of_each_enclosed_member(self) -> None:
+        for enclosed in ("@mag-a", "TST-0102"):
+            with self.subTest(enclosed):
+                lid = {"id": "close-lid", "kind": "close", "part": "TST-0104", "into": "TST-0101", "closes": [enclosed]}
+                report = ops.check_order(ops.normalize({"operations": [lid, *self.items()]}),
+                                         self.inventory(extra=("TST-0104",)))
+                [finding] = report.findings
+                self.assertEqual((finding["code"], finding["obligation"]),
+                                 ("assembly.closed_before_install", "assembly.order@op:install-hanger"))
+                self.assertIn(f"{enclosed.lstrip('@')}, which close-lid encloses", finding["measured"]["text"])
+                self.assertEqual(report.outcome("assembly.order@op:close-lid")["outcome"], "pass")
+
+    def test_an_occurrence_named_like_a_sub_build_is_not_its_install(self) -> None:
+        record = {"occurrences": [*({"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")),
+                                  {"id": "hanger", "PN": "TST-0105"}],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0]], "occurrences": ["@hanger"]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1]],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        inventory = assembly_data.normalize(record, {self.MAGNET: "part_local", "TST-0105": "part_local"})
+        pin = {"id": "insert-pin", "kind": "insert", "part": "@hanger", "into": "TST-0101", "direction": [0, 0, -1],
+               "acceptance": {"kind": "engaged", "features": ["pin_bore"]}}
+        bond_a, bond_b, cure, install = self.items()
+        missing = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, cure, pin]}), inventory)
+        self.assertEqual([f["code"] for f in missing.findings], ["assembly.sub_build_not_installed"])
+        complete = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, cure, pin, install]}), inventory)
+        self.assertEqual(complete.findings, ())
+
+    def test_a_mistyped_bench_receiver_leaves_its_step_unknown(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        typo = {**bond_a, "into": "TST-9999"}
+        inventory = self.inventory()
+        state = ops.sequence(ops.normalize({"operations": [typo, bond_b, cure, install]}), inventory)
+        self.assertEqual(state.sub_builds["hanger"].ground, "TST-0102")
+        self.assertNotIn("TST-9999", state.sub_builds["hanger"].members)
+        report = ops.check_order(ops.normalize({"operations": [typo, bond_b, cure, install]}), inventory)
+        self.assertEqual(report.outcome("assembly.order@op:bond-mag-a")["outcome"], "unknown")
+        self.assertEqual(report.findings, ())
+
+    def test_a_tool_free_hold_reaches_nothing_and_an_uncited_tool_on_it_is_advisory(self) -> None:
+        hold = {"id": "cure", "kind": "hold", "part": "TST-0001", "duration": fx.known(fx.quantity(24, "h")),
+                "fixture": "bench cure jig", "orientation": [0, 0, 1]}
+        socket = {"tool": "hex socket", "envelope": fx.known("TST socket", "supplier_typical", sources=[fx.source(
+            "supplier", "TST socket CAD", artifact="manufacturing/sources/socket.step", sha256="a" * 64)])}
+        for label, item, measured, advisory in (
+                ("tool-free", hold, 0, ()), ("named tool", {**hold, "tools": ["spring clamp"]}, 0, ("spring clamp",)),
+                ("uncited declared tool", {**hold, "tool_access": [{"tool": "spring clamp"}]}, 0, ("spring clamp",)),
+                ("cited envelope", {**hold, "tools": ["spring clamp"], "tool_access": [socket]}, 1, ("spring clamp",))):
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                documents = fx.tst_record()
+                documents["assembly.yaml"]["operations"].append(item)
+                record = intent.load_record(fx.write_record(Path(directory) / "hw", documents))
+                access = {o.id for o in intent.required_checks(record) if o.family == "assembly.access"}
+                self.assertIn("assembly.access@op:cure", access, "the obligation stays; not applicable is explicit")
+                plan = {r.operation.id: r for r in ops.access_plan(ops.normalize(documents["assembly.yaml"]))}
+                self.assertEqual(plan["cure"].not_applicable is None, bool(item.get("tools") or item.get("tool_access")))
+                self.assertEqual((len(plan["cure"].tools), plan["cure"].advisory), (measured, advisory))
+                self.assertFalse(any("name only" in reason for reason in plan["cure"].unknown), plan["cure"].unknown)
+                self.assertIsNone(plan["fit_bearing"].not_applicable)
+
+    def test_a_cure_figure_without_a_datasheet_source_fails(self) -> None:
+        for name, cure in (("supplier time", {"time": sourced(24, "h", [{"kind": "supplier", "reference": "email"}])}),
+                           ("unknown temperature", {"time": sourced(24, "h"),
+                                                    "temperature": {"status": "unknown", "reason": "not looked up"}})):
+            with self.subTest(name):
+                bond_a, bond_b, _cure, install = self.items()
+                report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, {**self.CURE, "cure": cure}, install]}),
+                                         self.inventory())
+                self.assertEqual([f["code"] for f in report.findings], ["assembly.cure_unsourced"])
+
+    def test_an_unsourced_cure_time_is_not_compared_with_the_hold(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        unsourced = {**cure, "duration": sourced(1, "h"),
+                     "cure": {"time": sourced(24, "h", [{"kind": "user", "reference": "the user", "origin": "TST"}])}}
+        report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, unsourced, install]}), self.inventory())
+        self.assertEqual([f["code"] for f in report.findings], ["assembly.cure_unsourced"])
+
+    def test_a_hold_shorter_than_the_cure_time_fails(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        short = {**cure, "duration": sourced(90, "min"), "cure": {"time": sourced(1, "d")}}
+        report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, short, install]}), self.inventory())
+        [finding] = report.findings
+        self.assertEqual(finding["code"], "assembly.hold_short")
+        self.assertIn("1.5 h, the cure time is 24 h", finding["measured"]["text"])
+
+    def test_the_record_reader_refuses_a_cure_or_duration_of_the_wrong_dimension(self) -> None:
+        def hold(**changes):
+            return {"id": "cure", "kind": "hold", "part": "TST-0001", "duration": fx.known(fx.quantity(24, "h")),
+                    "fixture": "bench cure jig", "orientation": [0, 0, 1],
+                    "cure": {"time": fx.known(fx.quantity(24, "h")), "temperature": fx.known(fx.quantity(23, "deg_C"))},
+                    **changes}
+
+        cases = {
+            "a duration in deg_C": ("operations/1/duration/value", hold(duration=fx.known(fx.quantity(24, "deg_C")))),
+            "a cure time in mm": ("operations/1/cure/time/value", hold(cure={"time": fx.known(fx.quantity(24))})),
+            "a cure temperature in h": ("operations/1/cure/temperature/value", hold(cure={
+                "time": fx.known(fx.quantity(24, "h")), "temperature": fx.known(fx.quantity(23, "h"))})),
+            "a well-formed hold": (None, hold()),
+        }
+        for label, (pointer, item) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                documents = fx.tst_record()
+                documents["assembly.yaml"]["operations"].append(item)
+                record = intent.load_record(fx.write_record(Path(directory) / "hw", documents))
+                units = [p.pointer for p in record.problems if p.code == "intent.units"]
+                self.assertEqual(units, [] if pointer is None else [pointer], [p.message for p in record.problems])
+
+    def test_a_hold_without_a_cure_needs_a_positive_duration(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        plain = {key: value for key, value in cure.items() if key != "cure"}
+        for name, duration, outcome in (("zero", sourced(0, "h"), "unknown"), ("negative", sourced(-1, "h"), "unknown"),
+                                        ("one hour", sourced(1, "h"), "pass")):
+            with self.subTest(name):
+                held = {**plain, "duration": duration}
+                report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, held, install]}), self.inventory())
+                row = report.outcome("assembly.order@op:cure-hanger")
+                self.assertEqual(row["outcome"], outcome)
+                if outcome == "unknown":
+                    self.assertIn("not a known positive time", row["uncertainty"])
+                    self.assertEqual(report.findings, ())
+
+    def test_a_one_sided_interval_is_an_invalid_quantity_not_a_crash(self) -> None:
+        for name, value in (("lower only", {"lower": 1, "units": "h"}), ("upper only", {"upper": 24, "units": "h"})):
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                hold = {"id": "cure", "kind": "hold", "part": "TST-0001", "fixture": "bench cure jig",
+                        "orientation": [0, 0, 1], "duration": {**fx.known(fx.quantity(1, "h")), "value": value},
+                        "cure": {"time": sourced(1, "h")}}
+                documents = fx.tst_record()
+                documents["assembly.yaml"]["operations"].append(hold)
+                record = intent.load_record(fx.write_record(Path(directory) / "hw", documents))
+                self.assertIn("operations/1/duration/value",
+                              [p.pointer for p in record.problems if p.code == "intent.number"])
+                report = ops.check_order(ops.normalize({"operations": [hold]}))
+                self.assertIn("the hold lasts unknown", report.findings[0]["measured"]["text"])
+
+    def test_a_cure_time_that_is_not_a_positive_time_fails_the_hold(self) -> None:
+        for name, time in (("negative", sourced(-24, "h")), ("zero", sourced(0, "h")), ("a length", sourced(24, "mm"))):
+            with self.subTest(name):
+                bond_a, bond_b, cure, install = self.items()
+                held = {**cure, "duration": sourced(1, "s"), "cure": {"time": time}}
+                report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, held, install]}), self.inventory())
+                self.assertEqual([f["code"] for f in report.findings], ["assembly.hold_short"])
+                self.assertIn("not a known positive time", report.findings[0]["measured"]["text"])
+
+    def test_a_hold_that_is_not_a_positive_time_is_short(self) -> None:
+        bond_a, bond_b, cure, install = self.items()
+        held = {**cure, "duration": sourced(-48, "h")}
+        report = ops.check_order(ops.normalize({"operations": [bond_a, bond_b, held, install]}), self.inventory())
+        [finding] = report.findings
+        self.assertIn("the hold lasts unknown, the cure time is 24 h", finding["measured"]["text"])
+
+    def test_an_uninstalled_subassembly_member_floats_in_its_sub_build(self) -> None:
+        bond_a, _bond_b, cure, install = self.items()
+        report = ops.check_order(ops.normalize({"operations": [bond_a, cure, install]}), self.inventory())
+        [finding] = report.findings
+        self.assertEqual((finding["code"], finding["subject"]), ("assembly.never_installed",
+                                                                 {"PN": self.MAGNET, "occurrence": "@mag-b"}))
+        self.assertIn("sub-build hanger has one base (the base is TST-0102)", finding["measured"]["text"])
+
+    def test_bench_operations_are_normalized_strictly(self) -> None:
+        for name, item in (("install of a part", {**self.INSTALL, "part": "TST-0102"}),
+                           ("install inside a sub-build", {**self.INSTALL, "sub_build": "hanger"}),
+                           ("duration on a join", {**self.bond("mag-a"), "duration": sourced(1, "h")}),
+                           ("cure without a time", {**self.CURE, "cure": {"temperature": sourced(23, "deg_C")}}),
+                           ("sub-build id", {**self.bond("mag-a"), "sub_build": "Hanger"})):
+            with self.subTest(name), self.assertRaises(ops.OperationsError):
+                ops.normalize({"operations": [item]})
+
+
 class SchemaParity(unittest.TestCase):
     """assembly.schema.json#/$defs/assembly_operation and this module describe one set of operations. A kind
     added to one without the other (print_in_place is deferred, see the interfaces `print_in_place` block) fails here."""
