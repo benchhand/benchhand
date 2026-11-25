@@ -69,3 +69,43 @@ interfaces:
     functional:
       critical: {status: unknown, reason: not recorded yet, question: Q-008}
       functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-008
+    from: VSE-0006
+    to: VSE-0011
+    type: motion
+    description: "Camshaft journals in the cylinder head journal bore: journal 8 f7 in an 8 H7 bore (clearance 13 to 43 um). IF-011 binds the bank B camshaft VSE-0007 the same way."
+    limits:
+      running_fit: {fit: 8 H7/f7, hole: {PN: VSE-0006, occurrence: "@head-1", feature: journal_bore}, shaft: {PN: VSE-0011, feature: journals}, note: "ISO 286 limits: hole 8.000/8.015, shaft 7.972/7.987; the bore model uses the 8.0075 mm mid-limit"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-009
+    from: VSE-0013
+    to: VSE-0012
+    type: motion
+    description: "Idler roller on the bracket idler axle: axle 3 g6 in the roller's 3 H7 bore (clearance 2 to 18 um)."
+    limits:
+      running_fit: {fit: 3 H7/g6, hole: {PN: VSE-0012, occurrence: "@idler", feature: bore}, shaft: {PN: VSE-0013, feature: axle_idler}, note: "ISO 286 limits: hole 3.000/3.010, shaft 2.992/2.998; the axle model uses the 2.995 mm mid-limit"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-010
+    from: VSE-0013
+    to: VSE-0012
+    type: motion
+    description: "Tensioner roller on the bracket tensioner axle: axle 3 g6 in the roller's 3 H7 bore (clearance 2 to 18 um)."
+    limits:
+      running_fit: {fit: 3 H7/g6, hole: {PN: VSE-0012, occurrence: "@tensioner", feature: bore}, shaft: {PN: VSE-0013, feature: axle_tensioner}, note: "ISO 286 limits: hole 3.000/3.010, shaft 2.992/2.998; the axle model uses the 2.995 mm mid-limit"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}
+  - id: IF-011
+    from: VSE-0006
+    to: VSE-0007
+    type: motion
+    description: "Bank B camshaft journals in the cylinder head journal bore: journal 8 f7 in an 8 H7 bore (clearance 13 to 43 um)."
+    limits:
+      running_fit: {fit: 8 H7/f7, hole: {PN: VSE-0006, occurrence: "@head-2", feature: journal_bore}, shaft: {PN: VSE-0007, feature: journals}, note: "ISO 286 limits: hole 8.000/8.015, shaft 7.972/7.987; the bore model uses the 8.0075 mm mid-limit"}
+    functional:
+      critical: {status: unknown, reason: not recorded yet, question: Q-008}
+      functions: {status: unknown, reason: not recorded yet, question: Q-008}

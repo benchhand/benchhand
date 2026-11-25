@@ -24,7 +24,7 @@ PARAMS = {
     "cyl_pitch": 36.0,  # cylinder pitch along X within one bank
     "chamber_d": 26.0,  # combustion chamber pocket over the 24 mm bore
     "chamber_h": 3.0,  # pocket depth above the deck face; leaves 7 mm to the cam journal bore
-    "journal_bore_d": 8.04,  # 8 H7 upper limit; the camshaft journal is 8 f7
+    "journal_bore_d": 8.0075,  # 8 H7 mid-limit (8.000..8.015); the camshaft journal is 8 f7
     "lobe_pocket_r": 7.5,  # cam lobe nose reaches 7.0 mm
     "lobe_pocket_w": 7.0,  # lobe 6 mm wide
 }

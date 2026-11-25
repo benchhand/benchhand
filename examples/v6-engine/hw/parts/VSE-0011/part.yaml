@@ -24,6 +24,8 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+      inspection:
+        - {id: gauge_journals, feature: journals, method: "Gauge the four journals against the 8 f7 limits before assembly", instrument: micrometer, state: as_manufactured}
 drawing:
   type: detail
   datum_features:
