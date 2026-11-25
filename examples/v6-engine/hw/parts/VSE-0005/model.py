@@ -13,6 +13,9 @@ takes a crank handle or a motor coupling.
 import math
 
 import cadquery as cq
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 from cadmodel.safe import safe_cut, safe_fuse
 
 KERNEL = "cadquery"
@@ -67,3 +70,68 @@ def build(params: dict) -> cq.Shape:
     shaft = safe_fuse(*parts)
     coupling = _cyl(p["coupling_bore_d"] / 2.0, -half - p["nose_len"] - 1.0, -half - p["nose_len"] + p["coupling_bore_len"])
     return safe_cut(shaft, coupling).val()
+
+
+def _witness(face: cq.Face) -> dict:
+    """A final-surface witness: the centre of the face's largest mesh triangle, projected onto the face."""
+    vertices, triangles = face.tessellate(0.01, 0.2)
+    a, b, c = max(((vertices[i], vertices[j], vertices[k]) for i, j, k in triangles),
+                  key=lambda t: (t[1] - t[0]).cross(t[2] - t[0]).Length)
+    near = GeomAPI_ProjectPointOnSurf(((a + b + c) * (1.0 / 3.0)).toPnt(), BRep_Tool.Surface_s(face.wrapped)).NearestPoint()
+    point = cq.Vector(near.X(), near.Y(), near.Z())
+    kind = {"PLANE": "plane", "CYLINDER": "cylinder", "CONE": "cone", "SPHERE": "sphere", "TORUS": "torus"}.get(face.geomType(), "other")
+    return {"support_type": kind, "point_mm": list(point.toTuple()), "normal": list(face.normalAt(point).normalized().toTuple())}
+
+
+def _radius(face: cq.Face) -> float:
+    return BRepAdaptor_Surface(face.wrapped).Cylinder().Radius()
+
+
+def _collect(shape: cq.Shape, role) -> dict:
+    """role(face, patch) -> (name, kind); faces with the same name join one locator."""
+    named: dict[str, tuple[str, list]] = {}
+    for face in shape.Faces():
+        patch = _witness(face)
+        name, kind = role(face, patch)
+        named.setdefault(name, (kind, []))[1].append(patch)
+    return {name: {"kind": kind, "frame": "assembly_zero", "patches": patches} for name, (kind, patches) in named.items()}
+
+
+def drawing_features(params: dict, shape: cq.Shape) -> dict:
+    """Nose, link shafts, main journals, crank pins, web hubs and pin ends, arm flanks and every x-normal plane by place."""
+    p = {**PARAMS, **params}
+    half = p["case_len"] / 2.0
+    pins = {k: (p["throw_r"] * math.cos(math.radians(a)), p["throw_r"] * math.sin(math.radians(a))) for k, a in enumerate(p["pin_angles_deg"], 1)}
+
+    def role(face: cq.Face, patch: dict) -> tuple[str, str]:
+        _, y, z = patch["point_mm"]
+        n = patch["normal"]
+        if patch["support_type"] == "cylinder":
+            surf = BRepAdaptor_Surface(face.wrapped).Cylinder()
+            r, loc = surf.Radius(), surf.Location()
+            cy, cz = loc.Y(), loc.Z()
+            on_axis = abs(cy) < 1e-6 and abs(cz) < 1e-6
+            if on_axis and abs(r - p["nose_d"] / 2.0) < 1e-6:
+                return "nose_and_links", "shaft"
+            if on_axis and abs(r - p["journal_d"] / 2.0) < 1e-6:
+                return "main_journal", "shaft"
+            if on_axis and abs(r - p["coupling_bore_d"] / 2.0) < 1e-6:
+                return "coupling_bore", "bore"
+            if on_axis and abs(r - p["web_r"]) < 1e-6:
+                return "web_hubs", "shaft"
+            for k, (py, pz) in pins.items():
+                if abs(cy - py) < 1e-6 and abs(cz - pz) < 1e-6:
+                    return (f"crank_pin_{k}" if abs(r - p["pin_d"] / 2.0) < 1e-6 else f"pin_web_ends_{k}"), "shaft"
+            raise ValueError(f"unexpected cylinder r={r} at {cy}, {cz}")
+        x = patch["point_mm"][0]
+        if abs(n[0]) < 0.99:
+            throw = round(x / p["pitch"]) + 2
+            side = "a" if (n[2] > 1e-6 or (abs(n[2]) < 1e-6 and n[1] > 0)) else "b"
+            return f"arm_flank_{throw}_{side}", ("plane_face" if abs(n[1]) < 1e-6 or abs(n[2]) < 1e-6 else "surface")
+        if abs(x + half + p["nose_len"]) < 1e-6:
+            return "nose_end", "plane_face"
+        if abs(x + half - p["coupling_bore_len"] + p["nose_len"]) < 1e-6:
+            return "coupling_floor", "plane_face"
+        return f"face_x_{'m' if x < 0 else 'p'}{abs(x):g}".replace(".", "_"), "plane_face"
+
+    return _collect(shape, role)

@@ -23,3 +23,81 @@ intent:
       orientation: {status: proposed, rotation: {quaternion: [1, 0, 0, 0]}, note: "Model frame as the print pose. Not yet approved by a decision."}
       supports: {status: unknown, reason: no support strategy is recorded, question: Q-010}
       post_processing: ["Deburr; no sharp edges"]
+      inspection:
+        - {id: gauge_main_journal, feature: main_journal, method: "Gauge the printed main journals against the 14 f7 limits before assembly", instrument: micrometer, state: as_manufactured}
+drawing:
+  type: detail
+  datum_features:
+    A: {feature: face_x_p60, role: plane}
+    B: {feature: main_journal, role: axis}
+    C: {feature: arm_flank_2_a, role: plane}
+  coordinate_frame:
+    origin: {intersection: [A, B]}
+    x: {normal_to: A}
+    z: {normal_to: C}
+  views:
+    - {id: elevation, kind: orthographic, perpendicular_to: B}
+    - {id: end, kind: orthographic, along_axis: B, toward: face_x_p60}
+    - {id: section_axis, kind: section, normal_axis: z, through: coupling_bore}
+  features:
+    arm_flank_1_a: {profile: controlled_model, profile_tolerance_mm: 0.3}
+    arm_flank_1_b: {profile: controlled_model, profile_tolerance_mm: 0.3}
+    arm_flank_2_a: {size: general}
+    arm_flank_2_b: {size: general}
+    arm_flank_3_a: {profile: controlled_model, profile_tolerance_mm: 0.3}
+    arm_flank_3_b: {profile: controlled_model, profile_tolerance_mm: 0.3}
+    coupling_bore: {size: general}
+    crank_pin_1: {size: general}
+    crank_pin_2: {size: general}
+    crank_pin_3: {size: general}
+    coupling_floor: {size: general}
+    face_x_m10: {size: general}
+    face_x_m12: {size: general}
+    face_x_m24: {size: general}
+    face_x_m26: {size: general}
+    face_x_m46: {size: general}
+    face_x_m48: {size: general}
+    face_x_m60: {size: general}
+    face_x_p10: {size: general}
+    face_x_p12: {size: general}
+    face_x_p24: {size: general}
+    face_x_p26: {size: general}
+    face_x_p46: {size: general}
+    face_x_p48: {size: general}
+    face_x_p60: {size: general}
+    main_journal: {size: interface}
+    nose_and_links: {size: general}
+    nose_end: {size: general}
+    pin_web_ends_1: {size: general}
+    pin_web_ends_2: {size: general}
+    pin_web_ends_3: {size: general}
+    web_hubs: {size: general}
+  dimensions:
+    - {id: shaft_length, operation: plane_separation, features: [face_x_p60, face_x_m60], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: nose_length, operation: plane_separation, features: [face_x_m60, nose_end], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: coupling_depth, presentation: section, operation: plane_separation, features: [nose_end, coupling_floor], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: nose_d, operation: diameter, features: [nose_and_links], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: coupling_d, operation: diameter, features: [coupling_bore], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: hub_d, operation: diameter, features: [web_hubs], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: main_journal_d, operation: diameter, features: [main_journal], tolerance: {deviation_mm: [-0.004, 0.014]}}
+    - {id: crank_pin_1_d, operation: diameter, features: [crank_pin_1], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pin_end_1_d, operation: diameter, features: [pin_web_ends_1], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: crank_pin_2_d, operation: diameter, features: [crank_pin_2], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pin_end_2_d, operation: diameter, features: [pin_web_ends_2], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: crank_pin_3_d, operation: diameter, features: [crank_pin_3], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pin_end_3_d, operation: diameter, features: [pin_web_ends_3], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: web_1_t, operation: thickness, features: [face_x_m48, face_x_m46], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: web_2_t, operation: thickness, features: [face_x_m26, face_x_m24], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: web_3_t, operation: thickness, features: [face_x_m12, face_x_m10], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: web_4_t, operation: thickness, features: [face_x_p10, face_x_p12], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: web_5_t, operation: thickness, features: [face_x_p24, face_x_p26], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: web_6_t, operation: thickness, features: [face_x_p46, face_x_p48], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pin_1_len, operation: plane_separation, features: [face_x_m46, face_x_m26], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pin_2_len, operation: plane_separation, features: [face_x_m10, face_x_p10], tolerance: {deviation_mm: [-0.2, 0.2]}}
+    - {id: pin_3_len, operation: plane_separation, features: [face_x_p26, face_x_p46], tolerance: {deviation_mm: [-0.2, 0.2]}}
+  edges: {external: [-0.3, 0.0], internal: [0.0, 0.3]}
+  surface_texture: {open: FDM surface of an as-printed part; no finish requirement is recorded}
+  notes:
+    - {kind: finish, text: "Printed in ASA. The two main journals are sanded to 14 f7 where they run in the 14 H7 crankcase seats. Deburr."}
+    - {kind: process, text: "Print with the axis flat on the bed, one throw plane parallel to it."}
+  sheet: {sizes: [A3], scale: auto}

@@ -13,6 +13,9 @@ cylinders) or +30 degrees (left bank, even). Crank throw k sits at x = (k - 1) *
 import math
 
 import cadquery as cq
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 from cadmodel.safe import safe_cut, safe_fuse
 
 KERNEL = "cadquery"
@@ -58,3 +61,69 @@ def build(params: dict) -> cq.Shape:
     for x0, x1 in ((-half, -half + p["seat_len"]), (half - p["seat_len"], half)):
         body = safe_cut(body, _cyl_x(p["main_bore_d"] / 2.0, x0 - 1.0, x1 + 1.0))
     return body.val()
+
+
+def _witness(face: cq.Face) -> dict:
+    """A final-surface witness: the centre of the face's largest mesh triangle, projected onto the face."""
+    vertices, triangles = face.tessellate(0.01, 0.2)
+    a, b, c = max(((vertices[i], vertices[j], vertices[k]) for i, j, k in triangles),
+                  key=lambda t: (t[1] - t[0]).cross(t[2] - t[0]).Length)
+    near = GeomAPI_ProjectPointOnSurf(((a + b + c) * (1.0 / 3.0)).toPnt(), BRep_Tool.Surface_s(face.wrapped)).NearestPoint()
+    point = cq.Vector(near.X(), near.Y(), near.Z())
+    kind = {"PLANE": "plane", "CYLINDER": "cylinder", "CONE": "cone", "SPHERE": "sphere", "TORUS": "torus"}.get(face.geomType(), "other")
+    return {"support_type": kind, "point_mm": list(point.toTuple()), "normal": list(face.normalAt(point).normalized().toTuple())}
+
+
+def _radius(face: cq.Face) -> float:
+    return BRepAdaptor_Surface(face.wrapped).Cylinder().Radius()
+
+
+def _collect(shape: cq.Shape, role) -> dict:
+    """role(face, patch) -> (name, kind); faces with the same name join one locator."""
+    named: dict[str, tuple[str, list]] = {}
+    for face in shape.Faces():
+        patch = _witness(face)
+        name, kind = role(face, patch)
+        named.setdefault(name, (kind, []))[1].append(patch)
+    return {name: {"kind": kind, "frame": "assembly_zero", "patches": patches} for name, (kind, patches) in named.items()}
+
+
+def drawing_features(params: dict, shape: cq.Shape) -> dict:
+    """The block outline, the two inclined banks (deck, bore floors, sides, bores), the crank window and the main seats."""
+    p = {**PARAMS, **params}
+    b = math.radians(p["bank_deg"])
+    axes = {"a": (0.0, math.sin(b), math.cos(b)), "b": (0.0, -math.sin(b), math.cos(b))}
+    half, wl = p["case_len"] / 2.0, p["window_len"] / 2.0
+
+    def role(face: cq.Face, patch: dict) -> tuple[str, str]:
+        point, n = patch["point_mm"], patch["normal"]
+        if patch["support_type"] == "cylinder":
+            axis = BRepAdaptor_Surface(face.wrapped).Cylinder().Axis().Direction()
+            r = _radius(face)
+            if abs(r - p["main_bore_d"] / 2.0) < 1e-6:
+                return "main_seat", "bore"
+            if abs(r - p["window_d"] / 2.0) < 1e-6:
+                return "crank_window", "bore"
+            if abs(r - p["bore_d"] / 2.0) < 1e-6:
+                return ("bank_a_bores" if axis.Y() * axis.Z() > 0 else "bank_b_bores"), "surface"
+            raise ValueError(f"unexpected cylinder r={r}")
+        if abs(n[0]) > 0.99:
+            x = point[0]
+            if abs(abs(x) - half) < 1e-6:
+                return ("end_face_pos" if x > 0 else "end_face_neg"), "plane_face"
+            return ("window_wall_pos" if x > 0 else "window_wall_neg"), "plane_face"
+        if abs(n[1]) > 0.99:
+            return ("case_side_pos" if point[1] > 0 else "case_side_neg"), "plane_face"
+        if abs(n[2]) > 0.99:
+            return "base_face", "plane_face"
+        for bank, a in axes.items():
+            along = n[1] * a[1] + n[2] * a[2]
+            if abs(along) > 0.99:
+                s = point[1] * a[1] + point[2] * a[2]
+                return (f"bank_{bank}_deck" if abs(s - p["deck_h"]) < 1e-6 else f"bank_{bank}_bore_floors"), "surface"
+        for bank, a in axes.items():
+            if abs(n[1] * a[1] + n[2] * a[2]) < 1e-6:
+                return f"bank_{bank}_side_{'inner' if abs(point[1]) < 20.0 else 'outer'}", "surface"
+        raise ValueError(f"unexpected plane at {point} normal {n}")
+
+    return _collect(shape, role)
