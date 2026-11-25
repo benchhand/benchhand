@@ -67,28 +67,41 @@ These form examples do not define material/process combinations or universal lim
 
 From F1, `form_check.py` checks each joint end for the geometry that mates it. The part's geometry counts, not its sourcing. A made, bought or existing part passes with a bore or a shaft on the joint axis. The cylinder axis is parallel to the joint axis and passes within `--joint-tol` (0.05 mm) of the joint origin.
 
-An edge fillet rounds a corner, so it never counts. Such a fillet is a convex blend of radius 10 mm or less that turns through 120° or less. A partial journal still counts: a half bore, or a D-shaft whose face turns through more than 120°. Of the cylinders on the axis, the check names the bore and shaft pair with the closest radii. A roller on a stub axle therefore reports its bore. The joint's `parts` row gives `kind` (`bore` or `shank`), `radius` and `offset_mm`.
+Adjoining faces on one axis line with one radius count as one cylinder, however the kernel splits the surface. An edge fillet rounds a corner, so it never counts. The check finds one as a convex cylinder that meets two or more faces tangentially, none of them on its own axis. A partial journal still counts: a half bore, a D-shaft, or a shaft between coaxial shoulder fillets.
 
-A fixed joint between parts mounted flat, such as a head bolted to a deck, may have no cylinder on its axis. Such a joint passes by face contact instead. The contact needs:
+Of the cylinders on the axis, the check names the bore and shaft pair with the closest radii. A roller on a stub axle therefore reports its bore. The joint's `parts` row gives `kind` (`bore` or `shank`), `radius` and `offset_mm`.
+
+A fixed joint between parts mounted flat, such as a head bolted to a deck, may have no cylinder on its axis. Such a joint passes by face contact instead. The check splits each overlap into connected patches and judges each patch on its own. A patch needs:
 
 - one planar face on each part, with normals opposite to within 1e-4 rad
 - an overlap of at least 0.01 mm² once the child face is laid on the parent face's plane
-- a separation within `--joint-tol` across the whole overlap, so a slight tilt counts at the overlap's far edge
-- the contact at the joint, as described below
+- a separation within `--joint-tol` across the whole patch, so a slight tilt counts at the patch's far edge
+- the joint's datum plane, through the joint origin and normal to the joint axis, meeting the patch
+- a locator that ties the patch to the joint
 
-The joint's datum plane runs through the joint origin, normal to the joint axis. The contact is at the joint when this plane meets the overlap within `--joint-tol`. A datum framed on the mounting face, its axis along the face normal, passes when it lies in the contact.
+The locator is the first of these that applies:
 
-An offset datum passes when it cuts through the contact. For example, a V6 head joint is framed on the crank axis, with its axis along the deck. The joint axis itself need not touch the contact. Contact far from the joint fails, even when the faces touch.
+1. `mount`: a declared `mount: {point: [x, y, z]}` on the joint, in assembly mm, must lie on the patch.
+2. `origin`: on a face-normal joint, its axis along the contact normal, the joint origin must lie on the patch.
+3. `projection`: on an offset joint, the origin's projection along the contact normal must fall inside the patch's outline. An opening in the patch, such as a head's bore, still counts as inside.
 
-The row gives `kind: face` and three values, each compared with the tolerance before rounding:
+A V6 head joint is an offset joint: its frame sits on the crank axis, with its axis along the deck. The origin projects onto the deck inside the head's gasket outline. Each value must be within `--joint-tol`, compared before rounding. A face pair is skipped only when the child face's bounding box lies wholly more than 1 mm from the parent plane.
+
+The row gives `kind: face` and these values:
 
 - `offset_mm`, the largest separation
-- `area_mm2`, the overlap
-- `datum_mm`, the distance from the datum plane, 0 when the plane meets the overlap
+- `area_mm2`, the patch area
+- `datum_mm`, the distance from the datum plane, 0 when the plane meets the patch
+- `locator` and `locator_mm`, the rule used and how far the point lies from the patch or outline
 
 Revolute and prismatic joints still need a cylinder.
 
-An end with neither is a blocking `joint_bore_missing` finding. Its `nearest` field holds the closest cylinder on the axis. On a fixed joint, its `contact` field holds the closest facing pair within 1 mm, or null. When the kernel cannot compute a face overlap, the contact is unknown, not empty. The result is a blocking `joint_contact_unknown` finding with `status: unknown` and the `reason`, and the end's row reads `kind: unknown`.
+An end with neither is a blocking `joint_bore_missing` finding. Its `nearest` field holds the closest cylinder on the axis. On a fixed joint, its `contact` field holds the closest facing patch within 1 mm, or null.
+
+A face contact can also be unknown. Its blocking `joint_contact_unknown` finding has `status: unknown` and a `reason`, and the end's row reads `kind: unknown`. This happens in two cases:
+
+- The kernel cannot compute an overlap. The check reads the error from cad-model's `occ.boolean`.
+- A patch meets the datum plane, but only its locator misses, and the joint declares no `mount`. The geometry alone cannot tell the intended mount from incidental contact. The finding's `remedy` asks for a `mount.point` on the contact.
 
 ## Render self-check: appearance only
 

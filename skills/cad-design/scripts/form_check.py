@@ -70,20 +70,25 @@ Checks (each failure is one `findings` entry):
     step_readback           any fidelity: readback_rel_error above cad-model's 1e-6;
                             loose fillet edges (0.01 to 0.1 mm tolerance) move it ~1e-5
     joint_bore_missing      F1+: a joint endpoint (made, bought or existing) without mating geometry: no
-                            cylinder face, a bore (concave) or a shank (convex), whose axis is parallel to
-                            the joint axis and passes within --joint-tol of the joint origin. An edge blend
-                            (a convex fillet, see blend_faces) is no mating cylinder. The joint's `parts`
-                            row names the kind found. A fixed joint's endpoint without one mates by face
-                            contact instead (`kind: face`, a flat mount): a planar face of each part,
-                            outward normals opposite within 1e-4 rad, the child face laid on the parent's
-                            plane overlapping it by at least 0.01 mm2 (area_mm2), the largest separation
-                            across that overlap within --joint-tol (offset_mm), and the joint's datum plane
-                            (through the origin, normal to the axis) meeting the overlap within --joint-tol
-                            (datum_mm): it lies in a datum normal to the contact and cuts an offset one.
-                            Its finding names the nearest such pair within 1 mm (`contact`, else null)
-    joint_contact_unknown   F1+: a fixed joint's face-contact Boolean failed in the kernel, so the contact
-                            is unknown (`status: unknown`, `reason`), not missing; its `parts` row reads
-                            `kind: unknown`
+                            cylinder patch, a bore (concave) or a shank (convex), whose axis is parallel to
+                            the joint axis and passes within --joint-tol of the joint origin. Adjoining
+                            coaxial faces of one radius are one patch; an edge blend (a convex patch tangent
+                            to two faces off its axis) is none. The joint's `parts` row names the kind
+                            found. A fixed joint's endpoint without one mates by face contact instead
+                            (`kind: face`, a flat mount), judged per connected overlap patch: a planar face
+                            of each part, outward normals opposite within 1e-4 rad, the child face laid on
+                            the parent's plane overlapping it by at least 0.01 mm2 (area_mm2), the largest
+                            separation across the patch within --joint-tol (offset_mm), the joint's datum
+                            plane (through the origin, normal to the axis) meeting the patch (datum_mm),
+                            and the patch tied to the joint (locator, locator_mm): a declared mount.point
+                            on it; else a face-normal joint's origin on it; else the origin's projection
+                            along the contact normal inside its outline. Each within --joint-tol, compared
+                            unrounded. Its finding names the nearest such patch (`contact`, else null)
+    joint_contact_unknown   F1+: a fixed joint's face contact is unknown (`status: unknown`, `reason`), not
+                            missing: an overlap Boolean failed in the kernel (cad-model occ.boolean), or a
+                            contact on the datum plane misses only its locator and no mount.point is
+                            declared, so the geometry cannot tell the mount from incidental contact
+                            (`remedy`: declare mount.point). Its `parts` row reads `kind: unknown`
     block_like              F2+, made solid parts only: (axis_planar_fraction >= 0.80 or
                             blend_faces + freeform_faces == 0), with both OBB exemptions
     min_wall                F2+, a process with a minimum (the resolved fdm value, or the override):
