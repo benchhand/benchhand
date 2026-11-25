@@ -2765,19 +2765,20 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertIn("process.fdm.feature_tolerance_missing", self.codes(result, GEOMETRY))
 
     def unchecked(self, result: Any) -> list[dict[str, Any]]:
-        return [f for f in result.findings if f["code"] == "process.fdm.criterion_not_assessed"]
+        return [f for f in result.findings if f["code"] == "process.fdm.criterion_unchecked"]
 
-    def test_a_criterion_no_check_reads_is_not_assessed_never_a_pass(self) -> None:
+    def test_a_criterion_no_check_reads_is_an_explicit_open_finding_never_a_pass(self) -> None:
+        """A check-coverage gap is no missing printer basis: the finding is explicit and the obligation stays UNKNOWN."""
         for prop, operator, value, units in (("tongue_width", ">=", 3.0, "mm"), ("seat_depth", "<=", 4.0, "mm"),
                                              ("surface_roughness", "<=", 3.2, "um")):
             with self.subTest(prop=prop):
                 result = self.critical("datum", criteria=[FX.criterion(prop, operator, value, units)])
-                self.assertEqual(self.outcome(result, GEOMETRY), "not_assessed")
-                self.assertEqual(result.outcome(GEOMETRY)["reason"], "no_check")
+                self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+                self.assertNotIn("reason", result.outcome(GEOMETRY))
                 found = self.unchecked(result)
-                self.assertEqual([(f["outcome"], f["severity"], f["reason"], f["criterion"]["property"]) for f in found],
-                                 [("not_assessed", "minor", "no_check", prop)])
-                self.assertIn(f"face_a {prop} not assessed: no check measures it", result.outcome(GEOMETRY)["coverage"])
+                self.assertEqual([(f["outcome"], f["severity"], f["criterion"]["property"], "reason" in f) for f in found],
+                                 [("unknown", "major", prop, False)])
+                self.assertIn(f"face_a {prop} not checked: no check measures it", result.outcome(GEOMETRY)["coverage"])
 
     def test_a_linear_band_narrower_than_the_guideline_spread_fails(self) -> None:
         """fdm.accuracy spreads a printed dimension over 1.0 mm (-0.5..0.5): no nominal holds a 0.2 mm band."""
@@ -2787,14 +2788,14 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual((found["outcome"], found["criterion"]["property"], found["uncertainty"]),
                          ("fail", "thickness", "guideline fdm.accuracy@2"))
 
-    def test_a_linear_band_that_holds_the_guideline_spread_is_not_assessed_since_the_model_is_not_measured(self) -> None:
+    def test_a_linear_band_that_holds_the_spread_stays_open_since_the_model_is_not_measured(self) -> None:
         for criteria, catalog in (([FX.criterion("thickness", "between", [2.0, 4.0], "mm")], SHIPPED),
                                   ([FX.criterion("thickness", "between", [2.9, 3.1], "mm")], None),  # no guideline: no miss known
                                   ([FX.criterion("boss_height", "between", [149.0, 151.0], "mm")], SHIPPED)):  # over 100 mm
             with self.subTest(criteria=criteria[0]["value"], catalog=catalog is not None):
                 result = self.critical("datum", criteria=criteria, catalog=catalog)
-                self.assertEqual(self.outcome(result, GEOMETRY) if catalog else self.unchecked(result)[0]["outcome"], "not_assessed")
-                self.assertEqual([f["reason"] for f in self.unchecked(result)], ["no_check"])
+                self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+                self.assertEqual([f["outcome"] for f in self.unchecked(result)], ["unknown"])
 
     def test_an_unchecked_criterion_does_not_mask_a_known_failure_or_turn_a_pass_into_one(self) -> None:
         failing = self.critical("datum", criteria=[*self.tolerance("dimensional_deviation", -0.3, 0.3),
@@ -2802,7 +2803,7 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(failing, GEOMETRY), "fail")
         passing = self.critical("datum", criteria=[*self.tolerance("dimensional_deviation", -0.6, 0.6),
                                                    FX.criterion("depth", ">=", 2.0, "mm")])
-        self.assertEqual(self.outcome(passing, GEOMETRY), "not_assessed")
+        self.assertEqual(self.outcome(passing, GEOMETRY), "unknown")
 
     def test_a_critical_bore_with_no_diameter_criterion_is_an_open_record_gap_even_without_a_basis(self) -> None:
         documents = guided(service="functional_demo", calibrations=(CONTACT,))
@@ -2824,9 +2825,9 @@ class GuidelineWithoutCalibrationTests(Checks):
         narrow = self.bore_with(FX.criterion("depth", "between", [9.9, 10.1], "mm"))
         self.assertEqual(self.outcome(narrow, GEOMETRY), "fail")
         self.assertEqual(self.finding(narrow, "process.fdm.criterion_band")["criterion"]["property"], "depth")
-        wide = self.bore_with(FX.criterion("depth", "between", [8.0, 12.0], "mm"))
-        self.assertEqual(self.outcome(wide, GEOMETRY), "not_assessed")
-        self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(wide)], [("depth", "no_check")])
+        wide = self.bore_with(FX.criterion("depth", "between", [8.0, 12.0], "mm"))  # a printer basis applies; the depth is unmeasured
+        self.assertEqual(self.outcome(wide, GEOMETRY), "unknown")
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(wide)], [("depth", "unknown")])
 
     def test_every_critical_surface_linked_to_one_bore_is_judged(self) -> None:
         """One 6 mm bore carries two critical features: bore_a (5..7 mm) passes, bore_b needs 10..11 mm and fails."""
@@ -2860,17 +2861,17 @@ class GuidelineWithoutCalibrationTests(Checks):
     def test_a_criterion_of_another_role_is_not_dropped(self) -> None:
         """A datum reads dimensional_deviation; its profile_deviation criterion is no deviation tolerance a check reads."""
         result = self.critical("datum", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
-        self.assertEqual(self.outcome(result, GEOMETRY), "not_assessed")
-        self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(result)],
-                         [("profile_deviation", "no_check")])
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(result)],
+                         [("profile_deviation", "unknown")])
 
     def test_the_band_width_check_applies_only_to_a_dimensional_size(self) -> None:
         """A 3.2..6.3 um roughness band is no size: the dimensional spread says nothing about it."""
         result = self.critical("datum", criteria=[FX.criterion("surface_roughness", "between", [3.2, 6.3], "um")])
-        self.assertEqual(self.outcome(result, GEOMETRY), "not_assessed")
+        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
         self.assertEqual(result.by_code("process.fdm.criterion_band"), [])
-        self.assertEqual([(f["criterion"]["property"], f["reason"]) for f in self.unchecked(result)],
-                         [("surface_roughness", "no_check")])
+        self.assertEqual([(f["criterion"]["property"], f["outcome"]) for f in self.unchecked(result)],
+                         [("surface_roughness", "unknown")])
 
     def test_a_flank_with_neither_a_calibration_nor_a_guideline_profile_deviation_is_a_non_blocking_advisory(self) -> None:
         result = self.critical("flank", criteria=self.tolerance("profile_deviation", -0.2, 0.2))
