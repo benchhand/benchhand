@@ -1400,6 +1400,95 @@ class OccurrenceBuildTests(unittest.TestCase):
         self.assertEqual({row["PN"]: row["qty"] for row in rows}, {BASE: "1", INSERT: "6"})
 
 
+STEP_PRODUCT = re.compile(r"PRODUCT\s*\(\s*'([^']*)'")
+
+
+def make_existing(hw: Path, pn: str) -> None:
+    """Record `pn` as existing equipment: make_buy existing with a declared range, no intent or supplier."""
+    path = hw / "parts" / pn / "part.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    fx = projects().shared()
+    for key in ("intent", "supplier", "procurement"):
+        data.pop(key, None)
+    data.update({"make_buy": "existing", "process": "other",
+                 "existing": {"dimensions": fx.known(fx.quantity(lower=69.8, upper=70.2), "user_declared")}})
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
+class ExistingEquipmentBuildTests(unittest.TestCase):
+    """The swing arm recorded as existing equipment: in the in-context assembly.step and assembly.glb and in
+    every check, never in product.step, product.glb or the product totals (CadQuery only)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.hw = two_part_project(Path(cls.tmp.name), "cadquery")
+        set_arm(cls.hw, "cadquery")
+        make_existing(cls.hw, "TST-0002")
+        cls.folder = cls.hw / "versions" / "v1"
+        cls.built = cli("run", str(cls.hw), "--label", "v1")
+        cls.checked = cli("check", "v1", "--hw", str(cls.hw))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def setUp(self) -> None:
+        self.assertEqual(self.built[0].returncode, 0, self.built[0].stdout[-3000:] + self.built[0].stderr[-3000:])
+
+    def version_json(self, name: str) -> dict:
+        return json.loads((self.folder / name).read_text(encoding="utf-8"))
+
+    def step_pns(self, name: str) -> set[str]:
+        text = (self.folder / name).read_text(encoding="utf-8")
+        return {match[:8] for match in STEP_PRODUCT.findall(text) if re.match(r"[A-Z]{2,5}-\d{4}", match)}
+
+    def test_product_step_holds_delivered_parts_and_assembly_step_keeps_the_existing_one(self) -> None:
+        self.assertEqual(self.step_pns("product.step"), {"TST-0001"})
+        self.assertEqual(self.step_pns("assembly.step"), {"TST-0001", "TST-0002"})
+
+    def test_glb_groups_occurrences_by_sourcing_and_the_product_glb_has_no_existing_group(self) -> None:
+        def groups(name: str) -> dict[str, list[str]]:
+            nodes = mesh.gltf_json(self.folder / name)["nodes"]
+            return {node["name"]: [nodes[child]["name"] for child in node.get("children", [])]
+                    for node in nodes if node.get("name") in ("made", "purchased", "existing")}
+
+        self.assertEqual(groups("assembly.glb"), {"made": ["TST-0001 Base block"], "existing": ["TST-0002 Swing arm"]})
+        self.assertEqual(groups("product.glb"), {"made": ["TST-0001 Base block"]})
+
+    def test_product_totals_count_delivered_parts_only(self) -> None:
+        metrics = self.version_json("metrics.json")
+        totals = metrics["totals"]
+        self.assertEqual(totals["quantity"], {"TST-0001": 1})
+        self.assertAlmostEqual(totals["volume_mm3"], BASE_V, places=3)
+        self.assertAlmostEqual(totals["mass_g"], metrics["parts"]["TST-0001"]["mass_g"], places=6)
+        self.assertEqual(totals["existing_occurrences"], ["TST-0002"])
+
+    def test_manifest_and_latest_name_the_product_exports(self) -> None:
+        self.assertEqual(self.version_json("manifest.json")["product"],
+                         {"step": "product.step", "glb": "product.glb", "occurrences": ["TST-0001"]})
+        latest = json.loads((self.hw / "versions" / "latest.json").read_text(encoding="utf-8"))
+        self.assertEqual((latest["product_step"], latest["product_glb"]),
+                         ("versions/v1/product.step", "versions/v1/product.glb"))
+
+    def test_check_measures_the_existing_part_and_passes_the_product_subset(self) -> None:
+        checks = self.checked[1]["checks"]
+        interference = checks["interference"]
+        pairs = [row["pair"] for row in interference["pairs"] + interference["joint_pairs"]]
+        self.assertIn(["TST-0001", "TST-0002"], pairs)
+        self.assertEqual(checks["product_exports"]["status"], "pass", json.dumps(checks["product_exports"])[:2000])
+
+    def test_a_product_step_holding_the_existing_part_fails_the_product_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hw = Path(shutil.copytree(self.hw, Path(tmp) / "hw", symlinks=True))
+            folder = hw / "versions" / "v1"
+            (folder / "product.step").unlink()
+            shutil.copyfile(folder / "assembly.step", folder / "product.step")
+            row = cli("check", "v1", "--hw", str(hw))[1]["checks"]["product_exports"]
+        self.assertEqual((row["status"], row["existing_in_step"]), ("fail", ["TST-0002"]))
+
+
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class PairClearanceBuildTests(unittest.TestCase):
     """The swing arm built 0.8 mm above the base, on its revolute joint, against a clearance
@@ -2595,6 +2684,45 @@ class RunnerLifecycleTests(unittest.TestCase):
             with mock.patch.dict(build.RUNNERS, self.runners(Path(tmp), "exits_without_result", "signals_peer")):
                 with self.assertRaisesRegex(build.UsageError, "cadquery runner wrote no result"):
                     build.run_kernels({"cadquery": [{"pn": "TST-0001"}]})
+
+
+class GlbGroupTests(unittest.TestCase):
+    """Occurrence nodes regrouped under made, purchased and existing nodes; indices and placements kept."""
+
+    TOP = {"name": "twoarm v1", "children": [1, 2, 3], "rotation": [-HALF, 0, 0, HALF]}
+    NODES = [TOP, {"name": "TST-0001 Base", "mesh": 0}, {"name": "BUY-0001 Screw [@s-1]", "mesh": 1},
+             {"name": "EXT-0001 Mount", "mesh": 2, "translation": [0, 0.02, 0]}]
+    GROUPS = {"TST-0001 Base": "made", "BUY-0001 Screw [@s-1]": "purchased", "EXT-0001 Mount": "existing"}
+
+    def gltf(self) -> dict:
+        return {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": copy.deepcopy(self.NODES)}
+
+    def test_each_group_node_holds_its_members_in_sourcing_order_below_the_old_parent(self) -> None:
+        nodes = mesh.grouped(self.gltf(), self.GROUPS)["nodes"]
+        self.assertEqual(nodes[:4], [{**self.TOP, "children": [4, 5, 6]}, *self.NODES[1:]])
+        self.assertEqual(nodes[4:], [{"name": "made", "children": [1]}, {"name": "purchased", "children": [2]},
+                                     {"name": "existing", "children": [3]}])
+
+    def test_an_empty_group_gets_no_node(self) -> None:
+        groups = {name: group for name, group in self.GROUPS.items() if group != "purchased"}
+        nodes = mesh.grouped(self.gltf(), groups)["nodes"]
+        self.assertEqual(nodes[0]["children"], [2, 4, 5])  # the ungrouped node stays where it was
+        self.assertEqual([node["name"] for node in nodes[4:]], ["made", "existing"])
+
+    def test_grouping_a_glb_file_keeps_its_binary_chunk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.glb"
+            body = json.dumps(self.gltf()).encode()
+            body += b" " * (-len(body) % 4)
+            binary = bytes(range(8))
+            path.write_bytes(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(body) + 8 + len(binary))
+                             + struct.pack("<I4s", len(body), b"JSON") + body
+                             + struct.pack("<I4s", len(binary), b"BIN\x00") + binary)
+            mesh.group_glb(path, self.GROUPS)
+            data = path.read_bytes()
+            self.assertEqual(struct.unpack_from("<I", data, 8)[0], len(data))
+            self.assertEqual([node["name"] for node in mesh.gltf_json(path)["nodes"][4:]], ["made", "purchased", "existing"])
+            self.assertEqual(data[-len(binary) - 8:], struct.pack("<I4s", len(binary), b"BIN\x00") + binary)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the trimesh environment")

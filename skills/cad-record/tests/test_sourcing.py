@@ -48,5 +48,12 @@ class DeliveredTests(unittest.TestCase):
         self.assertEqual(sourcing.GROUPS, ("made", "purchased", "existing"))
 
 
+class StepPnsTests(unittest.TestCase):
+    def test_the_part_numbers_leading_step_product_names(self) -> None:
+        text = ("#1=PRODUCT('twoarm v1','twoarm v1','',(#9));\n#2=PRODUCT ( 'TST-0001 Base block','',(#9));\n"
+                "#3=PRODUCT('EXT-0002','EXT-0002','',(#9));\n#4=PRODUCT('TST-00012 too long','','',(#9));\n"
+                "#5=PRODUCT_DEFINITION('TST-0009 not a product','',#2,#7);\n")
+        self.assertEqual(sourcing.step_pns(text), {"TST-0001", "EXT-0002"})
+
 if __name__ == "__main__":
     unittest.main()
