@@ -501,6 +501,22 @@ class SubBuildTests(unittest.TestCase):
         self.assertNotIn(mount, plan["bond-mag-a"].tool_obstacles, "the bench does not hold the existing equipment")
         self.assertIn(mount, plan["install-hanger"].path_obstacles, "the unit travels past the existing equipment")
 
+    def test_a_removed_base_never_moves_an_occurrence_named_like_the_sub_build(self) -> None:
+        record = {"occurrences": [*({"id": name, "PN": self.MAGNET} for name in ("mag-a", "mag-b")),
+                                  {"id": "hanger", "PN": "TST-0105"}],
+                  "subassemblies": [{"id": "main", "title": "Main", "parts": [self.PNS[0]], "occurrences": ["@hanger"]},
+                                    {"id": "hanger", "title": "Hanger", "parts": [self.PNS[1]],
+                                     "occurrences": ["@mag-a", "@mag-b"]}]}
+        inventory = assembly_data.normalize(record, {self.MAGNET: "part_local", "TST-0105": "part_local"})
+        bond_a, bond_b, cure, install = self.items()
+        strip = {"id": "strip-hanger", "kind": "disassemble", "sub_build": "hanger", "part": "TST-0102", "into": "@mag-a",
+                 "direction": [0, 0, 1]}
+        operations = ops.normalize({"operations": [bond_a, bond_b, cure, strip, install]})
+        request = {r.operation.id: r for r in ops.access_plan(operations, inventory, frozenset({"TST-0105"}))}["install-hanger"]
+        self.assertEqual((request.moving, request.part), (None, None), "the existing occurrence hanger stays put")
+        self.assertIn("hanger", request.path_obstacles)
+        self.assertTrue(any("TST-0102 is removed" in reason for reason in request.unknown), request.unknown)
+
     def test_the_cure_hold_sees_only_its_sub_build(self) -> None:
         clamped = {**self.CURE, "tools": ["spring clamp"]}
         items = [self.bond("mag-a"), self.bond("mag-b"), clamped, dict(self.INSTALL)]
