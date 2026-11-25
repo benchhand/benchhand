@@ -167,16 +167,47 @@
       "then": {"required": ["purchase"], "not": {"anyOf": [{"required": ["capability"]}, {"required": ["supports"]}, {"required": ["orientation"]}]}},
       "else": {"required": ["capability"], "not": {"required": ["purchase"]}}
     },
+    "designation": {
+      "description": "A commodity item identified by standard or family instead of a vendor part number. standard_designation names the standard (ISO 4762, ISO 7380, ISO 4032, ISO 7089, ISO 8734 ...), size, length, property class or material and finish; family_designation covers items no ISO standard defines, such as a heat-set insert (thread, length, outside diameter, recommended hole)",
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["kind", "standard", "size", "length", "property_class"],
+         "properties": {
+           "kind": {"const": "standard_designation"},
+           "standard": {"type": "string", "pattern": "^(ISO|DIN|EN|ASME|ANSI|JIS)\\s\\S.*$"},
+           "size": {"type": "string", "minLength": 1},
+           "length": {"description": "mm; `not_applicable` for an item without a length (nut, washer)", "oneOf": [{"type": "number", "exclusiveMinimum": 0}, {"const": "not_applicable"}]},
+           "property_class": {"description": "strength class or material, e.g. 8.8, A2-70, 300 HV", "type": "string", "minLength": 1},
+           "finish": {"type": "string", "minLength": 1}}},
+        {"type": "object", "additionalProperties": false, "required": ["kind", "family", "thread", "length", "outside_diameter", "recommended_hole"],
+         "properties": {
+           "kind": {"const": "family_designation"},
+           "family": {"type": "string", "minLength": 1},
+           "thread": {"type": "string", "minLength": 1},
+           "length": {"type": "number", "exclusiveMinimum": 0},
+           "outside_diameter": {"type": "number", "exclusiveMinimum": 0},
+           "recommended_hole": {"type": "number", "exclusiveMinimum": 0},
+           "material": {"type": "string", "minLength": 1},
+           "finish": {"type": "string", "minLength": 1}}}
+      ]
+    },
     "purchase": {
       "description": "Traceable purchase criteria: the identity, specification and ratings that make a bought item the right one, never an unidentified description",
-      "type": "object", "additionalProperties": false, "required": ["identity", "specification", "ratings"],
+      "type": "object", "additionalProperties": false, "required": ["specification", "ratings"],
+      "anyOf": [{"required": ["identity"]}, {"required": ["designation"]}],
       "properties": {
-        "identity": {"description": "manufacturer and part number, or a standard designation", "$ref": "manufacturing.schema.json#/$defs/text_fact"},
+        "identity": {"description": "manufacturer and part number (kind manufacturer_pn), or a free-text identification", "$ref": "manufacturing.schema.json#/$defs/text_fact"},
+        "designation": {"$ref": "#/$defs/designation"},
+        "reference_catalogue": {
+          "description": "Non-binding example listings of a commodity item (vendor, part number, URL). They show where the item can be found and never restrict the supplier",
+          "type": "array", "minItems": 1,
+          "items": {"type": "object", "additionalProperties": false, "required": ["vendor", "part_number"],
+                    "properties": {"vendor": {"$ref": "manufacturing.schema.json#/$defs/text"}, "part_number": {"$ref": "manufacturing.schema.json#/$defs/text"},
+                                   "url": {"type": "string", "pattern": "^https?://"}}}},
         "specification": {"description": "material grade, standard or datasheet the item conforms to", "$ref": "manufacturing.schema.json#/$defs/text_fact"},
         "ratings": {"description": "load, speed, temperature or other ratings", "$ref": "manufacturing.schema.json#/$defs/text_fact"},
         "optical": {"description": "optical grade and transmission, for a transparent item", "$ref": "manufacturing.schema.json#/$defs/text_fact"},
         "thickness": {"$ref": "manufacturing.schema.json#/$defs/quantity_fact"},
-        "availability": {"$ref": "manufacturing.schema.json#/$defs/text_fact"},
+        "availability": {"description": "a named supplier, or `commodity` (any supplier) for a standard or family designation", "$ref": "manufacturing.schema.json#/$defs/text_fact"},
         "supplier_evidence": {"$ref": "manufacturing.schema.json#/$defs/sources"}
       }
     },

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import json
 import subprocess
@@ -390,6 +391,117 @@ class BuildGuide(unittest.TestCase):
         misdated = self.run_guide(hw, "--rev", "A", "--date", "2026-10-05", version="v3")
         self.assertEqual(misdated.returncode, 2)
         self.assertIn("release A was sealed on 2026-10-01, not 2026-10-05", misdated.stderr)
+
+    NUT = {"kind": "standard_designation", "standard": "ISO 4032", "size": "M4", "length": "not_applicable",
+           "property_class": "8", "finish": "zinc plated"}
+
+    def designate(self, hw: Path, pn: str, designation: dict, *, supplier: str | None = None,
+                  order_code: str | None = None, manufacturer_part_number: str | None = None) -> None:
+        """Re-record `pn` as bought by structured designation: no manufacturer, part number or designation text.
+        A supplier or an order code binds the row to a vendor."""
+        part_path = hw / "parts" / pn / "part.yaml"
+        part = yaml.safe_load(part_path.read_text(encoding="utf-8"))
+        part["procurement"] = {"mode": "catalog", **({"supplier_part_number": order_code} if order_code else {}),
+                               **({"manufacturer": "TST Maker", "manufacturer_part_number": manufacturer_part_number}
+                                  if manufacturer_part_number else {})}
+        part["supplier"] = supplier
+        purchase = part["intent"]["route"][0]["purchase"]
+        purchase.pop("identity", None)
+        purchase["designation"] = copy.deepcopy(designation)
+        part_path.write_text(yaml.safe_dump(part, sort_keys=False), encoding="utf-8")
+        self.record_bom_identity(hw, pn, "", "")  # the BOM is rebuilt from the record: it no longer names a maker
+
+    def bom_quantity(self, hw: Path, pn: str) -> int:
+        with (hw / "bom.csv").open(newline="", encoding="utf-8") as stream:
+            return sum(int(row["qty"]) for row in csv.DictReader(stream) if row["PN"] == pn)
+
+    def test_structured_commodity_rows_are_grouped_by_designation_with_summed_quantity(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        expected = self.bom_quantity(hw, "LMP-0008") + self.bom_quantity(hw, "LMP-0009")
+        for pn in ("LMP-0008", "LMP-0009"):
+            self.designate(hw, pn, self.NUT)
+        guide = self.generate(hw)
+        rows = [line for line in guide.splitlines() if "ISO 4032 M4, 8, zinc plated" in line]
+        self.assertEqual(len(rows), 1, rows)
+        cells = [cell.strip() for cell in rows[0].strip("|").split("|")]
+        self.assertIn("LMP-0008, LMP-0009", cells)
+        self.assertIn(str(expected), cells)
+        self.assertIn("any supplier (commodity)", cells)
+
+    def nut_rows(self, first: dict, second: dict) -> list[str]:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        self.designate(hw, "LMP-0008", self.NUT, **first)
+        self.designate(hw, "LMP-0009", self.NUT, **second)
+        return [line for line in self.generate(hw).splitlines() if "ISO 4032 M4, 8, zinc plated" in line]
+
+    def test_commodity_rows_with_different_suppliers_stay_separate(self) -> None:
+        rows = self.nut_rows({}, {"supplier": "TST Supply Co"})
+        self.assertEqual(len(rows), 2, rows)
+        self.assertTrue(all("LMP-0008, LMP-0009" not in row for row in rows), rows)
+
+    def test_commodity_rows_with_different_order_codes_stay_separate(self) -> None:
+        rows = self.nut_rows({"order_code": "TST-4032-A"}, {"order_code": "TST-4032-B"})
+        self.assertEqual(len(rows), 2, rows)
+
+    def test_rows_with_different_manufacturer_part_numbers_keep_their_identities(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        self.designate(hw, "LMP-0008", self.NUT, manufacturer_part_number="TST-NUT-A")
+        self.designate(hw, "LMP-0009", self.NUT, manufacturer_part_number="TST-NUT-B")
+        buy = self.generate(hw).split("## Parts to buy")[1].split("## Tools")[0]
+        lines = {mpn: [line for line in buy.splitlines() if mpn in line] for mpn in ("TST-NUT-A", "TST-NUT-B")}
+        self.assertEqual({mpn: len(found) for mpn, found in lines.items()}, {"TST-NUT-A": 1, "TST-NUT-B": 1})
+        self.assertNotEqual(lines["TST-NUT-A"], lines["TST-NUT-B"], "two manufacturer items are two rows")
+        self.assertNotIn("any supplier (commodity)", "".join(lines["TST-NUT-A"] + lines["TST-NUT-B"]))
+
+    def record_bom_identity(self, hw: Path, pn: str, manufacturer: str, part_number: str) -> None:
+        """Name the manufacturer in bom.csv only: the part record stays designation-only."""
+        path = hw / "bom.csv"
+        with path.open(newline="", encoding="utf-8") as stream:
+            reader = csv.DictReader(stream)
+            fields = list(reader.fieldnames or [])
+            rows = list(reader)
+        for row in rows:
+            if row["PN"] == pn:
+                row["manufacturer"], row["manufacturer_part_number"] = manufacturer, part_number
+        with path.open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def test_bom_only_manufacturer_part_numbers_keep_their_identities(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        for pn, mpn in (("LMP-0008", "BOM-NUT-A"), ("LMP-0009", "BOM-NUT-B")):
+            self.designate(hw, pn, self.NUT)
+            self.record_bom_identity(hw, pn, "TST Maker", mpn)
+        buy = self.generate(hw).split("## Parts to buy")[1].split("## Tools")[0]
+        lines = {mpn: [line for line in buy.splitlines() if mpn in line] for mpn in ("BOM-NUT-A", "BOM-NUT-B")}
+        self.assertEqual({mpn: len(found) for mpn, found in lines.items()}, {"BOM-NUT-A": 1, "BOM-NUT-B": 1})
+        self.assertNotEqual(lines["BOM-NUT-A"], lines["BOM-NUT-B"], "two manufacturer items are two rows")
+        self.assertNotIn("any supplier (commodity)", "".join(lines["BOM-NUT-A"] + lines["BOM-NUT-B"]))
+
+    def test_commodity_rows_with_the_same_supplier_and_order_code_merge(self) -> None:
+        bound = {"supplier": "TST Supply Co", "order_code": "TST-4032-A"}
+        rows = self.nut_rows(bound, bound)
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("LMP-0008, LMP-0009", rows[0])
+
+    def test_an_unresolved_insert_is_not_labelled_any_supplier(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        guide = self.generate(hw)
+        row = next(line for line in guide.splitlines() if "LMP-0010" in line and "OPEN" in line)
+        self.assertNotIn("any supplier", row)
+
+    def test_an_ineligible_structured_designation_is_not_a_commodity_row(self) -> None:
+        hw = self.copy_lamp_example()
+        self.make_version(hw, "v1")
+        self.designate(hw, "LMP-0008", {**self.NUT, "standard": "ISO 4032", "length": 5.0, "kind": "family_designation"})
+        guide = self.generate(hw)
+        self.assertNotIn("any supplier (commodity)", guide)
 
     def test_buy_identity_open_fields_remain_visible(self) -> None:
         hw = self.copy_lamp_example()

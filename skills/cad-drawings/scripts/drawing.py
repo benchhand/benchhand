@@ -412,9 +412,10 @@ def procurement_findings(record: Mapping[str, Any]) -> list[dict[str, Any]]:
     found = []
     if procurement.get("mode") == "catalog":
         declared = {**procurement.get("open", {}), **procurement}
-        if not procurement.get("designation"):
+        commodity = drawing_intent.commodity_label(record) is not None
+        if not (procurement.get("designation") or commodity):
             found.append(drawing_intent.finding("procurement_incomplete", "a catalogue item needs a designation"))
-        for field in () if procurement.get("standard") else ("manufacturer", "manufacturer_part_number"):
+        for field in () if procurement.get("standard") or commodity else ("manufacturer", "manufacturer_part_number"):
             if not declared.get(field):
                 found.append(drawing_intent.finding("procurement_incomplete", f"a catalogue item needs its {field}, "
                                                     f"a procurement.open entry giving why it is open, or the "
@@ -437,7 +438,9 @@ def procurement_table(record: Mapping[str, Any]) -> SvgTable:
     def cell(field: str) -> str:
         return procurement.get(field) or (f"OPEN: {open_fields[field]}" if field in open_fields else "—")
 
-    rows = [("Designation", cell("designation"))]
+    designation = procurement.get("designation") or drawing_intent.commodity_label(record)
+
+    rows = [("Designation", designation or cell("designation"))]
     if "standard" in procurement:
         rows.append(("Standard", procurement["standard"]))
     rows += [("Manufacturer", cell("manufacturer")), ("Manufacturer PN", cell("manufacturer_part_number")),

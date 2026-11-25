@@ -1,0 +1,47 @@
+{
+  "units": "mm",
+  "note": "Modelled nominal or maximum catalogue dimensions of common commodity hardware, keyed by thread size. Each block names its public source; data/README.md holds the checking notes.",
+  "thread": {
+    "source": [
+      "pitch: ISO 261 coarse series, as printed in the ISO 4762 table at https://www.fasteners.eu/standards/ISO/4762/",
+      "clearance_hole_medium: ISO 273:1979 medium series (H13), https://forgent3d.com/en/calculators/clearance-hole-chart (read from IS 1821:1987) and https://mechcodex.com/reference/metric-clearance-hole-sizes",
+      "tap_drill: DIN 336 / ISO 2306 coarse thread, https://mvg-frankfurt.de/en/calculators/tap-drill"
+    ],
+    "size": {
+      "M2":   {"pitch": 0.4,  "clearance_hole_medium": 2.4, "tap_drill": 1.6},
+      "M2.5": {"pitch": 0.45, "clearance_hole_medium": 2.9, "tap_drill": 2.05},
+      "M3":   {"pitch": 0.5,  "clearance_hole_medium": 3.4, "tap_drill": 2.5},
+      "M4":   {"pitch": 0.7,  "clearance_hole_medium": 4.5, "tap_drill": 3.3},
+      "M5":   {"pitch": 0.8,  "clearance_hole_medium": 5.5, "tap_drill": 4.2},
+      "M6":   {"pitch": 1.0,  "clearance_hole_medium": 6.6, "tap_drill": 5.0},
+      "M8":   {"pitch": 1.25, "clearance_hole_medium": 9.0, "tap_drill": 6.8}
+    }
+  },
+  "standards": {
+    "ISO 4762": {"item": "socket head cap screw", "fields": "head_diameter_max, head_height_max, key_width",
+      "source": "https://www.fasteners.eu/standards/ISO/4762/ (table according to ISO 4762: dk max, k max, s nominal), read 2026-11-24",
+      "size": {"M2": [3.8, 2.0, 1.5], "M2.5": [4.5, 2.5, 2.0], "M3": [5.5, 3.0, 2.5], "M4": [7.0, 4.0, 3.0],
+               "M5": [8.5, 5.0, 4.0], "M6": [10.0, 6.0, 5.0], "M8": [13.0, 8.0, 6.0]}},
+    "ISO 7380-1": {"item": "button head screw, hexagon socket; the standard covers M3 to M16", "fields": "head_diameter_max, head_height_max, key_width",
+      "source": "https://www.fasteners.eu/standards/iso/7380 and ISO 7380-1:2022 Table 1 as printed in the preview at https://preview.sist.si/sist-preview/78699/a175805085534f98983d6c8aa583a5b0/ISO-7380-1-2022.pdf (dk max, k max, s nom), read 2026-11-24",
+      "size": {"M3": [5.7, 1.65, 2.0], "M4": [7.6, 2.2, 2.5], "M5": [9.5, 2.75, 3.0], "M6": [10.5, 3.3, 4.0], "M8": [14.0, 4.4, 5.0]}},
+    "ISO 4032": {"item": "hex nut, style 1", "fields": "across_flats, height_max",
+      "source": "https://www.fasteners.eu/standards/ISO/4032/ (table according to EN ISO 4032: s nominal = max, m max), read 2026-11-24",
+      "size": {"M2": [4.0, 1.6], "M2.5": [5.0, 2.0], "M3": [5.5, 2.4], "M4": [7.0, 3.2],
+               "M5": [8.0, 4.7], "M6": [10.0, 5.2], "M8": [13.0, 6.8]}},
+    "ISO 7089": {"item": "plain washer, normal series, product grade A (dimensions equal DIN 125 form A)", "fields": "inside_diameter_min, outside_diameter_max, thickness_nominal",
+      "source": "https://www.fasteners.eu/standards/ISO/7089/ (table according to DIN 125: d1 min, d2 max, h between min and max), read 2026-11-24",
+      "size": {"M2": [2.2, 5.0, 0.3], "M2.5": [2.7, 6.0, 0.5], "M3": [3.2, 7.0, 0.5], "M4": [4.3, 9.0, 0.8],
+               "M5": [5.3, 10.0, 1.0], "M6": [6.4, 12.0, 1.6], "M8": [8.4, 16.0, 1.6]}},
+    "ISO 8734": {"item": "hardened dowel pin, tolerance m6; the size key is the diameter in mm", "fields": "diameter",
+      "source": "https://www.fasteners.eu/standards/ISO/8734/ (table according to ISO 8734: d, m6), read 2026-11-24",
+      "size": {"2": [2.0], "3": [3.0], "4": [4.0], "5": [5.0], "6": [6.0], "8": [8.0]}}
+  },
+  "families": {
+    "heat_set_insert": {"item": "heat-set threaded insert, standard length, brass; no ISO standard defines it",
+      "fields": "length, outside_diameter, recommended_hole",
+      "source": "CNC Kitchen standard-length inserts, store table of 2026-04-10, as listed at https://forgent3d.com/en/calculators/clearance-hole-chart (read 2026-11-24). Makers differ: ruthex gives M4 hole 5.6, M5 6.4, M6 8.0, M8 9.6 and M2.5 length 5.7; PEM IUTB gives M4 5.67, M5 6.43, M6 8.03. Use the datasheet of the insert bought.",
+      "size": {"M2": [3.0, 3.6, 3.2], "M2.5": [4.0, 4.6, 4.0], "M3": [5.7, 4.6, 4.0], "M4": [8.1, 6.3, 5.7],
+               "M5": [9.5, 7.1, 6.5], "M6": [12.7, 8.7, 8.1], "M8": [12.7, 10.2, 9.7]}}
+  }
+}

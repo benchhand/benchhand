@@ -65,6 +65,16 @@ if "cad_record_assembly_operations" not in sys.modules:
     _OPERATIONS_SPEC.loader.exec_module(OPERATIONS)
 else:
     OPERATIONS = sys.modules["cad_record_assembly_operations"]
+COMMODITY_PATH = SKILL / "scripts" / "commodity_identity.py"
+if "cad_record_commodity_identity" not in sys.modules:  # the shared decision on which designations identify a commodity item
+    _COMMODITY_SPEC = importlib.util.spec_from_file_location("cad_record_commodity_identity", COMMODITY_PATH)
+    if _COMMODITY_SPEC is None or _COMMODITY_SPEC.loader is None:
+        raise ImportError(f"{COMMODITY_PATH} not found")
+    COMMODITY = importlib.util.module_from_spec(_COMMODITY_SPEC)
+    sys.modules["cad_record_commodity_identity"] = COMMODITY
+    _COMMODITY_SPEC.loader.exec_module(COMMODITY)
+else:
+    COMMODITY = sys.modules["cad_record_commodity_identity"]
 YAML_LOADER_PATH = SKILL / "scripts" / "yaml_loader.py"
 if "cad_record_yaml_loader" not in sys.modules:  # the shared YAML reader: yaml.safe_load on libyaml
     _YAML_SPEC = importlib.util.spec_from_file_location("cad_record_yaml_loader", YAML_LOADER_PATH)
@@ -121,6 +131,35 @@ def text(value: Any) -> str:
     if value is None or not str(value).strip():
         return "not recorded"
     return cell(str(value).strip())
+
+
+COMMODITY_SUPPLIER = "any supplier (commodity)"
+
+
+def group_commodity(rows: list[tuple[Any, ...]], commodity: list[bool]) -> list[tuple[Any, ...]]:
+    """Buy rows with the commodity rows that share a designation, supplier and order code merged into one: their item
+    numbers and PNs joined, their quantities summed. Rows are (item, PN, designation, qty, supplier, order code,
+    drawing); a row bound to another vendor, or any non-commodity row, stays on its own line."""
+    grouped: dict[tuple[Any, ...], list[Any]] = {}
+    result: list[Any] = []
+    for row, is_commodity in zip(rows, commodity, strict=True):
+        if not is_commodity:
+            result.append(row)
+            continue
+        key = (row[2], row[4], row[5])  # a vendor-bound row (a named supplier, an order code) merges only with its own kind
+        group = grouped.get(key)
+        if group is None:
+            grouped[key] = group = [[row[0]], [row[1]], row[2], row[3], *row[4:]]
+            result.append(group)
+            continue
+        group[0].append(row[0])
+        group[1].append(row[1])
+        try:
+            group[3] = int(group[3]) + int(row[3])
+        except (TypeError, ValueError):
+            group[3] = None
+    return [(", ".join(str(i) for i in r[0] if i is not None) or None, ", ".join(r[1]), *r[2:]) if isinstance(r, list)
+            else r for r in result]
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
@@ -486,6 +525,7 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
 
     make_rows: list[tuple[Any, ...]] = []
     buy_rows: list[tuple[Any, ...]] = []
+    commodity_rows: list[bool] = []
     for pn in part_numbers:
         part = part_records.get(pn, {})
         bom = bom_by_pn.get(pn, {})
@@ -517,7 +557,21 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
                 drawing = LAYOUT.bundle_dir(hw, "drawings", version, pn) / "sheet-1.pdf"
                 if drawing.is_file():
                     drawing_link = markdown_link("drawing sheet PDF", drawing, out)
+            label = COMMODITY.commodity_label(part)
+            # an item that names its manufacturer is a vendor item: it keeps its own identity and never merges
+            maker_fields = {k: procurement.get(k) or bom.get(k) for k in ("manufacturer", "manufacturer_part_number")}
+            vendor_named = any(maker_fields.values())  # the part record or, failing that, the BOM names the maker
+            commodity = label is not None and not vendor_named
+            if commodity:
+                designation = label
+                supplier = supplier or COMMODITY_SUPPLIER
+            elif label is not None and vendor_named:  # the designation plus the manufacturer identity the record names
+                maker = " ".join(str(v) for v in maker_fields.values() if v)
+                designation = f"{label}; {maker}"
             buy_rows.append((*common, designation, quantity, supplier, order_code, drawing_link))
+            commodity_rows.append(commodity)
+
+    buy_rows = group_commodity(buy_rows, commodity_rows)
 
     try:
         operations = OPERATIONS.normalize(assembly)

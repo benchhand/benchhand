@@ -60,6 +60,8 @@ yaml_loader = _load_module("cad_record_yaml_loader", Path(__file__).resolve().pa
 schema_registry = _load_module("cad_record_schema_registry", Path(__file__).resolve().parent / "schema_registry.py")
 # The workflow stages, the one reader of product.schema.json's stage list (decision_records.py reads it too).
 stage_list = _load_module("cad_record_stages", Path(__file__).resolve().parent / "stages.py")
+# Which structured designations identify a commodity item: the BOM generator and this check read the same designation.
+commodity_identity = _load_module("cad_record_commodity_identity", Path(__file__).resolve().parent / "commodity_identity.py")
 # The gate on product.yaml flow.profile, the user's project-start answers (pure in the parsed record).
 profile_gate = _load_module("cad_record_flow_profile_gate", Path(__file__).resolve().parent / "flow_profile_gate.py")
 # cad-motion's pose.py and plan.py, loaded only for a record with authored motion cases.
@@ -162,7 +164,7 @@ def procurement_cells(part: dict[str, Any]) -> dict[str, str | None]:
     specification = procurement.get("specification") or {}
     return {
         "unit": "pcs",
-        "designation": procurement.get("designation"),
+        "designation": commodity_identity.designation_cell(part),
         "manufacturer": procurement.get("manufacturer"),
         "manufacturer_part_number": procurement.get("manufacturer_part_number"),
         "supplier_part_number": procurement.get("supplier_part_number"),

@@ -29,6 +29,8 @@ ASSEMBLY_DATA_PATH = INTENT_PATH.with_name("assembly_data.py")
 ASSEMBLY_DATA_MODULE = "cad_record_assembly_data"  # the shared name cad-motion and cad-record load it under
 GUIDELINES_PATH = INTENT_PATH.with_name("guidelines.py")
 GUIDELINES_MODULE = "cad_record_guidelines"  # the shared name manufacturing_intent loads it under
+COMMODITY_IDENTITY_PATH = INTENT_PATH.with_name("commodity_identity.py")
+COMMODITY_IDENTITY_MODULE = "cad_record_commodity_identity"  # the shared name cad-bom and cad-record load it under
 
 # The service classes whose checks take a guideline value as a pass (the user's rule). Every other class, unknown
 # included, needs a calibrated or a waived value: a guideline pass is unknown there. A guideline fail fails in every class.
@@ -74,6 +76,11 @@ def intent() -> Any:
 def assembly_data() -> Any:
     """cad-record assembly_data.py (the occurrence inventory) under its shared module name."""
     return _load(ASSEMBLY_DATA_MODULE, ASSEMBLY_DATA_PATH)
+
+
+def commodity_identity() -> Any:
+    """cad-record commodity_identity.py (which designations identify a commodity item) under its shared module name."""
+    return _load(COMMODITY_IDENTITY_MODULE, COMMODITY_IDENTITY_PATH)
 
 
 def guidelines() -> Any:

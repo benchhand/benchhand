@@ -35,6 +35,7 @@ from feature_geometry import Face, ResolvedFeature, Vector
 from shared_module import load_shared
 
 FITS = Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py"
+COMMODITY = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "commodity_identity.py"
 EPS = fg.GEOMETRY_EPS
 FIT_KEYS = ("press_fit", "running_fit", "locating_fit")
 VENDOR_TYPES = ("vendor_specification", "source_control")
@@ -63,6 +64,13 @@ THREAD = re.compile(r"^M(?P<d>[0-9]+(?:\.[0-9]+)?)x(?P<p>[0-9]+(?:\.[0-9]+)?)-(?
 def _fits() -> Any:
     """cad-fits' fits.py, the single ISO 286 implementation; measuring runs on worker threads."""
     return load_shared("cad_fits_fits", FITS)
+
+
+def commodity_label(record: Mapping[str, Any]) -> str | None:
+    """The order line of a part bought by an eligible commodity designation, or None (cad-record commodity_identity.py,
+    the one decision the process checks, the BOM and the build guide share)."""
+    label: str | None = load_shared("cad_record_commodity_identity", COMMODITY).commodity_label(record)
+    return label
 
 
 def finding(code: str, message: str, **where: Any) -> dict[str, Any]:

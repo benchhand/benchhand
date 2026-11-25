@@ -1156,6 +1156,106 @@ class OpticalRouteTests(Checks):
         self.assertEqual(self.outcome(identified, self.obligation), "pass")
 
 
+# --- commodity hardware sourced by designation ------------------------------------------------------------------------
+
+SCREW = {"kind": "standard_designation", "standard": "ISO 4762", "size": "M4", "length": 20,
+         "property_class": "8.8", "finish": "A2 zinc flake"}
+NUT = {"kind": "standard_designation", "standard": "ISO 4032", "size": "M4", "length": "not_applicable",
+       "property_class": "8"}
+INSERT = {"kind": "family_designation", "family": "heat_set_insert", "thread": "M3", "length": 5.7,
+          "outside_diameter": 4.6, "recommended_hole": 4.0}
+
+
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class CommodityDesignationTests(Checks):
+    """A commodity item is bought by standard designation: no vendor PN, supplier or lead time is needed."""
+
+    def bought(self, purchase: dict[str, Any], **procurement: Any) -> Any:
+        item = part("TST-0701", [FX.operation("buy", "purchased", purchase=purchase)], process="purchased",
+                    material=None, make_buy="buy", procurement={"mode": "catalog", **procurement})
+        item["intent"]["material_profile"] = FX.not_applicable("catalogue item")
+        return self.assess(FX.record(parts=[item], capabilities=[], materials=materials()))
+
+    def commodity(self, **extra: Any) -> dict[str, Any]:
+        return {"designation": copy.deepcopy(SCREW), "specification": known("ISO 4762 M4x20 8.8", "standard", [FX.source("standard", "ISO 4762")]),
+                "ratings": known("property class 8.8", "standard", [FX.source("standard", "ISO 898-1")]), **extra}
+
+    def test_a_designation_only_row_passes_identity_dimensions_and_availability(self) -> None:
+        result = self.bought(self.commodity())
+        for family in ("identity", "dimensions", "availability"):
+            self.assertEqual(self.outcome(result, f"purchase.{family}@TST-0701/buy"), "pass", family)
+
+    def test_an_eligible_nut_and_heat_set_insert_pass(self) -> None:
+        for name, designation in (("nut without a length", NUT), ("heat-set insert", INSERT)):
+            with self.subTest(name):
+                result = self.bought(self.commodity(designation=copy.deepcopy(designation)))
+                self.assertEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "pass")
+                self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "pass")
+
+    def test_an_ineligible_designation_passes_neither_identity_nor_availability(self) -> None:
+        cases = {
+            "an unknown family": {**INSERT, "family": "mystery_widget"},
+            "a feature-only standard": {**SCREW, "standard": "ISO 965-1"},
+            "a screw with no length": {**SCREW, "length": "not_applicable"},
+        }
+        for name, designation in cases.items():
+            with self.subTest(name):
+                result = self.bought(self.commodity(designation=designation))
+                self.assertNotEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "pass")
+                self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "unknown")
+
+    def test_a_manufacturer_pn_row_still_needs_its_part_number(self) -> None:
+        result = self.bought({"identity": FX.unknown("part number not recorded"),
+                              "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                              "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])})
+        self.assertEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "unknown")
+
+    def test_a_named_supplier_satisfies_availability_with_no_lead_time(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        result = self.bought({**pn_row, "availability": known("TST Supply Co stock item")})
+        self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "pass")
+
+    def test_a_non_commodity_item_without_a_named_supplier_stays_unresolved(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        result = self.bought(pn_row)
+        self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "unknown")
+        self.assertIn("purchase.availability_unknown", self.codes(result))
+
+    def test_an_open_manufacturer_part_number_withholds_the_commodity_pass(self) -> None:
+        result = self.bought(self.commodity(), open={"manufacturer_part_number": "no catalogue part found"})
+        self.assertNotEqual(self.outcome(result, "purchase.identity@TST-0701/buy"), "pass")
+        self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "unknown")
+
+    def test_commodity_availability_needs_an_eligible_designation(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        cases = {
+            "a manufacturer part number": pn_row,
+            "an ineligible designation": {**pn_row, "designation": {**SCREW, "length": "not_applicable"}},
+        }
+        for name, purchase in cases.items():
+            with self.subTest(name):
+                claimed = self.bought({**purchase, "availability": known("commodity")}, manufacturer_part_number="TST-PN 1")
+                self.assertEqual(self.outcome(claimed, "purchase.availability@TST-0701/buy"), "unknown")
+                named = self.bought({**purchase, "availability": known("TST Supply Co stock item")},
+                                    manufacturer_part_number="TST-PN 1")
+                self.assertEqual(self.outcome(named, "purchase.availability@TST-0701/buy"), "pass")
+
+    def test_the_unresolved_availability_diagnostic_asks_for_no_lead_time(self) -> None:
+        pn_row = {"identity": known("TST-PN 1"), "specification": known("TST datasheet", "supplier_typical", [datasheet("TST")]),
+                  "ratings": known("TST rating", "supplier_typical", [datasheet("TST")])}
+        finding = self.finding(self.bought(pn_row), "purchase.availability_unknown")
+        self.assertNotIn("lead time", json.dumps(finding).lower())
+        self.assertIn("supplier", finding["remedy"] + json.dumps(finding["measured"]))
+
+    def test_a_reference_catalogue_is_a_non_binding_example(self) -> None:
+        listing = [{"vendor": "McMaster-Carr", "part_number": "91290A164", "url": "https://www.mcmaster.com/91290A164/"}]
+        result = self.bought(self.commodity(reference_catalogue=listing))
+        self.assertEqual(self.outcome(result, "purchase.availability@TST-0701/buy"), "pass")
+
+
 # --- the other route kinds: resin, casting, sheet forming, waterjet, laser flatness ----------------------------------
 
 def shaped(kind: str, calibrations: list, *, critical: Any = None, material: str = ALU, **op: Any) -> dict[str, Any]:

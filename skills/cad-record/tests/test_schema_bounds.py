@@ -341,6 +341,10 @@ NOT_IN_AUDIT = {
     ("manufacturing-materials.schema.json", "/$defs/profile/properties/revision"): "a revision counter",
     ("manufacturing.schema.json", "/$defs/money/properties/amount"): "sign-only; a plausibility band is tracked in #141",
     ("part.schema.json", "/$defs/component/properties/multiplicity"): "an instance count",
+    ("part.schema.json", "/$defs/designation/oneOf/0/properties/length/oneOf/0"): "sign-only; a catalogue screw length in mm, a size of an item bought by designation (cad-fits/data/commodity.json holds the modelled sizes)",
+    ("part.schema.json", "/$defs/designation/oneOf/1/properties/length"): "sign-only; a catalogue insert length in mm, a size of an item bought by designation (cad-fits/data/commodity.json holds the modelled sizes)",
+    ("part.schema.json", "/$defs/designation/oneOf/1/properties/outside_diameter"): "sign-only; a catalogue insert outside diameter in mm, a size of an item bought by designation",
+    ("part.schema.json", "/$defs/designation/oneOf/1/properties/recommended_hole"): "sign-only; a catalogue insert hole diameter in mm, a size of an item bought by designation",
     ("release-manifest.schema.json", "/$defs/v3/properties/manufacturing/additionalProperties/properties/quantity"): "a unit count",
 }
 # Nodes that a listed case covers without a case of their own

@@ -29,6 +29,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import completeness  # noqa: E402
+import drawing  # noqa: E402
 import drawing_document  # noqa: E402
 import freecad_runtime  # noqa: E402
 from drawing_document import SvgAnnotation  # noqa: E402
@@ -234,6 +235,50 @@ class EdgeAndTextureIndications(unittest.TestCase):
                                surface_texture={"open": "no basis for a value yet"})
         self.assertEqual(missing(), [])
         self.assertIn("surface_texture_open", [b["code"] for b in completeness.release_blockers(part)])
+
+
+SCREW = {"kind": "standard_designation", "standard": "ISO 4762", "size": "M4", "length": 20, "property_class": "8.8"}
+SPECIFICATION = {"reference": "ISO 4762", "revision": "2004", "sha256": "0" * 64, "url": "https://example.invalid/iso-4762"}
+
+
+def catalogue_screw(**procurement) -> dict:
+    """A bought catalogue screw identified only by its structured designation."""
+    return {"rev": "A", "make_buy": "buy", "supplier": None,
+            "procurement": {"mode": "catalog", "specification": dict(SPECIFICATION), **procurement},
+            "intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": dict(SCREW)}}]}}
+
+
+class CommodityProcurement(unittest.TestCase):
+    """A catalogue screw bought by structured designation needs no manufacturer, part number or supplier."""
+
+    def codes(self, record: dict) -> list[str]:
+        return [f["message"] for f in drawing.procurement_findings(record)]
+
+    def test_a_designation_only_screw_passes_the_procurement_check(self) -> None:
+        self.assertEqual(self.codes(catalogue_screw()), [])
+
+    def test_the_specification_is_still_required(self) -> None:
+        record = catalogue_screw()
+        del record["procurement"]["specification"]
+        self.assertTrue(any("specification" in m for m in self.codes(record)))
+
+    def test_an_open_manufacturer_part_number_keeps_the_manufacturer_requirement(self) -> None:
+        record = catalogue_screw(open={"manufacturer_part_number": "not chosen"})
+        self.assertTrue(any("manufacturer" in m for m in self.codes(record)), self.codes(record))
+
+    def test_readiness_needs_no_supplier_for_a_commodity_screw_only(self) -> None:
+        self.assertNotIn("procurement_incomplete", [b["code"] for b in completeness.release_blockers(catalogue_screw())
+                                                    if "supplier" in b["message"]])
+        vendor = {"rev": "A", "make_buy": "buy", "supplier": None, "procurement": {"mode": "catalog"}}
+        self.assertTrue(any("supplier" in b["message"] for b in completeness.release_blockers(vendor)))
+
+    def test_a_designation_with_a_manufacturer_part_number_still_needs_a_supplier(self) -> None:
+        record = catalogue_screw(manufacturer="TST Maker", manufacturer_part_number="TST-4762-M4")
+        self.assertTrue(any("supplier" in b["message"] for b in completeness.release_blockers(record)))
+
+    def test_the_table_shows_the_designation_of_a_designation_only_screw(self) -> None:
+        table = drawing.procurement_table(catalogue_screw())
+        self.assertIn("ISO 4762 M4x20, 8.8", dict(table.rows)["Designation"])
 
 
 @unittest.skipUnless(FREECAD_PRESENT and UV, "the gate tests need uv and FreeCAD's freecadcmd")
