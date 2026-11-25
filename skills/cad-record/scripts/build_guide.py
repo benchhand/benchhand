@@ -558,10 +558,15 @@ def make_guide(hw: Path, version: str, out: Path, rev: str | None = None, date: 
                 if drawing.is_file():
                     drawing_link = markdown_link("drawing sheet PDF", drawing, out)
             label = COMMODITY.commodity_label(part)
-            commodity = label is not None
-            if label is not None:
+            # an item that names its manufacturer is a vendor item: it keeps its own identity and never merges
+            vendor_named = bool(procurement.get("manufacturer") or procurement.get("manufacturer_part_number"))
+            commodity = label is not None and not vendor_named
+            if commodity:
                 designation = label
                 supplier = supplier or COMMODITY_SUPPLIER
+            elif label is not None and vendor_named:  # the designation plus the manufacturer identity the record names
+                maker = " ".join(str(procurement[k]) for k in ("manufacturer", "manufacturer_part_number") if procurement.get(k))
+                designation = f"{label}; {maker}"
             buy_rows.append((*common, designation, quantity, supplier, order_code, drawing_link))
             commodity_rows.append(commodity)
 
