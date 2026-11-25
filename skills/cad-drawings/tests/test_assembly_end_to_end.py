@@ -46,12 +46,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from decision_fixture import add_flow_profile  # noqa: E402
 sys.path.insert(0, str(SKILLS / "cad-model" / "scripts"))
 import assembly_check  # noqa: E402
+import drawing_document  # noqa: E402
 import freecad_runtime  # noqa: E402
 from cadmodel import scriptenv  # noqa: E402
 
 FREECADCMD = freecad_runtime.find_freecadcmd()
 FREECAD_PRESENT = FREECADCMD is not None and FREECADCMD.is_file()
-PLATE, PIN = "TST-0101", "TST-0102"
+PLATE, PIN, MOUNT = "TST-0101", "TST-0102", "EXT-0103"
 PINS = {"pin-a": [20.0, 20.0, 6.0], "pin-b": [60.0, 20.0, 6.0]}
 
 ASSEMBLY = {
@@ -84,9 +85,21 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path:
-    """A valid record and a version folder built from the fixture STEPs, hashed as ``cad_model.py run`` would."""
+MOUNT_PART = {"title": "Bench mount plate", "material": "as found", "process": "other", "mass_target": None,
+              "shape": {"box": [100, 60, 10]}, "frame": "assembly_zero"}
+
+
+def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2, existing: bool = False) -> Path:
+    """A valid record and a version folder built from the fixture STEPs, hashed as ``cad_model.py run`` would. With
+    `existing`, the plate sits on MOUNT, existing equipment: fixed to the plate, joined to it by IF-002, placed below
+    it in the STEP, and absent from bom.csv and the drawing's items."""
     hw = root / "project" / "hw"
+    parts = {**PARTS, MOUNT: MOUNT_PART} if existing else PARTS
+    assembly = json.loads(json.dumps(ASSEMBLY))
+    if existing:
+        assembly["subassemblies"][0]["parts"].append(MOUNT)
+        assembly["joints"].append({"id": "J-003", "type": "fixed", "parent": PLATE, "child": MOUNT, "axis": [0, 0, 1],
+                                   "origin": [0, 0, 0], "min": 0, "max": 0, "nominal": 0})
     documents = {
         "product.yaml": {"id": "pin-plate", "units": "mm", "regime": regime,
                          "general_tolerance": "ISO 2768-m", "flow": {"stage": "detail", "recheck_from": "detail"}},
@@ -96,7 +109,7 @@ def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path
                                             "description": "Pin pressed into the plate",
                                             "limits": {"press_fit": {"fit": "6 H7/p6", "pair": [PLATE, "@pin-a"],
                                                                      "axial_retainer": {"type": "press_fit"}}}}]},
-        "assembly.yaml": ASSEMBLY,
+        "assembly.yaml": assembly,
     }
     hw.mkdir(parents=True)
     for name, document in documents.items():
@@ -104,7 +117,7 @@ def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path
     with (hw / "bom.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream, lineterminator="\n")
         writer.writerow(["level", "PN", "rev", "qty", "title", "material", "process", "make_buy", "supplier", "mass"])
-        for pn, part in PARTS.items():
+        for pn, part in PARTS.items():  # the existing mount has no row
             qty = bom_pin_qty if pn == PIN else 1
             writer.writerow(["1", pn, "X1", qty, part["title"], part["material"], part["process"],
                              "buy" if part["process"] == "purchased" else "make", "", part["mass_target"]])
@@ -112,7 +125,7 @@ def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path
                                          encoding="utf-8")
     version = hw / "versions" / "v1"
     built = {}
-    for pn, part in PARTS.items():
+    for pn, part in parts.items():
         folder = hw / "parts" / pn
         folder.mkdir(parents=True)
         record = {"PN": pn, "rev": "X1", "title": part["title"], "material": part["material"], "process": part["process"],
@@ -124,18 +137,26 @@ def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path
         built[pn] = {"model": f"parts/{pn}/model.py", "source_sha256": sha(folder / "model.py"), "step": f"parts/{pn}.step"}
     # The record as current cad-record reads it: record version 2, every manufacturing-intent field unknown.
     fx.upgrade_record(hw)
+    if existing:  # existing equipment carries a declared range and no intent, so it is written after the upgrade
+        (hw / "parts" / MOUNT / "part.yaml").write_text(yaml.safe_dump(
+            fx.existing_part(MOUNT, MOUNT_PART["title"], model_frame="assembly_zero"), sort_keys=False), encoding="utf-8")
+        interfaces = yaml.safe_load((hw / "interfaces.yaml").read_text(encoding="utf-8"))
+        interfaces["interfaces"].append(fx.interface("IF-002", PLATE, MOUNT))
+        (hw / "interfaces.yaml").write_text(yaml.safe_dump(interfaces, sort_keys=False), encoding="utf-8")
     add_flow_profile(hw)  # the project-start profile is due from SPECIFY on
-    spec = {"definitions": {pn: {"name": f"{pn} {p['title']}", **p["shape"]} for pn, p in PARTS.items()},
+    mount = [{"id": MOUNT, "PN": MOUNT, "explicit": False, "translation_mm": [-10, -10, -10], "axis": [0, 0, 1],
+              "angle_deg": 0}] if existing else []
+    spec = {"definitions": {pn: {"name": f"{pn} {p['title']}", **p["shape"]} for pn, p in parts.items()},
             "occurrences": [{"id": PLATE, "PN": PLATE, "explicit": False, "translation_mm": [0, 0, 0], "axis": [0, 0, 1],
                              "angle_deg": 0}] + [{"id": oid, "PN": PIN, "explicit": True, "translation_mm": xyz,
-                                                  "axis": [0, 0, 1], "angle_deg": 0} for oid, xyz in PINS.items()],
+                                                  "axis": [0, 0, 1], "angle_deg": 0} for oid, xyz in PINS.items()] + mount,
             "parts_dir": str(version / "parts"), "assembly": str(version / "assembly.step"), "top": "pin-plate v1"}
     (root / "fixture.json").write_text(json.dumps(spec), encoding="utf-8")
     proc = subprocess.run(scriptenv.python_command(FIXTURE, str(FIXTURE), str(root / "fixture.json")),
                           capture_output=True, text=True, timeout=900)
     if proc.returncode != 0:
         raise AssertionError(f"fixture build failed: {proc.stderr[-2000:]}")
-    (version / "metrics.json").write_text(json.dumps({"parts": {pn: {"volume_mm3": 1.0, "holes": []} for pn in PARTS}}),
+    (version / "metrics.json").write_text(json.dumps({"parts": {pn: {"volume_mm3": 1.0, "holes": []} for pn in parts}}),
                                           encoding="utf-8")
     files = ["assembly.step", "metrics.json", *(b["step"] for b in built.values())]
     manifest = {"schema_version": 2, "label": "v1", "product_id": "pin-plate",
@@ -143,7 +164,7 @@ def write_project(root: Path, regime: str = "iso", bom_pin_qty: int = 2) -> Path
                 "record": {"record/product.yaml": sha(hw / "product.yaml"),
                            "record/interfaces.yaml": sha(hw / "interfaces.yaml"),
                            "record/assembly.yaml": sha(hw / "assembly.yaml"),
-                           **{f"record/parts/{pn}/part.yaml": sha(hw / "parts" / pn / "part.yaml") for pn in PARTS}},
+                           **{f"record/parts/{pn}/part.yaml": sha(hw / "parts" / pn / "part.yaml") for pn in parts}},
                 "manufacturing": {}, "files": {name: sha(version / name) for name in files}}
     for relative in manifest["record"]:
         source = hw / relative.removeprefix("record/")
@@ -219,6 +240,24 @@ class EndToEnd(unittest.TestCase):
                 self.assertEqual(rechecked["status"], "fail")
                 self.assertIn("item 2 has 0 balloons in view exploded_iso; expected one",
                               [f["message"] for f in rechecked["findings"]])
+
+    def test_existing_equipment_is_drawn_as_reference_without_an_item_or_a_balloon(self) -> None:
+        hw = write_project(self.root / "existing", existing=True)
+        status, result = run_cli(hw)
+        self.assertEqual((status, result["status"]), (0, "pass"), result.get("findings"))
+        package_path = hw.parent / result["output_dir"]
+        package = json.loads((package_path / "package.json").read_text(encoding="utf-8"))
+        top = next(row for row in package["coverage"]["rows"] if row["kind"] == "assembly_sheet" and row["sheet"] == 1)
+        self.assertEqual((sorted(row["PN"] for row in top["items"].values()), top["reference"]), ([PLATE, PIN], [MOUNT]))
+        root = assembly_check.SafeET.fromstring((package_path / "sheet-1.svg").read_text(encoding="utf-8"))
+        self.assertNotIn(MOUNT, {b["occurrence"] for b in assembly_check.read_balloons(root)})
+        svg = "{http://www.w3.org/2000/svg}"
+        views = {g.get("id"): g for g in root.iter(f"{svg}g") if g.get("class") == "view"}
+        for view in ("view-assembled_front", "view-exploded_iso"):
+            layers = {g.get("class"): g for g in views[view] if g.tag == f"{svg}g"}
+            self.assertEqual(layers["reference"].get("stroke-dasharray"), drawing_document.PHANTOM_DASH, view)
+            self.assertTrue(list(layers["reference"].iter(f"{svg}path")), f"{view}: the mount has phantom outlines")
+        self.assertEqual(assembly_check.check_package(package_path)["status"], "pass")
 
     def test_a_published_bundle_is_not_reused_under_another_source_date_epoch(self) -> None:
         hw = write_project(self.root / "epoch")
