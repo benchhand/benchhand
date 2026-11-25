@@ -65,6 +65,14 @@ if "cad_record_assembly_operations" not in sys.modules:
     _OPERATIONS_SPEC.loader.exec_module(OPERATIONS)
 else:
     OPERATIONS = sys.modules["cad_record_assembly_operations"]
+QUANTITIES_PATH = SKILL / "scripts" / "quantities.py"
+if "cad_record_quantities" not in sys.modules:  # the one quantity parser, shared with the record reader
+    _QUANTITIES_SPEC = importlib.util.spec_from_file_location("cad_record_quantities", QUANTITIES_PATH)
+    if _QUANTITIES_SPEC is None or _QUANTITIES_SPEC.loader is None:
+        raise ImportError(f"{QUANTITIES_PATH} not found")
+    sys.modules["cad_record_quantities"] = importlib.util.module_from_spec(_QUANTITIES_SPEC)
+    _QUANTITIES_SPEC.loader.exec_module(sys.modules["cad_record_quantities"])
+QUANTITIES = sys.modules["cad_record_quantities"]
 COMMODITY_PATH = SKILL / "scripts" / "commodity_identity.py"
 if "cad_record_commodity_identity" not in sys.modules:  # the shared decision on which designations identify a commodity item
     _COMMODITY_SPEC = importlib.util.spec_from_file_location("cad_record_commodity_identity", COMMODITY_PATH)
@@ -168,15 +176,17 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
     return "\n".join(lines)
 
 
-def fact_text(fact: Any) -> str:
-    """A quantity fact as guide text: its value or range with units, else its status and reason."""
+def fact_text(fact: Any, where: str) -> str:
+    """A quantity fact as guide text: its value or range with units (read by quantities.py), else its status and
+    reason; GuideError, naming `where`, for a known value that is not a valid quantity."""
     if not isinstance(fact, Mapping):
         return "not recorded"
     value = fact.get("value")
-    if fact.get("status") == "known" and isinstance(value, Mapping) and value.get("units"):
-        number = value.get("value")
-        amount = f"{number:g}" if isinstance(number, (int, float)) else f"{value.get('lower'):g}..{value.get('upper'):g}"
-        return f"{amount} {value['units']}"
+    if fact.get("status") == "known" and isinstance(value, Mapping):
+        try:
+            return str(QUANTITIES.quantity(value))
+        except QUANTITIES.IntentError as exc:
+            raise GuideError(f"{where} is not a valid quantity: {exc}") from exc
     return f"{fact.get('status') or 'unknown'} ({fact.get('reason') or 'no reason recorded'})"
 
 
@@ -192,18 +202,20 @@ def bench_note(operation: Any, items: Mapping[str, Any], regime: str) -> tuple[s
 
     if operation.kind == "hold":
         part, column = label(operation.part)
+        where = f"assembly operation {operation.id}"
         note = (words(f"Hold {part} in the {operation.fixture} with its ")
-                + assembly_sheet.direction_text(operation.orientation) + words(" axis up for ") + fact_text(operation.duration))
+                + assembly_sheet.direction_text(operation.orientation) + words(" axis up for ")
+                + fact_text(operation.duration, f"{where}: duration"))
         cure = operation.cure or {}
         if "time" in cure:
             unsourced = [name for name in ("time", "temperature") if name in cure and not OPERATIONS.cure_sourced(cure[name])]
-            time = fact_text(cure["time"]) if "time" not in unsourced else None
+            time = fact_text(cure["time"], f"{where}: cure time") if "time" not in unsourced else None
             if "temperature" not in cure:
                 note += words("; cure ") + (time or words("per the adhesive datasheet"))
             elif time is None:
                 note += words("; cure per the adhesive datasheet")
             else:
-                temperature = ("temperature" not in unsourced and fact_text(cure["temperature"])
+                temperature = ("temperature" not in unsourced and fact_text(cure["temperature"], f"{where}: cure temperature")
                                or words("a temperature per the adhesive datasheet"))
                 note += words("; cure ") + time + words(" at ") + temperature
             if unsourced:
