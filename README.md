@@ -218,7 +218,13 @@ A bare `TIER=MODEL` covers Claude, Codex and Kiro. OpenCode needs the `opencode:
 <!-- slopvac-allow: rule=prose-promotion.promotional-verbs reason=domain-term -->
 ## Showcase
 
-[`examples/v6-engine`](examples/v6-engine/README.md) takes a 3D-printable desktop V6 engine through the flow, from the project-start questions to a release attempt. This example models one rod, one piston and one pin, each placed six times on a 60° V. Its record lives in `examples/v6-engine/hw`, and every number below comes from tool output.
+[`examples/v6-engine`](examples/v6-engine/README.md) takes a 3D-printable desktop V6 engine through the flow, from the project-start questions to a release attempt. The finished model has 13 parts: 11 printed in ASA and 2 bought. Six pistons, rods and pins sit on a 60° V around one crankshaft. Two cylinder heads carry a camshaft each.
+
+A GT2 timing belt links a 20-tooth crank pulley to a 40-tooth pulley on each cam. The cams turn once per two crank turns. A bracket with two idler rollers tensions the belt. The record lives in `examples/v6-engine/hw`. Every number below comes from tool output.
+
+The story starts with the questions and the requirements ([Ground](#1-ground), [Intent](#2-intent), [Specify](#3-specify)). Three concepts compete ([Concept](#4-concept)).
+
+The crank and the six-piston layout follow, and the first checks find real overlaps ([Layout](#5-layout)). Each part gets a form check and a dimensioned drawing sheet ([Parts](#6-parts), [Detail](#7-detail), [Parts gallery](#parts-gallery)). The bill of materials, the motion sweep and an exploratory FEA come next ([BOM](#8-bom), [Analysis](#9-analysis)). Two critique reviews return open findings ([Critique](#10-critique)). The release stays blocked until the user decides ([Release](#11-release)).
 
 ```mermaid
 flowchart LR
@@ -300,7 +306,7 @@ The stack of the piston in its bore gives 0.30 to 0.65 mm against a 0.2 mm minim
 stackup: requirement not established (worst_case)
 ```
 
-The assembly drawing sheet (VSE-ASM) lists the five items with their quantities and shows the exploded pistons.
+The assembly drawing sheet (VSE-ASM) of the first build lists the five items with their quantities and shows the exploded pistons.
 
 ![Assembly drawing sheet](docs/images/v6-engine/09-drawing-assembly-sheet.webp)
 
@@ -317,7 +323,7 @@ Each thumbnail is the iso render of one part on built version v29. Click it to o
 
 Every sheet states the general tolerance ±0.2 mm, ±1° from DR-006. DR-006 records it as an FDM assumption with no measured H2D capability behind it. `drawing.py` passed each sheet. None is release-ready, because the revision is X1 and the general surface texture is open.
 
-- **VSE-0001 Crankcase and V block**. No sheet yet. `drawing.py` cannot locate the six bores of the 60° V. An inclined cylinder has no controlled-model fallback, and its axis is not parallel to a frame axis. The part already has its `drawing_features` hook.
+- **VSE-0001 Crankcase and V block**. No drawing sheet yet. Benchhand cannot place a dimension on the inclined bores of the 60° V, because it needs an axis parallel to a frame axis. The thumbnail opens the full render instead.
 - **VSE-0002 Piston** (A4, 2:1, two sheets). The skirt is Ø23.6 ±0.1 in the 24 mm bore, and the pin bore is Ø6.012 0/−0.012 (6 H7). The second sheet is a section through the hollow skirt, 7.4 mm deep. The route lists a gauge inspection of the pin bore.
 - **VSE-0003 Wrist pin** (A4, 5:1). A 20 ±0.2 mm tube with a Ø6 g6 journal (−0.004/−0.012), a Ø3 lumen and four 0.3 × 45° edge breaks. The route lists a gauge inspection of the journal.
 - **VSE-0004 Connecting rod** (A3, 2:1). The bore axes sit 48 mm apart. The small bore is Ø6.1 ±0.05 on the pin, and the big bore is Ø12.2 ±0.1 on the crank pin. Section D-D shows the 1.5 mm lightening pockets in the 7 mm web.
@@ -335,7 +341,7 @@ The piston's [second sheet](docs/images/v6-engine/09-drawing-VSE-0002-piston-she
 
 ### 8. BOM
 
-`bom.py` reconciles the roll-up against the v4 snapshot: five rows, 20 instances, no mismatches.
+`bom.py` reconciles the roll-up against the v4 snapshot, the first five-part build: five rows, 20 instances, no mismatches. The engine's later parts, the heads, cams, pulleys, belt, idler and bracket, join the same record.
 
 | PN | Title | Qty |
 |---|---|---|
