@@ -671,14 +671,7 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
                              "inside the closed assembly", f"install {ref} before {op.id}")
         _sub_build_rules(operations, state, step, transfers, fail)
         findings.extend(mine)
-        doubt = None if mine else _hold_doubt(op)
-        row: dict[str, Any] = {"obligation": obligation, "outcome": "fail" if mine else "unknown" if doubt else "pass",
-                               "level": "process_planned", "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
-        if mine:
-            row["findings"] = [f["id"] for f in mine]
-        if doubt:
-            row["uncertainty"] = doubt
-        outcomes.append(row)
+        outcomes.append(_order_row(obligation, op, mine))
     if inventory is not None:
         never = _never_installed(state, inventory)
         product: dict[str, Any] = {"obligation": "assembly.order@product", "outcome": "fail" if never else "pass",
@@ -688,6 +681,19 @@ def check_order(operations: Operations, inventory: Any = None, existing: frozens
         outcomes.append(product)
         findings.extend(never)
     return Report(tuple(outcomes), tuple(findings))
+
+
+def _order_row(obligation: str, op: AssemblyOperation, mine: list[dict[str, Any]]) -> dict[str, Any]:
+    """The order outcome of one operation: fail with its findings, else unknown when a hold's duration is in doubt,
+    else pass."""
+    doubt = None if mine else _hold_doubt(op)
+    row: dict[str, Any] = {"obligation": obligation, "outcome": "fail" if mine else "unknown" if doubt else "pass",
+                           "level": "process_planned", "method": ORDER_METHOD, "coverage": ORDER_COVERAGE}
+    if mine:
+        row["findings"] = [f["id"] for f in mine]
+    if doubt:
+        row["uncertainty"] = doubt
+    return row
 
 
 def _build_name(build: str | None) -> str:
