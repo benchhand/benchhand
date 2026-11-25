@@ -190,36 +190,59 @@ def delivered_occurrences(scene: Iterable[Any], records: Mapping[str, Mapping[st
     return {(c.occurrence or c.pn): c.pn for c in scene if sourcing.delivered(records.get(c.pn) or {})}
 
 
-def _glb_occurrence_nodes(gltf: Mapping[str, Any], owner: Mapping[str, str]) -> tuple[dict[str, list[bool]], list[str]]:
-    """Walking the nodes reachable from the GLB's scene: per occurrence of `owner` (node name -> occurrence id) whether
-    each node named for it carries a mesh in its subtree, and the names of the mesh nodes no occurrence owns."""
+def _glb_occurrence_nodes(gltf: Mapping[str, Any],
+                          owner: Mapping[str, str]) -> tuple[dict[str, list[bool]], list[str], list[str]]:
+    """Walking every node reachable from the GLB's scene: per occurrence of `owner` (node name -> occurrence id)
+    whether each node named for it, at any depth, carries a mesh in its subtree; the mesh nodes outside every
+    occurrence node; and why the node tree is malformed (a bad scene, root or child index), whose bad entries the
+    walk skips."""
+    malformed: list[str] = []
     nodes = gltf.get("nodes", [])
-    scene = (gltf.get("scenes") or [{}])[gltf.get("scene", 0)]
+    scenes = gltf.get("scenes", [])
+    if not isinstance(nodes, list) or not all(isinstance(node, Mapping) for node in nodes):
+        return {oid: [] for oid in owner.values()}, [], ["nodes is not a list of node objects"]
+    scene_index = gltf.get("scene", 0)
+    if not isinstance(scenes, list) or not isinstance(scene_index, int) or not 0 <= scene_index < len(scenes) \
+            or not isinstance(scenes[scene_index], Mapping):
+        return {oid: [] for oid in owner.values()}, [], [f"scene {scene_index!r} is not one of its {len(scenes) if isinstance(scenes, list) else 0} scenes"]
+
+    def indices(values: Any, where: str) -> list[int]:
+        if not isinstance(values, list):
+            malformed.append(f"{where} is not a list of node indices")
+            return []
+        good = [v for v in values if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < len(nodes)]
+        if len(good) != len(values):
+            malformed.append(f"{where} names nodes that do not exist: {[v for v in values if v not in good]}")
+        return good
+
     found: dict[str, list[bool]] = {oid: [] for oid in owner.values()}
     extra: list[str] = []
     visited: set[int] = set()
 
-    def has_mesh(index: int) -> bool:
+    def has_mesh(index: int, seen: set[int]) -> bool:
+        if index in seen:
+            return False
+        seen.add(index)
         node = nodes[index]
-        return "mesh" in node or any(has_mesh(child) for child in node.get("children", []))
+        return "mesh" in node or any(has_mesh(child, seen) for child in indices(node.get("children", []), f"node {index} children"))
 
-    def walk(index: int) -> None:
+    def walk(index: int, inside: bool) -> None:
         if index in visited:
             return
         visited.add(index)
         node = nodes[index]
         name = node.get("name", "")
-        if name in owner:
-            found[owner[name]].append(has_mesh(index))
-            return
-        if "mesh" in node:
+        mine = name in owner
+        if mine:
+            found[owner[name]].append(has_mesh(index, set()))
+        elif "mesh" in node and not inside:
             extra.append(name or f"node {index}")
-        for child in node.get("children", []):
-            walk(child)
+        for child in indices(node.get("children", []), f"node {index} children"):
+            walk(child, inside or mine)
 
-    for root in scene.get("nodes", []):
-        walk(root)
-    return found, extra
+    for root in indices(scenes[scene_index].get("nodes", []), f"scene {scene_index} nodes"):
+        walk(root, False)
+    return found, extra, sorted(set(malformed))
 
 
 def product_subset(expected: Mapping[str, str], existing: set[str], scene: Iterable[Any],
@@ -251,8 +274,9 @@ def product_subset(expected: Mapping[str, str], existing: set[str], scene: Itera
                       "same_definition": component.pn == expected[oid] and name == want_name
                       and _rel(volume, want_volume) <= READBACK_REL}
         found[oid]["ok"] = error_mm <= PLACEMENT_MM and error_rot <= pose.PLACEMENT_TOL_ROT and found[oid]["same_definition"]
-    nodes, extra = _glb_occurrence_nodes(gltf, {by_id[oid].name: oid for oid in expected})
-    names = [node.get("name", "") for node in gltf.get("nodes", [])]
+    nodes, extra, malformed = _glb_occurrence_nodes(gltf, {by_id[oid].name: oid for oid in expected})
+    names = [node.get("name", "") for node in gltf.get("nodes", []) if isinstance(node, Mapping)] \
+        if isinstance(gltf.get("nodes", []), list) else []
     result = {"occurrences": found, "unexpected_components": unexpected,
               "missing_occurrences": sorted(set(expected) - set(found)),
               "manifest_mismatch": sorted(set(expected) ^ set(listed)),
@@ -260,7 +284,7 @@ def product_subset(expected: Mapping[str, str], existing: set[str], scene: Itera
               "existing_in_glb": sorted({pn for name in names for pn in existing if name.startswith(pn)}),
               "glb_missing_nodes": sorted(oid for oid, meshes in nodes.items() if not any(meshes)),
               "glb_duplicate_nodes": sorted(oid for oid, meshes in nodes.items() if len(meshes) > 1),
-              "glb_extra_nodes": sorted(extra)}
+              "glb_extra_nodes": sorted(extra), "glb_malformed": malformed}
     ok = all(not value for key, value in result.items() if key != "occurrences") and all(
         row["ok"] for row in found.values())
     return {"status": _status(ok), "blocking": True, **result}
