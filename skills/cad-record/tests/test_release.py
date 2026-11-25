@@ -477,6 +477,20 @@ class ExistingEquipment(ReleaseCase):
         self.assertIn(("hw/versions/v1/product.step", "release.missing"),
                       {(item["path"], item.get("code")) for item in report["findings"]})
 
+    def test_a_failed_product_subset_in_the_readback_packet_refuses(self) -> None:
+        """cad-model check fails every cad.readback outcome when product_exports fails; the release gate reads them."""
+        def failed_subset(packet: dict[str, Any]) -> None:
+            for row in packet["outcomes"]:
+                if row["obligation"].startswith("cad.readback@"):
+                    row.update(outcome="fail", uncertainty="product.step or product.glb is not the delivered product "
+                                                           "(product_exports)")
+            packet["result"] = "fail"
+        hw = self.project(before_build=add_clamp_post, product_step=PRODUCT_STEP, packet=failed_subset)
+        code, report = self.release(hw)
+        self.assertEqual(code, 1)
+        refused = [item["message"] for item in report["findings"] if item.get("code") == "release.acceptance"]
+        self.assertTrue(any("cad.readback@" in message for message in refused), refused)
+
     def test_a_product_without_existing_equipment_ships_its_assembly_step_and_no_mates(self) -> None:
         hw = self.project()
         self.assertEqual(self.release(hw)[0], 0)
