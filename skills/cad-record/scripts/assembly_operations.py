@@ -184,6 +184,12 @@ class AssemblyOperation:
         return self.acceptance in GEOMETRIC_ACCEPTANCE
 
     @property
+    def owes_access(self) -> bool:
+        """Whether an `assembly.access` check applies: a hold moves no part, so a tool-free hold has nothing to reach
+        (manufacturing_intent.required_checks applies the same rule)."""
+        return self.kind != "hold" or bool(self.tools)
+
+    @property
     def tool_names(self) -> tuple[str, ...]:
         return tuple(tool.name for tool in self.tools)
 
@@ -902,11 +908,14 @@ def _unit(state: AssemblyState, step: Step, unknown: list[str]) -> tuple[frozens
 
 
 def access_plan(operations: Operations, inventory: Any = None) -> tuple[AccessRequest, ...]:
-    """One AccessRequest per operation, from the declared sequence (see `sequence`)."""
+    """One AccessRequest per operation that owes an access check (all but a tool-free hold), from the declared
+    sequence (see `sequence`)."""
     state = sequence(operations, inventory)
     requests = []
     for step in state.steps:
         op = step.operation
+        if not op.owes_access:
+            continue
         unknown: list[str] = []
         travels = op.kind in JOINING or op.kind in ("close", "disassemble", "install")
         if travels and op.direction is None:

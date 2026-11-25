@@ -331,6 +331,21 @@ class GeometricAccessTests(unittest.TestCase):
         unknown = next(f for f in result["findings"] if f["code"] == "assembly.access_unknown")
         self.assertIn("is a name only", unknown["uncertainty"])
 
+    def test_a_tool_free_hold_owes_no_access_and_a_tool_on_it_is_checked(self) -> None:
+        valid = reordered(operations("blocked_socket.yaml", self.socket_sha),
+                          "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+        cure = {"id": "cure-bracket", "kind": "hold", "part": "TST-0105", "fixture": "bench clamp",
+                "orientation": [0, 0, 1], "duration": fx.known(fx.quantity(24, "h"))}
+        code, result, stderr = self.run_access(self.project("hold", [*valid, cure]), *self.parts_args())
+        self.assertEqual(code, 0, stderr)
+        self.assertNotIn("assembly.access@op:cure-bracket", self.outcomes(result))
+        self.assertEqual(self.outcomes(result)["assembly.order@op:cure-bracket"], "pass")
+        self.assertEqual((result["result"], result["complete"]), ("pass", True))
+        clamped = {**cure, "tools": ["spring clamp"]}
+        code, result, _ = self.run_access(self.project("clamped", [*valid, clamped]), *self.parts_args())
+        self.assertEqual(code, 1)
+        self.assertEqual(self.outcomes(result)["assembly.access@op:cure-bracket"], "unknown")
+
     def test_a_declared_insertion_path_is_travelled_leg_by_leg(self) -> None:
         """The screw slid in sideways above the cover, then down: the bracket blocks the first leg, though the
         default straight path down through the bracket hole is clear."""

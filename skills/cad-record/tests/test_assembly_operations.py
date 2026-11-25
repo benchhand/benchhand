@@ -474,8 +474,10 @@ class SubBuildTests(unittest.TestCase):
                             "only a hold has a duration")
 
     def test_the_cure_hold_sees_only_its_sub_build(self) -> None:
+        clamped = {**self.CURE, "tools": ["spring clamp"]}
+        items = [self.bond("mag-a"), self.bond("mag-b"), clamped, dict(self.INSTALL)]
         plan = {request.operation.id: request
-                for request in ops.access_plan(ops.normalize({"operations": self.items()}), self.inventory())}
+                for request in ops.access_plan(ops.normalize({"operations": items}), self.inventory())}
         cure = plan["cure-hanger"]
         self.assertEqual(cure.tool_obstacles, frozenset({"mag-a", "mag-b"}), "the housing is not there during the cure")
         install = plan["install-hanger"]
@@ -551,6 +553,21 @@ class SubBuildTests(unittest.TestCase):
         report = ops.check_order(ops.normalize({"operations": [typo, bond_b, cure, install]}), inventory)
         self.assertEqual(report.outcome("assembly.order@op:bond-mag-a")["outcome"], "unknown")
         self.assertEqual(report.findings, ())
+
+    def test_a_tool_free_hold_owes_no_access_check_and_a_tool_on_it_does(self) -> None:
+        hold = {"id": "cure", "kind": "hold", "part": "TST-0001", "duration": fx.known(fx.quantity(24, "h")),
+                "fixture": "bench cure jig", "orientation": [0, 0, 1]}
+        for label, item, owed in (("tool-free", hold, False), ("named tool", {**hold, "tools": ["spring clamp"]}, True),
+                                  ("declared tool", {**hold, "tool_access": [{"tool": "spring clamp"}]}, True)):
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                documents = fx.tst_record()
+                documents["assembly.yaml"]["operations"].append(item)
+                record = intent.load_record(fx.write_record(Path(directory) / "hw", documents))
+                access = {o.id for o in intent.required_checks(record) if o.family == "assembly.access"}
+                self.assertEqual("assembly.access@op:cure" in access, owed)
+                planned = {r.operation.id for r in ops.access_plan(ops.normalize(documents["assembly.yaml"]))}
+                self.assertEqual("cure" in planned, owed, "the access plan and the obligations agree")
+                self.assertIn("fit_bearing", planned)
 
     def test_a_cure_figure_without_a_datasheet_source_fails(self) -> None:
         for name, cure in (("supplier time", {"time": sourced(24, "h", [{"kind": "supplier", "reference": "email"}])}),
