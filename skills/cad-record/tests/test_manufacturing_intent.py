@@ -598,6 +598,7 @@ TST_RECORD_OBLIGATIONS = (
     'cad.glb_step_agreement@TST-0001',
     'cad.glb_step_agreement@TST-0002',
     'cad.glb_step_agreement@TST-0004',
+    'cad.product_exports@product',
     'cad.readback@TST-0001',
     'cad.readback@TST-0002',
     'cad.readback@TST-0004',
