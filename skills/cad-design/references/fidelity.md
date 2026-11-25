@@ -65,17 +65,30 @@ These form examples do not define material/process combinations or universal lim
 
 ## Joint mating geometry
 
-From F1, `form_check.py` checks each joint end for the geometry that mates it. The part's geometry counts, not its sourcing. A made, bought or existing part passes with a bore or a shaft on the joint axis. The cylinder axis is parallel to the joint axis and passes within `--joint-tol` (0.05 mm) of the joint origin. Of the cylinders on the axis, the check names the bore and shaft pair with the closest radii, so a roller on a stub axle names its bore, not its outside. The joint's `parts` row gives `kind` (`bore` or `shank`), `radius` and `offset_mm`.
+From F1, `form_check.py` checks each joint end for the geometry that mates it. The part's geometry counts, not its sourcing. A made, bought or existing part passes with a bore or a shaft on the joint axis. The cylinder axis is parallel to the joint axis and passes within `--joint-tol` (0.05 mm) of the joint origin.
+
+An edge fillet rounds a corner, so it never counts. Such a fillet is a convex blend of radius 10 mm or less that turns through 120° or less. A partial journal still counts: a half bore, or a D-shaft whose face turns through more than 120°. Of the cylinders on the axis, the check names the bore and shaft pair with the closest radii. A roller on a stub axle therefore reports its bore. The joint's `parts` row gives `kind` (`bore` or `shank`), `radius` and `offset_mm`.
 
 A fixed joint between parts mounted flat, such as a head bolted to a deck, may have no cylinder on its axis. Such a joint passes by face contact instead. The contact needs:
 
-- one planar face on each part, with opposite normals
-- planes within `--joint-tol`
-- an overlap of at least 0.01 mm²
+- one planar face on each part, with normals opposite to within 1e-4 rad
+- an overlap of at least 0.01 mm² once the child face is laid on the parent face's plane
+- a separation within `--joint-tol` across the whole overlap, so a slight tilt counts at the overlap's far edge
+- the contact at the joint, as described below
 
-Its row gives `kind: face`, `offset_mm` (the gap) and `area_mm2` (the overlap). Revolute and prismatic joints still need a cylinder.
+The joint's datum plane runs through the joint origin, normal to the joint axis. The contact is at the joint when this plane meets the overlap within `--joint-tol`. A datum framed on the mounting face, its axis along the face normal, passes when it lies in the contact.
 
-An end with neither is a blocking `joint_bore_missing` finding. Its `nearest` field holds the closest cylinder on the axis. On a fixed joint, its `contact` field holds the closest facing pair within 1 mm, or null.
+An offset datum passes when it cuts through the contact. For example, a V6 head joint is framed on the crank axis, with its axis along the deck. The joint axis itself need not touch the contact. Contact far from the joint fails, even when the faces touch.
+
+The row gives `kind: face` and three values, each compared with the tolerance before rounding:
+
+- `offset_mm`, the largest separation
+- `area_mm2`, the overlap
+- `datum_mm`, the distance from the datum plane, 0 when the plane meets the overlap
+
+Revolute and prismatic joints still need a cylinder.
+
+An end with neither is a blocking `joint_bore_missing` finding. Its `nearest` field holds the closest cylinder on the axis. On a fixed joint, its `contact` field holds the closest facing pair within 1 mm, or null. When the kernel cannot compute a face overlap, the contact is unknown, not empty. The result is a blocking `joint_contact_unknown` finding with `status: unknown` and the `reason`, and the end's row reads `kind: unknown`.
 
 ## Render self-check: appearance only
 

@@ -71,12 +71,19 @@ Checks (each failure is one `findings` entry):
                             loose fillet edges (0.01 to 0.1 mm tolerance) move it ~1e-5
     joint_bore_missing      F1+: a joint endpoint (made, bought or existing) without mating geometry: no
                             cylinder face, a bore (concave) or a shank (convex), whose axis is parallel to
-                            the joint axis and passes within --joint-tol of the joint origin. The joint's
-                            `parts` row names the kind found. A fixed joint's endpoint without one mates by
-                            face contact instead (`kind: face`, a flat mount): a planar face of each part,
-                            outward normals opposite, planes within --joint-tol and overlapping by at least
-                            0.01 mm2 (offset_mm, area_mm2). Its finding names the nearest such pair within
-                            1 mm (`contact`, else null)
+                            the joint axis and passes within --joint-tol of the joint origin. An edge blend
+                            (a convex fillet, see blend_faces) is no mating cylinder. The joint's `parts`
+                            row names the kind found. A fixed joint's endpoint without one mates by face
+                            contact instead (`kind: face`, a flat mount): a planar face of each part,
+                            outward normals opposite within 1e-4 rad, the child face laid on the parent's
+                            plane overlapping it by at least 0.01 mm2 (area_mm2), the largest separation
+                            across that overlap within --joint-tol (offset_mm), and the joint's datum plane
+                            (through the origin, normal to the axis) meeting the overlap within --joint-tol
+                            (datum_mm): it lies in a datum normal to the contact and cuts an offset one.
+                            Its finding names the nearest such pair within 1 mm (`contact`, else null)
+    joint_contact_unknown   F1+: a fixed joint's face-contact Boolean failed in the kernel, so the contact
+                            is unknown (`status: unknown`, `reason`), not missing; its `parts` row reads
+                            `kind: unknown`
     block_like              F2+, made solid parts only: (axis_planar_fraction >= 0.80 or
                             blend_faces + freeform_faces == 0), with both OBB exemptions
     min_wall                F2+, a process with a minimum (the resolved fdm value, or the override):
@@ -90,7 +97,7 @@ Checks (each failure is one `findings` entry):
 
     The form checks (block_like, min_wall, min_wall_unmeasured, min_wall_limit_unknown, fdm_exterior_radius,
     cnc_internal_radius) are universal heuristics: diagnostics with `blocking: false` (decision 3).
-    Only brep_invalid, step_readback and joint_bore_missing carry `blocking: true`.
+    Only brep_invalid, step_readback, joint_bore_missing and joint_contact_unknown carry `blocking: true`.
 
 stdout: JSON in the tool-result envelope (cad-record emit.py) whose payload is {status, fidelity, parts, joints, findings[, version, manufacturing]}; `manufacturing` holds
 the packet's status, complete, bundle, outcome counts, open obligations and its major and critical
