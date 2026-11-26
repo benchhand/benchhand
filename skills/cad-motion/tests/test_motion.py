@@ -528,6 +528,18 @@ class PairRequirementTests(unittest.TestCase):
         self.assertEqual(self.policy.allowed_pairs(fits, []), {("TST-0201", "arm-a")})
         self.assertEqual(self.policy.fitted_pairs(fits), {("TST-0201", "arm-a"), ("TST-0201", "arm-b"), ("arm-a", "arm-b")})
 
+    def test_a_compliant_fit_whose_limits_span_clearance_and_interference_still_allows_its_overlap(self) -> None:
+        # hole +0.3/0, shaft +0.6/-0.2 on 22: clearance -0.6..+0.5, a transition, ribs crushing up to 0.6
+        ribs = {"id": "IF-001", "from": "a", "to": "b", "type": "mounting", "description": "Seats.",
+                "limits": {"press_fit": {"pair": ["@arm-a", "TST-0201"], "nominal_mm": 22, "compliance": "crush_rib",
+                                         "source": {"kind": "user", "reference": "crush-rib seat", "origin": "lead"},
+                                         "deviations": {"units": "mm", "hole": {"upper": 0.3, "lower": 0},
+                                                        "shaft": {"upper": 0.6, "lower": -0.2}}}}}
+        fits = self.policy.declared_press_fits(Path("hw"), [ribs], assembly_of(GAP_YAML))
+        self.assertEqual([(f["classification"], f["compliance"], f["max_interference_mm"]) for f in fits],
+                         [("transition", "crush_rib", 0.6)])
+        self.assertEqual(self.policy.allowed_pairs(fits, []), {("TST-0201", "arm-a")})
+
     def test_a_running_fit_on_one_occurrence_twice_is_refused(self) -> None:
         twice = {"id": "IF-001", "from": "a", "to": "b", "type": "motion", "description": "Pivots.",
                  "limits": {"running_fit": {"fit": "5 f7", "pair": ["TST-0202", "@arm-p"]}}}

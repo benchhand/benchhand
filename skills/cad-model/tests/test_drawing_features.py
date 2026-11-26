@@ -238,6 +238,20 @@ class FitEndpointsAndHeatSets(unittest.TestCase):
                          "an unmeasured overlap is stated, never a silent pass and never a blocker")
         self.assertIn("not measured", unmeasured["compliant_fits"][0]["reason"])
 
+    def test_a_compliant_transition_fit_allows_its_overlap_up_to_its_maximum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_interfaces(Path(tmp), (
+                "      press_fit: {nominal_mm: 22, compliance: crush_rib, pair: [TST-0002, TST-0001],\n"
+                "                  deviations: {units: mm, hole: {upper: 0.3, lower: 0}, shaft: {upper: 0.6, lower: -0.2}},\n"
+                "                  source: {kind: user, reference: crush-rib bearing seat, origin: lead}}\n"))
+            ribs = check.declared_press_fits(Path(tmp))
+        self.assertEqual([(f["classification"], f["max_interference_mm"]) for f in ribs], [("transition", 0.6)])
+        within = self.compliant_check(ribs, 40.0, 0.5)
+        self.assertEqual((within["status"], within["pairs"][0]["allowed"], within["compliant_fits"][0]["outcome"]),
+                         ("pass", True, "pass"))
+        beyond = self.compliant_check(ribs, 60.0, 0.8)
+        self.assertEqual([f["type"] for f in beyond["declared_fit_findings"]], ["compliant_fit_overlap_exceeded"])
+
     def test_a_plain_language_press_fit_is_a_check_finding_not_a_usage_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             write_interfaces(Path(tmp), "      press_fit: {fit: 'interference 0 to 1.013 mm, crush ribs', pair: [TST-0002, TST-0001]}\n")
