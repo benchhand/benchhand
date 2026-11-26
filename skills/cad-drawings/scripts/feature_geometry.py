@@ -351,7 +351,8 @@ class Binding:
         """The binding without its failed features, so no lookup of a feature's faces meets an empty or partial one.
         The findings stay: each failed feature is still named there."""
         failed = self.failed()
-        return Binding({i: f for i, f in self.features.items() if i not in failed}, self.owner, self.findings)
+        return Binding({i: f for i, f in self.features.items() if i not in failed},
+                       {face: owner for face, owner in self.owner.items() if owner not in failed}, self.findings)
 
 
 def resolve(locators: Mapping[str, Mapping[str, Any]], bound: Mapping[str, Sequence[Sequence[int]]],
