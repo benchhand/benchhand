@@ -283,6 +283,25 @@ def drop_collisions(plan: list[str], present: set[str], lead: dict[str, str], co
         plan = [path for path in plan if path not in clashing]
 
 
+def remove_synced(scratch_hw: Path, path: str) -> None:
+    """Delete a path the lead retired, then the directories that leaves empty (never `scratch_hw` itself)."""
+    target = scratch_hw / path
+    target.unlink(missing_ok=True)
+    for parent in target.parents:
+        if parent == scratch_hw or any(parent.iterdir()):
+            break
+        parent.rmdir()
+
+
+def install_synced(hw: Path, scratch_hw: Path, path: str, lead_digest: str, mine_digest: str | None) -> str:
+    """Put the lead's file in the scratch copy unless it already matches; return the digest of what is there."""
+    if mine_digest == lead_digest:
+        return lead_digest
+    target = scratch_hw / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return copy_bytes(hw / path, target)
+
+
 def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     """Bring the lead's current record into the workspace: parts the lead retired, other units' deliveries
     and the lead's edits to shared files. A file the unit has not touched takes the lead's version and
@@ -313,22 +332,13 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
         plan.append(path)
     plan = drop_collisions(plan, set(mine), lead, conflicts)
     for path in plan:
-        target = scratch_hw / path
         if path not in lead:
-            target.unlink(missing_ok=True)
-            for parent in target.parents:
-                if parent == scratch_hw or any(parent.iterdir()):
-                    break
-                parent.rmdir()
+            remove_synced(scratch_hw, path)
             removed.append(path)
             base.pop(path, None)
-            continue
-        digest = lead[path]
-        if mine.get(path) != digest:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            digest = copy_bytes(hw / path, target)
-        (modified if path in base else added).append(path)
-        base[path] = digest
+        else:
+            (modified if path in base else added).append(path)
+            base[path] = install_synced(hw, scratch_hw, path, lead[path], mine.get(path))
     (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
     report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
               "added": added, "modified": modified, "removed": removed, "conflicts": sorted(conflicts),
