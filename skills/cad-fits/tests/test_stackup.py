@@ -301,6 +301,16 @@ class IntentStackContractTests(unittest.TestCase):
         self.assertIn("designed deformation of the compliant part", finding["measured"]["text"])
         self.assertTrue(any("rigid press-fit seat qualification does not apply" in text for text in result["limits"]))
 
+    def test_an_invalid_compliant_press_fit_waives_nothing(self) -> None:
+        stack = fixture("closing_gap.yaml")
+        stack["requirement"]["min"] = -1.0
+        documents = closing_gap_documents()
+        reversed_band = {**self.CRUSH_RIBS, "interference": {"min": 1.013, "max": 0, "units": "mm"}}
+        documents["interfaces.yaml"]["interfaces"][0]["limits"] = {"press_fit": reversed_band}
+        result = self.bound(documents, stack, "closing-gap")
+        self.assertEqual((result["outcome"], codes(result)), ("unknown", ["stack.press_fit_unknown"]))
+        self.assertIn("interference.min 1.013 mm is above interference.max 0 mm", result["findings"][0]["measured"]["reason"])
+
     def test_a_contributor_takes_its_bounds_from_explicit_fit_limits(self) -> None:
         stack = fixture("closing_gap.yaml")
         housing = contributor(stack, "H")

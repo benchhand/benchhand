@@ -302,8 +302,9 @@ class GeometricAccessTests(unittest.TestCase):
         path = next(f for f in result["findings"] if f["code"] == "assembly.part_path_blocked")
         self.assertIn("TST-0103", path["consequence"])
 
-    def test_a_malformed_running_or_locating_fit_is_an_input_error_though_it_never_exempts(self) -> None:
-        """A misspelled key gets the reader's input error, as it did before this fit kind lost its exemption."""
+    def test_a_misspelled_running_or_locating_fit_is_reported_invalid_and_never_exempts(self) -> None:
+        """A misspelled key makes the fit invalid (cad-model check's and validate's finding, exit 1), not an input
+        error: access lists it and assesses the paths without it."""
         typos = {"running_fit": {"fit": "5 f7", "pairs": ["TST-0103", "TST-0104"]},
                  "locating_fit": {"fitt": "5 H7/f7", "pair": ["TST-0103", "TST-0104"]}}
         for kind, declaration in typos.items():
@@ -315,8 +316,11 @@ class GeometricAccessTests(unittest.TestCase):
                 proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw),
                                        *self.parts_args(), *attach], capture_output=True, text=True, timeout=1800,
                                       check=False)
-                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
-                self.assertIn(f"interfaces.yaml#/interfaces/1/limits/{kind}", proc.stderr)
+                self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
+                listed = json.loads(proc.stdout)["detail"]["invalid_fits"]
+                self.assertEqual([(f["kind"], f["source"]) for f in listed],
+                                 [(kind, f"interfaces.yaml#/interfaces/1/limits/{kind}")])
+                self.assertIn("unknown key", listed[0]["error"])
 
     def test_a_tool_known_by_name_only_keeps_access_unknown(self) -> None:
         items = reordered(operations("blocked_socket.yaml", self.socket_sha),
@@ -432,7 +436,8 @@ class EngagementAccessTests(unittest.TestCase):
                                str(self.root / "geometry" / pin / "parts"), *attach],
                               capture_output=True, text=True, timeout=1800, check=False)
         self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
-        rows = {row["obligation"]: row["outcome"] for row in json.loads(proc.stdout)["outcomes"]}
+        self.result = json.loads(proc.stdout)
+        rows = {row["obligation"]: row["outcome"] for row in self.result["outcomes"]}
         return rows["assembly.access@op:insert-pin"]
 
     @staticmethod
@@ -467,6 +472,19 @@ class EngagementAccessTests(unittest.TestCase):
         for length, expected in ((8.0, "pass"), (7.5, "fail"), (None, "unknown")):
             with self.subTest(engagement_length_mm=length):
                 self.assertEqual(self.outcome(f"heat-set-{length}", "press", heat_set(length)), expected)
+
+    def test_an_invalid_press_fit_exempts_nothing_and_is_reported(self) -> None:
+        """An 8 mm engagement exempts the press pin when its fit is valid; a fit cad-fits cannot read exempts none."""
+        invalid = {"plain language": {"fit": "10 press fit to vendor limits"},
+                   "reversed band": {"nominal_mm": 10, "interference": {"min": 0.05, "max": 0.01, "units": "mm"},
+                                     "source": {"kind": "user", "reference": "seat", "origin": "lead"}}}
+        for name, form in invalid.items():
+            with self.subTest(name):
+                press = {**form, "pair": [PIN, SLEEVE], "engagement_length_mm": 8.0}
+                self.assertEqual(self.outcome(f"invalid-{name}", "press", {"press_fit": press}), "fail")
+                self.assertEqual([(f["kind"], f["interface"]) for f in self.result["detail"]["invalid_fits"]],
+                                 [("press_fit", "IF-002")])
+                self.assertIn("accepted forms", self.result["detail"]["invalid_fits"][0]["error"])
 
     def test_a_locating_fit_on_the_same_pair_neither_enlarges_nor_erases_the_press_fit_cap(self) -> None:
         cases = (("longer", self.press(7.5), self.locating(20.0), "fail"),
