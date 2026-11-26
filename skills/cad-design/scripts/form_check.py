@@ -80,10 +80,12 @@ Checks (each failure is one `findings` entry):
                             the parent's plane overlapping it by at least 0.01 mm2 (area_mm2), the largest
                             separation across the patch within --joint-tol (offset_mm), the joint's datum
                             plane (through the origin, normal to the axis) meeting the patch (datum_mm),
-                            and the patch tied to the joint (locator, locator_mm): a declared mount.point
-                            on it; else a face-normal joint's origin on it; else the origin's projection
-                            along the contact normal inside its outline. Each within --joint-tol, compared
-                            unrounded. Its finding names the nearest such patch (`contact`, else null)
+                            and the patch tied to the joint (locator, locator_mm), each checked on its own:
+                            a declared mount.point on it; else a face-normal joint's origin on it; else the
+                            origin's projection along the contact normal inside its outline, at most 20 mm
+                            from the contact (opening_mm). Each within --joint-tol, compared unrounded. An
+                            edge blend's tangent supports count by surface. Its finding names the nearest
+                            such patch (`contact`, else null)
     joint_contact_unknown   F1+: a fixed joint's face contact is unknown (`status: unknown`, `reason`), not
                             missing: an overlap Boolean failed in the kernel (cad-model occ.boolean), or a
                             contact on the datum plane misses only its locator and no mount.point is

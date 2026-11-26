@@ -67,7 +67,7 @@ These form examples do not define material/process combinations or universal lim
 
 From F1, `form_check.py` checks each joint end for the geometry that mates it. The part's geometry counts, not its sourcing. A made, bought or existing part passes with a bore or a shaft on the joint axis. The cylinder axis is parallel to the joint axis and passes within `--joint-tol` (0.05 mm) of the joint origin.
 
-Adjoining faces on one axis line with one radius count as one cylinder, however the kernel splits the surface. An edge fillet rounds a corner, so it never counts. The check finds one as a convex cylinder that meets two or more faces tangentially, none of them on its own axis. A partial journal still counts: a half bore, a D-shaft, or a shaft between coaxial shoulder fillets.
+Adjoining faces on one axis line with one radius count as one cylinder, however the kernel splits the surface. An edge fillet rounds a corner, so it never counts. The check finds one as a convex cylinder that meets two or more distinct surfaces tangentially, none of them on its own axis. Fragments of one plane or one cylinder count as one surface. A partial journal still counts: a half bore, a D-shaft, or a shaft between coaxial shoulder fillets.
 
 Of the cylinders on the axis, the check names the bore and shaft pair with the closest radii. A roller on a stub axle therefore reports its bore. The joint's `parts` row gives `kind` (`bore` or `shank`), `radius` and `offset_mm`.
 
@@ -81,9 +81,11 @@ A fixed joint between parts mounted flat, such as a head bolted to a deck, may h
 
 The locator is the first of these that applies:
 
-1. `mount`: a declared `mount: {point: [x, y, z]}` on the joint, in assembly mm, must lie on the patch.
+1. `mount`: a declared `mount: {point: [x, y, z]}` on the joint, in assembly mm, must lie on the patch. The datum plane check still applies to that patch.
 2. `origin`: on a face-normal joint, its axis along the contact normal, the joint origin must lie on the patch.
-3. `projection`: on an offset joint, the origin's projection along the contact normal must fall inside the patch's outline. An opening in the patch, such as a head's bore, still counts as inside.
+3. `projection`: on an offset joint, the origin's projection along the contact normal must fall inside the patch's outline. It may sit in an opening of the patch, such as a head's bore, at most 20 mm from the contact.
+
+The 20 mm allowance covers a bore or bolt opening up to Ø40 in a mounting face. A V6 head's cylinder opening puts the projection 13 mm from its contact. In a wider opening the contact is only a rim around the point, and the geometry cannot tie it to the joint. Such a mount declares `mount.point`.
 
 A V6 head joint is an offset joint: its frame sits on the crank axis, with its axis along the deck. The origin projects onto the deck inside the head's gasket outline. Each value must be within `--joint-tol`, compared before rounding. A face pair is skipped only when the child face's bounding box lies wholly more than 1 mm from the parent plane.
 
@@ -93,6 +95,7 @@ The row gives `kind: face` and these values:
 - `area_mm2`, the patch area
 - `datum_mm`, the distance from the datum plane, 0 when the plane meets the patch
 - `locator` and `locator_mm`, the rule used and how far the point lies from the patch or outline
+- `opening_mm`, for a projection only: how far the projected point lies from the contact itself
 
 Revolute and prismatic joints still need a cylinder.
 
