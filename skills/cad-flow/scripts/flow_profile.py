@@ -274,7 +274,7 @@ def _flow_node(text: str) -> tuple[Any, Any]:
 
 
 def _require_flow_keys(node: Any) -> None:
-    if not isinstance(node, yaml.MappingNode):
+    if not isinstance(node, yaml.MappingNode) or node.tag != "tag:yaml.org,2002:map":
         raise FlowFinding("flow: expected a mapping")
     seen: set[str] = set()
     for key, _ in node.value:
@@ -294,21 +294,11 @@ def _require_flow_shape(flow: Mapping[str, Any]) -> None:
             raise FlowFinding(f"{field}: {problem.message}")
 
 
-def _with_inline_flow(text: str, flow: Mapping[str, Any]) -> str | None:
+def _with_inline_flow(text: str, node: Any, profile: Mapping[str, Any]) -> str:
     """Splice the profile into an inline flow without rewriting its siblings."""
-    root = yaml.compose(text, Loader=yaml.SafeLoader)
-    if not isinstance(root, yaml.MappingNode):
-        return None
-    for key, value in reversed(root.value):
-        if not isinstance(key, yaml.ScalarNode) or key.value != "flow":
-            continue
-        if not isinstance(value, yaml.MappingNode) or not value.flow_style or value.start_mark.index < key.end_mark.index:
-            raise ProfileError("product.yaml flow is not a directly editable mapping")
-        rendered: str = yaml.dump(_quoted(flow["profile"]), Dumper=_Dumper, sort_keys=False,
-                                  default_flow_style=True, allow_unicode=True,
-                                  width=4096)
-        return _splice_inline_profile(text, value, rendered.rstrip("\n"))
-    return None
+    rendered: str = yaml.dump(_quoted(profile), Dumper=_Dumper, sort_keys=False, default_flow_style=True,
+                              allow_unicode=True, width=4096)
+    return _splice_inline_profile(text, node, rendered.rstrip("\n"))
 
 
 def _splice_inline_profile(text: str, node: Any, rendered: str) -> str:
@@ -329,16 +319,14 @@ def _splice_inline_profile(text: str, node: Any, rendered: str) -> str:
     return text[:at] + f"profile: {rendered}{separator}" + text[at:]
 
 
-def with_profile(text: str, flow: Mapping[str, Any]) -> str:
-    """`text` (product.yaml, \\n newlines) with `flow.profile` replaced, adding `flow` when absent."""
-    profile = flow["profile"]
+def with_profile(text: str, key: Any, node: Any, profile: Mapping[str, Any]) -> str:
+    """Set `flow.profile` using the parsed mapping's style."""
+    if node.start_mark.index < key.end_mark.index:
+        raise FlowFinding("flow: edit the mapping directly, not through an alias")
+    if node.flow_style:
+        return _with_inline_flow(text, node, profile)
     lines = text.splitlines(keepends=True)
-    start = next((i for i, line in enumerate(lines) if re.match(r"^flow:\s*(#.*)?$", line)), None)
-    if start is None:
-        if (inline := _with_inline_flow(text, flow)) is not None:
-            return inline
-        prefix = text if not text or text.endswith("\n") else text + "\n"
-        return prefix + "flow:\n" + _dump({"profile": profile}, 2)
+    start = key.start_mark.line
     end = next((i for i in range(start + 1, len(lines)) if _content(lines[i]) and _indent_of(lines[i]) == 0), len(lines))
     children = [line for line in lines[start + 1:end] if _content(line)]
     column = _indent_of(children[0]) if children else 2
@@ -455,7 +443,7 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
     try:
-        _, node = _flow_node(text)
+        key, node = _flow_node(text)
         _require_flow_keys(node)
         product = yaml_loader.safe_load(text)
     except (yaml.YAMLError, ValueError) as error:
@@ -467,12 +455,12 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
     _require_flow_shape(expected["flow"])
     try:
-        after = with_profile(text, expected["flow"])
+        after = with_profile(text, key, node, profile)
         edited = yaml_loader.safe_load(after)
     except yaml.YAMLError as error:
-        raise ProfileError(f"{path}: cannot edit flow: {error}") from error
+        raise FlowFinding(f"flow.profile: cannot edit {path}: {error}") from error
     if edited != expected:
-        raise ProfileError(f"{path}: the textual edit would not give the intended data; simplify its flow block")
+        raise FlowFinding(f"flow.profile: the edit would change other data in {path}")
     try:
         _replace(path, after, newline)
     except OSError as error:
