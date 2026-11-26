@@ -460,6 +460,12 @@ JOINT_GEOMETRY_PARTS = {
     "TST-0626": (FDM_MADE, "cq.Workplane().circle(100).circle(90).extrude(6).translate((0, 0, 5))"),  # a ring: inner r 90
     # A V6-like head: a 36 mm plate whose Ø26 bore opening is centred on the origin's projection, 13 mm from the contact.
     "TST-0627": (FDM_MADE, "cq.Workplane().box(36, 36, 6).faces('>Z').workplane().hole(26).translate((0, 0, 8))"),
+    # An R20 half-shaft on a web: its one tangent support, the plane x = -20, is left as two faces split at z = 0.
+    "TST-0628": (FDM_MADE, "cq.Workplane().circle(20).extrude(30).translate((0, 0, -15))"
+                           ".intersect(cq.Workplane().box(40, 20, 30).translate((0, 10, 0)))"
+                           ".union(cq.Workplane().box(80, 10, 15).translate((20, -5, -7.5)), clean=False)"
+                           ".union(cq.Workplane().box(80, 10, 15).translate((20, -5, 7.5)), clean=False)"),
+    "TST-0629": (BOUGHT, "cq.Workplane().box(60, 60, 10).faces('>Z').workplane().hole(40)"),
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -502,6 +508,7 @@ joints:
 - {id: J-630, type: fixed, parent: TST-0605, child: TST-0624, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
 - {id: J-632, type: fixed, parent: TST-0625, child: TST-0626, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
 - {id: J-633, type: fixed, parent: TST-0605, child: TST-0627, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
+- {id: J-634, type: revolute, parent: TST-0629, child: TST-0628, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 """
 
 
@@ -589,6 +596,12 @@ class JointGeometryTests(unittest.TestCase):
         self.assertEqual(self.missing("J-628"), {})
         found = self.found("J-628")["TST-0622"]
         self.assertEqual((found["kind"], found["radius"], found["offset_mm"]), ("shank", 5.0, 0.0))
+
+    def test_a_half_shaft_with_one_split_tangent_support_mates(self) -> None:
+        """Its two fragments of the plane x = -20 are one tangent surface, so the R20 shank is no edge blend."""
+        self.assertEqual(self.missing("J-634"), {})
+        found = self.found("J-634")["TST-0628"]
+        self.assertEqual((found["kind"], found["radius"], found["offset_mm"]), ("shank", 20.0, 0.0))
 
     def test_face_contact_far_from_the_joint_fails(self) -> None:
         """The pad sits flush on the deck, but the joint's datum plane (x = 1000) is 990 mm from the contact."""
