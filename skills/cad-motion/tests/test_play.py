@@ -21,7 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 HERE = Path(__file__).resolve().parent
 SKILLS = HERE.parents[1]
@@ -130,6 +130,28 @@ class PlayBoundsTests(unittest.TestCase):
         self.assertEqual(shifted.transforms(shifted.complete({"J-001": 90.0}))["TST-0202"].apply((10.0, 0.0, 0.0)),
                          chain.transforms(chain.complete({"J-001": 90.0}))["TST-0202"].apply((10.0, 0.0, 0.5)),
                          "the offset sits in the parent's frame: the child keeps its motion")
+
+
+class PlayLimitTests(unittest.TestCase):
+    """A scenario pose outside a joint limit is not measured: its limit finding is reported, never dropped."""
+
+    def test_a_case_whose_every_pose_a_joint_limit_skips_is_unknown_and_names_the_limit(self) -> None:
+        chain = play.pose.build_chain([joint()], ["TST-0201", "TST-0202"])
+        samples = [play.sweep.Sample(0, "case:reach#0", {"J-001": 90.0}, {"J-001": 90.0})]  # J-001 stops at 20 deg
+        session = Mock()
+        session.measure.return_value = []
+        evaluator = play.Evaluator(session, set(), set(), {}, Mock(), [("TST-0201", "TST-0202")])
+        nominal = evaluator.run(chain, "nominal", samples, {"TST-0202"})
+        report = nominal.report()
+        self.assertEqual((report["status"], report["samples_skipped_by_limits"]), ("unknown", 1))
+        self.assertEqual([(f["joint"], f["value"]) for row in report["limit_findings"] for f in row["findings"]],
+                         [("J-001", 90.0)])
+        entry = play.Assessment("IF-001", joint=chain.joint("J-001"), nominal=nominal)
+        self.assertEqual(entry.outcome, "unknown")
+        [found] = play.play_findings(entry, "motion.play@IF-001")
+        self.assertEqual((found["code"], found["outcome"]), ("motion.play_unknown", "unknown"))
+        self.assertIn("no pose evaluated", found["uncertainty"])
+        self.assertIn("J-001 value 90.0 deg is outside [-20.0, 20.0]", found["uncertainty"])
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the play geometry and run play.py")
