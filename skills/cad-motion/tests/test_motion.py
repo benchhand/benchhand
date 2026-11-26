@@ -140,6 +140,18 @@ class KinematicsTests(unittest.TestCase):
         chain = pose.build_chain([joint("J-001", "prismatic", "TST-0001", "TST-0002", (2, 0, 0), (0, 0, 0), 0, 50)])
         assert_close(self, chain.transforms({"J-001": 30.0})["TST-0002"].apply((1.0, 2.0, 3.0)), (31.0, 2.0, 3.0))
 
+    def test_only_a_fixed_joint_takes_a_mount_point(self) -> None:
+        """As assembly.schema.json: an absent mount is none; a present one, null included, must be {point: [x, y, z]}
+        on a fixed joint."""
+        base = {"id": "J-001", "parent": "TST-0001", "child": "TST-0002", "axis": [0, 0, 1], "origin": [0, 0, 0],
+                "min": 0, "max": 0, "nominal": 0}
+        self.assertIsNone(pose.make_joint({**base, "type": "fixed"}).mount)
+        self.assertEqual(pose.make_joint({**base, "type": "fixed", "mount": {"point": [1, 2, 3]}}).mount, (1.0, 2.0, 3.0))
+        for kind, mount in (("revolute", {"point": [1, 2, 3]}), ("prismatic", {"point": [1, 2, 3]}), ("fixed", None),
+                            ("fixed", {}), ("fixed", {"point": [1, 2, 3], "face": 1}), ("fixed", {"point": [1, 2]})):
+            with self.subTest(kind=kind, mount=mount), self.assertRaisesRegex(pose.MotionError, "J-001.*mount"):
+                pose.make_joint({**base, "type": kind, "mount": mount})
+
     def test_out_of_range_value_is_a_structured_finding(self) -> None:
         chain = planar_chain(j2_max=90.0)
         findings = chain.limit_findings(chain.complete({"J-002": 120.0}))
