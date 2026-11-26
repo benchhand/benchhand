@@ -41,6 +41,7 @@ acceptance = load("cad_record_acceptance_fixtures", ACCEPTANCE)
 evidence, fx = acceptance.evidence, acceptance.fx
 DAY = date(2026, 11, 19)  # the fixed UTC day of the gate decisions and of the stamp timestamp below
 LAYOUT_GATE = ("layout", "parts")  # the `gate:` front matter of the decision that approves the layout -> parts advance
+LAYOUT_BUILD = ("v1", "0" * 64)
 STAMP_TIME = "2026-11-19T10:00:00Z"
 LEGACY_PRODUCT = "id: test-project\nflow:\n  stage: {stage}\n  recheck_from: {threshold}\n"
 
@@ -220,6 +221,7 @@ class RecheckHookTests(unittest.TestCase):
         self.stage_product(flow_stage, recheck_from)
         if decision is not None:
             write_test_decision(self.root / "hw", "DR-001", status=decision, date=decided, title=title, gate=gate,
+                                gate_build=LAYOUT_BUILD if gate else None,
                                 context="Temporary until the full check: v1 passed fast checks 1-4.")
         self.git("add", "hw")
 
@@ -262,7 +264,7 @@ class RecheckHookTests(unittest.TestCase):
         self.assertIn("layout → parts", result.stderr)
         self.assertIn("hw/decisions", result.stderr)
 
-    def test_an_accepted_decision_dated_on_the_stamp_day_passes_the_advance(self) -> None:
+    def test_an_accepted_decision_for_the_checked_build_passes_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
@@ -330,7 +332,8 @@ class RecheckHookTests(unittest.TestCase):
 
     def test_a_gate_decision_among_other_decisions_passes_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted", title="Flow profile", gate=None)
-        write_test_decision(self.root / "hw", "DR-002", status="proposed", date=DAY, gate=LAYOUT_GATE)
+        write_test_decision(self.root / "hw", "DR-002", status="proposed", date=DAY, gate=LAYOUT_GATE,
+                            gate_build=LAYOUT_BUILD)
         self.git("add", "hw")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
