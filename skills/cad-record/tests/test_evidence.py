@@ -282,6 +282,24 @@ class UnknownNeverPasses(unittest.TestCase):
         self.assertNotIn(INSPECTION, analysis, "a physical test may stay planned until the release")
         self.assertIn(INSPECTION, {f.obligation for f in result.gate("release") if f.severity == "error"})
 
+    def test_a_qualified_ledger_pass_cannot_resolve_a_record_derived_unknown(self) -> None:
+        """The collision obligation (two policy obligations no id separates) and the use case are decided from the
+        record. A ledger pass that names one, current and qualified as for any other check, leaves it unknown."""
+        docs = fx.with_subject_occurrences(documents(), {"PN": "TST-0003"})
+        docs["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+            {"subject": {"PN": "TST-0003", "occurrence": ref}, "level": "physically_validated"} for ref in ("@left", "@right")]}
+        base = normalized(docs)
+        targets = {"collision": ("intent.obligation_identity@TST-0003", {"PN": "TST-0003"}),
+                   "use case": ("intent.use_case@product", {"product": True})}
+        for case, (ident, subject) in targets.items():
+            with self.subTest(case):
+                entry = acceptance.entry(base, "EV-001", subject, "process_planned", obligation=ident, version="v1",
+                                         manifest_sha256=V1)
+                result = assess(normalized(docs, [entry]))
+                self.assertEqual(result.statuses[ident].result, "unknown")
+                (refused,) = [f for f in result.findings if f.code == "evidence.record_derived"]
+                self.assertEqual(refused.obligation, ident)
+
     def test_a_verification_csv_pass_is_not_evidence(self) -> None:
         docs = documents()
         record = normalized(docs)
