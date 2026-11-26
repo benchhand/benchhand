@@ -165,10 +165,12 @@ APPLICABILITY = "flow.applicability"
 @dataclass(frozen=True)
 class FdmApplicability:
     """Whether the FDM start questions apply: yes (FDM is planned), no (the record rules FDM out) or unknown
-    (it does not yet). `unresolved` names each field that leaves it unknown."""
+    (it does not yet). `unresolved` names each field that leaves it unknown; `malformed` names each record
+    that cannot be read as a plan or a part, which also leaves it unknown and blocks."""
 
     state: str
     unresolved: tuple[Problem, ...] = ()
+    malformed: tuple[Problem, ...] = ()
 
     @property
     def asks(self) -> bool:
@@ -181,8 +183,16 @@ def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicabilit
     route. It is ruled out only by a declared plan without it or by parts whose routes are all known; no plan
     and no part, or a part whose route is unknown, leaves it unknown. `parts` are the parsed part records by PN."""
     plan = _mapping(_mapping(product).get("manufacturing")).get("processes")
+    malformed = []
+    if plan is not None and not (isinstance(plan, list) and plan and all(isinstance(item, str) for item in plan)):
+        malformed.append(Problem("manufacturing/processes", "manufacturing.processes is not a non-empty list of process names",
+                                 "write the planned processes as a list, for example [cnc]", APPLICABILITY))
+    for number, part in parts.items():
+        if not isinstance(part, Mapping):
+            malformed.append(Problem(f"parts/{number}/part.yaml", f"parts/{number}/part.yaml is not a readable part record",
+                                     f"correct parts/{number}/part.yaml", APPLICABILITY))
     if (isinstance(plan, list) and "fdm" in plan) or any(_uses_fdm(_mapping(part)) for part in parts.values()):
-        return FdmApplicability(YES)
+        return FdmApplicability(YES, malformed=tuple(malformed))
     unresolved = []
     if plan is None and not parts:
         unresolved.append(Problem("manufacturing/processes", "manufacturing.processes is not declared and no part record "
@@ -194,7 +204,7 @@ def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicabilit
             unresolved.append(Problem(f"parts/{number}/intent/route", f"{number} intent.route is unknown, so FDM cannot "
                                       "be ruled out", f"plan the route of {number}, or declare manufacturing.processes",
                                       APPLICABILITY))
-    return FdmApplicability(UNKNOWN if unresolved else NO, tuple(unresolved))
+    return FdmApplicability(UNKNOWN if unresolved or malformed else NO, tuple(unresolved), tuple(malformed))
 
 
 # --- the gate -------------------------------------------------------------------------------------------------------
@@ -218,7 +228,8 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
         found.append(Problem("flow/profile/decision", f"flow.profile cites {decision}, which {why}",
                              "only the user's explicit approval records the answers: record them again with a new DR-###"))
     applicability = fdm_applicability(product, parts)
-    return found + asked_problems(profile, fdm=applicability.asks, unresolved=applicability.unresolved)
+    return found + list(applicability.malformed) + asked_problems(profile, fdm=applicability.asks,
+                                                                  unresolved=applicability.unresolved)
 
 
 def applicable_fields(profile: Mapping[str, Any], *, fdm: bool) -> list[str]:

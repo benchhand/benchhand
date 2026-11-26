@@ -168,6 +168,14 @@ class FlowFinding(ProfileError):
     """A field in product.yaml blocks recording the profile."""
 
 
+class ProfileFindings(ProfileError):
+    """Findings that name the record field or file that blocks the command (exit 1); nothing was written."""
+
+    def __init__(self, found: Iterable[Any]) -> None:
+        self.found = list(found)
+        super().__init__(gate.refusal(self.found))
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -183,14 +191,14 @@ def read_product(hw: Path) -> Any:
 
 
 def read_parts(hw: Path) -> dict[str, Any]:
-    """The part records under hw/parts/<PN>/part.yaml by PN. A part record that does not parse counts as no
-    part here; validate.py reports it."""
+    """The part records under hw/parts/<PN>/part.yaml by PN; one that does not parse is None, which the gate
+    reports as a malformed part record and never counts as a part that rules FDM out."""
     parts: dict[str, Any] = {}
     for path in sorted((Path(hw) / "parts").glob("*/part.yaml")):
         try:
             parts[path.parent.name] = yaml_loader.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, yaml.YAMLError):
-            continue
+            parts[path.parent.name] = None
     return parts
 
 
@@ -448,14 +456,25 @@ def _restore(path: Path, original: str) -> None:
         raise ProfileError(f"cannot restore {path} after a failed record: {error}") from error
 
 
-def _require_settled(answers: Mapping[str, Any], accepted: list[str], applicable: Iterable[str]) -> None:
+def _require_applicability(product: Any, parts: Mapping[str, Any]) -> Any:
+    """gate.fdm_applicability, raising ProfileFindings for a plan or part record that cannot be read."""
+    found = gate.fdm_applicability(product, parts)
+    if found.malformed:
+        raise ProfileFindings(found.malformed)
+    return found
+
+
+def _require_settled(answers: Mapping[str, Any], accepted: list[str], applicable: Iterable[str],
+                     unresolved: Iterable[Any] = ()) -> None:
     """Every applicable start question is answered or its default accepted, and none is both."""
     options = {field: option for option, field, _parse, _metavar in OPTIONS}
     if both := [options[field] for field in accepted if field in answers]:
         raise ProfileError(f"{', '.join(both)} answered and also accepted as the default; give one")
     if unasked := [options[field] for field in applicable if field not in answers and field not in accepted]:
+        why = "; ".join(item.message for item in unresolved)
+        note = f" ({why}, so the FDM questions are asked)" if why and any("fdm" in field for field in applicable) else ""
         raise ProfileError(f"ask the user {', '.join(unasked)} and answer it, or accept its default with --accept-default; "
-                           "nothing was recorded")
+                           f"nothing was recorded{note}")
 
 
 def _require_free(decisions: Path, number: int) -> None:
@@ -477,9 +496,10 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     accepted = list(accepted)
     if DECISION.fullmatch(decision) is None:
         raise ProfileError(f"--decision {decision!r} is not DR-###")
-    product = read_product(hw)
-    _require_settled(answers, accepted,
-                     gate.question_fields(product, read_parts(hw), answered_profile(decision, answers)))
+    product, parts = read_product(hw), read_parts(hw)
+    applicability = _require_applicability(product, parts)
+    _require_settled(answers, accepted, gate.question_fields(product, parts, answered_profile(decision, answers)),
+                     applicability.unresolved)
     decisions = hw / "decisions"
     number = int(decision.removeprefix("DR-"))
     _require_free(decisions, number)
@@ -543,9 +563,20 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def _scoped_fields(hw: Path) -> list[str]:
+    """The start questions that apply to the work tree `hw`; ProfileFindings when its records cannot say."""
+    try:
+        product = read_product(hw)
+    except ProfileError as error:
+        raise ProfileFindings([gate.Problem("product.yaml", str(error), "correct product.yaml")]) from error
+    parts = read_parts(hw)
+    _require_applicability(product, parts)
+    return gate.question_fields(product, parts)
+
+
 def print_questions(hw: Path | None = None) -> None:
     """The questions to relay; with `hw`, only those with an applicable option (or none, like the printer one)."""
-    fields = set(gate.QUESTION_FIELDS if hw is None else gate.question_fields(read_product(hw), read_parts(hw)))
+    fields = set(gate.QUESTION_FIELDS if hw is None else _scoped_fields(hw))
     option_fields = {option: field for option, field, _parse, _metavar in OPTIONS}
     shown = [(text, records) for text, records in QUESTIONS
              if not (named := [field for option, field in option_fields.items() if option in records])
@@ -580,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(record(args.hw, args.decision, answers, accepted), indent=2))
             return 0
         stage, found = check(args.hw, args.stage)
-    except FlowFinding as error:
+    except (FlowFinding, ProfileFindings) as error:
         print(f"flow_profile.py {args.command}: {error}", file=sys.stderr)
         return 1
     except ProfileError as error:
