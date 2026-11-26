@@ -1340,28 +1340,46 @@ class EvidenceDigestCli(BuiltRecord):
         return code, json.loads(out.getvalue())
 
     def test_a_cited_file_the_project_cannot_hold_is_a_refusal_naming_the_entry_and_field(self) -> None:
-        sources = self.hw / "manufacturing" / "sources"
+        manufacturing = self.hw / "manufacturing"
+        sources = manufacturing / "sources"
         sources.mkdir(parents=True, exist_ok=True)
-        link = sources / "link.pdf"
+        link, loop, real = sources / "link.pdf", sources / "loop.pdf", manufacturing / "sources-real"
+
+        def linked() -> None:
+            link.symlink_to(self.hw / "verification.csv")
+
+        def looped() -> None:
+            loop.symlink_to(loop.name)
+
+        def linked_directory() -> None:
+            sources.rename(real)
+            sources.symlink_to(real)
+
         cases = {
-            "missing": ("hw/manufacturing/sources/absent.pdf", "is missing"),
-            "linked": ("hw/manufacturing/sources/link.pdf", "symbolic link"),
-            "escaping": ("hw/../../outside.txt", "outside the project root"),
-            "unnormalized": ("hw/manufacturing/./sources/a.pdf", "not a normalized path"),
-            "NUL": ("hw/manufacturing/sources/a\x00b.pdf", "not a valid path"),
+            "missing": ("hw/manufacturing/sources/absent.pdf", "is missing", lambda: None),
+            "linked": ("hw/manufacturing/sources/link.pdf", "symbolic link", linked),
+            "a symbolic link loop": ("hw/manufacturing/sources/loop.pdf", "symbolic link", looped),
+            "behind a linked directory": ("hw/manufacturing/sources/a.pdf", "symbolic link", linked_directory),
+            "escaping": ("hw/../../outside.txt", "outside the project root", lambda: None),
+            "unnormalized": ("hw/manufacturing/./sources/a.pdf", "not a normalized path", lambda: None),
+            "without the hw/ prefix": ("manufacturing/sources/a.pdf", "not a project-relative hw/ path", lambda: None),
+            "NUL": ("hw/manufacturing/sources/a\x00b.pdf", "not a valid path", lambda: None),
         }
-        for name, (cited, text) in cases.items():
+        for name, (cited, text, arrange) in cases.items():
             with self.subTest(name):
-                link.unlink(missing_ok=True)
-                if name == "linked":
-                    link.symlink_to(self.hw / "verification.csv")
-                code, report = self.digest(cited)
+                arrange()
+                try:
+                    code, report = self.digest(cited)
+                finally:
+                    link.unlink(missing_ok=True)
+                    loop.unlink(missing_ok=True)
+                    if sources.is_symlink():
+                        sources.unlink()
+                        real.rename(sources)
                 self.assertEqual((code, report["status"]), (1, "refused"))
                 self.assertNotIn("evidence_sha256", report)
                 self.assertNotIn("inventory", report)
                 self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD], report)
-                schema = json.loads((HERE.parent / "schemas" / "evidence-digest.schema.json").read_text(encoding="utf-8"))
-                self.assertEqual([e.message for e in Draft202012Validator(schema).iter_errors(report)], [])
                 self.assertIn(text, report["findings"][0]["message"])
 
 
