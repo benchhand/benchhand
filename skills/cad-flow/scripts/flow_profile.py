@@ -224,9 +224,11 @@ def defaulted_profile(decision: str) -> dict[str, Any]:
     return profile
 
 
-def answered_profile(decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = ()) -> dict[str, Any]:
+def answered_profile(decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = (),
+                     skipped: Mapping[str, str] | None = None) -> dict[str, Any]:
     """defaulted_profile with each answer (profile field: value) set, and `asked` saying who settled each
-    question: the user for an answer, the user accepting the default for a field in `accepted`."""
+    question: the user for an answer, the user accepting the default for a field in `accepted`, and for each
+    field in `skipped` (field: reason) a not_applicable disposition citing `decision`, which counts as no answer."""
     profile = defaulted_profile(decision)
     for field, value in answers.items():
         *parents, key = field.split("/")
@@ -234,7 +236,9 @@ def answered_profile(decision: str, answers: Mapping[str, Any], accepted: Iterab
         for parent in parents:
             target = target[parent]
         target[key] = value
-    how = {**{field: ACCEPTED_DEFAULT for field in accepted}, **{field: USER for field in answers}}
+    not_applicable = {field: {"status": "not_applicable", "reason": reason, "decision": decision}
+                      for field, reason in (skipped or {}).items()}
+    how = {**not_applicable, **{field: ACCEPTED_DEFAULT for field in accepted}, **{field: USER for field in answers}}
     profile["asked"] = {field: how[field] for field in gate.QUESTION_FIELDS if field in how}
     return profile
 
@@ -408,6 +412,7 @@ def answers_table(profile: Mapping[str, Any]) -> str:
         word = json.dumps(value) if isinstance(value, bool) else str(value)
         parts = path.split("/")
         how = next((asked[key] for key in ("/".join(parts[:n]) for n in range(len(parts), 0, -1)) if key in asked), "stated")
+        how = "not applicable" if isinstance(how, Mapping) else how
         return [f"| {path.replace('/', '.')} | {word} | {how} |"]
 
     answers = [row for key, value in profile.items() if key not in ("decision", "asked") for row in rows(value, key)]
@@ -434,7 +439,8 @@ def write_profile_decision(decisions: Path, number: int, profile: Mapping[str, A
     context = ("The user answered the project-start questions (cad-flow `flow_profile.py questions`) at INTENT. "
                "`product.yaml` `flow.profile` records the answers. The lead showed the user each question with its "
                f"default: `{USER}` marks an answer the user gave, `{ACCEPTED_DEFAULT}` a default the user accepted, and "
-               "`stated` the motion sweep, which runs once a joint moves and is never asked.")
+               "`not_applicable` a question that does not apply to this project, and `stated` the motion sweep, which runs once "
+               "a joint moves and is never asked.")
     partial = decisions / f"DR-{number:03d}-{decision_records.slugify('Flow profile')}.md"
     existed = partial.exists()
     try:
@@ -498,8 +504,8 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         raise ProfileError(f"--decision {decision!r} is not DR-###")
     product, parts = read_product(hw), read_parts(hw)
     applicability = _require_applicability(product, parts)
-    _require_settled(answers, accepted, gate.question_fields(product, parts, answered_profile(decision, answers)),
-                     applicability.unresolved)
+    plan = gate.question_plan(product, parts, answered_profile(decision, answers))
+    _require_settled(answers, accepted, plan.fields, applicability.unresolved)
     decisions = hw / "decisions"
     number = int(decision.removeprefix("DR-"))
     _require_free(decisions, number)
@@ -516,7 +522,7 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         product = yaml_loader.safe_load(text)
     except (yaml.YAMLError, ValueError) as error:
         raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
-    profile = answered_profile(decision, answers, accepted)
+    profile = answered_profile(decision, answers, accepted, plan.skipped)
     if invalid := gate.shape_problems(profile):
         raise ProfileError(gate.refusal(invalid))
     expected = copy.deepcopy(dict(product))

@@ -240,12 +240,35 @@ def applicable_fields(profile: Mapping[str, Any], *, fdm: bool) -> list[str]:
             if not ((field.startswith(FDM) and not fdm) or (field.startswith(PIP_CLEARANCE) and not pip))]
 
 
+@dataclass(frozen=True)
+class QuestionPlan:
+    """The start questions that apply (`fields`, in question order) and, for each one that does not, why
+    (`skipped`: field to reason). A skipped question is recorded as not applicable, never as an answer."""
+
+    fields: list[str]
+    skipped: dict[str, str]
+
+
+def question_plan(product: Any, parts: Mapping[str, Any], profile: Any = None) -> QuestionPlan:
+    """The one rule for which start questions apply, shared by asking, recording and validating, with the
+    reason each skipped one is skipped. `profile` holds the answers so far (default: product.yaml
+    flow.profile); one that does not decline print-in-place keeps its clearance questions."""
+    chosen = _mapping(profile if profile is not None else profile_of(product))
+    asks = fdm_applicability(product, parts).asks
+    fields = applicable_fields(chosen, fdm=asks)
+    plan = _mapping(_mapping(product).get("manufacturing")).get("processes")
+    basis = f"manufacturing.processes is {plan}" if isinstance(plan, list) else "no part record uses FDM"
+    skipped = {field: (f"no FDM process is planned: {basis}" if not asks else
+                       "print-in-place is declined: processes.fdm.print_in_place is false")
+               for field in QUESTION_FIELDS if field not in fields}
+    return QuestionPlan(fields, skipped)
+
+
 def question_fields(product: Any, parts: Mapping[str, Any], profile: Any = None) -> list[str]:
     """The one rule for which start questions apply, shared by asking, recording and validating. `profile`
     holds the answers so far (default: product.yaml flow.profile); one that does not decline print-in-place
     keeps its clearance questions."""
-    return applicable_fields(_mapping(profile if profile is not None else profile_of(product)),
-                             fdm=fdm_applicability(product, parts).asks)
+    return question_plan(product, parts, profile).fields
 
 
 def asked_problems(profile: Mapping[str, Any], *, fdm: bool, unresolved: Iterable[Problem] = ()) -> list[Problem]:
@@ -259,7 +282,9 @@ def asked_problems(profile: Mapping[str, Any], *, fdm: bool, unresolved: Iterabl
         path = f"flow/profile/asked/{field}"
         if how not in PROVENANCE:
             note = f" (FDM applicability is unresolved at {why})" if why and field.startswith(FDM) else ""
-            found.append(Problem(path, f"{field.replace('/', '.')} was not asked{note}",
+            applies = (f" was recorded as not applicable ({how.get('reason')}) but applies now"
+                       if isinstance(how, Mapping) and how.get("status") == "not_applicable" else " was not asked")
+            found.append(Problem(path, f"{field.replace('/', '.')}{applies}{note}",
                                  "ask the user that project-start question, showing its default, and record the answers again"))
         elif how == ACCEPTED_DEFAULT and value_at(profile, field) != DEFAULTS[field]:
             found.append(Problem(path, f"{field.replace('/', '.')} is recorded as the accepted default but is "
