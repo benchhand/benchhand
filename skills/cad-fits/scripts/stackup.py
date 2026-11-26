@@ -728,6 +728,14 @@ class _IntentStack:
             return
         shaft = press_fit.get("shaft") or {}
         pin = f"{shaft.get('PN')} {shaft.get('feature')}" if shaft else interface_id
+        fits = _shared_module("cad_fits_fits", SKILLS / "cad-fits" / "scripts" / "fits.py")
+        try:
+            fits.declared_fit(press_fit)
+        except fits.FitError as error:  # an unreadable fit waives nothing: the seat stays unknown
+            self.unknown("stack.press_fit_unknown", None,
+                         f"the press fit of {pin} on {interface_id} is unknown: cad-fits cannot read it: {error}",
+                         "correct the fit entry in hw/interfaces.yaml", inputs=["hw/interfaces.yaml"])
+            return
         if press_fit.get("compliance") is not None:
             reason = (f"the press fit of {pin} on {interface_id} is {press_fit['compliance']}: its interference is designed "
                       "deformation of the compliant part, so rigid press-fit stress, press force and seat qualification "

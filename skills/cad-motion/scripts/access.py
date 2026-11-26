@@ -521,18 +521,21 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
 # --------------------------------------------------------------------------- run
 
 
-def declared_engagements(record_hw: Path, assembly: Any) -> dict[tuple[str, str], float | None]:
-    """The engagement caps of the record's press fits and heat-sets. Running and locating fits never exempt, but a
-    malformed declaration of either is still an input error."""
+def declared_engagements(record_hw: Path, assembly: Any) -> tuple[dict[tuple[str, str], float | None], list[dict[str, Any]]]:
+    """(the engagement caps of the record's valid press fits and heat-sets, its invalid fits). Running and locating
+    fits never exempt; an invalid fit of any kind exempts nothing and is listed as {kind, interface, source, error}."""
     try:
         interfaces = pair_policy.read_interfaces(record_hw)
-        caps = engagement_caps(pair_policy.declared_press_fits(record_hw, interfaces, assembly),
+        declared = {kind: read(record_hw, interfaces, assembly) for kind, read in (
+            ("press_fit", pair_policy.declared_press_fits), ("running_fit", pair_policy.declared_running_fits),
+            ("locating_fit", pair_policy.declared_locating_fits))}
+        caps = engagement_caps([f for f in declared["press_fit"] if f["classification"] != "invalid"],
                                pair_policy.declared_heat_sets(record_hw, interfaces, assembly))
-        pair_policy.declared_running_fits(record_hw, interfaces, assembly)
-        pair_policy.declared_locating_fits(record_hw, interfaces, assembly)
     except pair_policy.PolicyError as error:
         raise AccessError(str(error)) from error
-    return caps
+    invalid = [{"kind": kind, "interface": f["interface"], "source": f["source"], "error": f["error"]}
+               for kind, fits in declared.items() for f in fits if f.get("classification") == "invalid"]
+    return caps, invalid
 
 
 def measure_plans(plans: Sequence[OperationAccess], definitions: Mapping[str, Any],
@@ -581,7 +584,7 @@ def assess(args: argparse.Namespace, version: str | None, record_hw: Path) -> tu
         tools, tool_problems, digests = read_tools(requests, record_hw, args.hw)
         for index, (artifact, sha) in enumerate(sorted(digests.items())):
             dependencies[f"tool_envelope_{index + 1}"] = sha
-        caps = declared_engagements(record_hw, assembly)
+        caps, detail["invalid_fits"] = declared_engagements(record_hw, assembly)
         values = chain.complete({})
         world = chain.transforms(values)
         detail["nominal"] = {jid: value for jid, value in values.items()}
