@@ -555,6 +555,26 @@ sys.exit(code)
         tip = next(row for row in coverage["rows"] if row["characteristic"] == "tip_face.location")
         self.assertAlmostEqual(abs(tip["value_mm"]), 31.0, places=6)
 
+    def test_a_partly_stale_locator_fails_with_a_named_finding_not_an_error(self) -> None:
+        """A bracket revision moved one patch of the groove off every face: exit 1, the groove named."""
+        model = self.hw / "parts" / "LMP-0005" / "model.py"
+        original = model.read_text(encoding="utf-8")
+        hook = "            features.setdefault(name, []).append(patch)\n"
+        self.assertIn(hook, original)
+        model.write_text(original.replace(hook, hook + (
+            '            if name == "groove" and len(features[name]) == 1:\n'
+            '                features[name].append({**patch, "point_mm": [c + 100.0 for c in patch["point_mm"]]})\n')),
+            encoding="utf-8")
+        try:
+            build = run(UV, "run", "--script", str(CAD_MODEL), "run", str(self.hw), "--label", "v3", "--kernel", "auto")
+            self.assertEqual(build.returncode, 0, build.stdout[-2000:])
+            code, result = self.draw("v3", "stale")
+        finally:
+            model.write_text(original, encoding="utf-8")
+        self.assertEqual((code, result["status"]), (1, "fail"), result)
+        self.assertTrue([f for f in result["coverage"]["findings"]
+                         if f.get("feature") == "groove" and f["code"] == "feature_not_found"], result["coverage"])
+
     def test_vendor_sheet_controls_only_the_specification_limits(self) -> None:
         code, result = self.draw("v1", "vendor", "LMP-0009")
         self.assertEqual((code, result["status"], result["type"]), (0, "pass", "vendor_specification"),

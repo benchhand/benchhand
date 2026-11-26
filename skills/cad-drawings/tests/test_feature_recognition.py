@@ -23,7 +23,9 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import drawing_intent  # noqa: E402
+import completeness  # noqa: E402
 import feature_coverage  # noqa: E402
+import feature_geometry as fg  # noqa: E402
 import freecad_runtime  # noqa: E402
 from drawing_intent import Characteristic, DatumFrame, Measured  # noqa: E402
 from feature_geometry import Binding, Face, ResolvedFeature  # noqa: E402
@@ -192,6 +194,27 @@ class Recognition_(unittest.TestCase):
         # the dovetail's own length, height and position are other requests; nothing at a plane, no angle, no SR
         self.assertEqual([m for m in left if "at the plane" in m or m.startswith(("angle", "SR", "depth"))], [], left)
         self.assertNotIn(next(t.id for t in targets if t.category == "dish"), {f["feature"] for f in report.findings})
+
+    def test_a_partly_stale_feature_is_named_by_the_gate_and_never_crashes_it(self) -> None:
+        """One of two patches of a feature matches a face, the other no longer does: the feature leaves the binding
+        with its face owners, and the coverage and completeness gates still run and name it."""
+        recognition, faces = self.fixtures["plate"]
+        locators, bound = {}, {}
+        for number, item in enumerate(recognition.features):
+            patches = [{"support_type": faces[i].support_type, "point_mm": list(faces[i].point or (0, 0, 0))}
+                       for i in item.faces]
+            matches = [[i] for i in item.faces]
+            if number == 0:   # a bracket revision moved the second patch off every face
+                patches.append({"support_type": "plane", "point_mm": [500.0, 500.0, 500.0]})
+                matches.append([])
+            locators[item.id] = {"kind": "surface", "patches": patches}
+            bound[item.id] = matches
+        stale = recognition.features[0].id
+        binding = fg.resolve(locators, bound, list(faces.values())).usable()
+        report = completeness.evaluate("TST-0009", {"drawing": {"type": "detail"}}, [], binding, Measured(frame=FRAME),
+                                       None, "0" * 64, recognition=recognition, faces=faces)
+        named = [f for f in report.findings if f.get("feature") == stale and f["code"] == "feature_not_found"]
+        self.assertTrue(named, report.findings)
 
     def vcut_findings(self, opening: str):
         """Run the drawing intent on the V-cut plate with the engraving's `on` relation set to ``opening`` (top or under)."""
