@@ -507,6 +507,33 @@ class JustifiedAlternatives(unittest.TestCase):
         self.assertEqual(cut["outcome"], "unknown")
         self.assertTrue(any("lies outside" in reason for reason in cut["reasons"]), cut["reasons"])
 
+    def test_a_cutting_approval_after_an_engraving_only_entry_is_credited(self) -> None:
+        documents = scenarios.plate_frame_options()
+        approvals = profile(documents, "capabilities", "tst_laser")["materials"]
+        approvals.insert(0, {**approvals[0], "operations": ["engrave"]})
+        report = assess(self, documents)
+        sheet = candidate(report, "sheet_frame")
+        self.assertEqual(sheet["status"], "feasible")
+        self.assertEqual([e["outcome"] for e in evaluations(sheet, "material_approval")], ["pass", "pass"])
+
+    def test_each_recorded_cut_is_checked_against_its_own_stock(self) -> None:
+        """The record already holds the two-cut route: the outer cut is on 3 mm stock, the inner one on 5 mm. Neither
+        candidate step states its stock, so each takes its own operation's; the 5 mm cut is outside the 3 mm approval."""
+        documents = scenarios.plate_frame_options()
+        part = scenarios.made_part("TST-0501", "Frame", "laser", "tst_metal_q_sheet", "tst_laser")
+        part["intent"]["route"] = [
+            fx.operation(ident, "laser", "tst_laser", setup={"stock": {"thickness": fx.known(fx.quantity(mm)), "coating": fx.known("none")}})
+            for ident, mm in (("cut_outer", 3), ("cut_inner", 5))]
+        documents["parts/TST-0501/part.yaml"] = part
+        selection_candidate(documents, "sheet_frame")["parts"][0]["route"] = [
+            scenarios.step("laser", "tst_laser", "local"), scenarios.step("laser", "tst_laser", "local")]
+        report = assess(self, documents)
+        sheet = candidate(report, "sheet_frame")
+        self.assertEqual(sheet["recorded_route"], {"TST-0501": True})
+        outcomes = [(e["outcome"], " ".join(e["reasons"])) for e in evaluations(sheet, "material_approval")]
+        self.assertEqual([outcome for outcome, _ in outcomes], ["pass", "unknown"])
+        self.assertIn("5 mm lies outside", outcomes[1][1])
+
     def test_no_feasible_candidate_names_the_route_families_not_yet_considered(self) -> None:
         documents = scenarios.plate_frame_options()
         documents["manufacturing/selection.yaml"]["candidates"] = documents["manufacturing/selection.yaml"]["candidates"][:1]
