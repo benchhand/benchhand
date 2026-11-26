@@ -157,6 +157,40 @@ class Record(unittest.TestCase):
         missing = {item["path"] for item in json.loads(changed.stdout)["problems"]}
         self.assertEqual(missing, {f"flow/profile/asked/{field}" for field in QUESTION_FIELDS[5:14]})
 
+    def test_a_malformed_plan_or_an_unreadable_part_exits_1_naming_the_field_or_file_and_records_nothing(self) -> None:
+        part = self.hw / "parts" / "PRT-0001" / "part.yaml"
+        part.parent.mkdir(parents=True)
+        for name, product, part_text, named in (
+                ("a plan that is a word", PRODUCT + "manufacturing:\n  processes: fdm\n", "process: cnc\n",
+                 "manufacturing/processes"),
+                ("a part that does not parse", PRODUCT + "manufacturing:\n  processes: [cnc]\n", "process: [cnc\n",
+                 "parts/PRT-0001/part.yaml")):
+            with self.subTest(name):
+                self.product.write_text(product, encoding="utf-8")
+                part.write_text(part_text, encoding="utf-8")
+                recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS)
+                self.assertEqual(recorded.returncode, 1, recorded.stderr)
+                self.assertIn(named, recorded.stderr)
+                self.assertEqual(self.product.read_text(encoding="utf-8"), product)
+                self.assertFalse((self.hw / "decisions").exists())
+                asked = run("questions", "--hw", str(self.hw))
+                self.assertEqual(asked.returncode, 1, asked.stderr)
+                self.assertIn(named, asked.stderr)
+
+    def test_questions_for_a_product_that_does_not_parse_exits_1_naming_the_file(self) -> None:
+        self.product.write_text("flow: [unclosed\n", encoding="utf-8")
+        result = run("questions", "--hw", str(self.hw))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("product.yaml", result.stderr)
+
+    def test_a_project_with_no_plan_and_no_part_is_asked_the_fdm_questions_too(self) -> None:
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("--supports", result.stderr)
+        self.assertIn("manufacturing.processes", result.stderr)
+        self.assertIn("Would you like hinges", run("questions", "--hw", str(self.hw)).stdout)
+
     def test_a_project_that_plans_fdm_still_needs_every_answer(self) -> None:
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])

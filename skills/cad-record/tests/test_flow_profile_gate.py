@@ -260,6 +260,24 @@ class Gate(unittest.TestCase):
                 self.assertEqual(found.state, state)
                 self.assertEqual([item.path for item in found.unresolved], [field] if field else [])
 
+    def test_a_malformed_plan_or_part_record_is_a_finding_that_names_it_and_never_rules_fdm_out(self) -> None:
+        for name, parts, processes, field in (("a plan that is a word", {}, "fdm", "manufacturing/processes"),
+                                              ("an empty plan", {}, [], "manufacturing/processes"),
+                                              ("a plan of numbers", {}, [1], "manufacturing/processes"),
+                                              ("a part record that did not parse", {"A": None}, ["cnc"], "parts/A/part.yaml"),
+                                              ("a part record that is a list", {"A": []}, ["cnc"], "parts/A/part.yaml")):
+            with self.subTest(name):
+                product = {"manufacturing": {"processes": processes}}
+                found = gate_module.fdm_applicability(product, parts)
+                self.assertEqual((found.state, [item.path for item in found.malformed]), ("unknown", [field]))
+                self.assertEqual(found.malformed[0].code, gate_module.APPLICABILITY)
+
+    def test_the_gate_blocks_on_a_malformed_plan_and_names_the_field(self) -> None:
+        product = self.with_profile(fx.flow_profile(), "specify")
+        product["manufacturing"] = {"processes": "fdm"}
+        _stage, found = gate_module.gate(product, self.parts, approved)
+        self.assertEqual([(item.code, item.path) for item in found], [("flow.applicability", "manufacturing/processes")])
+
     def test_an_unresolved_applicability_asks_the_fdm_questions_and_names_the_field(self) -> None:
         profile = fx.flow_profile()
         del profile["asked"]["processes/fdm/orientation"]
