@@ -715,6 +715,22 @@ class ComparisonOutput(unittest.TestCase):
         self.assertEqual((decision["parts"], decision["recommendation"]["primary"]), (["TST-0201", "TST-0202"], "machined_bracket"))
         self.assertEqual(report["coverage"], {"made": ["TST-0201", "TST-0202"], "unselected": ["TST-0202"]})
 
+    def test_coverage_follows_the_confirmed_primary_not_the_ranking_winner(self) -> None:
+        """The ranking winner printed_cover also makes the clip TST-0302, but selection.yaml confirms machined_cover, which
+        names only TST-0301. The confirmed choice decides coverage, so the clip is unselected."""
+        documents = scenarios.qualified_polymer_cover()
+        documents["parts/TST-0302/part.yaml"] = scenarios.made_part("TST-0302", "Clip", "fdm", "tst_polymer_c_printed", "tst_printer")
+        selection_candidate(documents, "printed_cover")["parts"].append(
+            scenarios.cpart("TST-0302", "tst_polymer_c_printed", scenarios.step("fdm", "tst_printer", "local")))
+        recorded = documents["manufacturing/selection.yaml"]
+        recorded["status"] = "confirmed"
+        recorded["assessment"]["decision"] = "DR-001"
+        recorded["recommendation"] = {"status": "final", "primary": "machined_cover", "reasons": ["TST: the user prefers metal"],
+                                      "limits": ["TST: none recorded"], "what_would_change": ["TST: nothing recorded"]}
+        report = assess(self, documents)
+        self.assertEqual(only_decision(report)["recommendation"]["primary"], "printed_cover")
+        self.assertEqual(report["coverage"], {"made": ["TST-0301", "TST-0302"], "unselected": ["TST-0302"]})
+
     def test_every_material_property_has_one_comparison_group(self) -> None:
         grouped = [name for _, names in selection.PROPERTY_GROUPS for name in names]
         self.assertEqual(sorted(grouped), sorted(mi.MATERIAL_PROPERTIES))
