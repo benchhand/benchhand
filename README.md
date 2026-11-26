@@ -81,6 +81,8 @@ pi has no per-command shell permissions, so the CAD agents get no shell. Each ag
 - blocks `bash`.
 - blocks `edit` and `write` outside the project's `.cad-work/`, and inside the installed skills or the extension itself.
 
+`cad_run` is not a sandbox. It limits which launchers an agent can start. It does not limit what a launcher does: the BOM launcher can overwrite the shared BOM, and a scratch build runs agent-written Python with your permissions. Use an OS sandbox or container for a hard boundary. Tracked in benchhand-3eq.
+
 An agent without its extension still has no shell. `preflight.py --harness pi` warns when an agent names an extension that the installer receipt does not own.
 
 ### Kiro CLI entry points

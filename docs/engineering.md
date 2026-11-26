@@ -34,6 +34,7 @@ pi needs these parts:
 - The pi CAD extension `harness/pi/guard/cad-guard.js` is hand-written ESM JavaScript with no dependencies and no build. `harness/generate.py` writes one entry per agent under `harness/pi/launchers/`.
 - Node runs only in tests. `harness/test_pi_guard.py` runs the extension under `node`.
 - `harness/test_pi_integration.py` starts pi and pi-subagents at the versions in `harness/pi/integration/package-lock.json`, with a scripted model. Install them with `npm ci --prefix harness/pi/integration`.
+- `cad_run` is not a sandbox. The launcher allowlist limits which scripts start, not what they do: `bom.py` can overwrite the shared BOM, and the scratch build runs agent-written Python with host permissions. Only an OS sandbox or container bounds that. Tracked in benchhand-3eq.
 - Both pi test files skip without their tools. `CAD_REQUIRE_PI=1` turns the skip into a failure. CI sets that variable and installs Node 22.19.0.
 
 There is no root `pyproject.toml` and no package install. Dependencies come from one of three places:
