@@ -64,6 +64,8 @@ class Eligibility(unittest.TestCase):
             "a blank standard": ({**SCREW, "standard": "  \t"}, [("standard", "missing or blank")]),
             "a size that embeds the length": ({**SCREW, "size": "M4x20"}, [("size", "embeds a length")]),
             "a zero length": ({**SCREW, "length": 0}, [("length", "positive number")]),
+            "an infinite length": ({**SCREW, "length": float("inf")}, [("length", "positive number")]),
+            "a not-a-number length": ({**SCREW, "length": float("nan")}, [("length", "positive number")]),
             "a numeric property class": ({**SCREW, "property_class": 8.8}, [("property_class", "must be text")]),
             "two bad fields, in record order": ({**SCREW, "property_class": 8.8, "standard": " "},
                                                 [("standard", "missing or blank"), ("property_class", "must be text")]),

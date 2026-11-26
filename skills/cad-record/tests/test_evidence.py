@@ -1339,6 +1339,41 @@ class EvidenceDigestCli(BuiltRecord):
             code = evidence.main(["digest", "--hw", str(self.hw), "--version", "v1"])
         return code, json.loads(out.getvalue())
 
+    def schema_errors(self, report: Any) -> list[str]:
+        schema = json.loads((HERE.parent / "schemas" / "evidence-digest.schema.json").read_text(encoding="utf-8"))
+        return [e.message for e in Draft202012Validator(schema).iter_errors(report)]
+
+    def run_digest(self, version: str) -> tuple[int, Any]:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = evidence.main(["digest", "--hw", str(self.hw), "--version", version])
+        return code, json.loads(out.getvalue())
+
+    def test_the_schema_accepts_a_successful_digest_and_an_infrastructure_error(self) -> None:
+        code, report = self.run_digest("v1")
+        self.assertEqual((code, report["status"]), (0, "ok"), report)
+        self.assertEqual(self.schema_errors(report), [])
+        code, report = self.run_digest("v9")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertEqual(self.schema_errors(report), [])
+
+    def test_the_schema_rejects_malformed_digest_reports(self) -> None:
+        sha = "a" * 64
+        finding = {"path": "hw/", "message": "m", "severity": "error"}
+        malformed = {
+            "ok without its digest": {"status": "ok", "version": "v1", "inventory": {}},
+            "ok with a short digest": {"status": "ok", "version": "v1", "evidence_sha256": "abc", "inventory": {}},
+            "ok that carries findings": {"status": "ok", "version": "v1", "evidence_sha256": sha, "inventory": {},
+                                         "findings": [finding]},
+            "refused without findings": {"status": "refused", "findings": []},
+            "refused that carries a digest": {"status": "refused", "findings": [finding], "evidence_sha256": sha},
+            "a finding without its path": {"status": "refused", "findings": [{"message": "m", "severity": "error"}]},
+            "an error without its message": {"status": "error"},
+        }
+        for name, report in malformed.items():
+            with self.subTest(name):
+                self.assertNotEqual(self.schema_errors(report), [])
+
     def test_a_cited_file_the_project_cannot_hold_is_a_refusal_naming_the_entry_and_field(self) -> None:
         manufacturing = self.hw / "manufacturing"
         sources = manufacturing / "sources"
