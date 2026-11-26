@@ -267,17 +267,22 @@ class Record(unittest.TestCase):
         self.product.write_text(PRODUCT, encoding="utf-8")  # no plan and no part: FDM is not ruled out
         self.assertIn("Which printer, nozzle and filament?", run("questions", "--hw", str(self.hw)).stdout)
 
-    def test_the_scoped_questions_list_each_clearance_option_only_while_print_in_place_is_offered(self) -> None:
+    def test_the_scoped_questions_list_the_clearance_options_as_follow_ups_to_the_print_in_place_answer(self) -> None:
+        follow_up = "--print-in-place; if the answer is offer, also --pip-clearance-xy, --pip-clearance-z"
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
-        before = run("questions", "--hw", str(self.hw)).stdout
-        self.assertIn("--print-in-place, --pip-clearance-xy, --pip-clearance-z", before)
+        self.assertIn(follow_up, run("questions", "--hw", str(self.hw)).stdout)
         rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
         recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--print-in-place", "no", "--accept-default", *rest)
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
-        after = run("questions", "--hw", str(self.hw)).stdout
-        self.assertIn("--print-in-place", after)
-        self.assertNotIn("--pip-clearance", after)
-        self.assertNotIn("processes.fdm.pip_clearance_mm", after)
+        # A saved decline does not hide them: record still requires both when the user now offers print-in-place.
+        self.assertIn(follow_up, run("questions", "--hw", str(self.hw)).stdout)
+        offered = run("record", "--hw", str(self.hw), "--decision", "DR-002", "--print-in-place", "offer", "--accept-default", *rest)
+        self.assertEqual(offered.returncode, 2)
+        self.assertIn("--pip-clearance-xy", offered.stderr)
+
+    def test_the_scoped_questions_of_a_cnc_plan_list_no_clearance_option(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        self.assertNotIn("--pip-clearance", run("questions", "--hw", str(self.hw)).stdout)
 
     def test_a_project_that_plans_fdm_still_needs_every_answer(self) -> None:
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
