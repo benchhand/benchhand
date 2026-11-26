@@ -667,6 +667,18 @@ class ComparisonOutput(unittest.TestCase):
         self.assertEqual([d["parts"] for d in report["decisions"]], [["TST-0201"], ["TST-0202"]])
         self.assertEqual(report["decisions"][1]["recommendation"]["primary"], "printed_cover")
 
+    def test_a_part_only_an_eliminated_alternative_covers_stays_unselected(self) -> None:
+        """The printed alternative also proposes the cover TST-0202, but it is eliminated; the chosen machined bracket
+        names only TST-0201, so no chosen candidate covers the cover."""
+        documents = scenarios.hot_loaded_bracket()
+        documents["parts/TST-0202/part.yaml"] = scenarios.made_part("TST-0202", "Cover", "fdm", "tst_polymer_a_printed", "tst_printer")
+        selection_candidate(documents, "printed_bracket")["parts"].append(
+            scenarios.cpart("TST-0202", "tst_polymer_a_printed", scenarios.step("fdm", "tst_printer", "local")))
+        report = assess(self, documents)
+        decision = only_decision(report)
+        self.assertEqual((decision["parts"], decision["recommendation"]["primary"]), (["TST-0201", "TST-0202"], "machined_bracket"))
+        self.assertEqual(report["coverage"], {"made": ["TST-0201", "TST-0202"], "unselected": ["TST-0202"]})
+
     def test_every_material_property_has_one_comparison_group(self) -> None:
         grouped = [name for _, names in selection.PROPERTY_GROUPS for name in names]
         self.assertEqual(sorted(grouped), sorted(mi.MATERIAL_PROPERTIES))
