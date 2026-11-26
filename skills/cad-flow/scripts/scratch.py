@@ -39,7 +39,9 @@ build   runs cad-model `run` on the scratch hw/ under the next scratch label, ca
         checks against the same rigid attachments as the lead's integrated build.
 deliver copies each unit PN's scratch hw/parts/<PN>/ over HW/parts/<PN>/ and lists every other
         scratch file that differs from the baseline as a proposal for the lead. When any
-        HW/parts/<PN>/ changed since init it writes nothing and exits 1. Generated
+        HW/parts/<PN>/ changed since init it writes nothing and exits 1. A regenerated project
+        output (bom.csv) is listed as a proposal with "regenerated": true and never blocks delivery:
+        the lead regenerates it from the integrated record. Generated
         versions/, renders/, releases/, version-bound bundles (such as the hw/checks/vN/cad packet
         a scratch check publishes) and .cad/ output and every __pycache__/ are ignored
         during delivery, so a scratch build's own caches and evidence never reach HW.
@@ -325,6 +327,14 @@ def is_record_path(path: str) -> bool:
     return match is not None and match.entry.kind == "record" and match.role == "source"
 
 
+def is_regenerated_output(path: str) -> bool:
+    """A canonical generated project file outside parts/ (the BOM): a unit's copy is stale against the
+    lead's integrated record, so deliver lists it and never writes it or blocks on it."""
+    match = layout.classify(f"hw/{path}")
+    return (match is not None and match.entry.kind == "generated" and match.entry.mutability == "regenerated"
+            and not path.startswith("parts/"))
+
+
 def validate_delivery(baseline: dict[str, Any], authorized: set[str], files: dict[str, str],
                       directories: set[str]) -> None:
     old_files: dict[str, str] = baseline["files"]
@@ -341,6 +351,8 @@ def validate_delivery(baseline: dict[str, Any], authorized: set[str], files: dic
         if files.get(path) != old_files.get(path):
             match = layout.classify(f"hw/{path}")
             owner = path.split("/")[1] if path.startswith("parts/") else None
+            if is_regenerated_output(path):
+                continue  # reported as a proposal by deliver; the lead's build regenerates it
             if match is None or match.entry.kind != "record" or match.params.get("PN") not in (None, owner):
                 raise UsageError(f"cannot deliver changed non-record or non-canonical path {path}")
     for pn in authorized:
@@ -400,7 +412,10 @@ def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
         if any(path.startswith(f"parts/{pn}/") for pn in authorized) or files.get(path) == baseline_files.get(path):
             continue
         change = "added" if path not in baseline_files else "removed" if path not in files else "modified"
-        proposals.append({"path": str(hw / path), "scratch": str(scratch_hw / path), "change": change})
+        proposal: dict[str, Any] = {"path": str(hw / path), "scratch": str(scratch_hw / path), "change": change}
+        if is_regenerated_output(path):
+            proposal["regenerated"] = True
+        proposals.append(proposal)
     return 0, {"status": "delivered", "unit": unit, "delivered": delivered, "proposals": proposals}
 
 
