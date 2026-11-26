@@ -33,7 +33,8 @@ A custom view uses `dir-pX-mY-Z`, with signed decimal components encoded as p/m 
 
 Hiding and ghosting: a part's part.yaml `render` (shown, ghost or hidden) is its default; repeatable `--show`,
 `--ghost` and `--hide` (a PN, or an occurrence id) override it. A hidden occurrence is left out of every view and of
-the framing; a ghosted one is drawn translucent with edges and never occludes the subject or a visibility target.
+the framing; a ghosted one is drawn translucent with edges and never occludes the subject. Both change pictures only:
+a requirement visibility check draws every window and target part and judges occlusion by recorded transparency.
 An unknown id, one id under two flags, a hidden close-up or part subject and a hidden visibility target are errors.
 render.json and motion-render.json list `hidden` and `ghosted`, and every view's `render_inputs` holds both.
 
@@ -758,7 +759,7 @@ def build_scene(hw: Path, version: Version, views: list[str], size: tuple[int, i
     if len(hidden) == len(by_pn):
         raise InfraError("every part is hidden, so nothing is left to render; show or ghost one (--show, --ghost, "
                          "or part.yaml render)")
-    checks, requirements_sha = (visibility_checks(requirements, by_pn, records, hidden, ghosted)
+    checks, requirements_sha = (visibility_checks(requirements, by_pn, records, hidden)
                                 if requirements else ([], None))
     view_specs = []
     for name in views:
@@ -1014,15 +1015,14 @@ def requirements_input(version: Version) -> tuple[Path, str]:
 
 
 def visibility_checks(path: Path, occurrences: dict[str, str], records: dict[str, dict[str, Any]],
-                      hidden: Sequence[str] = (), ghosted: Sequence[str] = ()
-                      ) -> tuple[list[dict[str, Any]], str | None]:
+                      hidden: Sequence[str] = ()) -> tuple[list[dict[str, Any]], str | None]:
     """The visibility bindings of the requirements file `path` (`requirements_input`), resolved against
     this version's occurrences (id -> PN) and part records, and the file's sha256; ([], None) without the file.
 
     A check carries its camera direction and up in the GLB frame, its window and target occurrences,
-    and `see_through`: the drawn occurrences whose part.yaml declares `transparency: transparent`, and the
-    ghosted or hidden ones (a render draws them translucent or not at all, so they never occlude). Opaque
-    and translucent parts occlude. A hidden target is an error."""
+    and `see_through`: the occurrences whose part.yaml declares `transparency: transparent`. Opaque and
+    translucent parts occlude. Hiding and ghosting change pictures only, never this evidence: a hidden or
+    ghosted window part occludes as its recorded transparency says. A hidden target is an error."""
     if not path.is_file():
         return [], None
     raw = path.read_bytes()
@@ -1050,8 +1050,7 @@ def visibility_checks(path: Path, occurrences: dict[str, str], records: dict[str
                        "direction": to_glb(direction), "up": list(camera_up_reference(direction)),
                        "window": window, "targets": targets,
                        "see_through": [oid for oid in dict.fromkeys([*window, *targets])
-                                       if oid in hidden or oid in ghosted
-                                       or records[occurrences[oid]].get("transparency") == "transparent"],
+                                       if records[occurrences[oid]].get("transparency") == "transparent"],
                        "min_visible_fraction": binding.min_visible_fraction})
     return checks, sha256(raw)
 
