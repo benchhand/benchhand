@@ -290,9 +290,6 @@ class InitAndDeliver(ScratchCase):
                  '    return cq.Workplane("XY").box(params["size"], params["size"], params["size"])\n')
         (self.hw / "parts" / "PRT-0001" / "model.py").write_text(model, encoding="utf-8")
         add_flow_profile(self.hw)  # `run` builds at LAYOUT at the earliest, so it needs a settled profile at any stage
-        # The part states its route as unknown, which leaves FDM unresolved and blocks; the plan resolves it.
-        with (self.hw / "product.yaml").open("a", encoding="utf-8") as stream:
-            stream.write("manufacturing:\n  processes: [fdm]\n")
         cad_model = HERE.parents[1] / "cad-model" / "scripts" / "cad_model.py"
         lead = subprocess.run(["uv", "run", "--quiet", "--script", str(cad_model), "run", "hw", "--label", "v1"],
                               cwd=self.project, capture_output=True, text=True, timeout=1800)
