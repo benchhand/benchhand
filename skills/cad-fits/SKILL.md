@@ -25,12 +25,14 @@ TRIGGER
 
    The stack YAML is positional. An intent result publishes at `hw/analysis/vN/<case>/` and its required-check packet at `hw/checks/vN/stack-<case>/`. A standalone stack can use `--out .cad-work/<unit>/stack.json`, but `--out` cannot combine with `--hw` and `--version`. Exit 0 is pass; 1 is a completed violation or UNKNOWN; 2 is invalid input or infrastructure error.
 4. Report the computed worst-case result. Worst case governs collision, binding, lost function and critical fits. `justified_rss` applies only to suitable non-governing consequences and needs sourced stable centered distributions, supported independence/correlation, coverage/probability and approved decision. A plain quadrature sum is never a probability claim.
+5. A fit with no ISO 286 class is declared by explicit limits in `hw/interfaces.yaml`: `nominal_mm`, a `source`, and either hole and shaft `deviations` or an `interference`/`clearance` band on the diameter. A designed interference of a compliant part (crush ribs) adds `compliance: crush_rib`. LOAD [process-fits.md](references/process-fits.md) for the forms.
 
 ## Rules
 
 MUST Take commodity hardware dimensions from `commodity.py`, not from memory.
 MUST Take fit limits and classification from `fits.py` output.
 MUST Report stack outcome and method from `stackup.py` output; no statistical method overrides governing worst-case failure.
+MUST Declare a purposely built interference (crush ribs) as explicit limits with `compliance: crush_rib`, never as a plain-language `fit` string.
 DEFAULT Express asymmetric tolerances with `tol_plus`/`tol_minus`.
 NOT Report ASME B4.1 inch fits; the table covers ISO 286-1:2010 only.
 

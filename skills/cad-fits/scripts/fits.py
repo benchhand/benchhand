@@ -23,6 +23,12 @@ Fit: max_clearance = ES - ei, min_clearance = EI - es; a negative clearance is
 an interference. Clearance fit: min_clearance >= 0. Interference fit:
 max_clearance <= 0. Otherwise transition (ISO 286-1:2010 3.3.1-3.3.2).
 
+`declared_fit` reads an interface fit entry (hw/interfaces.yaml limits.press_fit, running_fit,
+locating_fit) in exactly one form: this ISO designation, or explicit limits with their nominal_mm and
+source (hole and shaft deviations, or an interference or clearance band on the diameter), classified by
+the same rule. `compliance: crush_rib` marks the interference designed deformation of a compliant part.
+An entry it cannot read raises FitError naming the accepted forms.
+
 stdout: JSON result. stderr: diagnostics.
 Exit 0 = computed (and matches --expect), 1 = classification differs from
 --expect, 2 = usage error or a size/class outside the covered tables.

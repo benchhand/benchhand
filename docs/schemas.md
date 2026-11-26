@@ -4,7 +4,7 @@ schema-sha256 cc2ca1a50d093d0dc81975cf82020b5295f7a13043cf0bde3e5e83877f315d6c s
 schema-sha256 b851d6f420c0ea132ba6c096b5b5105daced23aadae85ed3b10286997554565e skills/cad-record/schemas/assembly.schema.json
 schema-sha256 cabe6a6c934a7ba10522b6c4f3e47e756c972ed60db881dbe515baf7593a84cb skills/cad-record/schemas/bom-row.schema.json
 schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 skills/cad-record/schemas/bundle-manifest.schema.json
-schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
+schema-sha256 db1037111497dc545b0faf0079089f6805b664dbcf02b1fde89532e15d071012 skills/cad-record/schemas/drawing.schema.json
 schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
 schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
@@ -866,28 +866,49 @@ Constraints not expressed by the type:
 
 Source: `/$defs/fit`
 
-An ISO 286 fit between two parts: a part pair, or a hole and a shaft feature endpoint
+A fit between two parts (a part pair, or a hole and a shaft feature endpoint), in exactly one form: an ISO 286 designation `fit`, or explicit limits with their `nominal_mm` and `source` (design intent as a decision or user statement, a datasheet or a guideline) as hole and shaft `deviations` or as an `interference` or `clearance` band on the diameter. Every form is classified by one rule (cad-fits fits.py `classify`): interference when the largest diametral clearance is <= 0, clearance when the smallest is >= 0, else transition. `compliance: crush_rib` declares the interference designed deformation of a compliant part: overlap up to the stated maximum is allowed, rigid press-fit seat maths does not apply, and retention still follows the joint's own source rule
+
+Alias of `DrawingFitOneOf0 | DrawingFitOneOf1 | DrawingFitOneOf2 | DrawingFitOneOf3`
+
+Constraints not expressed by the type:
+
+- dependentRequired: {"ribs":["compliance"]}
+- additionalProperties: false
+- allOf[0].oneOf: [{"required":["pair"],"not":{"anyOf":[{"required":["hole"]},{"required":["shaft"]}]}},{"required":["hole","shaft"],"not":{"required":["pair"]}}]
+- allOf[0].oneOf[0].not: {"anyOf":[{"required":["hole"]},{"required":["shaft"]}]}
+- allOf[0].oneOf[1].not: {"required":["pair"]}
+
+### DrawingFitBand
+
+Source: `/$defs/fit_band`
+
+A band on the diameter, min <= max, in units mm or um
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `fit` | `str` | yes |  |  |
-| `pair` | `list[AssemblyPartRef]` | no |  |  |
-| `hole` | `DrawingFitEndpoint` | no |  |  |
-| `shaft` | `DrawingFitEndpoint` | no |  |  |
-| `engagement_length_mm` | `float` | no |  | engagement_length_mm: positive number, in mm. The travel along the insertion axis, back from the installed pose, over which the interfering surface of the inserted part still overlaps its partner. For a press fit seated on a bore floor, use the bore depth (an entry chamfer or counterbore may be ignored); not the press-band length and not the overlap at the installed pose. For a heat-set insert, use its embedded length. For a press fit or a heat-set insert, assembly access exempts interference up to this length plus one minimum sampling step. A running or locating fit records the length but gets no exemption. Optional; never derived. |
-| `note` | `str` | no |  |  |
-| `axial_retainer` | `DrawingAxialRetainer` | no |  |  |
+| `min` | `float` | yes |  |  |
+| `max` | `float` | yes |  |  |
+| `units` | `Literal["mm", "um"]` | yes |  |  |
 
 Constraints not expressed by the type:
 
 - additionalProperties: false
-- oneOf: [{"required":["pair"],"not":{"anyOf":[{"required":["hole"]},{"required":["shaft"]}]}},{"required":["hole","shaft"],"not":{"required":["pair"]}}]
-- `fit`: minLength: 1
-- `pair`: minItems: 2
-- `pair`: maxItems: 2
-- `pair`: uniqueItems: true
-- `engagement_length_mm`: exclusiveMinimum: 0
-- `note`: minLength: 1
+
+### DrawingFitDeviations
+
+Source: `/$defs/fit_deviations`
+
+Hole and shaft limit deviations from nominal_mm, lower <= upper, in units mm or um
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `units` | `Literal["mm", "um"]` | yes |  |  |
+| `hole` | `DrawingFitLimitDeviations` | yes |  |  |
+| `shaft` | `DrawingFitLimitDeviations` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
 
 ### DrawingFitEndpoint
 
@@ -903,6 +924,98 @@ Source: `/$defs/fit_endpoint`
 Constraints not expressed by the type:
 
 - additionalProperties: false
+
+### DrawingFitLimitDeviations
+
+Source: `/$defs/fit_limit_deviations`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `upper` | `float` | yes |  |  |
+| `lower` | `float` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### DrawingFitOneOf0
+
+Source: `/$defs/fit/oneOf/0`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `nominal_mm` | `Never` | no |  |  |
+| `deviations` | `Never` | no |  |  |
+| `interference` | `Never` | no |  |  |
+| `clearance` | `Never` | no |  |  |
+| `compliance` | `Never` | no |  |  |
+| `ribs` | `Never` | no |  |  |
+| `fit` | `Any` | yes |  |  |
+
+### DrawingFitOneOf1
+
+Source: `/$defs/fit/oneOf/1`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `fit` | `Never` | no |  |  |
+| `interference` | `Never` | no |  |  |
+| `clearance` | `Never` | no |  |  |
+| `nominal_mm` | `Any` | yes |  |  |
+| `source` | `Any` | yes |  |  |
+| `deviations` | `Any` | yes |  |  |
+
+### DrawingFitOneOf2
+
+Source: `/$defs/fit/oneOf/2`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `fit` | `Never` | no |  |  |
+| `deviations` | `Never` | no |  |  |
+| `clearance` | `Never` | no |  |  |
+| `nominal_mm` | `Any` | yes |  |  |
+| `source` | `Any` | yes |  |  |
+| `interference` | `Any` | yes |  |  |
+
+### DrawingFitOneOf3
+
+Source: `/$defs/fit/oneOf/3`
+
+Alias of `Mapping[str, Any]`
+
+Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+
+Known keys:
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `fit` | `Never` | no |  |  |
+| `deviations` | `Never` | no |  |  |
+| `interference` | `Never` | no |  |  |
+| `compliance` | `Never` | no |  |  |
+| `ribs` | `Never` | no |  |  |
+| `nominal_mm` | `Any` | yes |  |  |
+| `source` | `Any` | yes |  |  |
+| `clearance` | `Any` | yes |  |  |
 
 ### DrawingGeometricTolerance
 

@@ -40,6 +40,9 @@ Intent stack file (`intent_version: 2`, the analysis case of a critical interfac
         inspection: bore_check          # an inspection that enforces these limits (optional)
         designation: H7                 # set when the limits come from a fit class or general-tolerance label
         process: laser                  # the route kind that produces it, when no capability names it
+      - {id: F, category: assembly, direction: 1, fit: {interface: IF-011, kind: press_fit}}
+        # bounds from the fit's explicit limits instead of nominal/tol: its diametral clearance, or with
+        # side: hole|shaft that side's deviations; source defaults to the fit's source
       - {id: T, category: thermal, status: unknown, reason: no thermal analysis yet}
     statistics:                         # justified_rss only
       decision: DR-012                  # the approved decision that the statistics suit this use
@@ -142,7 +145,9 @@ MINIMUM_OPERATORS = (">=", ">")
 CLEARANCE_EPS = 1e-9
 CONTRIBUTOR_KEYS = frozenset(("id", "category", "description", "status", "reason", "direction", "nominal", "tol",
                               "tol_plus", "tol_minus", "subject", "state", "source", "capability", "operation",
-                              "inspection", "designation", "process", "distribution"))
+                              "inspection", "designation", "process", "distribution", "fit"))
+FIT_REFERENCE_KEYS = frozenset(("interface", "kind", "side"))
+FIT_KINDS = ("press_fit", "running_fit", "locating_fit")
 REQUIREMENT_KEYS = frozenset(("min", "max", "method", "source", "id"))
 STATISTICS_KEYS = frozenset(("decision", "coverage_factor", "probability", "independence", "correlations"))
 DISTRIBUTION_KEYS = frozenset(("sigma", "tolerance_divisor", "centred", "stable", "source"))
@@ -443,6 +448,11 @@ class _IntentStack:
         direction = entry.get("direction")
         if direction not in (1, -1) or isinstance(direction, bool):
             raise StackError(f"{where}.direction must be 1 or -1, got {direction!r}")
+        if "fit" in entry:
+            if set(entry) & {"nominal", "tol", "tol_plus", "tol_minus"}:
+                raise StackError(f"{where}: a fit contributor takes its bounds from the fit, not from nominal or tol")
+            centre, half, fit_source = self.fit_bounds(entry["fit"], f"{where}.fit")
+            entry = {**entry, "nominal": centre, "tol": half, "source": entry.get("source", fit_source)}
         plus, minus = _tolerance(entry, where)
         if plus + minus == 0:
             raise StackError(f"{where}: zero variation claims a perfect dimension; give its qualified limits, "
@@ -469,6 +479,38 @@ class _IntentStack:
                             operation=entry.get("operation"), inspection=entry.get("inspection"),
                             designation=None if entry.get("designation") is None else _text(entry["designation"], f"{where}.designation"),
                             process=entry.get("process"), distribution=distribution, **common)
+
+    def fit_bounds(self, reference: Any, where: str) -> tuple[float, float, Mapping[str, Any]]:
+        """(centre, half range, source) of a contributor that takes its bounds from an interface fit's explicit limits
+        `{interface, kind[, side]}`: the `side` (hole or shaft) limits of hole and shaft deviations, else the fit's
+        clearance on the diameter (negative: interference). An ISO class is a desired limit, never these bounds."""
+        reference = _mapping(reference, where)
+        _keys(reference, FIT_REFERENCE_KEYS, where)
+        if self.record is None:
+            raise StackError(f"{where}: a fit contributor reads its limits from the record; bind the stack with --hw "
+                             "and --version")
+        interface = self.record.interfaces.get(reference.get("interface"))
+        if interface is None:
+            raise StackError(f"{where}: {reference.get('interface')} is not in interfaces.yaml")
+        kind, side = reference.get("kind"), reference.get("side")
+        if kind not in FIT_KINDS or side not in (None, "hole", "shaft"):
+            raise StackError(f"{where}: kind must be one of {', '.join(FIT_KINDS)} and side hole or shaft")
+        fit = (interface.raw.get("limits") or {}).get(kind)
+        if not isinstance(fit, Mapping) or "fit" in fit:
+            raise StackError(f"{where}: {reference['interface']} {kind} states no explicit limits; an ISO class is a "
+                             "desired limit, so give the contributor its qualified limits")
+        fits = _shared_module("cad_fits_fits", SKILLS / "cad-fits" / "scripts" / "fits.py")
+        try:
+            declared = fits.declared_fit(fit)
+        except fits.FitError as error:
+            raise StackError(f"{where}: {error}") from error
+        if side is None:
+            low, high = declared["min_clearance_mm"], declared["max_clearance_mm"]
+        elif side in declared:
+            low, high = (declared["nominal_mm"] + declared[side][key] for key in ("lower_mm", "upper_mm"))
+        else:
+            raise StackError(f"{where}: {reference['interface']} {kind}: a band on the diameter states no {side} limits")
+        return (low + high) / 2, (high - low) / 2, fit["source"]
 
     def refuse_double_counting(self) -> None:
         seen: dict[tuple[Any, ...], _Contributor] = {}
@@ -673,14 +715,28 @@ class _IntentStack:
 
     def press_fit_unknown(self, interface_id: str, interface: Any) -> None:
         """A press-fit pin on the interface has no qualifying interference source, so its seat is unknown, never a
-        pass or a default: the value is set by a printed coupon on the target printer and material."""
+        pass or a default: the value is set by a printed coupon on the target printer and material. A compliant fit
+        (`compliance: crush_rib`) is designed deformation of the compliant part: rigid seat qualification does not
+        apply, and the stack says so in a not_applicable finding and its limits, never a silent pass."""
         press_fit = (interface.raw.get("limits") or {}).get("press_fit")
         if not isinstance(press_fit, Mapping):
             return
         shaft = press_fit.get("shaft") or {}
         pin = f"{shaft.get('PN')} {shaft.get('feature')}" if shaft else interface_id
+        if press_fit.get("compliance") is not None:
+            reason = (f"the press fit of {pin} on {interface_id} is {press_fit['compliance']}: its interference is designed "
+                      "deformation of the compliant part, so rigid press-fit stress, press force and seat qualification "
+                      "do not apply; retention follows the joint's own source")
+            self.limits.append(f"rigid press-fit seat qualification does not apply to {interface_id}: {reason}")
+            self.finding("stack.press_fit_not_applicable", f"press_fit_not_applicable_{interface_id}", severity="info",
+                         outcome="not_applicable", measured={"text": reason},
+                         consequence="the stack does not judge the seat of a compliant fit",
+                         remedy="none: qualify retention through the joint's datasheet, guideline or check",
+                         uncertainty=reason, inputs=["hw/interfaces.yaml"])
+            return
+        label = press_fit.get("fit") or f"⌀{press_fit.get('nominal_mm')} explicit limits"
         self.unknown("stack.press_fit_unknown", None,
-                     f"the press fit of {pin} on {interface_id} ({press_fit.get('fit')}) is unknown: no qualifying "
+                     f"the press fit of {pin} on {interface_id} ({label}) is unknown: no qualifying "
                      "press-fit source exists, so the interference is set by a printed coupon on the target printer "
                      "and material",
                      "print and measure a press-fit coupon on the target printer and material, then record its "

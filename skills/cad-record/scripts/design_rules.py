@@ -226,7 +226,8 @@ def axial_retainer_findings(interfaces: Mapping[str, Any], resolve: Resolve) -> 
             if not isinstance(fit, Mapping):
                 continue
             where = f"interfaces/{index}/limits/{kind}"
-            label = f"{interface['id']} {kind} {fit['fit']}"
+            name = fit.get("fit") or f"⌀{fit.get('nominal_mm')} explicit limits"
+            label = f"{interface['id']} {kind} {name}"
             retainer = fit.get("axial_retainer")
             if retainer is None:
                 findings.append(RuleFinding(AXIAL_CODE, where, (

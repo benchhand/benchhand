@@ -285,6 +285,46 @@ class IntentStackContractTests(unittest.TestCase):
         result = self.bound(closing_gap_documents(), stack, "closing-gap")
         self.assertNotIn("stack.press_fit_unknown", codes(result))
 
+    CRUSH_RIBS = {"nominal_mm": 22, "interference": {"min": 0, "max": 1.013, "units": "mm"}, "compliance": "crush_rib",
+                  "source": {"kind": "user", "reference": "crush-rib bearing seat", "origin": "TST fixture user"},
+                  "hole": {"PN": "TST-0001", "feature": "cover_seat"}, "shaft": {"PN": "TST-0002", "feature": "shoulder_length"}}
+
+    def test_a_compliant_press_fit_states_that_rigid_seat_maths_does_not_apply(self) -> None:
+        stack = fixture("closing_gap.yaml")
+        stack["requirement"]["min"] = -1.0
+        documents = closing_gap_documents()
+        documents["interfaces.yaml"]["interfaces"][0]["limits"] = {"press_fit": dict(self.CRUSH_RIBS)}
+        result = self.bound(documents, stack, "closing-gap")
+        self.assertEqual((result["outcome"], codes(result)), ("pass", ["stack.press_fit_not_applicable"]))
+        finding = result["findings"][0]
+        self.assertEqual((finding["outcome"], finding["severity"]), ("not_applicable", "info"))
+        self.assertIn("designed deformation of the compliant part", finding["measured"]["text"])
+        self.assertTrue(any("rigid press-fit seat qualification does not apply" in text for text in result["limits"]))
+
+    def test_a_contributor_takes_its_bounds_from_explicit_fit_limits(self) -> None:
+        stack = fixture("closing_gap.yaml")
+        housing = contributor(stack, "H")
+        for key in ("nominal", "tol"):
+            housing.pop(key)
+        housing["fit"] = {"interface": "IF-001", "kind": "press_fit", "side": "hole"}
+        documents = closing_gap_documents()
+        # hole limits 20.2 -0.06/+0.10: 20.14..20.30, the fixture's 20.22 +/- 0.08
+        documents["interfaces.yaml"]["interfaces"][0]["limits"] = {"press_fit": {
+            **{key: self.CRUSH_RIBS[key] for key in ("hole", "shaft", "source")}, "nominal_mm": 20.2,
+            "deviations": {"units": "mm", "hole": {"upper": 0.10, "lower": -0.06}, "shaft": {"upper": 0.3, "lower": 0.2}}}}
+        result = self.bound(documents, stack, "closing-gap")
+        row = next(item for item in result["contributors"] if item["id"] == "H")
+        self.assertAlmostEqual(row["nominal"], 20.22, places=9)
+        self.assertAlmostEqual(row["tol_plus"], 0.08, places=9)
+        self.assertAlmostEqual(row["tol_minus"], 0.08, places=9)
+        self.assertEqual((result["worst_case"]["min"], result["worst_case"]["max"]), (-0.1, 0.5))
+        with self.assertRaisesRegex(stackup.StackError, "reads its limits from the record"):
+            stackup.compute(stack)
+        housing["fit"]["side"] = "shaft"
+        documents["interfaces.yaml"]["interfaces"][0]["limits"] = {"press_fit": dict(self.CRUSH_RIBS)}
+        with self.assertRaisesRegex(stackup.StackError, "a band on the diameter states no shaft limits"):
+            self.bound(documents, stack, "closing-gap")
+
     def test_an_effect_the_interface_declares_relevant_cannot_be_dropped(self) -> None:
         result = self.bound(closing_gap_documents(relevant=("manufacture", "coating", "thermal", "moisture")),
                             fixture("closing_gap.yaml"), "closing-gap")

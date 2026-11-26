@@ -7,7 +7,7 @@
 # schema-sha256 b851d6f420c0ea132ba6c096b5b5105daced23aadae85ed3b10286997554565e skills/cad-record/schemas/assembly.schema.json
 # schema-sha256 cabe6a6c934a7ba10522b6c4f3e47e756c972ed60db881dbe515baf7593a84cb skills/cad-record/schemas/bom-row.schema.json
 # schema-sha256 6868af6519ab519f02414dc1d860de2b33d3757aa39d78d4960530f0b4dbbe28 skills/cad-record/schemas/bundle-manifest.schema.json
-# schema-sha256 e23a427f19c73134b6e320897d9590f66d471ea66e2c2b1872d5cffe444a8092 skills/cad-record/schemas/drawing.schema.json
+# schema-sha256 db1037111497dc545b0faf0079089f6805b664dbcf02b1fde89532e15d071012 skills/cad-record/schemas/drawing.schema.json
 # schema-sha256 77d09e3d654eef9c216f6cb70465fbca26689edbdc5bf76c70b850c15143484d skills/cad-record/schemas/evidence-run.schema.json
 # schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 skills/cad-record/schemas/fea-case.schema.json
 # schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
@@ -40,7 +40,7 @@ validate with them (schema_registry.py) and use these types for editor and type-
 """
 
 from collections.abc import Mapping
-from typing import Any, Literal, NotRequired, Required, TypedDict
+from typing import Any, Literal, Never, NotRequired, Required, TypedDict
 
 __all__ = [
     "Assembly",
@@ -102,7 +102,14 @@ __all__ = [
     "DrawingEdges",
     "DrawingFeatureIntent",
     "DrawingFit",
+    "DrawingFitBand",
+    "DrawingFitDeviations",
     "DrawingFitEndpoint",
+    "DrawingFitLimitDeviations",
+    "DrawingFitOneOf0",
+    "DrawingFitOneOf1",
+    "DrawingFitOneOf2",
+    "DrawingFitOneOf3",
     "DrawingGeometricTolerance",
     "DrawingHeatSet",
     "DrawingPartDrawing",
@@ -1727,6 +1734,83 @@ class DrawingFeatureIntent(TypedDict):
     edges: NotRequired[DrawingEdges]
 
 
+# Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit/oneOf/0
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: nominal_mm: Never (optional), deviations: Never (optional), interference: Never (optional), clearance: Never (optional), compliance: Never (optional), ribs: Never (optional), fit: Any
+DrawingFitOneOf0 = Mapping[str, Any]
+
+
+# Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit/oneOf/1
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: fit: Never (optional), interference: Never (optional), clearance: Never (optional), nominal_mm: Any, source: Any, deviations: Any
+DrawingFitOneOf1 = Mapping[str, Any]
+
+
+# Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit/oneOf/2
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: fit: Never (optional), deviations: Never (optional), clearance: Never (optional), nominal_mm: Any, source: Any, interference: Any
+DrawingFitOneOf2 = Mapping[str, Any]
+
+
+# Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit/oneOf/3
+#
+# Open object: the schema allows other keys, so this is a Mapping[str, Any]. Type checkers do not check the known keys' names or value types; the table of known keys is documentation.
+# Known keys: fit: Never (optional), deviations: Never (optional), interference: Never (optional), compliance: Never (optional), ribs: Never (optional), nominal_mm: Any, source: Any, clearance: Any
+DrawingFitOneOf3 = Mapping[str, Any]
+
+
+# A fit between two parts (a part pair, or a hole and a shaft feature endpoint), in exactly one form: an ISO 286 designation `fit`, or explicit limits with their `nominal_mm` and `source` (design intent as a decision or user statement, a datasheet or a guideline) as hole and shaft `deviations` or as an `interference` or `clearance` band on the diameter. Every form is classified by one rule (cad-fits fits.py `classify`): interference when the largest diametral clearance is <= 0, clearance when the smallest is >= 0, else transition. `compliance: crush_rib` declares the interference designed deformation of a compliant part: overlap up to the stated maximum is allowed, rigid press-fit seat maths does not apply, and retention still follows the joint's own source rule
+#
+# Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit
+#
+# Not expressible as types (see the schema):
+# - dependentRequired: {"ribs":["compliance"]}
+# - additionalProperties: false
+# - allOf[0].oneOf: [{"required":["pair"],"not":{"anyOf":[{"required":["hole"]},{"required":["shaft"]}]}},{"required":["hole","shaft"],"not":{"required":["pair"]}}]
+# - allOf[0].oneOf[0].not: {"anyOf":[{"required":["hole"]},{"required":["shaft"]}]}
+# - allOf[0].oneOf[1].not: {"required":["pair"]}
+DrawingFit = DrawingFitOneOf0 | DrawingFitOneOf1 | DrawingFitOneOf2 | DrawingFitOneOf3
+
+
+class DrawingFitBand(TypedDict):
+    """A band on the diameter, min <= max, in units mm or um
+
+    Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit_band
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    min: Required[float]
+    max: Required[float]
+    units: Required[Literal["mm", "um"]]
+
+
+class DrawingFitLimitDeviations(TypedDict):
+    """Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit_limit_deviations
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    upper: Required[float]
+    lower: Required[float]
+
+
+class DrawingFitDeviations(TypedDict):
+    """Hole and shaft limit deviations from nominal_mm, lower <= upper, in units mm or um
+
+    Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit_deviations
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    units: Required[Literal["mm", "um"]]
+    hole: Required[DrawingFitLimitDeviations]
+    shaft: Required[DrawingFitLimitDeviations]
+
+
 # Source: skills/cad-record/schemas/drawing.schema.json#/$defs/pn
 #
 # Not expressible as types (see the schema):
@@ -1744,30 +1828,6 @@ class DrawingFitEndpoint(TypedDict):
     occurrence: NotRequired[AssemblyOccurrenceRef]
     feature: Required[DrawingSemanticId]
     region: NotRequired[DrawingSemanticId]
-
-
-class DrawingFit(TypedDict):
-    """An ISO 286 fit between two parts: a part pair, or a hole and a shaft feature endpoint
-
-    Source: skills/cad-record/schemas/drawing.schema.json#/$defs/fit
-
-    Not expressible as types (see the schema):
-    - additionalProperties: false
-    - oneOf: [{"required":["pair"],"not":{"anyOf":[{"required":["hole"]},{"required":["shaft"]}]}},{"required":["hole","shaft"],"not":{"required":["pair"]}}]
-
-    Field notes:
-    - fit: minLength: 1
-    - pair: minItems: 2; maxItems: 2; uniqueItems: true
-    - engagement_length_mm: engagement_length_mm: positive number, in mm. The travel along the insertion axis, back from the installed pose, over which the interfering surface of the inserted part still overlaps its partner. For a press fit seated on a bore floor, use the bore depth (an entry chamfer or counterbore may be ignored); not the press-band length and not the overlap at the installed pose. For a heat-set insert, use its embedded length. For a press fit or a heat-set insert, assembly access exempts interference up to this length plus one minimum sampling step. A running or locating fit records the length but gets no exemption. Optional; never derived.; exclusiveMinimum: 0
-    - note: minLength: 1
-    """
-    fit: Required[str]
-    pair: NotRequired[list[AssemblyPartRef]]
-    hole: NotRequired[DrawingFitEndpoint]
-    shaft: NotRequired[DrawingFitEndpoint]
-    engagement_length_mm: NotRequired[float]
-    note: NotRequired[str]
-    axial_retainer: NotRequired[DrawingAxialRetainer]
 
 
 class DrawingGeometricTolerance(TypedDict):
