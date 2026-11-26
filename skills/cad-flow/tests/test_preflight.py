@@ -641,6 +641,19 @@ class FEASolverCheckTests(unittest.TestCase):
 
 
 class InfoStatusTests(unittest.TestCase):
+    def test_the_json_report_with_every_status_matches_its_schema(self) -> None:
+        import jsonschema
+
+        schema = json.loads((SCRIPT.parents[2] / "cad-record" / "schemas" / "preflight-report.schema.json")
+                            .read_text(encoding="utf-8"))
+        report = preflight.Report(tuple(
+            preflight.Check(status, status, status, status != "info", "detail", "fix", 0.5)
+            for status in ("pass", "fail", "warn", "info")))
+        jsonschema.Draft202012Validator(schema).validate(report.as_json())
+        bogus = report.as_json()
+        bogus["checks"][0]["status"] = "skipped"
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(schema).validate(bogus)
     def test_an_info_check_is_not_counted_and_does_not_fail_the_report(self) -> None:
         report = preflight.Report((
             preflight.Check("uv", "uv", "pass", True, "uv", ""),
