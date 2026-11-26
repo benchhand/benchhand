@@ -16,8 +16,8 @@ record     writes the answers to hw/product.yaml flow.profile, citing --decision
            as an accepted MADR record under hw/decisions/. The lead asks each question showing its default.
            Every question is an option the user answered (--fea off) or a default the user accepted
            (--accept-default fea); the profile's `asked` map records which. A question neither answered
-           nor accepted refuses the record. product.yaml is edited as text, so its comments and layout
-           survive: the edit must parse to exactly the intended data, and the file is replaced in one rename.
+           nor accepted refuses the record. The edit preserves product.yaml outside the flow mapping.
+           An inline flow mapping is re-rendered. The edit must parse to the intended data before the file is replaced.
 check      reports what blocks at --stage (default: product.yaml flow.stage): a missing profile or decision
            from SPECIFY on, a value the schema rejects, and a start question with no `asked` answer.
 
@@ -260,15 +260,31 @@ def _dump(block: Mapping[str, Any], indent: int) -> str:
     return "".join(" " * indent + line if line.strip() else line for line in text.splitlines(keepends=True))
 
 
-def with_profile(text: str, profile: Mapping[str, Any]) -> str:
-    """`text` (product.yaml, \\n newlines) with flow.profile set to `profile`: an earlier profile block
-    removed and the new one placed last in the block-style flow mapping, which is added when absent.
-    Raises ProfileError for a flow this textual edit cannot place."""
+def _with_inline_flow(text: str, flow: Mapping[str, Any]) -> str | None:
+    """Replace the inline flow mapping by its source span, leaving the rest of product.yaml untouched."""
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(root, yaml.MappingNode):
+        return None
+    for key, value in reversed(root.value):
+        if not isinstance(key, yaml.ScalarNode) or key.value != "flow":
+            continue
+        if not isinstance(value, yaml.MappingNode) or not value.flow_style or value.start_mark.index < key.end_mark.index:
+            raise ProfileError("product.yaml flow is not a directly editable mapping")
+        data = {**flow, "profile": _quoted(flow["profile"])}
+        rendered: str = yaml.dump(data, Dumper=_Dumper, sort_keys=False, default_flow_style=True, allow_unicode=True,
+                                  width=4096)
+        return text[:value.start_mark.index] + rendered.rstrip("\n") + text[value.end_mark.index:]
+    return None
+
+
+def with_profile(text: str, flow: Mapping[str, Any]) -> str:
+    """`text` (product.yaml, \\n newlines) with `flow.profile` replaced, adding `flow` when absent."""
+    profile = flow["profile"]
     lines = text.splitlines(keepends=True)
     start = next((i for i, line in enumerate(lines) if re.match(r"^flow:\s*(#.*)?$", line)), None)
     if start is None:
-        if any(re.match(r"^flow\s*:", line) for line in lines):
-            raise ProfileError("product.yaml flow is not a block-style mapping; write it as one, then record again")
+        if (inline := _with_inline_flow(text, flow)) is not None:
+            return inline
         prefix = text if not text or text.endswith("\n") else text + "\n"
         return prefix + "flow:\n" + _dump({"profile": profile}, 2)
     end = next((i for i in range(start + 1, len(lines)) if _content(lines[i]) and _indent_of(lines[i]) == 0), len(lines))
@@ -392,10 +408,14 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     profile = answered_profile(decision, answers, accepted)
     if invalid := gate.shape_problems(profile):
         raise ProfileError(gate.refusal(invalid))
-    after = with_profile(text, profile)
     expected = copy.deepcopy(dict(product))
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
-    if yaml_loader.safe_load(after) != expected:
+    try:
+        after = with_profile(text, expected["flow"])
+        edited = yaml_loader.safe_load(after)
+    except yaml.YAMLError as error:
+        raise ProfileError(f"{path}: cannot edit flow: {error}") from error
+    if edited != expected:
         raise ProfileError(f"{path}: the textual edit would not give the intended data; simplify its flow block")
     try:
         _replace(path, after, newline)
