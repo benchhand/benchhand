@@ -163,6 +163,9 @@ class Record(unittest.TestCase):
         for name, product, part_text, named in (
                 ("a plan that is a word", PRODUCT + "manufacturing:\n  processes: fdm\n", "process: cnc\n",
                  "manufacturing/processes"),
+                ("a process name that does not exist", PRODUCT + "manufacturing:\n  processes: [fmd]\n", "process: cnc\n",
+                 "manufacturing/processes"),
+                ("an explicit null", PRODUCT + "manufacturing:\n  processes:\n", "process: cnc\n", "manufacturing/processes"),
                 ("a part that does not parse", PRODUCT + "manufacturing:\n  processes: [cnc]\n", "process: [cnc\n",
                  "parts/PRT-0001/part.yaml")):
             with self.subTest(name):
@@ -176,6 +179,13 @@ class Record(unittest.TestCase):
                 asked = run("questions", "--hw", str(self.hw))
                 self.assertEqual(asked.returncode, 1, asked.stderr)
                 self.assertIn(named, asked.stderr)
+
+    def test_check_names_a_malformed_plan_while_no_profile_is_recorded(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fmd]\n", encoding="utf-8")
+        result = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual([item["path"] for item in json.loads(result.stdout)["problems"]],
+                         ["flow/profile", "manufacturing/processes"])
 
     def test_questions_for_a_product_that_does_not_parse_exits_1_naming_the_file(self) -> None:
         self.product.write_text("flow: [unclosed\n", encoding="utf-8")
