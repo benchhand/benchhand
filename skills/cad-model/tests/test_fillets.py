@@ -40,13 +40,40 @@ class FilletFallbackTests(unittest.TestCase):
         self.assertEqual(shape.fillet.call_count, 3)
         self.assertIn("skipped non-functional fillet on rim", captured.output[0])
 
-    def test_functional_edge_raises_last_kernel_failure(self) -> None:
+    def test_a_cosmetic_edge_filleted_smaller_reports_its_actual_radius(self) -> None:
         shape = mock.Mock()
-        errors = [self.StdFail_NotDone("first"), self.StdFail_NotDone("last")]
-        shape.fillet.side_effect = errors
+        shape.fillet.side_effect = [self.StdFail_NotDone("too large"), self.StdFail_NotDone("too large"), "quarter"]
+        with self.assertLogs("cadmodel.fillets", level="WARNING") as captured:
+            self.assertEqual(fillets.fillet_edge(shape, "rim", 2.0, name="rim"), "quarter")
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("rim filleted at 0.5 mm, not the requested 2 mm", captured.output[0])
+
+    def test_a_functional_edge_fails_at_its_specified_radius_and_never_shrinks(self) -> None:
+        shape = mock.Mock()
+        refused = self.StdFail_NotDone("too large")
+        shape.fillet.side_effect = [refused, "half-radius-shape"]
         with self.assertRaises(self.StdFail_NotDone) as caught:
-            fillets.fillet_edge(shape, "seat", 1.0, retries=1, functional=True)
-        self.assertIs(caught.exception, errors[-1])
+            fillets.fillet_edge(shape, "seat", 1.0, retries=2, functional=True)
+        self.assertIs(caught.exception, refused)
+        self.assertEqual([call.args for call in shape.fillet.call_args_list], [(1.0, ["seat"])])
+
+    def test_a_functional_edge_shrinks_only_within_its_declared_range(self) -> None:
+        within = mock.Mock()
+        within.fillet.side_effect = [self.StdFail_NotDone("too large"), "half-radius-shape"]
+        with self.assertLogs("cadmodel.fillets", level="WARNING") as captured:
+            result = fillets.fillet_edge(within, "seat", 1.0, functional=True, min_radius=0.5, name="seat")
+        self.assertEqual(result, "half-radius-shape")
+        self.assertIn("seat filleted at 0.5 mm, not the requested 1 mm", captured.output[0])
+        below = mock.Mock()
+        below.fillet.side_effect = [self.StdFail_NotDone("too large"), "half-radius-shape"]
+        with self.assertRaises(self.StdFail_NotDone):
+            fillets.fillet_edge(below, "seat", 1.0, functional=True, min_radius=0.6)
+        self.assertEqual([call.args for call in below.fillet.call_args_list], [(1.0, ["seat"])])
+
+    def test_a_permitted_range_must_hold_the_requested_radius(self) -> None:
+        for low in (0.0, -1.0, 2.0, float("nan")):
+            with self.subTest(min_radius=low), self.assertRaisesRegex(ValueError, "min_radius"):
+                fillets.fillet_edge(mock.Mock(), "seat", 1.0, functional=True, min_radius=low)
 
     def test_other_kernel_errors_are_not_treated_as_cosmetic_fallback(self) -> None:
         shape = mock.Mock()
