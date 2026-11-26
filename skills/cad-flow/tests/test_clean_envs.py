@@ -56,7 +56,7 @@ class PlanTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name) / "environments-v2"
         self.root.mkdir()
-        cadquery = ("cadquery-2.8.0", "cadquery_ocp-7.9.3.1.1", "vtk-9.6.2")
+        cadquery = ("cadquery-2.8.0", "cadquery_ocp-7.9.3.1.1", "vtk-9.6.2", "PyYAML-6.0.3")
         self.stale = environment(
             self.root, "run-cadquery-0123456789abcdef", "run_cadquery.py", cadquery
         )

@@ -6,7 +6,9 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = []
+# dependencies = [
+#   "pyyaml>=6.0",
+# ]
 # ///
 """Check the CAD plugin's required local tools and optional harness installation.
 
@@ -110,6 +112,10 @@ CHROMIUM = Runtime("playwright-chromium", SKILLS / "cad-render" / "scripts" / "r
                    "playwright")
 
 
+# An info check reports a fact; it is neither counted nor a failure.
+PASSING = frozenset({"pass", "info"})
+
+
 @dataclass(frozen=True)
 class Check:
     """One named check and the action that resolves a failure or warning."""
@@ -123,7 +129,7 @@ class Check:
     elapsed_s: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.status not in {"pass", "fail", "warn"}:
+        if self.status not in {"pass", "fail", "warn", "info"}:
             raise ValueError(f"invalid check status: {self.status}")
 
 
@@ -138,7 +144,7 @@ class Report:
 
     @property
     def exit_code(self) -> int:
-        return int(any(check.required and check.status != "pass" for check in self.checks))
+        return int(any(check.required and check.status not in PASSING for check in self.checks))
 
     @property
     def summary(self) -> str:
@@ -332,7 +338,24 @@ def cad_tool_version(command: Path, environ: Mapping[str, str]) -> tuple[str | N
     return version, output.strip() or f"freecadcmd exited {result.returncode}."
 
 
-def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) -> list[Check]:
+def fea_enabled(cwd: Path) -> bool:
+    """True only when hw/product.yaml sets flow.profile.fea.enabled to boolean true."""
+    import yaml  # lazy: a plain preflight run needs no PyYAML
+
+    try:
+        product = yaml.safe_load((cwd / "hw" / "product.yaml").read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return False
+    node: Any = product
+    for key in ("flow", "profile", "fea", "enabled"):
+        if not isinstance(node, dict):
+            return False
+        node = node.get(key)
+    return node is True
+
+
+def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None,
+                          fea_enabled: bool = False) -> list[Check]:
     tool = CAD_TOOL
     checks: list[Check] = []
     started = time.monotonic()
@@ -379,12 +402,17 @@ def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) 
     checks.append(replace(_check("techdraw-templates", "TechDraw templates", "pass" if okay else "fail", detail,
                                  "" if okay else template_fix), elapsed_s=time.monotonic() - started))
     print(f"[preflight] techdraw-templates: {checks[-1].status} ({checks[-1].elapsed_s:.1f}s)", file=sys.stderr, flush=True)
-    checks.append(_fea_solvers_check(command, environ))
+    checks.append(_fea_solvers_check(command, environ, fea_enabled))
     return checks
 
 
-def _fea_solvers_check(command: Path, environ: Mapping[str, str]) -> Check:
-    """The CalculiX ccx and Gmsh that cad-analysis FEA runs, as FreeCAD resolves them in its own process."""
+def _fea_solvers_check(command: Path, environ: Mapping[str, str], enabled: bool = False) -> Check:
+    """The CalculiX ccx and Gmsh that cad-analysis FEA runs, as FreeCAD resolves them in its own process.
+
+    Without FEA in the flow profile the probe does not run: the solvers are not needed yet."""
+    if not enabled:
+        return _check("fea-solvers", "FEA solvers (ccx, Gmsh)", "info",
+                      "FEA is not enabled; it will need ccx and Gmsh if enabled later.", "")
     started = time.monotonic()
     print("[preflight] fea-solvers: checking...", file=sys.stderr, flush=True)
     labels = {"calculix": "CalculiX ccx", "gmsh": "Gmsh"}
@@ -516,8 +544,8 @@ def run_checks(environ: Mapping[str, str] | None = None, cwd: Path | None = None
     env = os.environ if environ is None else environ
     workdir = cwd or Path.cwd()
     home_dir = home or Path(env.get("HOME", str(Path.home())))
-    checks = list(cad_checks if cad_checks is not None else _timed_freecad_checks(env, home_dir))
-    if any(check.status != "pass" for check in checks):
+    checks = list(cad_checks if cad_checks is not None else _timed_freecad_checks(env, home_dir, fea_enabled(workdir)))
+    if any(check.required and check.status not in PASSING for check in checks):
         return Report(tuple(checks))
     uv_check, uv = _run_uv_check(env)
     checks.append(uv_check)

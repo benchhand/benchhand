@@ -15,6 +15,7 @@ TRIGGER
 ## Workflow
 
 1. At GROUND, from the project root run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/setup.py`. Setup checks FreeCAD 1.1.4 first. A missing command or wrong version makes setup exit nonzero before any other action. Follow `cad-drawings` to install FreeCAD, then rerun setup.
+   The CalculiX `ccx` and Gmsh solvers are checked only when `flow.profile.fea.enabled` in `hw/product.yaml` is `true`; before that, preflight reports them as `info` and setup does not stop on a missing solver.
    Add `--yes` to execute the remaining user-level setup actions. Pass `--harness claude|codex|opencode|kiro` to install harness files. Setup reruns preflight and prints its summary.
    Start the background warm-up with `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-flow/scripts/preflight.py --warm --background` from the project root.
    Continue GROUND work while it runs.

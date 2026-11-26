@@ -576,7 +576,7 @@ class FEASolverCheckTests(unittest.TestCase):
               "calculix": {"path": "/b/bin/ccx", "version": "2.23", "source": "FreeCAD's lookup"},
               "gmsh": {"path": "/b/bin/gmsh", "version": "4.15.0", "source": "FreeCAD's lookup"}}
 
-    def solver_check(self, probe: dict) -> preflight.Check:
+    def solver_check(self, probe: dict, enabled: bool = True) -> preflight.Check:
         with tempfile.TemporaryDirectory(prefix="cad-preflight-fea-") as directory:
             command = Path(directory) / "freecadcmd"
             command.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -585,8 +585,12 @@ class FEASolverCheckTests(unittest.TestCase):
                     patch.object(preflight.freecad_runtime, "techdraw_templates",
                                  return_value=(directory, frozenset(preflight.EXPECTED_TEMPLATES))), \
                     patch.object(preflight.fea_solvers, "probe", **probe) as probed, patch("sys.stderr"):
-                checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""})
-        self.assertEqual(probed.call_args.args[0], command)
+                checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""},
+                                                         fea_enabled=enabled)
+        if enabled:
+            self.assertEqual(probed.call_args.args[0], command)
+        else:
+            probed.assert_not_called()
         return next(check for check in checks if check.id == "fea-solvers")
 
     def test_templates_listed_inside_freecad_pass_after_its_mount_is_gone(self) -> None:
@@ -622,6 +626,63 @@ class FEASolverCheckTests(unittest.TestCase):
         check = self.solver_check({"side_effect": preflight.fea_solvers.ProbeError("wrote no result marker")})
         self.assertEqual(check.status, "fail")
         self.assertIn("wrote no result marker", check.detail)
+
+    def test_without_fea_a_missing_solver_is_info_and_nothing_is_probed(self) -> None:
+        check = self.solver_check({"return_value": {**self.PROBED, "calculix": {"error": "ccx not found"}}},
+                                  enabled=False)
+        self.assertEqual(check.status, "info")
+        self.assertIn("FEA is not enabled", check.detail)
+        self.assertIn("ccx and Gmsh", check.detail)
+
+    def test_with_fea_a_missing_solver_fails(self) -> None:
+        check = self.solver_check({"return_value": {**self.PROBED, "gmsh": {"error": "gmsh not found"}}},
+                                  enabled=True)
+        self.assertEqual((check.status, check.required), ("fail", True))
+
+
+class InfoStatusTests(unittest.TestCase):
+    def test_an_info_check_is_not_counted_and_does_not_fail_the_report(self) -> None:
+        report = preflight.Report((
+            preflight.Check("uv", "uv", "pass", True, "uv", ""),
+            preflight.Check("fea-solvers", "FEA", "info", True, "not enabled", ""),
+        ))
+        self.assertEqual(report.exit_code, 0)
+        self.assertEqual(report.counts, {"pass": 1, "fail": 0, "warn": 0})
+
+    def test_run_checks_continues_past_an_info_check(self) -> None:
+        cad_checks = [preflight.Check("fea-solvers", "FEA", "info", True, "not enabled", "")]
+        ran = []
+        ok = preflight.Check("uv", "uv", "pass", True, "", "")
+        with patch.object(preflight, "_uv_check", side_effect=lambda env: (ran.append("uv") or ok, None)), \
+                patch.object(preflight, "_vendor_check", return_value=ok), \
+                patch.object(preflight, "_harness_check", return_value=ok), patch("sys.stderr"):
+            report = preflight.run_checks({"HOME": "/nowhere"}, Path("/p"), Path("/nowhere"), "codex",
+                                          cad_checks=cad_checks)
+        self.assertEqual(ran, ["uv"])
+        self.assertGreater(len(report.checks), 1)
+
+
+class FEAEnabledTests(unittest.TestCase):
+    def enabled(self, text: str | None) -> bool:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-profile-") as directory:
+            root = Path(directory)
+            if text is not None:
+                (root / "hw").mkdir()
+                (root / "hw" / "product.yaml").write_text(text, encoding="utf-8")
+            return preflight.fea_enabled(root)
+
+    def test_only_boolean_true_enables_fea(self) -> None:
+        for text, expected in (
+            (None, False),
+            ("name: widget\n", False),
+            ("flow:\n  profile:\n    other: 1\n", False),
+            ("flow:\n  profile:\n    fea:\n      enabled: false\n", False),
+            ("flow:\n  profile:\n    fea:\n      enabled: true\n", True),
+            ('flow:\n  profile:\n    fea:\n      enabled: "true"\n', False),
+            ("flow: [unclosed\n", False),
+        ):
+            with self.subTest(text=text):
+                self.assertIs(self.enabled(text), expected)
 
 
 if __name__ == "__main__":

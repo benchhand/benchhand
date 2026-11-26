@@ -4,7 +4,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.13"
-# dependencies = ["cadquery==2.8.0", "cadquery-ocp==7.9.3.1.1", "vtk==9.6.2"]
+# dependencies = ["cadquery==2.8.0", "cadquery-ocp==7.9.3.1.1", "vtk==9.6.2", "pyyaml>=6.0"]
 # ///
 """CadQuery 2.8 kernel runner for `cad_model.py run`; protocol in cadmodel/runner.py.
 
