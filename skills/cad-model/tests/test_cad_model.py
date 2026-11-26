@@ -1796,6 +1796,14 @@ class ProductSubsetTests(unittest.TestCase):
         row = self.judge(glb=glb)
         self.assertEqual((row["status"], row["glb_duplicate_nodes"]), ("fail", ["TST-0001"]))
 
+    def test_a_meshless_occurrence_does_not_borrow_the_mesh_of_one_nested_below_it(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        glb = self.gltf(names, meshless=(names[0],))
+        glb["nodes"][0]["children"].remove(2)
+        glb["nodes"][1]["children"] = [2]  # s-1, with its mesh, hangs below the meshless TST-0001 node
+        row = self.judge(glb=glb)
+        self.assertEqual((row["status"], row["glb_missing_nodes"], row["glb_duplicate_nodes"]), ("fail", ["TST-0001"], []))
+
     def test_a_malformed_glb_is_a_blocking_failure_not_a_crash(self) -> None:
         names = [self.PLACED[oid][1] for oid in self.DELIVERED]
         bad_scene = {**self.gltf(names), "scene": 3}
