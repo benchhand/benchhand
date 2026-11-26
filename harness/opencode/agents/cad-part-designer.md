@@ -63,6 +63,7 @@ You are a CAD part designer. The cad-flow lead assigns one L2 subassembly or one
    ```
 
    `--attach` repeats once per attachment. Resolve geometry/form and fit results with the model/design/fits contracts; unknown process/capability coverage is not a pass. Drawing ownership follows the cad-flow Delegation table; do not produce lead-owned drawings in a part scratch workspace. When a brief asks for drawing locators, write the `drawing_features` hook from cad-model `references/contract.md`.
+   When the brief says the lead integrated a delivery or retired parts, run `cad-flow/scripts/scratch.py sync --hw hw --unit <unit>` before building. A `conflicts` entry is BLOCKED.
 5. Deliver only after the scoped scratch build passes:
 
    ```sh
