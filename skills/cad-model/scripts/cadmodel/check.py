@@ -589,8 +589,8 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
     exactly that occurrence pair excuses overlap, as cad-motion pair_policy.allowed_pairs decides; an
     interference fit that measures no overlap is a finding, unless its explicit limits start at zero
     interference. A compliant (crush-rib) fit allows overlap up to its maximum interference on the diameter,
-    read from the row's `overlap_diametral_mm`: beyond it is a finding, unmeasured an explicit unknown in
-    `compliant_fits`. A fit cad-fits cannot read (`invalid`) is a finding. `refs` maps an occurrence id to its
+    read from the row's `overlap_diametral_mm`: beyond it is a finding; unmeasured, its row in `compliant_fits` is
+    unknown and the check abstains (status unknown: listed under the result's abstentions, never blocking). A fit cad-fits cannot read (`invalid`) is a finding. `refs` maps an occurrence id to its
     copyable reference.
 
     A cleared row proves no overlap by its bounds; an exact row overlaps above INTERFERENCE_MM3; a
@@ -646,7 +646,9 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
     measured_rows = [e for e in every if e["clearance_mm"] is not None]
     smallest = None if changed else min(measured_rows, key=lambda e: e["clearance_mm"], default=None)
     ok = all(e["ok"] for e in every) and not unknown and not unknown_allowed and not declared_fit_findings
-    return {"status": _status(ok), "blocking": True,
+    # an unmeasured compliant overlap abstains: the result lists the check under `abstentions`, and it never blocks
+    abstains = ok and any(row["outcome"] == "unknown" for row in compliant)
+    return {"status": "unknown" if abstains else _status(ok), "blocking": True,
             "selection": "changed" if changed else ("all" if named is None else "named"),
             "threshold_mm3": threshold, "unknown_pairs": unknown, "unknown_allowed": unknown_allowed,
             "declared_pairs": declarations, "declared_heat_sets": inserts, "declared_locating_fits": locating,
