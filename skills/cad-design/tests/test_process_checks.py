@@ -3141,10 +3141,13 @@ class GuidelineWithoutCalibrationTests(Checks):
 
     REAM = "process.reaming.allowance@TST-0101/ream"
 
-    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo") -> Any:
-        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size."""
+    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", machine: bool = True) -> Any:
+        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size. Without `machine` the print
+        names no capability profile."""
         documents = guided(service=service, calibrations=(CONTACT,))
         intent = documents["parts/TST-0101/part.yaml"]["intent"]
+        if not machine:
+            intent["route"][0]["capability"] = FX.unknown("no machine recorded")
         intent["route"][0]["allowances"] = [{"feature": "bore", "amount": mm(allowance), "purpose": "finish",
                                              "source": FX.source("user")}]
         intent["route"].append(FX.operation("ream", "reaming", "tst_reamer", targets=[{"feature": "bore"}]))
@@ -3161,6 +3164,14 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
                 if expected == "fail":
                     self.assertTrue(self.finding(result, "process.reaming.allowance_short")["uncertainty"].startswith("guideline "))
+
+    def test_a_ream_allowance_after_a_print_with_no_machine_is_judged_against_the_guideline_hole_deviation(self) -> None:
+        """The deviation is the producing print's: with no machine recorded its process and material scope the shipped
+        guideline, not the reaming operation's own profile."""
+        for allowance, expected in ((0.6, "pass"), (0.3, "fail")):
+            with self.subTest(allowance=allowance), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "0"}):
+                result = self.reamed(allowance, catalog=SHIPPED, machine=False)
+                self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
 
     def test_a_ream_allowance_after_printing_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
         result = self.reamed(0.6, catalog=None)
