@@ -281,6 +281,9 @@ class Evaluation:
     remedy: str | None = None
     blocks_prototype: bool = False  # a failure that rules the candidate out even as a limited prototype
     authored: bool = False  # from the candidate's evaluations, not computed here
+    # a stress criterion of a profiled part in a service class that needs a design allowable: an authored pass carries no
+    # allowable basis, so it never replaces this computed result
+    allowable_required: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"constraint": self.constraint, "mandatory": self.mandatory, "outcome": self.outcome,
@@ -883,7 +886,8 @@ class _Assessor:
                 self.issues.append({"kind": "conflict", "candidate": candidate.id, "requirement": requirement.id,
                                     "criterion": _criterion_dict(criterion), "subject": subject})
             if not computed_fail and any(e.outcome == "pass" for e in written):
-                computed = [e for e in computed if e.outcome != "unknown"]
+                # an authored pass settles an unknown only where its evidence meets the service class
+                computed = [e for e in computed if e.outcome != "unknown" or e.allowable_required]
             results.extend(computed + written)
         for index, data in enumerate(authored):
             if index in matched or (requirement.acceptance and data in blanket):
@@ -959,7 +963,7 @@ class _Assessor:
                       f"such as another candidate; never relax {requirement.id} to make this one pass")
         elif outcome == "unknown":
             remedy = f"record a sourced {name} of {profile.id} under the service conditions, or a grade-level profile"
-        return Evaluation(outcome=outcome, method=method, reasons=tuple(reasons),
+        return Evaluation(outcome=outcome, method=method, reasons=tuple(reasons), allowable_required=allowable,
                           measured=first.value.as_dict() if first is not None else None,
                           basis=first.basis if first is not None else None,
                           sources=tuple(_source_dict(s) for s in first.sources) if first is not None else (),
