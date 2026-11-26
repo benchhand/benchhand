@@ -163,6 +163,15 @@ class DeclaredFitTests(unittest.TestCase):
                 "units": ["um"], "hole": {"upper": 12, "lower": 0}, "shaft": {"upper": 20, "lower": 12}}},
                 "deviations.units"),
             "misspelled key": ({"fitt": "5 H7/f7", "pair": ["TST-0001", "TST-0002"]}, "unknown key 'fitt'"),
+            # the test project's local patch (absolute limits_mm sizes) is not a form: it must migrate, not be ignored
+            "local limits_mm": ({"fit": "crush-rib interference", "limits_mm": {
+                "hole": [50.987, 51.987], "shaft": [51.987, 52.0], "decision": "DR-042"}}, "unknown key 'limits_mm'"),
+            "deviation missing a bound": ({"nominal_mm": 52, "source": DESIGN_INTENT, "deviations": {
+                "units": "mm", "hole": {"upper": -0.013}, "shaft": {"upper": 0, "lower": -0.013}}},
+                "deviations.hole.lower must be a finite number"),
+            "reversed deviation": ({"nominal_mm": 52, "source": DESIGN_INTENT, "deviations": {
+                "units": "mm", "hole": {"upper": -1.013, "lower": -0.013}, "shaft": {"upper": 0, "lower": -0.013}}},
+                "deviations.hole.lower -0.013 mm is above deviations.hole.upper -1.013 mm"),
         }
         for name, (entry, field) in cases.items():
             with self.subTest(name), self.assertRaisesRegex(fits.FitError, f"{field}.*accepted forms"):
