@@ -811,10 +811,11 @@ def _critical(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[st
     return parts
 
 
-# The critical-surface properties another check of a printed route reads for every feature: flatness in thermal
-# distortion. Per feature, _critical adds the one it consumes itself: a bore's diameter (hole_fits) or the deviation of
-# its role. Every other criterion goes through _unchecked: the band-width check, else an explicit open finding.
-JUDGED_PROPERTIES = frozenset({"flatness"})
+# The critical-surface properties another check of a printed route reads for every feature, with the check that reads
+# it: flatness in thermal distortion. A property counts as judged only on a route whose handler table registers that
+# check (FDM, not resin). Per feature, _critical adds the one it consumes itself: a bore's diameter (hole_fits) or the
+# deviation of its role. Every other criterion goes through _unchecked: the band-width check, else an explicit open finding.
+JUDGED_PROPERTIES = {"flatness": "thermal_distortion"}
 # The criterion properties that name a dimensional size of the model (a length the print can miss), so a band of one in
 # a length unit can be compared with the as-printed spread. The table is explicit: a name is never read as a size from
 # its suffix (roughness_height is a roughness). A deviation, roughness or flatness is never a size; any property not
@@ -835,9 +836,12 @@ def _is_size(ctx: Context, prop: str, units: str | None) -> bool:
 
 
 def _judged_properties(ctx: Context) -> frozenset[str]:
-    """JUDGED_PROPERTIES plus join_distortion when a later joining operation judges the surface as made."""
+    """The JUDGED_PROPERTIES whose check this route kind registers, plus join_distortion when a later joining operation
+    judges the surface as made."""
+    handlers = HANDLERS.get(_k(ctx), {})
+    judged = frozenset(prop for prop, check in JUDGED_PROPERTIES.items() if check in handlers)
     joined = any(op.kind == "joining" for op in ctx.after())
-    return JUDGED_PROPERTIES | ({"join_distortion"} if joined else frozenset())
+    return judged | ({"join_distortion"} if joined else frozenset())
 
 
 def _length_mm(ctx: Context, value: Any, units: str | None) -> float | None:
@@ -1104,3 +1108,4 @@ FDM = {"orientation": gated(orientation), "geometry": gated(geometry), "support"
        "thermal_distortion": gated(thermal_distortion)}
 RESIN = {"orientation": gated(orientation), "geometry": gated(geometry), "support": gated(support),
          "drainage": drainage, "post_cure": gated(post_cure)}
+HANDLERS = {"fdm": FDM, "resin": RESIN}  # by route kind, as dispatch registers them
