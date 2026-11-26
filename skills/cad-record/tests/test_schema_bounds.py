@@ -338,6 +338,7 @@ NOT_IN_AUDIT = {
     ("preflight-report.schema.json", "/properties/counts/properties/fail"): "sign-only; a count of checks in a report, an output and not a setting",
     ("preflight-report.schema.json", "/properties/counts/properties/warn"): "sign-only; a count of checks in a report, an output and not a setting",
     ("preflight-report.schema.json", "/$defs/check/properties/elapsed_s"): "sign-only; a measured check duration in a report, an output and not a setting",
+    ("bom-summary.schema.json", "/properties/total_qty/additionalProperties"): "an instance count of a roll-up output, not a setting",
     ("finding.schema.json", "/properties/location/properties/line"): "a 1-based source line number in a finding, an index and not a setting",
     ("fea-case.schema.json", "/properties/solid_index"): "a 1-based index",
     ("manufacturing-capabilities.schema.json", "/$defs/profile/properties/revision"): "a revision counter",

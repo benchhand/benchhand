@@ -189,12 +189,14 @@ class RollUpTests(unittest.TestCase):
         records = {**invalid, "FST-0004": self.SCREW}
         with tempfile.TemporaryDirectory() as directory:
             hw = Path(directory) / "hw"
+            step = Path(directory) / "assembly.step"
+            step.write_text("stub", encoding="utf-8")  # read_step_tree is mocked; main only needs the file to exist
             write_parts(hw, {pn: yaml.safe_dump(self.bought(designation)) for pn, designation in records.items()})
             tree = [bom.Node("ASM-0001", True, [(bom.Node(pn, False), 1) for pn in records])]
             output = io.StringIO()
             with mock.patch.object(bom, "read_step_tree", return_value=tree), contextlib.redirect_stdout(output), \
                     contextlib.redirect_stderr(io.StringIO()):
-                status = bom.main([str(self.step), "--hw", str(hw)])
+                status = bom.main([str(step), "--hw", str(hw)])
             summary = json.loads(output.getvalue())
             rows = rows_by_level_pn(hw / "bom.csv")
         self.assertEqual((status, summary["status"]), (1, "fail"))
