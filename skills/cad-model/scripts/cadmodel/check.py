@@ -230,7 +230,8 @@ def _glb_occurrence_nodes(gltf: Mapping[str, Any],
 
     def has_mesh(index: int, seen: set[int]) -> bool:
         seen.add(index)
-        return "mesh" in nodes[index] or any(has_mesh(child, seen) for child in children(index) if child not in seen)
+        return "mesh" in nodes[index] or any(has_mesh(child, seen) for child in children(index)
+                                             if child not in seen and nodes[child].get("name", "") not in owner)
 
     def walk(index: int, inside: bool) -> None:
         visited.add(index)
