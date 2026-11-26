@@ -289,6 +289,12 @@ class Record(unittest.TestCase):
                 self.assertEqual(data, yaml_loader.safe_load(PRODUCT))
                 self.assertIn(" # keep this comment\nunits: mm\n", after)
 
+    def test_flow_mapping_can_start_on_the_line_after_its_key(self) -> None:
+        self.product.write_text("id: sample\nflow:\n  {stage: intent, recheck_from: intent}\nunits: mm\n", encoding="utf-8")
+        result = self.record()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.profile()["decision"], "DR-001")
+
     def test_replacing_an_inline_profile_preserves_internal_comments_and_cross_boundary_aliases(self) -> None:
         text = ('id: tst-product\nflow: {stage: &stage intent, # keep stage context\n'
                 '  recheck_from: intent, profile: {decision: DR-009}}\nunits: mm\nlabel: *stage\n')
