@@ -526,7 +526,8 @@ class PairRequirementTests(unittest.TestCase):
                                              "max_clearance_mm": 0})
         self.assertIn("accepted forms", fits[2]["error"])
         self.assertEqual(self.policy.allowed_pairs(fits, []), {("TST-0201", "arm-a")})
-        self.assertEqual(self.policy.fitted_pairs(fits), {("TST-0201", "arm-a"), ("TST-0201", "arm-b"), ("arm-a", "arm-b")})
+        self.assertEqual(self.policy.fitted_pairs(fits), {("TST-0201", "arm-a"), ("TST-0201", "arm-b")},
+                         "the invalid press fit on arm-a / arm-b declares no fitted pair")
 
     def test_a_misspelled_fit_key_is_an_invalid_fit_not_an_input_error(self) -> None:
         typos = [{"id": "IF-001", "from": "a", "to": "b", "type": "mounting", "description": "Locates.",
