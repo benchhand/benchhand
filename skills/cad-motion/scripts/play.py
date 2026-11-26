@@ -337,14 +337,15 @@ def joint_of(if_id: str, interface: Any, chain: Any) -> tuple[Any | None, str | 
 @dataclass
 class CaseResult:
     """One case over the scenario samples: collisions (undeclared overlap), clearance requirements
-    broken, kernel failures, the closest exact reading, and the samples a joint limit skipped."""
+    broken, kernel failures (a case with no evaluated pose among them), the closest exact reading,
+    and the samples a joint limit skipped with their limit findings."""
 
     label: str
     collisions: list[dict[str, Any]] = field(default_factory=list)
     violations: list[dict[str, Any]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
     closest: dict[str, Any] | None = None
-    limited: int = 0
+    limits: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def failed(self) -> bool:
@@ -354,7 +355,8 @@ class CaseResult:
         return {"label": self.label, "status": "fail" if self.failed else "unknown" if self.failures else "clear",
                 "collisions": self.collisions[:MAX_LISTED], "collision_count": len(self.collisions),
                 "violations": self.violations[:MAX_LISTED], "failures": self.failures[:MAX_LISTED],
-                "closest": self.closest, "samples_skipped_by_limits": self.limited}
+                "closest": self.closest, "samples_skipped_by_limits": len(self.limits),
+                "limit_findings": self.limits[:MAX_LISTED]}
 
 
 @dataclass
@@ -376,7 +378,8 @@ class Evaluator:
         result = CaseResult(label)
         for planned in sweep_plan.samples:
             if planned.transforms is None:
-                result.limited += 1
+                result.limits.append({"sample": planned.sample.index, "source": planned.sample.source,
+                                      "pose": sweep.rounded(planned.sample.values), "findings": planned.limits})
                 continue
             sample = planned.sample
             for k, index in enumerate(sweep_plan.selected):
@@ -398,6 +401,10 @@ class Evaluator:
                 if isinstance(outcome, pair_measure.Measured) and (
                         result.closest is None or distance < result.closest["distance_mm"]):
                     result.closest = {**where, "distance_mm": round(distance, 4)}
+        if len(result.limits) == len(sweep_plan.samples):  # nothing measured: never a clear case
+            messages = dict.fromkeys(f["message"] for row in result.limits for f in row["findings"])
+            result.failures.append(f"no pose evaluated: all {len(result.limits)} samples are outside a joint limit"
+                                   + (f" ({'; '.join(list(messages)[:MAX_LISTED])})" if messages else ""))
         return result
 
 
