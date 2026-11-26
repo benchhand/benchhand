@@ -1304,13 +1304,7 @@ def _coverage(record: Any, decisions: Sequence[Mapping[str, Any]]) -> dict[str, 
 
 
 def _use_case_section(record: Any, assessment: Any) -> dict[str, Any]:
-    use_case = record.use_case
-    fields = dict(use_case.facts)
-    fields["service_class"] = use_case.service_class
-    for name, value in (("loads", use_case.loads), ("capability.equipment", use_case.equipment),
-                        ("evidence_policy", use_case.evidence_policy)):
-        if mi.is_fact(value):
-            fields[name] = value
+    fields = mi.use_case_fields(record.use_case)
     missing = []
     for name in assessment.unknown:
         fact = fields[name]

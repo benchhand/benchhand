@@ -487,6 +487,11 @@ class Load:
     direction: tuple[float, float, float] | None  # a unit vector; None only when invalid, which validation reports
     requirements: tuple[str, ...]
     application: Mapping[str, Any] | None = field(default=None, hash=False)  # what `direction` is stated against; None when omitted, an empty mapping when present but not a subject; a mapping is unhashable, equality still compares it
+    timing: Mapping[str, Fact] = field(default_factory=lambda: types.MappingProxyType({}), hash=False)  # the duration, frequency and cycles it records
+
+    def facts(self) -> dict[str, Fact]:
+        """The load's facts by field name: its magnitude and the duration, frequency and cycles it records."""
+        return {"magnitude": self.magnitude, **self.timing}
 
 
 @dataclass(frozen=True)
@@ -1473,9 +1478,9 @@ class _Reader:
                     continue
                 pointer = f"use_case/loads/{index}"
                 self.define("load", item.get("id"), path, pointer)
-                for key, dimensions in (("duration", ("time",)), ("frequency", ("frequency",)), ("cycles", ("count",))):
-                    if key in item:
-                        self.fact(item[key], path, f"{pointer}/{key}", dimensions)
+                timing = {key: self.fact(item[key], path, f"{pointer}/{key}", dimensions)
+                          for key, dimensions in (("duration", ("time",)), ("frequency", ("frequency",)), ("cycles", ("count",)))
+                          if key in item}
                 direction = self.check_load_direction(item, path, pointer)
                 application = self.subject(item["application"], path, f"{pointer}/application") if "application" in item else None
                 for requirement in item.get("requirements") or ():
@@ -1483,7 +1488,7 @@ class _Reader:
                 entries.append(Load(item.get("id"), item.get("kind"),
                                     self.fact(item.get("magnitude"), path, f"{pointer}/magnitude", ("force", "torque")),
                                     direction,
-                                    tuple(item.get("requirements") or ()), application))
+                                    tuple(item.get("requirements") or ()), application, types.MappingProxyType(timing)))
             loads = tuple(entries)
         else:
             loads = self.fact(loads_data, path, "use_case/loads")
@@ -2279,6 +2284,23 @@ class UseCaseAssessment:
     open_questions: tuple[str, ...]  # open questions that are material to the choice or safety-relevant
 
 
+def use_case_fields(use_case: UseCase) -> dict[str, Fact]:
+    """Every use-case fact by its field name below use_case: the USE_CASE_FACTS, the service class, and loads,
+    capability.equipment and evidence_policy while each is a fact. A recorded loads list adds each load's facts as
+    loads.<id>.<field> (magnitude, duration, frequency, cycles), so a listed load never hides an unknown one."""
+    fields = dict(use_case.facts)
+    fields["service_class"] = use_case.service_class
+    for name, value in (("loads", use_case.loads), ("capability.equipment", use_case.equipment),
+                        ("evidence_policy", use_case.evidence_policy)):
+        if is_fact(value):
+            fields[name] = value
+    if not is_fact(use_case.loads):
+        for index, load in enumerate(use_case.loads):
+            for name, value in load.facts().items():
+                fields[f"loads.{load.id or index}.{name}"] = value
+    return fields
+
+
 def assess_use_case(record: Record) -> UseCaseAssessment:
     """Whether the use case supports a final material/process recommendation. Conditional exploration
     is always allowed; a final choice needs a confirmed use case, a known service class, no open
@@ -2293,12 +2315,7 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
     service = use_case.service_class.value if use_case.service_class.known else None
     if service in (None, "unknown"):
         blocking.append("the service class is unknown")
-    fields = dict(use_case.facts)
-    fields["service_class"] = use_case.service_class
-    for name, value in (("loads", use_case.loads), ("capability.equipment", use_case.equipment),
-                        ("evidence_policy", use_case.evidence_policy)):
-        if is_fact(value):
-            fields[name] = value
+    fields = use_case_fields(use_case)
     unknown = tuple(sorted(name for name, value in fields.items() if value.unknown))
     for name in unknown:
         tracking = fields[name].question
