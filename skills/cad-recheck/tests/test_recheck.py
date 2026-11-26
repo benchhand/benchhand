@@ -401,6 +401,18 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("DR-001-", result.stderr)
 
+    def test_a_malformed_gate_digest_reports_the_field_as_a_finding(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        path = decision_path(self.root / "hw", "DR-001")
+        text = path.read_text(encoding="utf-8").replace(LAYOUT_BUILD[1], "not-a-digest")
+        path.write_text(text, encoding="utf-8")
+        self.git("add", "hw")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("gate.version_manifest_sha256", result.stderr)
+        self.assertIn(path.name, result.stderr)
+
     def test_a_stamp_at_the_current_stage_needs_no_decision_record(self) -> None:
         self.provisional_gate("layout", decision=None)
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
