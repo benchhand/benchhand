@@ -283,7 +283,9 @@ def _obligation_path(obligation: Mapping[str, Any]) -> str:
 
 
 def _anchor(obligation_id: str) -> str:
-    return obligation_id.split("@", 1)[1] if "@" in obligation_id else ""
+    """The anchor of an obligation id, without the ~qualifier that separates checks sharing it."""
+    base = mi.obligation_base(obligation_id)
+    return base.split("@", 1)[1] if "@" in base else ""
 
 
 def _canonical_sha(value: Any) -> str:
@@ -1358,6 +1360,21 @@ def version_acceptance(hw: Path, version: str, record: Any,
 
 _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved", "release.waiver_forbidden",
                                     "release.trial_not_permitted"})
+# The packet problem of a packet whose expected checks are not the ones the record now implies.
+EXPECTED_CHANGED = "evidence.expected_changed"
+
+
+def expected_change(recorded: Any, expected: Sequence[Any]) -> str:
+    """What differs between a packet's `recorded` expected checks and the record's `expected` ones: the ids added,
+    removed, and kept with another subject, level, stage, basis, requirement or criterion. Empty when they agree."""
+    old = {o.get("id"): o for o in recorded or () if isinstance(o, Mapping)}
+    new = {o.id: o.as_dict() for o in expected}
+    parts = []
+    for label, idents in (("added", [i for i in new if i not in old]), ("removed", [i for i in old if i not in new]),
+                          ("changed", [i for i in new if i in old and impact.plain(old[i]) != impact.plain(new[i])])):
+        if idents:
+            parts.append(f"{label} {', '.join(map(str, idents[:5]))}{' …' if len(idents) > 5 else ''}")
+    return "; ".join(parts)
 
 
 def packet_problems(data: Any, *, record: Any, record_sha256: str, stage: str) -> list[str]:
@@ -1371,9 +1388,13 @@ def packet_problems(data: Any, *, record: Any, record_sha256: str, stage: str) -
     if data.get("record_sha256") != record_sha256:
         problems.append("it was computed from another record: hw/ changed during or after the check; check again")
     expected = mi.required_checks(record)
-    if data.get("expected_sha256") != expected_digest(expected) or \
-            [o.get("id") for o in data.get("expected") or ()] != [o.id for o in expected]:
-        problems.append("its expected checks are not the ones the record implies")
+    changed = expected_change(data.get("expected"), expected)
+    if data.get("expected_sha256") != expected_digest(expected) or changed:
+        problems.append(f"{EXPECTED_CHANGED}: its expected checks are not the ones the record implies"
+                        + (f" ({changed})" if changed else "") + ". A record change such as a region added to a critical "
+                        "surface changes an expected check, and a stamp made before it never carries over: regenerate the "
+                        "evidence packet (`evidence.py check --hw hw --version vN --out .cad-work/evidence.json`) and stamp "
+                        "again")
     statuses = _mapping(data.get("statuses"))
     missing = [o.id for o in expected if not isinstance(statuses.get(o.id), Mapping)]
     if missing:

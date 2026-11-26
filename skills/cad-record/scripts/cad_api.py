@@ -22,7 +22,7 @@
 # schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 # schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
 # schema-sha256 cecbad00c27eeebb9c3dbe27456aa4ca395507e60eac54d286ac8a1dc0915023 skills/cad-record/schemas/manufacturing-selection.schema.json
-# schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 skills/cad-record/schemas/manufacturing.schema.json
+# schema-sha256 e582e2845100b0fc5159954a56091179d6b3251d8df406c3939d3cb145ebea2d skills/cad-record/schemas/manufacturing.schema.json
 # schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 # schema-sha256 6e0abef226162aa78724b8958db0fb3464ddff043f7a287898ebe2af78bb5fb8 skills/cad-record/schemas/part.schema.json
 # schema-sha256 a925c74c84c3c9b3ef53579fdb4d41f295eef9af85ea8646996db71d5db66b36 skills/cad-record/schemas/preflight-report.schema.json
@@ -3978,12 +3978,12 @@ class ManufacturingSubject(TypedDict):
     requirements: NotRequired[ManufacturingRequirementIds]
 
 
-# family@anchor: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>
+# family@anchor[~qualifier]: anchor is product, a PN with optional .component, /operation and #feature, an IF with optional #feature, a REQ, or op:<assembly operation>. A later check that shares an anchor with another adds ~<critical surface id> or ~<REQ>; the first keeps the plain id
 #
 # Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation_id
 #
 # Not expressible as types (see the schema):
-# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)$"
+# - pattern: "^[a-z][a-z0-9_]*(\\.[a-z0-9][a-z0-9_]*)*@(product|[A-Z]{2,5}-[0-9]{4}(\\.[a-z][a-z0-9_]*)?(/[a-z][a-z0-9_]*)?(#[a-z][a-z0-9_]*)?|IF-[0-9]{3}(#[a-z][a-z0-9_]*)?|REQ-[0-9]{3}|op:[a-z][a-z0-9_-]*)(~([a-z][a-z0-9_]*|REQ-[0-9]{3}))?$"
 ManufacturingObligationId = str
 
 
