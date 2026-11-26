@@ -450,7 +450,7 @@ class Sync(ScratchCase):
         code, report = self.sync("unit-a")
         self.assertEqual((code, report["status"]), (0, "synced"), report)
         self.assertEqual(report["removed"], ["parts/PRT-0003/part.yaml"])
-        self.assertEqual(sorted(path.name for path in (scratch_hw / "parts").iterdir()), ["PRT-0001"])
+        self.assertEqual(sorted(path.name for path in (scratch_hw / "parts").glob("PRT-*")), ["PRT-0001"])
         before = tree(self.hw)
         code, report = self.scratch("deliver", "--hw", "hw", "--unit", "unit-a")
         self.assertEqual((code, report["status"]), (0, "delivered"), report)

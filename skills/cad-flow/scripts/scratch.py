@@ -15,6 +15,7 @@ Usage:
     uv run --script scratch.py build   --hw HW --unit UNIT --fidelity F0|F1|F2|F3 [--kernel auto|cadquery|build123d]
                                        [--attach REF=PARENT_REF ...]
     uv run --script scratch.py deliver --hw HW --unit UNIT
+    uv run --script scratch.py sync    --hw HW --unit UNIT
 
 The workspace is <project>/.cad-work/<UNIT>/, <project> being the directory that holds HW.
 
@@ -46,10 +47,18 @@ deliver copies each unit PN's scratch hw/parts/<PN>/ over HW/parts/<PN>/ and lis
         a scratch check publishes) and .cad/ output and every __pycache__/ are ignored
         during delivery, so a scratch build's own caches and evidence never reach HW.
 
+sync    brings the lead's current record into the workspace: a part the lead retired (its directory is
+        gone from HW) is removed, another unit's delivered part or the lead's edit to a shared file
+        is copied in. Each synced file also takes the lead's hash in baseline.json, so deliver never
+        carries it as the unit's change. A file the unit and the lead both changed, and any file of
+        a part the unit owns, stays as it is and is listed under "conflicts" (exit 1). It never
+        writes HW, and it links stored builds of newly delivered parts into the scratch store.
+        Run it before build whenever the lead has integrated a delivery or a decision.
+
 stdout: one JSON document; every path in it is absolute. build writes each tool's diagnostics to
 <workspace>/<tool>-<label>.log and names the log in the JSON, so its output stays small.
 Exit codes: 0 pass; 1 build: a part failed to build, a blocking check failed, or the unit's
-parts have blocking form findings; deliver: HW/parts/<PN>/ changed since init; 2 usage or
+parts have blocking form findings; deliver: HW/parts/<PN>/ changed since init; sync: conflicts; 2 usage or
 infrastructure error.
 """
 
@@ -177,6 +186,8 @@ def seed_store(hw: Path, scratch_hw: Path) -> int:
             if match is None or match.entry.id != entry_id or path.is_symlink() or not path.is_file():
                 continue
             target = scratch_hw / path.relative_to(hw)
+            if target.exists():
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 os.link(path, target)
@@ -209,6 +220,54 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
     (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
     return 0, {"status": "created", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
                "parts": baseline["parts"], "files": len(baseline["files"]), "seeded_store_files": seeded}
+
+
+def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
+    """Bring the lead's current record into the workspace: parts the lead retired, other units' deliveries
+    and the lead's edits to shared files. A file the unit has not touched takes the lead's version and
+    the baseline takes it too, so deliver sees no change. A file both sides changed, and any file of
+    a part the unit owns, is left alone and reported as a conflict."""
+    work = workspace(hw, unit)
+    baseline = load_baseline(work)
+    if Path(baseline["hw"]) != hw:
+        raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
+    scratch_hw = work / "hw"
+    own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
+    base: dict[str, str] = baseline["files"]
+    lead, mine = tree_hashes(hw), tree_hashes(scratch_hw)
+    added: list[str] = []
+    modified: list[str] = []
+    removed: list[str] = []
+    conflicts: list[str] = []
+    for path in sorted(set(lead) | set(base)):
+        if lead.get(path) == base.get(path):
+            continue
+        if path.startswith(own) or (mine.get(path) != base.get(path) and mine.get(path) != lead.get(path)):
+            conflicts.append(path)
+            continue
+        target = scratch_hw / path
+        if path not in lead:
+            target.unlink(missing_ok=True)
+            for parent in target.parents:
+                if parent == scratch_hw or any(parent.iterdir()):
+                    break
+                parent.rmdir()
+            removed.append(path)
+            base.pop(path, None)
+            continue
+        if mine.get(path) != lead[path]:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(hw / path, target)
+        (modified if path in base else added).append(path)
+        base[path] = lead[path]
+    seeded = seed_store(hw, scratch_hw)
+    (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
+              "added": added, "modified": modified, "removed": removed, "conflicts": conflicts,
+              "seeded_store_files": seeded}
+    if conflicts:
+        report["note"] = "left these as they are: the unit and the lead both changed them, or the lead changed a part the unit owns"
+    return (1 if conflicts else 0), report
 
 
 def run_tool(argv: list[str], log: Path) -> tuple[int, dict[str, Any] | None]:
@@ -422,7 +481,7 @@ def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="cad-flow worker scratch workspace")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "build", "deliver"):
+    for name in ("init", "build", "deliver", "sync"):
         command = sub.add_parser(name)
         command.add_argument("--hw", type=Path, required=True, help="project hw/ record")
         command.add_argument("--unit", required=True, help="unit id from the lead's brief")
@@ -442,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
             code, report = init(hw, args.unit, args.part, args.reset)
         elif args.command == "build":
             code, report = build(hw, args.unit, args.kernel, args.fidelity, args.attach)
+        elif args.command == "sync":
+            code, report = sync(hw, args.unit)
         else:
             code, report = deliver(hw, args.unit)
     except (UsageError, OSError, ValueError) as error:
