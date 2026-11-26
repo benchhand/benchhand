@@ -265,6 +265,21 @@ def copy_bytes(source: Path, target: Path) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def drop_collisions(plan: list[str], present: set[str], lead: dict[str, str], conflicts: list[str]) -> list[str]:
+    """The planned paths that can be applied together: a file and a directory may not share a name once
+    the plan is applied to the files in `present`. A planned path that would collide is moved to
+    `conflicts`, and the check repeats because dropping one change can leave another colliding."""
+    while True:
+        final = (present - {path for path in plan if path not in lead}) | {path for path in plan if path in lead}
+        clashing = {path for path in final if any(parent.as_posix() in final for parent in PurePosixPath(path).parents[:-1])}
+        clashing |= {parent.as_posix() for path in clashing for parent in PurePosixPath(path).parents[:-1] if parent.as_posix() in final}
+        dropped = [path for path in plan if path in clashing]
+        if not dropped:
+            return plan
+        conflicts.extend(dropped)
+        plan = [path for path in plan if path not in clashing]
+
+
 def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     """Bring the lead's current record into the workspace: parts the lead retired, other units' deliveries
     and the lead's edits to shared files. A file the unit has not touched takes the lead's version and
@@ -293,6 +308,7 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
             continue
         refuse_links(scratch_hw, scratch_hw / path)  # before any write
         plan.append(path)
+    plan = drop_collisions(plan, set(mine), lead, conflicts)
     for path in plan:
         target = scratch_hw / path
         if path not in lead:
@@ -312,7 +328,7 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
         base[path] = digest
     (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
     report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
-              "added": added, "modified": modified, "removed": removed, "conflicts": conflicts,
+              "added": added, "modified": modified, "removed": removed, "conflicts": sorted(conflicts),
               "seeded_store_files": seeded}
     if conflicts:
         report["note"] = "left these as they are: the unit and the lead both changed them, or the lead changed a part the unit owns"
