@@ -822,7 +822,8 @@ class ReleasePolicy(unittest.TestCase):
             for result, code in (("unknown", "gate.unresolved"), ("stale", "gate.stale"), ("fail", "gate.fail"),
                                  ("pass", None)):
                 with self.subTest(service_class=service_class, result=result):
-                    found = evidence.obligation_gate([owed], {owed["id"]: result}, "release", service_class)
+                    found = evidence.obligation_gate([owed], {owed["id"]: result}, "release",
+                                                     evidence.project_scope.ProjectScope(service_class, None))
                     self.assertEqual([(f.code, f.severity, f.obligation) for f in found],
                                      [(code, "error", owed["id"])] if code else [])
 

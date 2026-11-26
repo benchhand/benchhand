@@ -191,6 +191,14 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _owed(disposition: str, service_class: str | None) -> str:
+    """Why `service_class` gets `disposition`, in words."""
+    if service_class is None:
+        return "the service class is unknown, so every rule is required"
+    return {"required": f"owed by {service_class}", OUT_OF_SCOPE: f"not owed by {service_class}"}.get(
+        disposition, f"{disposition} for {service_class}")
+
+
 @dataclass(frozen=True)
 class ProjectProfile:
     """product.yaml flow.profile, typed through flow_profile_gate's readers."""
@@ -236,6 +244,13 @@ class ProjectScope:
     def obligation_disposition(self, obligation: Mapping[str, Any]) -> str:
         """The disposition of `obligation` (schema form) for this project."""
         return obligation_disposition(obligation, self.service_class)
+
+    def obligation_scope(self, obligation: Mapping[str, Any]) -> dict[str, str]:
+        """What this project owes `obligation` (schema form): its disposition, the rule that decides it and why."""
+        rule = obligation_rule(obligation)
+        disposition = rule.disposition(self.service_class)
+        return {"disposition": disposition, "rule": rule.id,
+                "reason": f"{rule.summary}; {_owed(disposition, self.service_class)}"}
 
     @property
     def rules_sha256(self) -> str:

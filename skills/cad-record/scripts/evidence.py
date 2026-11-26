@@ -396,6 +396,7 @@ class Assessment:
     complete: bool
     selection: Mapping[str, Any]
     selection_approved: bool | None
+    scope: Any  # project_scope.ProjectScope of `record`: its service class and flow profile
 
     def results(self) -> dict[str, str]:
         return {ident: status.result for ident, status in self.statuses.items()}
@@ -405,7 +406,8 @@ class Assessment:
         before layout explicit unknowns and assumptions stay warnings and only failures block; from
         layout every obligation due by the stage must be resolved, a physical one at least planned; a
         design freeze needs every obligation but physical tests resolved and a use case fit for the
-        choice; a release applies the service-class policy. Unresolved critical findings block a freeze
+        choice; a release applies the service-class policy. An obligation the service class does not owe
+        (`scope`) blocks no gate. Unresolved critical findings block a freeze
         and a release. From INTENT on, `selection_gate` applies the selection report."""
         if stage not in STAGES:
             raise ValueError(f"unknown stage {stage!r}")
@@ -418,8 +420,7 @@ class Assessment:
         if stage == "release":
             findings = list(self.release().findings)
         else:
-            findings = obligation_gate([o.as_dict() for o in self.expected], self.results(), stage,
-                                       _service_class(self.record))
+            findings = obligation_gate([o.as_dict() for o in self.expected], self.results(), stage, self.scope)
         for item in self.findings:
             if item.code in ("waiver.forbidden", "evidence.physical_claim"):
                 findings.append(item)
@@ -472,7 +473,7 @@ class Assessment:
                 waivers.append(impact.plain(status.waiver) if status.waiver is not None else {})
                 if obligation.level == PHYSICAL:
                     trial = True
-        findings.extend(obligation_gate([o.as_dict() for o in self.expected], results, "release", service))
+        findings.extend(obligation_gate([o.as_dict() for o in self.expected], results, "release", self.scope))
         claims = {}
         allowed = policy.claims if policy is not None else frozenset()
         for req_id in sorted(record.requirements):
@@ -508,11 +509,15 @@ def in_release_scope(obligation: Mapping[str, Any], service_class: str | None) -
 
 
 def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str, str], stage: str,
-                    service_class: str | None = None) -> list[Finding]:
+                    scope: Any = None) -> list[Finding]:
     """The per-obligation part of the stage gate at `stage`, from obligations in schema form and their
-    results: what cad-recheck recomputes from a stamped packet. Due means due by the stage; from a design
-    freeze everything is due, a physical test planned at least; a known failure blocks whenever it is
-    known, due or not; a release applies `in_release_scope`."""
+    results: what cad-recheck recomputes from a stamped packet. `scope` is the project's
+    project_scope.ProjectScope (None: an unknown service class, which owes everything). Due means due by
+    the stage; from a design freeze everything is due, a physical test planned at least; a known failure
+    blocks whenever it is known, due or not. An obligation whose disposition is out_of_scope blocks no
+    gate: before the release a gate.out_of_scope info row names it where it would otherwise have been
+    judged, and its result stays as shown; a release leaves it out (`in_release_scope`)."""
+    scope = scope if scope is not None else project_scope.ProjectScope(None, None)
     index = STAGES.index(stage)
     explore = index < STAGES.index("layout")
     findings = []
@@ -520,17 +525,21 @@ def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str,
         ident = obligation["id"]
         result = results.get(ident, "unknown")
         path = _obligation_path(obligation)
+        owed = scope.obligation_disposition(obligation) != project_scope.OUT_OF_SCOPE
         if stage == "release":
-            if not in_release_scope(obligation, service_class):
+            if not owed:
                 continue
             if result == "waived":
-                findings.extend(_waiver_findings(obligation, path, service_class))
+                findings.extend(_waiver_findings(obligation, path, scope.service_class))
                 continue
             if result in RESOLVED:
                 continue
         else:
             due = stage == "design_freeze" or STAGES.index(obligation["stage"]) <= index or result == "fail"
             if not due or result in RESOLVED:
+                continue
+            if not owed:
+                findings.append(_out_of_scope_finding(obligation, path, result, scope))
                 continue
             if result == "planned" and obligation["level"] == PHYSICAL:
                 continue  # a physical test may stay planned until the release
@@ -560,6 +569,14 @@ def _not_assessed_finding(obligation: Mapping[str, Any], path: str, stage: str) 
     """An obligation no producer assessed (D37): shown at the gate, never an error and never resolved."""
     ident = obligation["id"]
     return Finding("gate.not_assessed", path, f"{ident} is not assessed at stage {stage}: it blocks nothing and is no pass",
+                   "info", ident)
+
+
+def _out_of_scope_finding(obligation: Mapping[str, Any], path: str, result: str, scope: Any) -> Finding:
+    """An obligation the project's service class does not owe: shown at the gate, never an error, its result unchanged."""
+    ident = obligation["id"]
+    row = scope.obligation_scope(obligation)
+    return Finding("gate.out_of_scope", path, f"{ident} is {result} and blocks nothing: rule {row['rule']}, {row['reason']}",
                    "info", ident)
 
 
@@ -824,7 +841,8 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
     rows = _verification(record, verification, facets, entry_results, findings)
     report = selection.assess(record, input_sha256=selection_sha256)
     return Assessment(record, version, manifest_sha256, expected, statuses, facets, tuple(rows), tuple(findings),
-                      tuple(critical), complete, report, selection_approval(record, approved))
+                      tuple(critical), complete, report, selection_approval(record, approved),
+                      project_scope.ProjectScope.of(record))
 
 
 def selection_approval(record: Any, approved: Callable[[str | None], bool]) -> bool | None:
@@ -1394,7 +1412,7 @@ def packet_blocking(data: Mapping[str, Any], *, record: Any, stage: str, selecti
     statuses = _mapping(data.get("statuses"))
     results = {ident: (status or {}).get("result", "unknown") for ident, status in statuses.items()}
     found = [f"{f.obligation}: {f.message}" for f in obligation_gate([o.as_dict() for o in mi.required_checks(record)],
-                                                                     results, stage, _service_class(record))
+                                                                     results, stage, project_scope.ProjectScope.of(record))
              if f.severity == "error"]
     found += [f"{f.code}: {f.message}" for f in selection_gate(selection.assess(record, input_sha256=selection_sha256), stage)
               if f.severity == "error"]
