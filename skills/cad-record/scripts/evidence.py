@@ -156,7 +156,12 @@ SERVICE_POLICY: Mapping[str, Any] = project_scope.SERVICE_POLICY
 
 
 class EvidenceError(ValueError):
-    """An acceptance inventory that cannot be formed: a missing, linked, escaping or unnormalized path."""
+    """An acceptance inventory that cannot be formed: a missing, linked, escaping or unnormalized path.
+    `location` is the record field that cites the file, when one does (hw/...#/entries/<id>/artifacts/<n>/path)."""
+
+    def __init__(self, message: str, location: str | None = None) -> None:
+        super().__init__(message)
+        self.location = location
 
 
 @dataclass(frozen=True)
@@ -1263,11 +1268,17 @@ def acceptance_inventory(hw: Path, record: Any, packets: Iterable[ProducerPacket
     if refused:
         raise EvidenceError("; ".join(f"{item.path}: {item.message}" for item in refused))
     rels = {rel for rel in LEDGER_FILES if (hw / rel).is_file() or (hw / rel).is_symlink()}
+    cited_at: dict[str, str] = {}  # rel -> the ledger field that first cites it
     for entry in record.evidence:
-        for artifact in entry.get("artifacts") or ():
-            rels.add(_hw_relative(artifact.get("path")))
+        field = f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}"
+        for index, artifact in enumerate(entry.get("artifacts") or ()):
+            rel = _hw_relative(artifact.get("path"))
+            rels.add(rel)
+            cited_at.setdefault(rel, f"{field}/artifacts/{index}/path")
         if isinstance(entry.get("bundle"), Mapping):
-            rels.add(f"{_hw_relative(entry['bundle'].get('path'))}/{layout.MANIFEST}")
+            rel = f"{_hw_relative(entry['bundle'].get('path'))}/{layout.MANIFEST}"
+            rels.add(rel)
+            cited_at.setdefault(rel, f"{field}/bundle/path")
     for disposition in record.dispositions:
         rels.add(f"{_hw_relative((disposition.get('producer') or {}).get('bundle'))}/{layout.MANIFEST}")
     for packet in packets:
@@ -1284,7 +1295,10 @@ def acceptance_inventory(hw: Path, record: Any, packets: Iterable[ProducerPacket
         rels.update((Path(directory) / name).relative_to(hw).as_posix() for name in files)
     inventory = {}
     for rel in sorted(rels):
-        inventory[f"hw/{rel}"] = _sha256(_safe_file(hw, rel))
+        try:
+            inventory[f"hw/{rel}"] = _sha256(_safe_file(hw, rel))
+        except EvidenceError as error:
+            raise EvidenceError(str(error), cited_at.get(rel, f"hw/{rel}")) from error
     return inventory
 
 
@@ -1719,7 +1733,12 @@ def main(argv: list[str] | None = None) -> int:
             return code
         assessment, packets = build_assessment(hw, args.version)
         if args.command == "digest":
-            inventory, evidence_sha256 = version_acceptance(hw, str(assessment.version), assessment.record, packets)
+            try:
+                inventory, evidence_sha256 = version_acceptance(hw, str(assessment.version), assessment.record, packets)
+            except EvidenceError as error:  # a record finding (as validate.py and release.py report it), not a usage error
+                print(json.dumps({"status": "refused", "findings": [
+                    {"path": error.location or "hw/", "message": str(error), "severity": "error"}]}, indent=2))
+                return 1
             print(json.dumps({"version": assessment.version, "evidence_sha256": evidence_sha256,
                               "inventory": inventory, "status": "ok"}, indent=2))
             return 0
