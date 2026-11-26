@@ -1455,6 +1455,68 @@ class EvidenceRunProducers(BuiltRecord):
         self.form_blocks({"status": "pass", "manufacturing": {"status": "fail",
                                                               "open": [{"obligation": parts, "outcome": "fail"}]}}, "layout")
 
+    SEAL = fx.criterion("flatness", "<=", 0.1, "mm")
+
+    def open_seal(self, outcome: str = "unknown", *, criteria: bool = True) -> tuple[Any, Any]:
+        """Publish a packet that passes every producer obligation but one process obligation due at parts, which
+        is `outcome`; with `criteria`, unknown only because no check measures the flatness of its feature seal.
+        (obligation, row)"""
+        record = impact.read_record(self.hw)
+        obligation = next(o for o in mi.required_checks(record) if o.family.startswith("process.") and o.stage == "parts")
+        packet = acceptance.producer_packet(record)
+        row = next(r for r in packet["outcomes"] if r["obligation"] == obligation.id)
+        row["outcome"] = outcome
+        if outcome == "unknown" and criteria:
+            row["open_criteria"] = {"criteria": [{"feature": "seal", "criterion": self.SEAL}], "otherwise": "pass"}
+        packet["result"] = outcome
+        acceptance.publish_packet(self.hw, "v1", packet)
+        return obligation, row
+
+    def inspect_seal(self, obligation: Any, result: str, criterion: dict[str, Any] | None = None) -> None:
+        """Record a current inspection of the seal's flatness criterion of `obligation` as `result`."""
+        manifest = acceptance.sha((self.hw / "versions" / "v1" / "manifest.json").read_bytes())
+        subject = {**obligation.subject, "feature": "seal"}
+        acceptance.write_ledger(self.hw, [acceptance.entry(
+            impact.read_record(self.hw), "EV-001", subject, obligation.level, result, version="v1", manifest_sha256=manifest,
+            obligation=obligation.id, hw=self.hw, criterion=criterion or self.SEAL)])
+
+    def full_with_form(self, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """The full run at parts, its form_check.py reporting `row` open (form_check.py exits 1)."""
+        item = {"obligation": row["obligation"], "outcome": row["outcome"],
+                **({"open_criteria": row["open_criteria"]} if "open_criteria" in row else {})}
+        form = {"status": "pass", "manufacturing": {"status": row["outcome"], "open": [item]}}
+        return self.run_real({"cad-design/scripts/form_check.py": ("form", form, 1)}, "full", "parts")
+
+    def test_an_inspected_open_criterion_clears_the_full_gate_and_nothing_else_does(self) -> None:
+        obligation, row = self.open_seal()
+        code, report = self.full_with_form(row)
+        self.assertEqual((code, report["stopped_at"]), (1, "form"), "without evidence the criterion stays open")
+        other = {**self.SEAL, "value": 0.2}  # an inspection of another limit settles nothing
+        self.inspect_seal(obligation, "pass", other)
+        code, report = self.full_with_form(row)
+        self.assertEqual((code, report["stopped_at"]), (1, "form"))
+        self.inspect_seal(obligation, "pass")
+        code, report = self.full_with_form(row)
+        self.assertEqual((code, report["status"], report["stopped_at"]), (0, "pass", None), report.get("packet"))
+        status = report["packet"]["statuses"][obligation.id]
+        self.assertEqual(status["result"], "pass")
+        self.assertIn("EV-001", " ".join([*status["sources"], *status["reasons"]]))
+        _, bare = self.open_seal(criteria=False)  # open for a reason the inspection does not address
+        code, report = self.full_with_form(bare)
+        self.assertEqual((code, report["stopped_at"]), (1, "form"))
+        assessment, _ = evidence.build_assessment(self.hw, "v1")
+        self.assertEqual(assessment.statuses[obligation.id].result, "unknown", "a criterion inspection is no obligation pass")
+
+    def test_a_measured_failure_still_fails_the_full_gate_beside_an_inspection(self) -> None:
+        obligation, row = self.open_seal()
+        self.inspect_seal(obligation, "fail")  # the inspection itself measured a miss
+        code, report = self.full_with_form(row)
+        self.assertEqual(code, 1)
+        failed, failed_row = self.open_seal("fail")  # the check measured a miss; a passing inspection does not override it
+        self.inspect_seal(failed, "pass")
+        code, report = self.full_with_form(failed_row)
+        self.assertEqual((code, report["stopped_at"]), (1, "form"))
+
 
 class EvidenceDigestCli(BuiltRecord):
     """`evidence.py digest` on a ledger that cites a file the project cannot hold: a refusal finding, never exit 2."""

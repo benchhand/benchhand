@@ -1770,6 +1770,22 @@ class GuidelineLimitTests(Checks):
         self.assertEqual((found["outcome"], found["severity"], found["criterion"]["property"], found["subject"]["feature"]),
                          ("unknown", "major", "flatness", "datum_a"))
 
+    def test_an_obligation_open_only_on_unchecked_criteria_names_them_and_its_outcome_without_them(self) -> None:
+        """Evidence can settle such a criterion (cad-record evidence.py), so the row says which ones are open and what the
+        obligation is once they are settled; an obligation open for any other reason names none."""
+        flat = _flatness_criterion("<= 0.1")
+        data = facts(faces=(face("f1", features=("datum_a",)), face("f2", features=("datum_b",))),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        obligation = "process.resin.geometry@TST-0902/form"
+        for label, surfaces, expected in (
+                ("only the flatness", [surface("datum_a", "datum", criteria=[flat])],
+                 {"criteria": [{"feature": "datum_a", "criterion": flat}], "otherwise": "not_assessed", "reason": "no_guideline"}),
+                ("and a datum with no criterion", [surface("datum_a", "datum", criteria=[flat]), surface("datum_b", "datum")], None)):
+            with self.subTest(label):
+                documents = shaped("resin", [], material=POLYMER, critical=surfaces, supports={"strategy": "none"})
+                row = self.assess(documents, geometry("TST-0902", data)).outcome(obligation)
+                self.assertEqual((row["outcome"], row.get("open_criteria")), ("unknown", expected))
+
     def test_a_resin_wall_with_no_calibration_is_not_assessed_and_a_known_miss_still_fails(self) -> None:
         documents = shaped("resin", [], material=POLYMER, supports={"strategy": "none"})
         obligation = "process.resin.geometry@TST-0902/form"
