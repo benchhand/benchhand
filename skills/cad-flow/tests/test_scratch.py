@@ -537,6 +537,50 @@ class Sync(ScratchCase):
             self.assertEqual((scratch_hw / rel).stat().st_ino, (self.hw / rel).stat().st_ino, rel)
         self.deliver_and_expect_no_proposal("unit-a")
 
+    def outside(self) -> Path:
+        """A directory outside every workspace that a scratch symlink can point at."""
+        path = self.project / "outside"
+        path.mkdir()
+        (path / "keep.txt").write_text("keep\n", encoding="utf-8")
+        return path
+
+    def test_sync_refuses_a_linked_scratch_part_directory_and_deletes_nothing_through_it(self) -> None:
+        self.lead_part("PRT-0003")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        outside = self.outside()
+        shutil.rmtree(scratch_hw / "parts" / "PRT-0003")
+        (outside / "part.yaml").write_text("outside\n", encoding="utf-8")
+        (scratch_hw / "parts" / "PRT-0003").symlink_to(outside)
+        shutil.rmtree(self.hw / "parts" / "PRT-0003")
+        before = tree(outside)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("symlink", report["error"])
+        self.assertEqual(tree(outside), before)
+
+    def test_sync_refuses_a_linked_scratch_directory_and_writes_nothing_through_it(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        outside = self.outside()
+        shutil.rmtree(scratch_hw / "manufacturing")
+        (scratch_hw / "manufacturing").symlink_to(outside)
+        (self.hw / "manufacturing" / "lead-note.yaml").write_text("lead\n", encoding="utf-8")
+        before = tree(outside)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertEqual(tree(outside), before)
+
+    def test_sync_refuses_a_linked_scratch_cache_directory_and_seeds_nothing_through_it(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        outside = self.outside()
+        (scratch_hw / ".cad").symlink_to(outside)
+        rel = f".cad/cache/objects/{'c' * 64}"
+        (self.hw / rel).parent.mkdir(parents=True)
+        (self.hw / rel).write_text("lead\n", encoding="utf-8")
+        before = tree(outside)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertEqual(tree(outside), before)
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
