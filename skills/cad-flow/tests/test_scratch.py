@@ -423,6 +423,103 @@ class RegeneratedOutputs(ScratchCase):
                          [(str(self.hw.resolve() / "bom.csv"), "modified", True)])
 
 
+class Sync(ScratchCase):
+    """`sync` takes the lead's integrated record into a workspace without making it the unit's own change."""
+
+    PART = ("PN: {pn}\nrev: X1\ntitle: Placeholder\nmaterial: Placeholder material\nprocess: cnc\n"
+            "finish: As machined\nmass_target: null\nmake_buy: make\n")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.use_generic_template()
+
+    def lead_part(self, pn: str) -> Path:
+        part = self.hw / "parts" / pn
+        part.mkdir(parents=True)
+        (part / "part.yaml").write_text(self.PART.format(pn=pn), encoding="utf-8")
+        return part
+
+    def sync(self, unit: str) -> tuple[int, dict]:
+        return self.scratch("sync", "--hw", "hw", "--unit", unit)
+
+    def test_a_part_the_lead_retired_disappears_and_is_not_delivered_as_a_removal(self) -> None:
+        self.lead_part("PRT-0003")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        self.assertTrue((scratch_hw / "parts" / "PRT-0003" / "part.yaml").is_file())
+        shutil.rmtree(self.hw / "parts" / "PRT-0003")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        self.assertEqual(report["removed"], ["parts/PRT-0003/part.yaml"])
+        self.assertEqual(sorted(path.name for path in (scratch_hw / "parts").iterdir()), ["PRT-0001"])
+        before = tree(self.hw)
+        code, report = self.scratch("deliver", "--hw", "hw", "--unit", "unit-a")
+        self.assertEqual((code, report["status"]), (0, "delivered"), report)
+        self.assertEqual(report["proposals"], [])
+        self.assertEqual(tree(self.hw), before)
+
+    def test_another_units_delivery_appears_and_deliver_does_not_carry_it(self) -> None:
+        scratch_a = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        scratch_b = Path(self.init("unit-b", "PRT-0002")["scratch_hw"])
+        (scratch_b / "parts" / "PRT-0002" / "part.yaml").write_text(self.PART.format(pn="PRT-0002"), encoding="utf-8")
+        code, _ = self.scratch("deliver", "--hw", "hw", "--unit", "unit-b")
+        self.assertEqual(code, 0)
+        self.assertFalse((scratch_a / "parts" / "PRT-0002").exists())
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        self.assertEqual(report["added"], ["parts/PRT-0002/part.yaml"])
+        self.assertEqual((scratch_a / "parts" / "PRT-0002" / "part.yaml").read_text(encoding="utf-8"),
+                         self.PART.format(pn="PRT-0002"))
+        (scratch_a / "parts" / "PRT-0001" / "model.py").write_text("def build(params):\n    return None\n", encoding="utf-8")
+        before = tree(self.hw)
+        code, report = self.scratch("deliver", "--hw", "hw", "--unit", "unit-a")
+        self.assertEqual((code, report["status"]), (0, "delivered"), report)
+        self.assertEqual(report["proposals"], [])
+        self.assertEqual(tree(self.hw), {**before, "parts/PRT-0001/model.py": hashlib.sha256(
+            b"def build(params):\n    return None\n").hexdigest()})
+        self.assertFalse([path for path in report["delivered"] if "PRT-0002" in path])
+
+    def test_a_unit_still_cannot_deliver_a_change_to_a_part_it_does_not_own(self) -> None:
+        self.lead_part("PRT-0002")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        foreign = scratch_hw / "parts" / "PRT-0002" / "part.yaml"
+        foreign.write_text(foreign.read_text(encoding="utf-8").replace("Placeholder", "Edited"), encoding="utf-8")
+        before = tree(self.hw)
+        code, report = self.scratch("deliver", "--hw", "hw", "--unit", "unit-a")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(tree(self.hw), before)
+        self.assertEqual([p["path"] for p in report["proposals"]], [str(self.hw.resolve() / "parts/PRT-0002/part.yaml")])
+
+    def test_a_part_copied_in_by_hand_is_still_refused_as_an_unauthorized_new_part(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        self.lead_part("PRT-0002")
+        shutil.copytree(self.hw / "parts" / "PRT-0002", scratch_hw / "parts" / "PRT-0002")
+        code, report = self.scratch("deliver", "--hw", "hw", "--unit", "unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("not authorized for new part PRT-0002", report["error"])
+
+    def test_a_file_both_the_unit_and_the_lead_changed_is_kept_and_reported_as_a_conflict(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        for root, line in ((scratch_hw, "# unit\n"), (self.hw, "# lead\n")):
+            with (root / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+                stream.write(line)
+        self.lead_part("PRT-0002")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (1, "conflict"), report)
+        self.assertEqual(report["conflicts"], ["interfaces.yaml"])
+        self.assertEqual(report["added"], ["parts/PRT-0002/part.yaml"])
+        self.assertTrue((scratch_hw / "interfaces.yaml").read_text(encoding="utf-8").endswith("# unit\n"))
+
+    def test_a_part_the_unit_owns_is_never_synced(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        record = self.hw / "parts" / "PRT-0001" / "part.yaml"
+        record.write_text(record.read_text(encoding="utf-8").replace("mass_target: null", "mass_target: 10"), encoding="utf-8")
+        scratch_before = tree(scratch_hw)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (1, "conflict"), report)
+        self.assertEqual(report["conflicts"], ["parts/PRT-0001/part.yaml"])
+        self.assertEqual(tree(scratch_hw), scratch_before)
+
+
 class JsonChildren(unittest.TestCase):
     def test_run_tool_parses_a_child_that_is_asked_for_json(self) -> None:
         tmp = tempfile.TemporaryDirectory()
