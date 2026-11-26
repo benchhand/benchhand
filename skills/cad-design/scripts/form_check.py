@@ -989,13 +989,14 @@ CONTACT_AT_JOINT, CONTACT_UNPLACED, CONTACT_ELSEWHERE = 0, 1, 2  # a patch's gra
 
 
 def _grade(gap: float, off: float, locator: str, located: float, tol: float) -> int:
-    """At the joint: within `tol` across the patch and tied to the joint by `locate` (an offset datum must also cut the
-    patch). Unplaced: such a contact on the datum plane that only the locator misses, and no mount is declared, so the
-    geometry cannot tell an intended mount from incidental contact. Elsewhere: anything else."""
-    on_datum = off <= tol or locator == "mount"
-    if gap <= tol and on_datum and located <= tol:
+    """At the joint: within `tol` across the patch, on the joint's datum plane, and tied to the joint by `locate`; the
+    datum and the locator pass separately, a declared mount included. Unplaced: such a contact on the datum plane that
+    only the locator misses, and no mount is declared, so the geometry cannot tell an intended mount from incidental
+    contact. Elsewhere: anything else."""
+    near = gap <= tol and off <= tol
+    if near and located <= tol:
         return CONTACT_AT_JOINT
-    return CONTACT_UNPLACED if gap <= tol and on_datum and locator != "mount" else CONTACT_ELSEWHERE
+    return CONTACT_UNPLACED if near and locator != "mount" else CONTACT_ELSEWHERE
 
 
 class Contact(NamedTuple):
