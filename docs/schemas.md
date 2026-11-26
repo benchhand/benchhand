@@ -4786,17 +4786,50 @@ Source: `/$defs/obligation_outcome`
 | `uncertainty` | `ManufacturingText` | no |  |  |
 | `coverage` | `ManufacturingText` | yes |  | what the method covered, and what it did not |
 | `findings` | `ManufacturingSemanticIds` | no |  |  |
+| `open_criteria` | `ManufacturingOpenCriteria` | no |  |  |
 
 Constraints not expressed by the type:
 
 - additionalProperties: false
 - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+- if {"required":["open_criteria"]} then {"properties":{"outcome":{"const":"unknown"}}}
 
 ### ManufacturingOccurrenceRef
 
 Source: `/$defs/occurrence_ref`
 
 Alias of `AssemblyOccurrenceRef`
+
+### ManufacturingOpenCriteria
+
+Source: `/$defs/open_criteria`
+
+The criteria that alone leave an unknown outcome open: no check measures them on the model. A current pass ledger entry that names the obligation, one of these features as its subject feature and the same criterion settles that criterion; once every one is settled the obligation takes `otherwise`, the outcome of everything else the method covered. Evidence never settles a fail
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `criteria` | `list[ManufacturingOpenCriteriaCriteriaItems]` | yes |  |  |
+| `otherwise` | `Literal["pass", "not_applicable", "not_assessed"]` | yes |  |  |
+| `reason` | `ManufacturingNotAssessedReason` | no |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- if {"properties":{"otherwise":{"const":"not_assessed"}},"required":["otherwise"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+- `criteria`: minItems: 1
+
+### ManufacturingOpenCriteriaCriteriaItems
+
+Source: `/$defs/open_criteria/properties/criteria/items`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `feature` | `ManufacturingSemanticId` | yes |  |  |
+| `criterion` | `ManufacturingCriterion` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
 
 ### ManufacturingOutcome
 

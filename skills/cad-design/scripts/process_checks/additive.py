@@ -32,7 +32,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .core import (FAIL, MAXIMUM, MINIMUM, NOT_APPLICABLE, NOT_ASSESSED, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Limit,
-                   Result, angle, combine, gated, length, occurrence_ids, policy, source_dict, text, unknown)
+                   OpenCriterion, Result, angle, combine, gated, length, occurrence_ids, policy, source_dict, text, unknown)
 
 FINISHING_KINDS = frozenset({"reaming", "finishing", "cnc", "drilling"})  # operations that can restore a surface
 PRINTERS = frozenset({"fdm", "resin"})  # printer calibration is optional on these (benchhand-c7q.30)
@@ -883,7 +883,7 @@ def _unchecked(ctx: Context, g: Geometry, surface: Any, item: Mapping[str, Any],
                           f"whether the {surface.role} {feature} meets its {prop} criterion is not checked",
                           remedy=f"print and inspect {feature} for {prop}, or state it as a tolerance a check reads",
                           recheck=[f"process.{kind}.geometry"], feature=feature))
-    return UNKNOWN, f"{feature} {prop} not checked: no check measures it"
+    return OpenCriterion(f"{feature} {prop} not checked: no check measures it", feature, item)
 
 
 def _reason(findings: Sequence[Draft]) -> str:

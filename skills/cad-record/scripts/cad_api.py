@@ -328,6 +328,8 @@ __all__ = [
     "ManufacturingObligationId",
     "ManufacturingObligationOutcome",
     "ManufacturingOccurrenceRef",
+    "ManufacturingOpenCriteria",
+    "ManufacturingOpenCriteriaCriteriaItems",
     "ManufacturingOutcome",
     "ManufacturingPn",
     "ManufacturingPreferenceId",
@@ -4033,12 +4035,40 @@ ManufacturingOutcome = Literal["pass", "fail", "unknown", "not_applicable", "not
 ManufacturingNotAssessedReason = Literal["calibration_off", "no_capability_profile", "no_guideline", "no_check"]
 
 
+class ManufacturingOpenCriteriaCriteriaItems(TypedDict):
+    """Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/open_criteria/properties/criteria/items
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    """
+    feature: Required[ManufacturingSemanticId]
+    criterion: Required[ManufacturingCriterion]
+
+
+class ManufacturingOpenCriteria(TypedDict):
+    """The criteria that alone leave an unknown outcome open: no check measures them on the model. A current pass ledger entry that names the obligation, one of these features as its subject feature and the same criterion settles that criterion; once every one is settled the obligation takes `otherwise`, the outcome of everything else the method covered. Evidence never settles a fail
+
+    Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/open_criteria
+
+    Not expressible as types (see the schema):
+    - additionalProperties: false
+    - if {"properties":{"otherwise":{"const":"not_assessed"}},"required":["otherwise"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+
+    Field notes:
+    - criteria: minItems: 1
+    """
+    criteria: Required[list[ManufacturingOpenCriteriaCriteriaItems]]
+    otherwise: Required[Literal["pass", "not_applicable", "not_assessed"]]
+    reason: NotRequired[ManufacturingNotAssessedReason]
+
+
 class ManufacturingObligationOutcome(TypedDict):
     """Source: skills/cad-record/schemas/manufacturing.schema.json#/$defs/obligation_outcome
 
     Not expressible as types (see the schema):
     - additionalProperties: false
     - if {"properties":{"outcome":{"const":"not_assessed"}},"required":["outcome"]} then {"required":["reason"]} else {"not":{"required":["reason"]}}
+    - if {"required":["open_criteria"]} then {"properties":{"outcome":{"const":"unknown"}}}
 
     Field notes:
     - coverage: what the method covered, and what it did not
@@ -4052,6 +4082,7 @@ class ManufacturingObligationOutcome(TypedDict):
     uncertainty: NotRequired[ManufacturingText]
     coverage: Required[ManufacturingText]
     findings: NotRequired[ManufacturingSemanticIds]
+    open_criteria: NotRequired[ManufacturingOpenCriteria]
 
 
 # A stable finding code, such as process.fdm.overhang

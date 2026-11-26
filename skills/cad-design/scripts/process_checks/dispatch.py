@@ -229,6 +229,8 @@ def _row(obligation: Any, result: Result, drafted: list[dict[str, Any]]) -> dict
         row["source"] = dict(result.source)
     if result.uncertainty:
         row["uncertainty"] = result.uncertainty
+    if result.open_criteria is not None:
+        row["open_criteria"] = intent().thaw(result.open_criteria)
     linked = [f["id"] for f in drafted if f.get("obligation") == obligation.id]
     if linked:
         row["findings"] = linked

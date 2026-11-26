@@ -78,7 +78,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -398,7 +398,7 @@ class Assessment:
     complete: bool
     selection: Mapping[str, Any]
     selection_approved: bool | None
-
+    entry_results: Mapping[str, str] = field(default_factory=dict)  # each ledger entry's status for this version
     def results(self) -> dict[str, str]:
         return {ident: status.result for ident, status in self.statuses.items()}
 
@@ -742,6 +742,13 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
         elif obligation.family.startswith(impact.RECORD_FAMILIES):
             candidates[obligation.id].append(("unknown", "record", obligation.basis))
 
+    # ledger entries, judged first: a producer outcome open only on criteria reads them
+    judged = {str(e.get("id")): _entry(e, record, by_id, version, manifest_sha256, geometry or {}, approved, today,
+                                       artifact_sha, paths) for e in record.evidence}
+    reliant = _reliant(record, {i for i, (_, _, f) in judged.items() if any(x.code in _PATH_CODES for x in f)})
+    entry_results = {ident: ("unknown" if ident in reliant else result) for ident, (result, _, _) in judged.items()}
+    settled_entries: set[str] = set()  # the criterion entries that settle an open criterion of a producer outcome
+
     # producer packets
     accepted_packets = []
     for packet in packets:
@@ -770,6 +777,12 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
                                         f"{obligation.level}", "warning", ident))
                 continue
             result = outcome.get("outcome")
+            method = outcome.get("method") or ""
+            settling = settled_by(record, entry_results, ident, outcome.get("open_criteria")) if result == "unknown" else None
+            if settling is not None:  # every open criterion has passing evidence: the rest of the method decides
+                settled_entries.update(settling)
+                result = outcome["open_criteria"]["otherwise"]
+                method = f"{method}; open criteria settled by {', '.join(settling)}"
             if obligation.level == PHYSICAL and result == "not_assessed":
                 continue  # D37 covers the tool's own checks, not a test the user must perform: it never stands in for one
             if obligation.level == PHYSICAL and result == "pass":
@@ -782,16 +795,13 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
                                           + ", ".join(stale_since_build[ident])))
                 continue
             if result in ("pass", "fail", "not_applicable", "unknown"):
-                candidates[ident].append((result, packet.bundle, outcome.get("method") or ""))
+                candidates[ident].append((result, packet.bundle, method))
             elif result == "not_assessed":
-                candidates[ident].append((result, packet.bundle, outcome.get("reason") or ""))
+                reason = outcome["open_criteria"].get("reason") if settling is not None else outcome.get("reason")
+                candidates[ident].append((result, packet.bundle, reason or ""))
 
     # ledger entries
-    entry_results: dict[str, str] = {}
     untargeted: dict[tuple[str, str], list[str]] = {}
-    judged = {str(e.get("id")): _entry(e, record, by_id, version, manifest_sha256, geometry or {}, approved, today,
-                                       artifact_sha, paths) for e in record.evidence}
-    reliant = _reliant(record, {i for i, (_, _, f) in judged.items() if any(x.code in _PATH_CODES for x in f)})
     for entry in record.evidence:
         ident = str(entry.get("id"))
         result, reasons, entry_findings = judged[ident]
@@ -808,14 +818,22 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
         if derived:
             result = "unknown"
         entry_results[ident] = result
+        if not targets and entry.get("requirement"):
+            untargeted.setdefault((entry["requirement"], entry.get("level")), []).append(result)
+        if criterion_scope(entry) is not None and result != "fail":
+            targets = []  # it speaks to one criterion: open_criteria above reads its pass; only its fail is the obligation's
+            if result == "pass" and ident not in settled_entries:
+                feature, criterion = criterion_scope(entry) or ("", {})
+                findings.append(Finding("evidence.subject", f"hw/manufacturing/evidence.yaml#/entries/{ident}",
+                                        f"{ident} is about the {criterion.get('property')} of {feature}, which no producer "
+                                        f"outcome of {entry.get('obligation')} leaves open: evidence covers its own subject only",
+                                        obligation=entry.get("obligation")))
         for target in targets:
             if target in derived:
                 continue
             if result == "waived":
                 waivers.setdefault(target, entry.get("waiver") or {})
             candidates[target].append((result, ident, "; ".join(reasons)))
-        if not targets and entry.get("requirement"):
-            untargeted.setdefault((entry["requirement"], entry.get("level")), []).append(result)
 
     # dispositions of producer findings
     if paths:
@@ -847,7 +865,7 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
     rows = _verification(record, verification, facets, entry_results, findings)
     report = selection.assess(record, input_sha256=selection_sha256)
     return Assessment(record, version, manifest_sha256, expected, statuses, facets, tuple(rows), tuple(findings),
-                      tuple(critical), complete, report, selection_approval(record, approved))
+                      tuple(critical), complete, report, selection_approval(record, approved), entry_results)
 
 
 def selection_approval(record: Any, approved: Callable[[str | None], bool]) -> bool | None:
@@ -940,6 +958,38 @@ def _reliant_finding(ident: str, names: Sequence[str]) -> Finding:
                    "the dependency is promoted into the record")
 
 
+CRITERION_KEYS = ("property", "operator", "value", "units")  # what makes two criteria the same limit; the source does not
+
+
+def criterion_scope(entry: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]] | None:
+    """(feature, criterion) of a ledger entry about one criterion of one feature of the obligation it names: it names
+    the obligation, a subject feature and the criterion. None for an entry about a whole obligation or requirement.
+    Such an entry speaks only to that criterion: its pass settles that open criterion of a producer outcome
+    (open_criteria) and never the obligation; its fail fails the obligation."""
+    subject, criterion = _mapping(entry.get("subject")), entry.get("criterion")
+    if entry.get("obligation") and isinstance(subject.get("feature"), str) and isinstance(criterion, Mapping):
+        return subject["feature"], criterion
+    return None
+
+
+def settled_by(record: Any, entry_results: Mapping[str, str], obligation: str, open_criteria: Any) -> list[str] | None:
+    """The ids of the current passing ledger entries that settle every criterion in `open_criteria` (a producer
+    outcome's open_criteria) of `obligation`, one per criterion; None while any stays open."""
+    if not isinstance(open_criteria, Mapping) or not open_criteria.get("criteria"):
+        return None
+    ids = []
+    for item in open_criteria["criteria"]:
+        wanted = _mapping(_mapping(item).get("criterion"))
+        found = next((str(entry.get("id")) for entry in record.evidence
+                      if entry.get("obligation") == obligation and entry_results.get(str(entry.get("id"))) == "pass"
+                      and (scope := criterion_scope(entry)) is not None and scope[0] == _mapping(item).get("feature")
+                      and all(impact.plain(scope[1].get(k)) == impact.plain(wanted.get(k)) for k in CRITERION_KEYS)), None)
+        if found is None:
+            return None
+        ids.append(found)
+    return ids
+
+
 def _entry_targets(entry: Mapping[str, Any], record: Any, expected: Sequence[Any]) -> list[str]:
     """The expected obligations a ledger entry speaks to: the one it names, else the requirement and
     evidence-policy obligations of its requirement at its level."""
@@ -985,7 +1035,9 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
     refused = _path_findings(cited_paths.entry_problems(paths, entry), path, ident, named if obligation else None) if paths else []
     if refused:
         return "unknown", (f"{ident} cites files the record cannot hold",), refused
-    if entry.get("obligation") and obligation is not None and mi.obligation_anchor(subject) != _anchor(obligation.id):
+    # an entry about one criterion of one feature is about a part of its obligation's subject
+    about = {k: v for k, v in subject.items() if k not in ("feature", "region")} if criterion_scope(entry) else subject
+    if entry.get("obligation") and obligation is not None and mi.obligation_anchor(about) != _anchor(obligation.id):
         findings.append(Finding("evidence.subject", path, f"{ident} is about {mi.obligation_anchor(subject)}, but "
                                 f"{obligation.id} is about {_anchor(obligation.id)}: evidence covers its own subject only",
                                 obligation=obligation.id))
@@ -1671,11 +1723,13 @@ def _fail_fast() -> Any:
     return _load_module("cad_record_fail_fast", SCRIPTS / "fail_fast.py")
 
 
-def _judge(project: Path, stage: str, expected: Sequence[Any]) -> Callable[[Any, int | None, Any], str]:
+def _judge(project: Path, stage: str, expected: Sequence[Any],
+           settled: Callable[[str, Any], bool] = lambda _obligation, _open: False) -> Callable[[Any, int | None, Any], str]:
     """A step's status from its exit status. A producer that exits 0 without one JSON object on its
     stdout gave no result. form_check.py exits 1 on every open obligation it owns, due or not: its
     step fails only on a fidelity failure, a failed outcome, an open obligation due at `stage` or a
-    report this cannot read."""
+    report this cannot read. A due unknown whose open criteria (open_criteria) `settled` finds settled
+    by passing ledger evidence does not stop the run: the packet gate after it reconciles that evidence."""
     due = {obligation.id for obligation in expected if _due(obligation, stage)}
     status_of = _fail_fast().status_of
 
@@ -1691,7 +1745,8 @@ def _judge(project: Path, stage: str, expected: Sequence[Any]) -> Callable[[Any,
                 or not isinstance(manufacturing.get("open"), list):
             return status
         blocking = [item for item in manufacturing["open"]
-                    if not isinstance(item, Mapping) or item.get("outcome") != "unknown" or item.get("obligation") in due]
+                    if not isinstance(item, Mapping) or item.get("outcome") != "unknown"
+                    or (item.get("obligation") in due and not settled(str(item.get("obligation")), item.get("open_criteria")))]
         return status if blocking else "pass"
 
     return judge
@@ -1760,8 +1815,12 @@ def run(hw: Path, version: str, scope: str, *, stage: str | None = None, since_v
         return 1, {**report, "findings": [Finding(mi.VERSION_UNSUPPORTED, "hw/product.yaml", message + action).as_dict()]}
     assessment, _ = build_assessment(hw, label, today)
     work = run_plan(hw, label, scope, stage, assessment, since_version=since_version)
+    def settled(obligation: str, open_criteria: Any) -> bool:
+        return settled_by(assessment.record, assessment.entry_results, obligation, open_criteria) is not None
+
     outcome = _fail_fast().execute(work, validate=lambda: _validate_step(hw), spawn=spawn or _spawner(hw, label, scope),
-                                   strays=strays or (lambda: _strays(hw)), judge=_judge(hw.parent, stage, assessment.expected))
+                                   strays=strays or (lambda: _strays(hw)),
+                                   judge=_judge(hw.parent, stage, assessment.expected, settled))
     report.update(status=outcome.status, steps=[step.as_dict() for step in outcome.steps], stopped_at=outcome.stopped_at)
     if outcome.strays:
         report["strays"] = [dict(item) for item in outcome.strays]
