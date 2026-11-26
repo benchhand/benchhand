@@ -415,6 +415,11 @@ class DrawingRecordAdditions(unittest.TestCase):
             "an inverted band": (lambda l: (l["press_fit"].pop("fit"), l["press_fit"].update(
                 nominal_mm=22, source=intent, interference={"min": 1, "max": 0, "units": "mm"})),
                 f"limits/press_fit: interference.min 1 mm is above interference.max 0 mm; {accepted}"),
+            "list units": (lambda l: (l["press_fit"].pop("fit"), l["press_fit"].update(
+                nominal_mm=22, source=intent, interference={**band, "units": ["mm"]})),
+                "limits/press_fit/interference/units: ['mm'] is not one of ['mm', 'um']"),
+            "misspelled running-fit key": (lambda l: l["running_fit"].update(fitt="5 f7"),
+                                           "limits/running_fit: Additional properties are not allowed ('fitt' was unexpected)"),
         }
         self.run_cases(cases, lambda: self.docs["interfaces.yaml"]["interfaces"][0]["limits"])
 

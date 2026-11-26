@@ -126,6 +126,8 @@ def pair_policies(record: Path, assembly: Any, joint_pairs: Iterable[Mapping[str
     entries: dict[Pair, list[str]] = defaultdict(list)
     for kind, items in declared.items():
         for item in items:
+            if item["pair"] is None:  # an invalid fit whose misspelled key hides its pair declares no pair
+                continue
             if kind == "clearance" and margins is not None:
                 item = {**item, "margin_mm": margins.for_interface(item["interface"])}
             entries[tuple(item["pair"])].append(_policy_entry(kind, item))

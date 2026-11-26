@@ -43,9 +43,6 @@ from typing import Any, cast
 
 FITS_SCRIPT = Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py"
 YAML_LOADER_SCRIPT = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "yaml_loader.py"
-# The keys of drawing.schema.json $defs/fit.
-FIT_KEYS = frozenset(("fit", "nominal_mm", "deviations", "interference", "clearance", "source", "compliance", "ribs",
-                      "pair", "hole", "shaft", "engagement_length_mm", "note", "axial_retainer"))
 
 
 class PolicyError(ValueError):
@@ -139,10 +136,11 @@ def _fit_pair(fit: dict[str, Any], assembly: Any, where: str) -> tuple[tuple[str
 
 
 def _fits(hw: Path, interfaces: list[Any], assembly: Any,
-          kind: str) -> Iterator[tuple[dict[str, Any], dict[str, Any], tuple[str, str], dict[str, Any] | None, str,
-                                         float | None]]:
+          kind: str) -> Iterator[tuple[dict[str, Any], dict[str, Any], tuple[str, str] | None, dict[str, Any] | None,
+                                         str, float | None]]:
     """(interface, fit entry, sorted occurrence pair, endpoints or None, source, engagement_length_mm or None)
-    of each `limits.<kind>` fit."""
+    of each `limits.<kind>` fit. A fit with a misspelled key is cad-fits' invalid fit, not an input error: its
+    pair is None when the misspelling hides it."""
     path = hw / "interfaces.yaml"
     for index, interface in enumerate(interfaces):
         if not isinstance(interface, dict):
@@ -155,22 +153,23 @@ def _fits(hw: Path, interfaces: list[Any], assembly: Any,
         where = f"{path}:{source}"
         if not isinstance(fit, dict):
             raise PolicyError(f"{where}: expected fit and two distinct part references")
-        unknown = sorted(set(fit) - FIT_KEYS, key=str)
-        if unknown:  # a misspelled key is a malformed record (validate's schema finding), not a fit to classify
-            raise PolicyError(f"{where}: unknown key(s) {', '.join(map(str, unknown))}; expected fit and two distinct "
-                              "part references")
-        pair, endpoints = _fit_pair(fit, assembly, where)
+        try:
+            pair, endpoints = _fit_pair(fit, assembly, where)
+        except PolicyError:
+            if not set(fit) - _fits_module().FIT_KEYS:
+                raise
+            pair, endpoints = None, None  # cad-fits names the misspelled key
         yield interface, fit, pair, endpoints, source, fit.get("engagement_length_mm")
 
 
-def _fit_entry(interface: dict[str, Any], fit: dict[str, Any], pair: tuple[str, str],
+def _fit_entry(interface: dict[str, Any], fit: dict[str, Any], pair: tuple[str, str] | None,
                endpoints: dict[str, Any] | None, source: str, engagement_length_mm: float | None = None,
                declared: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
     """One declaration as {pair, fit, ...extra, interface, source[, limits, compliance, ribs, max_interference_mm]
     [, engagement_length_mm, endpoints]}: `fit` is the ISO designation, else the explicit limits' label;
     `declared` (cad-fits declared_fit) adds the explicit limits."""
     label = fit.get("fit") if declared is None else declared["label"]
-    entry = {"pair": list(pair), "fit": label, **extra, "interface": interface.get("id"), "source": source}
+    entry = {"pair": None if pair is None else list(pair), "fit": label, **extra, "interface": interface.get("id"), "source": source}
     if declared is not None and declared["form"] != "iso":
         entry["limits"] = {key: declared[key] for key in ("form", "nominal_mm", "min_clearance_mm", "max_clearance_mm")}
     if declared is not None and "compliance" in declared:
@@ -183,11 +182,13 @@ def _fit_entry(interface: dict[str, Any], fit: dict[str, Any], pair: tuple[str, 
     return entry
 
 
-def _declared(fit: dict[str, Any], where: str) -> tuple[dict[str, Any] | None, str | None]:
-    """(cad-fits' reading of a fit entry, None), or (None, why it cannot be read, naming the accepted forms)."""
+def _declared(fit: dict[str, Any], where: str,
+              vendor_designation: bool = False) -> tuple[dict[str, Any] | None, str | None]:
+    """(cad-fits' reading of a fit entry, None), or (None, why it cannot be read, naming the field and the accepted
+    forms). With `vendor_designation`, a designation no ISO class covers reads as `unclassified`."""
     fits = _fits_module()
     try:
-        return fits.declared_fit(fit), None
+        return fits.declared_fit(fit, vendor_designation=vendor_designation), None
     except fits.FitError as error:
         return None, f"{where}: {error}"
 
@@ -213,18 +214,15 @@ def declared_press_fits(hw: Path, interfaces: list[Any], assembly: Any) -> list[
 def declared_locating_fits(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
     """Locating-fit declarations as {pair, fit, classification, interface, source[, ...]}, `pair` the sorted
     occurrence ids. `classification` is the type of an ISO hole/shaft designation or of explicit limits, else
-    `unclassified`: a dowel or vendor limit locates without a fit class this table covers. Explicit limits cad-fits
-    cannot read are `invalid`, with their `error`."""
+    `unclassified`: a dowel or vendor limit locates without a fit class this table covers. A fit cad-fits cannot
+    read (explicit limits it rejects, a misspelled key, a value of the wrong type) is `invalid`, with its `error`."""
     path = hw / "interfaces.yaml"
     declared = []
     for interface, fit, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "locating_fit"):
-        reading, error = _declared(fit, f"{path}:{source}")
-        if reading is not None:
-            extra: dict[str, Any] = {"classification": reading["type"]}
-        elif isinstance(fit.get("fit"), str) and not set(fit) & set(_fits_module().EXPLICIT_FORMS):
-            extra = {"classification": "unclassified"}
-        else:
-            extra = {"classification": "invalid", "error": error}
+        reading, error = _declared(fit, f"{path}:{source}", vendor_designation=True)
+        extra = {"classification": reading["type"]} if reading is not None else {"classification": "invalid", "error": error}
+        if reading is not None and reading["form"] == "designation":
+            reading = None
         declared.append(_fit_entry(interface, fit, pair, endpoints, source, engagement, reading, **extra))
     return declared
 
@@ -232,11 +230,16 @@ def declared_locating_fits(hw: Path, interfaces: list[Any], assembly: Any) -> li
 def declared_running_fits(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
     """Running-fit declarations as {pair, fit, interface, source[, limits][, endpoints]}, `pair` the sorted
     occurrence ids. A running fit is a clearance by design, often to vendor limits rather than an
-    ISO 286 hole and shaft, so it is resolved but not classified; explicit limits are reported with it."""
+    ISO 286 hole and shaft, so it is resolved but not classified; explicit limits are reported with it. A fit
+    cad-fits cannot read is {classification: invalid, error}, its `pair` None when a misspelled key hides it."""
+    path = hw / "interfaces.yaml"
     declared = []
     for interface, fit, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "running_fit"):
-        reading = _declared(fit, source)[0] if set(fit) & set(_fits_module().EXPLICIT_FORMS) else None
-        declared.append(_fit_entry(interface, fit, pair, endpoints, source, engagement, reading))
+        reading, error = _declared(fit, f"{path}:{source}", vendor_designation=True)
+        extra = {} if reading is not None else {"classification": "invalid", "error": error}
+        explicit = reading is not None and reading["form"] in _fits_module().EXPLICIT_FORMS
+        declared.append(_fit_entry(interface, fit, pair, endpoints, source, engagement, reading if explicit else None,
+                                   **extra))
     return declared
 
 
@@ -289,8 +292,8 @@ def overlap_allowed(item: dict[str, Any]) -> bool:
 def fitted_pairs(*declarations: Iterable[dict[str, Any]]) -> set[tuple[str, str]]:
     """The occurrence pairs a press, running or locating fit or a heat-set insert declares. Fitted or
     contacting by design, they inherit no global running-clearance requirement; an explicit clearance
-    requirement on such a pair still applies."""
-    return {tuple(item["pair"]) for items in declarations for item in items}
+    requirement on such a pair still applies. An invalid fit declares nothing."""
+    return {tuple(item["pair"]) for items in declarations for item in items if item.get("classification") != "invalid"}
 
 
 def declared_clearances(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:

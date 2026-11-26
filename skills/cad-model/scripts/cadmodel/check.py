@@ -600,9 +600,9 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
     threshold = load_pose().INTERFERENCE_MM3
     refs = refs or {}
     candidates = set(geometry) if candidates is None else set(candidates)
-    declarations = sorted(declared, key=lambda item: (item["pair"], item["source"]))
+    declarations = sorted(declared, key=lambda item: (item["pair"] or [], item["source"]))
     inserts = sorted(heat_sets, key=lambda item: (item["pair"], item["source"]))
-    locating = sorted(locating_fits, key=lambda item: (item["pair"], item["source"]))
+    locating = sorted(locating_fits, key=lambda item: (item["pair"] or [], item["source"]))
     effective_allowed = allowed | load_pair_policy().allowed_pairs(declarations, inserts, locating)
     pairs = sorted(set(geometry) if named is None else {tuple(sorted(p)) for p in named})
     selected = set(pairs)
@@ -622,11 +622,12 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
     declared_fit_findings = []
     compliant = []
     for item in [*declarations, *locating]:
+        if item["classification"] == "invalid":  # reported whatever the selection when no pair can be read
+            if item["pair"] is None or tuple(item["pair"]) in selected:
+                declared_fit_findings.append({**item, "type": "fit_invalid"})
+            continue
         pair = tuple(item["pair"])
         if pair not in selected:
-            continue
-        if item["classification"] == "invalid":
-            declared_fit_findings.append({**item, "type": "fit_invalid"})
             continue
         if not load_pair_policy().overlap_allowed(item):
             continue
