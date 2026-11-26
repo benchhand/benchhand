@@ -764,7 +764,7 @@ class Context:
                           remedy="record the capability profile of the actual machine, operator or supplier"
                                  + ("" if self.calibration_off() else ", with its calibrations"),
                           recheck=[f"process.{op.kind}"], earliest_stage="parts")
-            if op.provider == "outsourced":
+            if self.part.provider_of(op.provider) == "outsourced":
                 draft.consequence += "; outsourcing is no exemption: the supplier's capability and inspection are required"
             return Result(UNKNOWN, method, "capability unknown", [draft])
         profile = self.profile

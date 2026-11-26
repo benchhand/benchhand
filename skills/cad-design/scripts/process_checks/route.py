@@ -60,7 +60,7 @@ def consistency(ctx: Context) -> Result:
             parts.append((PASS, f"{op.id} purchased"))
             continue
         parts.append(_capability(ctx, op, material, findings))
-        if op.provider == "outsourced" and not op.raw.get("supplier"):
+        if part.provider_of(op.provider) == "outsourced" and not op.raw.get("supplier"):
             findings.append(Draft("route.supplier_unknown", "minor", UNKNOWN, unknown("no supplier"),
                                   policy("supplier", "equals", "named for an outsourced operation"), "part.yaml route",
                                   "not recorded", f"{op.id} is outsourced to an unnamed supplier: its capability and inspection "
@@ -80,13 +80,14 @@ def consistency(ctx: Context) -> Result:
 
 
 def _capability(ctx: Context, op: Any, material: str | None, findings: list[Draft]) -> tuple[str, str]:
+    provider = ctx.part.provider_of(op.provider)  # stated, else the part's recorded sourcing
     if ctx.guidelines_without_machine(op):
         return NOT_ASSESSED, f"{op.id} records no machine; the guideline values govern"
     if ctx.mi.is_fact(op.capability):
         findings.append(Draft("route.capability_unknown", "major", UNKNOWN, text(f"{op.id} capability unknown"),
                               unknown(op.capability.reason or "no capability profile"), "part.yaml route capability",
                               "not recorded", f"{op.id} names no capability of the actual equipment or supplier"
-                              + ("; outsourcing is no exemption" if op.provider == "outsourced" else ""),
+                              + ("; outsourcing is no exemption" if provider == "outsourced" else ""),
                               remedy="record the capability profile of whoever performs it", recheck=[f"process.{op.kind}"],
                               earliest_stage="parts"))
         return UNKNOWN, f"{op.id} capability unknown"
@@ -105,10 +106,10 @@ def _capability(ctx: Context, op: Any, material: str | None, findings: list[Draf
                               remedy=f"name a {op.kind} capability of the actual equipment or supplier", recheck=[f"process.{op.kind}"],
                               earliest_stage="parts"))
         return FAIL, f"{op.id} capability mismatch"
-    if op.provider and profile.provider and op.provider != profile.provider:
-        findings.append(Draft("route.provider_mismatch", "minor", FAIL, text(f"{op.id} {op.provider}, {profile.id} {profile.provider}"),
+    if profile.provider and provider != profile.provider:
+        findings.append(Draft("route.provider_mismatch", "minor", FAIL, text(f"{op.id} {provider}, {profile.id} {profile.provider}"),
                               policy("provider", "equals", profile.provider), "capability profile provider", "record content",
-                              f"{op.id} is {op.provider} but its capability is {profile.provider}",
+                              f"{op.id} is {provider} but its capability is {profile.provider}",
                               remedy="make the operation's provider match whoever holds the capability", recheck=["route.consistency"]))
         return FAIL, f"{op.id} provider mismatch"
     approvals = profile.materials
