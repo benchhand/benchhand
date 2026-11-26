@@ -3059,11 +3059,15 @@ class GuidelineWithoutCalibrationTests(Checks):
                 self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
                 self.assertIn(f"{what} not assessed: no calibration or guideline", result.outcome(GEOMETRY)["coverage"])
 
-    def received(self, *, catalog: Any, critical: bool = True) -> Any:
+    def received(self, *, catalog: Any, critical: bool = True, into: str = "TST-0101") -> Any:
         """An insert pressed into the 4.2 mm printed boss bore of TST-0101: a critical bore whose limits are 3.0..5.0 mm,
-        or, without `critical`, a bore no critical surface names."""
+        or, without `critical`, a bore no critical surface names. An `into` of `@body` names TST-0101's one explicit
+        occurrence."""
         documents = guided(service="functional_demo", calibrations=(CONTACT,))
-        documents["assembly.yaml"]["operations"] = [{"id": "insert_m3", "kind": "insert", "part": "TST-0101", "into": "TST-0101",
+        if into.startswith("@"):
+            documents["assembly.yaml"]["occurrences"] = [{"id": into[1:], "PN": "TST-0101"}]
+            documents["assembly.yaml"]["subassemblies"] = [{"id": "main", "title": "Main", "occurrences": [into]}]
+        documents["assembly.yaml"]["operations"] = [{"id": "insert_m3", "kind": "insert", "part": "TST-0101", "into": into,
                                                      "direction": [0, 0, -1], "acceptance": {"kind": "seated", "features": ["boss"]}}]
         if critical:
             documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
@@ -3081,10 +3085,12 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(note["recheck"]["families"], ["assembly.order", "process.fdm.trial"])
 
     def test_a_receiving_only_bore_never_passes_on_an_interval_alone(self) -> None:
-        result = self.received(catalog=SHIPPED, critical=False)
-        self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
-        found = self.finding(result, "process.fdm.receiving_criterion_missing")
-        self.assertEqual((found["outcome"], found["subject"]["feature"]), ("unknown", "boss"))
+        for into in ("TST-0101", "@body"):  # the part number, or its occurrence reference
+            with self.subTest(into=into):
+                result = self.received(catalog=SHIPPED, critical=False, into=into)
+                self.assertEqual(self.outcome(result, GEOMETRY), "unknown")
+                found = self.finding(result, "process.fdm.receiving_criterion_missing")
+                self.assertEqual((found["outcome"], found["subject"]["feature"]), ("unknown", "boss"))
 
     def test_a_critical_receiving_bore_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
         result = self.received(catalog=None)
