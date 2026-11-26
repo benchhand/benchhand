@@ -295,6 +295,19 @@ class CoupledChain(unittest.TestCase):
                          ["J-031 follows J-001 (linear ratio 0.5 offset 0) reaches 180.25 deg at J-001 = 360.5 deg, "
                           "outside its limits [0, 180]"])
 
+    def test_a_derived_joint_at_the_end_of_its_driver_range_is_not_a_false_finding(self) -> None:
+        """Driver limits -0.1 to 0.2 at a ratio of 1e9: the old last driver sample, 0.20000000000000004, put
+        the follower 4e-8 past its limit of 2e8, more than LIMIT_EPS, and reported an excursion that is not there."""
+        data = {"joints": [
+            {"id": "J-001", "type": "prismatic", "parent": "TST-0001", "child": "TST-0002", "axis": [1, 0, 0],
+             "origin": [0, 0, 0], "min": -0.1, "max": 0.2, "nominal": 0},
+            {"id": "J-002", "type": "prismatic", "parent": "TST-0001", "child": "TST-0003", "axis": [1, 0, 0],
+             "origin": [0, 0, 0], "min": -1e8, "max": 2e8,
+             "coupling": {"type": "linear", "driver": "J-001", "ratio": 1e9}}]}
+        limits = {j["id"]: (j["min"], j["max"]) for j in data["joints"]}
+        units = {j["id"]: "mm" for j in data["joints"]}
+        self.assertEqual(coupling.parse(data).range_problems(limits, {"J-001": 0.0}, units), [])
+
     def test_the_bottom_dead_centre_rounding_is_inside_the_stroke(self) -> None:
         values = self.chain.complete({"J-001": 180.0})  # cylinder 1 at BDC: -2r, give or take one ulp
         self.assertAlmostEqual(values["J-011"], -v6_record.STROKE, places=12)
