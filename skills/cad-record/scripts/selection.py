@@ -1251,7 +1251,7 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
     """The deterministic, JSON-ready selection report of a normalized record (manufacturing_intent.Record).
     `problems` are the record's problems (default record.problems); an error
     makes the report invalid, and nothing is compared on invalid input. A valid
-    report's `coverage` names the record's made parts and those no candidate covers (see `_coverage`)."""
+    report's `coverage` names the record's made parts and those no chosen candidate covers (see `_coverage`)."""
     calibration = guidelines.calibration_enabled() if calibration is None else calibration  # read once, here
     problems = list(record.problems if problems is None else problems)
     assessment = mi.assess_use_case(record)
@@ -1302,11 +1302,21 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
 
 
 def _coverage(record: Any, decisions: Sequence[Mapping[str, Any]]) -> dict[str, list[str]]:
-    """The record's made parts and those no decision covers. A made part no candidate names has an unknown
-    material and process choice: exploration before the design freeze, a refusal from it (evidence.selection_gate)."""
+    """The record's made parts and those no decision's chosen candidate (its recommended primary) covers. A part only
+    an alternative names is not chosen, so its material and process choice is unknown: exploration before the design
+    freeze, a refusal from it (evidence.selection_gate)."""
     made = sorted(pn for pn, part in record.parts.items() if part.made)
-    covered = {pn for decision in decisions for pn in decision["parts"]}
+    covered = {pn for decision in decisions for pn in _chosen_parts(decision)}
     return {"made": made, "unselected": [pn for pn in made if pn not in covered]}
+
+
+def _chosen_parts(decision: Mapping[str, Any]) -> set[str]:
+    """The parts the decision's recommended primary names; none when every candidate is eliminated."""
+    recommendation = decision["recommendation"]
+    if recommendation is None:
+        return set()
+    chosen = next(c for c in decision["candidates"] if c["id"] == recommendation["primary"])
+    return {part["PN"] for part in chosen["parts"]}
 
 
 def _use_case_section(record: Any, assessment: Any) -> dict[str, Any]:
