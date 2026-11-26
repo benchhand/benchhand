@@ -580,13 +580,21 @@ def _scoped_fields(hw: Path) -> list[str]:
     return gate.question_fields(product, parts)
 
 
+def _shown_questions(fields: set[str]) -> list[tuple[str, str]]:
+    """The questions with an applicable answer, each listing only the options whose field applies one by one."""
+    option_field = {option: field for option, field, _parse, _metavar in OPTIONS}
+    shown = []
+    for text, records in QUESTIONS:
+        kept = [token for token in records.split(", ") if option_field.get(token.split()[0]) in fields]
+        if kept:
+            shown.append((text, ", ".join(kept)))
+    return shown
+
+
 def print_questions(hw: Path | None = None) -> None:
-    """The questions to relay; with `hw`, only those with an applicable option (or none, like the printer one)."""
+    """The questions to relay; with `hw`, only those that apply to that work tree."""
     fields = set(gate.QUESTION_FIELDS if hw is None else _scoped_fields(hw))
-    option_fields = {option: field for option, field, _parse, _metavar in OPTIONS}
-    shown = [(text, records) for text, records in QUESTIONS
-             if not (named := [field for option, field in option_fields.items() if option in records])
-             or any(field in fields for field in named)]
+    shown = _shown_questions(fields)
     print("Ask the user these questions verbatim, then record the answers with flow_profile.py record.\n")
     for number, (text, _records) in enumerate(shown, start=1):
         print(f"{number}. {text}")
