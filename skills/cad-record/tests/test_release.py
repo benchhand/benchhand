@@ -1479,6 +1479,16 @@ class Acceptance(ReleaseCase):
         self.assertIn("record.version_unsupported", [item.get("code") for item in report["findings"]])
         self.assertEqual(tree(hw), before)
 
+    def test_a_cited_artifact_that_is_gone_is_refused_at_its_ledger_field_by_release_and_validate(self) -> None:
+        hw = self.project()
+        (hw / "docs" / "inspection.md").unlink()
+        field = "hw/manufacturing/evidence.yaml#/entries/EV-001/artifacts/0/path"
+        code, report = self.release(hw)
+        self.assertEqual((code, report["status"]), (1, "refused"))
+        self.assertEqual([item["path"] for item in report["findings"] if item.get("code") == "release.acceptance"], [field])
+        anchored = [item["path"] for item in validate.validate_project(hw) if item.get("code") == "record.evidence_anchor"]
+        self.assertEqual(anchored, [str(hw / "manufacturing" / "evidence.yaml") + "#/entries/EV-001/artifacts/0/path"])
+
     def test_a_freeze_without_an_acceptance_anchor_refuses(self) -> None:
         hw = self.project(anchor=False)
         self.assertEqual(validate.blocking(validate.validate_project(hw)), [], "readable: only the release refuses an unanchored freeze")

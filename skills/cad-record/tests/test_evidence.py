@@ -1342,21 +1342,24 @@ class EvidenceDigestCli(BuiltRecord):
     def test_a_cited_file_the_project_cannot_hold_is_a_refusal_naming_the_entry_and_field(self) -> None:
         sources = self.hw / "manufacturing" / "sources"
         sources.mkdir(parents=True, exist_ok=True)
-        (sources / "link.pdf").symlink_to(self.hw / "verification.csv")
+        link = sources / "link.pdf"
         cases = {
             "missing": ("hw/manufacturing/sources/absent.pdf", "is missing"),
             "linked": ("hw/manufacturing/sources/link.pdf", "symbolic link"),
-            "escaping": ("hw/../outside.txt", "outside the project root"),
+            "escaping": ("hw/../../outside.txt", "outside the project root"),
             "unnormalized": ("hw/manufacturing/./sources/a.pdf", "not a normalized path"),
             "NUL": ("hw/manufacturing/sources/a\x00b.pdf", "not a valid path"),
         }
         for name, (cited, text) in cases.items():
             with self.subTest(name):
+                link.unlink(missing_ok=True)
+                if name == "linked":
+                    link.symlink_to(self.hw / "verification.csv")
                 code, report = self.digest(cited)
                 self.assertEqual((code, report["status"]), (1, "refused"))
                 self.assertNotIn("evidence_sha256", report)
                 self.assertNotIn("inventory", report)
-                self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD])
+                self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD], report)
                 self.assertIn(text, report["findings"][0]["message"])
 
 
