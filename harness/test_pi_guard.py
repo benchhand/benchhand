@@ -210,6 +210,99 @@ class ToolCallTests(unittest.TestCase):
                     self.assertIsNone(scope.decide(tool, {"path": "/etc/passwd"}))
 
 
+NBSP = "\u00a0"
+
+
+@unittest.skipUnless(NODE or REQUIRED, "node is needed to run the pi extension")
+class ConfinedWriteTests(unittest.TestCase):
+    """The mutation itself stays in .cad-work: the hook's verdict is not what protects the write."""
+
+    def write(self, scope: Scope, path: Path, content: str, swap: str = "") -> dict[str, object]:
+        """Run confinedWriteFile; `swap` is JavaScript run with `fs` between the guard's checks and its open."""
+        body = (
+            "const hook = input.swap ? new Function('fs', input.swap) : () => {};"
+            "try { await g.confinedWriteFile(input.path, input.content, {cwd: input.cwd, skills: input.skills, guardDir: input.guard, beforeOpen: () => hook(fsModule)});"
+            "  return {ok: true}; } catch (e) { return {error: e.message}; }"
+        )
+        payload = {"path": str(path), "content": content, "cwd": str(scope.project), "skills": str(scope.skills), "guard": str(scope.guard_dir), "swap": swap}
+        result = scope.node("const fsModule = await import('node:fs');" + body, payload)
+        self.assertNotIn("is not a function", str(result), "the guard does not export confinedWriteFile")
+        return result  # type: ignore[return-value]
+
+    def outside_names(self, scope: Scope) -> list[str]:
+        return sorted(path.name for path in scope.outside.iterdir())
+
+    def test_writes_a_file_inside_the_work_dir_and_creates_its_parents(self) -> None:
+        with Scope() as scope:
+            target = scope.project / ".cad-work/u1/new/deeper/draft.md"
+            self.assertEqual(self.write(scope, target, "draft\n"), {"ok": True})
+            self.assertEqual(target.read_text(encoding="utf-8"), "draft\n")
+
+    def test_replaces_the_whole_content_of_an_existing_file(self) -> None:
+        with Scope() as scope:
+            target = scope.project / ".cad-work/u1/draft.md"
+            target.write_text("a much longer earlier draft", encoding="utf-8")
+            self.assertEqual(self.write(scope, target, "short"), {"ok": True})
+            self.assertEqual(target.read_text(encoding="utf-8"), "short")
+
+    def test_a_parent_directory_link_does_not_carry_the_write_out(self) -> None:
+        with Scope() as scope:
+            (scope.project / ".cad-work/u1/link").symlink_to(scope.outside)
+            self.assertIn("error", self.write(scope, scope.project / ".cad-work/u1/link/new/x.py", "evil"))
+            self.assertEqual(self.outside_names(scope), ["evil.py"])
+
+    def test_a_file_link_to_an_outside_file_is_not_followed(self) -> None:
+        with Scope() as scope:
+            (scope.project / ".cad-work/u1/evil-link.py").symlink_to(scope.outside / "evil.py")
+            self.assertIn("error", self.write(scope, scope.project / ".cad-work/u1/evil-link.py", "evil"))
+            self.assertEqual((scope.outside / "evil.py").read_text(encoding="utf-8"), "")
+
+    def test_a_file_swapped_for_a_link_after_the_check_is_not_followed(self) -> None:
+        # The swap runs between the guard's checks and its open: the window a hook-only check leaves.
+        with Scope() as scope:
+            target = scope.project / ".cad-work/u1/draft.md"
+            target.write_text("keep", encoding="utf-8")
+            swap = f"fs.rmSync({json.dumps(str(target))}); fs.symlinkSync({json.dumps(str(scope.outside / 'evil.py'))}, {json.dumps(str(target))});"
+            self.assertIn("error", self.write(scope, target, "evil", swap))
+            self.assertEqual((scope.outside / "evil.py").read_text(encoding="utf-8"), "")
+
+    def test_a_directory_swapped_for_a_link_after_the_check_leaves_nothing_outside(self) -> None:
+        with Scope() as scope:
+            sub = scope.project / ".cad-work/u1/sub"
+            sub.mkdir()
+            swap = f"fs.rmSync({json.dumps(str(sub))}, {{recursive: true}}); fs.symlinkSync({json.dumps(str(scope.outside))}, {json.dumps(str(sub))});"
+            self.assertIn("error", self.write(scope, sub / "f.txt", "evil", swap))
+            self.assertEqual(self.outside_names(scope), ["evil.py"])
+
+    def test_the_hook_reads_a_unicode_space_the_way_pi_does(self) -> None:
+        # pi turns U+00A0 and its kin into a plain space before it opens the path, so "a<NBSP>b" is the directory "a b".
+        with Scope() as scope:
+            (scope.project / ".cad-work/u1/a b").symlink_to(scope.outside)
+            for space in (NBSP, "\u2003", "\u202f", "\u3000"):
+                with self.subTest(space=hex(ord(space))):
+                    self.assertEqual(scope.decide("write", {"path": f".cad-work/u1/a{space}b/x.py"})["block"], True)  # type: ignore[index]
+                    self.assertEqual(scope.decide("edit", {"path": f"@.cad-work/u1/a{space}b/evil.py"})["block"], True)  # type: ignore[index]
+
+    def test_the_write_tool_confines_a_path_that_pi_normalises(self) -> None:
+        # A stand-in for pi's write definition resolves the path as pi does, then calls the operations the guard hands it.
+        with Scope() as scope:
+            (scope.project / ".cad-work/u1/a b").symlink_to(scope.outside)
+            body = (
+                "const tools = {};"
+                "const pi = {createWriteToolDefinition: (cwd, {operations}) => ({name: 'write', parameters: {}, execute: async (id, p, s, u, ctx) => {"
+                "  const abs = ctx.cwd + '/' + p.path.replace(/[\\u00a0\\u2000-\\u200a\\u202f\\u205f\\u3000]/g, ' ');"
+                "  await operations.mkdir(abs.slice(0, abs.lastIndexOf('/'))); await operations.writeFile(abs, p.content); return {content: []}; }}),"
+                "  createEditToolDefinition: () => ({name: 'edit', parameters: {}, execute: async () => ({content: []})})};"
+                "g.cadGuard('cad-clerk', [], {guardDir: input.guard, loadPi: async () => pi})({registerTool: (t) => { tools[t.name] = t; }, on: () => {}});"
+                "try { await tools.write.execute('id', {path: input.path, content: 'evil'}, undefined, undefined, {cwd: input.cwd}); return {ok: true}; }"
+                "catch (e) { return {error: e.message}; }"
+            )
+            result = scope.node(body, {"guard": str(scope.guard_dir), "cwd": str(scope.project), "path": f".cad-work/u1/a{NBSP}b/new.py"})
+            self.assertNotIn("Cannot read properties", str(result), "the extension registers no write tool")
+            self.assertIn("error", result)  # type: ignore[operator]
+            self.assertEqual(self.outside_names(scope), ["evil.py"])
+
+
 @unittest.skipUnless(NODE or REQUIRED, "node is needed to run the pi extension")
 class CadRunToolTests(unittest.TestCase):
     """The registered tool, driven through a stand-in `pi` object and a fake `uv` on PATH."""
