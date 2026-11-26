@@ -53,7 +53,8 @@ motion between samples, intermediate offsets and other directions, loads beyond 
 compliance, contact forces, friction and dynamics.
 
 With --version the packet is published to hw/checks/<V>/motion-play/ (bundle.checks): result.json
-(schemas/manufacturing-check-result.schema.json) and evidence/play.json (every case and sample).
+(schemas/manufacturing-check-result.schema.json) and evidence/play.json (every case and sample,
+schemas/motion-play-detail.schema.json).
 Exit 0 = every obligation passes, 1 = a failure or an unknown, 2 = usage or input error.
 """
 
