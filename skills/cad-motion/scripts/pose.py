@@ -435,10 +435,11 @@ def make_joint(raw: Mapping[str, Any], resolve: Callable[[str, str], str] | None
 
 
 def _mount(raw: Mapping[str, Any], jid: str, kind: str) -> Vec | None:
-    """A fixed joint's declared flat-mount point (`mount: {point: [x, y, z]}`), or None."""
-    mount = raw.get("mount")
-    if mount is None:
+    """A fixed joint's declared flat-mount point (`mount: {point: [x, y, z]}`), or None when `mount` is absent. A
+    present `mount`, null included, must be that mapping, as assembly.schema.json requires."""
+    if "mount" not in raw:
         return None
+    mount = raw["mount"]
     if kind != "fixed" or not isinstance(mount, Mapping) or set(mount) != {"point"}:
         raise MotionError(f"{jid}: mount is a fixed joint's {{point: [x, y, z]}}")
     return _vector(mount["point"], f"{jid}.mount.point")
