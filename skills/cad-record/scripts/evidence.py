@@ -1269,6 +1269,21 @@ def _hw_relative(value: Any) -> str:
     return value[3:]
 
 
+def _cited_rel(value: Any, location: str) -> str:
+    """`_hw_relative`, a refusal carrying the ledger field `location` that cites the value."""
+    try:
+        return _hw_relative(value)
+    except EvidenceError as error:
+        raise EvidenceError(str(error), location) from error
+
+
+def _location_of(cited_at: Mapping[str, str], rel: str) -> str:
+    """The ledger field that cites `rel`, or a file below it (a link met on the way), else the file itself."""
+    if rel in cited_at:
+        return cited_at[rel]
+    return next((location for cited, location in cited_at.items() if cited.startswith(f"{rel}/")), f"hw/{rel}")
+
+
 def acceptance_inventory(hw: Path, record: Any, packets: Iterable[ProducerPacket] = ()) -> dict[str, str]:
     """The acceptance inventory: `hw/<path>` -> sha256 of the verification table, the evidence ledger and
     finding dispositions, every relied-on bundle manifest (cited evidence bundles, dispositioned producer
@@ -1286,36 +1301,39 @@ def acceptance_inventory(hw: Path, record: Any, packets: Iterable[ProducerPacket
     for entry in record.evidence:
         field = f"hw/manufacturing/evidence.yaml#/entries/{entry.get('id')}"
         for index, artifact in enumerate(entry.get("artifacts") or ()):
-            rel = _hw_relative(artifact.get("path"))
+            location = f"{field}/artifacts/{index}/path"
+            rel = _cited_rel(artifact.get("path"), location)
             rels.add(rel)
-            cited_at.setdefault(rel, f"{field}/artifacts/{index}/path")
+            cited_at.setdefault(rel, location)
         if isinstance(entry.get("bundle"), Mapping):
-            rel = f"{_hw_relative(entry['bundle'].get('path'))}/{layout.MANIFEST}"
+            location = f"{field}/bundle/path"
+            rel = f"{_cited_rel(entry['bundle'].get('path'), location)}/{layout.MANIFEST}"
             rels.add(rel)
-            cited_at.setdefault(rel, f"{field}/bundle/path")
+            cited_at.setdefault(rel, location)
     for disposition in record.dispositions:
-        rel = f"{_hw_relative((disposition.get('producer') or {}).get('bundle'))}/{layout.MANIFEST}"
+        location = f"hw/manufacturing/findings.yaml#/dispositions/{disposition.get('finding')}/producer/bundle"
+        rel = f"{_cited_rel((disposition.get('producer') or {}).get('bundle'), location)}/{layout.MANIFEST}"
         rels.add(rel)
-        cited_at.setdefault(rel, f"hw/manufacturing/findings.yaml#/dispositions/{disposition.get('finding')}/producer/bundle")
+        cited_at.setdefault(rel, location)
     for packet in packets:
         rels.add(f"{_hw_relative(packet.bundle)}/{layout.MANIFEST}")
     rels.update(record.artifacts)
     sources = hw / SOURCES_DIR
     if sources.is_symlink():
-        raise EvidenceError(f"hw/{SOURCES_DIR} is a symbolic link")
+        raise EvidenceError(f"hw/{SOURCES_DIR} is a symbolic link", _location_of(cited_at, SOURCES_DIR))
     for directory, folders, files in os.walk(sources, followlinks=False):
         for name in folders + files:
             path = Path(directory) / name
             if path.is_symlink():
                 where = path.relative_to(hw).as_posix()
-                raise EvidenceError(f"hw/{where} is a symbolic link", cited_at.get(where, f"hw/{where}"))
+                raise EvidenceError(f"hw/{where} is a symbolic link", _location_of(cited_at, where))
         rels.update((Path(directory) / name).relative_to(hw).as_posix() for name in files)
     inventory = {}
     for rel in sorted(rels):
         try:
             inventory[f"hw/{rel}"] = _sha256(_safe_file(hw, rel))
         except EvidenceError as error:
-            raise EvidenceError(str(error), cited_at.get(rel, f"hw/{rel}")) from error
+            raise EvidenceError(str(error), _location_of(cited_at, rel)) from error
     return inventory
 
 

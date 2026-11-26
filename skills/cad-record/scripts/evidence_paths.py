@@ -144,6 +144,8 @@ class ProjectPaths:
                         (self.root / cited).resolve())
         except ValueError:  # a NUL byte in the text: no file can have this name
             return Verdict(None, "is not a valid path")
+        except RuntimeError:  # Python 3.12: resolve() raises on a symbolic link loop
+            return Verdict(None, "is a symbolic link loop")
         if not full.is_relative_to(self.root):
             return Verdict(None, "is outside the project root")
         rel = full.relative_to(self.root).as_posix()
