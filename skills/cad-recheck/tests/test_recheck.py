@@ -803,6 +803,31 @@ class RecheckHookTests(unittest.TestCase):
         self.stamp_refused(checks, "computed from another record")
         self.stamp_refused(self.evidence_packet("parts"), "assessed for stage parts, not detail")
 
+    def rewrite_packet(self, checks: Path, change: Any) -> Path:
+        packet = json.loads(checks.read_text(encoding="utf-8"))
+        change(packet)
+        checks.write_text(json.dumps(packet), encoding="utf-8")
+        return checks
+
+    def test_a_version_1_packet_still_stamps_and_verifies(self) -> None:
+        """A stamp sealed before packet version 2 has no status scope and no rules digest; it still reads."""
+        def version_1(packet: dict[str, Any]) -> None:
+            packet["schema_version"] = 1
+            packet.pop("scope_rules_sha256", None)
+            for status in packet["statuses"].values():
+                status.pop("scope", None)
+        self.stage_product("detail")
+        self.assertTrue(self.stamp_with(self.rewrite_packet(self.evidence_packet("detail"), version_1))["passed"])
+        self.git("add", "hw/.cad/recheck.json")
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_packet_judged_under_other_scope_rules_is_stale(self) -> None:
+        self.stage_product("detail")
+        checks = self.rewrite_packet(self.evidence_packet("detail"),
+                                     lambda packet: packet.update(scope_rules_sha256="0" * 64))
+        self.stamp_refused(checks, "judged under other service-class scope rules")
+
     def test_a_stamp_whose_evidence_blocks_is_refused_at_commit_even_if_edited_to_passed(self) -> None:
         self.stage_product("detail")
         self.stamp(passed=False, stage="detail", outcome="unknown")

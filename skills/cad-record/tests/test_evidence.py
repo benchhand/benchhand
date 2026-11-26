@@ -744,6 +744,16 @@ class ScopeBeforeRelease(unittest.TestCase):
                 self.assertEqual({(f.code, f.severity) for f in gate if f.obligation == STRENGTH}, {("gate.unresolved", "error")})
                 self.assertNotIn("gate.out_of_scope", codes(gate))
 
+    def test_the_packet_records_each_status_scope_and_the_rules_it_was_judged_under(self) -> None:
+        data = self.assessed("fit_assembly").packet("analysis", "c" * 64)
+        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["scope_rules_sha256"], evidence.project_scope.rules_sha256("fit_assembly"))
+        strength = data["statuses"][STRENGTH]
+        self.assertEqual((strength["result"], strength["scope"]["disposition"], strength["scope"]["rule"]),
+                         ("unknown", "out_of_scope", "obligation.function"))
+        self.assertIn("not owed by fit_assembly", strength["scope"]["reason"])
+        self.assertEqual(data["statuses"][READBACK]["scope"]["disposition"], "required")
+
 
 class NotAssessedIsNoPhysicalTest(unittest.TestCase):
     """D37 covers the tool's own checks, not a test the record requires the user to perform: a producer's not_assessed on a
