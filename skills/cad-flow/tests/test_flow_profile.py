@@ -176,6 +176,7 @@ class Record(unittest.TestCase):
 
     def test_questions_for_a_work_tree_list_only_the_questions_that_apply(self) -> None:
         self.assertIn("Would you like hinges", run("questions").stdout)
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
         result = run("questions", "--hw", str(self.hw))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("Would you like hinges", result.stdout)

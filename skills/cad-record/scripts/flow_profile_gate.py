@@ -158,13 +158,43 @@ def _uses_fdm(part: Mapping[str, Any]) -> bool:
     return part.get("process") == "fdm" or any(op.get("kind") == "fdm" for op in _route(part))
 
 
-def plans_fdm(product: Any, parts: Mapping[str, Any]) -> bool:
-    """Whether the product plans FDM: at INTENT (manufacturing.processes), as a part's process, or as an
-    operation of a part's route. `parts` are the parsed part records by PN."""
-    processes = _mapping(_mapping(product).get("manufacturing")).get("processes")
-    if isinstance(processes, list) and "fdm" in processes:
-        return True
-    return any(_uses_fdm(_mapping(part)) for part in parts.values())
+YES, NO, UNKNOWN = "yes", "no", "unknown"
+APPLICABILITY = "flow.applicability"
+
+
+@dataclass(frozen=True)
+class FdmApplicability:
+    """Whether the FDM start questions apply: yes (FDM is planned), no (the record rules FDM out) or unknown
+    (it does not yet). `unresolved` names each field that leaves it unknown."""
+
+    state: str
+    unresolved: tuple[Problem, ...] = ()
+
+    @property
+    def asks(self) -> bool:
+        """The FDM questions are asked unless the record rules FDM out: unknown is never not applicable."""
+        return self.state != NO
+
+
+def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicability:
+    """FDM is planned at INTENT (manufacturing.processes), as a part's process, or as an operation of a part's
+    route. It is ruled out only by a declared plan without it or by parts whose routes are all known; no plan
+    and no part, or a part whose route is unknown, leaves it unknown. `parts` are the parsed part records by PN."""
+    plan = _mapping(_mapping(product).get("manufacturing")).get("processes")
+    if (isinstance(plan, list) and "fdm" in plan) or any(_uses_fdm(_mapping(part)) for part in parts.values()):
+        return FdmApplicability(YES)
+    unresolved = []
+    if plan is None and not parts:
+        unresolved.append(Problem("manufacturing/processes", "manufacturing.processes is not declared and no part record "
+                                  "exists, so FDM cannot be ruled out", "declare manufacturing.processes at INTENT",
+                                  APPLICABILITY))
+    for number, part in parts.items():
+        route = _mapping(_mapping(part).get("intent")).get("route")
+        if isinstance(route, Mapping) and route.get("status") == "unknown":
+            unresolved.append(Problem(f"parts/{number}/intent/route", f"{number} intent.route is unknown, so FDM cannot "
+                                      "be ruled out", f"plan the route of {number}, or declare manufacturing.processes",
+                                      APPLICABILITY))
+    return FdmApplicability(UNKNOWN if unresolved else NO, tuple(unresolved))
 
 
 # --- the gate -------------------------------------------------------------------------------------------------------
@@ -187,7 +217,8 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
     elif (why := approval(decision)) is not None:
         found.append(Problem("flow/profile/decision", f"flow.profile cites {decision}, which {why}",
                              "only the user's explicit approval records the answers: record them again with a new DR-###"))
-    return found + asked_problems(profile, fdm=plans_fdm(product, parts))
+    applicability = fdm_applicability(product, parts)
+    return found + asked_problems(profile, fdm=applicability.asks, unresolved=applicability.unresolved)
 
 
 def applicable_fields(profile: Mapping[str, Any], *, fdm: bool) -> list[str]:
@@ -203,18 +234,21 @@ def question_fields(product: Any, parts: Mapping[str, Any], profile: Any = None)
     holds the answers so far (default: product.yaml flow.profile); one that does not decline print-in-place
     keeps its clearance questions."""
     return applicable_fields(_mapping(profile if profile is not None else profile_of(product)),
-                             fdm=plans_fdm(product, parts))
+                             fdm=fdm_applicability(product, parts).asks)
 
 
-def asked_problems(profile: Mapping[str, Any], *, fdm: bool) -> list[Problem]:
-    """Every applicable start question needs an `asked` answer; one marked as the accepted default must hold it."""
+def asked_problems(profile: Mapping[str, Any], *, fdm: bool, unresolved: Iterable[Problem] = ()) -> list[Problem]:
+    """Every applicable start question needs an `asked` answer; one marked as the accepted default must hold it.
+    `unresolved` are the fields that left FDM unknown: an FDM question asked for that reason says so."""
     asked = _mapping(profile.get("asked"))
+    why = ", ".join(item.path for item in unresolved)
     found = []
     for field in applicable_fields(profile, fdm=fdm):
         how = asked.get(field)
         path = f"flow/profile/asked/{field}"
         if how not in PROVENANCE:
-            found.append(Problem(path, f"{field.replace('/', '.')} was not asked",
+            note = f" (FDM applicability is unresolved at {why})" if why and field.startswith(FDM) else ""
+            found.append(Problem(path, f"{field.replace('/', '.')} was not asked{note}",
                                  "ask the user that project-start question, showing its default, and record the answers again"))
         elif how == ACCEPTED_DEFAULT and value_at(profile, field) != DEFAULTS[field]:
             found.append(Problem(path, f"{field.replace('/', '.')} is recorded as the accepted default but is "
