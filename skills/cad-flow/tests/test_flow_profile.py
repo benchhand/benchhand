@@ -300,6 +300,20 @@ class Record(unittest.TestCase):
         self.assertIn('label: *stage\n', after)
         self.assertEqual(self.profile()["decision"], "DR-001")
 
+    def test_record_reports_the_field_in_an_invalid_flow_without_writing(self) -> None:
+        for flow, field in (("{stage: intent, stage: parts, recheck_from: intent}", "flow.stage"),
+                            ("{stage: 3, recheck_from: intent}", "flow.stage"),
+                            ("{stage: intent, recheck_from: false}", "flow.recheck_from"),
+                            ("[intent]", "flow")):
+            with self.subTest(flow=flow):
+                original = f"id: tst-product\nflow: {flow}\nunits: mm\n"
+                self.product.write_text(original, encoding="utf-8")
+                result = self.record()
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(field + ":", result.stderr)
+                self.assertEqual(self.product.read_text(encoding="utf-8"), original)
+                self.assertFalse((self.hw / "decisions").exists())
+
 
 class Check(unittest.TestCase):
     """flow_profile.py check: the gate over a work tree, with the cited decision judged by cad-record's reader."""
