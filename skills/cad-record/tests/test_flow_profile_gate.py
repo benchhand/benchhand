@@ -165,6 +165,10 @@ class Gate(unittest.TestCase):
             with self.subTest(stage=stage):
                 self.assertEqual(self.check(stage, fx.flow_profile()), [])
 
+    def test_the_recovery_for_a_missing_profile_points_at_the_scoped_questions_command(self) -> None:
+        _stage, found = gate_module.gate(self.with_profile(None, "specify"), self.parts, approved)
+        self.assertIn("flow_profile.py questions --hw hw", found[0].action)
+
     def test_a_missing_profile_blocks_from_specify_on(self) -> None:
         for stage, expected in (("ground", []), ("intent", []), ("specify", [("flow.profile", "flow/profile")]),
                                 ("layout", [("flow.profile", "flow/profile")])):
