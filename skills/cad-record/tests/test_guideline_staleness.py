@@ -28,6 +28,7 @@ from modload import load_module as load  # noqa: E402
 acceptance = load("cad_record_acceptance_fixtures", HERE / "fixtures" / "acceptance.py")
 fx, mi, impact = acceptance.fx, acceptance.mi, acceptance.impact
 gl = load("cad_record_guidelines", SKILL / "scripts" / "guidelines.py")
+build = load("cad_model_record_for_stock_staleness", SKILL.parent / "cad-model" / "scripts" / "cadmodel" / "record.py")
 registry = fx.schema_registry_module()
 
 
@@ -101,6 +102,30 @@ class Staleness(unittest.TestCase):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         digests = self.record().guideline_digests
         self.assertEqual(digests[gl.machine_free_key("fdm")]["tst_polymer_printed"], {"fdm.generic@1": digest})
+
+    def test_tightening_the_guideline_of_the_print_stock_after_a_build_stales_the_built_part(self) -> None:
+        """The process checks pick the guideline sets of an operation's setup.stock material, not of the part's main
+        profile. A part printed from TPU stock is stale once the TPU set tightens after the version was built."""
+        self.machine_free()
+        materials_path = self.hw / "manufacturing" / "materials.yaml"
+        materials = yaml.safe_load(materials_path.read_text(encoding="utf-8"))
+        polymer = next(p for p in materials["profiles"] if p["id"] == "tst_polymer_printed")
+        polymer["material_family"] = fx.known("pla")
+        materials["profiles"].append(fx.material_profile("tst_tpu_printed", level="family", form="printed",
+                                                         family="TST TPU", material_family=fx.known("tpu")))
+        materials_path.write_text(yaml.safe_dump(materials, sort_keys=False), encoding="utf-8")
+        part_path = self.hw / "parts" / "TST-0001" / "part.yaml"
+        data = yaml.safe_load(part_path.read_text(encoding="utf-8"))
+        data["intent"]["route"][0]["setup"] = {"stock": {"material_profile": "tst_tpu_printed"}}
+        part_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        put(self.project, "tpu", guideline("fdm.material.tpu", 2.0, material_family=["tpu"]))
+        record_dir = self.hw / "versions" / "v1" / "record"
+        pns = sorted(path.parent.name for path in (self.hw / "parts").glob("*/part.yaml"))
+        build.write_snapshot(record_dir, build.snapshot(self.hw, pns))
+        built = self.source(mi.load_record(record_dir, snapshot=True))
+        self.assertEqual(self.source(self.record()), built, "the snapshot fingerprints as the record it was built from")
+        put(self.project, "tpu", guideline("fdm.material.tpu", 3.0, material_family=["tpu"]))
+        self.assertNotEqual(self.source(self.record()), built)
 
     def test_editing_an_applicable_set_changes_the_source_fingerprint_and_no_other_domain(self) -> None:
         put(self.project, "generic", guideline("fdm.generic", 0.8))
