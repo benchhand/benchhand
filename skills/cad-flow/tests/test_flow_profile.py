@@ -310,7 +310,9 @@ class Record(unittest.TestCase):
         for number, (flow, field) in enumerate((("{stage: intent, stage: parts, recheck_from: intent}", "flow.stage"),
                             ("{stage: 3, recheck_from: intent}", "flow.stage"),
                             ("{stage: intent, recheck_from: false}", "flow.recheck_from"),
-                            ("[intent]", "flow")), start=1):
+                            ("[intent]", "flow"),
+                            ("{stage: intent, recheck_from: intent, frozen: {version: v1, version: v2, "
+                             f"decision: DR-009, manifest_sha256: '{'a' * 64}'}}}}", "flow.frozen.version")), start=1):
             with self.subTest(flow=flow):
                 original = f"id: tst-product\nflow: {flow}\nunits: mm\n"
                 self.product.write_text(original, encoding="utf-8")
