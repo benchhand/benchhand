@@ -28,7 +28,7 @@ TRIGGER
 MUST Use each part's recorded material, route and capability. Unknown does not fall back to FDM.
 MUST Treat form and envelope heuristics as diagnostics, not process or physical proof.
 MUST Report missing capability, handler, required input or packet as UNKNOWN.
-MUST Put every joint bore on its recorded assembly origin and axis; size bores from `cad-fits` output.
+MUST Put each joint's mating cylinder, a bore or a shaft, on its recorded assembly origin and axis. Size it from `cad-fits` output. A fixed joint with no cylinder on its axis needs a flat face on each part, in contact.
 NOT Treat a render as a check result or detailed form as process evidence.
 
 ```text

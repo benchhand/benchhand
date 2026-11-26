@@ -69,11 +69,28 @@ Checks (each failure is one `findings` entry):
                             a STEP read-back can heal an unorientable face)
     step_readback           any fidelity: readback_rel_error above cad-model's 1e-6;
                             loose fillet edges (0.01 to 0.1 mm tolerance) move it ~1e-5
-    joint_bore_missing      F1+: a joint's parent or child has no cylinder face whose
-                            axis is parallel to the joint axis and passes within
-                            --joint-tol of the joint origin; made parts need a bore
-                            (concave), purchased parts a shank (convex), existing
-                            equipment either one
+    joint_bore_missing      F1+: a joint endpoint (made, bought or existing) without mating geometry: no
+                            cylinder patch, a bore (concave) or a shank (convex), whose axis is parallel to
+                            the joint axis and passes within --joint-tol of the joint origin. Adjoining
+                            coaxial faces of one radius are one patch; an edge blend (a convex patch tangent
+                            to two faces off its axis) is none. The joint's `parts` row names the kind
+                            found. A fixed joint's endpoint without one mates by face contact instead
+                            (`kind: face`, a flat mount), judged per connected overlap patch: a planar face
+                            of each part, outward normals opposite within 1e-4 rad, the child face laid on
+                            the parent's plane overlapping it by at least 0.01 mm2 (area_mm2), the largest
+                            separation across the patch within --joint-tol (offset_mm), the joint's datum
+                            plane (through the origin, normal to the axis) meeting the patch (datum_mm),
+                            and the patch tied to the joint (locator, locator_mm), each checked on its own:
+                            a declared mount.point on it; else a face-normal joint's origin on it; else the
+                            origin's projection along the contact normal inside its outline, at most 20 mm
+                            from the contact (opening_mm). Each within --joint-tol, compared unrounded. An
+                            edge blend's tangent supports count by surface. Its finding names the nearest
+                            such patch (`contact`, else null)
+    joint_contact_unknown   F1+: a fixed joint's face contact is unknown (`status: unknown`, `reason`), not
+                            missing: an overlap Boolean failed in the kernel (cad-model occ.boolean), or a
+                            contact on the datum plane misses only its locator and no mount.point is
+                            declared, so the geometry cannot tell the mount from incidental contact
+                            (`remedy`: declare mount.point). Its `parts` row reads `kind: unknown`
     block_like              F2+, made solid parts only: (axis_planar_fraction >= 0.80 or
                             blend_faces + freeform_faces == 0), with both OBB exemptions
     min_wall                F2+, a process with a minimum (the resolved fdm value, or the override):
@@ -87,7 +104,7 @@ Checks (each failure is one `findings` entry):
 
     The form checks (block_like, min_wall, min_wall_unmeasured, min_wall_limit_unknown, fdm_exterior_radius,
     cnc_internal_radius) are universal heuristics: diagnostics with `blocking: false` (decision 3).
-    Only brep_invalid, step_readback and joint_bore_missing carry `blocking: true`.
+    Only brep_invalid, step_readback, joint_bore_missing and joint_contact_unknown carry `blocking: true`.
 
 stdout: JSON in the tool-result envelope (cad-record emit.py) whose payload is {status, fidelity, parts, joints, findings[, version, manufacturing]}; `manufacturing` holds
 the packet's status, complete, bundle, outcome counts, open obligations and its major and critical
@@ -118,7 +135,7 @@ LAYOUT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "
 CHECK_PACKET_PATH = LAYOUT_PATH.with_name("check_packet.py")
 GUIDELINES_PATH = LAYOUT_PATH.with_name("guidelines.py")  # the guideline resolver, hashed into producer_code
 PROCESS_SUBJECT = "process"  # hw/checks/<V>/process: this producer's bundle subject
-BLOCKING_CHECKS = frozenset({"brep_invalid", "step_readback", "joint_bore_missing"})  # the rest are diagnostics
+BLOCKING_CHECKS = frozenset({"brep_invalid", "step_readback", "joint_bore_missing", "joint_contact_unknown"})  # the rest are diagnostics
 
 POSE_PATH = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts" / "pose.py"
 CAD_MODEL_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-model" / "scripts"
@@ -145,6 +162,14 @@ BLOCK_MAX_THICKNESS_FRACTION = 0.10
 BLEND_MAX_RADIUS = 10.0
 BLEND_MAX_SPAN = math.radians(120.0)  # a fillet turns through its edge angle; a lug end turns 180 degrees
 AXIS_TOL = 1e-4  # sine of the allowed angle between a cylinder axis and a joint axis
+CONTACT_SEARCH_MM = 1.0  # a fixed joint's nearest coplanar face pair this far apart is named in its finding
+CONTACT_MIN_AREA_MM2 = 0.01  # faces that only touch along an edge or at a point share less than this
+SAME_RADIUS_MM = 1e-6  # adjoining cylinder faces this close in radius and axis line are one surface
+TANGENT_TOL = 1e-3  # sine of the angle between two faces' normals where they meet tangentially, as a blend does
+# A projected joint origin may fall in an opening of its contact this far from the contact: a bore or bolt opening up
+# to Ø40 in a mounting face, such as a V6 head's cylinder opening (13 mm). A wider opening leaves the contact a rim
+# around the point, which the geometry cannot tie to the joint; such a mount declares mount.point.
+OPENING_MAX_MM = 20.0
 MIN_WALL_PROCESSES = ("fdm", "cnc")  # the keys product.yaml manufacturing.min_wall_mm may set
 WALL_SPACING_FRACTION = 0.5  # sample spacing along each UV direction, as a fraction of the minimum wall
 WALL_FACE_SAMPLE_CAP = 4096  # samples per face; a larger face is sampled coarser and counted in capped_faces
@@ -663,7 +688,6 @@ def measure(shape: Any) -> dict[str, Any]:
     total = axis_planar = 0.0
     blends = freeform_count = 0
     min_convex = min_concave = math.inf
-    cylinders = []
     bores = holes.bore_walls(shape)  # a bore is drilled, not a corner a cutter leaves
     obb_extents, _ = occ.oriented_bbox(shape)
     obb_volume = math.prod(obb_extents)
@@ -687,7 +711,6 @@ def measure(shape: Any) -> dict[str, Any]:
             convex = _dot(normal, radial) > 0.0
             radius = cylinder.Radius()
             span = umax - umin
-            cylinders.append({"location": loc, "direction": direction, "radius": radius, "convex": convex})
             if convex and span <= BLEND_MAX_SPAN and radius <= BLEND_MAX_RADIUS:
                 blends += 1
                 min_convex = min(min_convex, radius)
@@ -717,23 +740,448 @@ def measure(shape: Any) -> dict[str, Any]:
         "freeform_faces": freeform_count,
         "min_convex_radius": None if math.isinf(min_convex) else round(min_convex, 4),
         "min_concave_radius": None if math.isinf(min_concave) else round(min_concave, 4),
-        "_cylinders": cylinders,
+        "_cylinders": joint_cylinders(shape),
+        "_planes": planar_faces(shape),
     }
 
 
-def bore_offset(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: Sequence[float],
-                kind: str | None) -> dict[str, Any] | None:
-    """The `kind` cylinder (bore or shank; None: either) parallel to the joint axis whose line passes closest to the
-    origin."""
-    best = None
+def _normal_along(edge: Any, face: Any) -> tuple[float, float, float] | None:
+    """`face`'s outward normal at the middle of `edge`, or None where it is not defined."""
+    from OCP.BRepAdaptor import BRepAdaptor_Curve2d, BRepAdaptor_Surface
+    from OCP.BRepLProp import BRepLProp_SLProps
+    from OCP.TopAbs import TopAbs_REVERSED
+
+    curve = BRepAdaptor_Curve2d(edge, face)
+    uv = curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2.0)
+    props = BRepLProp_SLProps(BRepAdaptor_Surface(face), uv.X(), uv.Y(), 1, 1e-6)
+    if not props.IsNormalDefined():
+        return None
+    normal = _xyz(props.Normal())
+    return (-normal[0], -normal[1], -normal[2]) if face.Orientation() == TopAbs_REVERSED else normal
+
+
+def _axis_line(face: Any) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    """The axis (a point and a direction) of a cylinder, cone or torus face; None for any other surface."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Torus
+
+    adaptor = BRepAdaptor_Surface(face)
+    getter = {GeomAbs_Cylinder: adaptor.Cylinder, GeomAbs_Cone: adaptor.Cone, GeomAbs_Torus: adaptor.Torus}.get(
+        adaptor.GetType())
+    if getter is None:
+        return None
+    axis = getter().Axis()
+    return _xyz(axis.Location()), _xyz(axis.Direction())
+
+
+def _same_line(a: tuple[Sequence[float], Sequence[float]], b: tuple[Sequence[float], Sequence[float]]) -> bool:
+    return _norm(_cross(a[1], b[1])) <= AXIS_TOL and _norm(_cross(_sub(b[0], a[0]), a[1])) <= SAME_RADIUS_MM
+
+
+def _cylinder_row(face: Any) -> dict[str, Any] | None:
+    from OCP.GeomAbs import GeomAbs_Cylinder
+
+    adaptor, point, normal, _ = surface_sample(face)
+    if adaptor.GetType() != GeomAbs_Cylinder:
+        return None
+    cylinder = adaptor.Cylinder()
+    loc, direction = _xyz(cylinder.Axis().Location()), _xyz(cylinder.Axis().Direction())
+    offset = _sub(point, loc)
+    radial = _sub(offset, tuple(_dot(offset, direction) * c for c in direction))
+    return {"location": loc, "direction": direction, "radius": cylinder.Radius(), "convex": _dot(normal, radial) > 0.0}
+
+
+def _same_cylinder(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return (a["convex"] == b["convex"] and abs(a["radius"] - b["radius"]) <= SAME_RADIUS_MM
+            and _same_line((a["location"], a["direction"]), (b["location"], b["direction"])))
+
+
+def _tangent_neighbours(edge: Any, faces: list[Any], adjacency: Any, index: int,
+                        line: tuple[Sequence[float], Sequence[float]]) -> list[int]:
+    """The faces across `edge` from face `index` (an occ.Adjacency) that meet it tangentially and do not turn about
+    `line`."""
+    from OCP.BRep import BRep_Tool
+
+    mine = None if BRep_Tool.Degenerated_s(edge) else _normal_along(edge, faces[index])
+    found: list[int] = []
+    if mine is None:
+        return found
+    for other in adjacency.across_indices(edge, index):
+        theirs = _normal_along(edge, faces[other])
+        axis = _axis_line(faces[other])
+        if (theirs is not None and _dot(mine, theirs) > 0.0 and _norm(_cross(mine, theirs)) <= TANGENT_TOL
+                and not (axis is not None and _same_line(line, axis))):
+            found.append(other)
+    return found
+
+
+def joint_cylinders(shape: Any) -> list[dict[str, Any]]:
+    """The shape's cylinder patches for the joint check. Adjoining cylinder faces on one axis line with one radius and
+    side are one patch, however the kernel segments the surface. A convex patch that meets two or more faces
+    tangentially, none on its own axis, is an edge blend (`blend`): a fillet or rounded end between them, never a
+    mating cylinder. A half bore, a D-shaft or a shaft between coaxial shoulder fillets is no blend."""
+    from cadmodel import occ
+
+    adjacency = occ.Adjacency(shape)
+    faces = adjacency.faces
+    rows = {index: row for index, face in enumerate(faces) if (row := _cylinder_row(face)) is not None}
+    root = {index: index for index in rows}
+
+    def find(index: int) -> int:
+        while root[index] != index:
+            index = root[index]
+        return index
+
+    for i, j in adjacency.shared():
+        if i in rows and j in rows and _same_cylinder(rows[i], rows[j]):
+            root[find(j)] = find(i)
+    tangent: dict[int, set[Any]] = {}
+    for index, row in rows.items():
+        line = (row["location"], row["direction"])
+        for edge in occ.subshapes(faces[index], "EDGE"):
+            tangent.setdefault(find(index), set()).update(
+                _surface_key(faces[other], other)
+                for other in _tangent_neighbours(occ.downcast(edge, "EDGE"), faces, adjacency, index, line)
+                if other not in rows or find(other) != find(index))
+    return [{**row, "blend": row["convex"] and len(tangent.get(index, ())) >= 2}
+            for index, row in rows.items() if find(index) == index]
+
+
+def _surface_key(face: Any, index: int) -> Any:
+    """One key per underlying surface, so the fragments of one plane or one cylinder count once as a tangent support:
+    a plane by its unit normal and offset, a cylinder by its axis line and radius (both sign-free and rounded to 1e-6),
+    any other surface by its face."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane
+
+    adaptor = BRepAdaptor_Surface(face)
+    if adaptor.GetType() == GeomAbs_Plane:
+        plane = adaptor.Plane()
+        normal = _sign_free(_xyz(plane.Axis().Direction()))
+        return "plane", *(round(c, 6) + 0.0 for c in (*normal, _dot(normal, _xyz(plane.Location()))))
+    if adaptor.GetType() == GeomAbs_Cylinder:
+        axis = adaptor.Cylinder().Axis()
+        direction = _sign_free(_xyz(axis.Direction()))
+        location = _xyz(axis.Location())
+        foot = _sub(location, tuple(_dot(location, direction) * c for c in direction))  # the axis point nearest 0
+        return "cylinder", *(round(c, 6) + 0.0 for c in (*direction, *foot, adaptor.Cylinder().Radius()))
+    return "face", index
+
+
+def _sign_free(direction: tuple[float, float, float]) -> tuple[float, float, float]:
+    """`direction` or its opposite, whichever has its first clearly nonzero component positive."""
+    lead = next((c for c in direction if abs(c) > 1e-9), 1.0)
+    return direction if lead > 0 else (-direction[0], -direction[1], -direction[2])
+
+
+def planar_faces(shape: Any) -> list[dict[str, Any]]:
+    """Each planar face with a point on it, its outward normal and the corners of its tight box: the faces a flat
+    mount can rest on."""
+    from cadmodel import occ
+    from OCP.GeomAbs import GeomAbs_Plane
+
+    planes = []
+    for face in faces_of(shape):
+        adaptor, point, normal, _ = surface_sample(face)
+        if adaptor.GetType() == GeomAbs_Plane:
+            low, high = occ.bbox(face)
+            corners = list(itertools.product(*zip(low, high)))
+            planes.append({"face": face, "point": point, "normal": normal, "corners": corners})
+    return planes
+
+
+def _may_touch(ours: dict[str, Any], corners: list[Sequence[float]], window: float) -> bool:
+    """False only when the child face's box (its `corners`, in the parent frame) lies wholly more than `window` from
+    the parent face's plane on one side: a conservative bound, so a long or tilted face is never ruled out by one
+    sample."""
+    heights = [_dot(_sub(corner, ours["point"]), ours["normal"]) for corner in corners]
+    return min(heights) <= window and max(heights) >= -window
+
+
+def coaxial_cylinders(cylinders: list[dict[str, Any]], axis: Sequence[float], origin: Sequence[float]) -> list[dict[str, Any]]:
+    """The cylinders parallel to the joint axis, bores (concave) and shanks (convex) alike, nearest line to the
+    origin first. Sourcing plays no part: the geometry shows which one mates. An edge blend (see measure) rounds a
+    corner and mates nothing, even on the joint axis; a partial journal turning through more than 120 degrees, or a
+    concave one, still mates."""
+    found = []
     for cylinder in cylinders:
-        found = "shank" if cylinder["convex"] else "bore"
-        if kind not in (None, found) or _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
+        if cylinder["blend"] or _norm(_cross(cylinder["direction"], axis)) > AXIS_TOL:
             continue
         offset = _norm(_cross(_sub(origin, cylinder["location"]), cylinder["direction"]))
-        if best is None or offset < best["offset_mm"]:
-            best = {"offset_mm": round(offset, 6), "radius": round(cylinder["radius"], 4), "kind": found}
-    return best
+        found.append({"offset_mm": round(offset, 6), "radius": round(cylinder["radius"], 4),
+                      "kind": "shank" if cylinder["convex"] else "bore"})
+    return sorted(found, key=lambda row: row["offset_mm"])
+
+
+def mating_cylinders(parent: list[dict[str, Any]], child: list[dict[str, Any]],
+                     tol: float) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Each endpoint's cylinder: of those on the axis, the bore and shank pair whose radii are closest (a shaft in
+    its bore, not a roller's outside); else each endpoint's nearest cylinder."""
+    pairs = [(abs(a["radius"] - b["radius"]), i, j, a, b)
+             for i, a in enumerate(parent) if a["offset_mm"] <= tol
+             for j, b in enumerate(child) if b["offset_mm"] <= tol and a["kind"] != b["kind"]]
+    if pairs:
+        _, _, _, a, b = min(pairs, key=lambda pair: pair[:3])
+        return a, b
+    return (parent[0] if parent else None), (child[0] if child else None)
+
+
+def _extent(shape: Any, origin: Sequence[float], direction: Sequence[float]) -> tuple[float, float]:
+    """The range of (x - origin) . direction over `shape`, from its tight box in a frame whose z axis is `direction`."""
+    from cadmodel import occ
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pnt, gp_Trsf
+
+    local = gp_Trsf()
+    local.SetTransformation(gp_Ax3(gp_Pnt(*origin), gp_Dir(*direction)))  # global coordinates into the frame's
+    low, high = occ.bbox(BRepBuilderAPI_Transform(shape, local, True).Shape())
+    return low[2], high[2]
+
+
+def datum_distance(patch: Any, datum: tuple[Sequence[float], Sequence[float]]) -> float:
+    """How far one connected contact patch lies from the joint's datum plane, the plane through the joint origin normal
+    to the joint axis: 0 when the plane meets the patch."""
+    low, high = _extent(patch, *datum)
+    return 0.0 if low <= 0.0 <= high else min(abs(low), abs(high))
+
+
+def _islands(overlap: Any) -> list[Any]:
+    """The overlap's connected patches: its faces grouped where they share an edge, each as one compound."""
+    from cadmodel import occ
+
+    faces = faces_of(overlap)
+    edges = [occ.subshapes(face, "EDGE") for face in faces]
+    root = list(range(len(faces)))
+
+    def find(i: int) -> int:
+        while root[i] != i:
+            i = root[i]
+        return i
+
+    for i, j in itertools.combinations(range(len(faces)), 2):
+        if any(a.IsSame(b) for a in edges[i] for b in edges[j]):
+            root[find(j)] = find(i)
+    groups: dict[int, list[Any]] = {}
+    for i, face in enumerate(faces):
+        groups.setdefault(find(i), []).append(face)
+    return [occ.compound(group) for group in groups.values()]
+
+
+def _outline(face: Any) -> Any:
+    """The planar face its outer wire bounds: the face with its openings filled."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.BRepTools import BRepTools
+
+    return BRepBuilderAPI_MakeFace(BRepTools.OuterWire_s(face), True).Face()
+
+
+def locate(patch: Any, ours: dict[str, Any], datum: tuple[Sequence[float], Sequence[float]],
+           mount: Sequence[float] | None) -> tuple[str, float, float | None]:
+    """How one connected contact patch is tied to the joint, as (locator, locator_mm, opening_mm), all in the parent
+    frame: `mount`, a declared mount point, must lie on the patch; else a face-normal joint's `origin` must lie on it;
+    else (an offset datum) the `projection` of the origin along the contact normal must fall inside the patch's
+    outline (locator_mm), and opening_mm is its distance from the contact itself: 0 on it, more inside an opening."""
+    origin, axis = datum
+    if mount is not None:
+        return "mount", _distance(_xyz3(mount), patch), None
+    if _norm(_cross(axis, ours["normal"])) <= AXIS_TOL:
+        return "origin", _distance(_xyz3(origin), patch), None
+    depth = _dot(_sub(origin, ours["point"]), ours["normal"])
+    foot = _xyz3([origin[i] - depth * ours["normal"][i] for i in range(3)])
+    return "projection", min(_distance(foot, _outline(face)) for face in faces_of(patch)), _distance(foot, patch)
+
+
+def _xyz3(point: Sequence[float]) -> tuple[float, float, float]:
+    return (point[0], point[1], point[2])
+
+
+CONTACT_AT_JOINT, CONTACT_UNPLACED, CONTACT_ELSEWHERE = 0, 1, 2  # a patch's grade; lowest wins
+
+
+def _grade(gap: float, off: float, locator: str, located: float, opening: float | None, tol: float) -> int:
+    """At the joint: within `tol` across the patch, on the joint's datum plane, and tied to the joint by `locate`; the
+    datum and the locator pass separately, a declared mount included. A projected origin may sit in an opening of the
+    contact up to OPENING_MAX_MM from it. Unplaced: such a contact on the datum plane that only the locator misses, and
+    no mount is declared, so the geometry cannot tell an intended mount from incidental contact. Elsewhere: anything
+    else."""
+    near = gap <= tol and off <= tol
+    if near and located <= tol and (opening is None or opening <= OPENING_MAX_MM):
+        return CONTACT_AT_JOINT
+    return CONTACT_UNPLACED if near and locator != "mount" else CONTACT_ELSEWHERE
+
+
+class Contact(NamedTuple):
+    """face_contact's answer: the best patch (None: none overlaps), its grade (_grade) and the face pairs whose kernel
+    Boolean failed. A failure leaves the contact unknown, never an empty intersection."""
+
+    best: dict[str, Any] | None
+    grade: int
+    failures: list[str]
+
+
+class ContactFailure(RuntimeError):
+    """The kernel could not compute one face pair's overlap."""
+
+
+def _onto_plane(ours: dict[str, Any], normal: Sequence[float], point: Sequence[float], pose: Any) -> Any:
+    """The rigid motion that lays a child face (outward `normal`, through `point`, both in the parent frame) on the
+    parent face's plane: a turn by its residual tilt about `point`, then a move along the parent normal. Within
+    AXIS_TOL of tilt it is the face's orthogonal projection to r (1 - cos tilt), under 5 nm at r = 1 m."""
+    target = tuple(-c for c in ours["normal"])
+    axis = _cross(normal, target)
+    sine = _norm(axis)
+    turn = (pose.Rigid.rotation(tuple(c / sine for c in axis), math.degrees(math.atan2(sine, _dot(normal, target))),
+                                tuple(point)) if sine > 1e-15 else pose.Rigid.identity())
+    drop = _dot(_sub(point, ours["point"]), ours["normal"])
+    return pose.Rigid.translation(ours["normal"], -drop) @ turn
+
+
+def separation(patch: Any, ours: dict[str, Any], normal: Sequence[float], point: Sequence[float]) -> tuple[float, float]:
+    """The least and greatest distance, along the parent normal, from the contact patch (on the parent plane) to the
+    child face's own plane (outward `normal`, through `point`). It is linear across the plane, so the patch's extent
+    along its gradient bounds it exactly. Positive: apart; negative: overlapping."""
+    n, base = ours["normal"], ours["point"]
+    facing = _dot(normal, n)
+    centre = _dot(normal, _sub(point, base)) / facing
+    gradient = tuple(-c / facing for c in normal)
+    along = _sub(gradient, tuple(_dot(gradient, n) * c for c in n))
+    slope = _norm(along)
+    if slope < 1e-15:
+        return centre, centre
+    low, high = _extent(patch, base, tuple(c / slope for c in along))
+    return centre + slope * low, centre + slope * high
+
+
+def _pair_contact(ours: dict[str, Any], face: Any, normal: Sequence[float], point: Sequence[float], relative: Any,
+                  pose: Any, datum: tuple[Sequence[float], Sequence[float]], mount: Sequence[float] | None,
+                  tol: float) -> list[tuple[tuple[int, float, float, float, float], dict[str, Any]]]:
+    """One facing pair's (rank, contact) per connected overlap patch of at least CONTACT_MIN_AREA_MM2, for
+    face_contact. Raises ContactFailure when cad-model's occ.boolean reports a kernel error."""
+    from cadmodel import occ
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+
+    laid = BRepBuilderAPI_Transform(face, pose.to_trsf(_onto_plane(ours, normal, point, pose) @ relative), True).Shape()
+    try:
+        overlap = occ.boolean("common", ours["face"], [laid])
+    except occ.GeometryError as error:
+        raise ContactFailure(f"the overlap Boolean failed: {error}") from error
+    found = []
+    for patch in _islands(overlap):
+        area = sum(face_area(piece) for piece in faces_of(patch))
+        if area < CONTACT_MIN_AREA_MM2:
+            continue
+        gap = max(abs(end) for end in separation(patch, ours, normal, point))
+        off = datum_distance(patch, datum)
+        locator, located, opening = locate(patch, ours, datum, mount)
+        row = {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6),
+               "locator": locator, "locator_mm": round(located, 6), "kind": "face"}
+        if opening is not None:
+            row["opening_mm"] = round(opening, 6)
+        found.append(((_grade(gap, off, locator, located, opening, tol), gap, off, max(located, opening or 0.0), -area),
+                      row))
+    return found
+
+
+def face_contact(parent: list[dict[str, Any]], child: list[dict[str, Any]], relative: Any, pose: Any,
+                 datum: tuple[Sequence[float], Sequence[float]], mount: Sequence[float] | None, tol: float,
+                 window: float) -> Contact:
+    """The connected contact patch between two parts' planar faces that mates them at the joint: outward normals
+    opposite within AXIS_TOL, planes at most `window` mm apart, and an overlap of at least CONTACT_MIN_AREA_MM2 once
+    the child face is laid on the parent's plane (_onto_plane). `relative` takes child-frame points into the parent
+    frame; `datum` (the joint origin and axis) and `mount` (a declared mount point, or None) are in the parent frame.
+    Per patch: offset_mm is its largest separation (separation), area_mm2 its area, datum_mm its distance from the
+    joint's datum plane (datum_distance), and locator and locator_mm how it is tied to the joint (locate). The best
+    grade (_grade) wins, compared before rounding; then the nearest."""
+    turn = pose.Rigid(relative.rot, (0.0, 0.0, 0.0))
+    best: tuple[tuple[int, float, float, float, float], dict[str, Any]] | None = None
+    failures = []
+    for j, theirs in enumerate(child):
+        normal, point = turn.apply(theirs["normal"]), relative.apply(theirs["point"])
+        corners = [relative.apply(corner) for corner in theirs["corners"]]
+        for i, ours in enumerate(parent):
+            if (_dot(ours["normal"], normal) >= 0.0 or _norm(_cross(ours["normal"], normal)) > AXIS_TOL
+                    or not _may_touch(ours, corners, window)):
+                continue
+            try:
+                found = _pair_contact(ours, theirs["face"], normal, point, relative, pose, datum, mount, tol)
+            except ContactFailure as failure:
+                failures.append(f"parent planar face {i} with child planar face {j}: {failure}")
+                continue
+            best = min([*found, *([best] if best is not None else [])], key=lambda row: row[0], default=None)
+    return Contact(None, CONTACT_ELSEWHERE, failures) if best is None else Contact(best[1], best[0][0], failures)
+
+
+def joint_mating(joint: Any, assembly: Any, pose: Any, cylinders: dict[str, list[dict[str, Any]]],
+                 planes: dict[str, list[dict[str, Any]]], tol: float) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Each endpoint's mating geometry for one joint, and a joint_bore_missing finding per endpoint without it. Every
+    endpoint (made, bought or existing) mates through the bore or shank its geometry has on the joint axis. An
+    endpoint of a fixed joint without one mates by planar face contact with the other part instead: a flat mount."""
+    ends = []
+    for oid in (joint.parent, joint.child):
+        pn = assembly.pn(oid)
+        ref = assembly.inventory.get(oid).ref if oid in assembly.inventory else pn
+        # The joint frame is in assembly coordinates; a placed occurrence's geometry is in its PN's frame.
+        rest = (pose.Rigid.from_placement(assembly.inventory.get(oid).placement).inverse()
+                if oid in assembly.inventory else pose.Rigid.identity())
+        axis = pose.Rigid(rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis)
+        ends.append((ref, pn, rest, coaxial_cylinders(cylinders.get(pn, []), axis, rest.apply(joint.origin))))
+    (parent_ref, parent_pn, parent_rest, _), (child_ref, child_pn, child_rest, _) = ends
+    parts = dict(zip((parent_ref, child_ref), mating_cylinders(ends[0][3], ends[1][3], tol)))
+    missing = [ref for ref, found in parts.items() if found is None or found["offset_mm"] > tol]
+    fixed = joint.type == "fixed"
+    contact = None
+    if fixed and missing and parent_pn in planes and child_pn in planes:
+        datum = (parent_rest.apply(joint.origin), pose.Rigid(parent_rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis))
+        mount = parent_rest.apply(joint.mount) if joint.mount is not None else None
+        contact = face_contact(planes[parent_pn], planes[child_pn], parent_rest @ child_rest.inverse(), pose,
+                               datum, mount, tol, max(CONTACT_SEARCH_MM, tol))
+        if contact.grade == CONTACT_AT_JOINT:
+            parts.update(dict.fromkeys(missing, contact.best))
+            return parts, []
+    return parts, _mating_findings(joint.id, missing, parts, contact, fixed, tol)
+
+
+UNPLACED_REMEDY = ("if this contact is the intended mount, declare it on the joint as mount.point: [x, y, z], a point on "
+                   "the contact in assembly mm, or frame the joint origin on the contact")
+
+
+def _unknown(contact: Contact) -> tuple[str, str | None] | None:
+    """(reason, remedy) when the contact can be neither shown nor ruled out, else None."""
+    if contact.failures:
+        return (f"{len(contact.failures)} face-contact Boolean(s) failed, so the contact is unknown; first: "
+                f"{contact.failures[0]}"), None
+    if contact.grade == CONTACT_UNPLACED and contact.best is not None:
+        best = contact.best
+        miss = (f"its {best['locator']} locator misses it by {best['locator_mm']} mm" if best["locator_mm"] > 0.0 else
+                f"the projected origin sits in an opening {best['opening_mm']} mm from it, past the {OPENING_MAX_MM:g} mm "
+                "allowance")
+        return (f"a face contact lies on the joint's datum plane, but {miss}, so the geometry cannot tell an intended mount "
+                "from incidental contact"), UNPLACED_REMEDY
+    return None
+
+
+def _mating_findings(joint_id: str, missing: list[str], parts: dict[str, Any], contact: Contact | None, fixed: bool,
+                     tol: float) -> list[dict[str, Any]]:
+    """A finding per endpoint without mating geometry: joint_contact_unknown (status unknown, with its reason and any
+    remedy) when a face-contact Boolean failed or an unplaced contact (_grade) cannot be told from incidental contact;
+    else joint_bore_missing."""
+    findings = []
+    unknown = _unknown(contact) if contact is not None else None
+    if unknown is not None and contact is not None:
+        reason, remedy = unknown
+        for ref in missing:
+            findings.append({"check": "joint_contact_unknown", "joint": joint_id, "part": ref, "status": "unknown",
+                             "reason": reason, **({"remedy": remedy} if remedy else {}), "nearest": parts[ref],
+                             "contact": contact.best, "tol_mm": tol})
+            parts[ref] = {"kind": "unknown", "reason": reason}
+        return findings
+    for ref in missing:
+        finding = {"check": "joint_bore_missing", "joint": joint_id, "part": ref,
+                   "kind": "bore, shank or face contact" if fixed else "bore or shank", "nearest": parts[ref]}
+        if fixed:
+            finding["contact"] = contact.best if contact is not None else None
+        findings.append({**finding, "tol_mm": tol})
+    return findings
 
 
 # --- manufacturing-state probe (process_checks facts, record version 2) -----------------------------------------
@@ -1375,9 +1823,11 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
     findings: list[dict[str, Any]] = []
     parts: dict[str, Any] = {}
     cylinders: dict[str, list[dict[str, Any]]] = {}
+    planes: dict[str, list[dict[str, Any]]] = {}
     for pn, part in sorted(loaded.items()):
         metrics = measure(part.shape)
         cylinders[pn] = metrics.pop("_cylinders")
+        planes[pn] = metrics.pop("_planes")
         obb_volume = metrics.pop("_obb_volume_mm3")
         thickness_fraction = metrics.pop("_obb_thickness_fraction")
         volume = shape_volume(part.shape)
@@ -1439,23 +1889,10 @@ def check(args: argparse.Namespace, pose: Any, record: Any = None, catalog: Any 
     joints: dict[str, Any] = {}
     if level >= 1:
         for joint in assembly.joints:
-            row = {"type": joint.type, "axis": list(joint.axis), "origin": list(joint.origin), "parts": {}}
-            for oid in (joint.parent, joint.child):
-                pn = assembly.pn(oid)
-                ref = assembly.inventory.get(oid).ref if oid in assembly.inventory else pn
-                # The joint frame is in assembly coordinates; a placed occurrence's bores are in its PN's frame.
-                rest = (pose.Rigid.from_placement(assembly.inventory.get(oid).placement).inverse()
-                        if oid in assembly.inventory else pose.Rigid.identity())
-                axis = pose.Rigid(rest.rot, (0.0, 0.0, 0.0)).apply(joint.axis)
-                # Existing equipment is not sourced to a bore or a shank: it mates through whichever it has.
-                sourcing = process.get(pn)
-                kind = "shank" if sourcing == "purchased" else None if sourcing == "existing" else "bore"
-                found = bore_offset(cylinders[pn], axis, rest.apply(joint.origin), kind) if pn in cylinders else None
-                row["parts"][ref] = found
-                if found is None or found["offset_mm"] > args.joint_tol:
-                    findings.append({"check": "joint_bore_missing", "joint": joint.id, "part": ref,
-                                     "kind": kind or "bore or shank", "nearest": found, "tol_mm": args.joint_tol})
-            joints[joint.id] = row
+            parts_found, missing = joint_mating(joint, assembly, pose, cylinders, planes, args.joint_tol)
+            joints[joint.id] = {"type": joint.type, "axis": list(joint.axis), "origin": list(joint.origin),
+                                "parts": parts_found}
+            findings.extend(missing)
     for finding in findings:
         finding["blocking"] = finding["check"] in BLOCKING_CHECKS
     blocking = any(finding["blocking"] for finding in findings)

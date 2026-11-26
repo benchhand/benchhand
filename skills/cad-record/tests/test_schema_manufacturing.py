@@ -395,6 +395,25 @@ class RecordDocuments(SchemaCase):
                                                                                  "dimension_state": "assembled"}]), False),
         })
 
+    def test_only_a_fixed_joint_declares_a_mount_point(self) -> None:
+        base = fx.tst_record()["assembly.yaml"]
+        joint = {"id": "J-001", "type": "fixed", "parent": "TST-0001", "child": "TST-0002", "axis": [0, 0, 1],
+                 "origin": [0, 0, 0], "min": 0, "max": 0, "nominal": 0}
+        moving = {"min": -10, "max": 10, "nominal": 0}
+
+        def add(**changes: Any) -> Callable[[Any], None]:
+            return lambda d: d["joints"].append({**joint, **changes})
+
+        self.assert_cases("assembly.schema.json", base, {
+            "a fixed joint without a mount": (add(), True),
+            "a fixed joint with a mount point": (add(mount={"point": [1, 2, 3]}), True),
+            "a revolute joint with a mount": (add(type="revolute", **moving, mount={"point": [1, 2, 3]}), False),
+            "a prismatic joint with a mount": (add(type="prismatic", **moving, mount={"point": [1, 2, 3]}), False),
+            "a null mount": (add(mount=None), False),
+            "a mount without its point": (add(mount={}), False),
+            "a mount with another key": (add(mount={"point": [1, 2, 3], "face": 1}), False),
+        })
+
     def test_assembly_operations_have_one_authority(self) -> None:
         base = fx.tst_record()["assembly.yaml"]
         operation = base["operations"][0]

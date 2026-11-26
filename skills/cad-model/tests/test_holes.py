@@ -180,5 +180,48 @@ class HoleCaseTests(unittest.TestCase):
                                             "radius": 3.0, "min": 4.0, "blocking": False}])
 
 
+# Prints, for a 10 x 20 x 30 box, cadmodel.occ.Adjacency's face count, its face pairs that share an edge, and the faces
+# across each edge of the first face. Run in form_check's OCP environment.
+ADJACENCY_PROBE = '''
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from cadmodel import occ
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
+adjacency = occ.Adjacency(BRepPrimAPI_MakeBox(10.0, 20.0, 30.0).Shape())
+first = adjacency.faces[0]
+across = [(adjacency.across_indices(occ.downcast(edge, "EDGE"), 0),
+           [any(face.IsSame(adjacency.faces[i]) for i in range(1, 6)) for face in adjacency.across(edge, first)])
+          for edge in occ.subshapes(first, "EDGE")]
+print(json.dumps({"faces": len(adjacency.faces), "shared": sorted(sorted(pair) for pair in adjacency.shared()),
+                  "across": across}))
+'''
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the OCP environment")
+class AdjacencyTests(unittest.TestCase):
+    """cadmodel.occ.Adjacency, the one edge-to-face index that holes and cad-design's form check share."""
+
+    def test_each_box_edge_joins_exactly_two_faces(self) -> None:
+        header = re.search(r"(?ms)^# /// script$.*?^# ///$", FORM_CHECK.read_text(encoding="utf-8"))
+        assert header is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "adjacency_probe.py"
+            probe.write_text(header.group(0) + "\n" + ADJACENCY_PROBE, encoding="utf-8")
+            proc = uv_script(probe, str(CLI.parent))
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        found = json.loads(proc.stdout)
+        self.assertEqual(found["faces"], 6)
+        self.assertEqual(len(found["shared"]), 12)  # a box's 12 edges, each between two of its faces
+        self.assertNotIn([0, 1], found["shared"])  # its first two faces are opposite: they share no edge
+        self.assertEqual(len(found["across"]), 4)
+        for indices, matches in found["across"]:
+            with self.subTest(indices=indices):
+                self.assertEqual((len(indices), matches), (1, [True]))
+                self.assertNotIn(indices[0], (0, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
