@@ -173,11 +173,10 @@ class PiSubagentTests(unittest.TestCase):
         self.assertEqual((self.project / "hw/product.yaml").read_text(encoding="utf-8"), "one two\n")
 
     def install_web_access(self) -> None:
-        """Stand in for `pi install npm:pi-web-access`: the package where pi keeps user npm packages, listed in its settings."""
+        """Stand in for `pi install npm:pi-web-access`, which keeps the package under the scope's `npm/node_modules`."""
         modules = self.home / ".pi/agent/npm/node_modules"
         modules.mkdir(parents=True)
         (modules / "pi-web-access").symlink_to(WEB_ACCESS)
-        (self.home / ".pi/agent/settings.json").write_text(json.dumps({"packages": ["npm:pi-web-access"]}), encoding="utf-8")
 
     def test_the_sourcing_researcher_child_has_the_web_tools(self) -> None:
         # A foreground child loads no ambient extension, so the agent must name pi-web-access itself.

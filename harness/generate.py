@@ -48,6 +48,7 @@ CLAUDE_TOOLS = {
     "read": ("Read", "Grep", "Glob"), "write-scratch": ("Edit", "Write"),
     "shell-uv": ("Bash",), "web": ("WebSearch", "WebFetch"),
 }
+PI_WEB_ACCESS = "../npm/node_modules/pi-web-access"  # where `pi install npm:pi-web-access` puts it, beside the agents' scope
 # pi built-ins, plus the pi-web-access tools for web research (a prerequisite the README names).
 # A pi CAD agent has no shell: `cad_run`, from the CAD extension, runs its launchers.
 PI_TOOLS = {
@@ -322,9 +323,15 @@ def render(agent: Agent, harness: str, tier_models: TierModels | None = None) ->
 def render_pi(agent: Agent, prompt: str, model: str | None) -> str:
     tools = ", ".join(tool for capability in agent.capabilities for tool in PI_TOOLS[capability])
     fields = ["---", f"name: {agent.name}", f"description: {json.dumps(agent.description, ensure_ascii=False)}", f"tools: {tools}"]
+    # A foreground child loads no ambient extension, so each one the agent needs is named here.
+    extensions = []
     if agent.shell:
         # pi-subagents resolves a `../` path from the agent file: <scope>/agents/ -> <scope>/cad-guard/.
-        fields.append(f"subagentOnlyExtensions: ../cad-guard/{agent.name}.js")
+        extensions.append(f"../cad-guard/{agent.name}.js")
+    if agent.web:
+        extensions.append(PI_WEB_ACCESS)
+    if extensions:
+        fields.append(f"subagentOnlyExtensions: {', '.join(extensions)}")
     if agent.skills:  # pi-subagents reads an absent `skills` as none. A blank value is YAML null.
         fields.append(f"skills: {', '.join(agent.skills)}")
     if model:

@@ -2,6 +2,7 @@
 name: cad-sourcing-researcher
 description: "Verifies purchased-part identity, ratings and supplier evidence. Read-only; invents no properties or prices."
 tools: read, grep, find, ls, web_search, fetch_content
+subagentOnlyExtensions: ../npm/node_modules/pi-web-access
 skills: cad-bom
 systemPromptMode: append
 inheritProjectContext: true

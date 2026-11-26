@@ -30,7 +30,7 @@ Other pins in the script headers (`pillow`, `ocp_viewer`, `imageio-ffmpeg`, `lib
 
 pi needs these parts:
 
-- At run time, pi agents need the `pi-subagents` npm package. `cad-sourcing-researcher` also needs `pi-web-access` for its `web_search` and `fetch_content` tools.
+- At run time, pi agents need the `pi-subagents` npm package. `cad-sourcing-researcher` also needs `pi-web-access` for its `web_search` and `fetch_content` tools. Its `subagentOnlyExtensions` names `../npm/node_modules/pi-web-access`, so the package must be installed in the agents' scope (`pi install`, or `pi install -l` for a project install): a foreground child loads no ambient extension. `harness/pi/integration/package.json` pins the same version for the real-pi test.
 - The pi CAD extension `harness/pi/guard/cad-guard.js` is hand-written ESM JavaScript with no dependencies and no build. `harness/generate.py` writes one entry per agent under `harness/pi/launchers/`.
 - Node runs only in tests. `harness/test_pi_guard.py` runs the extension under `node`.
 - `harness/test_pi_integration.py` starts pi and pi-subagents at the versions in `harness/pi/integration/package-lock.json`, with a scripted model. Install them with `npm ci --prefix harness/pi/integration`.

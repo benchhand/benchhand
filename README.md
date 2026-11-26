@@ -71,7 +71,7 @@ If a Claude Code `-p` run has a turn limit, set `--max-turns` above the number o
 
 ### pi entry points
 
-pi has no native subagents. The CAD agents need the `pi-subagents` package (`pi install npm:pi-subagents`); the sourcing researcher also needs `pi-web-access`. The installer writes skills to `.pi/skills`, agents to `.pi/agents`, the `/cad-flow` prompt template to `.pi/prompts`, and (user scope) the same under `~/.pi/agent/`.
+pi has no native subagents. The CAD agents need the `pi-subagents` package (`pi install npm:pi-subagents`); the sourcing researcher also needs `pi-web-access`, installed in the same scope as the agents (`pi install npm:pi-web-access` for a user install, `pi install -l npm:pi-web-access` for a project install), because the agent loads it from `../npm/node_modules/pi-web-access` beside its `agents/` folder. The installer writes skills to `.pi/skills`, agents to `.pi/agents`, the `/cad-flow` prompt template to `.pi/prompts`, and (user scope) the same under `~/.pi/agent/`.
 
 pi loads project resources only after you trust the project, so accept the trust prompt (or set `defaultProjectTrust`) before you start. Then run `/cad-flow`.
 
