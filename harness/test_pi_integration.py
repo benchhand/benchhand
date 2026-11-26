@@ -144,6 +144,15 @@ class PiSubagentTests(unittest.TestCase):
     def test_a_child_whose_guard_is_missing_runs_nothing(self) -> None:
         scope = self.install("--user")
         shutil.rmtree(scope / "cad-guard")
+        self.assert_runs_nothing(scope)
+
+    def test_a_child_whose_guard_is_present_but_fails_to_import_runs_nothing(self) -> None:
+        scope = self.install("--user")
+        (scope / "cad-guard/cad-guard.js").write_text('import "./no-such-module.js";\nexport const cadGuard = () => {};\n', encoding="utf-8")
+        self.assertTrue((scope / "cad-guard/cad-clerk.js").is_file())
+        self.assert_runs_nothing(scope)
+
+    def assert_runs_nothing(self, scope: Path) -> None:
         entries = self.run_pi(self.child_calls(scope))
         self.assertTrue(self.parent_mark.exists(), self.output)
         self.assertFalse(self.child_mark.exists(), self.output)
