@@ -698,6 +698,53 @@ class ProgressiveGates(unittest.TestCase):
         self.assertIn("record_version None is not supported", gate[0].message)
 
 
+class ScopeBeforeRelease(unittest.TestCase):
+    """Design T3 (benchhand-vwo.1): a gate before the release skips an obligation its service class does not owe
+    (project_scope RULES: out_of_scope) and names it in a gate.out_of_scope info row. The result stays as shown."""
+
+    def assessed(self, service_class: str) -> Any:
+        """The TST record of `service_class` whose producers showed every check but the strength analysis."""
+        record = normalized(joint_ready(documents(service_class)))
+        shown = [o for o in mi.required_checks(record) if o.id != STRENGTH]
+        return assess(record, packet(record, obligations=shown))
+
+    def test_a_fit_prototype_with_unknown_strength_passes_analysis(self) -> None:
+        gate = self.assessed("fit_assembly").gate("analysis")
+        self.assertEqual(codes(gate, "error"), set(), [f.message for f in gate if f.severity == "error"])
+
+    def test_the_gates_name_the_unowed_strength_check_in_an_info_row(self) -> None:
+        result = self.assessed("fit_assembly")
+        for stage in ("analysis", "design_freeze"):
+            with self.subTest(stage=stage):
+                rows = [f for f in result.gate(stage) if f.obligation == STRENGTH]
+                self.assertEqual([(f.code, f.severity) for f in rows], [("gate.out_of_scope", "info")])
+                self.assertIn("not owed by fit_assembly", rows[0].message)
+                self.assertIn("obligation.function", rows[0].message)
+        self.assertEqual(result.statuses[STRENGTH].result, "unknown", "scope never rewrites a result")
+
+    def test_a_fit_prototype_with_unknown_strength_passes_the_freeze_obligation_gate(self) -> None:
+        record = normalized(documents("fit_assembly"))
+        expected = [o.as_dict() for o in mi.required_checks(record)]
+        results = {**{o["id"]: "pass" for o in expected}, STRENGTH: "unknown"}
+        found = evidence.obligation_gate(expected, results, "design_freeze", evidence.project_scope.ProjectScope.of(record))
+        self.assertEqual([(f.code, f.severity, f.obligation) for f in found], [("gate.out_of_scope", "info", STRENGTH)])
+
+    def test_the_release_leaves_it_open_and_unclaimed(self) -> None:
+        result = self.assessed("fit_assembly")
+        policy = result.release()
+        self.assertIn(STRENGTH, policy.open_obligations)
+        self.assertNotIn(STRENGTH, {f.obligation for f in policy.findings})
+        self.assertNotIn(result.statuses[STRENGTH].obligation.level, policy.claims["REQ-001"])
+
+    def test_a_production_design_still_blocks_on_unknown_strength(self) -> None:
+        result = self.assessed("production")
+        for stage in ("analysis", "design_freeze"):
+            with self.subTest(stage=stage):
+                gate = result.gate(stage)
+                self.assertEqual({(f.code, f.severity) for f in gate if f.obligation == STRENGTH}, {("gate.unresolved", "error")})
+                self.assertNotIn("gate.out_of_scope", codes(gate))
+
+
 class NotAssessedIsNoPhysicalTest(unittest.TestCase):
     """D37 covers the tool's own checks, not a test the record requires the user to perform: a producer's not_assessed on a
     physically_validated obligation never stands in for it."""
