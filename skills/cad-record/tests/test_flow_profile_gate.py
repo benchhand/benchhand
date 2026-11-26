@@ -237,9 +237,9 @@ class Gate(unittest.TestCase):
         fdm_part, cnc_part = self.parts["TST-0001"], self.parts["TST-0002"]
         for name, parts, processes, expected in (
                 ("an fdm part", {"TST-0001": fdm_part}, None, 1), ("no fdm part", {"TST-0002": cnc_part}, None, 0),
-                ("fdm planned at intent", {}, ["fdm"], 1), ("no parts and no plan", {}, None, 1),
+                ("fdm planned at intent", {}, ["fdm"], 1), ("no parts and no plan", {}, None, 2),
                 ("a plan without fdm and no parts", {}, ["cnc"], 0),
-                ("a part whose route is unknown", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}}, None, 1),
+                ("a part whose route is unknown", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}}, None, 2),
                 ("an fdm route operation", {"TST-0009": {"process": "cnc", "intent": {"route": [{"kind": "fdm"}]}}}, None, 1)):
             with self.subTest(name):
                 self.parts = parts
@@ -309,6 +309,15 @@ class Gate(unittest.TestCase):
         self.assertEqual(list(declined.skipped), list(QUESTION_FIELDS[14:]))
         self.assertTrue(all("print-in-place is declined" in reason for reason in declined.skipped.values()), declined.skipped)
 
+    def test_an_unresolved_applicability_blocks_even_when_every_question_is_answered(self) -> None:
+        for name, parts, field in (("no plan and no part", {}, "manufacturing/processes"),
+                                   ("an unknown route", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}},
+                                    "parts/A/intent/route")):
+            with self.subTest(name):
+                _stage, found = gate_module.gate(self.with_profile(fx.flow_profile(), "specify"), parts, approved)
+                self.assertEqual([(item.code, item.path) for item in found], [("flow.applicability", field)])
+                self.assertIn("cannot be ruled out", found[0].message)
+
     def test_an_unresolved_applicability_asks_the_fdm_questions_and_names_the_field(self) -> None:
         profile = fx.flow_profile()
         del profile["asked"]["processes/fdm/orientation"]
@@ -318,7 +327,7 @@ class Gate(unittest.TestCase):
             with self.subTest(name):
                 product = self.with_profile(profile, "parts")
                 _stage, found = gate_module.gate(product, parts, approved)
-                self.assertEqual([item.path for item in found], ["flow/profile/asked/processes/fdm/orientation"])
+                self.assertEqual([item.path for item in found], ["flow/profile/asked/processes/fdm/orientation", field])
                 self.assertIn(field, found[0].message)
 
     def test_question_fields_is_the_set_of_questions_asked_problems_requires(self) -> None:

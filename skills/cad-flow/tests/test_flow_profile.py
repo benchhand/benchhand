@@ -531,10 +531,19 @@ class Check(unittest.TestCase):
         self.assertIn("has status proposed", report["problems"][0]["message"])
 
     def test_a_profile_recorded_by_the_record_command_passes_its_own_check(self) -> None:
-        (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify"), encoding="utf-8")
+        # The plan is declared: a product with no plan and no part leaves FDM unresolved, which blocks (next test).
+        (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify") + "manufacturing:\n  processes: [fdm]\n",
+                                              encoding="utf-8")
         recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS)
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         self.assertEqual(self.check(), (0, {"ok": True, "stage": "specify", "problems": []}))
+
+    def test_a_complete_profile_blocks_at_specify_while_no_plan_and_no_part_leave_fdm_unresolved(self) -> None:
+        (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify"), encoding="utf-8")
+        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS)
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        exit_code, report = self.check()
+        self.assertEqual((exit_code, [p["path"] for p in report["problems"]]), (1, ["manufacturing/processes"]))
 
     def test_the_fdm_questions_follow_the_part_records_in_the_work_tree(self) -> None:
         profile = fx.flow_profile("DR-007")
