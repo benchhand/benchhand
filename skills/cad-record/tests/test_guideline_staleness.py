@@ -103,9 +103,8 @@ class Staleness(unittest.TestCase):
         digests = self.record().guideline_digests
         self.assertEqual(digests[gl.machine_free_key("fdm")]["tst_polymer_printed"], {"fdm.generic@1": digest})
 
-    def test_tightening_the_guideline_of_the_print_stock_after_a_build_stales_the_built_part(self) -> None:
-        """The process checks pick the guideline sets of an operation's setup.stock material, not of the part's main
-        profile. A part printed from TPU stock is stale once the TPU set tightens after the version was built."""
+    def print_from_tpu_stock(self) -> None:
+        """TST-0001 names no machine and is of PLA (its main profile), printed from TPU stock (its print's setup.stock)."""
         self.machine_free()
         materials_path = self.hw / "manufacturing" / "materials.yaml"
         materials = yaml.safe_load(materials_path.read_text(encoding="utf-8"))
@@ -118,14 +117,43 @@ class Staleness(unittest.TestCase):
         data = yaml.safe_load(part_path.read_text(encoding="utf-8"))
         data["intent"]["route"][0]["setup"] = {"stock": {"material_profile": "tst_tpu_printed"}}
         part_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-        put(self.project, "tpu", guideline("fdm.material.tpu", 2.0, material_family=["tpu"]))
+
+    def built(self) -> Any:
+        """The record of version v1, built from hw/ as it stands."""
         record_dir = self.hw / "versions" / "v1" / "record"
         pns = sorted(path.parent.name for path in (self.hw / "parts").glob("*/part.yaml"))
         build.write_snapshot(record_dir, build.snapshot(self.hw, pns))
-        built = self.source(mi.load_record(record_dir, snapshot=True))
+        return mi.load_record(record_dir, snapshot=True)
+
+    def test_tightening_the_guideline_of_the_print_stock_after_a_build_stales_the_built_part(self) -> None:
+        """The process checks pick the guideline sets of an operation's setup.stock material, not of the part's main
+        profile. A part printed from TPU stock is stale once the TPU set tightens after the version was built."""
+        self.print_from_tpu_stock()
+        put(self.project, "tpu", guideline("fdm.material.tpu", 2.0, material_family=["tpu"]))
+        built = self.source(self.built())
         self.assertEqual(self.source(self.record()), built, "the snapshot fingerprints as the record it was built from")
         put(self.project, "tpu", guideline("fdm.material.tpu", 3.0, material_family=["tpu"]))
         self.assertNotEqual(self.source(self.record()), built)
+
+    def test_tightening_the_guideline_of_the_part_material_after_a_build_stales_its_stack_evidence(self) -> None:
+        """Stack-up resolves a part's limits through its main material profile even when the print names other stock, so
+        the part keeps the sets of both: tightening the PLA set marks the accepted stack evidence of IF-001 stale."""
+        self.print_from_tpu_stock()
+        put(self.project, "tpu", guideline("fdm.material.tpu", 2.0, material_family=["tpu"]))
+        put(self.project, "pla", guideline("fdm.material.pla", 1.0, material_family=["pla"]))
+        built = self.built()
+        stack = next(o for o in mi.required_checks(built) if o.id == "interface.stack@IF-001")
+        accepted = acceptance.entry(built, "EV-stack", {"interface": "IF-001"}, stack.level, obligation=stack.id,
+                                    version="v1", manifest_sha256="a" * 64)
+        (self.hw / "manufacturing" / "evidence.yaml").write_text(yaml.safe_dump({"entries": [accepted]}, sort_keys=False),
+                                                                 encoding="utf-8")
+
+        def status() -> str:
+            return str(acceptance.evidence.assess(self.record(), version="v1", manifest_sha256="a" * 64).statuses[stack.id].result)
+
+        self.assertNotEqual(status(), "stale", "the evidence is current before the edit")
+        put(self.project, "pla", guideline("fdm.material.pla", 1.5, material_family=["pla"]))
+        self.assertEqual(status(), "stale")
 
     def test_editing_an_applicable_set_changes_the_source_fingerprint_and_no_other_domain(self) -> None:
         put(self.project, "generic", guideline("fdm.generic", 0.8))
