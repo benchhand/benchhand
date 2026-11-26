@@ -5,6 +5,9 @@
   "description": "The JSON summary of bom.py. status is fail (exit 1) when the record and the model disagree: a leaf part without part.yaml, a part.yaml absent from the STEP, a leaf product without a PN, or a part whose structured purchase.designation has an invalid field. bom.csv is written either way, and an invalid designation never drops its row",
   "type": "object", "additionalProperties": false,
   "required": ["status", "bom_csv", "rows", "total_qty", "missing_part_yaml", "missing_in_step", "unidentified", "invalid_designation"],
+  "if": {"properties": {"status": {"const": "pass"}}},
+  "then": {"properties": {"missing_part_yaml": {"maxItems": 0}, "missing_in_step": {"maxItems": 0}, "unidentified": {"maxItems": 0}, "invalid_designation": {"maxItems": 0}}},
+  "else": {"anyOf": [{"properties": {"missing_part_yaml": {"minItems": 1}}}, {"properties": {"missing_in_step": {"minItems": 1}}}, {"properties": {"unidentified": {"minItems": 1}}}, {"properties": {"invalid_designation": {"minItems": 1}}}]},
   "properties": {
     "status": {"enum": ["pass", "fail"]},
     "bom_csv": {"type": "string"},
