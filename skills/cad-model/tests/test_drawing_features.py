@@ -234,8 +234,9 @@ class FitEndpointsAndHeatSets(unittest.TestCase):
                 self.assertEqual(compliant["rigid_press_fit"]["outcome"], "not_applicable")
                 self.assertIn("designed deformation of the compliant part", compliant["rigid_press_fit"]["reason"])
         unmeasured = self.compliant_check(ribs, 40.0)
-        self.assertEqual((unmeasured["status"], unmeasured["compliant_fits"][0]["outcome"]), ("pass", "unknown"),
-                         "an unmeasured overlap is stated, never a silent pass and never a blocker")
+        self.assertEqual((unmeasured["status"], unmeasured["compliant_fits"][0]["outcome"]), ("unknown", "unknown"),
+                         "an unmeasured overlap abstains: never a pass, and never a blocker (status unknown, not fail)")
+        self.assertTrue(unmeasured["blocking"], "the check still blocks on a fail; an abstention is not one")
         self.assertIn("not measured", unmeasured["compliant_fits"][0]["reason"])
 
     def test_a_compliant_transition_fit_allows_its_overlap_up_to_its_maximum(self) -> None:
