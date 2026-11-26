@@ -444,6 +444,31 @@ class JustifiedAlternatives(unittest.TestCase):
         self.assertEqual((sheet["status"], sheet["unknown"]), ("conditional", ["material_approval"]))
         self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_frame")
 
+    def test_an_approval_outside_the_step_scope_is_not_credited(self) -> None:
+        """tst_laser's approval of the sheet is scoped by operation, thickness and coating. An approval for engraving only,
+        or one whose thickness or coating scope is unresolved, never approves the cutting step."""
+        def approval(documents: dict[str, Any]) -> dict[str, Any]:
+            return profile(documents, "capabilities", "tst_laser")["materials"][0]
+
+        def cut(documents: dict[str, Any]) -> dict[str, Any]:
+            return selection_candidate(documents, "sheet_frame")["parts"][0]["route"][0]
+
+        cases = {
+            "engraving only": lambda d: approval(d).update(operations=["engrave"]),
+            "approved thickness not stated": lambda d: approval(d).pop("thickness"),
+            "coating not identified": lambda d: approval(d).pop("coating", None),
+            "stock thickness not stated": lambda d: cut(d).pop("stock", None),
+        }
+        for case, change in cases.items():
+            with self.subTest(case):
+                documents = scenarios.plate_frame_options()
+                change(documents)
+                report = assess(self, documents)
+                sheet = candidate(report, "sheet_frame")
+                self.assertEqual((sheet["status"], sheet["unknown"]), ("conditional", ["material_approval"]))
+                self.assertEqual([e["outcome"] for e in evaluations(sheet, "material_approval")], ["unknown", "pass"])
+                self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_frame")
+
     def test_no_feasible_candidate_names_the_route_families_not_yet_considered(self) -> None:
         documents = scenarios.plate_frame_options()
         documents["manufacturing/selection.yaml"]["candidates"] = documents["manufacturing/selection.yaml"]["candidates"][:1]
