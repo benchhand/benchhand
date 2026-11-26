@@ -115,7 +115,9 @@ class Record(unittest.TestCase):
     def record(self, decision: str = "DR-001", *answers: str) -> subprocess.CompletedProcess[str]:
         """The user answers the options in `answers` (option, value pairs) and accepts the default of every other."""
         given = {answers[i].removeprefix("--") for i in range(0, len(answers), 2)}
-        accepted = [name for name in OPTIONS if name not in given]
+        # The clearance questions are asked only once print-in-place is offered; a default for them is refused.
+        asked = OPTIONS if "offer" in answers else OPTIONS[:14]
+        accepted = [name for name in asked if name not in given]
         return run("record", "--hw", str(self.hw), "--decision", decision, *answers, "--accept-default", *accepted)
 
     def profile(self) -> Any:
@@ -304,7 +306,8 @@ class Record(unittest.TestCase):
         self.assertIn("Should generated results", result.stdout)
 
     def test_accepting_every_default_records_the_conservative_defaults(self) -> None:
-        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS).returncode, 0)
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default",
+                        *OPTIONS[:14]).returncode, 0)
         profile = self.profile()
         self.assertEqual({k: v for k, v in profile.items() if k != "asked"}, {
             "decision": "DR-001", "human_approval": "all", "fea": {"enabled": True, "mode": "accurate"}, "stack_up": "auto",
@@ -313,7 +316,9 @@ class Record(unittest.TestCase):
                                   "bridge_mm": "calibrated", "min_wall_mm": "calibrated", "min_feature_mm": "calibrated",
                                   "warp": "calibrated", "cosmetic_faces": False, "print_in_place": False,
                                   "pip_clearance_mm": {"xy": "calibrated", "z": "calibrated"}}}})
-        self.assertEqual(set(profile["asked"].values()), {"asked-accepted-default"})
+        asked = profile["asked"]
+        self.assertEqual({asked[field] for field in QUESTION_FIELDS[:14]}, {"asked-accepted-default"})
+        self.assertEqual({asked[field]["status"] for field in QUESTION_FIELDS[14:]}, {"not_applicable"})
 
     def test_a_declined_machine_offer_is_never_asked_again_and_blocks_nothing(self) -> None:
         """GROUND made the offer and the user declined: no capability profile exists. Recording every start answer and
@@ -329,7 +334,7 @@ class Record(unittest.TestCase):
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
         before = self.product.read_text(encoding="utf-8")
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--fea", "off", "--accept-default",
-                     *[name for name in OPTIONS if name not in ("fea", "stack-up", "warp")])
+                     *[name for name in OPTIONS[:14] if name not in ("fea", "stack-up", "warp")])
         self.assertEqual(result.returncode, 2)
         self.assertIn("--stack-up", result.stderr)
         self.assertIn("--warp", result.stderr)
@@ -573,13 +578,13 @@ class Check(unittest.TestCase):
         # The plan is declared: a product with no plan and no part leaves FDM unresolved, which blocks (next test).
         (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify") + "manufacturing:\n  processes: [fdm]\n",
                                               encoding="utf-8")
-        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS)
+        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:14])
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         self.assertEqual(self.check(), (0, {"ok": True, "stage": "specify", "problems": []}))
 
     def test_a_complete_profile_blocks_at_specify_while_no_plan_and_no_part_leave_fdm_unresolved(self) -> None:
         (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify"), encoding="utf-8")
-        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS)
+        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:14])
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         exit_code, report = self.check()
         self.assertEqual((exit_code, [p["path"] for p in report["problems"]]), (1, ["manufacturing/processes"]))

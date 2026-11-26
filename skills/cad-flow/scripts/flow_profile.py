@@ -470,6 +470,18 @@ def _require_applicability(product: Any, parts: Mapping[str, Any]) -> Any:
     return found
 
 
+def _require_not_given(answers: Mapping[str, Any], accepted: Iterable[str], skipped: Mapping[str, str]) -> None:
+    """No answer or accepted default is given for a skipped question: it is recorded as not applicable, so
+    that it is asked again if it applies later. Raises ProfileFindings naming each such option."""
+    options = {field: option for option, field, _parse, _metavar in OPTIONS}
+    given = [field for field in options if field in skipped and (field in answers or field in accepted)]
+    if given:
+        raise ProfileFindings(gate.Problem(f"flow/profile/asked/{field}", f"{options[field]} was given, but "
+                                           f"{field.replace('/', '.')} does not apply: {skipped[field]}",
+                                           f"drop {options[field]}; the question is recorded as not applicable")
+                              for field in given)
+
+
 def _require_settled(answers: Mapping[str, Any], accepted: list[str], applicable: Iterable[str],
                      unresolved: Iterable[Any] = ()) -> None:
     """Every applicable start question is answered or its default accepted, and none is both."""
@@ -506,6 +518,7 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     applicability = _require_applicability(product, parts)
     plan = gate.question_plan(product, parts, answered_profile(decision, answers))
     _require_settled(answers, accepted, plan.fields, applicability.unresolved)
+    _require_not_given(answers, accepted, plan.skipped)
     decisions = hw / "decisions"
     number = int(decision.removeprefix("DR-"))
     _require_free(decisions, number)
