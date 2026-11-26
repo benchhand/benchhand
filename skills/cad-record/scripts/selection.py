@@ -1370,21 +1370,32 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
 
 
 def _coverage(record: Any, decisions: Sequence[Mapping[str, Any]]) -> dict[str, list[str]]:
-    """The record's made parts and those no decision's chosen candidate (its recommended primary) covers. A part only
-    an alternative names is not chosen, so its material and process choice is unknown: exploration before the design
-    freeze, a refusal from it (evidence.selection_gate)."""
+    """The record's made parts and those no decision's chosen candidate covers. The chosen candidate of a decision is
+    the primary selection.yaml confirms when it belongs to that decision, else the assessment's recommended primary. A
+    part only an alternative names is not chosen, so its material and process choice is unknown: exploration before the
+    design freeze, a refusal from it (evidence.selection_gate)."""
     made = sorted(pn for pn, part in record.parts.items() if part.made)
-    covered = {pn for decision in decisions for pn in _chosen_parts(decision)}
+    confirmed = _confirmed_primary(record)
+    covered = {pn for decision in decisions for pn in _chosen_parts(decision, confirmed)}
     return {"made": made, "unselected": [pn for pn in made if pn not in covered]}
 
 
-def _chosen_parts(decision: Mapping[str, Any]) -> set[str]:
-    """The parts the decision's recommended primary names; none when every candidate is eliminated."""
+def _confirmed_primary(record: Any) -> str | None:
+    """The primary a confirmed selection.yaml records; None while the selection is not confirmed."""
+    recommendation = record.selection.recommendation
+    if record.selection.status != "confirmed" or not isinstance(recommendation, Mapping):
+        return None
+    primary = recommendation.get("primary")
+    return primary if isinstance(primary, str) else None
+
+
+def _chosen_parts(decision: Mapping[str, Any], confirmed: str | None) -> set[str]:
+    """The parts the decision's chosen candidate names: the confirmed primary when it is one of the decision's
+    candidates, else the recommended primary; none when every candidate is eliminated and none is confirmed."""
+    ids = {c["id"]: c for c in decision["candidates"]}
     recommendation = decision["recommendation"]
-    if recommendation is None:
-        return set()
-    chosen = next(c for c in decision["candidates"] if c["id"] == recommendation["primary"])
-    return {part["PN"] for part in chosen["parts"]}
+    chosen = confirmed if confirmed in ids else recommendation["primary"] if recommendation is not None else None
+    return {part["PN"] for part in ids[chosen]["parts"]} if chosen is not None else set()
 
 
 def _use_case_section(record: Any, assessment: Any) -> dict[str, Any]:
