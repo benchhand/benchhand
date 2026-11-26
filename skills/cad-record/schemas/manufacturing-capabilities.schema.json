@@ -74,7 +74,7 @@
         "constraints": {"$ref": "manufacturing.schema.json#/$defs/texts"},
         "calibrations": {"type": "array", "items": {"$ref": "#/$defs/calibration"}},
         "calibration_state": {
-          "description": "Whether the machine runs only its standard built-in calibration, a custom one, or is not known to. The state is a record that reports quote; it never sets a limit. standard and unknown need no measurement. custom needs at least one entry in calibrations: a custom calibration is claimed only with its measured results. Guideline values govern whatever limit no calibration covers",
+          "description": "Whether the machine runs only its standard built-in calibration, a custom one, or is not known to. The state is a record that reports quote; it never sets a limit. standard and unknown need no measurement. custom with no entry in calibrations draws a warning, never an error: a custom calibration is claimed with its measured results. Guideline values govern whatever limit no calibration covers",
           "type": "object", "additionalProperties": false, "required": ["status", "source"],
           "properties": {
             "status": {"enum": ["standard", "custom", "unknown"]},
