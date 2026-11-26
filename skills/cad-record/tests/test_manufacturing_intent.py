@@ -295,6 +295,21 @@ class Normalization(unittest.TestCase):
                 severity = {p.code: p.severity for p in record.problems}[code]
                 self.assertEqual(severity, "warning" if code == "intent.coverage" else "error")
 
+    def test_a_calibration_state_is_read_as_a_typed_status_and_a_malformed_one_as_unknown_with_a_warning(self) -> None:
+        for label, state, status, warned in (
+                ("absent", None, None, False), ("standard", fx.calibration_state("standard"), "standard", False),
+                ("a scalar", "standard", "unknown", True), ("a list", ["standard"], "unknown", True),
+                ("an unknown status", {"status": "factory", "source": {}}, "unknown", True),
+                ("an unhashable status", {"status": ["standard"]}, "unknown", True)):
+            with self.subTest(label):
+                documents = fx.tst_record()
+                if state is not None:
+                    documents["manufacturing/capabilities.yaml"]["profiles"][1]["calibration_state"] = state
+                record = mi.normalize_record(documents)
+                self.assertEqual(record.capabilities["tst_laser"].calibration_state, status)
+                found = [p for p in record.problems if p.code == "intent.calibration_state"]
+                self.assertEqual([p.severity for p in found], ["warning"] if warned else [])
+
     def test_a_custom_calibration_state_without_a_measured_calibration_is_a_warning_that_blocks_nothing(self) -> None:
         documents = fx.tst_record()
         documents["manufacturing/capabilities.yaml"]["profiles"][1].update(calibration_state=fx.calibration_state("custom"), calibrations=[])

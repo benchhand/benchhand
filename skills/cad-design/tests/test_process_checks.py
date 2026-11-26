@@ -341,6 +341,22 @@ class BedStabilityTests(Checks):
         self.assertEqual([(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in stated.findings],
                          [(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in plain.findings])
 
+    def test_a_malformed_calibration_state_never_crashes_the_checks_and_changes_no_outcome(self) -> None:
+        """A snapshot is normalised without schema validation, so the state can be any YAML value."""
+        base = printed("TST-0101", {"strategy": "none"}, calibrations=[])
+        plain = pc.assess(MI.normalize_record(copy.deepcopy(base)), geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)), today=TODAY)
+        for label, state in {"a scalar": "standard", "a list": ["standard"], "an unknown status": {"status": "factory"},
+                             "a list status": {"status": ["standard"]}}.items():
+            with self.subTest(label):
+                documents = copy.deepcopy(base)
+                documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibration_state"] = state
+                record = MI.normalize_record(documents)
+                self.assertEqual([p.severity for p in record.problems if p.code == "intent.calibration_state"], ["warning"])
+                result = pc.assess(record, geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)), today=TODAY)
+                self.assertEqual(result.outcome(self.OBLIGATION)["outcome"], plain.outcome(self.OBLIGATION)["outcome"])
+                self.assertEqual([(f["code"], f["outcome"], f["severity"]) for f in result.findings],
+                                 [(f["code"], f["outcome"], f["severity"]) for f in plain.findings])
+
     def test_the_warp_footprint_is_the_larger_extent_of_the_contact_hull(self) -> None:
         warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(15))
         small = self.orient(stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]]), calibrations=[CONTACT, warp])
