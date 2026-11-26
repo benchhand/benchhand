@@ -28,6 +28,7 @@ CAD = Path(__file__).resolve().parents[1]
 INTEGRATION = CAD / "harness/pi/integration"
 PI = INTEGRATION / "node_modules/.bin/pi"
 SUBAGENTS = INTEGRATION / "node_modules/pi-subagents/index.js"
+WEB_ACCESS = INTEGRATION / "node_modules/pi-web-access"
 REQUIRED = os.environ.get("CAD_REQUIRE_PI") == "1"
 AVAILABLE = PI.is_file() and SUBAGENTS.is_file() and shutil.which("node") is not None
 BOM = "cad-bom/scripts/bom.py"
@@ -71,13 +72,13 @@ class PiSubagentTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         return self.home / ".pi/agent" if "--user" in scope else self.project / ".pi"
 
-    def run_pi(self, child_calls: list[dict[str, object]], *flags: str) -> list[dict[str, object]]:
+    def run_pi(self, child_calls: list[dict[str, object]], *flags: str, agent: str = "cad-clerk", marker: str = "You are a CAD clerk") -> list[dict[str, object]]:
         script = self.root / "script.json"
         script.write_text(json.dumps({
-            "childMarker": "You are a CAD clerk",
+            "childMarker": marker,
             "parent": [
                 {"name": "bash", "arguments": {"command": f"touch {self.parent_mark}"}},
-                {"name": "subagent", "arguments": {"agent": "cad-clerk", "task": "Run the scripted chore.", "async": False}},
+                {"name": "subagent", "arguments": {"agent": agent, "task": "Run the scripted chore.", "async": False}},
             ],
             "child": child_calls,
         }), encoding="utf-8")
@@ -170,6 +171,24 @@ class PiSubagentTests(unittest.TestCase):
         self.assertEqual((self.project / ".cad-work/u1/note.md").read_text(encoding="utf-8"), "one 2\n")
         self.assertTrue(record["isError"], self.output)
         self.assertEqual((self.project / "hw/product.yaml").read_text(encoding="utf-8"), "one two\n")
+
+    def install_web_access(self) -> None:
+        """Stand in for `pi install npm:pi-web-access`: the package where pi keeps user npm packages, listed in its settings."""
+        modules = self.home / ".pi/agent/npm/node_modules"
+        modules.mkdir(parents=True)
+        (modules / "pi-web-access").symlink_to(WEB_ACCESS)
+        (self.home / ".pi/agent/settings.json").write_text(json.dumps({"packages": ["npm:pi-web-access"]}), encoding="utf-8")
+
+    def test_the_sourcing_researcher_child_has_the_web_tools(self) -> None:
+        # A foreground child loads no ambient extension, so the agent must name pi-web-access itself.
+        self.install("--user")
+        self.install_web_access()
+        entries = self.run_pi([{"name": "fetch_content", "arguments": {"url": "http://127.0.0.1:9/"}}],
+                              agent="cad-sourcing-researcher", marker="You are a read-only sourcing researcher")
+        self.assertEqual([entry["tool"] for entry in self.child_results(entries)], ["fetch_content"], self.output)
+        (fetch,) = self.child_results(entries)
+        self.assertNotIn("not found", str(fetch["text"]).lower(), self.output)
+        self.assertNotIn("unknown tool", str(fetch["text"]).lower(), self.output)
 
     def test_a_child_whose_guard_is_missing_runs_nothing(self) -> None:
         scope = self.install("--user")
