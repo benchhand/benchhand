@@ -858,15 +858,43 @@ def joint_cylinders(shape: Any) -> list[dict[str, Any]]:
         for i, j in itertools.combinations(members, 2):
             if i in rows and j in rows and _same_cylinder(rows[i], rows[j]):
                 root[find(j)] = find(i)
-    tangent: dict[int, set[int]] = {}
+    tangent: dict[int, set[Any]] = {}
     for index, row in rows.items():
         line = (row["location"], row["direction"])
         for edge in occ.subshapes(faces[index], "EDGE"):
             tangent.setdefault(find(index), set()).update(
-                other for other in _tangent_neighbours(occ.downcast(edge, "EDGE"), faces, adjacency, index, line)
+                _surface_key(faces[other], other)
+                for other in _tangent_neighbours(occ.downcast(edge, "EDGE"), faces, adjacency, index, line)
                 if other not in rows or find(other) != find(index))
     return [{**row, "blend": row["convex"] and len(tangent.get(index, ())) >= 2}
             for index, row in rows.items() if find(index) == index]
+
+
+def _surface_key(face: Any, index: int) -> Any:
+    """One key per underlying surface, so the fragments of one plane or one cylinder count once as a tangent support:
+    a plane by its unit normal and offset, a cylinder by its axis line and radius (both sign-free and rounded to 1e-6),
+    any other surface by its face."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane
+
+    adaptor = BRepAdaptor_Surface(face)
+    if adaptor.GetType() == GeomAbs_Plane:
+        plane = adaptor.Plane()
+        normal = _sign_free(_xyz(plane.Axis().Direction()))
+        return "plane", *(round(c, 6) + 0.0 for c in (*normal, _dot(normal, _xyz(plane.Location()))))
+    if adaptor.GetType() == GeomAbs_Cylinder:
+        axis = adaptor.Cylinder().Axis()
+        direction = _sign_free(_xyz(axis.Direction()))
+        location = _xyz(axis.Location())
+        foot = _sub(location, tuple(_dot(location, direction) * c for c in direction))  # the axis point nearest 0
+        return "cylinder", *(round(c, 6) + 0.0 for c in (*direction, *foot, adaptor.Cylinder().Radius()))
+    return "face", index
+
+
+def _sign_free(direction: tuple[float, float, float]) -> tuple[float, float, float]:
+    """`direction` or its opposite, whichever has its first clearly nonzero component positive."""
+    lead = next((c for c in direction if abs(c) > 1e-9), 1.0)
+    return direction if lead > 0 else (-direction[0], -direction[1], -direction[2])
 
 
 def planar_faces(shape: Any) -> list[dict[str, Any]]:
