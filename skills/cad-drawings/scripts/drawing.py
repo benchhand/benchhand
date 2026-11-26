@@ -499,6 +499,7 @@ def run_part(context: drawing_contract.DrawingContext, pn: str, output_dir: Path
         if vendor:
             binding = fg.Binding(binding.features, binding.owner,
                                  tuple(f for f in binding.findings if f["code"] != "geometry_unaccounted"))
+        binding = binding.usable()   # a stale or ambiguous locator stays in the findings; nothing downstream looks it up
         measured = drawing_intent.measure(pn, record, context.product, context.interfaces, binding, faces)
         if measured.frame is None:
             report = completeness.evaluate(pn, record, context.interfaces, binding, measured, None, part.step_sha256,

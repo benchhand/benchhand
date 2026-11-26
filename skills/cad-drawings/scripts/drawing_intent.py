@@ -540,7 +540,8 @@ class Measurer:
         self.drawing = part.get("drawing") or {}
         self.product = product
         self.interfaces = interfaces
-        self.binding = binding
+        self.failed = binding.failed()
+        self.binding = binding.usable()
         self.faces = {f.index: f for f in faces}
         self.policies = policies(product)
         # the policy of the sheet's general-tolerance note; any other policy prints on its own dimensions
@@ -635,8 +636,6 @@ class Measurer:
                 axis = frame.axis_of(datum.direction)
                 if axis:
                     self.locate(axis[0], frame.coords(datum.point)["xyz".index(axis[0])])
-        failed = {f.get("feature") for f in self.binding.findings
-                  if f["code"] in ("feature_not_found", "feature_ambiguous")}
         for feature_id in sorted(features):
             feature = features[feature_id]
             if self.vendor:
@@ -654,15 +653,14 @@ class Measurer:
                 self.add(finding("invalid_drawing_intent", f"feature {feature_id} kind {feature.kind!r} is not one of "
                                  f"{', '.join(DIMENSIONED_KINDS)}", feature=feature_id))
                 continue
-            if feature_id in failed:   # a stale or ambiguous locator: the binding finding names it; nothing to measure
-                continue
             try:
                 handler(feature, frame)
             except IntentError as exc:
                 self.add(finding(exc.code, f"{feature_id}: {exc}", feature=feature_id))
         for feature_id in sorted(set(self.intents) - set(features)):
-            self.add(finding("feature_not_found", f"drawing.features names {feature_id}, which the model's "
-                             f"drawing_features hook did not locate", feature=feature_id))
+            why = ("whose locator matched no face, or an ambiguous one, in this model" if feature_id in self.failed
+                   else "which the model's drawing_features hook did not locate")
+            self.add(finding("feature_not_found", f"drawing.features names {feature_id}, {why}", feature=feature_id))
         self._requests(frame)
         self._geometric(frame)
         if not self.vendor:  # the vendor envelope is illustrative: its ends need no location
@@ -1135,19 +1133,32 @@ class Measurer:
 
     def _engraving(self, feature: ResolvedFeature, frame: DatumFrame) -> None:
         on = feature.relations.get("on")
-        if not on or on[0] not in self.binding.features:
+        if not on:
             raise IntentError("invalid_drawing_intent", "an engraving needs an `on` relation to its surface feature")
-        surface = self.faces[self.binding.features[on[0]].faces[0]]
+        if on[0] not in self.binding.features:
+            raise IntentError("feature_not_found", f"the `on` surface {on[0]} of engraving {feature.id} is not bound: "
+                              "its locator matched no face, or an ambiguous one, in this model")
+        opening = [self.faces[i] for i in self.binding.features[on[0]].faces]
+        surface = opening[0]
         if surface.support_type != "plane":
             raise IntentError("invalid_drawing_intent", "an engraving surface must be a plane")
         own = self.own(feature)
         floors = [f for f in own if f.support_type == "plane" and fg.parallel(f.normal, surface.normal)]
-        # a V-cut has no flat floor: its depth is the groove's lowest point below the surface
-        lowest = [fg.dot(fg.sub(p, surface.point), surface.normal)
-                  for p in ([f.point for f in floors] if floors else [p for f in own for p in f.boundary_points()])]
-        if not lowest:
-            raise IntentError("measurement_failed", f"engraving {feature.id} has no geometry to take a depth from")
-        depth = max(abs(d) for d in lowest)
+        if floors:
+            depth = max(abs(fg.dot(fg.sub(f.point, surface.point), surface.normal)) for f in floors)
+        else:   # a V-cut has no flat floor: its depth is the groove's deepest point into the material below the opening
+            touching = {n for f in own for n in f.neighbours()}
+            borders = [f for f in opening if f.support_type == "plane" and f.index in touching]
+            if not borders:
+                raise IntentError("measurement_failed", f"engraving {feature.id} has no flat floor, and plane {on[0]} "
+                                  "does not border it; name the plane the cut opens through")
+            surface = borders[0]
+            inward = fg.scale(fg.unit(surface.normal), -1.0)   # the normal points out of the material
+            depth = max((fg.dot(fg.sub(p, surface.point), inward) for f in own for p in f.boundary_points()),
+                        default=0.0)
+            if depth < EPS:
+                raise IntentError("measurement_failed", f"engraving {feature.id} reaches no depth into the material "
+                                  f"below plane {on[0]}")
         axis = frame.axis_of(surface.normal)
         if axis is None:
             raise IntentError("dimension_coverage_incomplete", "the engraving surface is not normal to a frame axis")
@@ -1318,7 +1329,11 @@ class Measurer:
         if operation == "depth" and len(features) == 2:
             return self._sphere_depth(features)
         if operation == "axis_distance" and len(features) == 2:
-            a, b = (cylinder_instances([self.faces[i] for i in f.faces])[0] for f in features)
+            pair = [cylinder_instances([self.faces[i] for i in f.faces]) for f in features]
+            if not all(pair):
+                raise IntentError("measurement_failed", f"axis_distance needs a cylinder axis on each of "
+                                  f"{[f.id for f in features]}")
+            a, b = pair[0][0], pair[1][0]
             if not fg.parallel(a.axis_dir, b.axis_dir):
                 raise IntentError("measurement_failed", "the axes are not parallel")
             return fg.axis_distance(b.axis_point, a.axis_point, a.axis_dir), faces, None
