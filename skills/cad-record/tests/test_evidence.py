@@ -1324,22 +1324,40 @@ class EvidenceRunProducers(BuiltRecord):
 
 
 class EvidenceDigestCli(BuiltRecord):
-    """`evidence.py digest` on a ledger that cites a file the project lacks."""
+    """`evidence.py digest` on a ledger that cites a file the project cannot hold: a refusal finding, never exit 2."""
 
-    def test_a_missing_artifact_is_a_refusal_finding_naming_the_entry_and_field_not_exit_2(self) -> None:
+    FIELD = "hw/manufacturing/evidence.yaml#/entries/EV-001/artifacts/0/path"
+
+    def digest(self, cited: str) -> tuple[int, dict[str, Any]]:
         record = impact.read_record(self.hw)
         entry = acceptance.entry(record, "EV-001", {"product": True, "requirements": ["REQ-001"]}, "cad_valid",
-                                 requirement="REQ-001", version="v1", manifest_sha256=V1,
-                                 artifacts=["hw/manufacturing/sources/absent.pdf"])
+                                 requirement="REQ-001", version="v1", manifest_sha256=V1, artifacts=["hw/verification.csv"])
+        entry["artifacts"][0]["path"] = cited
         acceptance.write_ledger(self.hw, [entry])
         out = io.StringIO()
         with redirect_stdout(out):
             code = evidence.main(["digest", "--hw", str(self.hw), "--version", "v1"])
-        report = json.loads(out.getvalue())
-        self.assertEqual((code, report["status"]), (1, "refused"))
-        self.assertEqual([f["path"] for f in report["findings"]],
-                         ["hw/manufacturing/evidence.yaml#/entries/EV-001/artifacts/0/path"])
-        self.assertIn("hw/manufacturing/sources/absent.pdf is missing", report["findings"][0]["message"])
+        return code, json.loads(out.getvalue())
+
+    def test_a_cited_file_the_project_cannot_hold_is_a_refusal_naming_the_entry_and_field(self) -> None:
+        sources = self.hw / "manufacturing" / "sources"
+        sources.mkdir(parents=True, exist_ok=True)
+        (sources / "link.pdf").symlink_to(self.hw / "verification.csv")
+        cases = {
+            "missing": ("hw/manufacturing/sources/absent.pdf", "is missing"),
+            "linked": ("hw/manufacturing/sources/link.pdf", "symbolic link"),
+            "escaping": ("hw/../outside.txt", "outside the project root"),
+            "unnormalized": ("hw/manufacturing/./sources/a.pdf", "not a normalized path"),
+            "NUL": ("hw/manufacturing/sources/a\x00b.pdf", "not a valid path"),
+        }
+        for name, (cited, text) in cases.items():
+            with self.subTest(name):
+                code, report = self.digest(cited)
+                self.assertEqual((code, report["status"]), (1, "refused"))
+                self.assertNotIn("evidence_sha256", report)
+                self.assertNotIn("inventory", report)
+                self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD])
+                self.assertIn(text, report["findings"][0]["message"])
 
 
 class EvidenceRunCli(BuiltRecord):
