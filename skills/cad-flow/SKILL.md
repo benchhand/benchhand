@@ -24,6 +24,7 @@ TRIGGER
    - 0: continue.
    - 3: run the status command again.
    - 1: fix the required check, then warm in the foreground until exit 0.
+     A failure named `fea-profile` or `fea-solvers` belongs to this project, not to the warm-up: fix `hw/product.yaml` or install the solver, then run the status command again. A foreground `--warm` does not check FEA.
    - 2: warm in the foreground.
 2. Establish the project's `hw/` design record and approved scope using `references/flow.md`.
    `cad-record` owns validation and path resolution. `../cad-record/references/layout.md` is the canonical layout table; `../cad-record/references/layout-api.md` is the command API.

@@ -289,7 +289,9 @@ class WarmRecordTests(unittest.TestCase):
         self.path = preflight.warm_record_path(self.environ)
 
     def report(self, status: str) -> dict:
-        return preflight.Report((preflight.Check("cadquery", "cadquery", status, True, "d", "fix it"),)).as_json()
+        checks = tuple(preflight.Check(name, name, status if name == "cadquery" else "pass", True, "d", "fix it")
+                       for name in preflight.WARM_IDS)
+        return preflight.Report(checks).as_json()
 
     def test_the_record_is_keyed_by_this_plugin_copy_under_the_cache_home(self) -> None:
         self.assertTrue(self.path.is_relative_to(Path(self.environ["XDG_CACHE_HOME"]) / "cad-flow" / "warm"))

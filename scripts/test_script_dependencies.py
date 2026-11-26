@@ -38,11 +38,15 @@ PROVIDERS = {
 # - runner.py (in the kernel's environment) calls record.load_layout only (runner.py:111), and the cadmodel
 #   package loads pose.py for its geometry rules (occ.py:18), while pose.py loads yaml_loader.py only to read an
 #   assembly. The first element of a pair is a path prefix;
+# - preflight.py imports fea_profile.py (which loads flow_profile.py and PyYAML) inside project_fea only, to
+#   read a project's FEA setting. The cad-model runners, cad-analysis and cad-drawings reach preflight.py for
+#   the FreeCAD lookup alone. preflight.py declares pyyaml itself, and a test pins that it does;
 # - review_render.py calls record.load_yaml_loader only (review_render.py:126) and runs build_reference.py as a
 #   tool (review_render.py:118).
 OPTIONAL_LOADS = frozenset(
     {
         ("cad-record/scripts/emit.py", "sarif"),
+        ("cad-flow/scripts/preflight.py", "fea_profile"),
         ("cad-flow/scripts/scratch.py", "form_check"),
         ("cad-flow/scripts/scratch.py", "cad_model"),
         ("cad-motion/scripts/motion.py", "render"),
