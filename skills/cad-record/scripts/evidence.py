@@ -118,7 +118,10 @@ RESULTS = ("pass", "fail", "waived", "not_applicable", "not_assessed", "stale", 
 RESOLVED = frozenset({"pass", "waived", "not_applicable"})
 _WORST_FIRST = ("fail", "stale", "unknown", "planned", "not_assessed", "waived", "pass", "not_applicable")
 PACKET_KIND = "cad-evidence-packet"
-PACKET_SCHEMA_VERSION = 1
+# Version 2 adds each status's scope and the packet's scope_rules_sha256. A stamp sealed with version 1 still reads:
+# its gate is recomputed under the current scope, as every stamped packet's is.
+PACKET_SCHEMA_VERSION = 2
+PACKET_READ_VERSIONS = (1, 2)
 INVENTORY_SCHEMA = "cad-acceptance-inventory/1"
 LEDGER_FILES = ("verification.csv", "manufacturing/evidence.yaml", "manufacturing/findings.yaml")
 SOURCES_DIR = "manufacturing/sources"
@@ -207,12 +210,15 @@ class Status:
     sources: tuple[str, ...] = ()  # the packet bundles and evidence ids that decided it
     reasons: tuple[str, ...] = ()
     waiver: Mapping[str, Any] | None = None
+    scope: Mapping[str, str] | None = None  # project_scope.ProjectScope.obligation_scope: disposition, rule, reason
 
     def as_dict(self) -> dict[str, Any]:
         item: dict[str, Any] = {"result": self.result, "level": self.obligation.level, "stage": self.obligation.stage,
                                 "sources": list(self.sources), "reasons": list(self.reasons)}
         if self.waiver is not None:
             item["waiver"] = impact.plain(self.waiver)
+        if self.scope is not None:
+            item["scope"] = dict(self.scope)
         return item
 
 
@@ -491,6 +497,7 @@ class Assessment:
             "kind": PACKET_KIND, "schema_version": PACKET_SCHEMA_VERSION, "record_version": self.record.version,
             "version": self.version, "version_manifest_sha256": self.manifest_sha256, "record_sha256": record_sha256,
             "expected_sha256": expected_digest(self.expected), "stage": stage,
+            "scope_rules_sha256": self.scope.rules_sha256,
             "expected": [o.as_dict() for o in self.expected],
             "statuses": {ident: status.as_dict() for ident, status in self.statuses.items()},
             "facets": {key: dict(levels) for key, levels in self.facets.items()},
@@ -830,19 +837,20 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
                                  "obligation": item.get("obligation"), "consequence": item.get("consequence")})
 
     statuses = {}
+    scope = project_scope.ProjectScope.of(record)
     for obligation in expected:
         found = candidates[obligation.id]
         result = _best([r for r, _, _ in found], obligation.id in waivers)
         statuses[obligation.id] = Status(obligation, result, tuple(dict.fromkeys(s for _, s, _ in found)),
                                          tuple(dict.fromkeys(reason for _, _, reason in found if reason)),
-                                         waivers.get(obligation.id) if result == "waived" else None)
+                                         waivers.get(obligation.id) if result == "waived" else None,
+                                         scope.obligation_scope(obligation.as_dict()))
 
     facets = _facets(record, expected, statuses, untargeted)
     rows = _verification(record, verification, facets, entry_results, findings)
     report = selection.assess(record, input_sha256=selection_sha256)
     return Assessment(record, version, manifest_sha256, expected, statuses, facets, tuple(rows), tuple(findings),
-                      tuple(critical), complete, report, selection_approval(record, approved),
-                      project_scope.ProjectScope.of(record))
+                      tuple(critical), complete, report, selection_approval(record, approved), scope)
 
 
 def selection_approval(record: Any, approved: Callable[[str | None], bool]) -> bool | None:
@@ -1381,9 +1389,11 @@ _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved"
 def packet_problems(data: Any, *, record: Any, record_sha256: str, stage: str) -> list[str]:
     """Why an evidence packet is not the assessment of `record` (whose record inputs digest to
     `record_sha256`) at `stage`: not an evidence packet, computed from another record (sources changed
-    during or after the check), other expected checks, a missing or partial expected check, or another
-    stage. Such a packet never stamps, passed or not."""
-    if not isinstance(data, Mapping) or data.get("kind") != PACKET_KIND or data.get("schema_version") != PACKET_SCHEMA_VERSION:
+    during or after the check), other expected checks, a missing or partial expected check, another
+    stage, or (version 2) other service-class scope rules. Such a packet never stamps, passed or not.
+    A version 1 packet, sealed before the scope was recorded, still reads."""
+    version = data.get("schema_version") if isinstance(data, Mapping) else None
+    if version is None or data.get("kind") != PACKET_KIND or isinstance(version, bool) or version not in PACKET_READ_VERSIONS:
         return ["it is not an evidence packet; run `evidence.py check --hw hw --version vN --out .cad-work/evidence.json`"]
     problems = []
     if data.get("record_sha256") != record_sha256:
@@ -1400,6 +1410,9 @@ def packet_problems(data: Any, *, record: Any, record_sha256: str, stage: str) -
         problems.append("it is partial (complete: false): a producer packet was partial or invalid")
     if data.get("stage") != stage:
         problems.append(f"it was assessed for stage {data.get('stage')}, not {stage}")
+    if version != 1 and data.get("scope_rules_sha256") != project_scope.ProjectScope.of(record).rules_sha256:
+        problems.append("it was judged under other service-class scope rules (scope_rules_sha256), so it is stale; run "
+                        "`evidence.py check --hw hw --version vN --out .cad-work/evidence.json` again")
     return problems
 
 
