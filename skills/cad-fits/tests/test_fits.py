@@ -168,6 +168,11 @@ class DeclaredFitTests(unittest.TestCase):
             with self.subTest(name), self.assertRaisesRegex(fits.FitError, f"{field}.*accepted forms"):
                 fits.declared_fit(entry)
 
+    def test_an_iso_designation_may_separate_its_size_by_any_whitespace(self) -> None:
+        for text in ("25\tH7/p6", "25  H7/p6", " 25 H7/p6 "):
+            with self.subTest(repr(text)):
+                self.assertEqual(fits.declared_fit({"fit": text})["type"], "interference")
+
     def test_a_vendor_designation_is_unclassified_where_the_kind_allows_one(self) -> None:
         self.assertEqual(fits.declared_fit({"fit": "5 dowel to vendor limits"}, vendor_designation=True)["type"],
                          "unclassified")
