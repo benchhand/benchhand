@@ -106,6 +106,26 @@ The user's answers to the project-start questions live in `product.yaml` `flow.p
 - `validate.py` is listed in `GATE_ONLY` in `skills/cad-motion/scripts/code_shas.py`: a gate that decides refuse or allow, and changes no output, stays out of the manufacturing output key. `test_mfg_key_location` `OutputKeyInputTests` pins both sides: a validator edit leaves the key, an edit to `manufacturing_intent.py` changes it.
 - The commit check reads the index only: the product, the part records (`tree_parts`) and the decision records (`tree_decisions`) come from the staged tree, or from HEAD with `--committed`. A decision that is accepted in the work tree but proposed in the index does not pass. Do not add a work-tree read to it.
 
+## Service-class scope
+
+`skills/cad-record/scripts/project_scope.py` holds the one table of what each service class owes. `RULES` gives each rule one disposition per class:
+
+- `required`
+- `check_before_use`
+- `advisory`
+- `out_of_scope`
+
+The module:
+
+
+- Owner: `project_scope.py`. It loads `manufacturing_intent.py` and `flow_profile_gate.py` by path and reads no file. `ProjectScope.of(record)` reads the service class and the flow profile once. An unknown or unlisted class resolves every rule to `required`.
+- An obligation rule selects families by prefix and the evidence levels it covers. The first matching rule decides, so a narrower prefix (`optical.route`, `motion.play`) comes before its family.
+- `required_checks` takes no scope input. The obligation list and `expected_sha256` stay the same for every class.
+- `SERVICE_POLICY` moved here from `evidence.py`, which re-exports it. It keeps the release columns of a class: the levels it may claim and whether it allows an unvalidated trial.
+- `evidence.py` `in_release_scope` is `project_scope.in_release_scope`: an obligation is in a release's scope unless its disposition is `out_of_scope`. Gates before the release do not read the scope yet (design T3, epic benchhand-vwo).
+- `rules_sha256(service_class)` is the digest of `RULES` and the class, as canonical JSON.
+- Tests: `skills/cad-record/tests/test_project_scope.py`. `fixtures/release_scope_5dcd2c92.json` holds the release scope of every family, level and class as `SERVICE_POLICY` gave it at 5dcd2c92, before the move. A rule change that alters release scope fails that test. Only an approved decision to change the scope justifies regenerating the fixture.
+
 ## Hiding and ghosting parts in renders
 
 `render.py` and `motion.py render` take repeatable `--hide`, `--ghost` and `--show` (a PN or an occurrence id). The optional `part.yaml` field `render: shown|ghost|hidden` (`part.schema.json`) sets a part's default, and the flags override it.

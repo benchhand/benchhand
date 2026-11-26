@@ -105,6 +105,7 @@ layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 selection = _load_module("cad_record_selection", SCRIPTS / "selection.py")
 cited_paths = _load_module("cad_record_evidence_paths", SCRIPTS / "evidence_paths.py")
 operations = _load_module("cad_record_assembly_operations", SCRIPTS / "assembly_operations.py")
+project_scope = _load_module("cad_record_project_scope", SCRIPTS / "project_scope.py")
 SKILLS = SCRIPTS.parents[1]
 
 STAGES = mi.STAGES
@@ -148,32 +149,10 @@ _REQUIRED_DOMAINS: Mapping[str, Mapping[str, frozenset[str]]] = {
                 PHYSICAL: frozenset({"geometry", "criterion", "use_case"})},
 }
 
-# The minimum release policy per service class: which obligations a release must resolve (families by
-# prefix, with the levels they count at), which evidence levels it may claim, and whether an
-# unvalidated trial (a waived physical obligation) is permitted. Approved requirements and the
-# evidence policy (requirement.*, policy.*) are always in scope: a project may demand more.
-_LOWER = frozenset({"cad_valid", "geometrically_manufacturable", "process_planned"})
-_MAKE = ("intent.", "cad.", "route.", "process.", "purchase.", "optical.route", "export.")
-_FIT = _MAKE + ("interface.", "feature.", "assembly.", "motion.play")
-_FUNCTION = _FIT + ("engineering.", "function.", "contact.", "motion.", "optical.")
-
-
-@dataclass(frozen=True)
-class ServicePolicy:
-    families: tuple[str, ...] | None  # None: every family
-    levels: frozenset[str]  # the levels at which `families` are in scope; the lower ones only for appearance
-    claims: frozenset[str]
-    trial: bool
-
-
-SERVICE_POLICY: Mapping[str, ServicePolicy] = {
-    "appearance_concept": ServicePolicy(_MAKE, _LOWER, _LOWER, False),
-    "fit_assembly": ServicePolicy(_FIT, frozenset(LEVELS), _LOWER | {PHYSICAL}, True),
-    "functional_demo": ServicePolicy(_FUNCTION, frozenset(LEVELS), frozenset(LEVELS), True),
-    "working_prototype": ServicePolicy(None, frozenset(LEVELS), frozenset(LEVELS), True),
-    "production": ServicePolicy(None, frozenset(LEVELS), frozenset(LEVELS), False),
-    "safety_critical": ServicePolicy(None, frozenset(LEVELS), frozenset(LEVELS), False),
-}
+# The minimum release policy per service class lives in project_scope.py: its RULES say which obligations a
+# release must resolve (in_release_scope), SERVICE_POLICY which evidence levels it may claim and whether an
+# unvalidated trial (a waived physical obligation) is permitted.
+SERVICE_POLICY: Mapping[str, Any] = project_scope.SERVICE_POLICY
 
 
 class EvidenceError(ValueError):
@@ -516,16 +495,8 @@ class Assessment:
 
 
 def in_release_scope(obligation: Mapping[str, Any], service_class: str | None) -> bool:
-    """Whether a release of `service_class` must resolve `obligation` (schema form)."""
-    family, level = obligation["family"], obligation["level"]
-    if family.startswith(("requirement.", "policy.")):
-        return True
-    policy = SERVICE_POLICY.get(service_class or "")
-    if policy is None:
-        return True
-    if policy.families is None:
-        return True
-    return family.startswith(policy.families) and level in policy.levels
+    """Whether a release of `service_class` must resolve `obligation` (schema form): project_scope RULES."""
+    return bool(project_scope.in_release_scope(obligation, service_class))
 
 
 def obligation_gate(expected: Sequence[Mapping[str, Any]], results: Mapping[str, str], stage: str,
