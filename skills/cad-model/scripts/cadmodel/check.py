@@ -628,7 +628,7 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
         if item["classification"] == "invalid":
             declared_fit_findings.append({**item, "type": "fit_invalid"})
             continue
-        if item["classification"] != "interference":
+        if not load_pair_policy().overlap_allowed(item):
             continue
         measurement = geometry.get(cast(Pair, pair))
         if "compliance" in item:
@@ -695,7 +695,7 @@ def measure_compliant_overlaps(geometry: dict[Pair, dict[str, Any]], fits: Itera
     for item in fits:
         pair = cast(Pair, tuple(item["pair"]))
         row = geometry.get(pair)
-        if ("compliance" not in item or item["classification"] != "interference" or row is None
+        if ("compliance" not in item or not load_pair_policy().overlap_allowed(item) or row is None
                 or row["method"] != "exact" or not (row["interference_mm3"] or 0.0) > pose.INTERFERENCE_MM3):
             continue
         shape_a, shape_b = (parts[located[oid][0]].shape for oid in pair)
@@ -1360,7 +1360,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
         pair = tuple(item["pair"])
         minimum[pair] = max(minimum.get(pair, 0.0), item["min_clearance_mm"] + item["margin_mm"])
     exact_required = ({tuple(e["pair"]) for e in joints if e["type"] == "fixed"}
-                      | {tuple(i["pair"]) for i in [*declared, *locating] if i["classification"] == "interference"})
+                      | {tuple(i["pair"]) for i in [*declared, *locating] if load_pair_policy().overlap_allowed(i)})
     specs = {pair: PairSpec(located[pair[0]][0], located[pair[1]][0], relative[pair], minimum.get(pair, 0.0),
                             pair in exact_required) for pair in chosen}
     mesh_bound, description = mesh_bounds({pn: parts[pn].shape for pn in {s.a for s in specs.values()}

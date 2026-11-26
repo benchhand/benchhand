@@ -274,11 +274,16 @@ def declared_heat_sets(hw: Path, interfaces: list[Any], assembly: Any) -> list[d
 
 def allowed_pairs(press_fits: Iterable[dict[str, Any]], heat_sets: Iterable[dict[str, Any]],
                   locating_fits: Iterable[dict[str, Any]] = ()) -> set[tuple[str, str]]:
-    """The occurrence pairs whose shared volume is declared: interference press and locating fits, and
-    heat-set inserts. A transition, clearance or unclassified locating fit allows none."""
-    allowed = {tuple(item["pair"]) for items in (press_fits, locating_fits) for item in items
-               if item["classification"] == "interference"}
+    """The occurrence pairs whose shared volume is declared: interference press and locating fits, compliant fits
+    whatever their rigid classification (cad-model check bounds their overlap by `max_interference_mm`), and heat-set
+    inserts. A transition, clearance, unclassified or invalid fit that is not compliant allows none."""
+    allowed = {tuple(item["pair"]) for items in (press_fits, locating_fits) for item in items if overlap_allowed(item)}
     return allowed | {tuple(item["pair"]) for item in heat_sets}
+
+
+def overlap_allowed(item: dict[str, Any]) -> bool:
+    """Whether a declared fit allows shared volume: a rigid interference fit, or a validated compliant fit."""
+    return item["classification"] == "interference" or (item["classification"] != "invalid" and "compliance" in item)
 
 
 def fitted_pairs(*declarations: Iterable[dict[str, Any]]) -> set[tuple[str, str]]:
