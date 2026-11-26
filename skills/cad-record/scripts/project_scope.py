@@ -64,18 +64,20 @@ OUT_OF_SCOPE = "out_of_scope"
 
 @dataclass(frozen=True)
 class Obligations:
-    """The obligations a rule covers: families by prefix (None: every family) at the given evidence levels."""
+    """The obligations a rule covers: families by prefix (None: every family) at the given evidence levels (None:
+    every level, one outside the schema too, such as a typo in a requirement's evidence_required)."""
 
     families: tuple[str, ...] | None
-    levels: frozenset[str]
+    levels: frozenset[str] | None
 
     def matches(self, obligation: Mapping[str, Any]) -> bool:
         family, level = obligation["family"], obligation["level"]
-        return (self.families is None or family.startswith(self.families)) and level in self.levels
+        return ((self.families is None or family.startswith(self.families))
+                and (self.levels is None or level in self.levels))
 
     def as_dict(self) -> dict[str, Any]:
         return {"families": None if self.families is None else list(self.families),
-                "levels": [level for level in LEVELS if level in self.levels]}
+                "levels": None if self.levels is None else [level for level in LEVELS if level in self.levels]}
 
 
 @dataclass(frozen=True)
@@ -119,7 +121,7 @@ _FIT = ("interface.", "feature.", "assembly.", "motion.play")
 _FUNCTION = ("engineering.", "function.", "contact.", "motion.", "optical.")
 
 RULES: tuple[Rule, ...] = (
-    Rule("obligation.requirements", Obligations(("requirement.", "policy."), _ALL), _owed_from("appearance_concept"),
+    Rule("obligation.requirements", Obligations(("requirement.", "policy."), None), _owed_from("appearance_concept"),
          None, "Approved requirements and the evidence policy, at every level: a project may demand more"),
     Rule("obligation.make", Obligations(_MAKE, _LOWER), _owed_from("appearance_concept"), None,
          "Make checks (intent, CAD, route, process, purchase, optical route, export) at the CAD, geometry and "
@@ -130,9 +132,11 @@ RULES: tuple[Rule, ...] = (
          "Fit checks: interfaces, features, assembly and motion play"),
     Rule("obligation.function", Obligations(_FUNCTION, _ALL), _owed_from("functional_demo"), None,
          "Function checks: engineering, function, contact, motion and optical"),
-    Rule("obligation.other", Obligations(None, _ALL), _owed_from("working_prototype"), None,
-         "Every other check family"),
+    Rule("obligation.other", Obligations(None, None), _owed_from("working_prototype"), None,
+         "Every other check family, and any check at a level outside the schema"),
 )
+if RULES[-1].applies_to != Obligations(None, None):
+    raise ValueError("the last rule must cover every family at every level, so every obligation has a rule")
 _BY_ID: Mapping[str, Rule] = types.MappingProxyType({rule.id: rule for rule in RULES})
 
 
