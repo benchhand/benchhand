@@ -281,6 +281,11 @@ def calibration(ident: str, characteristic: str, material: str, limits: dict[str
             "date": "2026-01-01"}
 
 
+def calibration_state(status: str) -> dict[str, Any]:
+    """A profile's calibration_state: whether the machine runs its standard built-in calibration or a custom one."""
+    return {"status": status, "source": {"kind": "user", "reference": "the owner's statement", "origin": "the printer owner"}}
+
+
 def capability_profile(ident: str, process: str, *, parameters: dict[str, Any] | None = None,
                        calibrations: list[dict[str, Any]] | None = None, materials: Any = None, provider: str = "local",
                        **extra: Any) -> dict[str, Any]:

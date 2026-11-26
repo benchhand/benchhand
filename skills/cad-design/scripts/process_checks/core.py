@@ -234,6 +234,7 @@ class Calibrated:
     reasons: tuple[str, ...]
     calibration: Any = None
     resolved: Any = None  # guidelines.Resolved when the status is guideline
+    state: str = ""  # what the profile's calibration_state says (Context.state_phrase), quoted beside a guideline value
 
     @property
     def known(self) -> bool:
@@ -245,7 +246,8 @@ class Calibrated:
         if self.status != "guideline":
             return ""
         lower, upper = self.limits.bounds
-        return f"uncalibrated: guideline value {lower:g}..{upper:g} {self.limits.units} used; calibrate to tighten"
+        lead = f"{self.state}: " if self.state else "uncalibrated: "
+        return f"{lead}guideline value {lower:g}..{upper:g} {self.limits.units} used; calibrate to tighten"
 
     @property
     def basis(self) -> str:
@@ -744,7 +746,7 @@ class Context:
         if found not in self.resolutions:
             self.resolutions.append(found)
         if found.status == "guideline" and found.operator == "between":
-            return Calibrated("guideline", characteristic, found.value, (), None, found)
+            return Calibrated("guideline", characteristic, found.value, (), None, found, self.state_phrase(profile))
         why = found.reasons or ((f"the guideline {characteristic} limit is {found.operator}, not an interval",)
                                 if found.status == "guideline" else (f"no guideline states {characteristic}",))
         status = instead.status if not instead.known else "unknown"
@@ -756,6 +758,20 @@ class Context:
         printer guideline settles a check and a calibration only tightens it (benchhand-c7q.30). A guideline value is
         noted as uncalibrated."""
         return PASS, _noted(coverage, cal.note) if cal.note else coverage
+
+    def state_phrase(self, profile: Any | None = None) -> str:
+        """What the capability profile's recorded calibration_state says where a guideline value governs, for a report to
+        quote; empty when none is recorded. Wording only: it never changes an outcome."""
+        profile = profile or self.profile
+        state = profile.raw.get("calibration_state") if profile is not None else None
+        status = state.get("status") if state else None
+        if status == "standard":
+            return "standard built-in calibration; guideline deviations apply"
+        if status == "custom":
+            return "custom calibration, none of it covers this check; guideline deviations apply"
+        if status == "unknown":
+            return "calibration state unknown; guideline deviations apply"
+        return ""
 
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""

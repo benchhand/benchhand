@@ -248,6 +248,8 @@ class Normalization(unittest.TestCase):
                                                 "intent.units"),
             "accuracy as a parameter": (lambda d: capability(d, 0)["parameters"].update(hole_accuracy=fx.known(fx.quantity(0.1))), "intent.profile"),
             "text parameter as a quantity": (lambda d: capability(d, 0)["parameters"].update(enclosure=fx.known(fx.quantity(1))), "intent.units"),
+            "custom calibration state without a measured calibration": (
+                lambda d: capability(d, 1).update(calibration_state=fx.calibration_state("custom"), calibrations=[]), "intent.profile"),
             "template used as a capability": (lambda d: capability(d, 0).update(template=True, guidance=["x"], calibrations=[]), "intent.profile"),
             "laser profile on a print": (lambda d: route(d)[0].update(capability="tst_laser"), "intent.profile"),
             "calibration from an estimate": (lambda d: capability(d, 0)["calibrations"][0].update(source=fx.source("estimate")), "intent.profile"),

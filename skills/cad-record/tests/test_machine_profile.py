@@ -145,6 +145,18 @@ class CheckTests(Case):
         self.put(p)
         self.assertEqual(self.messages(), [])
 
+    def test_standard_calibration_state_without_measurements_is_accepted(self) -> None:
+        for status in ("standard", "unknown"):
+            with self.subTest(status=status):
+                self.put(profile(calibration_state={"status": status, "source": user("the owner runs the built-in calibration only")}))
+                self.assertEqual(self.messages(), [])
+
+    def test_custom_calibration_state_without_a_measured_calibration_is_a_finding(self) -> None:
+        self.put(profile(calibration_state={"status": "custom", "source": user("the owner tuned the printer")}))
+        found = self.messages()
+        self.assertTrue(any(m.startswith("hw/manufacturing/capabilities.yaml: profiles/0/calibration_state:")
+                            and "custom" in m and "bench" in m for m in found), found)
+
     def test_pin_to_missing_set_is_refused(self) -> None:
         self.put(profile(guidelines=["no.such.set@1"]))
         found = self.messages()

@@ -12,7 +12,7 @@ schema-sha256 377686f92cdce11703004e869721cc69db870681de0a4d0e3a3b06f2fc720779 s
 schema-sha256 078be15a80317b69b47fef81c0bfe83b86e1d5b8d4a775feab87ac5c1e8746dd skills/cad-record/schemas/finding.schema.json
 schema-sha256 4b1f107ed3be3c46a1a68c1b4cb81f1625f3053f3a29f95bd6b0de2bd02f02af skills/cad-record/schemas/interfaces.schema.json
 schema-sha256 5d04c1dd2745de30144da9fe4080e55cea79e23c3a207b3474601dd6eb8e9125 skills/cad-record/schemas/layout.schema.json
-schema-sha256 2af936cbacdc55c0cf3789c97db7ef72a6e230ad2ab0a5a968862238ab75fcad skills/cad-record/schemas/manufacturing-capabilities.schema.json
+schema-sha256 910e02c23ad5cc2f81f3d8ec7027ea5196a6226a7567281fa095813a5727f082 skills/cad-record/schemas/manufacturing-capabilities.schema.json
 schema-sha256 6ef27bc4c8273de006b8606504ea0897de10da12688d904197b43c3d8dc84e72 skills/cad-record/schemas/manufacturing-check-result.schema.json
 schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b skills/cad-record/schemas/manufacturing-evidence.schema.json
 schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
@@ -2806,6 +2806,7 @@ Source: `/$defs/profile`
 | `workholding` | `ManufacturingTextFact` | no |  |  |
 | `constraints` | `ManufacturingTexts` | no |  |  |
 | `calibrations` | `list[ManufacturingCapabilitiesCalibration]` | yes |  |  |
+| `calibration_state` | `ManufacturingCapabilitiesProfileCalibrationState` | no |  | Whether the machine runs only its standard built-in calibration, a custom one, or is not known to. The state is a record that reports quote; it never sets a limit. standard and unknown need no measurement. custom needs at least one entry in calibrations: a custom calibration is claimed only with its measured results. Guideline values govern whatever limit no calibration covers |
 | `guidelines` | `list[ManufacturingGuidelineRef]` | no |  | The manufacturing guideline sets (id@revision) that this profile's machine layer names. They rank above every set that scope selects, and a calibration ranks above them. Sets of the generic, material and nozzle layers resolve by their scope and need no pin. It has no default |
 | `source` | `ManufacturingSource` | no |  |  |
 
@@ -2818,6 +2819,21 @@ Constraints not expressed by the type:
 - `tools`: minItems: 1
 - `guidelines`: minItems: 1
 - `guidelines`: uniqueItems: true
+
+### ManufacturingCapabilitiesProfileCalibrationState
+
+Source: `/$defs/profile/properties/calibration_state`
+
+Whether the machine runs only its standard built-in calibration, a custom one, or is not known to. The state is a record that reports quote; it never sets a limit. standard and unknown need no measurement. custom needs at least one entry in calibrations: a custom calibration is claimed only with its measured results. Guideline values govern whatever limit no calibration covers
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `status` | `Literal["standard", "custom", "unknown"]` | yes |  |  |
+| `source` | `ManufacturingSource` | yes |  | who or what states it |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
 
 ### ManufacturingCapabilitiesProfileEnvelope
 

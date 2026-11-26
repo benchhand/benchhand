@@ -328,6 +328,19 @@ class BedStabilityTests(Checks):
         self.assertEqual(found["criterion"]["status"], "unknown")
         self.assertIn("bed contact area not assessed: no calibration or guideline", result.outcome(self.OBLIGATION)["coverage"])
 
+    def test_a_recorded_standard_state_is_quoted_on_the_advisory_and_changes_no_outcome(self) -> None:
+        documents = printed("TST-0101", {"strategy": "none"}, calibrations=[])
+        profile = documents["manufacturing/capabilities.yaml"]["profiles"][0]
+        plain = self.assess(copy.deepcopy(documents), geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)))
+        profile["calibration_state"] = {"status": "standard",
+                                        "source": {"kind": "user", "reference": "factory calibration only", "origin": "the printer owner"}}
+        stated = self.assess(documents, geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)))
+        self.assertEqual(self.outcome(stated, self.OBLIGATION), "not_assessed")
+        self.assertIn("standard built-in calibration; guideline deviations apply", stated.outcome(self.OBLIGATION)["coverage"])
+        self.assertNotIn("standard built-in", plain.outcome(self.OBLIGATION)["coverage"])
+        self.assertEqual([(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in stated.findings],
+                         [(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in plain.findings])
+
     def test_the_warp_footprint_is_the_larger_extent_of_the_contact_hull(self) -> None:
         warp = calibration("warp_coupon", "warp", POLYMER, 0.1, 0.2, size=mm(15))
         small = self.orient(stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]]), calibrations=[CONTACT, warp])
@@ -2775,8 +2788,10 @@ class GuidelineWithoutCalibrationTests(Checks):
     HOLE = deviation("hole_diameter_deviation", -0.5, 0.5)
     BED = stable([2.0, 2.0], [[0, 0], [10, 0], [10, 12], [0, 12]])
 
-    def warped(self, flatness: str, *, catalog: Any, calibrations: tuple = ()) -> Any:
+    def warped(self, flatness: str, *, catalog: Any, calibrations: tuple = (), state: dict | None = None) -> Any:
         documents = guided(service="functional_demo", calibrations=(CONTACT, *calibrations))
+        if state:
+            documents["manufacturing/capabilities.yaml"]["profiles"][0]["calibration_state"] = state
         documents["parts/TST-0101/part.yaml"]["intent"]["critical_surfaces"] = [
             surface("datum_a", "datum", criteria=[_flatness_criterion(flatness)])]
         return self.assess(documents, geometry("TST-0101", self.BED), catalog=catalog)
@@ -2798,6 +2813,16 @@ class GuidelineWithoutCalibrationTests(Checks):
         self.assertEqual(self.outcome(result, obligation), "pass")
         self.assertIn("uncalibrated: guideline value 0..1 mm used; calibrate to tighten", result.outcome(obligation)["coverage"])
         self.assertEqual(result.by_code("process.fdm.warp_uncalibrated"), [])
+
+    def test_a_recorded_standard_state_is_quoted_beside_the_guideline_value_and_changes_no_outcome(self) -> None:
+        state = {"status": "standard", "source": {"kind": "user", "reference": "factory calibration only", "origin": "the printer owner"}}
+        plain = self.warped("<= 1.5", catalog=accuracy_catalog(self.WARP))
+        stated = self.warped("<= 1.5", catalog=accuracy_catalog(self.WARP), state=state)
+        obligation = self.thermal(stated)
+        self.assertIn("standard built-in calibration; guideline deviations apply: guideline value 0..1 mm used; calibrate to tighten",
+                      stated.outcome(obligation)["coverage"])
+        self.assertEqual(self.outcome(stated, obligation), self.outcome(plain, obligation))
+        self.assertEqual(sorted(f["code"] for f in stated.findings), sorted(f["code"] for f in plain.findings))
 
     def test_a_guideline_warp_fails_a_flatness_limit_it_misses_with_basis_guideline(self) -> None:
         result = self.warped("<= 0.5", catalog=accuracy_catalog(self.WARP))

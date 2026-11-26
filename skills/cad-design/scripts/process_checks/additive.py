@@ -62,7 +62,9 @@ def _no_basis(ctx: Context, findings: list[Draft], draft: Draft, what: str, othe
     if (process or _k(ctx)) not in PRINTERS or ctx.stock_material_id(op) is None:
         return UNKNOWN, otherwise
     draft.outcome, draft.severity, draft.reason = NOT_ASSESSED, "minor", NO_BASIS
-    return NOT_ASSESSED, f"{what} not assessed: {why}; print and inspect, or calibrate to assess"
+    state = ctx.state_phrase()
+    detail = f" ({state})" if state else ""
+    return NOT_ASSESSED, f"{what} not assessed: {why}{detail}; print and inspect, or calibrate to assess"
 
 
 def hole_class(axis: Any) -> str:
