@@ -509,6 +509,34 @@ class Sync(ScratchCase):
         self.assertEqual(report["added"], ["parts/PRT-0002/part.yaml"])
         self.assertTrue((scratch_hw / "interfaces.yaml").read_text(encoding="utf-8").endswith("# unit\n"))
 
+    def deliver_and_expect_no_proposal(self, unit: str) -> None:
+        before = tree(self.hw)
+        code, report = self.scratch("deliver", "--hw", "hw", "--unit", unit)
+        self.assertEqual((code, report["status"]), (0, "delivered"), report)
+        self.assertEqual(report["proposals"], [])
+        self.assertEqual(tree(self.hw), before)
+
+    def test_a_lead_only_edit_to_a_shared_file_is_copied_in_and_is_not_proposed_back(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead widened IF-004\n")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["modified"]), (0, "synced", ["interfaces.yaml"]), report)
+        self.assertEqual((scratch_hw / "interfaces.yaml").read_bytes(), (self.hw / "interfaces.yaml").read_bytes())
+        self.deliver_and_expect_no_proposal("unit-a")
+
+    def test_sync_links_the_leads_new_store_files_and_deliver_ignores_them(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        stored = [f".cad/cache/objects/{'b' * 64}", f".cad/cache/records/{'b' * 64}.json"]
+        for rel in stored:
+            (self.hw / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.hw / rel).write_text("lead\n", encoding="utf-8")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["seeded_store_files"]), (0, "synced", 2), report)
+        for rel in stored:
+            self.assertEqual((scratch_hw / rel).stat().st_ino, (self.hw / rel).stat().st_ino, rel)
+        self.deliver_and_expect_no_proposal("unit-a")
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
