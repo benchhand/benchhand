@@ -322,6 +322,17 @@ class ScriptDependencies(unittest.TestCase):
         problems = missing_dependencies(files)
         self.assertEqual(problems, [], "Add the distribution to the script's PEP 723 dependencies:\n" + "\n".join(problems))
 
+    def test_preflight_shows_the_pyyaml_reach_of_its_project_read_to_the_scan(self) -> None:
+        # preflight.py reads a project through fea_profile.py (PyYAML). The reach must be visible to the scan, so
+        # preflight declares what it needs and the one exemption (OPTIONAL_LOADS) names the consumers' side.
+        files = {
+            str(path.relative_to(SKILLS)): path.read_text(encoding="utf-8") for path in sorted(SKILLS.glob("*/scripts/**/*.py"))
+        }
+        preflight = "cad-flow/scripts/preflight.py"
+        reached = local_modules(preflight, files[preflight], Index(files))
+        self.assertIn("cad-flow/scripts/fea_profile.py", reached)
+        self.assertIn("pyyaml", declared_dependencies(files[preflight]) or set())
+
 
 if __name__ == "__main__":
     unittest.main()
