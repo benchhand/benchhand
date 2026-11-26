@@ -348,9 +348,11 @@ def _numbers(value: Any) -> list[float] | None:
 
 
 def _same_criterion(required: Any, stated: Any) -> bool:
-    """Whether an evaluation states the requirement's criterion: same property and operator and the same
-    value, converted to the requirement's units. A pass against another criterion never satisfies it."""
-    if (required.property, required.operator) != (stated.property, stated.operator):
+    """Whether an evaluation states the requirement's criterion: same property and operator, the same dimension
+    state and conditions, and the same value, converted to the requirement's units. A pass against another
+    criterion, or measured in another state or under other conditions, never satisfies it."""
+    if (required.property, required.operator, required.state, required.conditions) != (
+            stated.property, stated.operator, stated.state, stated.conditions):
         return False
     wanted, given = mi.thaw(required.value), mi.thaw(stated.value)
     if required.units == stated.units:
