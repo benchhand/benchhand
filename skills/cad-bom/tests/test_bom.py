@@ -179,15 +179,31 @@ class RollUpTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(bom.roll_up(top, {"FST-0001": record})["rows"][1]["designation"], "")
 
-    def test_a_blank_standard_is_a_finding_naming_the_part_and_field_and_the_rest_still_reconciles(self) -> None:
-        bad, good = bom.Node("FST-0001", False), bom.Node("FST-0002", False)
-        top = [bom.Node("ASM-0001", True, [(bad, 1), (good, 2)])]
-        parts = {"FST-0001": self.bought({**self.SCREW, "standard": "   "}), "FST-0002": self.bought(self.SCREW)}
-        result = bom.roll_up(top, parts)
-        self.assertEqual(result["invalid_designation"], ["FST-0001: purchase.designation.standard is blank"])
-        self.assertEqual([(r["PN"], r["designation"]) for r in result["rows"]],
-                         [("ASM-0001", ""), ("FST-0001", ""), ("FST-0002", "ISO 4762 M4x20, 8.8, A2")])
-        self.assertEqual((result["total_qty"]["FST-0002"], result["missing_in_step"]), (2, []))
+    def test_invalid_designation_fields_are_findings_through_the_cli_and_the_rest_still_reconciles(self) -> None:
+        invalid = {
+            "FST-0001": {**self.SCREW, "standard": "   "},
+            "FST-0002": {**self.SCREW, "size": "M4x20"},
+            "FST-0003": {**self.SCREW, "property_class": 8.8, "length": 0},
+        }
+        records = {**invalid, "FST-0004": self.SCREW}
+        with tempfile.TemporaryDirectory() as directory:
+            hw = Path(directory) / "hw"
+            write_parts(hw, {pn: yaml.safe_dump(self.bought(designation)) for pn, designation in records.items()})
+            tree = [bom.Node("ASM-0001", True, [(bom.Node(pn, False), 1) for pn in records])]
+            output = io.StringIO()
+            with mock.patch.object(bom, "read_step_tree", return_value=tree), contextlib.redirect_stdout(output), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                status = bom.main([str(self.step), "--hw", str(hw)])
+            summary = json.loads(output.getvalue())
+            rows = rows_by_level_pn(hw / "bom.csv")
+        self.assertEqual((status, summary["status"]), (1, "fail"))
+        self.assertEqual([(f["PN"], f["field"]) for f in summary["invalid_designation"]],
+                         [("FST-0001", "purchase.designation.standard"), ("FST-0002", "purchase.designation.size"),
+                          ("FST-0003", "purchase.designation.length"), ("FST-0003", "purchase.designation.property_class")])
+        self.assertTrue(all(f["reason"] for f in summary["invalid_designation"]))
+        self.assertEqual({pn: rows[("1", pn)]["designation"] for pn in records},
+                         {"FST-0001": "", "FST-0002": "", "FST-0003": "", "FST-0004": "ISO 4762 M4x20, 8.8, A2"})
+        self.assertEqual((summary["missing_part_yaml"], summary["missing_in_step"], summary["unidentified"]), ([], [], []))
 
     def test_the_designation_text_of_the_record_wins_over_the_structured_label(self) -> None:
         screw = bom.Node("FST-0001", False)

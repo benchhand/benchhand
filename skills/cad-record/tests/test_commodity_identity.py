@@ -59,11 +59,28 @@ class Eligibility(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(word, ci.designation_problem(designation) or "")
 
-    def test_a_blank_standard_or_size_is_a_missing_field_not_a_crash(self) -> None:
-        for field in ("standard", "size"):
-            with self.subTest(field):
-                self.assertEqual(ci.designation_problem({**SCREW, field: "  \t"}), f"missing {field}")
-        self.assertEqual(ci.blank_fields({**SCREW, "standard": "   ", "finish": 5}), ["standard"])
+    def test_each_invalid_field_of_a_supplied_designation_is_named_with_its_reason(self) -> None:
+        cases = {
+            "a blank standard": ({**SCREW, "standard": "  \t"}, [("standard", "missing or blank")]),
+            "a size that embeds the length": ({**SCREW, "size": "M4x20"}, [("size", "embeds a length")]),
+            "a zero length": ({**SCREW, "length": 0}, [("length", "positive number")]),
+            "a numeric property class": ({**SCREW, "property_class": 8.8}, [("property_class", "must be text")]),
+            "two bad fields, in record order": ({**SCREW, "property_class": 8.8, "standard": " "},
+                                                [("standard", "missing or blank"), ("property_class", "must be text")]),
+            "an insert with a zero outside diameter": ({**INSERT, "outside_diameter": 0}, [("outside_diameter", "positive number")]),
+            "a feature standard": ({**SCREW, "standard": "ISO 965-1"}, [("standard", "feature standard")]),
+        }
+        for name, (designation, expected) in cases.items():
+            with self.subTest(name):
+                issues = ci.designation_issues(designation)
+                self.assertEqual([field for field, _ in issues], [field for field, _ in expected])
+                for (_, reason), (_, word) in zip(issues, expected):
+                    self.assertIn(word, reason)
+                self.assertIsNotNone(ci.designation_problem(designation))
+
+    def test_an_eligible_designation_has_no_issue(self) -> None:
+        for designation in (SCREW, NUT, INSERT):
+            self.assertEqual(ci.designation_issues(designation), [])
 
     def test_a_nut_may_omit_its_length_and_a_dowel_may_not(self) -> None:
         dowel = {**NUT, "standard": "ISO 8734", "size": "6"}
