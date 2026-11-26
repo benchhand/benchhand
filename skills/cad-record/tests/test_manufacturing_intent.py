@@ -248,6 +248,11 @@ class Normalization(unittest.TestCase):
                                                 "intent.units"),
             "accuracy as a parameter": (lambda d: capability(d, 0)["parameters"].update(hole_accuracy=fx.known(fx.quantity(0.1))), "intent.profile"),
             "text parameter as a quantity": (lambda d: capability(d, 0)["parameters"].update(enclosure=fx.known(fx.quantity(1))), "intent.units"),
+            "calibration state citing an undeclared decision": (lambda d: capability(d, 1).update(
+                calibration_state={"status": "standard", "source": fx.source("decision", decision="DR-009")}), "intent.reference"),
+            "calibration state citing a missing artifact": (lambda d: capability(d, 1).update(
+                calibration_state={"status": "standard", "source": fx.source("datasheet", artifact="manufacturing/sources/none.pdf",
+                                                                             sha256="0" * 64)}), "intent.source_artifact"),
             "template used as a capability": (lambda d: capability(d, 0).update(template=True, guidance=["x"], calibrations=[]), "intent.profile"),
             "laser profile on a print": (lambda d: route(d)[0].update(capability="tst_laser"), "intent.profile"),
             "calibration from an estimate": (lambda d: capability(d, 0)["calibrations"][0].update(source=fx.source("estimate")), "intent.profile"),
