@@ -633,6 +633,44 @@ class Sync(ScratchCase):
         self.assertEqual(baseline["files"]["interfaces.yaml"], installed)
         self.assertTrue((scratch_hw / "interfaces.yaml").read_text(encoding="utf-8").endswith("# second lead edit\n"))
 
+    def test_a_lead_file_over_a_directory_holding_a_local_draft_is_a_conflict_and_records_nothing_for_it(self) -> None:
+        (self.hw / "notes").mkdir()
+        (self.hw / "notes" / "a.txt").write_text("lead note\n", encoding="utf-8")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        (scratch_hw / "notes" / "draft.txt").write_text("my draft\n", encoding="utf-8")
+        shutil.rmtree(self.hw / "notes")
+        (self.hw / "notes").write_text("the lead now keeps one file\n", encoding="utf-8")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (1, "conflict"), report)
+        self.assertIn("notes", report["conflicts"])
+        self.assertEqual((scratch_hw / "notes" / "draft.txt").read_text(encoding="utf-8"), "my draft\n")
+        baseline = json.loads((scratch_hw.parent / "baseline.json").read_text(encoding="utf-8"))
+        self.assertNotIn("notes", baseline["files"])
+        self.assertEqual(baseline["files"].get("notes/draft.txt"), None)
+
+    def test_a_lead_directory_over_an_untouched_file_replaces_it(self) -> None:
+        (self.hw / "cfg").write_text("one file\n", encoding="utf-8")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        (self.hw / "cfg").unlink()
+        (self.hw / "cfg").mkdir()
+        (self.hw / "cfg" / "x.txt").write_text("now a directory\n", encoding="utf-8")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"], report["added"], report["removed"]), (0, "synced", ["cfg/x.txt"], ["cfg"]), report)
+        self.assertEqual((scratch_hw / "cfg" / "x.txt").read_text(encoding="utf-8"), "now a directory\n")
+        self.deliver_and_expect_no_proposal("unit-a")
+
+    def test_a_lead_directory_over_a_locally_edited_file_is_a_conflict(self) -> None:
+        (self.hw / "cfg").write_text("one file\n", encoding="utf-8")
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        (scratch_hw / "cfg").write_text("my edit\n", encoding="utf-8")
+        (self.hw / "cfg").unlink()
+        (self.hw / "cfg").mkdir()
+        (self.hw / "cfg" / "x.txt").write_text("now a directory\n", encoding="utf-8")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (1, "conflict"), report)
+        self.assertEqual(sorted(report["conflicts"]), ["cfg", "cfg/x.txt"])
+        self.assertEqual((scratch_hw / "cfg").read_text(encoding="utf-8"), "my edit\n")
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
