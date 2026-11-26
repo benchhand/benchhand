@@ -662,6 +662,45 @@ class InfoStatusTests(unittest.TestCase):
         self.assertGreater(len(report.checks), 1)
 
 
+class StandaloneRunChecksFEATests(unittest.TestCase):
+    """The public run_checks path, with the project's own product.yaml choosing FEA."""
+
+    def run_in_project(self, product: str | None) -> preflight.Report:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-run-") as directory:
+            root = Path(directory)
+            command = root / "freecadcmd"
+            command.write_text("#!/bin/sh\n", encoding="utf-8")
+            command.chmod(0o755)
+            if product is not None:
+                (root / "hw").mkdir()
+                (root / "hw" / "product.yaml").write_text(product, encoding="utf-8")
+            missing = {**FEASolverCheckTests.PROBED, "calculix": {"error": "ccx not found: $CCX is unset"}}
+            with patch.object(preflight, "cad_tool_version", return_value=("1.1.4", "FreeCAD 1.1.4")), \
+                    patch.object(preflight.freecad_runtime, "techdraw_templates",
+                                 return_value=(directory, frozenset(preflight.EXPECTED_TEMPLATES))), \
+                    patch.object(preflight.fea_solvers, "probe", return_value=missing), \
+                    patch.object(preflight, "_uv_check", return_value=(
+                        preflight.Check("uv", "uv", "pass", True, "", ""), None)), \
+                    patch.object(preflight, "_vendor_check", return_value=preflight.Check(
+                        "three-vendor-cache", "v", "pass", True, "", "")), \
+                    patch("sys.stderr"):
+                return preflight.run_checks({"FREECADCMD": str(command), "PATH": "", "HOME": directory},
+                                            cwd=root, home=root, harness="codex")
+
+    def test_a_missing_solver_fails_the_run_when_the_project_enables_fea(self) -> None:
+        report = self.run_in_project("flow:\n  profile:\n    fea:\n      enabled: true\n")
+        solver = next(check for check in report.checks if check.id == "fea-solvers")
+        self.assertEqual((solver.status, solver.required), ("fail", True))
+        self.assertIn("ccx not found", solver.detail)
+        self.assertEqual(report.exit_code, 1)
+
+    def test_the_same_missing_solver_is_info_when_the_project_has_no_fea(self) -> None:
+        report = self.run_in_project(None)
+        solver = next(check for check in report.checks if check.id == "fea-solvers")
+        self.assertEqual((solver.status, solver.required), ("info", False))
+        self.assertGreater(len(report.checks), 3)
+
+
 class FEAEnabledTests(unittest.TestCase):
     def enabled(self, text: str | None) -> bool:
         with tempfile.TemporaryDirectory(prefix="cad-preflight-profile-") as directory:
