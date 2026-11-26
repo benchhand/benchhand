@@ -665,7 +665,7 @@ class _Assessor:
                     (f"{step.kind} has no check contract: its manufacturability coverage is unknown, never a pass",),
                     remedy=f"add a check profile for {step.kind}, or choose a route kind Benchhand checks"))
                 continue
-            found.extend(self.capability(cpart, step, where))
+            found.extend(self.capability(cpart, step, where, index))
         return found
 
     def material_form(self, cpart: CandidatePart) -> Evaluation:
@@ -693,7 +693,7 @@ class _Assessor:
         return Evaluation("material_form", True, outcome, subject, method, (why,),
                           remedy=None if outcome == "pass" else "select a profile whose form matches the route")
 
-    def capability(self, cpart: CandidatePart, step: Step, where: str) -> list[Evaluation]:
+    def capability(self, cpart: CandidatePart, step: Step, where: str, index: int) -> list[Evaluation]:
         subject = {"PN": cpart.pn}
         method = f"{where}: capability profile"
         not_assumed = "unavailable tooling is never assumed"
@@ -734,9 +734,9 @@ class _Assessor:
                                criterion=criterion, remedy=f"confirm {profile.id} is available, or choose another capability")]
         return [Evaluation("capability", True, "pass", subject, method, tuple(reasons), criterion=criterion,
                            measured={"text": profile.process}),
-                self.approval(cpart, step, profile, where)]
+                self.approval(cpart, step, profile, where, index)]
 
-    def approval(self, cpart: CandidatePart, step: Step, profile: Any, where: str) -> Evaluation:
+    def approval(self, cpart: CandidatePart, step: Step, profile: Any, where: str, index: int) -> Evaluation:
         subject = {"PN": cpart.pn}
         method = f"{where}: {profile.id} material approvals"
         source = _record_source("hw/manufacturing/capabilities.yaml", f"{profile.id} materials")
@@ -768,23 +768,22 @@ class _Assessor:
                               (f"{profile.id} does not list {cpart.material}: an unlisted material is never assumed approved",),
                               criterion=criterion,
                               remedy=f"record {profile.id}'s approval of {cpart.material} with its source, or choose a listed material")
-        entry = approved[0]
-        if step.kind == "laser":
-            extraction = entry.get("extraction")
-            if not isinstance(extraction, Mapping) or not mi.fact(extraction).known:
-                return Evaluation("material_approval", True, "unknown", subject, method,
-                                  (f"{profile.id} approves {cpart.material} but its extraction approval is not recorded",),
-                                  criterion=criterion, remedy="record the extraction approved for this material")
-        outside = self.approval_scope(cpart, step, profile, entry)
-        if outside:
-            return Evaluation("material_approval", True, "unknown", subject, method, tuple(why for why, _ in outside),
-                              criterion={**criterion, "source": mi.thaw(entry.get("source"))},
-                              remedy="; ".join(dict.fromkeys(fix for _, fix in outside)))
-        return Evaluation("material_approval", True, "pass", subject, method, (f"{profile.id} approves {cpart.material}",),
-                          criterion={**criterion, "source": mi.thaw(entry.get("source"))}, measured={"text": "approved"})
+        gaps = []  # (entry, its (why, remedy) list) of every approval that does not cover the step
+        for entry in approved:
+            outside = self.approval_scope(cpart, step, profile, entry, index)
+            if not outside:
+                return Evaluation("material_approval", True, "pass", subject, method, (f"{profile.id} approves {cpart.material}",),
+                                  criterion={**criterion, "source": mi.thaw(entry.get("source"))}, measured={"text": "approved"})
+            gaps.append((entry, outside))
+        numbered = len(gaps) > 1
+        reasons = tuple(f"approval {number}: {why}" if numbered else why
+                        for number, (_, outside) in enumerate(gaps, 1) for why, _ in outside)
+        return Evaluation("material_approval", True, "unknown", subject, method, reasons,
+                          criterion={**criterion, "source": mi.thaw(gaps[0][0].get("source"))},
+                          remedy="; ".join(dict.fromkeys(fix for _, outside in gaps for _, fix in outside)))
 
-    def approval_scope(self, cpart: CandidatePart, step: Step, profile: Any,
-                       entry: Mapping[str, Any]) -> list[tuple[str, str]]:
+    def approval_scope(self, cpart: CandidatePart, step: Step, profile: Any, entry: Mapping[str, Any],
+                       index: int) -> list[tuple[str, str]]:
         """(why, remedy) for each way an approval entry does not cover this step, or is not known to: the operation the
         step does and, for a cutting step, an explicit cut scope, the stock thickness and the stock's coating. Empty when
         it covers the step. An approval for another operation or other stock, or whose scope cannot be resolved, never
@@ -806,8 +805,13 @@ class _Assessor:
                                                           f"{profile.id}, or choose a capability approved for it"))
         if not cutting:
             return found
+        if step.kind == "laser":
+            extraction = entry.get("extraction")
+            if not isinstance(extraction, Mapping) or not mi.fact(extraction).known:
+                found.append((f"{approval} does not record the extraction approved for it",
+                              "record the extraction approved for this material"))
         approved = mi.fact(entry["thickness"]) if isinstance(entry.get("thickness"), Mapping) else None
-        stock = self.stock_fact(cpart, step, "thickness")
+        stock = self.stock_fact(cpart, step, index, "thickness")
         if approved is None or not approved.known or not isinstance(approved.value, mi.Quantity):
             found.append((f"{approval} states no thickness, so the stock it covers is unknown",
                           f"record the thickness range {approval} covers"))
@@ -817,10 +821,10 @@ class _Assessor:
         elif not approved.value.contains(stock.value):
             found.append((f"the stock thickness {stock.value} lies outside {approval} at {approved.value}",
                           f"choose stock within {approved.value}, or record an approval that covers {stock.value}"))
-        found.extend(self.coating_scope(cpart, step, approval, entry))
+        found.extend(self.coating_scope(cpart, step, index, approval, entry))
         return found
 
-    def coating_scope(self, cpart: CandidatePart, step: Step, approval: str,
+    def coating_scope(self, cpart: CandidatePart, step: Step, index: int, approval: str,
                       entry: Mapping[str, Any]) -> list[tuple[str, str]]:
         """(why, remedy) when the approval's coating is unidentified, the stock's coating is not stated, or they differ.
         An uncoated stock and its approval both say "none"."""
@@ -828,7 +832,7 @@ class _Assessor:
         if approved is None or not approved.known or not isinstance(approved.value, str):
             return [(f"{approval} does not identify the coating or film it covers",
                      f'record the coating it is approved for, or "none" for uncoated stock, in {approval}')]
-        stock = self.stock_fact(cpart, step, "coating")
+        stock = self.stock_fact(cpart, step, index, "coating")
         if stock is None or not stock.known or not isinstance(stock.value, str):
             return [(f"the {step.kind} step states no stock coating, so {approval} for {approved.value} cannot be checked",
                      'record the stock.coating of the step, or "none" for uncoated stock')]
@@ -838,20 +842,18 @@ class _Assessor:
                      f"record an approval for stock with {stock.value}, or choose stock with {approved.value}")]
         return []
 
-    def stock_fact(self, cpart: CandidatePart, step: Step, key: str) -> Any:
-        """The `key` (thickness or coating) Fact of the stock `step` cuts: the candidate step's own, else, when the record
-        already holds this candidate's route, the record operation's setup stock. None when neither states it."""
+    def stock_fact(self, cpart: CandidatePart, step: Step, index: int, key: str) -> Any:
+        """The `key` (thickness or coating) Fact of the stock `step` (route position `index`) cuts: the candidate step's
+        own, else, when the record already holds this candidate's route, the setup stock of the record operation at the
+        same position. None when neither states it; another operation's stock never stands in for it."""
         stated = step.stock_thickness if key == "thickness" else step.stock_coating
         if stated is not None:
             return stated
         part = self.record.parts.get(cpart.pn)
         if part is None or not self.matches_record(cpart, part):
             return None
-        for op in part.intent.route:
-            stock = (op.setup or {}).get("stock") if op.kind == step.kind else None
-            if isinstance(stock, Mapping) and isinstance(stock.get(key), Mapping):
-                return mi.fact(stock[key])
-        return None
+        stock = (part.intent.route[index].setup or {}).get("stock")
+        return mi.fact(stock[key]) if isinstance(stock, Mapping) and isinstance(stock.get(key), Mapping) else None
 
     # -- optical --
     def optical(self, cpart: CandidatePart, part: Any) -> Evaluation:
