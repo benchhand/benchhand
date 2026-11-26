@@ -16,8 +16,7 @@ record     writes the answers to hw/product.yaml flow.profile, citing --decision
            as an accepted MADR record under hw/decisions/. The lead asks each question showing its default.
            Every question is an option the user answered (--fea off) or a default the user accepted
            (--accept-default fea); the profile's `asked` map records which. A question neither answered
-           nor accepted refuses the record. The edit preserves product.yaml outside the flow mapping.
-           An inline flow mapping is re-rendered. The edit must parse to the intended data before the file is replaced.
+           nor accepted refuses the record. The edit must parse to the intended data before the file is replaced.
 check      reports what blocks at --stage (default: product.yaml flow.stage): a missing profile or decision
            from SPECIFY on, a value the schema rejects, and a start question with no `asked` answer.
 
@@ -261,7 +260,7 @@ def _dump(block: Mapping[str, Any], indent: int) -> str:
 
 
 def _with_inline_flow(text: str, flow: Mapping[str, Any]) -> str | None:
-    """Replace the inline flow mapping by its source span, leaving the rest of product.yaml untouched."""
+    """Splice the profile into an inline flow without rewriting its siblings."""
     root = yaml.compose(text, Loader=yaml.SafeLoader)
     if not isinstance(root, yaml.MappingNode):
         return None
@@ -270,11 +269,29 @@ def _with_inline_flow(text: str, flow: Mapping[str, Any]) -> str | None:
             continue
         if not isinstance(value, yaml.MappingNode) or not value.flow_style or value.start_mark.index < key.end_mark.index:
             raise ProfileError("product.yaml flow is not a directly editable mapping")
-        data = {**flow, "profile": _quoted(flow["profile"])}
-        rendered: str = yaml.dump(data, Dumper=_Dumper, sort_keys=False, default_flow_style=True, allow_unicode=True,
+        rendered: str = yaml.dump(_quoted(flow["profile"]), Dumper=_Dumper, sort_keys=False,
+                                  default_flow_style=True, allow_unicode=True,
                                   width=4096)
-        return text[:value.start_mark.index] + rendered.rstrip("\n") + text[value.end_mark.index:]
+        return _splice_inline_profile(text, value, rendered.rstrip("\n"))
     return None
+
+
+def _splice_inline_profile(text: str, node: Any, rendered: str) -> str:
+    for key, value in node.value:
+        if isinstance(key, yaml.ScalarNode) and key.value == "profile":
+            start, end = value.start_mark.index, value.end_mark.index
+            if start < key.end_mark.index:
+                tokens = yaml.scan(text, Loader=yaml.SafeLoader)
+                alias = next(token for token in tokens if isinstance(token, yaml.AliasToken)
+                             and token.start_mark.index >= key.end_mark.index)
+                start, end = alias.start_mark.index, alias.end_mark.index
+            return text[:start] + rendered + text[end:]
+    tokens = yaml.scan(text, Loader=yaml.SafeLoader)
+    opening = next(token for token in tokens if isinstance(token, yaml.FlowMappingStartToken)
+                   and token.start_mark.index >= node.start_mark.index)
+    at = opening.end_mark.index
+    separator = ", " if node.value else ""
+    return text[:at] + f"profile: {rendered}{separator}" + text[at:]
 
 
 def with_profile(text: str, flow: Mapping[str, Any]) -> str:
