@@ -85,7 +85,7 @@ def _listed(standard_bodies: str, number: str, entries: tuple[tuple[str, ...], .
 
 def is_feature_standard(standard: str) -> bool:
     """Whether `standard` (ISO 965-1, DIN EN ISO 286-2) names a feature standard, which identifies no part."""
-    *bodies, number = standard.split()
+    *bodies, number = standard.split() or [""]
     return _listed(" ".join(bodies), number, _FEATURE)
 
 
@@ -116,8 +116,13 @@ def _is_number(value: Any) -> bool:
 
 
 def _missing(designation: Mapping[str, Any], fields: tuple[str, ...]) -> str | None:
-    absent = [f for f in fields if designation.get(f) in (None, "")]
+    absent = [f for f in fields if designation.get(f) in (None, "") or f in blank_fields(designation)]
     return f"missing {', '.join(absent)}" if absent else None
+
+
+def blank_fields(designation: Mapping[str, Any]) -> list[str]:
+    """The fields of a structured designation whose text is empty or only whitespace, in record order."""
+    return [name for name, value in designation.items() if isinstance(value, str) and not value.strip()]
 
 
 def _standard_problem(designation: Mapping[str, Any]) -> str | None:
@@ -208,6 +213,12 @@ def commodity_label(part: Mapping[str, Any], purchase: Any = None) -> str | None
     if designation is None or opened:
         return None
     return designation_text(designation)
+
+
+def blank_designation_fields(part: Mapping[str, Any]) -> list[str]:
+    """The blank fields of the part's structured designation, as `purchase.designation.<field>`."""
+    designation = _purchase(part).get("designation")
+    return [f"purchase.designation.{name}" for name in blank_fields(designation)] if isinstance(designation, Mapping) else []
 
 
 def designation_cell(part: Mapping[str, Any]) -> str | None:
