@@ -23,6 +23,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import jsonschema
 import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import result_payload  # noqa: E402
@@ -197,6 +198,8 @@ class RollUpTests(unittest.TestCase):
             summary = json.loads(output.getvalue())
             rows = rows_by_level_pn(hw / "bom.csv")
         self.assertEqual((status, summary["status"]), (1, "fail"))
+        schema = json.loads((SKILL.parent / "cad-record" / "schemas" / "bom-summary.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual([e.message for e in jsonschema.Draft202012Validator(schema).iter_errors(summary)], [])
         self.assertEqual([(f["PN"], f["field"]) for f in summary["invalid_designation"]],
                          [("FST-0001", "purchase.designation.standard"), ("FST-0002", "purchase.designation.size"),
                           ("FST-0003", "purchase.designation.length"), ("FST-0003", "purchase.designation.property_class")])

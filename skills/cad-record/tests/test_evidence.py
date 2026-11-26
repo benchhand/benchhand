@@ -1360,6 +1360,8 @@ class EvidenceDigestCli(BuiltRecord):
                 self.assertNotIn("evidence_sha256", report)
                 self.assertNotIn("inventory", report)
                 self.assertEqual([f["path"] for f in report["findings"]], [self.FIELD], report)
+                schema = json.loads((HERE.parent / "schemas" / "evidence-digest.schema.json").read_text(encoding="utf-8"))
+                self.assertEqual([e.message for e in Draft202012Validator(schema).iter_errors(report)], [])
                 self.assertIn(text, report["findings"][0]["message"])
 
 
