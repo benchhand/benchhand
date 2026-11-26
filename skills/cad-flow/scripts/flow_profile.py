@@ -11,12 +11,13 @@
 """The flow profile: the project-start questions, the record of their answers, and the check on it.
 
 questions  prints the questions the lead relays to the user verbatim at GROUND, and the motion sweep,
-           which is stated to the user and never asked.
+           which is stated to the user and never asked. --hw limits them to the ones that apply to that work tree.
 record     writes the answers to hw/product.yaml flow.profile, citing --decision, and writes that decision
            as an accepted MADR record under hw/decisions/. The lead asks each question showing its default.
            Every question is an option the user answered (--fea off) or a default the user accepted
            (--accept-default fea); the profile's `asked` map records which. A question neither answered
-           nor accepted refuses the record. The edit must parse to the intended data before the file is replaced.
+           nor accepted refuses the record; only the questions that apply count (gate.question_fields). The edit
+           must parse to the intended data before the file is replaced.
 check      reports what blocks at --stage (default: product.yaml flow.stage): a missing profile or decision
            from SPECIFY on, a value the schema rejects, and a start question with no `asked` answer.
 
@@ -447,12 +448,12 @@ def _restore(path: Path, original: str) -> None:
         raise ProfileError(f"cannot restore {path} after a failed record: {error}") from error
 
 
-def _require_settled(answers: Mapping[str, Any], accepted: list[str]) -> None:
-    """Every start question is answered or its default accepted, and none is both."""
+def _require_settled(answers: Mapping[str, Any], accepted: list[str], applicable: Iterable[str]) -> None:
+    """Every applicable start question is answered or its default accepted, and none is both."""
     options = {field: option for option, field, _parse, _metavar in OPTIONS}
     if both := [options[field] for field in accepted if field in answers]:
         raise ProfileError(f"{', '.join(both)} answered and also accepted as the default; give one")
-    if unasked := [option for field, option in options.items() if field not in answers and field not in accepted]:
+    if unasked := [options[field] for field in applicable if field not in answers and field not in accepted]:
         raise ProfileError(f"ask the user {', '.join(unasked)} and answer it, or accept its default with --accept-default; "
                            "nothing was recorded")
 
@@ -476,7 +477,9 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     accepted = list(accepted)
     if DECISION.fullmatch(decision) is None:
         raise ProfileError(f"--decision {decision!r} is not DR-###")
-    _require_settled(answers, accepted)
+    product = read_product(hw)
+    _require_settled(answers, accepted,
+                     gate.question_fields(product, read_parts(hw), answered_profile(decision, answers)))
     decisions = hw / "decisions"
     number = int(decision.removeprefix("DR-"))
     _require_free(decisions, number)
@@ -523,7 +526,8 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     sub = root.add_subparsers(dest="command", required=True)
-    sub.add_parser("questions", help="print the project-start questions to relay verbatim")
+    ask = sub.add_parser("questions", help="print the project-start questions to relay verbatim")
+    ask.add_argument("--hw", type=Path, help="print only the questions that apply to this design record directory (hw/)")
     rec = sub.add_parser("record", help="record the user's answers as flow.profile and its decision")
     rec.add_argument("--hw", type=Path, required=True, help="the design record directory (hw/)")
     rec.add_argument("--decision", required=True, help="the new DR-### that records the answers")
@@ -539,15 +543,23 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def print_questions() -> None:
+def print_questions(hw: Path | None = None) -> None:
+    """The questions to relay; with `hw`, only those with an applicable option (or none, like the printer one)."""
+    fields = set(gate.QUESTION_FIELDS if hw is None else gate.question_fields(read_product(hw), read_parts(hw)))
+    option_fields = {option: field for option, field, _parse, _metavar in OPTIONS}
+    shown = [(text, records) for text, records in QUESTIONS
+             if not (named := [field for option, field in option_fields.items() if option in records])
+             or any(field in fields for field in named)]
     print("Ask the user these questions verbatim, then record the answers with flow_profile.py record.\n")
-    for number, (text, _records) in enumerate(QUESTIONS, start=1):
+    for number, (text, _records) in enumerate(shown, start=1):
         print(f"{number}. {text}")
     print(f"\n{MOTION_STATEMENT}\n{MACHINE_STATEMENT}\n\nEach answer records as:")
-    for number, (_text, records) in enumerate(QUESTIONS, start=1):
+    for number, (_text, records) in enumerate(shown, start=1):
         print(f"  {number}: {records}")
     print("\nDefaults, shown with each question:")
     for field, value in gate.DEFAULTS.items():
+        if field in gate.QUESTION_FIELDS and field not in fields:
+            continue
         print(f"  {field.replace('/', '.')}: {json.dumps(value)}")
     print("Show the user each question with its default. Record an answer as its option, or a")
     print("default the user accepts with --accept-default <options>. A listed question neither answered nor accepted refuses")
@@ -558,7 +570,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "questions":
-            print_questions()
+            print_questions(args.hw)
             return 0
         if args.command == "record":
             answers = {field: getattr(args, field) for _option, field, _parse, _metavar in OPTIONS

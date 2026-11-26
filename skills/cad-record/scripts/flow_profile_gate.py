@@ -190,14 +190,27 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
     return found + asked_problems(profile, fdm=plans_fdm(product, parts))
 
 
+def applicable_fields(profile: Mapping[str, Any], *, fdm: bool) -> list[str]:
+    """The start questions that apply, in question order: the FDM ones while `fdm`, the PIP clearance ones
+    while the profile does not decline print-in-place."""
+    pip = value_at(profile, "processes/fdm/print_in_place") is not False
+    return [field for field in QUESTION_FIELDS
+            if not ((field.startswith(FDM) and not fdm) or (field.startswith(PIP_CLEARANCE) and not pip))]
+
+
+def question_fields(product: Any, parts: Mapping[str, Any], profile: Any = None) -> list[str]:
+    """The one rule for which start questions apply, shared by asking, recording and validating. `profile`
+    holds the answers so far (default: product.yaml flow.profile); one that does not decline print-in-place
+    keeps its clearance questions."""
+    return applicable_fields(_mapping(profile if profile is not None else profile_of(product)),
+                             fdm=plans_fdm(product, parts))
+
+
 def asked_problems(profile: Mapping[str, Any], *, fdm: bool) -> list[Problem]:
     """Every applicable start question needs an `asked` answer; one marked as the accepted default must hold it."""
     asked = _mapping(profile.get("asked"))
-    pip = value_at(profile, "processes/fdm/print_in_place") is not False
     found = []
-    for field in QUESTION_FIELDS:
-        if (field.startswith(FDM) and not fdm) or (field.startswith(PIP_CLEARANCE) and not pip):
-            continue
+    for field in applicable_fields(profile, fdm=fdm):
         how = asked.get(field)
         path = f"flow/profile/asked/{field}"
         if how not in PROVENANCE:

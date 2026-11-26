@@ -142,6 +142,38 @@ class Record(unittest.TestCase):
         self.assertEqual((data["flow"]["stage"], data["flow"]["recheck_from"]), ("intent", "intent"))
         self.assertIn("# a comment the profile record keeps\n", self.product.read_text(encoding="utf-8"))
 
+    def test_a_project_that_plans_no_fdm_records_with_its_five_answers(self) -> None:
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(self.profile()["asked"]), set(QUESTION_FIELDS[:5]))
+        self.assertEqual(run("check", "--hw", str(self.hw)).returncode, 0)
+
+    def test_a_project_that_plans_fdm_still_needs_every_answer(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--supports", result.stderr)
+        self.assertNotIn("--human-approval", result.stderr)
+        self.assertNotIn("--pip-clearance", result.stderr)  # print-in-place defaults to declined
+
+    def test_declining_print_in_place_drops_its_clearance_questions_and_offering_keeps_them(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
+        declined = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--print-in-place", "no", "--accept-default", *rest)
+        self.assertEqual(declined.returncode, 0, declined.stderr)
+        offered = run("record", "--hw", str(self.hw), "--decision", "DR-002", "--print-in-place", "offer", "--accept-default", *rest)
+        self.assertEqual(offered.returncode, 2)
+        self.assertIn("--pip-clearance-xy", offered.stderr)
+
+    def test_questions_for_a_work_tree_list_only_the_questions_that_apply(self) -> None:
+        self.assertIn("Would you like hinges", run("questions").stdout)
+        result = run("questions", "--hw", str(self.hw))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Would you like hinges", result.stdout)
+        self.assertNotIn("overhang", result.stdout)
+        self.assertIn("Should generated results", result.stdout)
+
     def test_accepting_every_default_records_the_conservative_defaults(self) -> None:
         self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS).returncode, 0)
         profile = self.profile()
@@ -165,13 +197,15 @@ class Record(unittest.TestCase):
         self.assertFalse((self.hw / "manufacturing").exists())
 
     def test_record_refuses_a_question_neither_answered_nor_accepted_and_writes_nothing(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        before = self.product.read_text(encoding="utf-8")
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--fea", "off", "--accept-default",
                      *[name for name in OPTIONS if name not in ("fea", "stack-up", "warp")])
         self.assertEqual(result.returncode, 2)
         self.assertIn("--stack-up", result.stderr)
         self.assertIn("--warp", result.stderr)
         self.assertNotIn("--critique", result.stderr)
-        self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
+        self.assertEqual(self.product.read_text(encoding="utf-8"), before)
         self.assertFalse((self.hw / "decisions").exists())
 
     def test_record_refuses_an_option_both_answered_and_accepted(self) -> None:

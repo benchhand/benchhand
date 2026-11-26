@@ -239,6 +239,29 @@ class Gate(unittest.TestCase):
                 _stage, found = gate_module.gate(product, parts, approved)
                 self.assertEqual(len(found), expected)
 
+    def test_question_fields_is_the_set_of_questions_asked_problems_requires(self) -> None:
+        fdm_part = {"process": "fdm", "intent": {"route": []}}
+        cnc_part = {"process": "cnc", "intent": {"route": []}}
+        for name, parts, offer in (("fdm, pip offered", {"A": fdm_part}, True), ("fdm, pip declined", {"A": fdm_part}, False),
+                                   ("cnc only", {"A": cnc_part}, True), ("no parts", {}, False)):
+            with self.subTest(name):
+                profile = fx.flow_profile(fdm={"print_in_place": offer})
+                profile["asked"] = {}
+                product = {"flow": {"profile": profile}}
+                unasked = [problem.path.removeprefix("flow/profile/asked/")
+                           for problem in gate_module.asked_problems(profile, fdm=gate_module.plans_fdm(product, parts))]
+                self.assertEqual(gate_module.question_fields(product, parts), unasked)
+
+    def test_question_fields_of_a_cnc_only_product_are_the_five_general_questions(self) -> None:
+        product = {"flow": {}}
+        self.assertEqual(gate_module.question_fields(product, {"A": {"process": "cnc"}}), list(QUESTION_FIELDS[:5]))
+
+    def test_question_fields_takes_the_answers_so_far_for_the_print_in_place_rule(self) -> None:
+        parts = {"A": {"process": "fdm"}}
+        declined = {"processes": {"fdm": {"print_in_place": False}}}
+        self.assertNotIn("processes/fdm/pip_clearance_mm/xy", gate_module.question_fields({}, parts, declined))
+        self.assertIn("processes/fdm/pip_clearance_mm/xy", gate_module.question_fields({}, parts, {}))
+
     def test_the_pip_clearance_questions_apply_only_while_print_in_place_is_offered(self) -> None:
         for offer, expected in ((True, [("flow.profile", "flow/profile/asked/processes/fdm/pip_clearance_mm/z")]), (False, [])):
             with self.subTest(print_in_place=offer):
