@@ -737,6 +737,36 @@ class MultiprocessRouteTests(Checks):
                 self.assertEqual(self.outcome(result, obligation), "pass", self.codes(result, obligation))
 
 
+@unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
+class RouteProviderTests(Checks):
+    """Route consistency of an operation that names a capability but states no provider: the provider is the part's
+    recorded sourcing, so a part bought to its drawing is outsourced. Its supplier must be named and the capability
+    profile's provider must agree."""
+
+    BOUGHT = {"make_buy": "buy", "procurement": {"mode": "made_to_drawing"}, "supplier": "TST print bureau"}
+
+    def route_codes(self, sourcing: dict[str, Any], profile_provider: str) -> tuple[str, list[str]]:
+        documents = printed("TST-0101", {"strategy": "none"})
+        documents["parts/TST-0101/part.yaml"].update(copy.deepcopy(sourcing))
+        documents["manufacturing/capabilities.yaml"]["profiles"][0]["provider"] = profile_provider
+        result = self.assess(documents)
+        row = next(r for r in result.outcomes if r["obligation"].startswith("route.consistency@TST-0101"))
+        return row["outcome"], self.codes(result, row["obligation"])
+
+    def test_an_omitted_provider_is_checked_as_the_part_sourcing(self) -> None:
+        for name, sourcing, provider, wanted, unwanted in (
+                ("made to drawing on a local profile", self.BOUGHT, "local", {"route.provider_mismatch"}, set()),
+                ("made to drawing with no named supplier", self.BOUGHT, "outsourced", {"route.supplier_unknown"},
+                 {"route.provider_mismatch"}),
+                ("made in-house on a local profile", {}, "local", set(), {"route.provider_mismatch", "route.supplier_unknown"})):
+            with self.subTest(name):
+                outcome, codes = self.route_codes(sourcing, provider)
+                self.assertTrue(wanted <= set(codes), codes)
+                self.assertEqual(unwanted & set(codes), set(), codes)
+                if "route.provider_mismatch" in wanted:
+                    self.assertEqual(outcome, "fail")
+
+
 # --- row 17: dispatch by process -----------------------------------------------------------------------------------
 
 @unittest.skipUnless(DEPS, "pyyaml and jsonschema are required")
