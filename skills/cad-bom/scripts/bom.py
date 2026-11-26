@@ -38,7 +38,8 @@ imported inside the readers so `roll_up` stays importable by plain unit tests.
 
 stdout: JSON summary. stderr: diagnostics (OCCT translator output included).
 Exit 0 = BOM complete, 1 = record mismatch (leaf part without part.yaml,
-part.yaml absent from STEP, or a leaf product without a part number; bom.csv
+part.yaml absent from STEP, a leaf product without a part number, or an invalid field in a
+structured purchase.designation, reported as `invalid_designation` items {PN, field, reason}; bom.csv
 is still written), 2 = usage or infrastructure error.
 """
 

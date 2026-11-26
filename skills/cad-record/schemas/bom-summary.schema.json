@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srobroek.com/cad/schemas/bom-summary.schema.json",
+  "title": "EBOM roll-up summary (bom.py stdout)",
+  "description": "The JSON summary of bom.py. status is fail (exit 1) when the record and the model disagree: a leaf part without part.yaml, a part.yaml absent from the STEP, a leaf product without a PN, or a part whose structured purchase.designation has an invalid field. bom.csv is written either way, and an invalid designation never drops its row",
+  "type": "object", "additionalProperties": false,
+  "required": ["status", "bom_csv", "rows", "total_qty", "missing_part_yaml", "missing_in_step", "unidentified", "invalid_designation"],
+  "properties": {
+    "status": {"enum": ["pass", "fail"]},
+    "bom_csv": {"type": "string"},
+    "rows": {"description": "the BOM rows as written to bom.csv (bom-row.schema.json describes the record-side row)", "type": "array", "items": {"type": "object", "additionalProperties": {"type": "string"}}},
+    "total_qty": {"description": "PN -> instances in the whole product", "type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+    "missing_part_yaml": {"type": "array", "items": {"type": "string"}},
+    "missing_in_step": {"type": "array", "items": {"type": "string"}},
+    "unidentified": {"type": "array", "items": {"type": "string"}},
+    "invalid_designation": {"description": "one finding per invalid field of a supplied structured designation", "type": "array", "items": {"$ref": "#/$defs/designation_finding"}},
+    "reconciled_against": {"description": "the built version the BOM was reconciled against (--version)", "type": "string"}
+  },
+  "$defs": {
+    "designation_finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["PN", "field", "reason"],
+      "properties": {
+        "PN": {"type": "string"},
+        "field": {"description": "the part.yaml field, purchase.designation.<name>", "type": "string", "pattern": "^purchase\\.designation\\."},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
