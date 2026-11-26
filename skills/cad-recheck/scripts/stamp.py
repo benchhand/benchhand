@@ -131,9 +131,9 @@ def require_profile(root: Path, committed: bool, product: dict[str, Any]) -> Non
 def require_gate_decision(root: Path, committed: bool, previous: str, advanced: str, stamp_time: Any) -> None:
     """Refuse an advance of flow.stage from the stamped stage `previous` to `advanced` unless a decision record of
     hw/decisions is the gate of that advance: its front matter says `gate: {from: <previous>, to: <advanced>}`, its
-    status is proposed (provisional) or accepted, it is not superseded and it is dated on or after the stamp's UTC
-    day. Any other record, the flow profile among them, is no gate. Reads the index, or HEAD when `committed`; a
-    record cad-record decision_records refuses is a refusal too."""
+    status is proposed (provisional) or accepted, and it is not superseded. The stamp's tree hash binds the
+    decision to the same tree as the checked version, so the decision date is not compared with the stamp time.
+    Reads the index, or HEAD when `committed`; a record cad-record decision_records refuses is a refusal too."""
     decision_records = validate.decision_records
     wanted = f"gate: {{from: {previous}, to: {advanced}}}"
     problem = (f"flow.stage advanced past the stamped stage (gate {previous} → {advanced}) without a decision record "
@@ -144,7 +144,6 @@ def require_gate_decision(root: Path, committed: bool, previous: str, advanced: 
         raise RuntimeError(f"{problem}: the recheck stamp has no readable timestamp") from error
     if stamped.utcoffset() is None:
         raise RuntimeError(f"{problem}: the recheck stamp timestamp {stamp_time!r} has no time zone offset")
-    stamped_on = stamped.astimezone(timezone.utc).date()
     with tempfile.TemporaryDirectory() as scratch:
         tree_decisions(root, committed, Path(scratch))
         try:
@@ -152,10 +151,9 @@ def require_gate_decision(root: Path, committed: bool, previous: str, advanced: 
         except decision_records.DecisionRecordError as error:
             raise RuntimeError(f"cannot read the decision records of hw/decisions: {str(error).replace(scratch + '/', '')}") from error
     if not any(r.gate == (previous, advanced) and r.status in ("proposed", "accepted") and not r.superseded_by
-               and r.date >= stamped_on for r in records):
+               for r in records):
         raise RuntimeError(f"{problem}. Record the decision in hw/decisions as a proposed (provisional) or accepted "
-                           f"record with `{wanted}` in its front matter, not superseded, dated {stamped_on} (UTC) "
-                           "or later.")
+                           f"record with `{wanted}` in its front matter and no `superseded-by`.")
 
 
 def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:
