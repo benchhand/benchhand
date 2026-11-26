@@ -231,6 +231,40 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
                "parts": baseline["parts"], "files": len(baseline["files"]), "seeded_store_files": seeded}
 
 
+STAGED_DELIVERY = re.compile(r"^\.[A-Z]{2,5}-[0-9]{4}\.(?:deliver|replaced)-[0-9]+$")
+
+
+def refuse_staged_delivery(hw: Path) -> None:
+    """deliver stages a part as hw/parts/.<PN>.deliver-<pid> and renames the old one to .<PN>.replaced-<pid>;
+    while either exists a part directory can be missing, which a scan would read as a retirement."""
+    parts = hw / "parts"
+    staged = sorted(path.name for path in parts.iterdir() if STAGED_DELIVERY.match(path.name)) if parts.is_dir() else []
+    if staged:
+        raise UsageError(f"delivery in progress: {', '.join(staged)} in {parts}; run sync again when it finishes")
+
+
+def lead_snapshot(hw: Path) -> dict[str, str]:
+    """sha256 per file of the lead's record, read twice around two staged-delivery checks. A delivery in
+    progress, or any change between the two reads, refuses the sync instead of syncing a mixed state."""
+    refuse_staged_delivery(hw)
+    first = delivery_tree(hw)[0]
+    refuse_staged_delivery(hw)
+    if delivery_tree(hw)[0] != first:
+        raise UsageError(f"{hw} changed while sync read it; run sync again when the lead's edits are done")
+    return first
+
+
+def copy_bytes(source: Path, target: Path) -> str:
+    """Install `source` at `target` through a temporary file and os.replace, which never follows a link at
+    `target`, and return the sha256 of the bytes actually written."""
+    data = source.read_bytes()
+    staged = target.with_name(f".{target.name}.sync-{os.getpid()}")
+    staged.write_bytes(data)
+    staged.chmod(source.stat().st_mode & 0o777)
+    os.replace(staged, target)
+    return hashlib.sha256(data).hexdigest()
+
+
 def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     """Bring the lead's current record into the workspace: parts the lead retired, other units' deliveries
     and the lead's edits to shared files. A file the unit has not touched takes the lead's version and
@@ -244,7 +278,7 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
     base: dict[str, str] = baseline["files"]
     refuse_links(scratch_hw, scratch_hw)
-    lead, mine = delivery_tree(hw)[0], delivery_tree(scratch_hw)[0]
+    lead, mine = lead_snapshot(hw), delivery_tree(scratch_hw)[0]
     added: list[str] = []
     modified: list[str] = []
     removed: list[str] = []
@@ -270,11 +304,12 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
             removed.append(path)
             base.pop(path, None)
             continue
-        if mine.get(path) != lead[path]:
+        digest = lead[path]
+        if mine.get(path) != digest:
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(hw / path, target)
+            digest = copy_bytes(hw / path, target)
         (modified if path in base else added).append(path)
-        base[path] = lead[path]
+        base[path] = digest
     (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
     report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
               "added": added, "modified": modified, "removed": removed, "conflicts": conflicts,
