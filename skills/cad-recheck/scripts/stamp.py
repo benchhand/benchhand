@@ -185,7 +185,7 @@ def require_gate_decision(root: Path, committed: bool, previous: str, advanced: 
         try:
             records = decision_records.read_decisions(Path(scratch))
         except decision_records.DecisionRecordError as error:
-            raise RuntimeError(f"cannot read the decision records of hw/decisions: {str(error).replace(scratch + '/', '')}") from error
+            raise GateFinding(f"hw/decisions: {str(error).replace(scratch + '/', '')}") from error
     candidates = [r for r in records if r.gate == (previous, advanced) and r.status in ("proposed", "accepted")
                   and not r.superseded_by]
     if not candidates:

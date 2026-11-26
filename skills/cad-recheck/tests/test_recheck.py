@@ -335,7 +335,7 @@ class RecheckHookTests(unittest.TestCase):
                 self.git("add", "hw")
                 self.assertEqual(self.stamp_gate("layout").returncode, 0)
                 result = self.verify()
-                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.returncode, 1)
                 self.assertIn("DR-001-", result.stderr)
                 self.assertIn("gate", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
@@ -398,7 +398,7 @@ class RecheckHookTests(unittest.TestCase):
         self.git("add", "hw")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         result = self.verify()
-        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.returncode, 1)
         self.assertIn("DR-001-", result.stderr)
 
     def test_a_malformed_gate_digest_reports_the_field_as_a_finding(self) -> None:
