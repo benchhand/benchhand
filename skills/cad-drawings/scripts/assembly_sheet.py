@@ -377,13 +377,8 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
     until = acceptance_text(operation.acceptance, operation.features, measured, regime)
     data = None
     if operation.kind == "press_fit":
-<<<<<<< HEAD
         action = words(f"Press item {op.part_item} into {_into(op)}")
-        data = words("fit ") + str(limit["fit"])
-=======
-        action = words(f"Press item {op.part_item} into item {op.into_item}")
         data = words("fit ") + str(limit["fit"]) if "fit" in limit else words("fit " + explicit_fit_text(limit))
->>>>>>> e29e6dd6f (feat(cad-fits): fits by explicit limits; crush-rib fits (wip))
     elif operation.kind == "heat_set":
         action = words(f"Heat-set item {op.part_item} into {_into(op)}")
         lower, upper = limit.get("hole_tol", (0.0, 0.0))
