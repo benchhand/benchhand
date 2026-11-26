@@ -760,18 +760,24 @@ class Context:
         noted as uncalibrated."""
         return PASS, _noted(coverage, cal.note) if cal.note else coverage
 
-    def state_phrase(self, profile: Any | None = None) -> str:
-        """What the capability profile's recorded calibration_state says where a guideline value governs, for a report to
-        quote; empty when none is recorded. Wording only: it never changes an outcome."""
-        profile = profile or self.profile
+    def state_label(self, profile: Any | None) -> str:
+        """What `profile`'s recorded calibration_state says, for a report to quote; empty when none is recorded or there is
+        no profile (it never falls back to this operation's). A custom calibration is either ignored (printer calibration is
+        off) or does not cover the check. Wording only: it never changes an outcome."""
         status = profile.calibration_state if profile is not None else None
         if status == "standard":
-            return "standard built-in calibration; guideline deviations apply"
+            return "standard built-in calibration"
         if status == "custom":
-            return "custom calibration, none of it covers this check; guideline deviations apply"
+            return ("custom calibration ignored while printer calibration is off" if self.calibration_off(profile)
+                    else "custom calibration does not cover this check")
         if status == "unknown":
-            return "calibration state unknown; guideline deviations apply"
+            return "calibration state unknown"
         return ""
+
+    def state_phrase(self, profile: Any | None = None) -> str:
+        """The state of `profile` (this operation's unless named) where a guideline value governs the check."""
+        label = self.state_label(profile or self.profile)
+        return f"{label}; guideline deviations apply" if label else ""
 
     def calibration_off(self, profile: Any | None = None) -> bool:
         """Whether the FDM calibration flag is off for this operation's capability profile (only FDM has the flag)."""

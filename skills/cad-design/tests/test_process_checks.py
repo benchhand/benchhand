@@ -3236,18 +3236,11 @@ class GuidelineWithoutCalibrationTests(Checks):
 
     REAM = "process.reaming.allowance@TST-0101/ream"
 
-<<<<<<< HEAD
     def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", machine: bool = True,
-               stock: Any = None) -> Any:
+               stock: Any = None, state: dict | None = None, reamer_state: dict | None = None) -> Any:
         """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size. Without `machine` the print
         names no capability profile; with `stock` the print's setup.stock.material_profile is that value."""
-        documents = guided(service=service, calibrations=(CONTACT,))
-=======
-    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", state: dict | None = None,
-               reamer_state: dict | None = None) -> Any:
-        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size."""
         documents = guided(service=service, calibrations=(CONTACT,), state=state)
->>>>>>> bd75ec8a (test(cad-design): the calibration state wording names the real basis and the printer's own state)
         intent = documents["parts/TST-0101/part.yaml"]["intent"]
         if not machine:
             intent["route"][0]["capability"] = FX.unknown("no machine recorded")
