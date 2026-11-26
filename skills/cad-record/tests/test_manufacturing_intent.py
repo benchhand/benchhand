@@ -716,6 +716,33 @@ class RequiredChecks(unittest.TestCase):
         self.assertEqual((product.family, dict(product.subject), product.level, product.stage),
                          ("cad.product_exports", {"product": True}, "cad_valid", "layout"))
 
+    def test_checks_that_share_an_obligation_id_are_reported_not_merged(self) -> None:
+        """Two seal regions on one feature, or two policy requirements at one level on one part, share an obligation id.
+        One result cannot answer both, so neither vanishes into the other: an intent obligation names the collision."""
+        def regions(documents: dict[str, Any]) -> None:
+            documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+                {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "after_finish"}
+                for side in ("inner", "outer")]
+
+        def policies(documents: dict[str, Any]) -> None:
+            documents["requirements.yaml"]["requirements"].append(fx.requirement("REQ-002", "Seal the housing"))
+            documents["product.yaml"]["use_case"]["evidence_policy"] = {"decision": "DR-001", "obligations": [
+                {"subject": {"PN": "TST-0001"}, "requirement": ident, "level": "physically_validated"}
+                for ident in ("REQ-001", "REQ-002")]}
+
+        cases = {"two regions": (regions, "intent.obligation_identity@TST-0001#seal_groove", ("seal_inner", "seal_outer")),
+                 "two requirements": (policies, "intent.obligation_identity@TST-0001", ("REQ-001", "REQ-002"))}
+        for case, (change, ident, named) in cases.items():
+            with self.subTest(case):
+                documents = fx.tst_record()
+                change(documents)
+                record = mi.normalize_record(documents)
+                self.assertEqual([p.message for p in record.problems if p.severity == "error"], [])
+                owed = {o.id: o for o in mi.required_checks(record)}
+                self.assertIn(ident, sorted(owed))
+                for name in named:
+                    self.assertIn(name, owed[ident].basis)
+
     def test_existing_equipment_carries_no_obligation_of_its_own(self) -> None:
         documents = fx.record(parts=[fx.part("TST-0001"), fx.existing_part("TST-0009")],
                               interfaces=[fx.interface("IF-001", "TST-0001", "TST-0009")])
