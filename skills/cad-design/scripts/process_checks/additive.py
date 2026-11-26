@@ -32,7 +32,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .core import (FAIL, MAXIMUM, MINIMUM, NOT_APPLICABLE, NOT_ASSESSED, PASS, UNKNOWN, Calibrated, Context, Draft, Geometry, Limit,
-                   Result, angle, combine, gated, length, policy, source_dict, text, unknown)
+                   Result, angle, combine, gated, length, occurrence_ids, policy, source_dict, text, unknown)
 
 FINISHING_KINDS = frozenset({"reaming", "finishing", "cnc", "drilling"})  # operations that can restore a surface
 PRINTERS = frozenset({"fdm", "resin"})  # printer calibration is optional on these (benchhand-c7q.30)
@@ -957,9 +957,12 @@ def _receiving(ctx: Context, g: Geometry, findings: list[Draft]) -> list[tuple[s
     if mi.is_fact(operations):
         return []
     critical = ctx.critical_features()
+    occurrence_id, placed = occurrence_ids(ctx)
+    mine = {o.id for o in placed}
     parts: list[tuple[str, str]] = []
     for item in operations:
-        if item.get("into") != ctx.pn or item.get("kind") not in ("press_fit", "heat_set", "insert"):
+        into = item.get("into")  # the part number, or an occurrence of it the inventory resolves
+        if (into != ctx.pn and occurrence_id(into) not in mine) or item.get("kind") not in ("press_fit", "heat_set", "insert"):
             continue
         for feature in (item.get("acceptance") or {}).get("features") or ():
             hole = next((h for h in g.holes() if feature in (h.get("features") or ())), None)

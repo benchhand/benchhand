@@ -449,6 +449,25 @@ def guideline_scope(record: Any, pn: str, catalog: Any, today: date) -> tuple[li
     return [], list(dict.fromkeys(reasons))
 
 
+def occurrence_ids(ctx: Context) -> tuple[Callable[[Any], Any], tuple[Any, ...]]:
+    """The function that maps a reference to its occurrence id, and the occurrences of the part under check, both read
+    from the assembly inventory. When the inventory fails to build (validate reports why), references stand as written."""
+    data = assembly_data()
+    frames = {pn: part.raw.get("model_frame", data.DEFAULT_FRAME) for pn, part in ctx.record.parts.items()}
+    try:
+        inventory = data.normalize(intent().thaw(ctx.record.assembly_inventory), frames)
+    except data.InventoryError:
+        return (lambda ref: ref), ()
+
+    def occurrence_id(ref: Any) -> Any:
+        try:
+            return inventory.resolve(ref).id
+        except data.UnresolvedReference:
+            return None  # a reference the inventory cannot resolve names no occurrence, so it matches none
+
+    return occurrence_id, inventory.of(ctx.pn)
+
+
 def parse_side(value: str) -> tuple[float, float, float] | None:
     """An access side as an axis direction of the native manufacturing frame (+X .. -Z); None otherwise."""
     key = re.sub(r"\s+", "", str(value)).lower()
