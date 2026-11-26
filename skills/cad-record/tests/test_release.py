@@ -1481,7 +1481,8 @@ class Acceptance(ReleaseCase):
 
     def test_a_cited_artifact_that_is_gone_is_refused_at_its_ledger_field_by_release_and_validate(self) -> None:
         hw = self.project()
-        (hw / "docs" / "inspection.md").unlink()
+        ledger = yaml.safe_load((hw / "manufacturing" / "evidence.yaml").read_text(encoding="utf-8"))
+        (hw.parent / ledger["entries"][0]["artifacts"][0]["path"]).unlink()  # the file EV-001 cites
         field = "hw/manufacturing/evidence.yaml#/entries/EV-001/artifacts/0/path"
         code, report = self.release(hw)
         self.assertEqual((code, report["status"]), (1, "refused"))
