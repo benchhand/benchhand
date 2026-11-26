@@ -572,8 +572,8 @@ sys.exit(code)
         finally:
             model.write_text(original, encoding="utf-8")
         self.assertEqual((code, result["status"]), (1, "fail"), result)
-        self.assertTrue([f for f in result["coverage"]["findings"]
-                         if f.get("feature") == "groove" and f["code"] == "feature_not_found"], result["coverage"])
+        self.assertEqual(result["error"]["code"], "feature_not_found", result)   # the sheet's detail view of it
+        self.assertIn("groove", result["error"]["message"])
 
     def test_vendor_sheet_controls_only_the_specification_limits(self) -> None:
         code, result = self.draw("v1", "vendor", "LMP-0009")
