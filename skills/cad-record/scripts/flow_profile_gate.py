@@ -79,7 +79,7 @@ WORD_FIELDS = ("human_approval", "stack_up", "critique", "motion", "processes/fd
                "processes/fdm/overhang_deg", "processes/fdm/bridge_mm", "processes/fdm/min_wall_mm",
                "processes/fdm/min_feature_mm", "processes/fdm/warp", "processes/fdm/pip_clearance_mm/xy",
                "processes/fdm/pip_clearance_mm/z")
-ASK = ("ask the user the project-start questions (flow_profile.py questions), each with its default, and record the "
+ASK = ("ask the user the project-start questions (flow_profile.py questions --hw hw), each with its default, and record the "
        "answers with flow_profile.py record --decision DR-###")
 # Settings whose off or light turns a check off; safety_critical service and regulated rigor refuse them, and
 # fea disabled. cosmetic_faces false declares no cosmetic face and turns no check off.
