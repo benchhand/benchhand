@@ -362,6 +362,19 @@ class RecheckHookTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn(field + ":", result.stderr)
 
+    def test_gate_refuses_a_packet_for_an_older_manifest_at_the_same_version(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        path = self.root / "hw" / "versions" / "v1" / "manifest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"label":"v1","files":{},"build":"replacement"}\n', encoding="utf-8")
+        self.git("add", "-f", "hw/versions/v1/manifest.json")
+        stamped = self.stamp_gate("layout")
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("version_manifest_sha256:", result.stderr)
+        self.assertIn("hw/versions/v1/manifest.json", result.stderr)
+
     def test_a_malformed_decision_record_is_a_refusal(self) -> None:
         self.provisional_gate("parts")
         decision_path(self.root / "hw", "DR-001").write_text("not a record\n", encoding="utf-8")
