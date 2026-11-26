@@ -137,7 +137,7 @@ The module:
 `render.py` and `motion.py render` take repeatable `--hide`, `--ghost` and `--show` (a PN or an occurrence id). The optional `part.yaml` field `render: shown|ghost|hidden` (`part.schema.json`) sets a part's default, and the flags override it.
 
 - Owner: `render_states` in `skills/cad-render/scripts/render.py` resolves the lists; `skills/cad-render/assets/renderer/render.js` draws them. A ghost reuses the ghosted-context material of the close-up fallback (`ghostMaterial`) and adds edge lines. The viewer's `parts` action (`skills/cad-viewer`) is a separate browser-side tool and is not reused.
-- A ghost is never an occluder: the mask pass and the floor bake leave it out, and requirement visibility counts a ghosted or hidden window part as see-through. A hidden visibility target is an error.
+- A ghost is never an occluder in a picture: the mask pass and the floor bake leave it out. Requirement visibility is evidence, not a picture: it draws a ghosted or hidden window part and judges it by its recorded `transparency`, so an opaque cover still occludes (benchhand-yjq.14). A hidden visibility target is an error.
 - `render.json` and `motion-render.json` list `hidden` and `ghosted`. Both enter the cache key and every view's `render_inputs`, so a change re-renders. `motion.py` adds them to the bundle recipe.
 - An existing part (`make_buy: existing`) with no `render` value defaults to ghost (`sourcing.delivered`).
 
