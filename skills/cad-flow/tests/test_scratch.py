@@ -581,6 +581,58 @@ class Sync(ScratchCase):
         self.assertEqual((code, report["status"]), (2, "error"), report)
         self.assertEqual(tree(outside), before)
 
+    def test_sync_refuses_while_a_delivery_is_staged_and_names_it(self) -> None:
+        """deliver renames a part directory away while it replaces it, so a scan then would read a replacement as a retirement."""
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        staged = self.hw / "parts" / ".PRT-0002.deliver-4242"
+        staged.mkdir()
+        shutil.rmtree(self.hw / "parts" / "PRT-0001")
+        before = tree(scratch_hw)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("delivery in progress", report["error"])
+        self.assertIn(".PRT-0002.deliver-4242", report["error"])
+        self.assertEqual(tree(scratch_hw), before)
+
+    def test_sync_refuses_when_the_lead_changes_a_file_between_its_two_snapshot_scans(self) -> None:
+        self.init("unit-a", "PRT-0001")
+        module = load_scratch()
+        hw, scans = self.hw.resolve(), []
+        real = module.delivery_tree
+
+        def scan(root):
+            result = real(root)
+            if root == hw:
+                scans.append(result)
+                if len(scans) == 1:
+                    with (hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+                        stream.write("# lead edit during the scan\n")
+            return result
+
+        with mock.patch.object(module, "delivery_tree", scan), self.assertRaises(module.UsageError) as raised:
+            module.sync(hw, "unit-a")
+        self.assertIn("changed while sync read it", str(raised.exception))
+
+    def test_sync_records_the_digest_of_the_bytes_it_installed(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# first lead edit\n")
+        module = load_scratch()
+        real = module.copy_bytes
+
+        def copy(source, target):
+            with source.open("a", encoding="utf-8") as stream:  # the lead edits again after the snapshot
+                stream.write("# second lead edit\n")
+            return real(source, target)
+
+        with mock.patch.object(module, "copy_bytes", copy):
+            code, report = module.sync(self.hw.resolve(), "unit-a")
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        installed = hashlib.sha256((scratch_hw / "interfaces.yaml").read_bytes()).hexdigest()
+        baseline = json.loads((scratch_hw.parent / "baseline.json").read_text(encoding="utf-8"))
+        self.assertEqual(baseline["files"]["interfaces.yaml"], installed)
+        self.assertTrue((scratch_hw / "interfaces.yaml").read_text(encoding="utf-8").endswith("# second lead edit\n"))
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
