@@ -273,13 +273,21 @@ class Record(unittest.TestCase):
         self.assertIn("[DR-001]", listing)
         self.assertIn("[DR-002]", listing)
 
-    def test_record_refuses_a_flow_it_cannot_edit_as_text(self) -> None:
-        text = PRODUCT.replace("flow:\n  stage: intent\n  recheck_from: intent\n", "flow: {stage: intent, recheck_from: intent}\n")
-        self.product.write_text(text, encoding="utf-8")
-        result = self.record("DR-001", "--fea", "accurate")
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(self.product.read_text(encoding="utf-8"), text)
-        self.assertFalse((self.hw / "decisions").exists())
+    def test_record_accepts_a_flow_style_mapping_and_preserves_other_product_data(self) -> None:
+        for decision, mapping in (
+            ("DR-001", 'flow: {stage: intent, recheck_from: intent} # keep this comment\n'),
+            ("DR-002", '"flow": {stage: intent,\n  recheck_from: intent, profile: {decision: DR-001}} # keep this comment\n'),
+        ):
+            with self.subTest(mapping=mapping):
+                text = PRODUCT.replace("flow:\n  stage: intent\n  recheck_from: intent\n", mapping)
+                self.product.write_text(text, encoding="utf-8")
+                result = self.record(decision, "--fea", "accurate")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                after = self.product.read_text(encoding="utf-8")
+                data = yaml_loader.safe_load(after)
+                self.assertEqual(data["flow"].pop("profile")["decision"], decision)
+                self.assertEqual(data, yaml_loader.safe_load(PRODUCT))
+                self.assertIn(" # keep this comment\nunits: mm\n", after)
 
 
 class Check(unittest.TestCase):
