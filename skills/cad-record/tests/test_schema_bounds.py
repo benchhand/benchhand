@@ -292,6 +292,10 @@ CASES: tuple[Case, ...] = (
     number(0, "interface.margin_mm", "interfaces.schema.json", "/properties/interfaces/items/properties/margin_mm", "[0, 1]",
            {"max": 0.5}),
     number(0, "guideline.factor", "manufacturing-guideline.schema.json", "/$defs/relative/properties/factor", "(0, )", None),
+    # A fit by explicit limits: the nominal diameter and its crush ribs, facts about the part
+    number(0, "fit.nominal_mm", DRAWING, "/$defs/fit/properties/nominal_mm", "(0, )", None),
+    number(0, "fit.ribs.count", DRAWING, "/$defs/fit/properties/ribs/properties/count", "[1, ]", None, shape="int"),
+    number(0, "fit.ribs.width_mm", DRAWING, "/$defs/fit/properties/ribs/properties/width_mm", "(0, )", None),
 )
 BY_NAME = {case.name: case for case in CASES}
 # Audit row 8 was the product `rigor` field, which the schema no longer has
@@ -308,6 +312,7 @@ FACTS = {
     "power", "pump_pressure", "press_brake_force", "modulus", "density", "temperature", "poisson_ratio", "fu_fy_ratio", "min_clearance_mm",
     "tol", "tol_plus", "tol_minus", "confidence", "weight", "crank_radius_mm", "rod_length_mm", "guideline.factor",
     "period_deg", "mass_target", "bom.mass", "print_in_place.break_free.force_n",
+    "fit.nominal_mm", "fit.ribs.count", "fit.ribs.width_mm",
 }
 # An explicit override that has no default of its own: mesh_size_extent_ratio carries the default and mesh_size wins when set;
 # fast_band_pct is absent unless the user sets it, and cad-analysis then measures its own band
