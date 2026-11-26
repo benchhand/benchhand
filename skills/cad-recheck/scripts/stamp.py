@@ -36,7 +36,6 @@ import hashlib
 import importlib.util
 import json
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -159,10 +158,12 @@ def _matching_gate_date(records: list[Any], version: str, digest: str, stamped_o
 
 def _checked_build(root: Path, committed: bool, checks: dict[str, Any]) -> tuple[str, str]:
     version = checks.get("version")
-    pattern = validate.layout.load().tokens["V"]["pattern"]
-    if not isinstance(version, str) or re.fullmatch(pattern, version) is None:
+    if not isinstance(version, str):
         raise GateFinding("version: the evidence packet must name a built version")
-    path = f"hw/versions/{version}/manifest.json"
+    try:
+        path = f"{layout.load().path('version.core', {'V': version})}/{layout.MANIFEST}"
+    except layout.LayoutError as error:
+        raise GateFinding("version: the evidence packet must name a built version") from error
     try:
         digest = hashlib.sha256(tree_blob(root, path, committed)).hexdigest()
     except RuntimeError as error:
