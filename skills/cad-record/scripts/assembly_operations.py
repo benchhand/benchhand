@@ -851,19 +851,7 @@ def _hours(fact: Any, *, lower: bool) -> float | None:
 def _quantities() -> Any:
     """cad-record quantities.py, the shared quantity parser, loaded once by path under its shared name. It needs only
     the standard library, so this module keeps no dependency of manufacturing_intent's."""
-    name = "cad_record_quantities"
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "quantities.py")
-        if spec is None or spec.loader is None:
-            raise ImportError(f"quantities.py not found beside {Path(__file__).name}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException:
-            del sys.modules[name]
-            raise
-    return sys.modules[name]
+    return load_shared("cad_record_quantities", SCRIPTS / "quantities.py")
 
 
 def _never_installed(state: AssemblyState, inventory: Any) -> list[dict[str, Any]]:
