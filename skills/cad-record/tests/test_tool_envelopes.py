@@ -158,7 +158,8 @@ class AccessPlanTests(unittest.TestCase):
         for tools in (["by eye"], ["on the bench", "clock"], ["hold"], []):
             with self.subTest(tools=tools):
                 request = plan(BRACKET, {**INSPECT, "tools": tools})["inspect-bracket"]
-                self.assertEqual((request.applicable, request.unknown, request.reaches), (False, (), ()))
+                self.assertEqual((request.unknown, request.reaches), ((), ()))
+                self.assertIn("inspect-bracket moves no part and no tool or hand reaches it", request.not_applicable or "")
 
     def test_a_common_tool_gets_its_standard_envelope(self) -> None:
         request = plan({**BRACKET, "tools": ["3 mm hex key"]})["mount-bracket"]
@@ -194,13 +195,13 @@ class AccessPlanTests(unittest.TestCase):
                 self.assertEqual((request.unknown, request.reaches), ((), ()))
                 self.assertEqual(len(request.notes), 1)
                 self.assertIn("frobnicator", request.notes[0])
-                self.assertTrue(request.applicable, "the part path is still checked")
+                self.assertIsNone(request.not_applicable, "the part path is still checked")
 
     def test_a_reaching_tool_without_any_direction_stays_unknown(self) -> None:
         request = plan(BRACKET, {**INSPECT, "kind": "adjust", "id": "adjust-bracket",
                                  "acceptance": {"kind": "adjusted", "features": ["bracket_foot"]},
                                  "tools": ["3 mm hex key"]})["adjust-bracket"]
-        self.assertTrue(request.applicable)
+        self.assertIsNone(request.not_applicable)
         self.assertEqual(request.reaches, ())
         self.assertIn("tool '3 mm hex key' has no approach direction", request.unknown)
 
@@ -246,6 +247,54 @@ class AccessPlanTests(unittest.TestCase):
                 self.assertEqual([reach.index for reach in request.reaches], [1])
                 self.assertEqual(len(request.unknown), 1, "the tools entry still needs its own placement")
                 self.assertIn(repr(written), request.unknown[0])
+
+
+HOLD = {"id": "hold-screw", "kind": "hold", "part": "TST-0105", "fixture": "bench vice", "orientation": [0, 0, 1],
+        "duration": {"status": "known", "value": {"value": 10, "units": "min"}, "basis": "user_declared",
+                     "sources": [{"kind": "user", "reference": "TST fixture"}]}}
+KEY = {"tool": "3 mm hex key", "approach": [0, 0, -1], "contact": [20, 0, 44]}
+
+
+class HoldPlanTests(unittest.TestCase):
+    """A hold moves no part: it reaches what its tools reach, through the same planner as every other step."""
+
+    def test_a_tool_free_hold_is_not_applicable_with_its_reason(self) -> None:
+        for tools in ([], ["by eye"], ["on the bench", "clock"]):
+            with self.subTest(tools=tools):
+                request = plan(BRACKET, {**HOLD, "tools": tools})["hold-screw"]
+                self.assertEqual((request.reaches, request.unknown, request.advisory), ((), (), ()))
+                self.assertIn("hold-screw", request.not_applicable or "")
+
+    def test_a_recognised_tool_on_a_hold_is_measured_at_its_own_index(self) -> None:
+        cases = {"declared": {"tools": ["spring clamp"], "tool_access": [KEY]},
+                 "named, with a contact in tool_access": {"tools": ["spring clamp", "Allen key (3 mm)"], "tool_access": [KEY]}}
+        for label, entries in cases.items():
+            with self.subTest(label):
+                request = plan(BRACKET, {**HOLD, **entries})["hold-screw"]
+                [reach] = request.reaches
+                index = len(entries["tools"])
+                self.assertEqual((reach.index, reach.tool.name, reach.source), (index, "3 mm hex key", "standard"))
+                self.assertEqual(request.tools[reach.index].name, "3 mm hex key", "the index is the tool's own")
+                self.assertEqual((request.not_applicable, request.unknown, request.advisory), (None, (), ("spring clamp",)))
+
+    def test_a_recognised_tool_on_a_hold_without_its_placement_stays_unknown(self) -> None:
+        for entry, needs in (({"tool": "3 mm hex key", "contact": [20, 0, 44]}, "approach"),
+                             ({"tool": "3 mm hex key", "approach": [0, 0, -1]}, "contact"),
+                             ("by hand", "approach")):
+            with self.subTest(needs=needs, entry=entry):
+                field = {"tools": [entry]} if isinstance(entry, str) else {"tool_access": [entry]}
+                request = plan(BRACKET, {**HOLD, **field})["hold-screw"]
+                self.assertEqual((request.reaches, request.not_applicable), ((), None))
+                [reason] = request.unknown
+                self.assertIn(needs, reason)
+
+    def test_a_hold_whose_tools_are_all_advisory_is_neither_measured_nor_not_applicable(self) -> None:
+        for entries in ({"tools": ["spring clamp"]}, {"tool_access": [{"tool": "spring clamp"}]},
+                        {"tools": ["spring clamp", "by eye"]}):
+            with self.subTest(entries=entries):
+                request = plan(BRACKET, {**HOLD, **entries})["hold-screw"]
+                self.assertEqual((request.reaches, request.unknown, request.not_applicable), ((), (), None))
+                self.assertEqual(request.advisory, ("spring clamp",))
 
 
 if __name__ == "__main__":
