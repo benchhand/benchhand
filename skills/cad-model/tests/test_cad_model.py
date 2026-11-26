@@ -1804,6 +1804,24 @@ class ProductSubsetTests(unittest.TestCase):
         row = self.judge(glb=glb)
         self.assertEqual((row["status"], row["glb_missing_nodes"], row["glb_duplicate_nodes"]), ("fail", ["TST-0001"], []))
 
+    def test_a_boolean_scene_index_is_malformed(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        row = self.judge(glb={**self.gltf(names), "scene": False})
+        self.assertEqual(row["status"], "fail")
+        self.assertTrue(row["glb_malformed"])
+
+    def test_a_node_referenced_twice_in_the_scene_is_malformed(self) -> None:
+        names = [self.PLACED[oid][1] for oid in self.DELIVERED]
+        twice = self.gltf(names)
+        twice["scenes"][0]["nodes"].append(0)  # the top node is a root twice
+        cycle = self.gltf(names)
+        cycle["nodes"][3]["children"] = [0]  # s-2's node points back at the top node
+        for name, glb in (("root twice", twice), ("cycle", cycle)):
+            with self.subTest(name):
+                row = self.judge(glb=glb)
+                self.assertEqual(row["status"], "fail")
+                self.assertTrue(any("more than once" in reason for reason in row["glb_malformed"]), row["glb_malformed"])
+
     def test_a_malformed_glb_is_a_blocking_failure_not_a_crash(self) -> None:
         names = [self.PLACED[oid][1] for oid in self.DELIVERED]
         bad_scene = {**self.gltf(names), "scene": 3}
