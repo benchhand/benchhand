@@ -51,6 +51,8 @@ STAGES: tuple[str, ...] = tuple(schema_registry.schema(SCHEMAS, "product.schema.
 # The profile and its decision are due once the INTENT gate has passed. A build is L1 LAYOUT work or later.
 PROFILE_DUE = "specify"
 BUILD_STAGE = "layout"
+# The process names a manufacturing.processes entry may take (manufacturing.schema.json $defs/primary_process).
+PROCESSES: frozenset[str] = frozenset(schema_registry.schema(SCHEMAS, "manufacturing.schema.json")["$defs"]["primary_process"]["enum"])
 FDM = "processes/fdm/"
 PIP_CLEARANCE = "processes/fdm/pip_clearance_mm/"
 # The ISO/ASTM 52900 category of each flow.profile process (product.schema.json $defs/iso_52900_category);
@@ -182,11 +184,15 @@ def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicabilit
     """FDM is planned at INTENT (manufacturing.processes), as a part's process, or as an operation of a part's
     route. It is ruled out only by a declared plan without it or by parts whose routes are all known; no plan
     and no part, or a part whose route is unknown, leaves it unknown. `parts` are the parsed part records by PN."""
-    plan = _mapping(_mapping(product).get("manufacturing")).get("processes")
+    manufacturing = _mapping(_mapping(product).get("manufacturing"))
+    declared, plan = "processes" in manufacturing, manufacturing.get("processes")
     malformed = []
-    if plan is not None and not (isinstance(plan, list) and plan and all(isinstance(item, str) for item in plan)):
-        malformed.append(Problem("manufacturing/processes", "manufacturing.processes is not a non-empty list of process names",
-                                 "write the planned processes as a list, for example [cnc]", APPLICABILITY))
+    unknown = [item for item in plan if not isinstance(item, str) or item not in PROCESSES] if isinstance(plan, list) else []
+    if declared and (not isinstance(plan, list) or not plan or unknown):
+        named = f" (not a process name: {', '.join(repr(item) for item in unknown)})" if unknown else ""
+        malformed.append(Problem("manufacturing/processes",
+                                 f"manufacturing.processes is not a non-empty list of process names{named}",
+                                 f"write the planned processes as a list of {', '.join(sorted(PROCESSES))}", APPLICABILITY))
     for number, part in parts.items():
         if not isinstance(part, Mapping):
             malformed.append(Problem(f"parts/{number}/part.yaml", f"parts/{number}/part.yaml is not a readable part record",
@@ -194,7 +200,7 @@ def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicabilit
     if (isinstance(plan, list) and "fdm" in plan) or any(_uses_fdm(_mapping(part)) for part in parts.values()):
         return FdmApplicability(YES, malformed=tuple(malformed))
     unresolved = []
-    if plan is None and not parts:
+    if not declared and not parts:
         unresolved.append(Problem("manufacturing/processes", "manufacturing.processes is not declared and no part record "
                                   "exists, so FDM cannot be ruled out", "declare manufacturing.processes at INTENT",
                                   APPLICABILITY))
@@ -218,7 +224,8 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
         return []
     profile = profile_of(product)
     if not isinstance(profile, Mapping):
-        return [Problem("flow/profile", "flow.profile is missing: the project-start questions are not recorded", ASK)]
+        return [Problem("flow/profile", "flow.profile is missing: the project-start questions are not recorded", ASK),
+                *fdm_applicability(product, parts).malformed]
     found = []
     decision = profile.get("decision")
     if not isinstance(decision, str):
