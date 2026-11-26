@@ -406,5 +406,47 @@ class SizesAtAPlane(unittest.TestCase):
         self.assertIn('text-anchor="end"', markup, "ASME text reads leftward, away from the view")
 
 
+class FailedBindingsAndGrooves(unittest.TestCase):
+    """Malformed model input is a finding that names the feature, never an exception."""
+
+    def test_a_feature_whose_locator_went_stale_is_not_measured(self) -> None:
+        bed = rectangle(0, 0, 0, 60, 40, 0)
+        features = {"bed": ResolvedFeature("bed", "plane_face", (0,)),
+                    "tab": ResolvedFeature("tab", "plane_face", ())}    # its patch matched no face
+        stale = ({"code": "feature_not_found", "feature": "tab", "message": "tab patch 0 lies on no face"},)
+        part = {"process": "fdm", "drawing": {
+            "type": "detail", "coordinate_frame": {"origin": {"at": "bed"}, "z": {"normal_to": "bed"}},
+            "features": {"bed": {}, "tab": {}}}}
+        measurer = drawing_intent.Measurer("TST-0006", part, {}, [], Binding(features, {0: "bed"}, stale), [bed])
+        measured = measurer.run()
+        self.assertEqual({c.feature for c in measured.characteristics} - {"bed"}, set())
+        self.assertEqual(measured.findings, [])   # the binding's own finding names tab; measuring adds no crash
+
+    def test_a_stale_feature_still_reports_its_missing_intent(self) -> None:
+        bed = rectangle(0, 0, 0, 60, 40, 0)
+        features = {"bed": ResolvedFeature("bed", "plane_face", (0,)),
+                    "tab": ResolvedFeature("tab", "plane_face", ())}
+        stale = ({"code": "feature_not_found", "feature": "tab", "message": "tab patch 0 lies on no face"},)
+        part = {"process": "fdm", "drawing": {
+            "type": "detail", "coordinate_frame": {"origin": {"at": "bed"}, "z": {"normal_to": "bed"}},
+            "features": {"bed": {}}}}
+        measured = drawing_intent.Measurer("TST-0006", part, {}, [], Binding(features, {0: "bed"}, stale), [bed]).run()
+        self.assertEqual([(f["code"], f["feature"]) for f in measured.findings],
+                         [("dimension_coverage_incomplete", "tab")])
+
+    def test_a_v_cut_engraving_with_no_flat_floor_is_as_deep_as_its_lowest_point(self) -> None:
+        surface = rectangle(0, 0, 0, 60, 40, 0)
+        left = strip(1, ((-1.0, 0.0), (0.0, -1.0)), (-0.7071, -0.7071, 0.0))
+        right = strip(2, ((0.0, -1.0), (1.0, 0.0)), (0.0, 0.7071, 0.7071))
+        features = {"top": ResolvedFeature("top", "plane_face", (0,)),
+                    "mark": ResolvedFeature("mark", "engraving", (1, 2), relations={"on": ("top",)})}
+        part = {"drawing": {"type": "detail", "notes": [{"reference": "mark"}]}}
+        measurer = drawing_intent.Measurer("TST-0007", part, {}, [], Binding(features, {}, ()), [surface, left, right])
+        measurer._engraving(features["mark"], FRAME)
+        depth = next(c for c in measurer.result.characteristics if c.operation == "depth")
+        self.assertAlmostEqual(depth.value, 1.0)
+        self.assertEqual(depth.faces, (1, 2))
+
+
 if __name__ == "__main__":
     unittest.main()
