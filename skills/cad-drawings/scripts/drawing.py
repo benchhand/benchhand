@@ -505,7 +505,12 @@ def run_part(context: drawing_contract.DrawingContext, pn: str, output_dir: Path
             report = completeness.evaluate(pn, record, context.interfaces, binding, measured, None, part.step_sha256,
                                            recognition=recognition, faces=face_map)
             return {"pn": pn, "status": "fail", "coverage": report.to_dict()}, 1
-        plans = part_views.plan_views(drawing, measured.frame, binding.features, face_map)
+        try:
+            plans = part_views.plan_views(drawing, measured.frame, binding.features, face_map)
+        except drawing_intent.IntentError as exc:   # keep the binding and measurement findings beside the view error
+            report = completeness.evaluate(pn, record, context.interfaces, binding, measured, None, part.step_sha256,
+                                           recognition=recognition, faces=face_map)
+            return {**fail(exc.code, str(exc), pn=pn), "coverage": report.to_dict()}, 1
         result, code = compose_and_publish(context, part, drawing, regime, binding, face_map, measured, plans,
                                            procurement, vendor, output_dir, freecadcmd, timeout, work, recognition,
                                            bundle_path, jobs)
