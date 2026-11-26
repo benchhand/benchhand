@@ -142,12 +142,20 @@ class Record(unittest.TestCase):
         self.assertEqual((data["flow"]["stage"], data["flow"]["recheck_from"]), ("intent", "intent"))
         self.assertIn("# a comment the profile record keeps\n", self.product.read_text(encoding="utf-8"))
 
-    def test_a_project_that_plans_no_fdm_records_with_its_five_answers(self) -> None:
+    def test_a_cnc_project_records_with_its_five_answers_and_a_part_that_becomes_fdm_brings_the_questions_back(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
         general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(set(self.profile()["asked"]), set(QUESTION_FIELDS[:5]))
-        self.assertEqual(run("check", "--hw", str(self.hw)).returncode, 0)
+        settled = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual((settled.returncode, json.loads(settled.stdout)["problems"]), (0, []), settled.stdout)
+        part = self.hw / "parts" / "PRT-0001" / "part.yaml"
+        part.parent.mkdir(parents=True)
+        part.write_text("PN: PRT-0001\nprocess: fdm\n", encoding="utf-8")
+        changed = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual(changed.returncode, 1, changed.stdout)
+        missing = {item["path"] for item in json.loads(changed.stdout)["problems"]}
+        self.assertEqual(missing, {f"flow/profile/asked/{field}" for field in QUESTION_FIELDS[5:14]})
 
     def test_a_project_that_plans_fdm_still_needs_every_answer(self) -> None:
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
