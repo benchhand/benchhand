@@ -779,6 +779,21 @@ class ReleasePolicy(unittest.TestCase):
                     self.assertEqual([(f.code, f.severity, f.obligation) for f in found],
                                      [(code, "error", owed["id"])] if code else [])
 
+    def test_a_release_judges_an_acceptance_level_outside_the_schema_by_the_5dcd2c92_policy(self) -> None:
+        """A typo in a critical interface's evidence_required survives normalisation as an obligation at that level.
+        The release owes it from working_prototype on and for an unknown class, as before project_scope."""
+        typo = "interface.acceptance.physicaly_validated@IF-001#running_clearance"
+        for service_class, owed in ((None, True), ("fit_assembly", False), ("functional_demo", False),
+                                    ("working_prototype", True), ("production", True)):
+            with self.subTest(service_class=service_class):
+                docs = documents(service_class)
+                acceptance_row = docs["interfaces.yaml"]["interfaces"][0]["functional"]["acceptance"][0]
+                acceptance_row["verification"]["evidence_required"].append("physicaly_validated")
+                record = normalized(docs)
+                self.assertIn(typo, {o.id for o in mi.required_checks(record)})
+                policy = assess(record).release()  # no producer packet: the obligation stays unknown
+                self.assertEqual(typo in {f.obligation for f in policy.blocking}, owed)
+
     def test_a_fit_prototype_needs_its_trial_tested_or_waived_as_a_trial(self) -> None:
         self.assertIn(TRIAL, {f.obligation for f in self.released("fit_assembly").blocking})
         policy = self.released("fit_assembly", self.trial_waiver)

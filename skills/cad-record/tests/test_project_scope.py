@@ -57,6 +57,23 @@ class ReleaseScopeTests(unittest.TestCase):
                         self.assertEqual(evidence.in_release_scope({"family": family, "level": level}, service_class),
                                          f"{family} {level}" not in out)
 
+    def test_a_level_outside_the_schema_keeps_the_5dcd2c92_scope(self) -> None:
+        """At 5dcd2c92 a level outside the schema was in no class's `levels`: out of scope wherever the class named
+        its families, in scope from working_prototype on, for an unknown class and for requirement.* and policy.*."""
+        owed_from_working_prototype = {"appearance_concept": False, "fit_assembly": False, "functional_demo": False,
+                                       "working_prototype": True, "production": True, "safety_critical": True,
+                                       "unknown": True, None: True}
+        for family in ("interface.acceptance.physicaly_validated", "cad.readback", "unlisted.family"):
+            for service_class, owed in owed_from_working_prototype.items():
+                with self.subTest(family=family, service_class=service_class):
+                    self.assertEqual(evidence.in_release_scope({"family": family, "level": "physicaly_validated"},
+                                                               service_class), owed)
+        for family in ("requirement.physicaly_validated", "policy.physicaly_validated"):
+            for service_class in owed_from_working_prototype:
+                with self.subTest(family=family, service_class=service_class):
+                    self.assertTrue(evidence.in_release_scope({"family": family, "level": "physicaly_validated"},
+                                                              service_class))
+
 
 class ServiceClassTests(unittest.TestCase):
     def test_an_unknown_or_unlisted_service_class_resolves_every_rule_to_required(self) -> None:
