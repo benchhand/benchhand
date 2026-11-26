@@ -322,6 +322,20 @@ class Record(unittest.TestCase):
                 self.assertEqual(self.product.read_text(encoding="utf-8"), original)
                 self.assertFalse((self.hw / "decisions").exists())
 
+    def test_replacing_a_profile_keeps_unchanged_anchors_used_outside_flow(self) -> None:
+        text = ('id: tst-product\nflow: {stage: intent, recheck_from: intent, '
+                'profile: {decision: DR-009, motion: &motion "auto", '
+                'fea: {enabled: true, mode: &mode "accurate"}}}\n'
+                'motion_label: *motion\nmode_label: *mode\n')
+        self.product.write_text(text, encoding="utf-8")
+        result = self.record()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = self.product.read_text(encoding="utf-8")
+        self.assertIn('motion: &motion "auto"', after)
+        self.assertIn('mode: &mode "accurate"', after)
+        self.assertTrue(after.endswith('motion_label: *motion\nmode_label: *mode\n'))
+        self.assertEqual(self.profile()["decision"], "DR-001")
+
 
 class Check(unittest.TestCase):
     """flow_profile.py check: the gate over a work tree, with the cited decision judged by cad-record's reader."""
