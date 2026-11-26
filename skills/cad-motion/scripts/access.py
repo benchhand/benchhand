@@ -327,9 +327,8 @@ class OperationAccess:
     paths: list[Travel] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     not_applicable: str | None = None  # why the operation reaches nothing (a tool-free hold)
-    advisory: list[str] = field(default_factory=list)  # notes on tools no check measures (assembly_operations.hold_reach)
+    advisory: list[str] = field(default_factory=list)  # a hold's tools no check measures (AccessRequest.advisory)
     notes: list[str] = field(default_factory=list)  # tool entries kept as instruction notes
-    applicable: bool = True  # False: the operation moves no part and nothing reaches it
 
     @property
     def outcome(self) -> str:
@@ -339,8 +338,6 @@ class OperationAccess:
             return "not_assessed"  # D37: never a pass, and it blocks nothing
         if any(p.status == "collision" for p in self.paths):
             return "fail"
-        if not self.applicable and not self.unknown and not self.paths:
-            return "not_applicable"
         if self.unknown or any(p.status != "clear" for p in self.paths) or not self.paths:
             return "unknown"
         return "pass"
@@ -360,6 +357,17 @@ def engagement_caps(*declarations: Iterable[dict[str, Any]]) -> dict[tuple[str, 
     return caps
 
 
+def operation_access(request: Any) -> OperationAccess:
+    """The access entry of one AccessRequest before any path is planned: its not-applicable reason, or its unknowns,
+    a hold's advisory tools and the instruction notes."""
+    op = request.operation
+    if request.not_applicable is not None:
+        return OperationAccess(op, not_applicable=request.not_applicable, notes=list(request.notes))
+    advisory = [f"tool {name!r} has no cited envelope solid: check by hand that it reaches {op.part}"
+                for name in request.advisory]
+    return OperationAccess(op, unknown=list(request.unknown), advisory=advisory, notes=list(request.notes))
+
+
 def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], definitions: Mapping[str, Any],
                caps: Mapping[tuple[str, str], float | None], tools: Mapping[tuple[str, int], ToolShape]) -> list[OperationAccess]:
     """The paths of each operation's AccessRequest; `tools` maps (operation id, tool index) to the
@@ -367,15 +375,9 @@ def plan_paths(requests: Iterable[Any], chain: Any, world: Mapping[str, Any], de
     plans = []
     for request in requests:
         op = request.operation
-        if request.not_applicable is not None:
-            plans.append(OperationAccess(op, not_applicable=request.not_applicable))
-            continue
-        advisory = [f"tool {name!r} has no cited envelope solid: check by hand that it reaches {op.part}"
-                    for name in request.advisory]
-        entry = OperationAccess(op, unknown=list(request.unknown), advisory=advisory, notes=list(request.notes),
-                                applicable=request.applicable)
-        if not request.tools and advisory:
-            plans.append(entry)
+        entry = operation_access(request)
+        if entry.not_applicable is not None or (request.moving is None and not request.reaches):
+            plans.append(entry)  # nothing travels and no envelope reaches: there is no path to plan
             continue
         frame = request.frame
         if frame not in world:
@@ -606,10 +608,7 @@ def access_outcome(entry: OperationAccess, findings: Sequence[Mapping[str, Any]]
         row["findings"] = mine
     if entry.outcome == "unknown":
         reason = next(f["uncertainty"] for f in findings if f["code"] == "assembly.access_unknown")
-        row["uncertainty"] = "; ".join([reason, *entry.notes])
-    elif entry.outcome == "not_applicable":
-        row["uncertainty"] = "; ".join([f"{entry.operation.id} moves no part and no tool or hand reaches it: "
-                                        "there is no access to check", *entry.notes])
+        row["uncertainty"] = "; ".join([reason, *entry.advisory, *entry.notes])
     elif entry.advisory or entry.notes:
         row["uncertainty"] = "; ".join([*entry.advisory, *entry.notes])
     if entry.outcome == "not_assessed":
