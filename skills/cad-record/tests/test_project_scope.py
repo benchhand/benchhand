@@ -21,6 +21,7 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
@@ -120,6 +121,21 @@ class RulesDigestTests(unittest.TestCase):
                    "safety_critical")
         self.assertEqual(len({scope.rules_sha256(service_class) for service_class in classes}), len(classes))
         self.assertEqual(scope.ProjectScope.of(record("production")).rules_sha256, scope.rules_sha256("production"))
+
+    def one_rule(self, summary: str, fit_assembly: str = "required") -> tuple[Any, ...]:
+        per_class = {cls: "required" for cls in scope.SERVICE_CLASSES} | {"fit_assembly": fit_assembly}
+        return (scope.Rule("t.one", scope.Obligations(("x.",), frozenset({"cad_valid"})), per_class, None, summary),)
+
+    def test_rules_sha256_hashes_the_rules_not_only_the_class(self) -> None:
+        """Test vectors: sha256 (shasum -a 256) of the canonical JSON of one rule and the class, written out by hand:
+        {"rules":[{"applies_to":{"families":["x."],"levels":["cad_valid"]},"id":"t.one","per_class":{...},
+        "purpose":null,"summary":"40 mm bore"}],"service_class":"fit_assembly"}, with per_class keys sorted."""
+        vectors = {"required": "2ca587568f4618fbac861b0ee8f090d9c6d8f2fd30d9a24497b47f5246a693c9",
+                   "out_of_scope": "f53dc87ab0c8f06376016ff170ebd928fa6162f127905a7d75b05cad595602cf"}
+        for fit_assembly, digest in vectors.items():
+            with self.subTest(fit_assembly=fit_assembly), mock.patch.object(scope, "RULES",
+                                                                             self.one_rule("40 mm bore", fit_assembly)):
+                self.assertEqual(scope.rules_sha256("fit_assembly"), digest)
 
 
 class ProfileTests(unittest.TestCase):
