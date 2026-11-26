@@ -2044,6 +2044,7 @@ class _Reader:
                 calibrations.append(Calibration(data.get("id"), data.get("characteristic"), freeze(scope), limits, uncertainty,
                                                 int(result.get("samples", 0)), source, data.get("date"), data.get("valid_until")))
         state = _mapping(item.get("calibration_state"))
+        self.source(state.get("source"), path, f"{pointer}/calibration_state/source")
         if state.get("status") == "custom" and not calibrations:
             self.problem("intent.calibration_state", path, f"{pointer}/calibration_state",
                          f"{ident}: calibration_state custom has no measured calibration; record one in calibrations, "
