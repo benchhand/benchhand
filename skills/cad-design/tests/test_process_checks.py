@@ -1682,14 +1682,14 @@ SUPPORT = "process.fdm.support@TST-0101/print"
 
 
 def guided(*, service: str | None = None, calibrations: tuple = (), parameters: dict | None = None,
-           dispositions: tuple = (), supports: Any = None, pin: tuple = ()) -> dict[str, Any]:
+           dispositions: tuple = (), supports: Any = None, pin: tuple = (), state: dict | None = None) -> dict[str, Any]:
     """A printed part on a 0.4 mm nozzle profile (unless `parameters` say otherwise) whose limits come from the shipped
     guideline sets unless `calibrations` hold them, with support strategy none and the use case's `service` class."""
     route = [FX.operation("print", "fdm", "tst_printer", output_state="printed", orientation=copy.deepcopy(APPROVED),
                           supports=supports or {"strategy": "none"})]
     profile = FX.capability_profile("tst_printer", "fdm", envelope=ENVELOPE, calibrations=list(calibrations),
                                     parameters=copy.deepcopy(NOZZLE_04 if parameters is None else parameters),
-                                    **({"guidelines": list(pin)} if pin else {}))
+                                    **({"guidelines": list(pin)} if pin else {}), **({"calibration_state": state} if state else {}))
     use = FX.use_case(**({"service_class": known(service)} if service else {}))
     documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[profile], materials=materials(),
                           product_data=FX.product(use), decisions=("DR-001", "DR-002"))
@@ -1752,6 +1752,21 @@ class GuidelineLimitTests(Checks):
                             mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
                         result = self.judged(data, service=service)
                         self.assertEqual(self.outcome(result, obligation), "pass", self.codes(result, obligation))
+
+    def test_a_recorded_standard_state_is_quoted_on_every_guideline_pass_and_changes_no_outcome(self) -> None:
+        state = FX.calibration_state("standard")
+        cases = {"wall": (walled(3.0), GEOMETRY), "small_feature": (walled(3.0, pins=(3.0,)), GEOMETRY),
+                 "small_hole": (walled(3.0, holes=(3.0,)), GEOMETRY), "support": (underside(30.0), SUPPORT),
+                 "failing wall": (walled(1.0), GEOMETRY), "failing support": (underside(60.0), SUPPORT)}
+        for name, (data, obligation) in cases.items():
+            with self.subTest(name):
+                plain, stated = self.judged(data), self.judged(data, state=state)
+                self.assertEqual(self.outcome(stated, obligation), self.outcome(plain, obligation))
+                self.assertEqual(self.codes(stated, obligation), self.codes(plain, obligation))
+                quote = "standard built-in calibration; guideline deviations apply"
+                if self.outcome(plain, obligation) == "pass":
+                    self.assertIn(quote, stated.outcome(obligation)["coverage"])
+                    self.assertNotIn("standard built-in", plain.outcome(obligation)["coverage"])
 
     def test_a_guideline_fail_fails_in_every_service_class(self) -> None:
         for service in (*MI.SERVICE_CLASSES, None):
