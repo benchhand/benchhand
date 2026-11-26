@@ -336,7 +336,8 @@ class BedStabilityTests(Checks):
                                         "source": {"kind": "user", "reference": "factory calibration only", "origin": "the printer owner"}}
         stated = self.assess(documents, geometry("TST-0101", stable([2.0, 2.0], TRIANGLE)))
         self.assertEqual(self.outcome(stated, self.OBLIGATION), "not_assessed")
-        self.assertIn("standard built-in calibration; guideline deviations apply", stated.outcome(self.OBLIGATION)["coverage"])
+        self.assertIn("standard built-in calibration; no guideline value covers this check", stated.outcome(self.OBLIGATION)["coverage"])
+        self.assertNotIn("guideline deviations apply", stated.outcome(self.OBLIGATION)["coverage"])
         self.assertNotIn("standard built-in", plain.outcome(self.OBLIGATION)["coverage"])
         self.assertEqual([(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in stated.findings],
                          [(f["code"], f["outcome"], f["severity"], f.get("reason")) for f in plain.findings])
@@ -3235,11 +3236,18 @@ class GuidelineWithoutCalibrationTests(Checks):
 
     REAM = "process.reaming.allowance@TST-0101/ream"
 
+<<<<<<< HEAD
     def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", machine: bool = True,
                stock: Any = None) -> Any:
         """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size. Without `machine` the print
         names no capability profile; with `stock` the print's setup.stock.material_profile is that value."""
         documents = guided(service=service, calibrations=(CONTACT,))
+=======
+    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", state: dict | None = None,
+               reamer_state: dict | None = None) -> Any:
+        """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size."""
+        documents = guided(service=service, calibrations=(CONTACT,), state=state)
+>>>>>>> bd75ec8a (test(cad-design): the calibration state wording names the real basis and the printer's own state)
         intent = documents["parts/TST-0101/part.yaml"]["intent"]
         if not machine:
             intent["route"][0]["capability"] = FX.unknown("no machine recorded")
@@ -3249,10 +3257,28 @@ class GuidelineWithoutCalibrationTests(Checks):
                                              "source": FX.source("user")}]
         intent["route"].append(FX.operation("ream", "reaming", "tst_reamer", targets=[{"feature": "bore"}]))
         intent["critical_surfaces"] = [surface("bore", "bore", "after_finish")]
-        documents["manufacturing/capabilities.yaml"]["profiles"].append(FX.capability_profile("tst_reamer", "reaming"))
+        documents["manufacturing/capabilities.yaml"]["profiles"].append(
+            FX.capability_profile("tst_reamer", "reaming", **({"calibration_state": reamer_state} if reamer_state else {})))
         data = facts(holes=(hole("bore", 6.0),), walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [],
                                                          "measured": 12})
         return self.assess(documents, geometry("TST-0101", data), catalog=catalog)
+
+    def test_the_missing_basis_advisory_of_a_finishing_operation_quotes_the_printers_state_not_its_own(self) -> None:
+        result = self.reamed(0.6, catalog=None, state=FX.calibration_state("standard"), reamer_state=FX.calibration_state("custom"))
+        coverage = result.outcome(self.REAM)["coverage"]
+        self.assertIn("standard built-in calibration; no guideline value covers this check", coverage)
+        self.assertNotIn("custom", coverage)
+        unstated = self.reamed(0.6, catalog=None, reamer_state=FX.calibration_state("standard"))
+        self.assertNotIn("standard built-in", unstated.outcome(self.REAM)["coverage"])
+
+    def test_a_custom_state_says_whether_its_calibration_is_ignored_or_out_of_scope(self) -> None:
+        state = FX.calibration_state("custom")
+        for flag, said in (("0", "custom calibration ignored while printer calibration is off; guideline deviations apply"),
+                           ("1", "custom calibration does not cover this check; guideline deviations apply")):
+            with self.subTest(flag=flag), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: flag}):
+                result = self.assess(guided(service="functional_demo", state=state, calibrations=(CONTACT,)),
+                                     geometry("TST-0101", walled(3.0)), catalog=SHIPPED)
+                self.assertIn(said, result.outcome(GEOMETRY)["coverage"])
 
     def test_a_ream_allowance_after_printing_is_judged_against_the_guideline_hole_deviation(self) -> None:
         for allowance, expected in ((0.6, "pass"), (0.3, "fail")):  # the guideline puts the printed bore up to 0.5 mm oversize
