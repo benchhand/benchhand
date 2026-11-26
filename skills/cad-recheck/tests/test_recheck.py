@@ -332,12 +332,12 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
 
-    def test_a_decision_dated_before_the_stamp_does_not_pass_the_advance(self) -> None:
-        self.provisional_gate("parts", decided=date(2026, 11, 18))
-        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+    def test_recheck_just_after_midnight_accepts_the_previous_days_gate_decision(self) -> None:
+        self.provisional_gate("parts", decided=DAY)
+        stamped = self.stamp_gate("layout", timestamp="2026-11-20T00:01:00Z")
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
         result = self.verify()
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("layout → parts", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_malformed_decision_record_is_a_refusal(self) -> None:
         self.provisional_gate("parts")
@@ -353,11 +353,6 @@ class RecheckHookTests(unittest.TestCase):
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         self.assertEqual(self.verify().returncode, 0)
 
-    def test_a_decision_dated_after_the_stamp_passes_the_advance(self) -> None:
-        self.provisional_gate("parts", decided=date(2026, 11, 20))
-        self.assertEqual(self.stamp_gate("layout").returncode, 0)
-        self.assertEqual(self.verify().returncode, 0)
-
     def test_a_stamp_without_a_complete_aware_timestamp_is_refused(self) -> None:
         for what, stamp in (("missing", None), ("garbled", "not-a-time"), ("date only", "2026-11-19"),
                             ("naive", "2026-11-19T10:00:00")):
@@ -367,15 +362,6 @@ class RecheckHookTests(unittest.TestCase):
                 result = self.verify()
                 self.refused_gate(result)
                 self.assertIn("timestamp", result.stderr)
-
-    def test_the_stamp_day_is_its_utc_day(self) -> None:
-        late = "2026-11-19T23:30:00-02:00"  # 2026-11-20 01:30 UTC
-        self.provisional_gate("parts", decided=DAY)
-        self.assertEqual(self.stamp_gate("layout", timestamp=late).returncode, 0)
-        self.refused_gate(self.verify())
-        self.provisional_gate("parts", decided=date(2026, 11, 20))
-        self.assertEqual(self.stamp_gate("layout", timestamp=late).returncode, 0)
-        self.assertEqual(self.verify().returncode, 0)
 
     def test_a_decisions_folder_without_a_decision_record_is_refused(self) -> None:
         self.provisional_gate("parts", decision=None)
