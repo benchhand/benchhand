@@ -525,6 +525,19 @@ class MandatoryConstraintsBeforeScores(unittest.TestCase):
         compliant = evaluations(candidate(report, "compliant"), "REQ-001")
         self.assertEqual([(e["outcome"], e["basis"]) for e in compliant], [("pass", "allowable")])
 
+    def test_an_authored_pass_does_not_stand_in_for_a_missing_design_allowable(self) -> None:
+        """Production service needs a justified design allowable for a stress criterion. An authored pass of the same
+        criterion carries no allowable basis, so the computed unknown stays and the candidate stays conditional."""
+        documents = scenarios.mandatory_vs_score()
+        selection_candidate(documents, "unproven")["evaluations"] = [
+            scenarios.evaluation("REQ-001", "pass", "yield_strength", ">=", 100, "MPa", method="TST coupon test")]
+        report = assess(self, documents)
+        unproven = candidate(report, "unproven")
+        self.assertEqual((unproven["status"], unproven["unknown"]), ("conditional", ["REQ-001"]))
+        computed = [e for e in evaluations(unproven, "REQ-001") if not e["authored"]]
+        self.assertEqual([e["outcome"] for e in computed], ["unknown"])
+        self.assertIn("needs a justified design allowable", " ".join(computed[0]["reasons"]))
+
     def test_authored_passes_do_not_override_computed_failures_or_weaker_criteria(self) -> None:
         report = scenario_report(self, scenarios.mandatory_vs_score)
         (conflict,) = findings(report, "selection.evaluation_conflict")
