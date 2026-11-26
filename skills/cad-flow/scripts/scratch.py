@@ -51,8 +51,11 @@ sync    brings the lead's current record into the workspace: a part the lead ret
         gone from HW) is removed, another unit's delivered part or the lead's edit to a shared file
         is copied in. Each synced file also takes the lead's hash in baseline.json, so deliver never
         carries it as the unit's change. A file the unit and the lead both changed, and any file of
-        a part the unit owns, stays as it is and is listed under "conflicts" (exit 1). It never
-        writes HW, and it links stored builds of newly delivered parts into the scratch store.
+        a part the unit owns, and a file that would collide with a directory (or the reverse) once
+        applied, stays as it is and is listed under "conflicts" (exit 1). It reads the lead's
+        record twice and refuses (exit 2, nothing written) when the two reads differ, when a delivery is
+        staged in HW/parts/, or when a scratch path is a symlink. It never writes HW,
+        and it links stored builds of newly delivered parts into the scratch store.
         Run it before build whenever the lead has integrated a delivery or a decision.
 
 stdout: one JSON document; every path in it is absolute. build writes each tool's diagnostics to
