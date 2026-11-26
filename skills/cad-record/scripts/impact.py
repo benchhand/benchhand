@@ -478,6 +478,9 @@ class _Record:
         heat_sets = self.heat_set_inputs(key) if key in self.interfaces else None
         if heat_sets is not None:
             combined["occurrences"] = heat_sets
+        if key == "product":  # cad.product_exports places every delivered occurrence where the record does
+            combined["occurrences"] = {"assembly": plain(self.record.assembly_document),
+                                       "sourcing": {pn: (part or {}).get("make_buy") for pn, part in sorted(self.parts.items())}}
         return combined
 
 

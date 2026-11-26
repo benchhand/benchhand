@@ -629,8 +629,9 @@ class PurchaseMountingStaleness(unittest.TestCase):
     def test_only_an_occurrence_placed_bought_part_and_the_made_parts_carry_the_occurrences_domain(self) -> None:
         prints = impact.subject_fingerprints(normalized(self.documents()))
         self.assertEqual(sorted(key for key, domains in prints.items() if "occurrences" in domains),
-                         ["TST-0103", "TST-0104", "TST-0105"],
-                         "the bought ring placed as occurrences, and each made part: its agreement reads its placements")
+                         ["TST-0103", "TST-0104", "TST-0105", "product"],
+                         "the bought ring placed as occurrences, each made part (its agreement reads its placements) and "
+                         "the product (its exports place every delivered occurrence)")
 
     def test_a_non_part_subject_carries_no_opt_in_domain_whatever_its_name(self) -> None:
         """The synthetic domain stands for any later opt-in domain: only a part carries one."""
