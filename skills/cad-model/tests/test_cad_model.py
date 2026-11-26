@@ -1552,6 +1552,64 @@ class ExistingEquipmentBuildTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
+class CrushRibCheckTests(unittest.TestCase):
+    """A ⌀6.4 pin drawn in the base's ⌀6 bore, fixed to it, under a crush-rib fit (CadQuery only): the check measures
+    the 0.4 mm diametral overlap from the built geometry. v1 allows 0.6 mm, v2 0.3 mm; check reads the fit from the
+    version's record snapshot."""
+
+    LABELS = {0.6: "v1", 0.3: "v2"}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.hw = hw = Path(cls.tmp.name) / "ribs" / "hw"
+        hw.mkdir(parents=True)
+        (hw / "product.yaml").write_text("id: ribs\n", encoding="utf-8")
+        (hw / "assembly.yaml").write_text(
+            f"joints:\n  - {{id: J-001, type: fixed, parent: {BASE}, child: {PIN}, axis: [0, 0, 1], origin: [0, 0, 0], "
+            "min: 0, max: 0, nominal: 0}\n", encoding="utf-8")
+        set_model(hw, BASE, "cadquery", "base.py", {"size": 40.0, "height": 20.0, "bore": 6.0}, *PARTS[BASE][:2])
+        set_model(hw, PIN, "cadquery", "ring.py", {"radius": 3.2, "height": 20.0, "fillet": 0.1}, "Ribbed pin", "PETG")
+        projects().upgrade_project(hw)
+        cls.built = []
+        for maximum, label in cls.LABELS.items():
+            (hw / "interfaces.yaml").write_text(
+                "interfaces:\n  - id: IF-011\n    from: pin\n    to: base\n    type: mounting\n"
+                "    description: Crush ribs seat the pin.\n    limits:\n"
+                f"      press_fit: {{nominal_mm: 6, interference: {{min: 0, max: {maximum}, units: mm}}, "
+                f"compliance: crush_rib, pair: [{BASE}, {PIN}],\n"
+                "                  source: {kind: user, reference: crush-rib seat, origin: lead}}\n", encoding="utf-8")
+            cls.built.append(cli("run", str(hw), "--label", label))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def checked(self, maximum: float) -> tuple[subprocess.CompletedProcess[str], dict]:
+        for proc, _, _ in self.built:
+            self.assertEqual(proc.returncode, 0, proc.stderr[-3000:])
+        proc, result, _ = cli("check", self.LABELS[maximum], "--hw", str(self.hw))
+        return proc, result
+
+    def test_an_overlap_within_the_crush_rib_maximum_passes(self) -> None:
+        proc, result = self.checked(0.6)
+        interference = result["checks"]["interference"]
+        self.assertEqual(proc.returncode, 0, json.dumps(interference, indent=1)[:4000] + proc.stderr[-2000:])
+        (row,) = interference["compliant_fits"]
+        self.assertEqual((interference["status"], row["outcome"], row["rigid_press_fit"]["outcome"]),
+                         ("pass", "pass", "not_applicable"))
+        self.assertAlmostEqual(row["overlap_diametral_mm"], 0.4, delta=0.01)  # 2 x (3.2 - 3.0)
+
+    def test_an_overlap_beyond_the_crush_rib_maximum_is_a_finding(self) -> None:
+        proc, result = self.checked(0.3)
+        interference = result["checks"]["interference"]
+        self.assertEqual(proc.returncode, 1, proc.stderr[-2000:])
+        self.assertIn("interference", result["blocking_failures"])
+        self.assertEqual([f["type"] for f in interference["declared_fit_findings"]], ["compliant_fit_overlap_exceeded"])
+        self.assertAlmostEqual(interference["declared_fit_findings"][0]["overlap_diametral_mm"], 0.4, delta=0.01)
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required for the kernel environments")
 class PairClearanceBuildTests(unittest.TestCase):
     """The swing arm built 0.8 mm above the base, on its revolute joint, against a clearance
     requirement on that joint-connected pair (CadQuery only): 1.0 mm in v1, 0.5 mm in v2. check

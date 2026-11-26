@@ -554,6 +554,11 @@ class PairRequirementTests(unittest.TestCase):
         self.assertEqual([(f["classification"], f["compliance"], f["max_interference_mm"]) for f in fits],
                          [("transition", "crush_rib", 0.6)])
         self.assertEqual(self.policy.allowed_pairs(fits, []), {("TST-0201", "arm-a")})
+        rigid = [{**ribs, "limits": {"press_fit": {key: value for key, value in ribs["limits"]["press_fit"].items()
+                                                   if key != "compliance"}}}]
+        transition = self.policy.declared_press_fits(Path("hw"), rigid, assembly_of(GAP_YAML))
+        self.assertEqual([f["classification"] for f in transition], ["transition"])
+        self.assertEqual(self.policy.allowed_pairs(transition, []), set(), "a rigid transition fit allows no overlap")
 
     def test_a_running_fit_on_one_occurrence_twice_is_refused(self) -> None:
         twice = {"id": "IF-001", "from": "a", "to": "b", "type": "motion", "description": "Pivots.",
