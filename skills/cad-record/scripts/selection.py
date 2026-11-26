@@ -141,17 +141,24 @@ DIGEST_SCOPE = ("product.yaml use_case", "requirements.yaml", "interfaces.yaml",
                 "manufacturing/capabilities.yaml", "manufacturing/materials.yaml", "manufacturing/selection.yaml candidates")
 _APPEARANCE_INTENT = ("color",)  # intent keys that never reach the selection digest
 _PART_FIELDS = ("PN", "make_buy", "procurement", "process", "material", "transparency", "intent")
+# The approved operation (manufacturing-capabilities.schema.json material_approval operations) a route step of each
+# kind does; a kind not listed does none of them, so an operation-scoped approval of it is unresolved.
+_STEP_OPERATION = {"laser": "cut", "waterjet": "cut", "plasma": "cut", "cnc": "machine", "drilling": "machine",
+                   "reaming": "machine", "tapping": "machine", "fdm": "print", "resin": "print", "sheet_forming": "form",
+                   "joining": "join"}
 
 
 # --- inputs ----------------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Step:
-    """One route step of a candidate part: its kind, capability profile id (or a Fact) and provider."""
+    """One route step of a candidate part: its kind, capability profile id (or a Fact), provider and, for a cutting
+    step, the thickness Fact of the stock it cuts (None when the step states no stock)."""
 
     kind: str
     capability: Any  # a capability profile id, or a Fact (unknown when the step records none)
     provider: str | None
+    stock_thickness: Any = None
 
     def describe(self) -> str:
         capability = self.capability if isinstance(self.capability, str) else f"capability {self.capability.status}"
@@ -219,6 +226,16 @@ def _open_choice(value: Any, what: str) -> Any:
     return mi.Fact.unknown_because(f"the candidate records no {what}")
 
 
+def _stock_thickness(stock: Any) -> Any:
+    """The thickness Fact a candidate step states for its stock; None when it states none. A thickness that is not a
+    recorded fact (which the schema reports) is unknown."""
+    thickness = stock.get("thickness") if isinstance(stock, Mapping) else None
+    if thickness is None:
+        return None
+    return _open_choice(thickness, "stock thickness") if isinstance(thickness, Mapping) else mi.Fact.unknown_because(
+        "the candidate's stock thickness is not a recorded fact")
+
+
 def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = frozenset()) -> Candidate:
     """A selection.yaml candidate. A part entry naming existing equipment is dropped: it is outside the product, so it
     is never assessed, ranked or proposed a material, route or make_buy."""
@@ -226,7 +243,8 @@ def _candidate(ident: str, raw: Mapping[str, Any], existing: frozenset[str] = fr
     for entry in raw.get("parts") or ():
         if isinstance(entry.get("PN"), str) and entry["PN"] in existing:
             continue
-        steps = [Step(step.get("kind"), _open_choice(step.get("capability"), "capability"), step.get("provider"))
+        steps = [Step(step.get("kind"), _open_choice(step.get("capability"), "capability"), step.get("provider"),
+                      _stock_thickness(step.get("stock")))
                  for step in entry.get("route") or ()]
         parts.append(CandidatePart(entry.get("PN"), _open_choice(entry.get("material_profile"), "material profile"),
                                    tuple(steps), entry.get("note")))
@@ -751,8 +769,58 @@ class _Assessor:
                 return Evaluation("material_approval", True, "unknown", subject, method,
                                   (f"{profile.id} approves {cpart.material} but its extraction approval is not recorded",),
                                   criterion=criterion, remedy="record the extraction approved for this material")
+        outside = self.approval_scope(cpart, step, profile, entry)
+        if outside:
+            operation = _STEP_OPERATION.get(step.kind, step.kind)
+            return Evaluation("material_approval", True, "unknown", subject, method, tuple(outside),
+                              criterion={**criterion, "source": mi.thaw(entry.get("source"))},
+                              remedy=f"record {profile.id}'s approval of {cpart.material} for {operation}, with the thickness and "
+                                     "coating it covers and the stock thickness the step uses, or choose an approved capability")
         return Evaluation("material_approval", True, "pass", subject, method, (f"{profile.id} approves {cpart.material}",),
                           criterion={**criterion, "source": mi.thaw(entry.get("source"))}, measured={"text": "approved"})
+
+    def approval_scope(self, cpart: CandidatePart, step: Step, profile: Any, entry: Mapping[str, Any]) -> list[str]:
+        """Why an approval entry does not cover this step, or is not known to: the operation the step does, and for a
+        cutting step the stock thickness and coating. Empty when it covers the step. An approval for another operation,
+        or whose scope cannot be resolved, never approves the step."""
+        found = []
+        operation = _STEP_OPERATION.get(step.kind)
+        modes = entry.get("operations")
+        if modes and operation is None:
+            found.append(f"{profile.id} approves {cpart.material} for {', '.join(modes)}; which of these a {step.kind} step "
+                         "does is unknown")
+        elif modes and operation not in modes:
+            found.append(f"{profile.id} approves {cpart.material} only for {', '.join(modes)}, not for {operation}: an "
+                         "approval for another operation is never credited")
+        if step.kind not in mi.SHEET_CUTTING_KINDS:
+            return found
+        approved = mi.fact(entry["thickness"]) if isinstance(entry.get("thickness"), Mapping) else None
+        stock = self.stock_thickness(cpart, step)
+        if approved is None or not approved.known or not isinstance(approved.value, mi.Quantity):
+            found.append(f"{profile.id}'s approval of {cpart.material} states no thickness, so the stock it covers is unknown")
+        elif stock is None or not stock.known or not isinstance(stock.value, mi.Quantity):
+            found.append(f"the {step.kind} step states no stock thickness, so {profile.id}'s approval at {approved.value} "
+                         "cannot be checked")
+        elif not approved.value.contains(stock.value):
+            found.append(f"the stock thickness {stock.value} lies outside {profile.id}'s approval at {approved.value}")
+        coating = entry.get("coating")
+        if not isinstance(coating, Mapping) or not mi.fact(coating).known:
+            found.append(f"{profile.id}'s approval of {cpart.material} does not identify the stock's coating or film (or none)")
+        return found
+
+    def stock_thickness(self, cpart: CandidatePart, step: Step) -> Any:
+        """The thickness Fact of the stock `step` cuts: the candidate step's own, else, when the record already holds
+        this candidate's route, the record operation's setup stock. None when neither states it."""
+        if step.stock_thickness is not None:
+            return step.stock_thickness
+        part = self.record.parts.get(cpart.pn)
+        if part is None or not self.matches_record(cpart, part):
+            return None
+        for op in part.intent.route:
+            stock = (op.setup or {}).get("stock") if op.kind == step.kind else None
+            if isinstance(stock, Mapping) and isinstance(stock.get("thickness"), Mapping):
+                return mi.fact(stock["thickness"])
+        return None
 
     # -- optical --
     def optical(self, cpart: CandidatePart, part: Any) -> Evaluation:

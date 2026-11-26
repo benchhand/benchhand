@@ -106,7 +106,12 @@
         "kind": {"$ref": "manufacturing.schema.json#/$defs/route_kind"},
         "capability": {"oneOf": [{"$ref": "manufacturing.schema.json#/$defs/profile_id"}, {"$ref": "manufacturing.schema.json#/$defs/fact_open"}]},
         "provider": {"enum": ["local", "outsourced"]},
-        "purchase": {"$ref": "part.schema.json#/$defs/purchase"}
+        "purchase": {"$ref": "part.schema.json#/$defs/purchase"},
+        "stock": {
+          "description": "The stock a cutting step cuts, so the capability's material approval can be checked against its thickness",
+          "type": "object", "additionalProperties": false, "required": ["thickness"],
+          "properties": {"thickness": {"$ref": "manufacturing.schema.json#/$defs/quantity_fact"}}
+        }
       },
       "if": {"required": ["purchase"]}, "then": {"properties": {"kind": {"const": "purchased"}}}
     },

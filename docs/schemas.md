@@ -18,7 +18,7 @@ schema-sha256 44eb55d0ae79137cafcf20b6b594ba922e75ea71f57e96b91feb3f38ba1faf1b s
 schema-sha256 2e34c2bb8de9b89272743ca36cf0801afcca6c65a54260a728d43316c9b18352 skills/cad-record/schemas/manufacturing-findings.schema.json
 schema-sha256 19cbfed3c714ae92a3b27ed8242078c59455f05ede808f77d92f9a9b51da70b7 skills/cad-record/schemas/manufacturing-guideline.schema.json
 schema-sha256 db84c9d7d1dadacd69cede1384e9d63fff73e788733ff74e23ded51dc047d934 skills/cad-record/schemas/manufacturing-materials.schema.json
-schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac skills/cad-record/schemas/manufacturing-selection.schema.json
+schema-sha256 c5bf4d65b0b24d6755981ac00be2f5c6d30e375b5e022224b33041c675c95fba skills/cad-record/schemas/manufacturing-selection.schema.json
 schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 skills/cad-record/schemas/manufacturing.schema.json
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 schema-sha256 7e31ffb8d6a6abc67e890d6b0543f581a9aa8e23af0d24fbffbbb8a0a1fe79c9 skills/cad-record/schemas/part.schema.json
@@ -4214,11 +4214,26 @@ One route step of a candidate part. A purchased step may carry the purchase crit
 | `capability` | `ManufacturingProfileId \| ManufacturingFactOpen` | yes |  |  |
 | `provider` | `Literal["local", "outsourced"]` | no |  |  |
 | `purchase` | `PartPurchase` | no |  |  |
+| `stock` | `ManufacturingSelectionStepStock` | no |  | The stock a cutting step cuts, so the capability's material approval can be checked against its thickness |
 
 Constraints not expressed by the type:
 
 - additionalProperties: false
 - if {"required":["purchase"]} then {"properties":{"kind":{"const":"purchased"}}}
+
+### ManufacturingSelectionStepStock
+
+Source: `/$defs/step/properties/stock`
+
+The stock a cutting step cuts, so the capability's material approval can be checked against its thickness
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `thickness` | `ManufacturingQuantityFact` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
 
 ## manufacturing.schema.json
 

@@ -44,6 +44,8 @@ An optical or transparency requirement is a hard constraint. Opaque routes canno
 
 Capability profiles describe supplied equipment, stock, operators, tools, suppliers and calibrated/demonstrated limits. They do not set product requirements or prove compliance. Nominal resolution, build volume and drawing tolerance labels do not verify dimensional capability. Material-family guidance does not establish a grade property or allowable. Density does not provide strength. Do not transfer values between materials.
 
+A material approval counts only for the operation, thickness and coating it states. A cutting step in a candidate route states its stock thickness (`stock.thickness`), so selection can check it against the approval. An unstated thickness or coating leaves the approval unknown.
+
 ## SPECIFY and record
 
 Translate accepted choices into measurable, sourced requirements and evidence obligations. Capture each part's make/buy status, function, material profile or unknown, service scope, components, ordered route, capability reference, setup/workholding, orientation, critical surfaces/datums, supports/removal, finishing allowance, inspection and alternatives.

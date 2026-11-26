@@ -128,7 +128,7 @@ def approval(material_id: str, **extra: Any) -> dict[str, Any]:
 
 
 def capability(ident: str, process: str, materials: list[str], *, provider: str = "local", **extra: Any) -> dict[str, Any]:
-    approvals = [approval(m, extraction=fx.known("TST extraction"), thickness=fx.known(fx.quantity(3)))
+    approvals = [approval(m, extraction=fx.known("TST extraction"), thickness=fx.known(fx.quantity(3)), coating=fx.known("none"))
                  if process == "laser" else approval(m) for m in materials]
     return fx.capability_profile(ident, process, materials=approvals, provider=provider, **extra)
 
@@ -144,7 +144,8 @@ def made_part(pn: str, title: str, process: str, material_id: str, capability_id
         route=[fx.operation("make", process, capability_id)]), **extra)
 
 
-def step(kind: str, capability_id: str | None = None, provider: str | None = None) -> dict[str, Any]:
+def step(kind: str, capability_id: str | None = None, provider: str | None = None, *,
+         stock_thickness: float | None = None) -> dict[str, Any]:
     if capability_id is None:
         capability_value: Any = (fx.not_applicable("a purchase has no capability") if kind == "purchased"
                                  else fx.unknown("no capability in this fixture"))
@@ -153,6 +154,8 @@ def step(kind: str, capability_id: str | None = None, provider: str | None = Non
     data = {"kind": kind, "capability": capability_value}
     if provider:
         data["provider"] = provider
+    if stock_thickness is not None:
+        data["stock"] = {"thickness": fx.known(fx.quantity(stock_thickness))}
     return data
 
 
@@ -338,7 +341,7 @@ def plate_frame_options() -> dict[str, Any]:
             candidate("printed_frame", "Printed frame", "one printed part",
                       [cpart("TST-0501", "tst_polymer_p_printed", step("fdm", "tst_printer", "local"))], cost=3, scores={"PRF-001": 10}),
             candidate("sheet_frame", "Laser-cut and formed sheet frame", "one sheet part",
-                      [cpart("TST-0501", "tst_metal_q_sheet", step("laser", "tst_laser", "local"),
+                      [cpart("TST-0501", "tst_metal_q_sheet", step("laser", "tst_laser", "local", stock_thickness=3),
                              step("sheet_forming", "tst_brake", "local"))], cost=12, scores={"PRF-001": 7}),
             candidate("machined_frame", "Machined frame", "one machined part",
                       [cpart("TST-0501", "tst_metal_r_bar", step("cnc", "tst_mill", "outsourced"))], cost=60, scores={"PRF-001": 2})])
@@ -406,6 +409,7 @@ def transparent_cover() -> dict[str, Any]:
                       [cpart("TST-0601", "tst_resin_l_printed", step("resin", "tst_resin_printer", "local"))], cost=3,
                       scores={"PRF-001": 9}),
             candidate("laser_window", "Window laser-cut from identified transparent sheet", "one sheet part",
-                      [cpart("TST-0601", "tst_clear_k_sheet", step("laser", "tst_laser", "local"))], cost=10, scores={"PRF-001": 6}),
+                      [cpart("TST-0601", "tst_clear_k_sheet", step("laser", "tst_laser", "local", stock_thickness=3))], cost=10,
+                      scores={"PRF-001": 6}),
             candidate("purchased_window", "Purchased transparent window", "one purchased part",
                       [cpart("TST-0601", "tst_clear_k_sheet", step("purchased"))], cost=15, scores={"PRF-001": 4})])
