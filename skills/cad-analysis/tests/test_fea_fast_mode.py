@@ -112,7 +112,7 @@ class FastCase(conditions_tests.SourcedFEACase):
         (run_dir / "solver.dat").write_text("solver output\n", encoding="utf-8")
         marker = {"run_id": job["run_id"], "mode": job["mode"],
                   **fea_modes.reported(job["mode"], von_mises=VON_MISES, displacement=DISPLACEMENT,
-                                       yield_mpa=job["material"]["yield"],
+                                       yield_mpa=job["material"].get("yield"),
                                        required_safety_factor=job["required_safety_factor"]),
                   "node_count": len(VON_MISES), "element_count": 4, "solver_versions": job["solver_versions"],
                   "warnings": [], "retained_files": ["solver.dat"]}
@@ -140,11 +140,11 @@ class FastCase(conditions_tests.SourcedFEACase):
         self.assertEqual(status, 0, report)
         return report, dict(json.loads((Path(report["bundle"]) / "results.json").read_text(encoding="utf-8")))
 
-    def test_a_fast_result_passes_the_stiffness_check_and_leaves_strength_unknown(self) -> None:
+    def test_a_fast_result_passes_the_stiffness_check_and_leaves_strength_not_assessed(self) -> None:
         report, _ = self.fast_results()
         self.assertEqual(self.outcomes(report), {f"engineering.stiffness@{PN}": "pass",
-                                                 f"engineering.strength@{PN}": "unknown"})
-        self.assertEqual(report["engineering"]["result"], "unknown")
+                                                 f"engineering.strength@{PN}": "not_assessed"})
+        self.assertEqual(report["engineering"]["result"], "not_assessed")
 
     def test_a_fast_strength_reason_names_the_stress_study_and_not_acceptance_strength(self) -> None:
         # A fast case refuses acceptance.strength, so a reason that asks for it sends the reader into a refusal (#218).
