@@ -7,9 +7,9 @@
 """project_scope.py: the service-class scope of every obligation, one RULES table read by every gate.
 
 The release-scope table in fixtures/release_scope_5dcd2c92.json was frozen from evidence.py SERVICE_POLICY at
-5dcd2c92, before the policy moved: every family the record can owe (each PROCESS_CHECKS and _FUNCTION_CHECKS
-family, the fixed families of required_checks, one unlisted process kind and one unlisted family), every evidence
-level and every service class, with `unknown` for an unrecorded class.
+5dcd2c92, before the policy moved: every fixed family the record can owe (each PROCESS_CHECKS and _FUNCTION_CHECKS
+family, the fixed families of required_checks), one representative unlisted process kind and unlisted family, every
+schema evidence level and every service class, with `unknown` for an unrecorded class.
 """
 
 from __future__ import annotations

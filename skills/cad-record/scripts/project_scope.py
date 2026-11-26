@@ -19,8 +19,9 @@ decides only what a gate makes of it. A release must resolve every obligation wh
 `out_of_scope` (`in_release_scope`). SERVICE_POLICY holds the other release columns of a class: the evidence levels
 it may claim and whether an unvalidated trial (a waived physical obligation) is permitted.
 
-It loads manufacturing_intent.py, flow_profile_gate.py and layout.py (its canonical JSON digest) by path and reads
-no file. Load it by path and register it in `sys.modules` as `cad_record_project_scope`.
+It loads manufacturing_intent.py, flow_profile_gate.py and layout.py (its canonical JSON digest) by path. It reads
+no project file; the modules it loads read the shipped product schema. Load it by path and register it in
+`sys.modules` as `cad_record_project_scope`.
 """
 
 from __future__ import annotations
