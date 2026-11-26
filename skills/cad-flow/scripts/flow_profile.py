@@ -276,13 +276,25 @@ def _flow_node(text: str) -> tuple[Any, Any]:
 def _require_flow_keys(node: Any) -> None:
     if not isinstance(node, yaml.MappingNode) or node.tag != "tag:yaml.org,2002:map":
         raise FlowFinding("flow: expected a mapping")
-    seen: set[str] = set()
-    for key, _ in node.value:
-        if not isinstance(key, yaml.ScalarNode):
-            raise FlowFinding("flow: expected scalar keys")
-        if key.value in seen:
-            raise FlowFinding(f"flow.{key.value}: duplicate key")
-        seen.add(key.value)
+    _unique_keys(node, "flow", set())
+
+
+def _unique_keys(node: Any, path: str, parents: set[int]) -> None:
+    if id(node) in parents:
+        raise FlowFinding(f"{path}: recursive alias")
+    if isinstance(node, yaml.MappingNode):
+        seen: set[str] = set()
+        for key, value in node.value:
+            if not isinstance(key, yaml.ScalarNode):
+                raise FlowFinding(f"{path}: expected scalar keys")
+            field = f"{path}.{key.value}"
+            if key.value in seen:
+                raise FlowFinding(f"{field}: duplicate key")
+            seen.add(key.value)
+            _unique_keys(value, field, parents | {id(node)})
+    elif isinstance(node, yaml.SequenceNode):
+        for index, value in enumerate(node.value):
+            _unique_keys(value, f"{path}.{index}", parents | {id(node)})
 
 
 def _require_flow_shape(flow: Mapping[str, Any]) -> None:
