@@ -25,13 +25,31 @@ def _is_not_done(error: BaseException) -> bool:
     return isinstance(error, StdFail_NotDone)
 
 
+def _radii(radius: float, min_radius: float | None, functional: bool, retries: int) -> list[float]:
+    """The radii to try, largest first. Without a range a functional edge has its one specified radius, and a cosmetic
+    edge halves `retries` times. With `min_radius` the halving stops above it and the last retry is the minimum itself,
+    tried once, so no radius inside the range is skipped and none outside it is tried."""
+    if min_radius is None:
+        return [radius] if functional else [radius / (2 ** attempt) for attempt in range(retries + 1)]
+    radii = [radius]
+    for attempt in range(1, retries + 1):
+        halved = radius / (2 ** attempt)
+        if attempt == retries or halved <= min_radius:
+            break
+        radii.append(halved)
+    if retries and min_radius < radius:
+        radii.append(min_radius)
+    return radii
+
+
 def fillet_edge(shape: Any, edge: Any, radius: float, *, functional: bool = False,
                 min_radius: float | None = None, retries: int = 2, name: str = "edge") -> Any:
     """Fillet one edge, halving the radius after ``StdFail_NotDone``.
 
     ``retries`` counts attempts after the requested radius, so the default tries radius, radius/2, and radius/4.
-    ``min_radius`` (0 < min_radius <= radius) declares the smallest radius the design permits: no attempt goes below
-    it. A functional edge without ``min_radius`` is tried at its specified radius only, so a refusal fails the build
+    ``min_radius`` (0 < min_radius <= radius) declares the smallest radius the design permits: the halving stops above
+    it and the last retry is the minimum itself, so no attempt goes below it. A functional edge without ``min_radius``
+    is tried at its specified radius only, so a refusal fails the build
     rather than weakening the part. A round made smaller than requested logs a warning with the actual radius. A
     non-functional edge is left sharp if every attempt fails; a functional edge re-raises the last kernel exception.
     """
@@ -42,8 +60,7 @@ def fillet_edge(shape: Any, edge: Any, radius: float, *, functional: bool = Fals
     if min_radius is not None and not (math.isfinite(min_radius) and 0 < min_radius <= radius):
         raise ValueError("fillet min_radius must be finite, positive and no larger than the radius")
 
-    floor = min_radius if min_radius is not None else (radius if functional else 0.0)
-    candidates = [r for r in (radius / (2 ** attempt) for attempt in range(retries + 1)) if r >= floor - 1e-12]
+    candidates = _radii(radius, min_radius, functional, retries)
     last_error: Exception | None = None
     for candidate_radius in candidates:
         try:
