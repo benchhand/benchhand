@@ -164,6 +164,10 @@ CONTACT_SEARCH_MM = 1.0  # a fixed joint's nearest coplanar face pair this far a
 CONTACT_MIN_AREA_MM2 = 0.01  # faces that only touch along an edge or at a point share less than this
 SAME_RADIUS_MM = 1e-6  # adjoining cylinder faces this close in radius and axis line are one surface
 TANGENT_TOL = 1e-3  # sine of the angle between two faces' normals where they meet tangentially, as a blend does
+# A projected joint origin may fall in an opening of its contact this far from the contact: a bore or bolt opening up
+# to Ø40 in a mounting face, such as a V6 head's cylinder opening (13 mm). A wider opening leaves the contact a rim
+# around the point, which the geometry cannot tie to the joint; such a mount declares mount.point.
+OPENING_MAX_MM = 20.0
 MIN_WALL_PROCESSES = ("fdm", "cnc")  # the keys product.yaml manufacturing.min_wall_mm may set
 WALL_SPACING_FRACTION = 0.5  # sample spacing along each UV direction, as a fraction of the minimum wall
 WALL_FACE_SAMPLE_CAP = 4096  # samples per face; a larger face is sampled coarser and counted in capped_faces
@@ -967,18 +971,19 @@ def _outline(face: Any) -> Any:
 
 
 def locate(patch: Any, ours: dict[str, Any], datum: tuple[Sequence[float], Sequence[float]],
-           mount: Sequence[float] | None) -> tuple[str, float]:
-    """How one connected contact patch is tied to the joint, as (locator, locator_mm), all in the parent frame:
-    `mount`, a declared mount point, must lie on the patch; else a face-normal joint's `origin` must lie on it; else
-    (an offset datum) the `projection` of the origin along the contact normal must fall inside the patch's outline."""
+           mount: Sequence[float] | None) -> tuple[str, float, float | None]:
+    """How one connected contact patch is tied to the joint, as (locator, locator_mm, opening_mm), all in the parent
+    frame: `mount`, a declared mount point, must lie on the patch; else a face-normal joint's `origin` must lie on it;
+    else (an offset datum) the `projection` of the origin along the contact normal must fall inside the patch's
+    outline (locator_mm), and opening_mm is its distance from the contact itself: 0 on it, more inside an opening."""
     origin, axis = datum
     if mount is not None:
-        return "mount", _distance(_xyz3(mount), patch)
+        return "mount", _distance(_xyz3(mount), patch), None
     if _norm(_cross(axis, ours["normal"])) <= AXIS_TOL:
-        return "origin", _distance(_xyz3(origin), patch)
+        return "origin", _distance(_xyz3(origin), patch), None
     depth = _dot(_sub(origin, ours["point"]), ours["normal"])
     foot = _xyz3([origin[i] - depth * ours["normal"][i] for i in range(3)])
-    return "projection", min(_distance(foot, _outline(face)) for face in faces_of(patch))
+    return "projection", min(_distance(foot, _outline(face)) for face in faces_of(patch)), _distance(foot, patch)
 
 
 def _xyz3(point: Sequence[float]) -> tuple[float, float, float]:
@@ -988,13 +993,14 @@ def _xyz3(point: Sequence[float]) -> tuple[float, float, float]:
 CONTACT_AT_JOINT, CONTACT_UNPLACED, CONTACT_ELSEWHERE = 0, 1, 2  # a patch's grade; lowest wins
 
 
-def _grade(gap: float, off: float, locator: str, located: float, tol: float) -> int:
+def _grade(gap: float, off: float, locator: str, located: float, opening: float | None, tol: float) -> int:
     """At the joint: within `tol` across the patch, on the joint's datum plane, and tied to the joint by `locate`; the
-    datum and the locator pass separately, a declared mount included. Unplaced: such a contact on the datum plane that
-    only the locator misses, and no mount is declared, so the geometry cannot tell an intended mount from incidental
-    contact. Elsewhere: anything else."""
+    datum and the locator pass separately, a declared mount included. A projected origin may sit in an opening of the
+    contact up to OPENING_MAX_MM from it. Unplaced: such a contact on the datum plane that only the locator misses, and
+    no mount is declared, so the geometry cannot tell an intended mount from incidental contact. Elsewhere: anything
+    else."""
     near = gap <= tol and off <= tol
-    if near and located <= tol:
+    if near and located <= tol and (opening is None or opening <= OPENING_MAX_MM):
         return CONTACT_AT_JOINT
     return CONTACT_UNPLACED if near and locator != "mount" else CONTACT_ELSEWHERE
 
@@ -1061,10 +1067,13 @@ def _pair_contact(ours: dict[str, Any], face: Any, normal: Sequence[float], poin
             continue
         gap = max(abs(end) for end in separation(patch, ours, normal, point))
         off = datum_distance(patch, datum)
-        locator, located = locate(patch, ours, datum, mount)
-        found.append(((_grade(gap, off, locator, located, tol), gap, off, located, -area),
-                      {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6),
-                       "locator": locator, "locator_mm": round(located, 6), "kind": "face"}))
+        locator, located, opening = locate(patch, ours, datum, mount)
+        row = {"offset_mm": round(gap, 6), "area_mm2": round(area, 4), "datum_mm": round(off, 6),
+               "locator": locator, "locator_mm": round(located, 6), "kind": "face"}
+        if opening is not None:
+            row["opening_mm"] = round(opening, 6)
+        found.append(((_grade(gap, off, locator, located, opening, tol), gap, off, max(located, opening or 0.0), -area),
+                      row))
     return found
 
 
@@ -1137,9 +1146,12 @@ def _unknown(contact: Contact) -> tuple[str, str | None] | None:
         return (f"{len(contact.failures)} face-contact Boolean(s) failed, so the contact is unknown; first: "
                 f"{contact.failures[0]}"), None
     if contact.grade == CONTACT_UNPLACED and contact.best is not None:
-        return (f"a face contact lies on the joint's datum plane, but its {contact.best['locator']} locator misses it by "
-                f"{contact.best['locator_mm']} mm, so the geometry cannot tell an intended mount from incidental "
-                "contact"), UNPLACED_REMEDY
+        best = contact.best
+        miss = (f"its {best['locator']} locator misses it by {best['locator_mm']} mm" if best["locator_mm"] > 0.0 else
+                f"the projected origin sits in an opening {best['opening_mm']} mm from it, past the {OPENING_MAX_MM:g} mm "
+                "allowance")
+        return (f"a face contact lies on the joint's datum plane, but {miss}, so the geometry cannot tell an intended mount "
+                "from incidental contact"), UNPLACED_REMEDY
     return None
 
 
