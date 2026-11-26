@@ -822,11 +822,16 @@ def check_design_rules(hw: Path, documents: Mapping[str, Any], valid: Mapping[st
         report(hw / "requirements.yaml", design_rules.visibility_findings(requirements, resolve))
 
 
+def _below_hw(hw: Path, located: str) -> str:
+    """A project-relative `hw/...` location, with its optional `#pointer`, made a path below `hw`."""
+    location, _, pointer = located.partition("#")
+    path = str(hw / location.removeprefix("hw/")) if location.startswith("hw/") else location
+    return path + (f"#{pointer}" if pointer else "")
+
+
 def _intent_finding(hw: Path, item: Mapping[str, Any]) -> dict[str, Any]:
     """A manufacturing_intent or evidence finding, its project-relative `hw/...` path made a path below `hw`."""
-    location, _, pointer = str(item["path"]).partition("#")
-    path = str(hw / location.removeprefix("hw/")) if location.startswith("hw/") else location
-    return {**item, "path": path + (f"#{pointer}" if pointer else "")}
+    return {**item, "path": _below_hw(hw, str(item["path"]))}
 
 
 def check_manufacturing_intent(hw: Path, documents: Mapping[str, Any],
@@ -904,11 +909,6 @@ def check_existing(hw: Path, record: Any, inventory: assembly_data.Inventory | N
                                     "installs it; name it as the operation's into", code="existing.installed"))
 
 
-def _located(hw: Path, location: str | None, fallback: str) -> str:
-    """A finding path for an `hw/...` record location (evidence.EvidenceError.location), else `fallback`."""
-    return f"{hw}/{location[3:]}" if location and location.startswith("hw/") else fallback
-
-
 def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]]) -> None:
     """A record version 2 freeze anchors its acceptance evidence: flow.frozen.evidence_sha256 is the
     acceptance digest (evidence.py) of the frozen version's inventory as it stands now. A changed ledger,
@@ -926,7 +926,7 @@ def check_acceptance_anchor(hw: Path, record: Any, findings: list[dict[str, Any]
     try:
         _, digest = evidence.version_acceptance(hw, frozen["version"], record)
     except evidence.EvidenceError as error:
-        path = _located(hw, error.location, path)
+        path = _below_hw(hw, error.location) if error.location else path
         findings.append(finding(path, f"flow/frozen/evidence_sha256: the acceptance inventory cannot be formed: {error}",
                                 code="record.evidence_anchor", canonical_location=None,
                                 action="Restore the file, or record the change through an engineering change."))
