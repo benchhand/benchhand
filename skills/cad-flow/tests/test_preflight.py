@@ -760,6 +760,70 @@ class FEASettingTests(unittest.TestCase):
             self.assertEqual(self.setting(text).enabled, enabled)
 
 
+class WarmWorkerWithoutPyYAMLTests(unittest.TestCase):
+    """The detached warm-up runs on the base interpreter, which may have no PyYAML."""
+
+    def test_the_warm_up_runs_without_pyyaml_and_reads_no_project(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-noyaml-") as directory:
+            root = Path(directory)
+            (root / "hw").mkdir()
+            (root / "hw" / "product.yaml").write_text("flow:\n  profile:\n    fea:\n      enabled: true\n",
+                                                      encoding="utf-8")
+            code = ("import runpy, sys; sys.modules['yaml'] = None; "
+                    f"sys.argv = ['preflight.py', '--warm']; runpy.run_path({str(SCRIPT)!r}, run_name='__main__')")
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", code], cwd=root, capture_output=True, text=True, check=False,
+                env={"FREECADCMD": str(root / "missing"), "PATH": "", "HOME": directory,
+                     "XDG_CACHE_HOME": directory})
+        self.assertNotIn("ImportError", result.stderr)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)  # FreeCAD is missing: a report, not a crash
+        self.assertIn("FreeCAD", result.stdout)
+
+
+class WarmStatusPerProjectTests(unittest.TestCase):
+    """The warm-up is shared by every project of this plugin copy; solver readiness is the project's."""
+
+    def finished_record(self, directory: str) -> dict:
+        environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+        checks = tuple(preflight.Check(identifier, identifier, "pass", True, "ok", "")
+                       for identifier in ("freecad-command", "cadquery"))
+        preflight._write_record(preflight.warm_record_path(environ), {
+            "state": "finished", "pid": 1, "started_at": "t0", "finished_at": "t1",
+            "report": preflight.Report(checks).as_json()})
+        return environ
+
+    def status(self, product: str | None) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-status-") as directory:
+            environ = self.finished_record(directory)
+            project = Path(directory) / "project"
+            project.mkdir()
+            if product is not None:
+                (project / "hw").mkdir()
+                (project / "hw" / "product.yaml").write_text(product, encoding="utf-8")
+            missing = {**FEASolverCheckTests.PROBED, "calculix": {"error": "ccx not found: $CCX is unset"}}
+            command = Path(directory) / "freecadcmd"
+            command.write_text("#!/bin/sh\n", encoding="utf-8")
+            command.chmod(0o755)
+            with patch.object(preflight.fea_solvers, "probe", return_value=missing), patch("sys.stderr"):
+                return preflight.warm_status({**environ, "FREECADCMD": str(command), "PATH": ""}, cwd=project)
+
+    def test_a_warm_up_taken_with_fea_off_does_not_pass_a_project_that_enables_fea(self) -> None:
+        code, text = self.status("flow:\n  profile:\n    fea:\n      enabled: true\n")
+        self.assertEqual(code, 1, text)
+        self.assertIn("ccx not found", text)
+
+    def test_the_same_warm_up_passes_a_project_without_fea(self) -> None:
+        code, text = self.status(None)
+        self.assertEqual(code, 0, text)
+        self.assertIn("FEA is not enabled", text)
+
+    def test_an_invalid_profile_fails_the_status_by_name(self) -> None:
+        code, text = self.status("flow:\n  profile:\n    fea:\n      enabled: maybe\n")
+        self.assertEqual(code, 1, text)
+        self.assertIn("flow.profile.fea", text)
+
+
 class FEAProfileCheckTests(unittest.TestCase):
     def test_an_invalid_profile_fails_by_name_and_nothing_is_probed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cad-preflight-fea-") as directory:
