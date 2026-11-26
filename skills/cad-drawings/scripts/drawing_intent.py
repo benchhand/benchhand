@@ -71,7 +71,7 @@ def _fit_side_tolerance(source: str, fit: Mapping[str, Any], side: str) -> Toler
     None when the designation names no class for that side."""
     if "fit" not in fit:
         return _explicit_fit_tolerance(source, fit, side)
-    nominal_text, _, classes = fit["fit"].partition(" ")
+    nominal_text, classes = (*fit["fit"].split(maxsplit=1), "")[:2]  # any whitespace separates size and classes
     hole_class, _, shaft_class = classes.partition("/")
     if not shaft_class:  # a single class names the shaft when it is a shaft class
         hole_class, shaft_class = (classes, "") if classes[:1] == "H" else ("", classes)
