@@ -481,10 +481,11 @@ class FailedBindings(unittest.TestCase):
                         point=(30.0, y / 2, z - 0.5), normal=(0.0, 0.7071, 0.7071))
         upper, lower = rectangle(0, 0, -30, 60, 30, 10), rectangle(1, 0, -30, 60, 30, 5)
         faces = [upper, lower, flank(2, -1.0, 10.0, 3, 0), flank(3, 1.0, 10.0, 2, 0),
-                 flank(4, -1.0, 5.0, 5, 1), flank(5, 1.0, 5.0, 4, 1)]
-        features = {"terraces": ResolvedFeature("terraces", "plane_face", (0, 1)),
+                 flank(4, -1.0, 5.0, 5, 1), flank(5, 1.0, 5.0, 4, 1), rectangle(6, 0, -30, 60, 30, 0)]
+        features = {"bed": ResolvedFeature("bed", "plane_face", (6,)),
+                    "terraces": ResolvedFeature("terraces", "plane_face", (0, 1)),
                     "mark": ResolvedFeature("mark", "engraving", (2, 3, 4, 5), relations={"on": ("terraces",)})}
-        part = self.part(features={"terraces": {}, "mark": {}}, notes=[{"reference": "mark"}])
+        part = self.part(features={"bed": {}, "terraces": {}, "mark": {}}, notes=[{"reference": "mark"}])
         measured = drawing_intent.measure("TST-0010", part, {}, [], Binding(features, {}, ()), faces)
         self.assertEqual([c for c in measured.characteristics if c.operation == "depth"], [])
         (finding,) = [f for f in measured.findings if f.get("feature") == "mark"]
