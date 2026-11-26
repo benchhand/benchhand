@@ -351,9 +351,13 @@ def acceptance_text(acceptance: str | None, names: Sequence[str], measured: Mapp
     return None
 
 
+def _named(item: int | None, name: str) -> str:
+    """An end of an operation or joint: its item, or existing equipment, which has none, by its product name."""
+    return f"item {item}" if item is not None else f"{name} (existing)"
+
+
 def _into(op: ResolvedOperation) -> str:
-    """What an operation installs into: its item, or existing equipment, which has none, by its product name."""
-    return f"item {op.into_item}" if op.into_item is not None else f"{op.into_name} (existing)"
+    return _named(op.into_item, op.into_name)
 
 
 def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: str) -> str:
@@ -401,7 +405,8 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
     text += f" ({operation.interface})." if operation.interface else "."
     if op.travel is not None:
         unit = "°" if op.travel.kind == "revolute" else " mm"
-        text += (words(f" Then check that item {op.travel.child_item} moves freely on item {op.travel.parent_item} from ")
+        text += (words(f" Then check that {_named(op.travel.child_item, op.travel.child_name)} moves freely on "
+                       f"{_named(op.travel.parent_item, op.travel.parent_name)} from ")
                  + f"{_number(op.travel.low)}{unit}" + words(" to ") + f"{_number(op.travel.high)}{unit} "
                  + f"({op.travel.joint}).")
     return text

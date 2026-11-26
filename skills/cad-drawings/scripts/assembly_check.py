@@ -266,8 +266,10 @@ class Travel:
     kind: str            # "revolute" (degrees) or "prismatic" (mm)
     low: float
     high: float
-    parent_item: int
-    child_item: int
+    parent_item: int | None  # None when the end is existing equipment, which has no item; its `_name` says which
+    child_item: int | None
+    parent_name: str = ""
+    child_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -498,6 +500,17 @@ def _check_coverage(binding: _Binding, item_of: Mapping[str, int], bom: Mapping[
                                         f"bom.csv lists {pn}, which the assembly STEP does not place"))
 
 
+def _endpoint(binding: _Binding, item_of: Mapping[str, int], oid: str) -> tuple[int | None, str] | None:
+    """A joint end as (its item, "") or, for existing equipment, which has no item, (None, its product name); None for
+    an occurrence that is neither."""
+    if oid in item_of:
+        return item_of[oid], ""
+    occurrence = binding.occurrences.get(oid)
+    if occurrence is not None and occurrence.pn in binding.existing:
+        return None, occurrence.product
+    return None
+
+
 def _resolve_operations(binding: _Binding, intent: Intent, interfaces: Sequence[Mapping[str, Any]],
                         item_of: Mapping[str, int]) -> list[ResolvedOperation]:
     findings, occurrences, counts = binding.findings, binding.occurrences, binding.counts
@@ -538,10 +551,16 @@ def _resolve_operations(binding: _Binding, intent: Intent, interfaces: Sequence[
                 findings.append(finding("assembly_instruction_incomplete", f"{where}: verify_joint "
                                                                            f"{operation.verify_joint} is not a movable joint"))
                 continue
-            if joint["parent"] not in item_of or joint["child"] not in item_of:
+            ends = [_endpoint(binding, item_of, joint[side]) for side in ("parent", "child")]
+            if None in ends:
+                findings.append(finding("assembly_instruction_incomplete", f"{where}: verify_joint "
+                                        f"{operation.verify_joint} joins an occurrence with no item that is not existing "
+                                        "equipment", operation=operation.id))
                 continue
+            parent, child = ends
+            assert parent is not None and child is not None  # the None check above
             travel = Travel(joint=joint["id"], kind=joint["type"], low=float(joint["min"]), high=float(joint["max"]),
-                            parent_item=item_of[joint["parent"]], child_item=item_of[joint["child"]])
+                            parent_item=parent[0], child_item=child[0], parent_name=parent[1], child_name=child[1])
         onto_existing = occurrences[into].pn in binding.existing
         if part not in item_of or (into not in item_of and not onto_existing):
             continue
