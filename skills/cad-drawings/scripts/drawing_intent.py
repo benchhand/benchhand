@@ -1131,6 +1131,24 @@ class Measurer:
                                       designation="profile", source="drawing intent"),
                   details={"datum_frame": list(frame_labels)})
 
+    @staticmethod
+    def _v_cut_depth(feature: ResolvedFeature, name: str, opening: Sequence[Face], own: Sequence[Face]
+                     ) -> tuple[Face, float]:
+        """A V-cut has no flat floor: its depth is the groove's deepest point into the material below the plane
+        it opens through, which must border the groove. Returns that plane and the depth."""
+        touching = {n for f in own for n in f.neighbours()}
+        borders = [f for f in opening if f.support_type == "plane" and f.index in touching]
+        if not borders:
+            raise IntentError("measurement_failed", f"engraving {feature.id} has no flat floor, and plane {name} "
+                              "does not border it; name the plane the cut opens through")
+        surface = borders[0]
+        inward = fg.scale(fg.unit(surface.normal), -1.0)   # the normal points out of the material
+        depth = max((fg.dot(fg.sub(p, surface.point), inward) for f in own for p in f.boundary_points()), default=0.0)
+        if depth < EPS:
+            raise IntentError("measurement_failed", f"engraving {feature.id} reaches no depth into the material "
+                              f"below plane {name}")
+        return surface, depth
+
     def _engraving(self, feature: ResolvedFeature, frame: DatumFrame) -> None:
         on = feature.relations.get("on")
         if not on:
@@ -1146,19 +1164,8 @@ class Measurer:
         floors = [f for f in own if f.support_type == "plane" and fg.parallel(f.normal, surface.normal)]
         if floors:
             depth = max(abs(fg.dot(fg.sub(f.point, surface.point), surface.normal)) for f in floors)
-        else:   # a V-cut has no flat floor: its depth is the groove's deepest point into the material below the opening
-            touching = {n for f in own for n in f.neighbours()}
-            borders = [f for f in opening if f.support_type == "plane" and f.index in touching]
-            if not borders:
-                raise IntentError("measurement_failed", f"engraving {feature.id} has no flat floor, and plane {on[0]} "
-                                  "does not border it; name the plane the cut opens through")
-            surface = borders[0]
-            inward = fg.scale(fg.unit(surface.normal), -1.0)   # the normal points out of the material
-            depth = max((fg.dot(fg.sub(p, surface.point), inward) for f in own for p in f.boundary_points()),
-                        default=0.0)
-            if depth < EPS:
-                raise IntentError("measurement_failed", f"engraving {feature.id} reaches no depth into the material "
-                                  f"below plane {on[0]}")
+        else:
+            surface, depth = self._v_cut_depth(feature, on[0], opening, own)
         axis = frame.axis_of(surface.normal)
         if axis is None:
             raise IntentError("dimension_coverage_incomplete", "the engraving surface is not normal to a frame axis")
