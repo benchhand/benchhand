@@ -792,6 +792,11 @@ def assess(record: Any, *, version: str | None = None, manifest_sha256: str | No
         for target in targets:
             if result == "waived":
                 waivers.setdefault(target, entry.get("waiver") or {})
+            elif by_id[target].family.startswith(_DECIDED_FROM_RECORD):
+                findings.append(Finding("evidence.record_derived", f"hw/manufacturing/evidence.yaml#/entries/{ident}",
+                                        f"{ident}: {target} is decided from the record, so a ledger {result} counts for "
+                                        "nothing; resolve what its basis names in the record instead", "warning", target))
+                continue
             candidates[target].append((result, ident, "; ".join(reasons)))
         if not targets and entry.get("requirement"):
             untargeted.setdefault((entry["requirement"], entry.get("level")), []).append(result)
@@ -1362,6 +1367,10 @@ _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved"
                                     "release.trial_not_permitted"})
 # The packet problem of a packet whose expected checks are not the ones the record now implies.
 EXPECTED_CHANGED = "evidence.expected_changed"
+# The families only the record decides: an intent.* obligation (the use case, an unknown input, an obligation id
+# collision) resolves when the record changes, never from a ledger entry. assembly.joint is record-derived too, but
+# accepted joint evidence (a retention test) may still resolve it.
+_DECIDED_FROM_RECORD = ("intent.",)
 
 
 def expected_change(recorded: Any, expected: Sequence[Any]) -> str:
