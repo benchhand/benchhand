@@ -2304,8 +2304,9 @@ def use_case_fields(use_case: UseCase) -> dict[str, Fact]:
 def assess_use_case(record: Record) -> UseCaseAssessment:
     """Whether the use case supports a final material/process recommendation. Conditional exploration
     is always allowed; a final choice needs a confirmed use case, a known service class, no open
-    material-to-choice or safety question, and no unknown that no open question tracks. A resolved
-    question does not track an unknown: its answer belongs in the fact, so the pair is a contradiction."""
+    material-to-choice or safety question, and no unknown that no open question tracks. An unknown load fact (the load
+    case, or a listed load's magnitude, duration, frequency or cycles) blocks whatever its question is classed as. A
+    resolved question does not track an unknown: its answer belongs in the fact, so the pair is a contradiction."""
     use_case = record.use_case
     blocking: list[str] = []
     if record.version != RECORD_VERSION:
@@ -2325,6 +2326,9 @@ def assess_use_case(record: Record) -> UseCaseAssessment:
         elif question.status != "open":
             blocking.append(f"use_case.{name} is unknown but its question {question.id} is {question.status}; "
                             "record the answer in the fact or reopen the question")
+        elif name == "loads" or name.startswith("loads."):
+            blocking.append(f"use_case.{name} is unknown: a final choice needs every load fact known, whatever its "
+                            f"question ({question.id}) is classed as")
     open_questions = tuple(sorted(q.id for q in record.questions.values() if q.blocks_final_choice))
     if open_questions:
         blocking.append(f"open questions material to the choice or safety: {', '.join(open_questions)}")
