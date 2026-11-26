@@ -137,6 +137,12 @@ class RulesDigestTests(unittest.TestCase):
                                                                              self.one_rule("40 mm bore", fit_assembly)):
                 self.assertEqual(scope.rules_sha256("fit_assembly"), digest)
 
+    def test_rules_sha256_uses_the_record_canonical_json(self) -> None:
+        """layout.canonical_json writes text as UTF-8, not as \\u escapes: the vector above with summary "Ø 40 bore"."""
+        with mock.patch.object(scope, "RULES", self.one_rule("Ø 40 bore")):
+            self.assertEqual(scope.rules_sha256("fit_assembly"),
+                             "308fc5699f28b1694addf46656b4b9a90f2332a845728d3f0bbb4f1a3256217b")
+
 
 class ProfileTests(unittest.TestCase):
     def test_a_record_without_a_flow_profile_has_none(self) -> None:
