@@ -267,7 +267,8 @@ class H2dCalibrationFlagTests(unittest.TestCase):
 
         self.assertEqual(grade(after), grade(before))
         obligation = f"process.fdm.orientation@{PRINTED[0]}/print"
-        self.assertIn("standard built-in calibration; guideline deviations apply", after.outcome(obligation)["coverage"])
+        self.assertIn("standard built-in calibration; no guideline value covers this check", after.outcome(obligation)["coverage"])
+        self.assertNotIn("guideline deviations apply", after.outcome(obligation)["coverage"])
         self.assertNotIn("standard built-in", before.outcome(obligation)["coverage"])
 
 
