@@ -59,6 +59,12 @@ class Eligibility(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(word, ci.designation_problem(designation) or "")
 
+    def test_a_blank_standard_or_size_is_a_missing_field_not_a_crash(self) -> None:
+        for field in ("standard", "size"):
+            with self.subTest(field):
+                self.assertEqual(ci.designation_problem({**SCREW, field: "  \t"}), f"missing {field}")
+        self.assertEqual(ci.blank_fields({**SCREW, "standard": "   ", "finish": 5}), ["standard"])
+
     def test_a_nut_may_omit_its_length_and_a_dowel_may_not(self) -> None:
         dowel = {**NUT, "standard": "ISO 8734", "size": "6"}
         self.assertIsNone(ci.designation_problem(NUT))

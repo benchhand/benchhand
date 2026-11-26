@@ -179,6 +179,16 @@ class RollUpTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(bom.roll_up(top, {"FST-0001": record})["rows"][1]["designation"], "")
 
+    def test_a_blank_standard_is_a_finding_naming_the_part_and_field_and_the_rest_still_reconciles(self) -> None:
+        bad, good = bom.Node("FST-0001", False), bom.Node("FST-0002", False)
+        top = [bom.Node("ASM-0001", True, [(bad, 1), (good, 2)])]
+        parts = {"FST-0001": self.bought({**self.SCREW, "standard": "   "}), "FST-0002": self.bought(self.SCREW)}
+        result = bom.roll_up(top, parts)
+        self.assertEqual(result["invalid_designation"], ["FST-0001: purchase.designation.standard is blank"])
+        self.assertEqual([(r["PN"], r["designation"]) for r in result["rows"]],
+                         [("ASM-0001", ""), ("FST-0001", ""), ("FST-0002", "ISO 4762 M4x20, 8.8, A2")])
+        self.assertEqual((result["total_qty"]["FST-0002"], result["missing_in_step"]), (2, []))
+
     def test_the_designation_text_of_the_record_wins_over_the_structured_label(self) -> None:
         screw = bom.Node("FST-0001", False)
         record = self.bought(self.SCREW, designation="ISO 4762 - M4 x 20 - 8.8")
