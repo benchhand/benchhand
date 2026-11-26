@@ -556,13 +556,13 @@ sys.exit(code)
         self.assertAlmostEqual(abs(tip["value_mm"]), 31.0, places=6)
 
     def test_stale_locator_on_one_patch_fails_with_a_named_finding_not_an_error(self) -> None:
-        """A bracket revision moved one patch of the groove off every face: exit 1, the groove named."""
+        """A bracket revision moved one patch each of the groove and the tip chamfer off every face: exit 1, both named."""
         model = self.hw / "parts" / "LMP-0005" / "model.py"
         original = model.read_text(encoding="utf-8")
         hook = "            features.setdefault(name, []).append(patch)\n"
         self.assertIn(hook, original)
         model.write_text(original.replace(hook, hook + (
-            '            if name == "groove" and len(features[name]) == 1:\n'
+            '            if name in ("groove", "tip_chamfer") and len(features[name]) == 1:\n'
             '                features[name].append({**patch, "point_mm": [c + 100.0 for c in patch["point_mm"]]})\n')),
             encoding="utf-8")
         try:
@@ -574,6 +574,8 @@ sys.exit(code)
         self.assertEqual((code, result["status"]), (1, "fail"), result)
         self.assertEqual(result["error"]["code"], "feature_not_found", result)   # the sheet's detail view of it
         self.assertIn("groove", result["error"]["message"])
+        named = {f["feature"] for f in result["coverage"]["findings"] if f["code"] == "feature_not_found"}
+        self.assertEqual(named, {"groove", "tip_chamfer"}, result["coverage"]["findings"])   # the view error hides none
 
     def test_vendor_sheet_controls_only_the_specification_limits(self) -> None:
         code, result = self.draw("v1", "vendor", "LMP-0009")
