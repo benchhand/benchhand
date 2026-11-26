@@ -446,7 +446,8 @@ class JustifiedAlternatives(unittest.TestCase):
 
     def test_an_approval_outside_the_step_scope_is_not_credited(self) -> None:
         """tst_laser's approval of the sheet is scoped by operation, thickness and coating. An approval for engraving only,
-        or one whose thickness or coating scope is unresolved, never approves the cutting step."""
+        one that states no operation, or one whose thickness or coating scope is unresolved or is for other stock, never
+        approves the cutting step."""
         def approval(documents: dict[str, Any]) -> dict[str, Any]:
             return profile(documents, "capabilities", "tst_laser")["materials"][0]
 
@@ -455,9 +456,12 @@ class JustifiedAlternatives(unittest.TestCase):
 
         cases = {
             "engraving only": lambda d: approval(d).update(operations=["engrave"]),
+            "operation scope not stated": lambda d: approval(d).pop("operations"),
             "approved thickness not stated": lambda d: approval(d).pop("thickness"),
             "coating not identified": lambda d: approval(d).pop("coating", None),
             "stock thickness not stated": lambda d: cut(d).pop("stock", None),
+            "stock coating not stated": lambda d: cut(d)["stock"].pop("coating"),
+            "approved for another coating": lambda d: cut(d)["stock"].update(coating=fx.known("TST protective film")),
         }
         for case, change in cases.items():
             with self.subTest(case):
@@ -468,6 +472,29 @@ class JustifiedAlternatives(unittest.TestCase):
                 self.assertEqual((sheet["status"], sheet["unknown"]), ("conditional", ["material_approval"]))
                 self.assertEqual([e["outcome"] for e in evaluations(sheet, "material_approval")], ["unknown", "pass"])
                 self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_frame")
+
+    def test_an_unstated_thickness_or_coating_names_how_to_record_it(self) -> None:
+        """The remedy of an unresolved scope says what to record, including "none" for uncoated stock."""
+        def approval(documents: dict[str, Any]) -> dict[str, Any]:
+            return profile(documents, "capabilities", "tst_laser")["materials"][0]
+
+        def stock(documents: dict[str, Any]) -> dict[str, Any]:
+            return selection_candidate(documents, "sheet_frame")["parts"][0]["route"][0]["stock"]
+
+        cases = {
+            "approved thickness": (lambda d: approval(d).pop("thickness"), "thickness range"),
+            "approved coating": (lambda d: approval(d).pop("coating"), 'coating it is approved for, or "none"'),
+            "stock coating": (lambda d: stock(d).pop("coating"), 'stock.coating of the step, or "none" for uncoated stock'),
+            "stock thickness": (lambda d: stock(d).pop("thickness"), "stock.thickness of the step"),
+        }
+        for case, (change, wanted) in cases.items():
+            with self.subTest(case):
+                documents = scenarios.plate_frame_options()
+                change(documents)
+                report = assess(self, documents)
+                (cut, _) = evaluations(candidate(report, "sheet_frame"), "material_approval")
+                self.assertEqual(cut["outcome"], "unknown")
+                self.assertIn(wanted, cut["remedy"])
 
     def test_a_stock_thickness_outside_the_approved_range_is_not_credited(self) -> None:
         """tst_laser approves the sheet at 3 mm. A 5 mm stock is stated, so the approval does not cover the cut."""
