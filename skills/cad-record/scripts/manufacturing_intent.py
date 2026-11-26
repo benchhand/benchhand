@@ -2045,9 +2045,9 @@ class _Reader:
                                                 int(result.get("samples", 0)), source, data.get("date"), data.get("valid_until")))
         state = _mapping(item.get("calibration_state"))
         if state.get("status") == "custom" and not calibrations:
-            self.problem("intent.profile", path, f"{pointer}/calibration_state",
-                         f"{ident}: calibration_state custom needs at least one measured calibration; record it in calibrations, "
-                         "or state standard or unknown")
+            self.problem("intent.calibration_state", path, f"{pointer}/calibration_state",
+                         f"{ident}: calibration_state custom has no measured calibration; record one in calibrations, "
+                         "or state standard or unknown", "warning")
         if not isinstance(ident, str):
             return None
         return CapabilityProfile(ident, int(item.get("revision", 0)), process, item.get("provider"), bool(item.get("template")),

@@ -156,7 +156,7 @@ def documents_problems(documents: Mapping[str, Any], hw: Path) -> list[str]:
     record = intent.normalize_record(documents, hw=hw)
     wanted = {f"hw/{rel}" for rel in own} | {f"hw/{artifact}" for artifact in _artifacts(list(own.values()))}
     found = [problem for problem in intent.schema_problems(own) + list(record.problems)
-             if (problem.path in wanted or problem.code == intent.VERSION_UNSUPPORTED) and problem.severity == "error"]
+             if (problem.path in wanted or problem.code == intent.VERSION_UNSUPPORTED) and (problem.severity == "error" or problem.code == "intent.calibration_state")]
     messages = [f"{problem.path}: {problem.pointer or '-'}: {problem.message}" for problem in found]
     catalog = guidelines.discover(hw)
     for profile in (documents.get(CAPABILITIES) or {}).get("profiles") or ():
