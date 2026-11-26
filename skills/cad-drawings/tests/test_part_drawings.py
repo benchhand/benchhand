@@ -482,45 +482,48 @@ sys.exit(code)
         package_json = json.loads((package / "package.json").read_text(encoding="utf-8"))
         self.assertFalse(package_json["release"]["ready"])  # X1 is a prototype revision
 
+    def drawn_with(self, old: str, new: str) -> tuple[int, dict]:
+        """The LMP-0005 drawing after replacing `old` (once) by `new` in interfaces.yaml. drawing reads the version's
+        record snapshot, so each edit gets its own build: the next version of a copy of the project, which leaves this
+        class's own version numbering alone."""
+        copy = Path(self.tmp.name) / "record-edits" / "hw"
+        if not copy.is_dir():
+            shutil.copytree(self.hw, copy, ignore=shutil.ignore_patterns("versions", "drawings", "checks", ".cad-work"))
+        label = f"v{len(list((copy / 'versions').glob('v*'))) + 1}" if (copy / "versions").is_dir() else "v1"
+        interfaces = copy / "interfaces.yaml"
+        original = interfaces.read_text(encoding="utf-8")
+        self.assertIn(old, original)
+        try:
+            interfaces.write_text(original.replace(old, new, 1), encoding="utf-8")
+            build = run(UV, "run", "--script", str(CAD_MODEL), "run", str(copy), "--label", label, "--kernel", "auto")
+            self.assertEqual(build.returncode, 0, build.stdout[-2000:] + build.stderr[-2000:])
+        finally:
+            interfaces.write_text(original, encoding="utf-8")
+        return self.draw(label, "unused", hw=copy, output=False)
+
     def test_explicit_fit_limits_print_on_the_sheet_never_an_iso_class(self) -> None:
         """IF-001's press band given as explicit limits (the p6 limits, so the model's 5.016 band still fits) or as a
         crush-rib interference band: the sheet prints the limits or the band, never a class."""
-        interfaces = self.hw / "interfaces.yaml"
-        original = interfaces.read_text(encoding="utf-8")
         iso = "press_fit: {fit: 5 H7/p6, "
         source = "source: {kind: user, reference: press band limits, origin: lead}, "
         forms = {
-            "deviations": ("press_fit: {nominal_mm: 5, " + source + "deviations: {units: mm, hole: {upper: 0.012, "
-                           "lower: 0}, shaft: {upper: 0.020, lower: 0.012}}, ", "+0.020/+0.012"),
+            "deviations": ("press_fit: {nominal_mm: 5, " + source + "deviations: {units: mm, hole: {upper: "
+                           "0.012, lower: 0}, shaft: {upper: 0.020, lower: 0.012}}, ", "+0.020/+0.012"),
             "crush ribs": ("press_fit: {nominal_mm: 5, " + source + "compliance: crush_rib, "
                            "interference: {min: 0, max: 0.020, units: mm}, ", "(interference 0/0.02, crush ribs)"),
         }
         for name, (form, printed) in forms.items():
             with self.subTest(name):
-                self.assertEqual(original.count(iso), 3)
-                try:
-                    interfaces.write_text(original.replace(iso, form, 1), encoding="utf-8")
-                    code, result = self.draw("v1", f"explicit-{name.replace(' ', '-')}")
-                finally:
-                    interfaces.write_text(original, encoding="utf-8")
+                code, result = self.drawn_with(iso, form)
                 svg = (Path(result["output_dir"]) / "sheet-1.svg").read_text(encoding="utf-8")
                 texts = re.findall(r"<text[^>]*>([^<]*)</text>", svg)
                 band = [text for text in texts if printed in text]
                 self.assertEqual(len(band), 1, (code, texts, result.get("findings")))
-                self.assertNotIn("p6", band[0])
                 self.assertFalse(any("p6" in text for text in texts), texts)
                 self.assertFalse(any("None" in text for text in texts), texts)  # the test project's local-patch bug
 
     def test_an_iso_fit_with_a_tab_before_its_classes_prints_its_class(self) -> None:
-        interfaces = self.hw / "interfaces.yaml"
-        original = interfaces.read_text(encoding="utf-8")
-        try:
-            interfaces.write_text(original.replace("press_fit: {fit: 5 H7/p6, ", 'press_fit: {fit: "5\\tH7/p6", ', 1),
-                                  encoding="utf-8")
-            self.assertNotEqual(interfaces.read_text(encoding="utf-8"), original)
-            code, result = self.draw("v1", "tab-designation")
-        finally:
-            interfaces.write_text(original, encoding="utf-8")
+        code, result = self.drawn_with("press_fit: {fit: 5 H7/p6, ", 'press_fit: {fit: "5\\tH7/p6", ')
         self.assertEqual((code, result["status"]), (0, "pass"), result.get("findings"))
         texts = re.findall(r"<text[^>]*>([^<]*)</text>", (Path(result["output_dir"]) / "sheet-1.svg").read_text(encoding="utf-8"))
         self.assertIn("⌀5 p6 (+0.020/+0.012)", texts)
