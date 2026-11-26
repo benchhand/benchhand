@@ -551,13 +551,13 @@ def _resolve_operations(binding: _Binding, intent: Intent, interfaces: Sequence[
                 findings.append(finding("assembly_instruction_incomplete", f"{where}: verify_joint "
                                                                            f"{operation.verify_joint} is not a movable joint"))
                 continue
-            ends = [_endpoint(binding, item_of, joint[side]) for side in ("parent", "child")]
-            if None in ends:
+            joint_ends = [_endpoint(binding, item_of, joint[side]) for side in ("parent", "child")]
+            if None in joint_ends:
                 findings.append(finding("assembly_instruction_incomplete", f"{where}: verify_joint "
                                         f"{operation.verify_joint} joins an occurrence with no item that is not existing "
                                         "equipment", operation=operation.id))
                 continue
-            parent, child = ends
+            parent, child = joint_ends
             assert parent is not None and child is not None  # the None check above
             travel = Travel(joint=joint["id"], kind=joint["type"], low=float(joint["min"]), high=float(joint["max"]),
                             parent_item=parent[0], child_item=child[0], parent_name=parent[1], child_name=child[1])
