@@ -398,6 +398,24 @@ class JustifiedAlternatives(unittest.TestCase):
         wear = [f for f in findings(report, "selection.recorded_route_eliminated") if f["requirements"] == ["REQ-002"]]
         self.assertEqual(wear[0]["subject"]["interface"], "IF-001")
 
+    def test_a_result_for_another_state_or_condition_does_not_meet_the_requirement(self) -> None:
+        """REQ-002 asks for the assembled wear depth after the run-in. A pass measured in another dimension state or
+        under other conditions is a different criterion: a mismatch, never credited."""
+        required = {"state": "assembled", "conditions": "TST after 1000 h run-in at 40 deg_C"}
+        stated = {"another state": {**required, "state": "as_manufactured"}, "no state": {"conditions": required["conditions"]},
+                  "other conditions": {**required, "conditions": "TST new, at 23 deg_C"}}
+        for case, extra in stated.items():
+            with self.subTest(case):
+                documents = scenarios.wear_shaft_options()
+                documents["requirements.yaml"]["requirements"][1]["acceptance"][0].update(required)
+                (written,) = selection_candidate(documents, "purchased_shaft")["evaluations"]
+                written["criterion"].update(extra)
+                report = assess(self, documents)
+                purchased = candidate(report, "purchased_shaft")
+                self.assertEqual((purchased["status"], purchased["unknown"]), ("conditional", ["REQ-002"]))
+                self.assertIn("evaluation_mismatch_purchased_shaft_req_002",
+                              [f["id"] for f in findings(report, "selection.evaluation_mismatch")])
+
     def test_a_missing_evaluation_keeps_an_alternative_conditional(self) -> None:
         documents = scenarios.wear_shaft_options()
         selection_candidate(documents, "purchased_shaft")["evaluations"] = []
