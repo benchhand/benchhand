@@ -2635,15 +2635,20 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
     whole product) and access, and joint evidence for every joining operation; requirement evidence levels;
     and an intent.* obligation for every unknown
     input that hides checks. A producer cannot shrink this list by omission; an unknown route kind gets
-    process.<kind>.coverage, which no handler can pass."""
+    process.<kind>.coverage, which no handler can pass. Distinct checks that share one id (two regions of a feature, two
+    policy requirements at one level on a part) add an unknown intent.obligation_identity obligation that names them."""
     found: dict[str, Obligation] = {}
+    collided: dict[str, list[Obligation]] = {}  # obligation id -> the distinct checks that share it
 
     def add(family: str, subject: Mapping[str, Any], level: str, stage: str, basis: str, *,
             requirement: str | None = None, criterion: str | None = None) -> None:
         clean = {key: value for key, value in subject.items() if value is not None}
         ident = f"{family}@{obligation_anchor(clean)}"
-        if ident not in found:
-            found[ident] = Obligation(ident, family, types.MappingProxyType(clean), level, stage, basis, requirement, criterion)
+        obligation = Obligation(ident, family, types.MappingProxyType(clean), level, stage, basis, requirement, criterion)
+        first = found.setdefault(ident, obligation)
+        members = collided.setdefault(ident, [first])
+        if all(_identity(obligation) != _identity(member) for member in members):
+            members.append(obligation)
 
     use_case = record.use_case
     add("intent.use_case", {"product": True}, "process_planned", "intent",
@@ -2685,7 +2690,50 @@ def required_checks(record: Record) -> tuple[Obligation, ...]:
             if subject is not None and policy_level in _LEVEL_STAGE:
                 add(f"policy.{policy_level}", subject, policy_level, _LEVEL_STAGE[policy_level], "the approved evidence policy",
                     requirement=item.get("requirement"))
+    found.update(_identity_collisions(collided))
     return tuple(found[key] for key in sorted(found))
+
+
+# The record-derived obligation that reports distinct checks sharing one obligation id; no producer can pass it.
+OBLIGATION_IDENTITY_FAMILY = "intent.obligation_identity"
+
+
+def _identity(obligation: Obligation) -> tuple[Any, ...]:
+    """What makes two checks distinct: subject (occurrence, component, operation, feature and region), requirement and
+    criterion. The basis text is not identity: one check may be derived from two functions."""
+    return (sorted(obligation.subject.items(), key=lambda item: item[0]), obligation.requirement, obligation.criterion)
+
+
+def _identity_collisions(collided: Mapping[str, Sequence[Obligation]]) -> dict[str, Obligation]:
+    """One intent.obligation_identity obligation per anchor where distinct checks share an obligation id. The id grammar
+    (obligation_anchor) holds no region, occurrence or requirement of a part subject, so the first check keeps the id; the
+    others would vanish. This obligation names them all and stays unknown, so the collision is never a pass."""
+    texts: dict[str, list[str]] = {}
+    firsts: dict[str, Obligation] = {}
+    stages: dict[str, str] = {}
+    for ident, members in sorted(collided.items()):
+        if len(members) < 2:
+            continue
+        anchor = ident.split("@", 1)[1]
+        firsts.setdefault(anchor, members[0])
+        texts.setdefault(anchor, []).append(f"{ident} stands for {len(members)} checks: "
+                                            + "; ".join(_identity_text(member) for member in members))
+        stages[anchor] = min((stages.get(anchor, members[0].stage), *(m.stage for m in members)), key=STAGES.index)
+    found = {}
+    for anchor, first in firsts.items():
+        ident = f"{OBLIGATION_IDENTITY_FAMILY}@{anchor}"
+        found[ident] = Obligation(ident, OBLIGATION_IDENTITY_FAMILY, first.subject, "process_planned", stages[anchor],
+                                  " | ".join(texts[anchor]) + ". One result cannot answer them all, so none of them is "
+                                  "checked: give each its own feature, or each policy requirement its own subject or level")
+    return found
+
+
+def _identity_text(obligation: Obligation) -> str:
+    details = [f"{key} {obligation.subject[key]}" for key in ("occurrence", "component", "operation", "region")
+               if obligation.subject.get(key)]
+    if obligation.requirement:
+        details.append(f"requirement {obligation.requirement}")
+    return obligation.basis + (f" ({', '.join(details)})" if details else "")
 
 
 def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
@@ -2760,7 +2808,7 @@ def _part_checks(record: Record, pn: str, part: Part, add: Any) -> None:
                 f"{pn} is structural and additive: layer direction against its loads")
     surfaces = () if is_fact(intent.critical_surfaces) else intent.critical_surfaces
     for surface in surfaces:
-        subject = {**base, "component": surface.component, "feature": surface.feature}
+        subject = {**base, "component": surface.component, "feature": surface.feature, "region": surface.region}
         add("feature.fit", subject, "process_planned", "detail", f"{pn} {surface.id}: {surface.role} finished fit")
         add("feature.inspection", subject, "physically_validated", "release", f"{pn} {surface.id}: inspected finished dimensions")
     for function, family, level in _FUNCTION_CHECKS:
