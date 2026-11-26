@@ -356,9 +356,12 @@ class _Record:
                 profile_digests = digests.get(guidelines.machine_free_key(op["kind"]))  # no machine: the process's own sets
             else:
                 profile_digests = digests.get(profile) if isinstance(profile, str) else None
-            stock = _get(op, "setup", "stock", "material_profile")  # the process checks read the stock's sets, if named
-            names = [stock] if isinstance(stock, str) else [] if undecided else self.profiles(pn)
-            for ref, sha in guidelines.digests_for(profile_digests, names).items():
+            # the process checks read the sets of the operation's stock, if named; stack-up those of the part's materials
+            stock = _get(op, "setup", "stock", "material_profile")
+            found = guidelines.digests_for(profile_digests, [] if undecided else self.profiles(pn))
+            if isinstance(stock, str):
+                found.update(guidelines.digests_for(profile_digests, [stock]))
+            for ref, sha in sorted(found.items()):
                 values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:
