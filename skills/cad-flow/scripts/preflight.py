@@ -19,7 +19,7 @@ detached process and returns at once; `--status [--wait SECONDS]` reports on the
 """
 import argparse
 import hashlib
-import importlib.util
+import importlib
 import json
 import os
 import re
@@ -350,15 +350,9 @@ class FeaSetting:
 
 def project_fea(cwd: Path) -> FeaSetting:
     """The FEA setting of the project at `cwd`, read by fea_profile.py (cad-record's YAML reader and gate
-    accessors). Loaded by path here: only a run that reads a project needs PyYAML."""
-    name = "cad_flow_fea_profile"
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name("fea_profile.py"))
-        if spec is None or spec.loader is None:
-            raise ImportError("fea_profile.py not found beside preflight.py")
-        sys.modules[name] = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sys.modules[name])
-    return FeaSetting(*sys.modules[name].read(cwd))
+    accessors). Imported by name when called: only a run that reads a project needs PyYAML."""
+    fea_profile = importlib.import_module("fea_profile")  # by name: no static import, so no PyYAML reach
+    return FeaSetting(*fea_profile.read(cwd))
 
 
 def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None,

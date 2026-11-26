@@ -4,7 +4,7 @@
 
 # /// script
 # requires-python = ">=3.12,<3.13"
-# dependencies = ["build123d==0.13.0", "cadquery-ocp-novtk==8.0.1.1.0", "bd_warehouse==0.4.0", "pyyaml>=6.0"]
+# dependencies = ["build123d==0.13.0", "cadquery-ocp-novtk==8.0.1.1.0", "bd_warehouse==0.4.0"]
 # ///
 """build123d 0.13 kernel runner for `cad_model.py run`; protocol in cadmodel/runner.py.
 
