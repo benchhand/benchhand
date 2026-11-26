@@ -1757,6 +1757,19 @@ class GuidelineLimitTests(Checks):
         self.assertEqual(found["criterion"]["status"], "unknown")
         self.assertEqual((found["outcome"], found["severity"], found["reason"]), ("not_assessed", "minor", "no_guideline"))
 
+    def test_a_resin_flatness_criterion_is_an_explicit_open_finding_since_no_resin_check_measures_it(self) -> None:
+        """Only FDM registers thermal_distortion, the check that reads flatness: on resin the criterion is a coverage gap."""
+        datum = [surface("datum_a", "datum", criteria=[_flatness_criterion("<= 0.1")])]
+        documents = shaped("resin", [], material=POLYMER, critical=datum, supports={"strategy": "none"})
+        data = facts(faces=(face("f1", features=("datum_a",)),),
+                     walls={"thickness_mm": 3.0, "location_mm": [1.0, 1.0, 1.0], "features": [], "measured": 12})
+        result = self.assess(documents, geometry("TST-0902", data))
+        obligation = "process.resin.geometry@TST-0902/form"
+        self.assertEqual(self.outcome(result, obligation), "unknown")
+        found = self.finding(result, "process.resin.criterion_unchecked")
+        self.assertEqual((found["outcome"], found["severity"], found["criterion"]["property"], found["subject"]["feature"]),
+                         ("unknown", "major", "flatness", "datum_a"))
+
     def test_a_resin_wall_with_no_calibration_is_not_assessed_and_a_known_miss_still_fails(self) -> None:
         documents = shaped("resin", [], material=POLYMER, supports={"strategy": "none"})
         obligation = "process.resin.geometry@TST-0902/form"
