@@ -493,6 +493,17 @@ class UseCaseReadiness(unittest.TestCase):
                 self.assertIn(f"loads.head_load.{name}", assessment.unknown)
                 self.assertIn(f"use_case.loads.head_load.{name} is unknown and no open question tracks it", assessment.blocking)
 
+    def test_an_unknown_load_fact_blocks_even_when_an_open_minor_question_tracks_it(self) -> None:
+        """A load fact is never minor: an open question that is neither material to the choice nor safety relevant
+        tracks the unknown magnitude, and the final choice is still refused."""
+        documents = self.confirmed()
+        documents["requirements.yaml"]["open_questions"].append(fx.question("Q-060"))
+        documents["product.yaml"]["use_case"]["loads"][0]["magnitude"] = fx.unknown("never measured", "Q-060")
+        assessment = mi.assess_use_case(mi.normalize_record(documents))
+        self.assertFalse(assessment.final_ready)
+        self.assertIn("use_case.loads.head_load.magnitude is unknown: a final choice needs every load fact known, "
+                      "whatever its question (Q-060) is classed as", assessment.blocking)
+
     def test_a_resolved_question_does_not_track_an_unknown(self) -> None:
         documents = self.confirmed()
         question = mi.normalize_record(fx.tst_record()).use_case.facts["environment.uv"].question
