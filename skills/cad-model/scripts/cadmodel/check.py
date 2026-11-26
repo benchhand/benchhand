@@ -208,7 +208,8 @@ def _glb_tree(gltf: Mapping[str, Any]) -> tuple[list[Mapping[str, Any]], list[in
     if not isinstance(nodes, list) or not all(isinstance(node, Mapping) for node in nodes):
         return [], [], ["nodes is not a list of node objects"]
     scene_count = len(scenes) if isinstance(scenes, list) else 0
-    if not isinstance(index, int) or not 0 <= index < scene_count or not isinstance(scenes[index], Mapping):
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < scene_count \
+            or not isinstance(scenes[index], Mapping):
         return nodes, [], [f"scene {index!r} is not one of its {scene_count} scenes"]
     malformed: list[str] = []
     return nodes, _glb_indices(scenes[index].get("nodes", []), len(nodes), f"scene {index} nodes", malformed), malformed
@@ -219,7 +220,8 @@ def _glb_occurrence_nodes(gltf: Mapping[str, Any],
     """Walking every node reachable from the GLB's scene: per occurrence of `owner` (node name -> occurrence id)
     whether each node named for it, at any depth, carries a mesh in its subtree; the mesh nodes outside every
     occurrence node; and why the node tree is malformed (a bad scene, root or child index), whose bad entries the
-    walk skips."""
+    walk skips; a node the scene reaches more than once, through a repeated reference or a cycle, is malformed too.
+    A node's mesh counts for the occurrence above it only down to the next occurrence node, which owns its own."""
     nodes, roots, malformed = _glb_tree(gltf)
     found: dict[str, list[bool]] = {oid: [] for oid in owner.values()}
     extra: list[str] = []
@@ -234,6 +236,9 @@ def _glb_occurrence_nodes(gltf: Mapping[str, Any],
                                              if child not in seen and nodes[child].get("name", "") not in owner)
 
     def walk(index: int, inside: bool) -> None:
+        if index in visited:
+            malformed.append(f"node {index} is reached more than once from the scene")
+            return
         visited.add(index)
         name = nodes[index].get("name", "")
         if name in owner:
@@ -241,12 +246,10 @@ def _glb_occurrence_nodes(gltf: Mapping[str, Any],
         elif "mesh" in nodes[index] and not inside:
             extra.append(name or f"node {index}")
         for child in children(index):
-            if child not in visited:
-                walk(child, inside or name in owner)
+            walk(child, inside or name in owner)
 
     for root in roots:
-        if root not in visited:
-            walk(root, False)
+        walk(root, False)
     return found, extra, sorted(set(malformed))
 
 
