@@ -1528,6 +1528,19 @@ class ExistingEquipmentBuildTests(unittest.TestCase):
         row, _ = self.checked_copy(drop_glb)
         self.assertEqual((row["status"], row["missing_exports"]), ("fail", ["product.glb"]))
 
+    def test_a_manifest_naming_a_valid_alternate_beside_an_invalid_canonical_product_step_fails(self) -> None:
+        """release ships hw/versions/<V>/product.step; a manifest that points at another file cannot vouch for it."""
+        def alternate(folder: Path, manifest: dict) -> None:
+            shutil.copyfile(folder / "product.step", folder / "product-alternate.step")
+            (folder / "product.step").unlink()
+            shutil.copyfile(folder / "assembly.step", folder / "product.step")  # the canonical one holds the arm
+            manifest["product"]["step"] = "product-alternate.step"
+            manifest["files"]["product-alternate.step"] = ""
+
+        row, results = self.checked_copy(alternate)
+        self.assertEqual((row["status"], row["existing_in_step"]), ("fail", ["TST-0002"]))
+        self.assertEqual(results["cad.product_exports@product"], "fail")
+
     def test_the_sweep_measures_the_existing_part_against_the_product(self) -> None:
         worst = self.hw.parent / ".cad-work" / "sweep" / "worst.step"
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(HERE.parents[1] / "cad-motion" / "scripts" / "sweep.py"),
