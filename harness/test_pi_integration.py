@@ -201,12 +201,22 @@ class PiSubagentTests(unittest.TestCase):
         self.assert_runs_nothing(scope)
 
     def assert_runs_nothing(self, scope: Path) -> None:
+        skill_file = scope / "skills" / BOM
+        before = skill_file.read_bytes()
         entries = self.run_pi(self.child_calls(scope))
+        launch = [entry for entry in entries if entry["who"] == "parent" and entry["tool"] == "subagent"]
+        self.assertEqual(len(launch), 1, self.output)
+        self.assertTrue(launch[0]["isError"], launch[0])
+        self.assertIn("Agent 'cad-clerk' ran as a foreground child", str(launch[0]["text"]))
+        self.assertIn("these child tools were unavailable: cad_run", str(launch[0]["text"]))
+        self.assertIn("(failed)", str(launch[0]["text"]))
+        self.assertEqual(self.child_results(entries), [], self.output)
+        self.assertEqual(skill_file.read_bytes(), before)
+        self.assertEqual(sorted(path.name for path in (self.project / ".cad-work/u1").iterdir()), [])
         self.assertTrue(self.parent_mark.exists(), self.output)
         self.assertFalse(self.child_mark.exists(), self.output)
         self.assertEqual(self.uv_calls(), [])
         self.assertFalse((self.project / "hw/product.yaml").exists(), self.output)
-        self.assertEqual([entry for entry in self.child_results(entries) if not entry["isError"]], [], self.output)
 
 
 if __name__ == "__main__":
