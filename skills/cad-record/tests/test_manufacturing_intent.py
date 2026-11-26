@@ -248,8 +248,6 @@ class Normalization(unittest.TestCase):
                                                 "intent.units"),
             "accuracy as a parameter": (lambda d: capability(d, 0)["parameters"].update(hole_accuracy=fx.known(fx.quantity(0.1))), "intent.profile"),
             "text parameter as a quantity": (lambda d: capability(d, 0)["parameters"].update(enclosure=fx.known(fx.quantity(1))), "intent.units"),
-            "custom calibration state without a measured calibration": (
-                lambda d: capability(d, 1).update(calibration_state=fx.calibration_state("custom"), calibrations=[]), "intent.profile"),
             "template used as a capability": (lambda d: capability(d, 0).update(template=True, guidance=["x"], calibrations=[]), "intent.profile"),
             "laser profile on a print": (lambda d: route(d)[0].update(capability="tst_laser"), "intent.profile"),
             "calibration from an estimate": (lambda d: capability(d, 0)["calibrations"][0].update(source=fx.source("estimate")), "intent.profile"),
@@ -291,6 +289,14 @@ class Normalization(unittest.TestCase):
                 self.assertIn(code, codes, [p.message for p in record.problems])
                 severity = {p.code: p.severity for p in record.problems}[code]
                 self.assertEqual(severity, "warning" if code == "intent.coverage" else "error")
+
+    def test_a_custom_calibration_state_without_a_measured_calibration_is_a_warning_that_blocks_nothing(self) -> None:
+        documents = fx.tst_record()
+        documents["manufacturing/capabilities.yaml"]["profiles"][1].update(calibration_state=fx.calibration_state("custom"), calibrations=[])
+        record = mi.load_record(fx.write_record(temp_hw(self), documents))
+        found = [p for p in record.problems if p.code == "intent.calibration_state"]
+        self.assertEqual([(p.severity, p.pointer) for p in found], [("warning", "profiles/1/calibration_state")])
+        self.assertEqual([p for p in record.problems if p.severity == "error"], [])
 
     def test_a_decision_the_layout_cannot_resolve_is_a_reference_problem_not_a_crash(self) -> None:
         for label, ident, extra in (("two files with one id", "DR-009", "DR-009-second.md"),
