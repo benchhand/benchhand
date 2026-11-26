@@ -350,13 +350,15 @@ class _Record:
                                                      if isinstance(c, Mapping) and c.get("material_profile") is not None)]
         undecided = any(not isinstance(m, str) and not (isinstance(m, Mapping) and m.get("status") == "not_applicable")
                         for m in declared)  # a main or component material that is unknown could be any of them
-        for op in self.route(pn):  # a guideline set the part's capability profile resolves through, for its own materials
+        for op in self.route(pn):  # a guideline set the operation's capability profile resolves through, for its material
             profile = op.get("capability")
             if not isinstance(profile, str) and op.get("kind") in guidelines.GUIDELINE_PROCESSES:
                 profile_digests = digests.get(guidelines.machine_free_key(op["kind"]))  # no machine: the process's own sets
             else:
                 profile_digests = digests.get(profile) if isinstance(profile, str) else None
-            for ref, sha in guidelines.digests_for(profile_digests, [] if undecided else self.profiles(pn)).items():
+            stock = _get(op, "setup", "stock", "material_profile")  # the process checks read the stock's sets, if named
+            names = [stock] if isinstance(stock, str) else [] if undecided else self.profiles(pn)
+            for ref, sha in guidelines.digests_for(profile_digests, names).items():
                 values["source"][f"guideline:{ref}"] = sha
         mounting = self.mounting_inputs(pn)
         if mounting is not None:
