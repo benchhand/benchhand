@@ -172,6 +172,14 @@ def load_baseline(work: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
+def refuse_links(root: Path, path: Path) -> None:
+    """Refuse a write below `root` that would follow a symlink: `root` itself, every directory down to
+    `path`, and `path` are checked, the same refusal deliver makes for a linked scratch file."""
+    for step in (root, *(root / part for part in path.relative_to(root).parents[::-1]), path):
+        if step.is_symlink():
+            raise UsageError(f"scratch contains a symlink at {step}")
+
+
 def seed_store(hw: Path, scratch_hw: Path) -> int:
     """Hard-link HW's part store (cad-record layout cache.part_objects, cache.part_records) into the
     scratch copy and return how many files were linked. The store's writers only rename onto a name and
@@ -188,6 +196,7 @@ def seed_store(hw: Path, scratch_hw: Path) -> int:
             target = scratch_hw / path.relative_to(hw)
             if target.exists():
                 continue
+            refuse_links(scratch_hw, target.parent)
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 os.link(path, target)
@@ -234,17 +243,23 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
     scratch_hw = work / "hw"
     own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
     base: dict[str, str] = baseline["files"]
-    lead, mine = tree_hashes(hw), tree_hashes(scratch_hw)
+    refuse_links(scratch_hw, scratch_hw)
+    lead, mine = delivery_tree(hw)[0], delivery_tree(scratch_hw)[0]
     added: list[str] = []
     modified: list[str] = []
     removed: list[str] = []
     conflicts: list[str] = []
+    plan: list[str] = []
+    seeded = seed_store(hw, scratch_hw)  # refuses a linked cache directory before anything else is written
     for path in sorted(set(lead) | set(base)):
         if lead.get(path) == base.get(path):
             continue
         if path.startswith(own) or (mine.get(path) != base.get(path) and mine.get(path) != lead.get(path)):
             conflicts.append(path)
             continue
+        refuse_links(scratch_hw, scratch_hw / path)  # before any write
+        plan.append(path)
+    for path in plan:
         target = scratch_hw / path
         if path not in lead:
             target.unlink(missing_ok=True)
@@ -260,7 +275,6 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
             shutil.copy2(hw / path, target)
         (modified if path in base else added).append(path)
         base[path] = lead[path]
-    seeded = seed_store(hw, scratch_hw)
     (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
     report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
               "added": added, "modified": modified, "removed": removed, "conflicts": conflicts,
