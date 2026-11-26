@@ -196,7 +196,8 @@ class RecheckHookTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot parse staged hw/product.yaml", result.stderr)
 
-    def gate_packet(self, stage: str, *, outcome: str = "pass") -> Path:
+    def gate_packet(self, stage: str, *, outcome: str = "pass", version: str = "v1",
+                    manifest_sha256: str = "0" * 64) -> Path:
         """The evidence packet at `stage` of a producer that shows only the checks due at or before `stage`:
         later-stage checks stay unknown, as in a project that has just frozen that stage."""
         order = stamp_module.validate.stages()
@@ -204,7 +205,7 @@ class RecheckHookTests(unittest.TestCase):
         due = [o for o in evidence.mi.required_checks(staged.record) if order.index(o.stage) <= order.index(stage)]
         producer = evidence.ProducerPacket("hw/checks/v1/tst", "0" * 64,
                                            acceptance.producer_packet(staged.record, outcome=outcome, obligations=due))
-        packet = evidence.assess(staged.record, version="v1", manifest_sha256="0" * 64, packets=[producer],
+        packet = evidence.assess(staged.record, version=version, manifest_sha256=manifest_sha256, packets=[producer],
                                  selection_sha256=staged.selection_sha256).packet(stage, staged.record_sha256)
         checks = self.root / ".checks.json"
         checks.write_text(json.dumps(packet), encoding="utf-8")
@@ -223,10 +224,12 @@ class RecheckHookTests(unittest.TestCase):
         self.git("add", "hw")
 
     def stamp_gate(self, stage: str, *, outcome: str = "pass", passed: bool = True,
-                   timestamp: str | None = STAMP_TIME) -> subprocess.CompletedProcess[str]:
+                   timestamp: str | None = STAMP_TIME, version: str = "v1",
+                   manifest_sha256: str = "0" * 64) -> subprocess.CompletedProcess[str]:
         """Stamp `stage` through the public writer, then fix the stamp's timestamp (dropped when None) so no test
         reads the clock. The timestamp sits outside the tree hash, so the staged stamp stays valid."""
-        args = ["--stage", stage, "--checks", str(self.gate_packet(stage, outcome=outcome))]
+        packet = self.gate_packet(stage, outcome=outcome, version=version, manifest_sha256=manifest_sha256)
+        args = ["--stage", stage, "--checks", str(packet)]
         result = self.run_python(STAMP, *(args + (["--passed"] if passed else [])), cwd=self.root)
         if result.returncode == 0:
             self.set_stamp_time(timestamp)
@@ -339,6 +342,23 @@ class RecheckHookTests(unittest.TestCase):
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_reopening_a_stage_does_not_let_a_fresh_stamp_reuse_the_old_gate_decision(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        for version, digest, field in (("v2", "0" * 64, "gate.version"),
+                                       ("v1", "1" * 64, "gate.version_manifest_sha256")):
+            with self.subTest(version=version, field=field):
+                stamped = self.stamp_gate("layout", version=version, manifest_sha256=digest)
+                self.assertEqual(stamped.returncode, 0, stamped.stderr)
+                result = self.verify()
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(field + ":", result.stderr)
+
     def test_a_malformed_decision_record_is_a_refusal(self) -> None:
         self.provisional_gate("parts")
         decision_path(self.root / "hw", "DR-001").write_text("not a record\n", encoding="utf-8")
@@ -360,8 +380,17 @@ class RecheckHookTests(unittest.TestCase):
                 self.provisional_gate("parts")
                 self.assertEqual(self.stamp_gate("layout", timestamp=stamp).returncode, 0)
                 result = self.verify()
-                self.refused_gate(result)
-                self.assertIn("timestamp", result.stderr)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("timestamp:", result.stderr)
+
+    def test_a_gate_decision_after_the_stamps_utc_date_is_a_named_finding(self) -> None:
+        self.provisional_gate("parts", decided=date(2026, 11, 20))
+        stamped = self.stamp_gate("layout", timestamp="2026-11-20T00:01:00+01:00")
+        self.assertEqual(stamped.returncode, 0, stamped.stderr)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("DR-001", result.stderr)
+        self.assertIn("date:", result.stderr)
 
     def test_a_decisions_folder_without_a_decision_record_is_refused(self) -> None:
         self.provisional_gate("parts", decision=None)
