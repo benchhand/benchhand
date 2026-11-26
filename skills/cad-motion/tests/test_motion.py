@@ -528,6 +528,21 @@ class PairRequirementTests(unittest.TestCase):
         self.assertEqual(self.policy.allowed_pairs(fits, []), {("TST-0201", "arm-a")})
         self.assertEqual(self.policy.fitted_pairs(fits), {("TST-0201", "arm-a"), ("TST-0201", "arm-b"), ("arm-a", "arm-b")})
 
+    def test_a_misspelled_fit_key_is_an_invalid_fit_not_an_input_error(self) -> None:
+        typos = [{"id": "IF-001", "from": "a", "to": "b", "type": "mounting", "description": "Locates.",
+                  "limits": {"locating_fit": {"fitt": "5 H7/f7", "pair": ["@arm-a", "TST-0201"]}}},
+                 {"id": "IF-002", "from": "a", "to": "b", "type": "motion", "description": "Pivots.",
+                  "limits": {"running_fit": {"fit": "5 f7", "pairs": ["@arm-b", "TST-0201"]}}}]
+        assembly, hw = assembly_of(GAP_YAML), Path("hw")
+        locating = self.policy.declared_locating_fits(hw, typos, assembly)
+        running = self.policy.declared_running_fits(hw, typos, assembly)
+        self.assertEqual([(f["pair"], f["classification"]) for f in locating], [(["TST-0201", "arm-a"], "invalid")])
+        self.assertIn("unknown key 'fitt'", locating[0]["error"])
+        self.assertEqual([(f["pair"], f["classification"]) for f in running], [(None, "invalid")])
+        self.assertIn("unknown key 'pairs'", running[0]["error"])
+        self.assertEqual((self.policy.allowed_pairs([], [], locating), self.policy.fitted_pairs(locating, running)),
+                         (set(), set()), "an invalid fit neither allows overlap nor excuses a clearance")
+
     def test_a_compliant_fit_whose_limits_span_clearance_and_interference_still_allows_its_overlap(self) -> None:
         # hole +0.3/0, shaft +0.6/-0.2 on 22: clearance -0.6..+0.5, a transition, ribs crushing up to 0.6
         ribs = {"id": "IF-001", "from": "a", "to": "b", "type": "mounting", "description": "Seats.",

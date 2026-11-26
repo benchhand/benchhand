@@ -148,3 +148,28 @@ class DeclaredFitTests(unittest.TestCase):
         for name, entry in cases.items():
             with self.subTest(name), self.assertRaisesRegex(fits.FitError, "accepted forms: fit: 'SIZE HOLE/SHAFT'"):
                 fits.declared_fit(entry)
+
+    def test_a_value_of_the_wrong_type_or_a_misspelled_key_names_its_field(self) -> None:
+        band = {"min": 0, "max": 1.013, "units": "mm"}
+        cases = {
+            "list units": ({"nominal_mm": 22, "source": DESIGN_INTENT, "interference": {**band, "units": ["mm"]}},
+                           "interference.units"),
+            "list compliance": ({"nominal_mm": 22, "source": DESIGN_INTENT, "interference": band,
+                                 "compliance": ["crush_rib"]}, "compliance"),
+            "text nominal": ({"nominal_mm": "22", "source": DESIGN_INTENT, "interference": band}, "nominal_mm"),
+            "text rib count": ({"nominal_mm": 22, "source": DESIGN_INTENT, "interference": band,
+                                "compliance": "crush_rib", "ribs": {"count": "6"}}, "ribs.count"),
+            "list deviations units": ({"nominal_mm": 5, "source": DESIGN_INTENT, "deviations": {
+                "units": ["um"], "hole": {"upper": 12, "lower": 0}, "shaft": {"upper": 20, "lower": 12}}},
+                "deviations.units"),
+            "misspelled key": ({"fitt": "5 H7/f7", "pair": ["TST-0001", "TST-0002"]}, "unknown key 'fitt'"),
+        }
+        for name, (entry, field) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(fits.FitError, f"{field}.*accepted forms"):
+                fits.declared_fit(entry)
+
+    def test_a_vendor_designation_is_unclassified_where_the_kind_allows_one(self) -> None:
+        self.assertEqual(fits.declared_fit({"fit": "5 dowel to vendor limits"}, vendor_designation=True)["type"],
+                         "unclassified")
+        with self.assertRaisesRegex(fits.FitError, "unknown key 'pairs'"):
+            fits.declared_fit({"fit": "5 f7", "pairs": ["TST-0001", "TST-0002"]}, vendor_designation=True)
