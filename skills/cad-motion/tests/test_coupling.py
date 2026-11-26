@@ -339,6 +339,14 @@ class CoupledChain(unittest.TestCase):
             now, later = self.relative(values[k], pairs), self.relative(values[k + 3600], pairs)
             self.assertEqual([self.bits(now[p]) for p in pairs], [self.bits(later[p]) for p in pairs], values[k])
 
+    def test_sweep_samples_end_exactly_on_the_declared_limits(self) -> None:
+        """-0.1 + (0.2 - -0.1) * 18 / 18 is 0.20000000000000004: a limit checker without slack rejects the
+        sweep's own end point, so the end points are the declared limits verbatim."""
+        for low, high, count in ((-0.1, 0.2, 19), (0.1, 0.7, 7), (-0.3, 0.1, 13), (0.0, 720.0, 7201)):
+            values = sweep.linspace(low, high, count)
+            self.assertEqual((values[0], values[-1], len(values)), (low, high, count), (low, high))
+            self.assertTrue(all(low <= v <= high for v in values), (low, high))
+
     def test_a_chain_without_the_record_couplings_is_refused(self) -> None:
         data = v6_record.record()
         inventory = pose.assembly_data.normalize(data, {pn: f for pn, (_, f) in v6_record.PARTS.items()})
