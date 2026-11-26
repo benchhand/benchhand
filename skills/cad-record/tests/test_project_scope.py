@@ -15,9 +15,12 @@ level and every service class, with `unknown` for an unrecorded class.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
@@ -26,7 +29,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from modload import load_module as load  # noqa: E402
 
 evidence = load("cad_record_evidence", SCRIPTS / "evidence.py")
+scope = load("cad_record_project_scope", SCRIPTS / "project_scope.py")
+fx = load("cad_record_mi_fixtures", HERE / "fixtures" / "manufacturing_intent.py")
+mi = fx.intent_module()
 RELEASE_SCOPE = json.loads((HERE / "fixtures" / "release_scope_5dcd2c92.json").read_text(encoding="utf-8"))
+STRENGTH = {"family": "engineering.strength", "level": "simulation_supported"}
+
+
+def record(service_class: str | None = None, profile: dict[str, Any] | None = None) -> Any:
+    """The TST record (fixtures.manufacturing_intent.tst_record), with `service_class` known and `profile` as
+    product.yaml flow.profile when given."""
+    docs = {rel: data for rel, data in fx.tst_record().items() if not rel.startswith("_")}
+    if service_class is not None:
+        docs["product.yaml"]["use_case"]["service_class"] = fx.known(service_class)
+    if profile is not None:
+        docs["product.yaml"].setdefault("flow", {})["profile"] = profile
+    return mi.normalize_record(docs)
 
 
 class ReleaseScopeTests(unittest.TestCase):
@@ -38,6 +56,64 @@ class ReleaseScopeTests(unittest.TestCase):
                     with self.subTest(service_class=service_class, family=family, level=level):
                         self.assertEqual(evidence.in_release_scope({"family": family, "level": level}, service_class),
                                          f"{family} {level}" not in out)
+
+
+class ServiceClassTests(unittest.TestCase):
+    def test_an_unknown_or_unlisted_service_class_resolves_every_rule_to_required(self) -> None:
+        for service_class in (None, "unknown", "bespoke"):
+            for rule in scope.RULES:
+                with self.subTest(service_class=service_class, rule=rule.id):
+                    self.assertEqual(rule.disposition(service_class), "required")
+
+    def test_a_record_without_a_known_service_class_owes_every_obligation(self) -> None:
+        project = scope.ProjectScope.of(record())
+        self.assertIsNone(project.service_class)
+        self.assertEqual(project.obligation_disposition(STRENGTH), "required")
+
+    def test_the_service_class_is_read_from_the_use_case(self) -> None:
+        project = scope.ProjectScope.of(record("fit_assembly"))
+        self.assertEqual(project.service_class, "fit_assembly")
+        self.assertEqual(project.obligation_disposition(STRENGTH), "out_of_scope")
+
+    def test_every_rule_gives_each_schema_service_class_one_disposition(self) -> None:
+        schema = json.loads((HERE.parent / "schemas" / "manufacturing.schema.json").read_text(encoding="utf-8"))
+        classes = set(schema["$defs"]["service_class"]["enum"]) - {"unknown"}
+        for rule in scope.RULES:
+            with self.subTest(rule=rule.id):
+                self.assertEqual(set(rule.per_class), classes)
+                self.assertLessEqual(set(rule.per_class.values()), set(scope.DISPOSITIONS))
+
+
+class RulesDigestTests(unittest.TestCase):
+    def digest_in_process(self, seed: str, service_class: str) -> str:
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from modload import load_module; "
+                "m = load_module('cad_record_project_scope', sys.argv[2]); print(m.rules_sha256(sys.argv[3]))")
+        done = subprocess.run([sys.executable, "-B", "-c", code, str(Path(__file__).resolve().parents[3] / "scripts"),
+                               str(SCRIPTS / "project_scope.py"), service_class],
+                              env={**os.environ, "PYTHONHASHSEED": seed}, capture_output=True, text=True, check=True)
+        return done.stdout.strip()
+
+    def test_rules_sha256_is_the_same_under_every_hash_seed(self) -> None:
+        digests = {self.digest_in_process(seed, "fit_assembly") for seed in ("0", "1", "2")}
+        self.assertEqual(digests, {scope.rules_sha256("fit_assembly")})
+        self.assertRegex(digests.pop(), r"^[0-9a-f]{64}$")
+
+    def test_rules_sha256_differs_by_service_class(self) -> None:
+        classes = (None, "appearance_concept", "fit_assembly", "functional_demo", "working_prototype", "production",
+                   "safety_critical")
+        self.assertEqual(len({scope.rules_sha256(service_class) for service_class in classes}), len(classes))
+        self.assertEqual(scope.ProjectScope.of(record("production")).rules_sha256, scope.rules_sha256("production"))
+
+
+class ProfileTests(unittest.TestCase):
+    def test_a_record_without_a_flow_profile_has_none(self) -> None:
+        self.assertIsNone(scope.ProjectScope.of(record()).profile)
+
+    def test_the_flow_profile_is_read_as_a_typed_view(self) -> None:
+        profile = scope.ProjectScope.of(record(profile=fx.flow_profile(
+            human_approval="key", fea={"enabled": False}, critique="light", fdm={"print_in_place": False}))).profile
+        self.assertEqual((profile.human_approval, profile.fea, profile.stack_up, profile.critique, profile.fdm_planned,
+                          profile.pip), ("key", (False, None), "auto", "light", True, False))
 
 
 if __name__ == "__main__":
