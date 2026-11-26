@@ -44,24 +44,27 @@ JOINT = {"id": "J-001", "type": "revolute", "parent": "TST-0301", "child": "TST-
          "origin": [0, 0, 0], "min": 0, "max": 75, "nominal": 0}
 
 
-def load_entry(ident: str, newtons: float = 30.0) -> dict:
-    return {"id": ident, "kind": "static", "magnitude": fx.known(fx.quantity(newtons, "N")), "direction": [0, 0, -1],
+def load_entry(ident: str, newtons: float = 30.0, direction: tuple[float, float, float] = (0, 0, -1)) -> dict:
+    return {"id": ident, "kind": "static", "magnitude": fx.known(fx.quantity(newtons, "N")), "direction": list(direction),
             "requirements": ["REQ-001"]}
 
 
 def documents(contact_load: float | None = None, joint: dict | None = None, kind: str = "other",
               limits: dict | None = None, *, joints: list[dict] | None = None, ends: tuple[str, str] = ("TST-0302", "TST-0301"),
-              pns: tuple[str, ...] = ("TST-0301", "TST-0302"), loads: str = "known") -> dict:
+              pns: tuple[str, ...] = ("TST-0301", "TST-0302"), loads: str = "known",
+              direction: tuple[float, float, float] = (0, 0, -1)) -> dict:
     """A record of the fixture parts: IF-006 the lever-to-bracket stops, critical and structural, under two 30 N loads.
     `joint` replaces the pivot (`joints`, all the joints), `kind` is the interface type, `limits` its declared fits,
-    `ends` its from and to, and `loads` is "known", "unknown" (named, magnitude unknown) or "none" (not named)."""
+    `ends` its from and to, and `loads` is "known", "unknown" (named, magnitude unknown) or "none" (not named), and `direction` is the unit
+    vector of both loads."""
     functional = {"critical": fx.known(True), "functions": [{"function": "locating"}, {"function": "structural"}]}
     if loads != "none":
         functional["loads"] = ["handle_close_at_latched_stop", "handle_open_at_open_stop"]
     if contact_load is not None:
         unknown = {"status": "unknown", "reason": "not needed by the fixture"}
         functional["contact"] = {"materials": [unknown, unknown], "load": fx.known(fx.quantity(contact_load, "N"))}
-    entries = [load_entry("handle_close_at_latched_stop"), load_entry("handle_open_at_open_stop")]
+    entries = [load_entry("handle_close_at_latched_stop", direction=direction),
+               load_entry("handle_open_at_open_stop", direction=direction)]
     if loads == "unknown":
         for entry in entries:
             entry["magnitude"] = fx.unknown("the handle force is not measured")
@@ -343,10 +346,51 @@ class StopGeometryTests(unittest.TestCase):
         self.assertUnknownPivot("coupled", "driven through a coupling", variant="ring", pns=("TST-0301", "TST-0302", "TST-0303"),
                                 joints=[driver, driven])
 
-    def test_a_prismatic_pivot_leaves_the_stop_unknown(self) -> None:
-        slide = {"id": "J-001", "type": "prismatic", "parent": "TST-0301", "child": "TST-0302", "axis": [1, 0, 0],
-                 "origin": [0, 0, 0], "min": 0, "max": 5, "nominal": 0}
-        self.assertUnknownPivot("prismatic", "only a revolute stop is derived", joint=slide)
+    # A plate on its stop: the lever slides along +z from 0 to 5 mm, and at 0 its underside rests on the disc's top
+    # face (z -3). The slide has no pivot axis, so there is no arm and no moment: the stop reacts the load's
+    # component along the slide axis. The load pushes the plate down, along -z, with 30 N.
+    SLIDE = {"id": "J-001", "type": "prismatic", "parent": "TST-0301", "child": "TST-0302", "axis": [0, 0, 1],
+             "origin": [0, 0, 0], "min": 0, "max": 5, "nominal": 0}
+
+    def test_a_prismatic_stop_reacts_the_axial_load_component_with_no_moment(self) -> None:
+        # By hand: the 30 N load is along -z, the slide axis is +z, so the lower stop carries 30 N. The upper limit,
+        # 5 mm up, is clear of the disc: only the lower limit is a stop.
+        code, result = self.run_stop("slide-known", joint=self.SLIDE, variant="disk")
+        [row] = result["outcomes"]
+        self.assertEqual((code, result["result"], row["outcome"], result["findings"]), (0, "pass", "pass", []))
+        ends = result["detail"]["interfaces"]["IF-006"]["ends"]
+        self.assertEqual((ends["min"]["touching"], ends["max"]["touching"]), (True, False))
+        reaction = ends["min"]["reaction"]
+        self.assertEqual(reaction["status"], "bounded")
+        self.assertAlmostEqual(reaction["design_reaction_n"], 30.0, places=9)
+        self.assertEqual(reaction["moment_n_mm"], 0.0)
+        self.assertIsNone(ends["min"]["patch"])
+
+    def test_a_prismatic_stop_reacts_only_the_component_that_presses_it(self) -> None:
+        # By hand: direction (0.6, 0, -0.8) has -0.8 along the axis, so 30 * 0.8 = 24 N presses the lower stop;
+        # a load pulling up, (0, 0, 1), presses the upper stop and leaves the lower one 0 N.
+        for name, direction, expected in (("oblique", (0.6, 0, -0.8), 24.0), ("pulled-away", (0, 0, 1), 0.0)):
+            with self.subTest(case=name):
+                code, result = self.run_stop(f"slide-{name}", joint=self.SLIDE, variant="disk", direction=direction)
+                reaction = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]["reaction"]
+                self.assertAlmostEqual(reaction["design_reaction_n"], expected, places=9)
+                self.assertEqual((code, result["result"]), (0, "pass"))
+
+    def test_a_prismatic_stop_with_unknown_loads_is_unknown_never_pass(self) -> None:
+        code, result = self.run_stop("slide-unknown", joint=self.SLIDE, variant="disk", loads="unknown")
+        [row] = result["outcomes"]
+        self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+        self.assertRegex(row["uncertainty"], "force|use-case load")
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
+    def test_a_recorded_contact_load_below_the_axial_reaction_is_understated(self) -> None:
+        code, short = self.run_stop("slide-short", joint=self.SLIDE, variant="disk", contact_load=20.0)
+        self.assertEqual((code, short["result"]), (1, "fail"))
+        [finding] = short["findings"]
+        self.assertEqual((finding["code"], finding["severity"]), ("engineering.stop_reaction_understated", "major"))
+        self.assertAlmostEqual(finding["criterion"]["value"], 30.0, places=9)
+        code, enough = self.run_stop("slide-enough", joint=self.SLIDE, variant="disk", contact_load=30.0)
+        self.assertEqual((code, enough["result"], enough["findings"]), (0, "pass", []))
 
     def test_a_round_stop_face_tangent_to_the_axis_line_is_unbounded(self) -> None:
         # By hand: the disc (center (10, 2), radius 10, top at z -3) meets the lever's underside (z -3 at 0 deg,
