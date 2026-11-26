@@ -1469,6 +1469,7 @@ class EvidenceRunProducers(BuiltRecord):
         if outcome == "unknown" and criteria:
             row["open_criteria"] = {"criteria": [{"feature": "seal", "criterion": self.SEAL}], "otherwise": "pass"}
         packet["result"] = outcome
+        shutil.rmtree(self.hw / "checks", ignore_errors=True)  # a bundle is sealed once
         acceptance.publish_packet(self.hw, "v1", packet)
         return obligation, row
 
@@ -1478,7 +1479,7 @@ class EvidenceRunProducers(BuiltRecord):
         subject = {**obligation.subject, "feature": "seal"}
         acceptance.write_ledger(self.hw, [acceptance.entry(
             impact.read_record(self.hw), "EV-001", subject, obligation.level, result, version="v1", manifest_sha256=manifest,
-            obligation=obligation.id, hw=self.hw, criterion=criterion or self.SEAL)])
+            geometry=impact.current_geometry(self.hw), obligation=obligation.id, hw=self.hw, criterion=criterion or self.SEAL)])
 
     def full_with_form(self, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """The full run at parts, its form_check.py reporting `row` open (form_check.py exits 1)."""
@@ -1486,6 +1487,18 @@ class EvidenceRunProducers(BuiltRecord):
                 **({"open_criteria": row["open_criteria"]} if "open_criteria" in row else {})}
         form = {"status": "pass", "manufacturing": {"status": row["outcome"], "open": [item]}}
         return self.run_real({"cad-design/scripts/form_check.py": ("form", form, 1)}, "full", "parts")
+
+    def full_with_form_passed(self) -> dict[str, Any]:
+        """The full run report at parts once a check passes every producer obligation, with no ledger entry; the TST
+        record's unconfirmed use case still holds its gate."""
+        shutil.rmtree(self.hw / "checks", ignore_errors=True)
+        acceptance.write_ledger(self.hw, [])
+        self.pass_every_producer_obligation()
+        return self.run_real({}, "full", "parts")[1]
+
+    @staticmethod
+    def gate_errors(report: dict[str, Any]) -> list[tuple[str, str | None]]:
+        return sorted((f["code"], f.get("obligation")) for f in report["packet"]["gate"]["findings"] if f["severity"] == "error")
 
     def test_an_inspected_open_criterion_clears_the_full_gate_and_nothing_else_does(self) -> None:
         obligation, row = self.open_seal()
@@ -1497,11 +1510,14 @@ class EvidenceRunProducers(BuiltRecord):
         self.assertEqual((code, report["stopped_at"]), (1, "form"))
         self.inspect_seal(obligation, "pass")
         code, report = self.full_with_form(row)
-        self.assertEqual((code, report["status"], report["stopped_at"]), (0, "pass", None), report.get("packet"))
+        self.assertEqual(report["stopped_at"], None, "the run reconciles the evidence instead of stopping at the form step")
         status = report["packet"]["statuses"][obligation.id]
         self.assertEqual(status["result"], "pass")
         self.assertIn("EV-001", " ".join([*status["sources"], *status["reasons"]]))
+        self.assertEqual(self.gate_errors(report), self.gate_errors(self.full_with_form_passed()),
+                         "the gate holds what it holds when the check passes the obligation outright")
         _, bare = self.open_seal(criteria=False)  # open for a reason the inspection does not address
+        self.inspect_seal(obligation, "pass")
         code, report = self.full_with_form(bare)
         self.assertEqual((code, report["stopped_at"]), (1, "form"))
         assessment, _ = evidence.build_assessment(self.hw, "v1")
@@ -1511,7 +1527,8 @@ class EvidenceRunProducers(BuiltRecord):
         obligation, row = self.open_seal()
         self.inspect_seal(obligation, "fail")  # the inspection itself measured a miss
         code, report = self.full_with_form(row)
-        self.assertEqual(code, 1)
+        self.assertEqual((code, report["stopped_at"]), (1, "form"))
+        self.assertEqual(evidence.build_assessment(self.hw, "v1")[0].statuses[obligation.id].result, "fail")
         failed, failed_row = self.open_seal("fail")  # the check measured a miss; a passing inspection does not override it
         self.inspect_seal(failed, "pass")
         code, report = self.full_with_form(failed_row)
