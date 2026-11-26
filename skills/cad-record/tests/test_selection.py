@@ -469,6 +469,17 @@ class JustifiedAlternatives(unittest.TestCase):
                 self.assertEqual([e["outcome"] for e in evaluations(sheet, "material_approval")], ["unknown", "pass"])
                 self.assertEqual(only_decision(report)["recommendation"]["primary"], "machined_frame")
 
+    def test_a_stock_thickness_outside_the_approved_range_is_not_credited(self) -> None:
+        """tst_laser approves the sheet at 3 mm. A 5 mm stock is stated, so the approval does not cover the cut."""
+        documents = scenarios.plate_frame_options()
+        selection_candidate(documents, "sheet_frame")["parts"][0]["route"][0]["stock"]["thickness"] = fx.known(fx.quantity(5))
+        report = assess(self, documents)
+        sheet = candidate(report, "sheet_frame")
+        self.assertEqual((sheet["status"], sheet["unknown"]), ("conditional", ["material_approval"]))
+        (cut, _) = evaluations(sheet, "material_approval")
+        self.assertEqual(cut["outcome"], "unknown")
+        self.assertTrue(any("lies outside" in reason for reason in cut["reasons"]), cut["reasons"])
+
     def test_no_feasible_candidate_names_the_route_families_not_yet_considered(self) -> None:
         documents = scenarios.plate_frame_options()
         documents["manufacturing/selection.yaml"]["candidates"] = documents["manufacturing/selection.yaml"]["candidates"][:1]
