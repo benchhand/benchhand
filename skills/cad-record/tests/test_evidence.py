@@ -1323,6 +1323,25 @@ class EvidenceRunProducers(BuiltRecord):
                                                               "open": [{"obligation": parts, "outcome": "fail"}]}}, "layout")
 
 
+class EvidenceDigestCli(BuiltRecord):
+    """`evidence.py digest` on a ledger that cites a file the project lacks."""
+
+    def test_a_missing_artifact_is_a_refusal_finding_naming_the_entry_and_field_not_exit_2(self) -> None:
+        record = impact.read_record(self.hw)
+        entry = acceptance.entry(record, "EV-001", {"product": True, "requirements": ["REQ-001"]}, "cad_valid",
+                                 requirement="REQ-001", version="v1", manifest_sha256=V1,
+                                 artifacts=["hw/manufacturing/sources/absent.pdf"])
+        acceptance.write_ledger(self.hw, [entry])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = evidence.main(["digest", "--hw", str(self.hw), "--version", "v1"])
+        report = json.loads(out.getvalue())
+        self.assertEqual((code, report["status"]), (1, "refused"))
+        self.assertEqual([f["path"] for f in report["findings"]],
+                         ["hw/manufacturing/evidence.yaml#/entries/EV-001/artifacts/0/path"])
+        self.assertIn("hw/manufacturing/sources/absent.pdf is missing", report["findings"][0]["message"])
+
+
 class EvidenceRunCli(BuiltRecord):
     """`evidence.py run` through its command line."""
 
