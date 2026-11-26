@@ -289,6 +289,17 @@ class Record(unittest.TestCase):
                 self.assertEqual(data, yaml_loader.safe_load(PRODUCT))
                 self.assertIn(" # keep this comment\nunits: mm\n", after)
 
+    def test_replacing_an_inline_profile_preserves_internal_comments_and_cross_boundary_aliases(self) -> None:
+        text = ('id: tst-product\nflow: {stage: &stage intent, # keep stage context\n'
+                '  recheck_from: intent, profile: {decision: DR-009}}\nunits: mm\nlabel: *stage\n')
+        self.product.write_text(text, encoding="utf-8")
+        result = self.record()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = self.product.read_text(encoding="utf-8")
+        self.assertIn('stage: &stage intent, # keep stage context\n  recheck_from: intent', after)
+        self.assertIn('label: *stage\n', after)
+        self.assertEqual(self.profile()["decision"], "DR-001")
+
 
 class Check(unittest.TestCase):
     """flow_profile.py check: the gate over a work tree, with the cited decision judged by cad-record's reader."""
