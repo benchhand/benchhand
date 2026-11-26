@@ -24,10 +24,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from jsonschema import Draft202012Validator
+
 HERE = Path(__file__).resolve().parent
 SKILLS = HERE.parents[1]
 SCRIPT = HERE.parent / "scripts" / "play.py"
 FIXTURES = HERE / "fixtures"
+DETAIL_SCHEMA = SKILLS / "cad-record" / "schemas" / "motion-play-detail.schema.json"  # evidence/play.json
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
@@ -165,6 +168,8 @@ class PlayGeometryTests(unittest.TestCase):
             self.assertEqual(list(finding.iter_errors(item)), [], item["id"])
         for row in result["outcomes"]:
             self.assertEqual(list(outcome.iter_errors(row)), [], row["obligation"])
+        detail = Draft202012Validator(json.loads(DETAIL_SCHEMA.read_text(encoding="utf-8")))
+        self.assertEqual([e.message for e in detail.iter_errors(result["detail"])], [], "play.json matches its schema")
         self.assertEqual([o["id"] for o in result["expected"]],
                          ["motion.play@IF-001", *(f"motion.play@{pn}" for pn in rotating)])
         return proc.returncode, result
