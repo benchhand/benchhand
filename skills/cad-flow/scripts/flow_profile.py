@@ -306,14 +306,45 @@ def _require_flow_shape(flow: Mapping[str, Any]) -> None:
             raise FlowFinding(f"{field}: {problem.message}")
 
 
-def _with_inline_flow(text: str, node: Any, profile: Mapping[str, Any]) -> str:
+def _with_inline_flow(text: str, node: Any, profile: Mapping[str, Any], old_profile: Any) -> str:
     """Splice the profile into an inline flow without rewriting its siblings."""
     rendered: str = yaml.dump(_quoted(profile), Dumper=_Dumper, sort_keys=False, default_flow_style=True,
                               allow_unicode=True, width=4096)
-    return _splice_inline_profile(text, node, rendered.rstrip("\n"))
+    return _splice_inline_profile(text, node, rendered.rstrip("\n"), old_profile, profile)
 
 
-def _splice_inline_profile(text: str, node: Any, rendered: str) -> str:
+def _mapping_nodes(node: Any) -> dict[str, Any]:
+    return {key.value: value for key, value in node.value} if isinstance(node, yaml.MappingNode) else {}
+
+
+def _retained_anchors(old: Any, new: Any, before: Any, after: Any,
+                      anchors: Mapping[int, str]) -> Iterable[tuple[int, str]]:
+    anchor = anchors.get(old.start_mark.index)
+    if anchor is not None and type(before) is type(after) and before == after:
+        yield new.start_mark.index, anchor
+    if isinstance(before, Mapping) and isinstance(after, Mapping):
+        old_fields = _mapping_nodes(old)
+        for key, value in _mapping_nodes(new).items():
+            if key in old_fields and key in before and key in after:
+                yield from _retained_anchors(old_fields[key], value, before[key], after[key], anchors)
+
+
+def _preserve_profile_anchors(text: str, old: Any, rendered: str, before: Any, after: Any) -> str:
+    start, end = old.start_mark.index, old.end_mark.index
+    anchors = {token.start_mark.index: f"&{token.value} " for token in yaml.scan(text, Loader=yaml.SafeLoader)
+               if isinstance(token, yaml.AnchorToken) and start <= token.start_mark.index < end}
+    if anchors:
+        new = yaml.compose(rendered, Loader=yaml.SafeLoader)
+        # Aliases in the old node graph can visit the same anchor at more than one field.
+        unique: dict[str, int] = {}
+        for index, anchor in _retained_anchors(old, new, before, after, anchors):
+            unique.setdefault(anchor, index)
+        for anchor, index in sorted(unique.items(), key=lambda item: item[1], reverse=True):
+            rendered = rendered[:index] + anchor + rendered[index:]
+    return rendered
+
+
+def _splice_inline_profile(text: str, node: Any, rendered: str, before: Any, after: Any) -> str:
     for key, value in node.value:
         if isinstance(key, yaml.ScalarNode) and key.value == "profile":
             start, end = value.start_mark.index, value.end_mark.index
@@ -322,6 +353,8 @@ def _splice_inline_profile(text: str, node: Any, rendered: str) -> str:
                 alias = next(token for token in tokens if isinstance(token, yaml.AliasToken)
                              and token.start_mark.index >= key.end_mark.index)
                 start, end = alias.start_mark.index, alias.end_mark.index
+            else:
+                rendered = _preserve_profile_anchors(text, value, rendered, before, after)
             return text[:start] + rendered + text[end:]
     tokens = yaml.scan(text, Loader=yaml.SafeLoader)
     opening = next(token for token in tokens if isinstance(token, yaml.FlowMappingStartToken)
@@ -331,12 +364,12 @@ def _splice_inline_profile(text: str, node: Any, rendered: str) -> str:
     return text[:at] + f"profile: {rendered}{separator}" + text[at:]
 
 
-def with_profile(text: str, key: Any, node: Any, profile: Mapping[str, Any]) -> str:
+def with_profile(text: str, key: Any, node: Any, profile: Mapping[str, Any], old_profile: Any) -> str:
     """Set `flow.profile` using the parsed mapping's style."""
     if node.start_mark.index < key.end_mark.index:
         raise FlowFinding("flow: edit the mapping directly, not through an alias")
     if node.flow_style:
-        return _with_inline_flow(text, node, profile)
+        return _with_inline_flow(text, node, profile, old_profile)
     lines = text.splitlines(keepends=True)
     start = key.start_mark.line
     end = next((i for i in range(start + 1, len(lines)) if _content(lines[i]) and _indent_of(lines[i]) == 0), len(lines))
@@ -467,7 +500,7 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
     _require_flow_shape(expected["flow"])
     try:
-        after = with_profile(text, key, node, profile)
+        after = with_profile(text, key, node, profile, product["flow"].get("profile"))
         edited = yaml_loader.safe_load(after)
     except yaml.YAMLError as error:
         raise FlowFinding(f"flow.profile: cannot edit {path}: {error}") from error
