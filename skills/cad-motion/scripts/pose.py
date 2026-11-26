@@ -1042,35 +1042,27 @@ SEAT_MESH_DEFLECTION_MM = 1e-3  # the mesh that samples the outer reach of a sha
 SEAT_EDGE_SAMPLES = 64
 
 
-def diametral_overlap_mm(shape_a: Any, shape_b: Any) -> float | None:
-    """How deep `shape_a` and `shape_b` overlap across a cylindrical seat, on the diameter: twice the largest
-    radial depth of one connected piece of their shared volume about the seat axis, the axis of the shared
-    volume's largest-radius cylindrical face. None when the shared volume has no cylindrical face (no seat, or
-    nothing shared). A plain shaft in a bore reads its diametral interference; crush ribs read the overlap of
-    their tips. The inner reach is BRepExtrema's distance from the axis, exact; the outer reach is sampled
-    (vertices, edges and a SEAT_MESH_DEFLECTION_MM mesh), so a curved outer face reads at most its deflection low."""
-    from OCP.BRep import BRep_Tool
-    from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
-    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
-    from OCP.BRepMesh import BRepMesh_IncrementalMesh
-    from OCP.GeomAbs import GeomAbs_Cylinder
-    from OCP.gp import gp_Lin
-    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SOLID
+def _subshapes(shape: Any, kind: Any) -> list[Any]:
+    """The subshapes of `shape` of TopAbs type `kind`, in explorer order."""
     from OCP.TopExp import TopExp_Explorer
-    from OCP.TopLoc import TopLoc_Location
+
+    found, explorer = [], TopExp_Explorer(shape, kind)
+    while explorer.More():
+        found.append(explorer.Current())
+        explorer.Next()
+    return found
+
+
+def _as_face(shape: Any) -> Any:
     from OCP.TopoDS import TopoDS
 
-    def items(shape: Any, kind: Any) -> list[Any]:
-        found, explorer = [], TopExp_Explorer(shape, kind)
-        while explorer.More():
-            found.append(explorer.Current())
-            explorer.Next()
-        return found
+    return (getattr(TopoDS, "Face_s", None) or TopoDS.Face)(shape)  # OCP 7.9 static vs OCP 8 namespace function
 
-    as_face = getattr(TopoDS, "Face_s", None) or TopoDS.Face  # OCP 7.9 static vs OCP 8 namespace function
-    as_edge = getattr(TopoDS, "Edge_s", None) or TopoDS.Edge
+
+def _shared_volume(shape_a: Any, shape_b: Any) -> Any:
+    """The Boolean common of the two shapes, as `measure` runs it."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+
     common = BRepAlgoAPI_Common()
     common.SetArguments(shape_list([shape_a]))
     common.SetTools(shape_list([shape_b]))
@@ -1079,15 +1071,52 @@ def diametral_overlap_mm(shape_a: Any, shape_b: Any) -> float | None:
     common.Build()
     if not common.IsDone():
         raise MotionError("interference computation failed")
-    shared = common.Shape()
+    return common.Shape()
+
+
+def _seat_axis(shared: Any) -> Any:
+    """The gp_Ax1 of the largest-radius cylindrical face of `shared`, or None without one."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Cylinder
+    from OCP.TopAbs import TopAbs_FACE
+
     seat = None
-    for face in items(shared, TopAbs_FACE):
-        surface = BRepAdaptor_Surface(as_face(face))
+    for face in _subshapes(shared, TopAbs_FACE):
+        surface = BRepAdaptor_Surface(_as_face(face))
         if surface.GetType() == GeomAbs_Cylinder and (seat is None or surface.Cylinder().Radius() > seat.Radius()):
             seat = surface.Cylinder()
-    if seat is None:
-        return None
-    axis = seat.Axis()
+    return None if seat is None else seat.Axis()
+
+
+def _sampled_points(piece: Any) -> list[Any]:
+    """Points on a meshed piece: its vertices, SEAT_EDGE_SAMPLES steps along each edge and its mesh nodes."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+
+    as_edge = getattr(TopoDS, "Edge_s", None) or TopoDS.Edge
+    points = _vertex_points(piece)
+    for edge in _subshapes(piece, TopAbs_EDGE):
+        curve = BRepAdaptor_Curve(as_edge(edge))
+        first, last = curve.FirstParameter(), curve.LastParameter()
+        points += [curve.Value(first + (last - first) * i / SEAT_EDGE_SAMPLES) for i in range(SEAT_EDGE_SAMPLES + 1)]
+    for face in _subshapes(piece, TopAbs_FACE):
+        location = TopLoc_Location()
+        mesh = BRep_Tool.Triangulation_s(_as_face(face), location)
+        if mesh is not None:
+            trsf = location.Transformation()
+            points += [mesh.Node(i).Transformed(trsf) for i in range(1, mesh.NbNodes() + 1)]
+    return points
+
+
+def _radial_depth(piece: Any, axis: Any) -> float:
+    """The radial depth of one piece about `axis`: its sampled outer reach less its exact distance from the axis."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    from OCP.gp import gp_Lin
+
     origin, direction = axis.Location(), axis.Direction()
 
     def radius(point: Any) -> float:
@@ -1095,27 +1124,31 @@ def diametral_overlap_mm(shape_a: Any, shape_b: Any) -> float | None:
         along = offset[0] * direction.X() + offset[1] * direction.Y() + offset[2] * direction.Z()
         return math.dist(offset, (along * direction.X(), along * direction.Y(), along * direction.Z()))
 
+    points = _sampled_points(piece)
+    reach = max(math.sqrt(origin.SquareDistance(p)) for p in points) + 1.0
+    line = BRepBuilderAPI_MakeEdge(gp_Lin(axis), -reach - 1.0, reach + 1.0).Edge()
+    inner = BRepExtrema_DistShapeShape(line, piece)
+    if not inner.IsDone():
+        raise MotionError("seat depth computation failed")
+    return max(radius(p) for p in points) - inner.Value()
+
+
+def diametral_overlap_mm(shape_a: Any, shape_b: Any) -> float | None:
+    """How deep `shape_a` and `shape_b` overlap across a cylindrical seat, on the diameter: twice the largest
+    radial depth of one connected piece of their shared volume about the seat axis, the axis of the shared
+    volume's largest-radius cylindrical face. None when the shared volume has no cylindrical face (no seat, or
+    nothing shared). A plain shaft in a bore reads its diametral interference; crush ribs read the overlap of
+    their tips. The inner reach is BRepExtrema's distance from the axis, exact; the outer reach is sampled
+    (vertices, edges and a SEAT_MESH_DEFLECTION_MM mesh), so a curved outer face reads at most its deflection low."""
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_SOLID
+
+    shared = _shared_volume(shape_a, shape_b)
+    axis = _seat_axis(shared)
+    if axis is None:
+        return None
     BRepMesh_IncrementalMesh(shared, SEAT_MESH_DEFLECTION_MM, False, 0.05, False)
-    deepest = 0.0
-    for piece in items(shared, TopAbs_SOLID) or [shared]:
-        points = _vertex_points(piece)
-        for edge in items(piece, TopAbs_EDGE):
-            curve = BRepAdaptor_Curve(as_edge(edge))
-            first, last = curve.FirstParameter(), curve.LastParameter()
-            points += [curve.Value(first + (last - first) * i / SEAT_EDGE_SAMPLES) for i in range(SEAT_EDGE_SAMPLES + 1)]
-        for face in items(piece, TopAbs_FACE):
-            location = TopLoc_Location()
-            mesh = BRep_Tool.Triangulation_s(as_face(face), location)
-            if mesh is not None:
-                trsf = location.Transformation()
-                points += [mesh.Node(i).Transformed(trsf) for i in range(1, mesh.NbNodes() + 1)]
-        reach = max(math.sqrt(origin.SquareDistance(p)) for p in points) + 1.0
-        line = BRepBuilderAPI_MakeEdge(gp_Lin(axis), -reach - 1.0, reach + 1.0).Edge()
-        inner = BRepExtrema_DistShapeShape(line, piece)
-        if not inner.IsDone():
-            raise MotionError("seat depth computation failed")
-        deepest = max(deepest, max(radius(p) for p in points) - inner.Value())
-    return 2.0 * deepest
+    return 2.0 * max(0.0, *(_radial_depth(piece, axis) for piece in _subshapes(shared, TopAbs_SOLID) or [shared]))
 
 
 def read_shape(path: Path) -> Any:

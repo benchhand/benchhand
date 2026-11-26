@@ -43,6 +43,9 @@ from typing import Any, cast
 
 FITS_SCRIPT = Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py"
 YAML_LOADER_SCRIPT = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "yaml_loader.py"
+# The keys of drawing.schema.json $defs/fit.
+FIT_KEYS = frozenset(("fit", "nominal_mm", "deviations", "interference", "clearance", "source", "compliance", "ribs",
+                      "pair", "hole", "shaft", "engagement_length_mm", "note", "axial_retainer"))
 
 
 class PolicyError(ValueError):
@@ -152,6 +155,10 @@ def _fits(hw: Path, interfaces: list[Any], assembly: Any,
         where = f"{path}:{source}"
         if not isinstance(fit, dict):
             raise PolicyError(f"{where}: expected fit and two distinct part references")
+        unknown = sorted(set(fit) - FIT_KEYS, key=str)
+        if unknown:  # a misspelled key is a malformed record (validate's schema finding), not a fit to classify
+            raise PolicyError(f"{where}: unknown key(s) {', '.join(map(str, unknown))}; expected fit and two distinct "
+                              "part references")
         pair, endpoints = _fit_pair(fit, assembly, where)
         yield interface, fit, pair, endpoints, source, fit.get("engagement_length_mm")
 

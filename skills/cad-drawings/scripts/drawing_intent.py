@@ -66,6 +66,25 @@ def _fits() -> Any:
     return load_shared("cad_fits_fits", FITS)
 
 
+def _fit_side_tolerance(source: str, fit: Mapping[str, Any], side: str) -> Tolerance | None:
+    """The size control an interface fit gives its `side` (hole or shaft): its ISO class, or its explicit limits;
+    None when the designation names no class for that side."""
+    if "fit" not in fit:
+        return _explicit_fit_tolerance(source, fit, side)
+    nominal_text, _, classes = fit["fit"].partition(" ")
+    hole_class, _, shaft_class = classes.partition("/")
+    if not shaft_class:  # a single class names the shaft when it is a shaft class
+        hole_class, shaft_class = (classes, "") if classes[:1] == "H" else ("", classes)
+    cls = hole_class if side == "hole" else shaft_class
+    if not cls:
+        return None
+    nominal = Decimal(nominal_text)
+    limits = _fits().tolerance_class(nominal, cls)
+    micron = Decimal("0.001")
+    return Tolerance("fit", limits.lower * micron, limits.upper * micron, nominal=nominal, designation=cls,
+                     source=f"{source} {fit['fit']}")
+
+
 def _explicit_fit_tolerance(source: str, fit: Mapping[str, Any], side: str) -> Tolerance | None:
     """The size control explicit fit limits give one side, never an ISO class: its hole or shaft deviations from
     the fit's nominal, or (a band on the diameter, which states no side's limits) the band itself, printed beside
@@ -809,23 +828,9 @@ class Measurer:
                 endpoint = (fit or {}).get(side)
                 if not isinstance(endpoint, Mapping) or endpoint.get("PN") != self.pn or endpoint.get("feature") != feature.id:
                     continue
-                if "fit" not in fit:  # explicit limits, not an ISO class
-                    explicit = _explicit_fit_tolerance(f"{interface['id']} {key}", fit, side)
-                    if explicit is not None:
-                        found.append(explicit)
-                    continue
-                nominal_text, _, classes = fit["fit"].partition(" ")
-                hole_class, _, shaft_class = classes.partition("/")
-                if not shaft_class:  # a single class names the shaft when it is a shaft class
-                    hole_class, shaft_class = (classes, "") if classes[:1] == "H" else ("", classes)
-                cls = hole_class if side == "hole" else shaft_class
-                if not cls:
-                    continue
-                nominal = Decimal(nominal_text)
-                limits_ = _fits().tolerance_class(nominal, cls)
-                micron = Decimal("0.001")
-                found.append(Tolerance("fit", limits_.lower * micron, limits_.upper * micron, nominal=nominal,
-                                       designation=cls, source=f"{interface['id']} {key} {fit['fit']}"))
+                control = _fit_side_tolerance(f"{interface['id']} {key}", fit, side)
+                if control is not None:
+                    found.append(control)
             if side == "hole":
                 for heat in limits.get("heat_set") or []:
                     if heat["pair"][0] == self.pn and heat.get("feature") == feature.id:

@@ -448,11 +448,7 @@ class _IntentStack:
         direction = entry.get("direction")
         if direction not in (1, -1) or isinstance(direction, bool):
             raise StackError(f"{where}.direction must be 1 or -1, got {direction!r}")
-        if "fit" in entry:
-            if set(entry) & {"nominal", "tol", "tol_plus", "tol_minus"}:
-                raise StackError(f"{where}: a fit contributor takes its bounds from the fit, not from nominal or tol")
-            centre, half, fit_source = self.fit_bounds(entry["fit"], f"{where}.fit")
-            entry = {**entry, "nominal": centre, "tol": half, "source": entry.get("source", fit_source)}
+        entry = self.with_fit_bounds(entry, where)
         plus, minus = _tolerance(entry, where)
         if plus + minus == 0:
             raise StackError(f"{where}: zero variation claims a perfect dimension; give its qualified limits, "
@@ -479,6 +475,15 @@ class _IntentStack:
                             operation=entry.get("operation"), inspection=entry.get("inspection"),
                             designation=None if entry.get("designation") is None else _text(entry["designation"], f"{where}.designation"),
                             process=entry.get("process"), distribution=distribution, **common)
+
+    def with_fit_bounds(self, entry: Mapping[str, Any], where: str) -> Mapping[str, Any]:
+        """A contributor with `fit` gets its nominal, tol and default source from the fit's explicit limits."""
+        if "fit" not in entry:
+            return entry
+        if set(entry) & {"nominal", "tol", "tol_plus", "tol_minus"}:
+            raise StackError(f"{where}: a fit contributor takes its bounds from the fit, not from nominal or tol")
+        centre, half, fit_source = self.fit_bounds(entry["fit"], f"{where}.fit")
+        return {**entry, "nominal": centre, "tol": half, "source": entry.get("source", fit_source)}
 
     def fit_bounds(self, reference: Any, where: str) -> tuple[float, float, Mapping[str, Any]]:
         """(centre, half range, source) of a contributor that takes its bounds from an interface fit's explicit limits

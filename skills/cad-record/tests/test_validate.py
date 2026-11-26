@@ -422,6 +422,9 @@ class ValidateProject(unittest.TestCase):
         coupling_copy = self.project / "cad-motion" / "scripts" / "coupling.py"  # the sibling skill's module
         coupling_copy.parent.mkdir(parents=True)
         shutil.copy2(SKILL.parent / "cad-motion" / "scripts" / "coupling.py", coupling_copy)
+        fits_copy = self.project / "cad-fits"  # the sibling skill's fit reader and its ISO 286 table
+        shutil.copytree(SKILL.parent / "cad-fits" / "scripts", fits_copy / "scripts")
+        shutil.copytree(SKILL.parent / "cad-fits" / "data", fits_copy / "data")
         result, report = self.validate(validator_copy)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(any(item["severity"] == "info" and "skipped handoff schema validation" in item["message"] for item in report["findings"]))

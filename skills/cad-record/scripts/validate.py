@@ -428,6 +428,18 @@ def check_procurement(part: dict[str, Any], path: str, hw: Path, findings: list[
         findings.append(finding(path, f"procurement/specification/sha256 does not match {specification['artifact']}"))
 
 
+def fit_form_problems(kind: str, fit: Mapping[str, Any]) -> list[str]:
+    """Why cad-fits cannot read a press fit, or explicit limits on any fit, naming the accepted forms; [] when it can.
+    A running or locating fit may carry a vendor designation no ISO class covers."""
+    if kind != "press_fit" and not set(fit) & set(fits.EXPLICIT_FORMS):
+        return []
+    try:
+        fits.declared_fit(fit)
+    except fits.FitError as error:
+        return [str(error)]
+    return []
+
+
 def check_interfaces(interfaces: dict[str, Any], path: str, part_records: dict[str, Any],
                      inventory: assembly_data.Inventory | None, findings: list[dict[str, str]]) -> None:
     """Fit endpoints, heat-set pairs and clearance-requirement pairs must name existing parts, each
@@ -491,11 +503,7 @@ def check_interfaces(interfaces: dict[str, Any], path: str, part_records: dict[s
             if not isinstance(fit, dict):
                 continue
             where = f"interfaces/{index}/limits/{kind}"
-            if kind == "press_fit" or set(fit) & set(fits.EXPLICIT_FORMS):
-                try:
-                    fits.declared_fit(fit)
-                except fits.FitError as error:
-                    findings.append(finding(path, f"{where}: {error}"))
+            findings.extend(finding(path, f"{where}: {problem}") for problem in fit_form_problems(kind, fit))
             if "pair" in fit:
                 for ref in fit["pair"]:
                     resolve(ref, where)
