@@ -886,6 +886,20 @@ class StampedPacket(unittest.TestCase):
         self.assertIn("not an evidence packet", evidence.packet_problems({"all_passed": True}, record=self.record,
                                                                          record_sha256=self.digest, stage="concept")[0])
 
+    def test_a_packet_from_before_a_region_was_added_names_the_regeneration(self) -> None:
+        """A region added to the pivot bore's critical surface changes that check's subject, so the expected digest
+        changes while the ids stay the same. The old packet cannot stamp, and the problem says to regenerate it."""
+        docs = documents()
+        surface = next(s for s in docs["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"]
+                       if s["feature"] == "pivot_bore")
+        surface["region"] = "bore_wall"
+        record = normalized(docs)
+        self.assertIn(INSPECTION, [o.id for o in mi.required_checks(record)])
+        problems = evidence.packet_problems(self.packet, record=record, record_sha256=self.digest, stage="concept")
+        (changed,) = [p for p in problems if p.startswith("evidence.expected_changed:")]
+        self.assertIn(INSPECTION, changed)
+        self.assertIn("regenerate the evidence packet", changed)
+
     def test_a_packet_flagged_passing_cannot_hide_a_due_unknown(self) -> None:
         forged = copy.deepcopy(assess(self.record).packet("parts", self.digest))
         forged["gate"] = {"stage": "parts", "passed": True, "findings": []}
