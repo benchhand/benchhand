@@ -1118,8 +1118,8 @@ def _machine_optional(record: Any, pn: str, op: Any, calibration: bool) -> bool:
     if not _intent_module().is_fact(op.capability):
         return False
     service = record.use_case.service_class
-    return GUIDELINES.machine_optional(op.kind, record.parts[pn].provider_of(op.provider),
-                                       str(service.value) if service.known else None, calibration)
+    return bool(GUIDELINES.machine_optional(op.kind, record.parts[pn].provider_of(op.provider),
+                                            str(service.value) if service.known else None, calibration))
 
 
 def _clearance_scope(record: Any, pn: str, calibration: bool = True) -> tuple[tuple[Any, str, Any] | None, _Unusable | None]:
