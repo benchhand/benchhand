@@ -28,6 +28,8 @@ TRIGGER
 
    A stamp one stage behind needs an unsuperseded `proposed` or `accepted` decision in `hw/decisions`. The decision's `gate.from` and `gate.to` must match the transition. Its `gate.version` and `gate.version_manifest_sha256` must match the evidence packet. Date the decision in UTC. It can precede the stamp's UTC date, but cannot follow it.
 
+   Stage `hw/versions/vN/manifest.json` for that advance. If generated results are ignored, force-add only the manifest. Verification hashes the manifest from the index, or from HEAD with `--committed`. It refuses a missing manifest or one whose digest differs from the packet.
+
    The evidence input MUST be the JSON packet that `evidence.py check` writes, or an `evidence.py run` report. A run report stamps with its `packet`. A run that stopped holds no packet, so it cannot stamp. A `cad_model.py check` result is never evidence. Include `--passed` only when every blocking obligation passes, and omit it for a failed gate. A record that is not version 2 cannot be stamped.
 4. Stage the design changes and `hw/.cad/recheck.json`.
 

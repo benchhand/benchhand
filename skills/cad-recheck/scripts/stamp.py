@@ -36,6 +36,7 @@ import hashlib
 import importlib.util
 import json
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -145,9 +146,7 @@ def _stamp_utc_day(stamp_time: Any) -> date:
         raise GateFinding("timestamp: the recheck stamp is outside the supported UTC date range") from error
 
 
-def _matching_gate_date(records: list[Any], checks: dict[str, Any], stamped_on: date) -> None:
-    version = checks.get("version")
-    digest = checks.get("version_manifest_sha256")
+def _matching_gate_date(records: list[Any], version: str, digest: str, stamped_on: date) -> None:
     versions = [r for r in records if r.gate_build and r.gate_build[0] == version]
     if not versions:
         raise GateFinding(f"gate.version: no decision for the checked version {version!r}")
@@ -156,6 +155,23 @@ def _matching_gate_date(records: list[Any], checks: dict[str, Any], stamped_on: 
         raise GateFinding("gate.version_manifest_sha256: no decision for the checked version's manifest digest")
     if all(r.date > stamped_on for r in builds):
         raise GateFinding(f"{builds[0].id} date: gate decision is after the stamp's UTC date {stamped_on}")
+
+
+def _checked_build(root: Path, committed: bool, checks: dict[str, Any]) -> tuple[str, str]:
+    version = checks.get("version")
+    pattern = validate.layout.load().tokens["V"]["pattern"]
+    if not isinstance(version, str) or re.fullmatch(pattern, version) is None:
+        raise GateFinding("version: the evidence packet must name a built version")
+    path = f"hw/versions/{version}/manifest.json"
+    try:
+        digest = hashlib.sha256(tree_blob(root, path, committed)).hexdigest()
+    except RuntimeError as error:
+        where = "HEAD" if committed else "the index"
+        raise GateFinding(f"version_manifest_sha256: {path} is missing from {where}; track the manifest even if the "
+                          "other build results are ignored") from error
+    if checks.get("version_manifest_sha256") != digest:
+        raise GateFinding(f"version_manifest_sha256: the evidence packet does not match {path}; check the staged build again")
+    return version, digest
 
 
 def require_gate_decision(root: Path, committed: bool, previous: str, advanced: str,
@@ -178,7 +194,8 @@ def require_gate_decision(root: Path, committed: bool, previous: str, advanced: 
                            f"record with `{wanted}` in its front matter and no `superseded-by`.")
     if stamp.get("version") != checks.get("version"):
         raise GateFinding("version: the recheck stamp does not match its evidence packet")
-    _matching_gate_date(candidates, checks, stamped_on)
+    version, digest = _checked_build(root, committed, checks)
+    _matching_gate_date(candidates, version, digest, stamped_on)
 
 
 def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:

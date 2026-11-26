@@ -41,7 +41,8 @@ acceptance = load("cad_record_acceptance_fixtures", ACCEPTANCE)
 evidence, fx = acceptance.evidence, acceptance.fx
 DAY = date(2026, 11, 19)  # the fixed UTC day of the gate decisions and of the stamp timestamp below
 LAYOUT_GATE = ("layout", "parts")  # the `gate:` front matter of the decision that approves the layout -> parts advance
-LAYOUT_BUILD = ("v1", "0" * 64)
+LAYOUT_MANIFEST = '{"label":"v1","files":{}}\n'
+LAYOUT_BUILD = ("v1", hashlib.sha256(LAYOUT_MANIFEST.encode()).hexdigest())
 STAMP_TIME = "2026-11-19T10:00:00Z"
 LEGACY_PRODUCT = "id: test-project\nflow:\n  stage: {stage}\n  recheck_from: {threshold}\n"
 
@@ -198,7 +199,7 @@ class RecheckHookTests(unittest.TestCase):
         self.assertIn("cannot parse staged hw/product.yaml", result.stderr)
 
     def gate_packet(self, stage: str, *, outcome: str = "pass", version: str = "v1",
-                    manifest_sha256: str = "0" * 64) -> Path:
+                    manifest_sha256: str = LAYOUT_BUILD[1]) -> Path:
         """The evidence packet at `stage` of a producer that shows only the checks due at or before `stage`:
         later-stage checks stay unknown, as in a project that has just frozen that stage."""
         order = stamp_module.validate.stages()
@@ -224,10 +225,19 @@ class RecheckHookTests(unittest.TestCase):
                                 gate_build=LAYOUT_BUILD if gate else None,
                                 context="Temporary until the full check: v1 passed fast checks 1-4.")
         self.git("add", "hw")
+        self.stage_manifest("v1", LAYOUT_MANIFEST)
+
+    def stage_manifest(self, version: str, content: str) -> str:
+        relative = f"hw/versions/{version}/manifest.json"
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        self.git("add", "-f", relative)
+        return hashlib.sha256(content.encode()).hexdigest()
 
     def stamp_gate(self, stage: str, *, outcome: str = "pass", passed: bool = True,
                    timestamp: str | None = STAMP_TIME, version: str = "v1",
-                   manifest_sha256: str = "0" * 64) -> subprocess.CompletedProcess[str]:
+                   manifest_sha256: str = LAYOUT_BUILD[1]) -> subprocess.CompletedProcess[str]:
         """Stamp `stage` through the public writer, then fix the stamp's timestamp (dropped when None) so no test
         reads the clock. The timestamp sits outside the tree hash, so the staged stamp stays valid."""
         packet = self.gate_packet(stage, outcome=outcome, version=version, manifest_sha256=manifest_sha256)
@@ -353,9 +363,9 @@ class RecheckHookTests(unittest.TestCase):
         self.stage_product("layout", "ground")
         self.git("commit", "-qm", "reopen layout")
         self.stage_product("parts", "ground")
-        for version, digest, field in (("v2", "0" * 64, "gate.version"),
-                                       ("v1", "1" * 64, "gate.version_manifest_sha256")):
+        for version, field in (("v2", "gate.version"), ("v1", "gate.version_manifest_sha256")):
             with self.subTest(version=version, field=field):
+                digest = self.stage_manifest(version, json.dumps({"label": version, "files": {}, "build": "new"}))
                 stamped = self.stamp_gate("layout", version=version, manifest_sha256=digest)
                 self.assertEqual(stamped.returncode, 0, stamped.stderr)
                 result = self.verify()
@@ -364,16 +374,23 @@ class RecheckHookTests(unittest.TestCase):
 
     def test_gate_refuses_a_packet_for_an_older_manifest_at_the_same_version(self) -> None:
         self.provisional_gate("parts", decision="accepted")
-        path = self.root / "hw" / "versions" / "v1" / "manifest.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('{"label":"v1","files":{},"build":"replacement"}\n', encoding="utf-8")
-        self.git("add", "-f", "hw/versions/v1/manifest.json")
+        self.stage_manifest("v1", '{"label":"v1","files":{},"build":"replacement"}\n')
+        (self.root / "hw/versions/v1/manifest.json").write_text(LAYOUT_MANIFEST, encoding="utf-8")
         stamped = self.stamp_gate("layout")
         self.assertEqual(stamped.returncode, 0, stamped.stderr)
         result = self.verify()
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("version_manifest_sha256:", result.stderr)
         self.assertIn("hw/versions/v1/manifest.json", result.stderr)
+
+    def test_worktree_only_manifest_cannot_authorize_the_advance(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.git("rm", "--cached", "hw/versions/v1/manifest.json")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("version_manifest_sha256:", result.stderr)
+        self.assertIn("missing from the index", result.stderr)
 
     def test_a_malformed_decision_record_is_a_refusal(self) -> None:
         self.provisional_gate("parts")
