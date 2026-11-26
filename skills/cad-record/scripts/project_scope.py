@@ -19,15 +19,13 @@ decides only what a gate makes of it. A release must resolve every obligation wh
 `out_of_scope` (`in_release_scope`). SERVICE_POLICY holds the other release columns of a class: the evidence levels
 it may claim and whether an unvalidated trial (a waived physical obligation) is permitted.
 
-It loads manufacturing_intent.py and flow_profile_gate.py by path and reads no file. Load it by path and register
-it in `sys.modules` as `cad_record_project_scope`.
+It loads manufacturing_intent.py, flow_profile_gate.py and layout.py (its canonical JSON digest) by path and reads
+no file. Load it by path and register it in `sys.modules` as `cad_record_project_scope`.
 """
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
-import json
 import sys
 import types
 from collections.abc import Mapping
@@ -51,6 +49,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 mi = _load_module("cad_record_manufacturing_intent", SCRIPTS / "manufacturing_intent.py")
 profile_gate = _load_module("cad_record_flow_profile_gate", SCRIPTS / "flow_profile_gate.py")
+layout = _load_module("cad_record_layout", SCRIPTS / "layout.py")
 
 LEVELS: tuple[str, ...] = tuple(mi.EVIDENCE_LEVELS)
 PHYSICAL = "physically_validated"
@@ -174,9 +173,9 @@ def in_release_scope(obligation: Mapping[str, Any], service_class: str | None) -
 
 
 def rules_sha256(service_class: str | None) -> str:
-    """sha256 of RULES and `service_class` as canonical JSON: a result judged under other rules is stale."""
-    data = {"rules": [rule.as_dict() for rule in RULES], "service_class": service_class}
-    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    """sha256 of RULES and `service_class` as the record's canonical JSON (layout.recipe_sha256): a result judged
+    under other rules is stale."""
+    return str(layout.recipe_sha256({"rules": [rule.as_dict() for rule in RULES], "service_class": service_class}))
 
 
 def _text(value: Any) -> str | None:
