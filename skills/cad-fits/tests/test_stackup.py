@@ -889,6 +889,21 @@ class ClearanceTests(unittest.TestCase):
         self.assertEqual(row["guidelines"]["fdm.generic@2"], generic.sha256)
         self.assertEqual(codes(result), ["stack.clearance_below_minimum"])
 
+    def test_off_a_sliding_part_printed_with_no_machine_is_judged_on_the_shipped_minimum(self) -> None:
+        """With calibration off, a local print that names no machine resolves the clearance through the shipped sets for its
+        process and material. With the flag on a calibration needs the machine, so the clearance stays unknown."""
+        documents = clearance_documents()
+        documents["parts/TST-0001/part.yaml"]["intent"]["route"][0]["capability"] = fx.unknown("no machine recorded")
+        shipped = GL.discover(None)
+        for gap, met in ((0.2, False), (0.4, True)):
+            with self.subTest(gap=gap):
+                result = self.run_stack(documents, clearance_stack("side", nominal_gap=gap), shipped, calibration=False)
+                row = result["clearance"]
+                self.assertEqual((row["status"], row.get("minimum_mm"), row.get("met")), ("guideline", 0.3, met))
+                self.assertEqual(row["guidelines"]["fdm.generic@2"], shipped.guidelines["fdm.generic"].sha256)
+        on = self.run_stack(documents, clearance_stack("side", nominal_gap=0.4), shipped, calibration=True)
+        self.assertIn("stack.clearance_unknown", codes(on))
+
     def test_the_packet_depends_on_every_guideline_set_the_clearance_resolved_through(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             stack_path = Path(directory) / "case.yaml"
