@@ -565,7 +565,7 @@ def run_checks(environ: Mapping[str, str] | None = None, cwd: Path | None = None
     home_dir = home or Path(env.get("HOME", str(Path.home())))
     if cad_checks is None:
         # A warm-up is shared by every project of this plugin copy, so it reads none.
-        cad_checks = _timed_freecad_checks(env, home_dir, project_fea(workdir))
+        cad_checks = _timed_freecad_checks(env, home_dir, None if warm else project_fea(workdir))
     checks = list(cad_checks)
     if any(check.status not in PASSING for check in checks):
         return Report(tuple(checks))
@@ -670,9 +670,22 @@ def start_background(environ: Mapping[str, str] | None = None, harness: str | No
     return {"started": False, "pid": child.pid, "record": str(path), "log": str(log), "error": error}
 
 
-def warm_status(environ: Mapping[str, str] | None = None, wait_s: float = 0.0) -> tuple[int, str]:
+PROJECT_CHECKS = frozenset({"fea-profile", "fea-solvers"})
+
+
+def project_checks(environ: Mapping[str, str], cwd: Path) -> list[Check]:
+    """The checks that depend on the project at `cwd`, not on this plugin copy: the FEA setting and, when the
+    project enables FEA, the solvers. The warm-up record holds none of them."""
+    fea = project_fea(cwd)
+    command = find_freecadcmd(environ) if fea.enabled and not fea.invalid else None
+    return _fea_checks(command, environ, fea)
+
+
+def warm_status(environ: Mapping[str, str] | None = None, wait_s: float = 0.0,
+                cwd: Path | None = None) -> tuple[int, str]:
     """Exit code and text for the last warm-up of this plugin copy, waiting up to `wait_s` for a
-    running one: 0 passed, 1 a required check failed, EXIT_NO_WARM none or it died, EXIT_RUNNING."""
+    running one: 0 passed, 1 a required check failed, EXIT_NO_WARM none or it died, EXIT_RUNNING.
+    A finished warm-up is joined with the FEA checks of the project at `cwd` (default: the current folder)."""
     env = os.environ if environ is None else environ
     path = warm_record_path(env)
     log = path.with_suffix(".log")
@@ -683,7 +696,8 @@ def warm_status(environ: Mapping[str, str] | None = None, wait_s: float = 0.0) -
             return EXIT_NO_WARM, (f"No warm-up is recorded for {CAD_ROOT} ({path}). "
                                   "Run `preflight.py --warm` in the foreground.")
         if record.get("state") == "finished":
-            report = Report(tuple(Check(**check) for check in record["report"]["checks"]))
+            recorded = [Check(**check) for check in record["report"]["checks"] if check["id"] not in PROJECT_CHECKS]
+            report = Report(tuple(recorded + project_checks(env, cwd or Path.cwd())))
             return report.exit_code, (f"Warm-up finished at {record.get('finished_at')} "
                                       f"(started {record.get('started_at')}).\n{render_text(report)}")
         if not _alive(record.get("pid")):
