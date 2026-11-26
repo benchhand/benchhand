@@ -216,6 +216,28 @@ class Record(unittest.TestCase):
             self.assertEqual(asked[field]["status"], "not_applicable", field)
             self.assertIn("print-in-place is declined", asked[field]["reason"])
 
+    def test_the_printer_question_is_asked_only_while_fdm_may_apply(self) -> None:
+        for name, manufacturing, printer in (("a cnc plan", "[cnc]", False), ("an fdm plan", "[fdm]", True)):
+            with self.subTest(name):
+                self.product.write_text(PRODUCT + f"manufacturing:\n  processes: {manufacturing}\n", encoding="utf-8")
+                result = run("questions", "--hw", str(self.hw))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual("Which printer, nozzle and filament?" in result.stdout, printer, result.stdout)
+        self.product.write_text(PRODUCT, encoding="utf-8")  # no plan and no part: FDM is not ruled out
+        self.assertIn("Which printer, nozzle and filament?", run("questions", "--hw", str(self.hw)).stdout)
+
+    def test_the_scoped_questions_list_each_clearance_option_only_while_print_in_place_is_offered(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        before = run("questions", "--hw", str(self.hw)).stdout
+        self.assertIn("--print-in-place, --pip-clearance-xy, --pip-clearance-z", before)
+        rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
+        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--print-in-place", "no", "--accept-default", *rest)
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        after = run("questions", "--hw", str(self.hw)).stdout
+        self.assertIn("--print-in-place", after)
+        self.assertNotIn("--pip-clearance", after)
+        self.assertNotIn("processes.fdm.pip_clearance_mm", after)
+
     def test_a_project_that_plans_fdm_still_needs_every_answer(self) -> None:
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])
