@@ -546,7 +546,7 @@ sys.exit(code)
         model.write_text(original.replace('"length": 30.0,', '"length": 31.0,'), encoding="utf-8")
         try:
             build = run(UV, "run", "--script", str(CAD_MODEL), "run", str(self.hw), "--label", "v2", "--kernel", "auto")
-            self.assertEqual(build.returncode, 0, build.stdout[-2000:])
+            self.assertEqual(build.returncode, 0, build.stdout[-2000:] + build.stderr[-2000:])
             code, result = self.draw("v2", "longer")
         finally:
             model.write_text(original, encoding="utf-8")
@@ -555,7 +555,7 @@ sys.exit(code)
         tip = next(row for row in coverage["rows"] if row["characteristic"] == "tip_face.location")
         self.assertAlmostEqual(abs(tip["value_mm"]), 31.0, places=6)
 
-    def test_a_partly_stale_locator_fails_with_a_named_finding_not_an_error(self) -> None:
+    def test_stale_locator_on_one_patch_fails_with_a_named_finding_not_an_error(self) -> None:
         """A bracket revision moved one patch of the groove off every face: exit 1, the groove named."""
         model = self.hw / "parts" / "LMP-0005" / "model.py"
         original = model.read_text(encoding="utf-8")
@@ -567,7 +567,7 @@ sys.exit(code)
             encoding="utf-8")
         try:
             build = run(UV, "run", "--script", str(CAD_MODEL), "run", str(self.hw), "--label", "v3", "--kernel", "auto")
-            self.assertEqual(build.returncode, 0, build.stdout[-2000:])
+            self.assertEqual(build.returncode, 0, build.stdout[-2000:] + build.stderr[-2000:])
             code, result = self.draw("v3", "stale")
         finally:
             model.write_text(original, encoding="utf-8")
