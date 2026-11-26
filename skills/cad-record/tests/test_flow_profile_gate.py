@@ -38,6 +38,9 @@ QUESTION_FIELDS = (
     "processes/fdm/pip_clearance_mm/xy", "processes/fdm/pip_clearance_mm/z")
 
 
+UNKNOWN_ROUTE = {"status": "unknown", "reason": "not planned yet"}
+
+
 def approved(_decision: str) -> None:
     return None
 
@@ -229,7 +232,9 @@ class Gate(unittest.TestCase):
         fdm_part, cnc_part = self.parts["TST-0001"], self.parts["TST-0002"]
         for name, parts, processes, expected in (
                 ("an fdm part", {"TST-0001": fdm_part}, None, 1), ("no fdm part", {"TST-0002": cnc_part}, None, 0),
-                ("fdm planned at intent", {}, ["fdm"], 1), ("no parts", {}, None, 0),
+                ("fdm planned at intent", {}, ["fdm"], 1), ("no parts and no plan", {}, None, 1),
+                ("a plan without fdm and no parts", {}, ["cnc"], 0),
+                ("a part whose route is unknown", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}}, None, 1),
                 ("an fdm route operation", {"TST-0009": {"process": "cnc", "intent": {"route": [{"kind": "fdm"}]}}}, None, 1)):
             with self.subTest(name):
                 self.parts = parts
@@ -239,17 +244,46 @@ class Gate(unittest.TestCase):
                 _stage, found = gate_module.gate(product, parts, approved)
                 self.assertEqual(len(found), expected)
 
+    def test_fdm_applicability_separates_unknown_from_known_non_fdm(self) -> None:
+        cnc = {"process": "cnc", "intent": {"route": [{"kind": "cnc"}]}}
+        for name, parts, processes, state, field in (
+                ("no plan and no part", {}, None, "unknown", "manufacturing/processes"),
+                ("a route that is unknown", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}}, None, "unknown",
+                 "parts/A/intent/route"),
+                ("a plan without fdm", {}, ["cnc"], "no", None), ("a known cnc part", {"A": cnc}, None, "no", None),
+                ("an fdm plan", {}, ["fdm"], "yes", None),
+                ("an fdm part beside an unknown route", {"A": {"process": "fdm"}, "B": {"intent": {"route": UNKNOWN_ROUTE}}},
+                 None, "yes", None)):
+            with self.subTest(name):
+                product = {"manufacturing": {"processes": processes}} if processes else {}
+                found = gate_module.fdm_applicability(product, parts)
+                self.assertEqual(found.state, state)
+                self.assertEqual([item.path for item in found.unresolved], [field] if field else [])
+
+    def test_an_unresolved_applicability_asks_the_fdm_questions_and_names_the_field(self) -> None:
+        profile = fx.flow_profile()
+        del profile["asked"]["processes/fdm/orientation"]
+        for name, parts, field in (("no plan and no part", {}, "manufacturing/processes"),
+                                   ("an unknown route", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}},
+                                    "parts/A/intent/route")):
+            with self.subTest(name):
+                product = self.with_profile(profile, "parts")
+                _stage, found = gate_module.gate(product, parts, approved)
+                self.assertEqual([item.path for item in found], ["flow/profile/asked/processes/fdm/orientation"])
+                self.assertIn(field, found[0].message)
+
     def test_question_fields_is_the_set_of_questions_asked_problems_requires(self) -> None:
         fdm_part = {"process": "fdm", "intent": {"route": []}}
         cnc_part = {"process": "cnc", "intent": {"route": []}}
         for name, parts, offer in (("fdm, pip offered", {"A": fdm_part}, True), ("fdm, pip declined", {"A": fdm_part}, False),
-                                   ("cnc only", {"A": cnc_part}, True), ("no parts", {}, False)):
+                                   ("cnc only", {"A": cnc_part}, True), ("no parts", {}, False),
+                                   ("unknown route", {"A": {"process": "cnc", "intent": {"route": UNKNOWN_ROUTE}}}, True)):
             with self.subTest(name):
                 profile = fx.flow_profile(fdm={"print_in_place": offer})
                 profile["asked"] = {}
                 product = {"flow": {"profile": profile}}
                 unasked = [problem.path.removeprefix("flow/profile/asked/")
-                           for problem in gate_module.asked_problems(profile, fdm=gate_module.plans_fdm(product, parts))]
+                           for problem in gate_module.asked_problems(profile, fdm=gate_module.fdm_applicability(product, parts).asks)]
                 self.assertEqual(gate_module.question_fields(product, parts), unasked)
 
     def test_question_fields_of_a_cnc_only_product_are_the_five_general_questions(self) -> None:
