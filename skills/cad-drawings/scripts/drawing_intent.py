@@ -635,6 +635,8 @@ class Measurer:
                 axis = frame.axis_of(datum.direction)
                 if axis:
                     self.locate(axis[0], frame.coords(datum.point)["xyz".index(axis[0])])
+        failed = {f.get("feature") for f in self.binding.findings
+                  if f["code"] in ("feature_not_found", "feature_ambiguous")}
         for feature_id in sorted(features):
             feature = features[feature_id]
             if self.vendor:
@@ -651,6 +653,8 @@ class Measurer:
             if handler is None:
                 self.add(finding("invalid_drawing_intent", f"feature {feature_id} kind {feature.kind!r} is not one of "
                                  f"{', '.join(DIMENSIONED_KINDS)}", feature=feature_id))
+                continue
+            if feature_id in failed:   # a stale or ambiguous locator: the binding finding names it; nothing to measure
                 continue
             try:
                 handler(feature, frame)
@@ -1138,7 +1142,12 @@ class Measurer:
             raise IntentError("invalid_drawing_intent", "an engraving surface must be a plane")
         own = self.own(feature)
         floors = [f for f in own if f.support_type == "plane" and fg.parallel(f.normal, surface.normal)]
-        depth = max(abs(fg.dot(fg.sub(f.point, surface.point), surface.normal)) for f in floors)
+        # a V-cut has no flat floor: its depth is the groove's lowest point below the surface
+        lowest = [fg.dot(fg.sub(p, surface.point), surface.normal)
+                  for p in ([f.point for f in floors] if floors else [p for f in own for p in f.boundary_points()])]
+        if not lowest:
+            raise IntentError("measurement_failed", f"engraving {feature.id} has no geometry to take a depth from")
+        depth = max(abs(d) for d in lowest)
         axis = frame.axis_of(surface.normal)
         if axis is None:
             raise IntentError("dimension_coverage_incomplete", "the engraving surface is not normal to a frame axis")
@@ -1151,7 +1160,7 @@ class Measurer:
             self.add(finding("dimension_coverage_incomplete", f"engraving {feature.id} has no note giving its text and "
                              f"font (a note with reference: {feature.id})", feature=feature.id))
         tol = self.general(feature.id, "depth", depth)
-        self.char(feature, "depth", depth, [f.index for f in floors], tolerance=tol)
+        self.char(feature, "depth", depth, [f.index for f in (floors or own)], tolerance=tol)
         centre = {a: (lo[a] + hi[a]) / 2 for a in across}
         self.char(feature, "extent", hi[across[0]] - lo[across[0]], feature.faces,
                   details={"axes": across, "size": [hi[a] - lo[a] for a in across], "centre": centre,
