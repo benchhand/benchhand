@@ -115,60 +115,92 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
 
 
-def _missing(designation: Mapping[str, Any], fields: tuple[str, ...]) -> str | None:
-    absent = [f for f in fields if designation.get(f) in (None, "") or f in blank_fields(designation)]
-    return f"missing {', '.join(absent)}" if absent else None
+Issue = tuple[str, str]  # (the designation field, why it is wrong)
+_STRING_FIELDS = ("standard", "size", "property_class", "finish", "thread", "material")
+_POSITIVE = "must be a positive number"
+_STANDARD_ORDER = ("standard", "size", "length", "property_class", "finish")
 
 
-def blank_fields(designation: Mapping[str, Any]) -> list[str]:
-    """The fields of a structured designation whose text is empty or only whitespace, in record order."""
-    return [name for name, value in designation.items() if isinstance(value, str) and not value.strip()]
+def _blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
-def _standard_problem(designation: Mapping[str, Any]) -> str | None:
-    problem = _missing(designation, ("standard", "size", "length", "property_class"))
-    if problem:
-        return problem
-    standard = str(designation["standard"])
-    if is_feature_standard(standard):
-        return f"{standard} is a feature standard, not a part standard"
-    size = str(designation["size"])
-    if re.search(r"[x\u00d7]", size):  # the length has its own field: M4 with length 20, never M4x20
-        return f"size {size!r} embeds a length; record the length in the length field"
-    problem = size_problem(standard, size)
-    if problem:
-        return problem
+def _text_issues(designation: Mapping[str, Any], fields: tuple[str, ...]) -> list[Issue]:
+    """Missing or blank required fields and text fields that are not text (YAML reads an unquoted 8.8 as a number)."""
+    issues: list[Issue] = []
+    for name in fields:
+        if _blank(designation.get(name)):
+            issues.append((name, "is missing or blank"))
+    for name in _STRING_FIELDS:
+        value = designation.get(name)
+        if name in designation and not _blank(value) and not isinstance(value, str):
+            issues.append((name, f"must be text, not {value!r}: quote it so {value!r} stays text"))
+    return issues
+
+
+def _length_issue(designation: Mapping[str, Any]) -> Issue | None:
     length = designation["length"]
     if length == NOT_APPLICABLE:
-        if standard not in NO_LENGTH_STANDARDS:
-            return f"{standard} needs a length; not_applicable is for nuts and washers"
+        if designation["standard"] not in NO_LENGTH_STANDARDS:
+            return "length", f"{designation['standard']} needs a length; not_applicable is for nuts and washers"
     elif not _is_number(length):
-        return "length must be a positive number"
+        return "length", f"{_POSITIVE}, or not_applicable for a nut or washer"
     return None
 
 
-def _family_problem(designation: Mapping[str, Any]) -> str | None:
+def _standard_issues(designation: Mapping[str, Any]) -> list[Issue]:
+    issues = _text_issues(designation, ("standard", "size", "length", "property_class"))
+    named = {field for field, _ in issues}
+    if "length" not in named:
+        issue = _length_issue({**designation, "standard": str(designation.get("standard", ""))})
+        if issue:
+            issues.append(issue)
+    standard, size = designation.get("standard"), designation.get("size")
+    if isinstance(standard, str) and standard.strip():
+        if is_feature_standard(standard):
+            issues.append(("standard", f"{standard} is a feature standard, not a part standard"))
+        elif isinstance(size, str) and size.strip():
+            if re.search(r"[x\u00d7]", size):  # the length has its own field: M4 with length 20, never M4x20
+                issues.append(("size", f"embeds a length ({size!r}); record the length in the length field"))
+            elif size_problem(standard, size):
+                issues.append(("size", f"does not fit {standard} ({size!r})"))
+    return sorted(issues, key=lambda issue: _STANDARD_ORDER.index(issue[0]) if issue[0] in _STANDARD_ORDER else len(_STANDARD_ORDER))
+
+
+def _family_issues(designation: Mapping[str, Any]) -> list[Issue]:
     family = designation.get("family")
     if family not in KNOWN_FAMILIES:
-        return f"family {family!r} is not a known commodity family ({', '.join(sorted(KNOWN_FAMILIES))})"
+        return [("family", f"{family!r} is not a known commodity family ({', '.join(sorted(KNOWN_FAMILIES))})")]
     fields = KNOWN_FAMILIES[family]
-    problem = _missing(designation, fields)
-    if problem:
-        return problem
-    bad = [f for f in fields[1:] if not _is_number(designation[f])]
-    return f"{', '.join(bad)} must be a positive number" if bad else None
+    issues = _text_issues(designation, fields)
+    named = {field for field, _ in issues}
+    return issues + [(f, _POSITIVE) for f in fields[1:] if f not in named and not _is_number(designation[f])]
+
+
+def designation_issues(designation: Any) -> list[Issue]:
+    """Each field of a supplied structured designation that stops it identifying a commodity item, with the reason.
+    Empty for an eligible designation and for a value that is no structured designation at all."""
+    if not isinstance(designation, Mapping):
+        return []
+    kind = designation.get("kind")
+    if kind == "standard_designation":
+        return _standard_issues(designation)
+    if kind == "family_designation":
+        return _family_issues(designation)
+    return [("kind", f"{kind!r} is not a commodity designation")]
 
 
 def designation_problem(designation: Any) -> str | None:
     """Why `designation` does not identify a commodity item, or None when it does."""
     if not isinstance(designation, Mapping):
         return "kind: no structured designation"
-    kind = designation.get("kind")
-    if kind == "standard_designation":
-        return _standard_problem(designation)
-    if kind == "family_designation":
-        return _family_problem(designation)
-    return f"kind {kind!r} is not a commodity designation"
+    issues = designation_issues(designation)
+    return "; ".join(f"{field} {reason}" for field, reason in issues) or None
+
+
+def part_designation_issues(part: Mapping[str, Any]) -> list[Issue]:
+    """The issues of the structured designation the part's purchased route operation supplies."""
+    return designation_issues(_purchase(part).get("designation"))
 
 
 def _number(value: Any) -> str:
@@ -213,12 +245,6 @@ def commodity_label(part: Mapping[str, Any], purchase: Any = None) -> str | None
     if designation is None or opened:
         return None
     return designation_text(designation)
-
-
-def blank_designation_fields(part: Mapping[str, Any]) -> list[str]:
-    """The blank fields of the part's structured designation, as `purchase.designation.<field>`."""
-    designation = _purchase(part).get("designation")
-    return [f"purchase.designation.{name}" for name in blank_fields(designation)] if isinstance(designation, Mapping) else []
 
 
 def designation_cell(part: Mapping[str, Any]) -> str | None:

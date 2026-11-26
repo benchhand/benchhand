@@ -239,6 +239,17 @@ def _cell(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def designation_findings(rows: list[dict[str, str]], parts: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
+    """One finding per invalid field of each BOM row's supplied structured designation: its PN, the
+    `purchase.designation.<field>` and the reason. The row itself stays in the BOM."""
+    identity = commodity_identity()
+    findings: list[dict[str, str]] = []
+    for pn in dict.fromkeys(row["PN"] for row in rows):
+        for field, reason in identity.part_designation_issues(parts.get(pn) or {}):
+            findings.append({"PN": pn, "field": f"purchase.designation.{field}", "reason": reason})
+    return findings
+
+
 def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Flatten the product tree into indented BOM rows and record mismatches."""
     rows: list[dict[str, str]] = []
@@ -246,7 +257,6 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
     in_step: set[str] = set()
     missing_part_yaml: set[str] = set()
     unidentified: set[str] = set()
-    invalid_designation: set[str] = set()
 
     def outside(node: Node) -> bool:
         """Existing equipment (cad-record sourcing.delivered): in the STEP for fit checks, never a BOM row."""
@@ -288,7 +298,6 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
         row.update({key: _cell(procurement.get(key)) for key in PROCUREMENT_FIELDS})
         # the same lookup the record validator expects: the text of the record, else a commodity item's structured designation
         row["designation"] = _cell(commodity_identity().designation_cell(meta))
-        invalid_designation.update(f"{pn}: {field} is blank" for field in commodity_identity().blank_designation_fields(meta))
         row["specification_ref"] = _cell(specification.get("reference"))
         row["specification_rev"] = _cell(specification.get("revision"))
         row["title"] = _cell(title)
@@ -311,7 +320,6 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
         "missing_part_yaml": sorted(missing_part_yaml),
         "missing_in_step": sorted(pn for pn in set(parts) - in_step if SOURCING.delivered(parts[pn])),
         "unidentified": sorted(unidentified),
-        "invalid_designation": sorted(invalid_designation),
     }
 
 
@@ -350,7 +358,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"bom: STEP file not found: {args.step}", file=sys.stderr)
         return 2
     try:
-        result = roll_up(read_step_tree(args.step), load_parts(args.hw, record_hw))
+        parts = load_parts(args.hw, record_hw)
+        result = roll_up(read_step_tree(args.step), parts)
+        result["invalid_designation"] = designation_findings(result["rows"], parts)
         write_csv(out, result["rows"])
     except (BomError, OSError) as error:
         print(f"bom: {error}", file=sys.stderr)
@@ -362,9 +372,11 @@ def main(argv: list[str] | None = None) -> int:
         summary["reconciled_against"] = version
     json.dump(summary, sys.stdout, indent=2)
     sys.stdout.write("\n")
-    for key in ("missing_part_yaml", "missing_in_step", "unidentified", "invalid_designation"):
+    for key in ("missing_part_yaml", "missing_in_step", "unidentified"):
         if result[key]:
             print(f"bom: {key}: {', '.join(result[key])}", file=sys.stderr)
+    for item in result["invalid_designation"]:
+        print(f"bom: invalid_designation: {item['PN']} {item['field']} {item['reason']}", file=sys.stderr)
     return 1 if failed else 0
 
 
