@@ -400,7 +400,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         return int(bool(_execute(items, cwd, home, environ, args.harness)[0]))
 
-    cad_checks = preflight._timed_freecad_checks(environ, home, preflight.fea_enabled(cwd))
+    cad_checks = preflight._timed_freecad_checks(environ, home, preflight.project_fea(cwd))
     cad_report = preflight.Report(tuple(cad_checks))
     if cad_report.exit_code:
         print(preflight.render_text(cad_report))

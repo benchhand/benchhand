@@ -225,8 +225,8 @@ class MainTests(unittest.TestCase):
             f"flow:\n  profile:\n    fea:\n      enabled: {flag}\n", encoding="utf-8")
         base = {"freecad-command": "pass", "freecad-version": "pass", "techdraw-templates": "pass"}
 
-        def timed(environ, home=None, fea_enabled=False):
-            solver = ("fail", "ccx not found") if fea_enabled else ("info", "FEA is not enabled")
+        def timed(environ, home=None, fea=None):
+            solver = ("fail", "ccx not found") if fea.enabled else ("info", "FEA is not enabled")
             return [setup.preflight.Check(i, i, s, True, "d", "") for i, s in base.items()] + [
                 setup.preflight.Check("fea-solvers", "FEA solvers", *solver[:1], True, solver[1], "")]
 

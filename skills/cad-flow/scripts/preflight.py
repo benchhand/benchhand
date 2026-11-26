@@ -19,6 +19,7 @@ detached process and returns at once; `--status [--wait SECONDS]` reports on the
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -338,24 +339,32 @@ def cad_tool_version(command: Path, environ: Mapping[str, str]) -> tuple[str | N
     return version, output.strip() or f"freecadcmd exited {result.returncode}."
 
 
-def fea_enabled(cwd: Path) -> bool:
-    """True only when hw/product.yaml sets flow.profile.fea.enabled to boolean true."""
-    import yaml  # lazy: a plain preflight run needs no PyYAML
+@dataclass(frozen=True)
+class FeaSetting:
+    """What the project's flow profile says about FEA. `invalid` names the file and the cause when the
+    configuration is there but cannot be read or has the wrong shape; it is not the same as FEA off."""
 
-    try:
-        product = yaml.safe_load((cwd / "hw" / "product.yaml").read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError):
-        return False
-    node: Any = product
-    for key in ("flow", "profile", "fea", "enabled"):
-        if not isinstance(node, dict):
-            return False
-        node = node.get(key)
-    return node is True
+    enabled: bool = False
+    invalid: str | None = None
+
+
+def project_fea(cwd: Path) -> FeaSetting:
+    """The FEA setting of the project at `cwd`, read by fea_profile.py (cad-record's YAML reader and gate
+    accessors). Loaded by path here: only a run that reads a project needs PyYAML."""
+    name = "cad_flow_fea_profile"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name("fea_profile.py"))
+        if spec is None or spec.loader is None:
+            raise ImportError("fea_profile.py not found beside preflight.py")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return FeaSetting(*sys.modules[name].read(cwd))
 
 
 def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None,
-                          fea_enabled: bool = False) -> list[Check]:
+                          fea: FeaSetting | None = FeaSetting()) -> list[Check]:
+    """The FreeCAD checks. `fea` is the project's setting; None leaves the project-specific FEA checks out
+    (the shared warm-up reads no project)."""
     tool = CAD_TOOL
     checks: list[Check] = []
     started = time.monotonic()
@@ -402,18 +411,27 @@ def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None,
     checks.append(replace(_check("techdraw-templates", "TechDraw templates", "pass" if okay else "fail", detail,
                                  "" if okay else template_fix), elapsed_s=time.monotonic() - started))
     print(f"[preflight] techdraw-templates: {checks[-1].status} ({checks[-1].elapsed_s:.1f}s)", file=sys.stderr, flush=True)
-    checks.append(_fea_solvers_check(command, environ, fea_enabled))
+    if fea is not None:
+        checks.extend(_fea_checks(command, environ, fea))
     return checks
 
 
-def _fea_solvers_check(command: Path, environ: Mapping[str, str], enabled: bool = False) -> Check:
-    """The CalculiX ccx and Gmsh that cad-analysis FEA runs, as FreeCAD resolves them in its own process.
+def _fea_checks(command: Path | None, environ: Mapping[str, str], fea: FeaSetting) -> list[Check]:
+    """The FEA checks of one project: an invalid profile fails by name, FEA off is info, FEA on probes."""
+    if fea.invalid:
+        return [_check("fea-profile", "FEA flow profile", "fail", fea.invalid,
+                       "Set flow.profile.fea.enabled in hw/product.yaml to true or false, or repair the file.")]
+    if not fea.enabled:
+        return [_check("fea-solvers", "FEA solvers (ccx, Gmsh)", "info",
+                       "FEA is not enabled; it will need ccx and Gmsh if enabled later.", "", required=False)]
+    if command is None:
+        return [_check("fea-solvers", "FEA solvers (ccx, Gmsh)", "fail", "FreeCAD command unavailable.",
+                       f"Install {CAD_TOOL.name} {CAD_TOOL.required_version}; it ships ccx and gmsh.")]
+    return [_fea_solvers_check(command, environ)]
 
-    Without FEA in the flow profile the probe does not run: the solvers are not needed yet."""
-    if not enabled:
-        return _check("fea-solvers", "FEA solvers (ccx, Gmsh)", "info",
-                      "FEA is not enabled; it will need ccx and Gmsh if enabled later.", "",
-                      required=False)
+
+def _fea_solvers_check(command: Path, environ: Mapping[str, str]) -> Check:
+    """The CalculiX ccx and Gmsh that cad-analysis FEA runs, as FreeCAD resolves them in its own process."""
     started = time.monotonic()
     print("[preflight] fea-solvers: checking...", file=sys.stderr, flush=True)
     labels = {"calculix": "CalculiX ccx", "gmsh": "Gmsh"}
@@ -545,8 +563,11 @@ def run_checks(environ: Mapping[str, str] | None = None, cwd: Path | None = None
     env = os.environ if environ is None else environ
     workdir = cwd or Path.cwd()
     home_dir = home or Path(env.get("HOME", str(Path.home())))
-    checks = list(cad_checks if cad_checks is not None else _timed_freecad_checks(env, home_dir, fea_enabled(workdir)))
-    if any(check.required and check.status not in PASSING for check in checks):
+    if cad_checks is None:
+        # A warm-up is shared by every project of this plugin copy, so it reads none.
+        cad_checks = _timed_freecad_checks(env, home_dir, project_fea(workdir))
+    checks = list(cad_checks)
+    if any(check.status not in PASSING for check in checks):
         return Report(tuple(checks))
     uv_check, uv = _run_uv_check(env)
     checks.append(uv_check)

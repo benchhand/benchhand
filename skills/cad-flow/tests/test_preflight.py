@@ -751,6 +751,7 @@ class FEASettingTests(unittest.TestCase):
         gate_spec = importlib.util.spec_from_file_location("test_gate_agreement", path)
         assert gate_spec is not None and gate_spec.loader is not None
         gate = importlib.util.module_from_spec(gate_spec)
+        sys.modules[gate_spec.name] = gate
         gate_spec.loader.exec_module(gate)
         for enabled in (True, False):
             text = f"flow:\n  profile:\n    fea:\n      enabled: {str(enabled).lower()}\n"
