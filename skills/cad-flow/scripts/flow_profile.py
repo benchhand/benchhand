@@ -577,7 +577,8 @@ def _scoped_fields(hw: Path) -> list[str]:
         raise ProfileFindings([gate.Problem("product.yaml", str(error), "correct product.yaml")]) from error
     parts = read_parts(hw)
     _require_applicability(product, parts)
-    return gate.question_fields(product, parts)
+    fields: list[str] = gate.question_fields(product, parts)
+    return fields
 
 
 def _shown_questions(fields: set[str]) -> list[tuple[str, str]]:

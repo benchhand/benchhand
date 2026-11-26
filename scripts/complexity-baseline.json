@@ -1,7 +1,7 @@
 {
  "counts": {
   "C901": 168,
-  "PLR0912": 85,
+  "PLR0912": 84,
   "PLR0915": 50
  },
  "offenders": [
@@ -183,7 +183,6 @@
   "PLR0912 skills/cad-design/scripts/process_checks/shaping.py::draft",
   "PLR0912 skills/cad-drawings/scripts/assembly_check.py::_check_parts_list",
   "PLR0912 skills/cad-drawings/scripts/assembly_check.py::read_intent",
-  "PLR0912 skills/cad-drawings/scripts/assembly_sheet.py::operation_note",
   "PLR0912 skills/cad-drawings/scripts/completeness.py::evaluate",
   "PLR0912 skills/cad-drawings/scripts/drawing.py::compose_and_publish",
   "PLR0912 skills/cad-drawings/scripts/drawing_intent.py::Measurer._measure_request",
