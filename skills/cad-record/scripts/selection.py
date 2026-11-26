@@ -668,7 +668,9 @@ class _Assessor:
         subject = {"PN": cpart.pn}
         method = f"{where}: capability profile"
         not_assumed = "unavailable tooling is never assumed"
-        if not isinstance(step.capability, str) and guidelines.machine_optional(step.kind, step.provider, self.service,
+        part = self.record.parts.get(cpart.pn)
+        provider = part.provider_of(step.provider) if part is not None else step.provider
+        if not isinstance(step.capability, str) and guidelines.machine_optional(step.kind, provider, self.service,
                                                                                 self.calibration):
             # No machine is recorded and calibration is off: the shipped guideline values govern, so the missing machine
             # is a note. It is not a pass, and it is no proof that a machine exists.

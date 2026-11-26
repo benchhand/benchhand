@@ -602,6 +602,12 @@ class Part:
         """Pre-existing equipment the product mounts onto: outside the product, never bought or made."""
         return self.sourcing == "existing"
 
+    def provider_of(self, stated: str | None) -> str:
+        """Who runs a route operation of this part: the operation's `stated` provider, else the recorded sourcing
+        (make_buy and procurement.mode): local for a part made in-house, outsourced for one bought to a drawing or from a
+        catalogue."""
+        return stated or ("local" if self.sourcing == "make" else "outsourced")
+
 
 @dataclass(frozen=True)
 class InterfaceFunctional:
