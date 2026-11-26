@@ -11,6 +11,7 @@ value to one. Only APIs present in both OCP 7.9 (CadQuery 2.8) and OCP 8.0 (buil
 from __future__ import annotations
 
 import io
+import itertools
 from typing import Any, Iterable, cast
 
 from cadmodel.motion import load_pose
@@ -192,6 +193,39 @@ def max_tolerance(shape: Any) -> float:
 
     return max((BRep_Tool.Tolerance_s(downcast(sub, kind))
                 for kind in ("FACE", "EDGE", "VERTEX") for sub in subshapes(shape, kind)), default=0.0)
+
+
+class Adjacency:
+    """The faces of a shape (`faces`, in subshapes order) indexed by their edges, to find the faces across an edge.
+
+    OCP 8.0 hashes a shape by its TShape and Location, so both orientations of a shared edge land
+    in one bucket; IsSame then picks the edge out of it.
+    """
+
+    def __init__(self, shape: Any) -> None:
+        self.faces = [downcast(item, "FACE") for item in subshapes(shape, "FACE")]
+        self._by_edge: dict[int, list[tuple[Any, int]]] = {}
+        for index, face in enumerate(self.faces):
+            for edge in subshapes(face, "EDGE"):
+                self._by_edge.setdefault(hash(edge), []).append((edge, index))
+
+    def across_indices(self, edge: Any, index: int) -> list[int]:
+        """The indices of the other faces that share `edge` with face `index`."""
+        return sorted({i for e, i in self._by_edge.get(hash(edge), []) if e.IsSame(edge) and i != index})
+
+    def across(self, edge: Any, face: Any) -> list[Any]:
+        """The other faces that share `edge` with `face`."""
+        return [self.faces[i] for i in sorted({i for e, i in self._by_edge.get(hash(edge), [])
+                                               if e.IsSame(edge) and not self.faces[i].IsSame(face)})]
+
+    def shared(self) -> set[tuple[int, int]]:
+        """Each pair of face indices, lower first, that shares an edge."""
+        pairs = set()
+        for members in self._by_edge.values():
+            for (edge, i), (other, j) in itertools.combinations(members, 2):
+                if i != j and edge.IsSame(other):
+                    pairs.add((min(i, j), max(i, j)))
+        return pairs
 
 
 def face_areas(shape: Any) -> list[float]:

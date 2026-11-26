@@ -743,31 +743,6 @@ def measure(shape: Any) -> dict[str, Any]:
     }
 
 
-class _Adjacency:
-    """The faces of a shape that meet along each of its edges, by their index in `faces`."""
-
-    def __init__(self, shape: Any, faces: list[Any]) -> None:
-        from cadmodel import occ
-        from OCP.TopAbs import TopAbs_EDGE
-        from OCP.TopExp import TopExp
-        try:  # OCP 8 binds NCollection maps under OCP.collections, as cad-motion's mesh_bound does
-            from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher as ShapeMap
-        except ImportError:  # OCP 7.9
-            from OCP.TopTools import TopTools_IndexedMapOfShape as ShapeMap
-
-        self.edges = ShapeMap()
-        TopExp.MapShapes_s(shape, TopAbs_EDGE, self.edges)
-        self.faces: dict[int, list[int]] = {}
-        for index, face in enumerate(faces):
-            for edge in occ.subshapes(face, "EDGE"):
-                members = self.faces.setdefault(self.edges.FindIndex(edge), [])
-                if index not in members:
-                    members.append(index)
-
-    def across(self, edge: Any) -> list[int]:
-        return self.faces.get(self.edges.FindIndex(edge), [])
-
-
 def _normal_along(edge: Any, face: Any) -> tuple[float, float, float] | None:
     """`face`'s outward normal at the middle of `edge`, or None where it is not defined."""
     from OCP.BRepAdaptor import BRepAdaptor_Curve2d, BRepAdaptor_Surface
@@ -819,17 +794,18 @@ def _same_cylinder(a: dict[str, Any], b: dict[str, Any]) -> bool:
             and _same_line((a["location"], a["direction"]), (b["location"], b["direction"])))
 
 
-def _tangent_neighbours(edge: Any, faces: list[Any], adjacency: _Adjacency, index: int,
+def _tangent_neighbours(edge: Any, faces: list[Any], adjacency: Any, index: int,
                         line: tuple[Sequence[float], Sequence[float]]) -> list[int]:
-    """The faces across `edge` from face `index` that meet it tangentially and do not turn about `line`."""
+    """The faces across `edge` from face `index` (an occ.Adjacency) that meet it tangentially and do not turn about
+    `line`."""
     from OCP.BRep import BRep_Tool
 
     mine = None if BRep_Tool.Degenerated_s(edge) else _normal_along(edge, faces[index])
     found: list[int] = []
     if mine is None:
         return found
-    for other in adjacency.across(edge):
-        theirs = None if other == index else _normal_along(edge, faces[other])
+    for other in adjacency.across_indices(edge, index):
+        theirs = _normal_along(edge, faces[other])
         axis = _axis_line(faces[other])
         if (theirs is not None and _dot(mine, theirs) > 0.0 and _norm(_cross(mine, theirs)) <= TANGENT_TOL
                 and not (axis is not None and _same_line(line, axis))):
@@ -844,9 +820,9 @@ def joint_cylinders(shape: Any) -> list[dict[str, Any]]:
     mating cylinder. A half bore, a D-shaft or a shaft between coaxial shoulder fillets is no blend."""
     from cadmodel import occ
 
-    faces = faces_of(shape)
+    adjacency = occ.Adjacency(shape)
+    faces = adjacency.faces
     rows = {index: row for index, face in enumerate(faces) if (row := _cylinder_row(face)) is not None}
-    adjacency = _Adjacency(shape, faces)
     root = {index: index for index in rows}
 
     def find(index: int) -> int:
@@ -854,10 +830,9 @@ def joint_cylinders(shape: Any) -> list[dict[str, Any]]:
             index = root[index]
         return index
 
-    for members in adjacency.faces.values():
-        for i, j in itertools.combinations(members, 2):
-            if i in rows and j in rows and _same_cylinder(rows[i], rows[j]):
-                root[find(j)] = find(i)
+    for i, j in adjacency.shared():
+        if i in rows and j in rows and _same_cylinder(rows[i], rows[j]):
+            root[find(j)] = find(i)
     tangent: dict[int, set[Any]] = {}
     for index, row in rows.items():
         line = (row["location"], row["direction"])

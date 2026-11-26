@@ -175,25 +175,6 @@ def _runs(spans: list[_Span]) -> list[_Run]:
     return runs
 
 
-class _Adjacency:
-    """The faces of one solid indexed by their edges, to find the face across an edge.
-
-    OCP 8.0 hashes a shape by its TShape and Location, so both orientations of a shared edge land
-    in one bucket; IsSame then picks the edge out of it.
-    """
-
-    def __init__(self, solid: Any) -> None:
-        self._by_edge: dict[int, list[tuple[Any, Any]]] = {}
-        for item in occ.subshapes(solid, "FACE"):
-            face = occ.downcast(item, "FACE")
-            for edge in occ.subshapes(face, "EDGE"):
-                self._by_edge.setdefault(hash(edge), []).append((edge, face))
-
-    def across(self, edge: Any, face: Any) -> list[Any]:
-        """The other faces that share `edge` with `face`."""
-        return [f for e, f in self._by_edge.get(hash(edge), []) if e.IsSame(edge) and not f.IsSame(face)]
-
-
 def _samples(edge: Any) -> list[Vec]:
     """EDGE_SAMPLES + 1 points along the edge, both ends included."""
     from OCP.BRepAdaptor import BRepAdaptor_Curve
@@ -221,7 +202,7 @@ def _is_axial_line(edge: Any, direction: Vec) -> bool:
     return math.sqrt(sum(c * c for c in _cross(_xyz(curve.Line().Direction()), direction))) <= PARALLEL_TOL
 
 
-def _end_opens(run: _Run, low_end: bool, group: list[_Wall], adjacency: _Adjacency) -> bool:
+def _end_opens(run: _Run, low_end: bool, group: list[_Wall], adjacency: occ.Adjacency) -> bool:
     """Whether one end of a run is open: some face across its rim reaches outside the bore radius.
 
     The rim is the outer-wire edges of the walls that end there, on that side of each wall's middle,
@@ -259,7 +240,7 @@ def _canonical(direction: Vec) -> Vec:
     return direction
 
 
-def _bores(group: list[_Wall], adjacency: _Adjacency) -> list[dict[str, Any]]:
+def _bores(group: list[_Wall], adjacency: occ.Adjacency) -> list[dict[str, Any]]:
     """The holes one group of coaxial walls makes: one per chain of runs joined across open ends."""
     ref = group[0]
     forward = ref.direction
@@ -295,7 +276,7 @@ def holes(shape: Any) -> list[dict[str, Any]]:
     for solid in occ.subshapes(shape, "SOLID"):
         groups = _groups(solid)
         if groups:
-            adjacency = _Adjacency(solid)
+            adjacency = occ.Adjacency(solid)
             for group in groups:
                 found.extend(_bores(group, adjacency))
     found.sort(key=lambda h: (h["diameter_mm"], [round(c, 3) for c in h["position"]]))
