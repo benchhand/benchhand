@@ -66,6 +66,31 @@ def _fits() -> Any:
     return load_shared("cad_fits_fits", FITS)
 
 
+def _explicit_fit_tolerance(source: str, fit: Mapping[str, Any], side: str) -> Tolerance | None:
+    """The size control explicit fit limits give one side, never an ISO class: its hole or shaft deviations from
+    the fit's nominal, or (a band on the diameter, which states no side's limits) the band itself, printed beside
+    the modelled size. None for limits cad-fits cannot read; cad-record validate reports those."""
+    try:
+        declared = _fits().declared_fit(fit)
+    except _fits().FitError:
+        return None
+    label = f"{source} {declared['label']}"
+    if side in declared:
+        deviation = declared[side]
+        return Tolerance("explicit", Decimal(str(deviation["lower_mm"])), Decimal(str(deviation["upper_mm"])),
+                         nominal=Decimal(str(declared["nominal_mm"])), source=label)
+    return Tolerance("band", designation=declared["label"].removeprefix(f"⌀{declared['nominal_mm']} "), source=label)
+
+
+def explicit_fit_text(fit: Mapping[str, Any]) -> str:
+    """Explicit fit limits as a drawing note states them, such as "⌀22 interference 0/1.013, crush ribs"
+    (cad-fits' label); limits it cannot read are named so, never guessed."""
+    try:
+        return str(_fits().declared_fit(fit)["label"])
+    except _fits().FitError:
+        return "limits not readable (see cad-record validate)"
+
+
 def commodity_label(record: Mapping[str, Any]) -> str | None:
     """The order line of a part bought by an eligible commodity designation, or None (cad-record commodity_identity.py,
     the one decision the process checks, the BOM and the build guide share)."""
@@ -109,11 +134,11 @@ def finished_state_findings(pn: str, part: Mapping[str, Any], feature: str, sour
 class Tolerance:
     """What controls a characteristic: deviations from a nominal (mm), or a basic dimension."""
 
-    kind: str                      # fit, heat_set, explicit, policy, general, basic, vendor
+    kind: str                      # fit, heat_set, explicit, band, policy, general, basic, vendor
     lower: Decimal = Decimal(0)
     upper: Decimal = Decimal(0)
     nominal: Decimal | None = None # interface nominal (fits, heat-set seats); None: the measured value is nominal
-    designation: str | None = None # ISO 286 class, policy name or "basic"
+    designation: str | None = None # ISO 286 class, policy name, "basic", or a band's text such as "interference 0/1.013"
     source: str = ""
 
     def limits(self, measured: float) -> tuple[Decimal, Decimal]:
@@ -783,6 +808,11 @@ class Measurer:
                 fit = limits.get(key)
                 endpoint = (fit or {}).get(side)
                 if not isinstance(endpoint, Mapping) or endpoint.get("PN") != self.pn or endpoint.get("feature") != feature.id:
+                    continue
+                if "fit" not in fit:  # explicit limits, not an ISO class
+                    explicit = _explicit_fit_tolerance(f"{interface['id']} {key}", fit, side)
+                    if explicit is not None:
+                        found.append(explicit)
                     continue
                 nominal_text, _, classes = fit["fit"].partition(" ")
                 hole_class, _, shaft_class = classes.partition("/")

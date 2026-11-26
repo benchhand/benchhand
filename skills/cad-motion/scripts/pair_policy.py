@@ -11,11 +11,16 @@ occurrence, and a bare PN must have exactly one. So a fit declared on one occurr
 excuses the overlap of another occurrence of the same PN. Every entry keeps its provenance:
 interface id and record path.
 
-Press fits are classified with cad-fits' ISO 286 tables; only an `interference` classification
-allows shared volume. An installed heat-set insert overlaps its bore by design, so its pair may
+Press fits are classified with cad-fits (`fits.declared_fit`): an ISO 286 designation, or explicit
+limits (hole and shaft deviations, or an interference or clearance band on the diameter) by the same
+rule; only an `interference` classification allows shared volume. A fit cad-fits cannot read is
+`invalid`, with an error naming the accepted forms: it allows nothing and is a check finding, never a
+usage error. A `compliance: crush_rib` fit carries its `max_interference_mm`: the interference is
+designed deformation of the compliant part, so cad-model check allows overlap up to that maximum.
+An installed heat-set insert overlaps its bore by design, so its pair may
 interfere; unlike a press fit, no measured overlap is required, because a model may draw the
 insert at its bore size. Running fits are resolved but not classified. Locating fits are
-classified like press fits when their designation is an ISO 286 hole/shaft fit, else
+classified like press fits when they are an ISO 286 hole/shaft fit or explicit limits, else
 `unclassified` (a dowel or vendor limit): a locating fit is neither a running clearance nor a
 tolerated overlap, so only an `interference` classification allows shared volume.
 
@@ -32,7 +37,6 @@ import importlib.util
 import math
 import sys
 from collections.abc import Iterable, Iterator
-from decimal import Decimal, InvalidOperation
 from functools import cache
 from pathlib import Path
 from typing import Any, cast
@@ -132,10 +136,10 @@ def _fit_pair(fit: dict[str, Any], assembly: Any, where: str) -> tuple[tuple[str
 
 
 def _fits(hw: Path, interfaces: list[Any], assembly: Any,
-          kind: str) -> Iterator[tuple[dict[str, Any], str, tuple[str, str], dict[str, Any] | None, str,
+          kind: str) -> Iterator[tuple[dict[str, Any], dict[str, Any], tuple[str, str], dict[str, Any] | None, str,
                                          float | None]]:
-    """(interface, designation, sorted occurrence pair, endpoints or None, source, engagement_length_mm
-    or None) of each `limits.<kind>` fit."""
+    """(interface, fit entry, sorted occurrence pair, endpoints or None, source, engagement_length_mm or None)
+    of each `limits.<kind>` fit."""
     path = hw / "interfaces.yaml"
     for index, interface in enumerate(interfaces):
         if not isinstance(interface, dict):
@@ -146,16 +150,25 @@ def _fits(hw: Path, interfaces: list[Any], assembly: Any,
             continue
         source = f"interfaces.yaml#/interfaces/{index}/limits/{kind}"
         where = f"{path}:{source}"
-        if not isinstance(fit, dict) or not isinstance(fit.get("fit"), str):
+        if not isinstance(fit, dict):
             raise PolicyError(f"{where}: expected fit and two distinct part references")
         pair, endpoints = _fit_pair(fit, assembly, where)
-        yield interface, fit["fit"], pair, endpoints, source, fit.get("engagement_length_mm")
+        yield interface, fit, pair, endpoints, source, fit.get("engagement_length_mm")
 
 
-def _fit_entry(interface: dict[str, Any], designation: str, pair: tuple[str, str],
+def _fit_entry(interface: dict[str, Any], fit: dict[str, Any], pair: tuple[str, str],
                endpoints: dict[str, Any] | None, source: str, engagement_length_mm: float | None = None,
-               **extra: Any) -> dict[str, Any]:
-    entry = {"pair": list(pair), "fit": designation, **extra, "interface": interface.get("id"), "source": source}
+               declared: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
+    """One declaration as {pair, fit, ...extra, interface, source[, limits, compliance, ribs, max_interference_mm]
+    [, engagement_length_mm, endpoints]}: `fit` is the ISO designation, else the explicit limits' label;
+    `declared` (cad-fits declared_fit) adds the explicit limits."""
+    label = fit.get("fit") if declared is None else declared["label"]
+    entry = {"pair": list(pair), "fit": label, **extra, "interface": interface.get("id"), "source": source}
+    if declared is not None and declared["form"] != "iso":
+        entry["limits"] = {key: declared[key] for key in ("form", "nominal_mm", "min_clearance_mm", "max_clearance_mm")}
+    if declared is not None and "compliance" in declared:
+        entry.update(compliance=declared["compliance"], max_interference_mm=-declared["min_clearance_mm"],
+                     **({"ribs": declared["ribs"]} if "ribs" in declared else {}))
     if engagement_length_mm is not None:
         entry["engagement_length_mm"] = engagement_length_mm
     if endpoints is not None:
@@ -163,55 +176,61 @@ def _fit_entry(interface: dict[str, Any], designation: str, pair: tuple[str, str
     return entry
 
 
+def _declared(fit: dict[str, Any], where: str) -> tuple[dict[str, Any] | None, str | None]:
+    """(cad-fits' reading of a fit entry, None), or (None, why it cannot be read, naming the accepted forms)."""
+    fits = _fits_module()
+    try:
+        return fits.declared_fit(fit), None
+    except fits.FitError as error:
+        return None, f"{where}: {error}"
+
+
 def declared_press_fits(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
-    """Press-fit declarations as {pair, fit, classification, interface, source[, endpoints, engagement_length_mm]}.
+    """Press-fit declarations as {pair, fit, classification, interface, source[, error][, limits, compliance, ribs,
+    max_interference_mm][, endpoints, engagement_length_mm]}.
 
     `pair` is the sorted occurrence ids. A fit names its parts as a `pair` or as feature-specific
-    `hole` and `shaft` endpoints; an endpoint declaration is reported with its `endpoints`.
+    `hole` and `shaft` endpoints; an endpoint declaration is reported with its `endpoints`. A fit cad-fits
+    cannot read (no accepted form, or a plain-language designation) is classified `invalid` with its `error`:
+    it allows no overlap and is a finding of the check, never a usage error.
     """
     path = hw / "interfaces.yaml"
-    return [_fit_entry(interface, designation, pair, endpoints, source, engagement,
-                       classification=_classify(designation, f"{path}:{source}"))
-            for interface, designation, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "press_fit")]
-
-
-def _classify(designation: str, where: str) -> str:
-    """The ISO 286 fit type of `designation` ("SIZE HOLE/SHAFT"); PolicyError when it is not one."""
-    fits = _fits_module()
-    size = designation.split(maxsplit=1)
-    if len(size) != 2:
-        raise PolicyError(f"{where}: fit must contain a nominal size and ISO fit")
-    try:
-        fit_data = fits.evaluate(Decimal(size[0]), size[1]).get("fit")
-        if not isinstance(fit_data, dict):
-            raise PolicyError(f"{where}: expected an ISO hole/shaft fit, got {designation!r}")
-        classified: str = fit_data["type"]
-        return classified
-    except (InvalidOperation, ValueError, fits.FitError, KeyError) as error:
-        raise PolicyError(f"{where}: cannot classify {designation!r}: {error}") from error
+    declared = []
+    for interface, fit, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "press_fit"):
+        reading, error = _declared(fit, f"{path}:{source}")
+        extra = {"classification": reading["type"]} if reading is not None else {"classification": "invalid", "error": error}
+        declared.append(_fit_entry(interface, fit, pair, endpoints, source, engagement, reading, **extra))
+    return declared
 
 
 def declared_locating_fits(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
-    """Locating-fit declarations as {pair, fit, classification, interface, source[, endpoints]}, `pair`
-    the sorted occurrence ids. `classification` is the ISO 286 type of an ISO hole/shaft designation,
-    else `unclassified`: a dowel or vendor limit locates without a fit class this table covers."""
+    """Locating-fit declarations as {pair, fit, classification, interface, source[, ...]}, `pair` the sorted
+    occurrence ids. `classification` is the type of an ISO hole/shaft designation or of explicit limits, else
+    `unclassified`: a dowel or vendor limit locates without a fit class this table covers. Explicit limits cad-fits
+    cannot read are `invalid`, with their `error`."""
     path = hw / "interfaces.yaml"
     declared = []
-    for interface, designation, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "locating_fit"):
-        try:
-            classified = _classify(designation, f"{path}:{source}")
-        except PolicyError:
-            classified = "unclassified"
-        declared.append(_fit_entry(interface, designation, pair, endpoints, source, engagement,
-                                   classification=classified))
+    for interface, fit, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "locating_fit"):
+        reading, error = _declared(fit, f"{path}:{source}")
+        if reading is not None:
+            extra: dict[str, Any] = {"classification": reading["type"]}
+        elif isinstance(fit.get("fit"), str) and not set(fit) & set(_fits_module().EXPLICIT_FORMS):
+            extra = {"classification": "unclassified"}
+        else:
+            extra = {"classification": "invalid", "error": error}
+        declared.append(_fit_entry(interface, fit, pair, endpoints, source, engagement, reading, **extra))
     return declared
 
 
 def declared_running_fits(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:
-    """Running-fit declarations as {pair, fit, interface, source[, endpoints]}, `pair` the sorted
+    """Running-fit declarations as {pair, fit, interface, source[, limits][, endpoints]}, `pair` the sorted
     occurrence ids. A running fit is a clearance by design, often to vendor limits rather than an
-    ISO 286 hole and shaft, so it is resolved but not classified."""
-    return [_fit_entry(*fit) for fit in _fits(hw, interfaces, assembly, "running_fit")]
+    ISO 286 hole and shaft, so it is resolved but not classified; explicit limits are reported with it."""
+    declared = []
+    for interface, fit, pair, endpoints, source, engagement in _fits(hw, interfaces, assembly, "running_fit"):
+        reading = _declared(fit, source)[0] if set(fit) & set(_fits_module().EXPLICIT_FORMS) else None
+        declared.append(_fit_entry(interface, fit, pair, endpoints, source, engagement, reading))
+    return declared
 
 
 def declared_heat_sets(hw: Path, interfaces: list[Any], assembly: Any) -> list[dict[str, Any]]:

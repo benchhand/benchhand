@@ -34,6 +34,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from functools import cache
@@ -161,6 +162,143 @@ def evaluate(size: Decimal, fit: str) -> dict[str, Any]:
         },
     )
     return result
+
+
+ACCEPTED_FORMS = ("accepted forms: fit: 'SIZE HOLE/SHAFT' (an ISO 286 hole-basis fit such as '22 H7/p6'); or "
+                  "nominal_mm and source with one of deviations: {units, hole: {upper, lower}, shaft: {upper, lower}}, "
+                  "interference: {min, max, units} or clearance: {min, max, units} on the diameter; compliance: "
+                  "crush_rib needs an interference")
+EXPLICIT_FORMS = ("deviations", "interference", "clearance")
+COMPLIANCE = {"crush_rib": "crush ribs"}
+UNITS = {"mm": Decimal(1), "um": MICRON}
+
+
+def _form_error(reason: str) -> FitError:
+    return FitError(f"{reason}; {ACCEPTED_FORMS}")
+
+
+def _length(value: Any, units: Decimal, what: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise _form_error(f"{what} must be a number, got {value!r}")
+    try:
+        number = Decimal(str(value))
+    except InvalidOperation:
+        number = Decimal("NaN")
+    if not number.is_finite():
+        raise _form_error(f"{what} must be a finite number, got {value!r}")
+    return number * units
+
+
+def _units(entry: Mapping[str, Any], what: str) -> Decimal:
+    units = entry.get("units")
+    if units not in UNITS:
+        raise _form_error(f"{what}.units must be one of {', '.join(UNITS)}, got {units!r}")
+    return UNITS[units]
+
+
+def _span(entry: Any, what: str, low: str, high: str, units: Decimal | None = None) -> tuple[Decimal, Decimal]:
+    """(low, high) in mm of a {low, high[, units]} mapping; FitError when low > high."""
+    if not isinstance(entry, Mapping):
+        raise _form_error(f"{what} must be a mapping with {low} and {high}")
+    units = _units(entry, what) if units is None else units
+    lower, upper = (_length(entry.get(key), units, f"{what}.{key}") for key in (low, high))
+    if lower > upper:
+        raise _form_error(f"{what}.{low} {_num(lower)} mm is above {what}.{high} {_num(upper)} mm")
+    return lower, upper
+
+
+def _iso(designation: Any) -> dict[str, Any]:
+    if not isinstance(designation, str):
+        raise _form_error(f"fit must be a string, got {designation!r}")
+    size, _, classes = designation.strip().partition(" ")
+    try:
+        nominal = Decimal(size)
+        if not nominal.is_finite():
+            raise InvalidOperation
+    except InvalidOperation:
+        raise _form_error(f"fit {designation!r} does not start with a nominal size in mm") from None
+    try:
+        result = evaluate(nominal, classes.strip())
+    except FitError as error:
+        raise _form_error(f"fit {designation!r} is not an ISO 286 fit: {error}") from None
+    if "fit" not in result:
+        raise _form_error(f"fit {designation!r} names one class, not a HOLE/SHAFT fit")
+    side = {key: {"upper_mm": _num(result[key]["upper_deviation_um"] * MICRON),
+                  "lower_mm": _num(result[key]["lower_deviation_um"] * MICRON)} for key in ("hole", "shaft")}
+    return {"form": "iso", "nominal_mm": _num(nominal), "label": designation,
+            "max_clearance": Decimal(result["fit"]["max_clearance_um"]) * MICRON,
+            "min_clearance": Decimal(result["fit"]["min_clearance_um"]) * MICRON, **side}
+
+
+def _signed(value: Decimal) -> str:
+    return f"{'+' if value > 0 else ''}{_num(value)}"
+
+
+def _explicit(entry: Mapping[str, Any], form: str) -> dict[str, Any]:
+    if not isinstance(entry.get("source"), Mapping) or not isinstance(entry["source"].get("kind"), str):
+        raise _form_error("explicit limits need a source {kind, reference}: design intent, datasheet or guideline")
+    if "nominal_mm" not in entry:
+        raise _form_error("explicit limits need nominal_mm, the diameter they apply to")
+    nominal = _length(entry["nominal_mm"], Decimal(1), "nominal_mm")
+    if nominal <= 0:
+        raise _form_error(f"nominal_mm must be above 0, got {entry['nominal_mm']!r}")
+    found: dict[str, Any] = {"form": form, "nominal_mm": _num(nominal)}
+    if form == "deviations":
+        deviations = entry["deviations"]
+        if not isinstance(deviations, Mapping):
+            raise _form_error("deviations must be a mapping {units, hole, shaft}")
+        units = _units(deviations, "deviations")
+        hole, shaft = (_span(deviations.get(side), f"deviations.{side}", "lower", "upper", units) for side in ("hole", "shaft"))
+        found.update(max_clearance=hole[1] - shaft[0], min_clearance=hole[0] - shaft[1],
+                     label=f"⌀{_num(nominal)} hole {_signed(hole[1])}/{_signed(hole[0])} shaft "
+                           f"{_signed(shaft[1])}/{_signed(shaft[0])}",
+                     **{side: {"upper_mm": _num(high), "lower_mm": _num(low)}
+                        for side, (low, high) in (("hole", hole), ("shaft", shaft))})
+    else:
+        low, high = _span(entry[form], form, "min", "max")
+        clearance = (-high, -low) if form == "interference" else (low, high)
+        found.update(min_clearance=clearance[0], max_clearance=clearance[1],
+                     label=f"⌀{_num(nominal)} {form} {_num(low)}/{_num(high)}")
+    return found
+
+
+def declared_fit(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """The fit of an interface limit (press, running or locating fit), from exactly one form: an ISO 286
+    designation `fit: "SIZE HOLE/SHAFT"`, or explicit limits with their `nominal_mm` and `source`, as hole and
+    shaft `deviations` or as an `interference` or `clearance` band on the diameter. `compliance: crush_rib`
+    declares the interference designed deformation of a compliant part, so it needs one.
+
+    Returns {form, nominal_mm, min_clearance_mm, max_clearance_mm, type, label[, hole, shaft][, compliance, ribs]},
+    clearances on the diameter in mm (negative: interference), `type` by `classify`, `hole` and `shaft` their
+    {upper_mm, lower_mm} deviations when the form gives them. FitError names the accepted forms."""
+    if not isinstance(entry, Mapping):
+        raise _form_error(f"a fit must be a mapping, got {entry!r}")
+    forms = [key for key in ("fit", *EXPLICIT_FORMS) if key in entry]
+    if len(forms) != 1:
+        raise _form_error("a fit gives exactly one form, got " + (", ".join(forms) if forms else "none"))
+    if forms[0] == "fit":
+        if "nominal_mm" in entry or "compliance" in entry:
+            raise _form_error("an ISO designation carries its own nominal size and no compliance")
+        found = _iso(entry["fit"])
+    else:
+        found = _explicit(entry, forms[0])
+    compliance = entry.get("compliance")
+    if compliance is not None and (compliance not in COMPLIANCE or found["min_clearance"] >= 0):
+        raise _form_error(f"compliance {compliance!r} must be one of {', '.join(COMPLIANCE)} on a fit with interference")
+    if "ribs" in entry and compliance is None:
+        raise _form_error("ribs describe a compliance: crush_rib fit")
+    max_clearance, min_clearance = found.pop("max_clearance"), found.pop("min_clearance")
+    found.update(min_clearance_mm=_num(min_clearance), max_clearance_mm=_num(max_clearance),
+                 type=classify(max_clearance, min_clearance))
+    if compliance is not None:
+        ribs = entry.get("ribs")
+        found.update(compliance=compliance, label=f"{found['label']}, {COMPLIANCE[compliance]}")
+        if isinstance(ribs, Mapping) and ribs:
+            found["ribs"] = dict(ribs)
+            shape = " x ".join(str(part) for part in (ribs.get("count"),
+                                                      f"{ribs['width_mm']} wide" if "width_mm" in ribs else None) if part)
+            found["label"] += f" ({shape})"
+    return found
 
 
 def main(argv: list[str] | None = None) -> int:

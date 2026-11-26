@@ -255,6 +255,17 @@ class Acceptance(unittest.TestCase):
         with_tools_op = assembly_check.ResolvedOperation(**{**op.__dict__, "operation": with_tools})
         self.assertNotIn("Arbor press", assembly_sheet.operation_note(with_tools_op, {"gap": 0.3}, "iso"))
 
+    def test_a_note_states_explicit_fit_limits_instead_of_an_iso_class(self) -> None:
+        op = self.resolved("seated")
+        ribs = {"nominal_mm": 22, "interference": {"min": 0, "max": 1.013, "units": "mm"}, "compliance": "crush_rib",
+                "source": {"kind": "user", "reference": "crush-rib bearing seat", "origin": "lead"},
+                "pair": [BASE, "@pin-a"]}
+        explicit = assembly_check.ResolvedOperation(**{**op.__dict__, "limit": ribs})
+        self.assertIn("; fit ⌀22 interference 0/1.013, crush ribs (IF-001).",
+                      assembly_sheet.operation_note(explicit, {"gap": 0.0}, "iso"))
+        self.assertIn("FIT ⌀22 INTERFERENCE 0/1.013, CRUSH RIBS (IF-001)",
+                      assembly_sheet.operation_note(explicit, {"gap": 0.0}, "asme"))
+
 
 VIEW = ViewGeometry(view_id="exploded", role="assembly", kind="part", centre_mm=(150.0, 120.0), scale=1.0,
                     rotation_deg=0.0, direction=(1.0, -1.0, 1.0), x_direction=(1.0, 1.0, 0.0),

@@ -64,6 +64,8 @@ stage_list = _load_module("cad_record_stages", Path(__file__).resolve().parent /
 commodity_identity = _load_module("cad_record_commodity_identity", Path(__file__).resolve().parent / "commodity_identity.py")
 # The gate on product.yaml flow.profile, the user's project-start answers (pure in the parsed record).
 profile_gate = _load_module("cad_record_flow_profile_gate", Path(__file__).resolve().parent / "flow_profile_gate.py")
+# cad-fits' reader of an interface fit: an ISO 286 designation or explicit limits, and the accepted forms.
+fits = _load_module("cad_fits_fits", Path(__file__).resolve().parents[2] / "cad-fits" / "scripts" / "fits.py")
 # cad-motion's pose.py and plan.py, loaded only for a record with authored motion cases.
 MOTION_SCRIPTS = Path(__file__).resolve().parents[2] / "cad-motion" / "scripts"
 
@@ -139,7 +141,9 @@ def validate_document(
     errors = sorted(validator.iter_errors(data), key=lambda item: list(item.absolute_path))
     for item in errors:
         location = "/".join(str(part) for part in item.absolute_path)
-        findings.append(finding(path, f"{location + ': ' if location else ''}{item.message}"))
+        forms = item.schema.get("x-accepted-forms") if item.validator == "oneOf" and isinstance(item.schema, dict) else None
+        message = item.message if forms is None else f"not one accepted fit form; accepted forms: {forms}"
+        findings.append(finding(path, f"{location + ': ' if location else ''}{message}"))
     return not errors
 
 
@@ -487,6 +491,11 @@ def check_interfaces(interfaces: dict[str, Any], path: str, part_records: dict[s
             if not isinstance(fit, dict):
                 continue
             where = f"interfaces/{index}/limits/{kind}"
+            if kind == "press_fit" or set(fit) & set(fits.EXPLICIT_FORMS):
+                try:
+                    fits.declared_fit(fit)
+                except fits.FitError as error:
+                    findings.append(finding(path, f"{where}: {error}"))
             if "pair" in fit:
                 for ref in fit["pair"]:
                     resolve(ref, where)

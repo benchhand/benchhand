@@ -335,10 +335,19 @@
       }
     },
     "fit": {
-      "description": "An ISO 286 fit between two parts: a part pair, or a hole and a shaft feature endpoint",
-      "type": "object", "additionalProperties": false, "required": ["fit"],
+      "description": "A fit between two parts (a part pair, or a hole and a shaft feature endpoint), in exactly one form: an ISO 286 designation `fit`, or explicit limits with their `nominal_mm` and `source` (design intent as a decision or user statement, a datasheet or a guideline) as hole and shaft `deviations` or as an `interference` or `clearance` band on the diameter. Every form is classified by one rule (cad-fits fits.py `classify`): interference when the largest diametral clearance is <= 0, clearance when the smallest is >= 0, else transition. `compliance: crush_rib` declares the interference designed deformation of a compliant part: overlap up to the stated maximum is allowed, rigid press-fit seat maths does not apply, and retention still follows the joint's own source rule",
+      "x-accepted-forms": "fit: 'SIZE HOLE/SHAFT' (an ISO 286 hole-basis fit such as '22 H7/p6'); or nominal_mm and source with one of deviations: {units, hole: {upper, lower}, shaft: {upper, lower}}, interference: {min, max, units} or clearance: {min, max, units} on the diameter; compliance: crush_rib needs an interference",
+      "type": "object", "additionalProperties": false,
       "properties": {
-        "fit": {"type": "string", "minLength": 1},
+        "fit": {"description": "An ISO 286 hole-basis fit at its nominal size: 'SIZE HOLE/SHAFT', such as '22 H7/p6'", "type": "string", "minLength": 1},
+        "nominal_mm": {"description": "The nominal diameter in mm that explicit limits apply to", "type": "number", "exclusiveMinimum": 0},
+        "deviations": {"$ref": "#/$defs/fit_deviations"},
+        "interference": {"description": "The diametral interference band: min and max interference on the diameter (shaft larger than hole); 0 to 1.013 mm is an interference fit", "$ref": "#/$defs/fit_band"},
+        "clearance": {"description": "The diametral clearance band: min and max clearance on the diameter", "$ref": "#/$defs/fit_band"},
+        "source": {"description": "Where explicit limits come from: design intent (kind decision or user), a datasheet or a guideline", "$ref": "manufacturing.schema.json#/$defs/source"},
+        "compliance": {"description": "crush_rib: the interference is designed deformation of the compliant part (printed crush ribs). It needs an interference; check allows overlap up to its maximum, and rigid press-fit seat maths does not apply", "enum": ["crush_rib"]},
+        "ribs": {"description": "The crush ribs, when known", "type": "object", "additionalProperties": false, "minProperties": 1,
+                 "properties": {"count": {"type": "integer", "minimum": 1}, "width_mm": {"type": "number", "exclusiveMinimum": 0}}},
         "pair": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"$ref": "assembly.schema.json#/$defs/part_ref"}},
         "hole": {"$ref": "#/$defs/fit_endpoint"},
         "shaft": {"$ref": "#/$defs/fit_endpoint"},
@@ -346,10 +355,35 @@
         "note": {"type": "string", "minLength": 1},
         "axial_retainer": {"$ref": "#/$defs/axial_retainer"}
       },
+      "dependentRequired": {"ribs": ["compliance"]},
       "oneOf": [
+        {"required": ["fit"], "properties": {"nominal_mm": false, "deviations": false, "interference": false, "clearance": false, "compliance": false, "ribs": false}},
+        {"required": ["nominal_mm", "source", "deviations"], "properties": {"fit": false, "interference": false, "clearance": false}},
+        {"required": ["nominal_mm", "source", "interference"], "properties": {"fit": false, "deviations": false, "clearance": false}},
+        {"required": ["nominal_mm", "source", "clearance"], "properties": {"fit": false, "deviations": false, "interference": false, "compliance": false, "ribs": false}}
+      ],
+      "allOf": [{"oneOf": [
         {"required": ["pair"], "not": {"anyOf": [{"required": ["hole"]}, {"required": ["shaft"]}]}},
         {"required": ["hole", "shaft"], "not": {"required": ["pair"]}}
-      ]
+      ]}]
+    },
+    "fit_band": {
+      "description": "A band on the diameter, min <= max, in units mm or um",
+      "type": "object", "additionalProperties": false, "required": ["min", "max", "units"],
+      "properties": {"min": {"type": "number"}, "max": {"type": "number"}, "units": {"enum": ["mm", "um"]}}
+    },
+    "fit_deviations": {
+      "description": "Hole and shaft limit deviations from nominal_mm, lower <= upper, in units mm or um",
+      "type": "object", "additionalProperties": false, "required": ["units", "hole", "shaft"],
+      "properties": {
+        "units": {"enum": ["mm", "um"]},
+        "hole": {"$ref": "#/$defs/fit_limit_deviations"},
+        "shaft": {"$ref": "#/$defs/fit_limit_deviations"}
+      }
+    },
+    "fit_limit_deviations": {
+      "type": "object", "additionalProperties": false, "required": ["upper", "lower"],
+      "properties": {"upper": {"type": "number"}, "lower": {"type": "number"}}
     },
     "axial_retainer": {
       "description": "What keeps a press_fit or locating_fit from walking along its axis; the record validator requires one from stage parts on. Hardware types (circlip, set_screw, nut, pin, cap) name their modelled occurrences in parts",

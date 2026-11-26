@@ -587,8 +587,11 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
                  candidates: Iterable[Pair] | None = None, locating_fits: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
     """Only a classified declared interference fit (press or locating) or a declared heat-set insert on
     exactly that occurrence pair excuses overlap, as cad-motion pair_policy.allowed_pairs decides; an
-    interference fit that measures no overlap is a finding. `refs` maps an occurrence id to its copyable
-    reference.
+    interference fit that measures no overlap is a finding, unless its explicit limits start at zero
+    interference. A compliant (crush-rib) fit allows overlap up to its maximum interference on the diameter,
+    read from the row's `overlap_diametral_mm`: beyond it is a finding, unmeasured an explicit unknown in
+    `compliant_fits`. A fit cad-fits cannot read (`invalid`) is a finding. `refs` maps an occurrence id to its
+    copyable reference.
 
     A cleared row proves no overlap by its bounds; an exact row overlaps above INTERFERENCE_MM3; a
     failed row is unknown and fails. `named` limits the rows (`changed`: the changed-only selection,
@@ -617,13 +620,26 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
                  "ok": not hit or (g["method"] == "exact" and pair in effective_allowed)}
         rows["joint_pairs" if pair in joint_pairs else "pairs"].append(entry)
     declared_fit_findings = []
+    compliant = []
     for item in [*declarations, *locating]:
         pair = tuple(item["pair"])
-        if item["classification"] != "interference" or pair not in selected:
+        if pair not in selected:
+            continue
+        if item["classification"] == "invalid":
+            declared_fit_findings.append({**item, "type": "fit_invalid"})
+            continue
+        if item["classification"] != "interference":
             continue
         measurement = geometry.get(cast(Pair, pair))
+        if "compliance" in item:
+            row, finding = _compliant_fit(item, measurement, threshold)
+            compliant.append(row)
+            if finding is not None:
+                declared_fit_findings.append(finding)
+            continue
         if measurement is not None and measurement["interference_mm3"] is not None \
-                and measurement["interference_mm3"] <= threshold:
+                and measurement["interference_mm3"] <= threshold \
+                and (item.get("limits") or {}).get("max_clearance_mm", -1) < 0:
             declared_fit_findings.append({**item, "type": "declared_fit_not_realized", **measurement,
                                           "threshold_mm3": threshold})
     every = rows["pairs"] + rows["joint_pairs"]
@@ -634,9 +650,59 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
             "selection": "changed" if changed else ("all" if named is None else "named"),
             "threshold_mm3": threshold, "unknown_pairs": unknown, "unknown_allowed": unknown_allowed,
             "declared_pairs": declarations, "declared_heat_sets": inserts, "declared_locating_fits": locating,
-            "declared_fit_findings": declared_fit_findings,
+            "declared_fit_findings": declared_fit_findings, "compliant_fits": compliant,
             "min_clearance": {"pair": smallest["pair"], "clearance_mm": smallest["clearance_mm"]} if smallest else None,
             **rows}
+
+
+RIGID_PRESS_FIT_NOT_APPLICABLE = {
+    "outcome": "not_applicable",
+    "reason": "the interference is designed deformation of the compliant part (crush ribs): rigid press-fit stress, "
+              "press force and seat qualification do not apply; retention follows the joint's own source"}
+COMPLIANT_OVERLAP_TOLERANCE_MM = 1e-3  # the sampled diametral overlap of a measured pair, against its stated maximum
+
+
+def _compliant_fit(item: Mapping[str, Any], measurement: Mapping[str, Any] | None,
+                   threshold: float) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """(the coverage row, a finding or None) of one compliant interference fit: its overlap may reach the stated
+    maximum interference on the diameter; a model drawn beyond it is a finding. A shared volume whose diametral
+    depth was not measured is an explicit unknown, never a pass and never a blocker."""
+    maximum = item["max_interference_mm"]
+    row: dict[str, Any] = {"pair": list(item["pair"]), "interface": item["interface"], "source": item["source"],
+                           "compliance": item["compliance"], "max_interference_mm": maximum,
+                           "rigid_press_fit": dict(RIGID_PRESS_FIT_NOT_APPLICABLE)}
+    volume = None if measurement is None else measurement.get("interference_mm3")
+    diametral = None if measurement is None else measurement.get("overlap_diametral_mm")
+    if volume is not None and volume <= threshold:
+        return {**row, "outcome": "pass", "overlap_diametral_mm": 0.0}, None
+    if diametral is None:
+        return {**row, "outcome": "unknown",
+                "reason": "the diametral overlap was not measured: no exact shared volume with a cylindrical seat"}, None
+    row.update(overlap_diametral_mm=diametral)
+    if diametral > maximum + COMPLIANT_OVERLAP_TOLERANCE_MM:
+        return {**row, "outcome": "fail"}, {**item, "type": "compliant_fit_overlap_exceeded",
+                                            "overlap_diametral_mm": diametral, "max_interference_mm": maximum}
+    return {**row, "outcome": "pass"}, None
+
+
+def measure_compliant_overlaps(geometry: dict[Pair, dict[str, Any]], fits: Iterable[dict[str, Any]],
+                               parts: Mapping[str, Any], located: Mapping[str, tuple[str, Any]],
+                               relative: Mapping[Pair, Any]) -> None:
+    """Add `overlap_diametral_mm` (cad-motion pose.diametral_overlap_mm at the measured placement; None: no
+    cylindrical seat) to the exact row of each compliant interference fit whose pair shares volume; a kernel
+    failure leaves it unmeasured, with its `overlap_error`."""
+    pose = load_pose()
+    for item in fits:
+        pair = cast(Pair, tuple(item["pair"]))
+        row = geometry.get(pair)
+        if ("compliance" not in item or item["classification"] != "interference" or row is None
+                or row["method"] != "exact" or not (row["interference_mm3"] or 0.0) > pose.INTERFERENCE_MM3):
+            continue
+        shape_a, shape_b = (parts[located[oid][0]].shape for oid in pair)
+        try:
+            row["overlap_diametral_mm"] = pose.diametral_overlap_mm(shape_a, pose.placed(shape_b, relative[pair]))
+        except pose.MotionError as error:
+            row["overlap_error"] = str(error)
 
 
 def pair_clearance(geometry: dict[Pair, dict[str, Any]], requirements: Iterable[dict[str, Any]],
@@ -1307,6 +1373,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
     finally:
         if cache is not None:
             cache.close()
+    measure_compliant_overlaps(geometry, [*declared, *locating], parts, located, relative)
     manufacturing, made = manufacture.version_check(folder, manifest)
     printed = {pn: pose.Part(pn, part.name, made.get(pn, part.shape)) for pn, part in parts.items()}
     if selection is None:

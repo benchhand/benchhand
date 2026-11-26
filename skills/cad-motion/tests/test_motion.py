@@ -506,6 +506,28 @@ class PairRequirementTests(unittest.TestCase):
         self.assertEqual([item.get("engagement_length_mm") for item in with_length], [5.7])
         self.assertNotIn("engagement_length_mm", self.policy.declared_heat_sets(hw, [insert()], assembly)[0])
 
+    def test_explicit_limits_classify_by_the_iso_rule_and_an_unreadable_press_fit_is_reported(self) -> None:
+        def press(number: int, pair: list[str], **fit: object) -> dict:
+            return {"id": f"IF-00{number}", "from": "a", "to": "b", "type": "mounting", "description": "Seats.",
+                    "limits": {"press_fit": {"pair": pair, **fit}}}
+
+        intent = {"kind": "user", "reference": "crush-rib bearing seat", "origin": "lead"}
+        interfaces = [press(1, ["@arm-a", "TST-0201"], nominal_mm=22, source=intent, compliance="crush_rib",
+                            interference={"min": 0, "max": 1.013, "units": "mm"}),
+                      press(2, ["@arm-b", "TST-0201"], nominal_mm=5, source=intent,
+                            clearance={"min": 0.01, "max": 0.05, "units": "mm"}),
+                      press(3, ["@arm-a", "@arm-b"], fit="interference 0 to 1.013 mm, crush ribs")]
+        assembly, hw = assembly_of(GAP_YAML), Path("hw")
+        fits = self.policy.declared_press_fits(hw, interfaces, assembly)
+        self.assertEqual([(fit["pair"], fit["classification"]) for fit in fits], [
+            (["TST-0201", "arm-a"], "interference"), (["TST-0201", "arm-b"], "clearance"), (["arm-a", "arm-b"], "invalid")])
+        self.assertEqual((fits[0]["fit"], fits[0]["max_interference_mm"]), ("⌀22 interference 0/1.013, crush ribs", 1.013))
+        self.assertEqual(fits[0]["limits"], {"form": "interference", "nominal_mm": 22, "min_clearance_mm": -1.013,
+                                             "max_clearance_mm": 0})
+        self.assertIn("accepted forms", fits[2]["error"])
+        self.assertEqual(self.policy.allowed_pairs(fits, []), {("TST-0201", "arm-a")})
+        self.assertEqual(self.policy.fitted_pairs(fits), {("TST-0201", "arm-a"), ("TST-0201", "arm-b"), ("arm-a", "arm-b")})
+
     def test_a_running_fit_on_one_occurrence_twice_is_refused(self) -> None:
         twice = {"id": "IF-001", "from": "a", "to": "b", "type": "motion", "description": "Pivots.",
                  "limits": {"running_fit": {"fit": "5 f7", "pair": ["TST-0202", "@arm-p"]}}}
@@ -563,6 +585,20 @@ class JobsArgumentTests(unittest.TestCase):
 
 
 
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is required to build seats through OCP")
+class SeatOverlapTests(unittest.TestCase):
+    """pose.diametral_overlap_mm: how deep two shapes overlap across a cylindrical seat, on the diameter."""
+
+    def test_the_overlap_depth_of_a_plain_and_a_crush_rib_seat(self) -> None:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(HERE / "fixtures" / "seat_overlap_probe.py")],
+                              capture_output=True, text=True, check=False, timeout=900)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        found = json.loads(proc.stdout)
+        self.assertAlmostEqual(found["plain"], 0.6, delta=1e-4)   # 22.6 shaft in a 22 bore
+        self.assertAlmostEqual(found["ribs"], 0.8, delta=1e-4)    # rib tips 10.6 off the axis, shaft radius 11
+        self.assertIsNone(found["clear"])
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build and read STEP through OCP")

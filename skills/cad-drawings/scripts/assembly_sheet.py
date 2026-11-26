@@ -29,6 +29,7 @@ from typing import Any
 from assembly_check import DIRECTIONS, ORTHOGRAPHIC, PARTS_LIST_HEADINGS, TOP, PartsRow, ResolvedOperation, ViewRequest
 from drawing_document import (CENTRING_MARK_INSIDE, FRAME_CLEARANCE, STANDARD_SCALES, THIN_WIDTH, CompositionError,
                               PageLayout, SheetSpec, SvgAnnotation, SvgNote, SvgTable, page_layout, text_width)
+from drawing_intent import explicit_fit_text
 from freecad_views import ViewGeometry
 from layout_check import TEXT_ASCENT, TEXT_DESCENT, Box
 
@@ -376,8 +377,13 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
     until = acceptance_text(operation.acceptance, operation.features, measured, regime)
     data = None
     if operation.kind == "press_fit":
+<<<<<<< HEAD
         action = words(f"Press item {op.part_item} into {_into(op)}")
         data = words("fit ") + str(limit["fit"])
+=======
+        action = words(f"Press item {op.part_item} into item {op.into_item}")
+        data = words("fit ") + str(limit["fit"]) if "fit" in limit else words("fit " + explicit_fit_text(limit))
+>>>>>>> e29e6dd6f (feat(cad-fits): fits by explicit limits; crush-rib fits (wip))
     elif operation.kind == "heat_set":
         action = words(f"Heat-set item {op.part_item} into {_into(op)}")
         lower, upper = limit.get("hole_tol", (0.0, 0.0))

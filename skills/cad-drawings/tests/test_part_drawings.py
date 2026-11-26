@@ -186,6 +186,23 @@ class PrintedTolerances(unittest.TestCase):
         self.assertEqual(self.evaluate(fit, '<text x="0" y="0">⌀5.012/5.000 (5 H7)</text>', "asme")[1], "pass")
         self.assertEqual(self.evaluate(fit, '<text x="0" y="0">⌀5.012/5.000 (5 H7)</text>', "iso")[1], "fail")
 
+    def test_explicit_fit_limits_print_as_limits_or_a_band_never_an_iso_class(self) -> None:
+        import drawing_intent
+        import sheet
+
+        intent = {"kind": "user", "reference": "crush-rib bearing seat", "origin": "lead"}
+        ribs = drawing_intent._explicit_fit_tolerance("IF-011 press_fit", {
+            "nominal_mm": 22, "interference": {"min": 0, "max": 1.013, "units": "mm"}, "compliance": "crush_rib",
+            "source": intent, "hole": {"PN": "TST-0001", "feature": "seat"}, "shaft": {"PN": "TST-0002", "feature": "od"}},
+            "hole")
+        self.assertEqual(sheet.tolerance_text(ribs, 21.4, "iso"), ("21.4", " (interference 0/1.013, crush ribs)"))
+        seat = drawing_intent._explicit_fit_tolerance("IF-012 press_fit", {
+            "nominal_mm": 22, "source": intent, "deviations": {"units": "mm", "hole": {"upper": 0.021, "lower": 0},
+                                                                "shaft": {"upper": 0.15, "lower": 0.1}}}, "shaft")
+        self.assertEqual((seat.kind, seat.nominal, seat.designation), ("explicit", Decimal("22"), None))
+        self.assertEqual(sheet.tolerance_text(seat, 22.12, "iso"), ("22", " +0.150/+0.100"))
+        self.assertIsNone(drawing_intent._explicit_fit_tolerance("IF-013 press_fit", {"nominal_mm": 22}, "hole"))
+
 
 class EdgeAndTextureIndications(unittest.TestCase):
     """ISO 13715 edge sizes and their ASME notes, ISO 21920-1 symbols, and the gate's edge and texture rows."""

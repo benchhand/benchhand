@@ -196,6 +196,59 @@ class FitEndpointsAndHeatSets(unittest.TestCase):
         self.assertEqual(refused, {"clearance": "fail", "unclassified": "fail"})
         self.assertEqual((unrealized["status"], unrealized["declared_fit_findings"][0]["type"]), ("fail", "declared_fit_not_realized"))
 
+    CRUSH_RIB = ("      press_fit: {nominal_mm: 22, interference: {min: 0, max: 1.013, units: mm}, compliance: crush_rib,\n"
+                 "                  ribs: {count: 6, width_mm: 1.2}, pair: [TST-0002, TST-0001],\n"
+                 "                  source: {kind: user, reference: crush-rib bearing seat, origin: lead}}\n")
+
+    def compliant_check(self, fits: list[dict], volume: float, diametral: float | None = None) -> dict:
+        row: dict = {"clearance_mm": 0.0, "interference_mm3": volume, "method": "exact"}
+        if diametral is not None:
+            row["overlap_diametral_mm"] = diametral
+        with mock.patch.object(check, "load_pose", return_value=mock.Mock(INTERFERENCE_MM3=0.001)):
+            return check.interference({("TST-0001", "TST-0002"): row}, None, set(), set(), fits)
+
+    def test_a_crush_rib_fit_allows_overlap_up_to_its_stated_maximum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_interfaces(Path(tmp), self.CRUSH_RIB)
+            ribs = check.declared_press_fits(Path(tmp))
+        self.assertEqual([(f["classification"], f["compliance"], f["max_interference_mm"]) for f in ribs],
+                         [("interference", "crush_rib", 1.013)])
+        within = self.compliant_check(ribs, 40.0, 0.8)
+        self.assertEqual((within["status"], within["pairs"][0]["allowed"], within["declared_fit_findings"]), ("pass", True, []))
+        self.assertEqual(within["compliant_fits"][0]["outcome"], "pass")
+        beyond = self.compliant_check(ribs, 60.0, 1.2)
+        self.assertEqual(beyond["status"], "fail")
+        self.assertEqual([(f["type"], f["overlap_diametral_mm"], f["max_interference_mm"]) for f in beyond["declared_fit_findings"]],
+                         [("compliant_fit_overlap_exceeded", 1.2, 1.013)])
+        line_to_line = self.compliant_check(ribs, 0.0, 0.0)
+        self.assertEqual((line_to_line["status"], line_to_line["declared_fit_findings"]), ("pass", []),
+                         "a band from 0 interference is realised line to line")
+
+    def test_a_compliant_fit_states_that_rigid_press_fit_maths_does_not_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_interfaces(Path(tmp), self.CRUSH_RIB)
+            ribs = check.declared_press_fits(Path(tmp))
+        for name, diametral in (("measured", 0.8), ("unmeasured", None)):
+            with self.subTest(name):
+                compliant = self.compliant_check(ribs, 40.0, diametral)["compliant_fits"][0]
+                self.assertEqual(compliant["rigid_press_fit"]["outcome"], "not_applicable")
+                self.assertIn("designed deformation of the compliant part", compliant["rigid_press_fit"]["reason"])
+        unmeasured = self.compliant_check(ribs, 40.0)
+        self.assertEqual((unmeasured["status"], unmeasured["compliant_fits"][0]["outcome"]), ("pass", "unknown"),
+                         "an unmeasured overlap is stated, never a silent pass and never a blocker")
+        self.assertIn("not measured", unmeasured["compliant_fits"][0]["reason"])
+
+    def test_a_plain_language_press_fit_is_a_check_finding_not_a_usage_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_interfaces(Path(tmp), "      press_fit: {fit: 'interference 0 to 1.013 mm, crush ribs', pair: [TST-0002, TST-0001]}\n")
+            plain = check.declared_press_fits(Path(tmp))
+        self.assertEqual(plain[0]["classification"], "invalid")
+        self.assertIn("interfaces.yaml#/interfaces/0/limits/press_fit", plain[0]["error"])
+        self.assertIn("accepted forms: fit: 'SIZE HOLE/SHAFT'", plain[0]["error"])
+        result = self.compliant_check(plain, 40.0)
+        self.assertEqual((result["status"], result["pairs"][0]["allowed"]), ("fail", False))
+        self.assertEqual([f["type"] for f in result["declared_fit_findings"]], ["fit_invalid"])
+
 
 def set_model(hw: Path, pn: str, kernel: str, fixture: str, title: str, params: dict | None = None) -> None:
     folder = hw / "parts" / pn

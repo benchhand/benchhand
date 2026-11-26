@@ -96,3 +96,55 @@ class TableRuleTests(unittest.TestCase):
             self.assertEqual(fits.main(["25", "H7/p6", "--expect", "interference"]), 0)
             self.assertEqual(fits.main(["25", "H7/k6", "--expect", "clearance"]), 1)
             self.assertEqual(fits.main(["130", "H7/k6"]), 2)
+
+
+DESIGN_INTENT = {"kind": "decision", "reference": "crush-rib seat", "decision": "DR-001"}
+
+
+class DeclaredFitTests(unittest.TestCase):
+    """An interface fit entry: an ISO designation or explicit limits, classified by one rule."""
+
+    def test_an_interference_band_on_the_diameter_is_an_interference_fit(self) -> None:
+        fit = fits.declared_fit({"nominal_mm": 22, "interference": {"min": 0, "max": 1.013, "units": "mm"},
+                                 "source": DESIGN_INTENT})
+        self.assertEqual((fit["form"], fit["type"]), ("interference", "interference"))
+        # interference 0..1.013 on the diameter is a diametral clearance of -1.013..0
+        self.assertEqual((fit["min_clearance_mm"], fit["max_clearance_mm"]), (-1.013, 0))
+
+    def test_a_clearance_band_in_micrometres_is_a_clearance_fit(self) -> None:
+        fit = fits.declared_fit({"nominal_mm": 8, "clearance": {"min": 20, "max": 60, "units": "um"},
+                                 "source": DESIGN_INTENT})
+        self.assertEqual((fit["type"], fit["min_clearance_mm"], fit["max_clearance_mm"]), ("clearance", 0.02, 0.06))
+
+    def test_hole_and_shaft_deviations_classify_as_their_iso_class_does(self) -> None:
+        # 25 H7/k6 as limits: hole +21/0 um, shaft +15/+2 um -> clearance -15..+19 um, transition (MM, FR above)
+        fit = fits.declared_fit({"nominal_mm": 25, "source": DESIGN_INTENT, "deviations": {
+            "units": "um", "hole": {"upper": 21, "lower": 0}, "shaft": {"upper": 15, "lower": 2}}})
+        self.assertEqual((fit["type"], fit["min_clearance_mm"], fit["max_clearance_mm"]), ("transition", -0.015, 0.019))
+        self.assertEqual((fit["hole"], fit["shaft"]), ({"upper_mm": 0.021, "lower_mm": 0}, {"upper_mm": 0.015, "lower_mm": 0.002}))
+
+    def test_an_iso_designation_classifies_unchanged(self) -> None:
+        fit = fits.declared_fit({"fit": "25 H7/p6"})
+        self.assertEqual((fit["form"], fit["type"], fit["label"]), ("iso", "interference", "25 H7/p6"))
+        self.assertEqual((fit["min_clearance_mm"], fit["max_clearance_mm"]), (-0.035, -0.001))
+
+    def test_a_crush_rib_fit_prints_its_limits_and_ribs(self) -> None:
+        fit = fits.declared_fit({"nominal_mm": 22, "interference": {"min": 0, "max": 1.013, "units": "mm"},
+                                 "compliance": "crush_rib", "ribs": {"count": 6, "width_mm": 1.2}, "source": DESIGN_INTENT})
+        self.assertEqual(fit["compliance"], "crush_rib")
+        self.assertEqual(fit["label"], "⌀22 interference 0/1.013, crush ribs (6 x 1.2 wide)")
+
+    def test_a_plain_language_or_malformed_fit_names_the_accepted_forms(self) -> None:
+        cases = {"plain language": {"fit": "interference 0 to 1.013 mm, crush ribs"},
+                 "no form": {"pair": ["TST-0001", "TST-0002"]},
+                 "two forms": {"fit": "22 H7/p6", "nominal_mm": 22, "source": DESIGN_INTENT,
+                               "interference": {"min": 0, "max": 1, "units": "mm"}},
+                 "band without nominal": {"interference": {"min": 0, "max": 1, "units": "mm"}, "source": DESIGN_INTENT},
+                 "inverted band": {"nominal_mm": 22, "source": DESIGN_INTENT,
+                                   "interference": {"min": 1, "max": 0, "units": "mm"}},
+                 "no source": {"nominal_mm": 22, "interference": {"min": 0, "max": 1, "units": "mm"}},
+                 "compliant clearance": {"nominal_mm": 22, "source": DESIGN_INTENT, "compliance": "crush_rib",
+                                         "clearance": {"min": 0, "max": 1, "units": "mm"}}}
+        for name, entry in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(fits.FitError, "accepted forms: fit: 'SIZE HOLE/SHAFT'"):
+                fits.declared_fit(entry)

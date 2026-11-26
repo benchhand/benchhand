@@ -78,6 +78,8 @@ def tolerance_text(tol: Tolerance | None, measured: float, regime: str) -> tuple
         if regime == "asme":
             return limits(high, low), f" ({number(nominal)} {tol.designation})"
         return f"{number(nominal)} {tol.designation}", f" ({signed(tol.upper)}/{signed(tol.lower)})"
+    if tol.kind == "band":  # a fit band on the diameter states no limits of this side: the modelled size and the band
+        return number(measured), f" ({tol.designation})"
     if tol.lower == -tol.upper:
         return number(nominal), f" ±{number(tol.upper)}"
     return number(nominal), f" {signed(tol.upper)}/{signed(tol.lower)}"

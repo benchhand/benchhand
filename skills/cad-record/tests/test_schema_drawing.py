@@ -381,6 +381,43 @@ class DrawingRecordAdditions(unittest.TestCase):
                     else:
                         self.assert_rejected("engagement_length_mm")
 
+    def test_explicit_and_compliant_fits_validate(self) -> None:
+        limits = lambda: self.docs["interfaces.yaml"]["interfaces"][0]["limits"]  # noqa: E731
+        intent = {"kind": "user", "reference": "crush-rib bearing seat design intent", "origin": "lead"}
+        forms = {
+            "crush-rib interference band": {"nominal_mm": 22, "interference": {"min": 0, "max": 1.013, "units": "mm"},
+                                            "compliance": "crush_rib", "ribs": {"count": 6, "width_mm": 1.2},
+                                            "source": intent},
+            "hole and shaft deviations": {"nominal_mm": 5, "source": intent, "deviations": {
+                "units": "um", "hole": {"upper": 12, "lower": 0}, "shaft": {"upper": 20, "lower": 12}}},
+        }
+        pristine = copy.deepcopy((self.docs, self.parts))
+        for name, form in forms.items():
+            with self.subTest(name):
+                self.docs, self.parts = copy.deepcopy(pristine)
+                fit = limits()["press_fit"]
+                fit.pop("fit")
+                fit.update(form)
+                self.assert_valid()
+
+    def test_an_unreadable_fit_is_a_finding_naming_the_field_and_the_accepted_forms(self) -> None:
+        accepted = "accepted forms: fit: 'SIZE HOLE/SHAFT'"
+        intent = {"kind": "user", "reference": "crush-rib bearing seat design intent", "origin": "lead"}
+        band = {"min": 0, "max": 1.013, "units": "mm"}
+        cases: dict[str, tuple[Callable[[dict], None], str]] = {
+            "plain-language press fit": (lambda l: l["press_fit"].update(fit="interference 0 to 1.013 mm, crush ribs"),
+                                         f"limits/press_fit: fit 'interference 0 to 1.013 mm, crush ribs' does not "
+                                         f"start with a nominal size in mm; {accepted}"),
+            "a designation and a band": (lambda l: l["press_fit"].update(nominal_mm=22, interference=band, source=intent),
+                                         f"limits/press_fit: not one accepted fit form; {accepted}"),
+            "a band without its source": (lambda l: (l["press_fit"].pop("fit"), l["press_fit"].update(
+                nominal_mm=22, interference=band)), f"limits/press_fit: not one accepted fit form; {accepted}"),
+            "an inverted band": (lambda l: (l["press_fit"].pop("fit"), l["press_fit"].update(
+                nominal_mm=22, source=intent, interference={"min": 1, "max": 0, "units": "mm"})),
+                f"limits/press_fit: interference.min 1 mm is above interference.max 0 mm; {accepted}"),
+        }
+        self.run_cases(cases, lambda: self.docs["interfaces.yaml"]["interfaces"][0]["limits"])
+
     def test_bom_procurement_columns(self) -> None:
         def designation(rows: list[dict[str, str]]) -> None:
             rows[1]["designation"] = "ISO 2338 5 x 20"
