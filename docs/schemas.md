@@ -20,6 +20,7 @@ schema-sha256 aa6604769841c3c43a57d3f6b8947e331675b8c81dba09b95a210d1cae839dac s
 schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 skills/cad-record/schemas/manufacturing.schema.json
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 schema-sha256 7e31ffb8d6a6abc67e890d6b0543f581a9aa8e23af0d24fbffbbb8a0a1fe79c9 skills/cad-record/schemas/part.schema.json
+schema-sha256 a925c74c84c3c9b3ef53579fdb4d41f295eef9af85ea8646996db71d5db66b36 skills/cad-record/schemas/preflight-report.schema.json
 schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
 schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
 schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
@@ -5770,6 +5771,70 @@ Source: `/properties/transparency`
 How much light the part passes; absent means opaque. Only a transparent part is see-through to the visibility check. An optical requirement is a hard selection constraint met by a purchased transparent part or identified transparent stock on a suitable route, never by an opaque process
 
 Alias of `Literal["opaque", "translucent", "transparent"]`
+
+## preflight-report.schema.json
+
+- File: `skills/cad-record/schemas/preflight-report.schema.json`
+- `$id`: `https://srobroek.com/cad/schemas/preflight-report.schema.json`
+
+CAD preflight report
+
+### PreflightReport
+
+Source: schema root
+
+**CAD preflight report**
+
+The JSON report of cad-flow preflight.py (`--json`, and the report stored in a warm-up record). A pass, fail or warn check is counted; an info check reports a fact, is not counted and never fails a report.
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `summary` | `str` | yes |  |  |
+| `exit_code` | `Literal[0, 1]` | yes |  | 1 when a required check is not pass or info. |
+| `counts` | `PreflightReportCounts` | yes |  |  |
+| `checks` | `list[PreflightReportCheck]` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+
+### PreflightReportCheck
+
+Source: `/$defs/check`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `id` | `str` | yes |  |  |
+| `name` | `str` | yes |  |  |
+| `status` | `Literal["pass", "fail", "warn", "info"]` | yes |  |  |
+| `required` | `bool` | yes |  |  |
+| `detail` | `str` | yes |  |  |
+| `fix` | `str` | yes |  |  |
+| `elapsed_s` | `float` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `id`: minLength: 1
+- `name`: minLength: 1
+- `elapsed_s`: minimum: 0
+
+### PreflightReportCounts
+
+Source: `/properties/counts`
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `pass` | `int` | yes |  |  |
+| `fail` | `int` | yes |  |  |
+| `warn` | `int` | yes |  |  |
+
+Constraints not expressed by the type:
+
+- additionalProperties: false
+- `pass`: minimum: 0
+- `fail`: minimum: 0
+- `warn`: minimum: 0
 
 ## product.schema.json
 

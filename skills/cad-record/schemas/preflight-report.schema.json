@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://srobroek.com/cad/schemas/preflight-report.schema.json",
+  "title": "CAD preflight report",
+  "description": "The JSON report of cad-flow preflight.py (`--json`, and the report stored in a warm-up record). A pass, fail or warn check is counted; an info check reports a fact, is not counted and never fails a report.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "exit_code", "counts", "checks"],
+  "properties": {
+    "summary": {"type": "string"},
+    "exit_code": {"type": "integer", "enum": [0, 1], "description": "1 when a required check is not pass or info."},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "fail", "warn"],
+      "properties": {
+        "pass": {"type": "integer", "minimum": 0},
+        "fail": {"type": "integer", "minimum": 0},
+        "warn": {"type": "integer", "minimum": 0}
+      }
+    },
+    "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}}
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "status", "required", "detail", "fix", "elapsed_s"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "enum": ["pass", "fail", "warn", "info"]},
+        "required": {"type": "boolean"},
+        "detail": {"type": "string"},
+        "fix": {"type": "string"},
+        "elapsed_s": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}
