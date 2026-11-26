@@ -649,6 +649,9 @@ class Calibration:
     valid_until: str | None
 
 
+CALIBRATION_STATES = ("standard", "custom", "unknown")
+
+
 @dataclass(frozen=True)
 class CapabilityProfile:
     id: str
@@ -660,7 +663,7 @@ class CapabilityProfile:
     materials: tuple[Mapping[str, Any], ...] | Fact
     calibrations: tuple[Calibration, ...]
     raw: Mapping[str, Any]
-
+    calibration_state: str | None = None  # standard, custom or unknown; None when the profile records none
 
 @dataclass(frozen=True)
 class MaterialProperty:
@@ -2043,16 +2046,32 @@ class _Reader:
             if limits is not None and source is not None:
                 calibrations.append(Calibration(data.get("id"), data.get("characteristic"), freeze(scope), limits, uncertainty,
                                                 int(result.get("samples", 0)), source, data.get("date"), data.get("valid_until")))
-        state = _mapping(item.get("calibration_state"))
-        self.source(state.get("source"), path, f"{pointer}/calibration_state/source")
-        if state.get("status") == "custom" and not calibrations:
-            self.problem("intent.calibration_state", path, f"{pointer}/calibration_state",
-                         f"{ident}: calibration_state custom has no measured calibration; record one in calibrations, "
-                         "or state standard or unknown", "warning")
+        status = self.calibration_state(item, bool(calibrations), ident, path, pointer)
         if not isinstance(ident, str):
             return None
         return CapabilityProfile(ident, int(item.get("revision", 0)), process, item.get("provider"), bool(item.get("template")),
-                                 params, materials, tuple(calibrations), freeze(item))
+                                 params, materials, tuple(calibrations), freeze(item), status)
+
+    def calibration_state(self, item: Mapping[str, Any], measured: bool, ident: Any, path: str, pointer: str) -> str | None:
+        """The typed status of a profile's calibration_state: None when none is recorded, `unknown` (with a warning) when
+        it is not a mapping with a known status, since a snapshot is normalised without schema validation. A source is
+        read like any other. `custom` with no measured calibration warns. It never blocks anything."""
+        raw = item.get("calibration_state")
+        if raw is None:
+            return None
+        where = f"{pointer}/calibration_state"
+        state = _mapping(raw)
+        status = state.get("status")
+        if not isinstance(status, str) or status not in CALIBRATION_STATES:
+            self.problem("intent.calibration_state", path, where,
+                         f"{ident}: calibration_state is not a status of {', '.join(CALIBRATION_STATES)}; read as unknown", "warning")
+            status = "unknown"
+        self.source(state.get("source"), path, f"{where}/source")
+        if status == "custom" and not measured:
+            self.problem("intent.calibration_state", path, where,
+                         f"{ident}: calibration_state custom has no measured calibration; record one in calibrations, "
+                         "or state standard or unknown", "warning")
+        return status
 
     def materials(self) -> Mapping[str, MaterialProfile]:
         path = "hw/manufacturing/materials.yaml"

@@ -763,8 +763,7 @@ class Context:
         """What the capability profile's recorded calibration_state says where a guideline value governs, for a report to
         quote; empty when none is recorded. Wording only: it never changes an outcome."""
         profile = profile or self.profile
-        state = profile.raw.get("calibration_state") if profile is not None else None
-        status = state.get("status") if state else None
+        status = profile.calibration_state if profile is not None else None
         if status == "standard":
             return "standard built-in calibration; guideline deviations apply"
         if status == "custom":
