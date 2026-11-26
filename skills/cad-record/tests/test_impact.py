@@ -43,6 +43,17 @@ def documents() -> dict[str, Any]:
     return {rel: data for rel, data in fx.tst_record().items() if not rel.startswith("_")}
 
 
+def before_the_optional_machine(docs: dict[str, Any], *, equipment: bool = True) -> dict[str, Any]:
+    """`docs` with the use-case inputs fixtures had before the machine became optional (benchhand-miw): Q-010 also asks
+    for the equipment, and with `equipment` the use case tracks the equipment list as unknown under Q-010."""
+    for entry in docs["requirements.yaml"]["open_questions"]:
+        if entry["id"] == "Q-010":
+            entry["question"] = "Which equipment and operators are available, and is outsourcing acceptable?"
+    if equipment:
+        docs["product.yaml"]["use_case"]["capability"]["equipment"] = fx.unknown(question="Q-010")
+    return docs
+
+
 def normalized(docs: dict[str, Any]) -> Any:
     return mi.normalize_record(copy.deepcopy(docs))
 
@@ -953,10 +964,12 @@ class Selection(unittest.TestCase):
 
     def test_records_without_a_colour_keep_their_recorded_selection_digest(self) -> None:
         """Digests recorded in selection.yaml (assessment.input_sha256) stay valid. The pins come from the
-        digest before color left the scope."""
+        digest before color left the scope, so each fixture is restored to the inputs it had then."""
         digest = acceptance.evidence.selection.input_digest
-        self.assertEqual(digest(documents()), "14eefb6b8e5cb822baae30ec3612eefefac8d22e55482ef23227234fa73ea01d")
-        self.assertEqual(self.digest, "d22bad8dfe54d21aea9dc9248ae15c665d0be4741a70b097e292379955387645")
+        self.assertEqual(digest(before_the_optional_machine(documents())),
+                         "14eefb6b8e5cb822baae30ec3612eefefac8d22e55482ef23227234fa73ea01d")
+        cover = before_the_optional_machine(acceptance.selection_scenarios().qualified_polymer_cover(), equipment=False)
+        self.assertEqual(digest(cover), "d22bad8dfe54d21aea9dc9248ae15c665d0be4741a70b097e292379955387645")
 
     def test_confirming_the_choice_is_no_selection_input(self) -> None:
         before, _ = acceptance.recorded_selection(acceptance.selection_scenarios().qualified_polymer_cover())
