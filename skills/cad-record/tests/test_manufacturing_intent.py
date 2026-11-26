@@ -482,6 +482,17 @@ class UseCaseReadiness(unittest.TestCase):
         self.assertEqual(mi.assess_use_case(mi.normalize_record(documents)).open_questions, ("Q-050",))
         self.assertFalse(mi.assess_use_case(mi.load_record(fx.LAMP)).final_ready)
 
+    def test_an_unknown_fact_of_a_listed_load_blocks_and_is_named(self) -> None:
+        """A populated loads list is not a known load case: each load's magnitude, duration, frequency and cycles count."""
+        for name in ("magnitude", "duration", "frequency", "cycles"):
+            with self.subTest(field=name):
+                documents = self.confirmed()
+                documents["product.yaml"]["use_case"]["loads"][0][name] = fx.unknown("never measured")
+                assessment = mi.assess_use_case(mi.normalize_record(documents))
+                self.assertFalse(assessment.final_ready)
+                self.assertIn(f"loads.head_load.{name}", assessment.unknown)
+                self.assertIn(f"use_case.loads.head_load.{name} is unknown and no open question tracks it", assessment.blocking)
+
     def test_a_resolved_question_does_not_track_an_unknown(self) -> None:
         documents = self.confirmed()
         question = mi.normalize_record(fx.tst_record()).use_case.facts["environment.uv"].question

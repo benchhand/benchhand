@@ -150,6 +150,13 @@ class AssessmentBeforeFinalRecommendation(unittest.TestCase):
         computed = evaluations(candidate(report, "convenient_print"), "REQ-001")
         self.assertTrue(all("the operating temperature is unknown" in e["uncertainty"] for e in computed))
 
+    def test_an_unknown_load_magnitude_refuses_a_final_choice_and_is_named(self) -> None:
+        documents = scenarios.qualified_polymer_cover()
+        documents["product.yaml"]["use_case"]["loads"][0]["magnitude"] = fx.unknown("never measured")
+        report = assess(self, documents)
+        self.assertEqual((report["status"], only_decision(report)["final_allowed"]), ("conditional", False))
+        self.assertIn("use_case.loads.service_load.magnitude", [m["field"] for m in report["use_case"]["missing"]])
+
     def test_the_report_is_read_only(self) -> None:
         hw = write(self, scenarios.unassessed_case())
         before = tree_digest(hw.parent)
