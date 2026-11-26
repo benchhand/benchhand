@@ -239,6 +239,7 @@
             "form": {"$ref": "manufacturing.schema.json#/$defs/text_fact"},
             "dimensions": {"$ref": "manufacturing.schema.json#/$defs/text_fact"},
             "thickness": {"$ref": "manufacturing.schema.json#/$defs/quantity_fact"},
+            "coating": {"description": "the stock's coating or film, \"none\" for uncoated stock; a cutting approval must name the same", "$ref": "manufacturing.schema.json#/$defs/text_fact"},
             "state": {"$ref": "manufacturing.schema.json#/$defs/text"},
             "supplier": {"$ref": "manufacturing.schema.json#/$defs/text"}
           }
