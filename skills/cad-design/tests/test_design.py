@@ -491,6 +491,8 @@ joints:
    mount: {point: [2, 1, 5]}}
 - {id: J-627, type: fixed, parent: TST-0605, child: TST-0608, axis: [0, 0, 1], origin: [1000, 0, 5], min: 0, max: 0, nominal: 0,
    mount: {point: [30, 0, 5]}}
+- {id: J-631, type: fixed, parent: TST-0605, child: TST-0608, axis: [1, 0, 0], origin: [-490, 0, 5], min: 0, max: 0, nominal: 0,
+   mount: {point: [2, 1, 5]}}
 - {id: J-628, type: revolute, parent: TST-0602, child: TST-0622, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 - {id: J-629, type: fixed, parent: TST-0605, child: TST-0623, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
 - {id: J-630, type: fixed, parent: TST-0605, child: TST-0624, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
@@ -673,6 +675,15 @@ class JointGeometryTests(unittest.TestCase):
         missing = self.missing("J-627")
         self.assertEqual(sorted(missing), ["TST-0605", "TST-0608"])
         self.assertAlmostEqual(missing["TST-0608"]["contact"]["locator_mm"], 20.0, places=6)
+
+    def test_a_mount_point_on_a_patch_off_the_datum_fails(self) -> None:
+        """The mount point lies on the pad, but the datum plane x = -490 is 480 mm from it: datum and locator pass
+        separately or not at all."""
+        missing = self.missing("J-631")
+        self.assertEqual(sorted(missing), ["TST-0605", "TST-0608"])
+        contact = missing["TST-0608"]["contact"]
+        self.assertEqual((contact["locator"], contact["locator_mm"]), ("mount", 0.0))
+        self.assertAlmostEqual(contact["datum_mm"], 480.0, places=6)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
