@@ -836,6 +836,7 @@ class StepAssembly:
 
     definitions: dict[str, Part]
     components: tuple[Component, ...]
+    unnumbered: tuple[str, ...] = ()  # leaf products whose name carries no PN, which the components leave out
 
 
 def component_name(part: Part, occurrence: Any) -> str | None:
@@ -1049,17 +1050,25 @@ def rigid_from_trsf(trsf: Any, where: str) -> Rigid:
     return Rigid(tuple(tuple(row[:3]) for row in rows), tuple(row[3] for row in rows))  # type: ignore[arg-type]
 
 
+def _label_name(label: Any) -> str:
+    """An XCAF label's TDataStd_Name, or "" without one."""
+    from OCP.TDataStd import TDataStd_Name
+
+    attribute = TDataStd_Name()
+    return attribute.Get().ToExtString() if label.FindAttribute(TDataStd_Name.GetID_s(), attribute) else ""
+
+
 def read_assembly_step(path: Path) -> StepAssembly:
     """Read an assembly STEP through XCAF: each PN's definition from its referred product label, and
     every component placing it, with its cumulative location and its product path from the root.
 
-    A leaf product whose name does not start with a PN is ignored. Two different products named
-    with one PN are refused: a PN is one definition.
+    A leaf product whose name does not start with a PN is no component; its name is listed under
+    `unnumbered`. An assembly product needs no PN. Two different products named with one PN are
+    refused: a PN is one definition.
     """
     from OCP.IFSelect import IFSelect_RetDone
     from OCP.STEPCAFControl import STEPCAFControl_Reader
     from OCP.TCollection import TCollection_ExtendedString
-    from OCP.TDataStd import TDataStd_Name
     from OCP.TDF import TDF_Label
     from OCP.TDocStd import TDocStd_Document
     from OCP.TopLoc import TopLoc_Location
@@ -1077,14 +1086,11 @@ def read_assembly_step(path: Path) -> StepAssembly:
         if not reader.Transfer(doc):
             raise MotionError(f"STEP transfer failed for {path}")
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
-
-    def name(label: Any) -> str:
-        attribute = TDataStd_Name()
-        return attribute.Get().ToExtString() if label.FindAttribute(TDataStd_Name.GetID_s(), attribute) else ""
-
+    name = _label_name
     definitions: dict[str, Part] = {}
     labels: dict[str, Any] = {}
     components: list[Component] = []
+    unnumbered: list[str] = []
 
     def visit(label: Any, location: Any, trail: tuple[str, ...], instance: Any) -> None:
         if XCAFDoc_ShapeTool.IsAssembly_s(label):
@@ -1100,6 +1106,7 @@ def read_assembly_step(path: Path) -> StepAssembly:
         product = name(label)
         match = PN_PREFIX.match(product)
         if not match:
+            unnumbered.append(product or "<unnamed>")
             return
         pn = match.group(1)
         if pn not in definitions:
@@ -1116,7 +1123,7 @@ def read_assembly_step(path: Path) -> StepAssembly:
     tool.GetFreeShapes(roots)
     for index in range(1, roots.Length() + 1):
         visit(roots.Value(index), TopLoc_Location(), (), None)
-    return StepAssembly(definitions, tuple(components))
+    return StepAssembly(definitions, tuple(components), tuple(unnumbered))
 
 
 def load_definitions(hw: Path, parts_dir: Path, record_hw: Path | None = None) -> dict[str, Part]:
@@ -1299,9 +1306,11 @@ def write_part_step(path: Path, part: Part) -> None:
 
 
 def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Part], occurrences: Iterable[Any],
-                        placements: Mapping[str, Rigid]) -> None:
+                        placements: Mapping[str, Rigid], groups: Mapping[str, str] | None = None) -> None:
     """Write AP242: one product per PN definition and, under the top product `top_name`, one component per
     occurrence at `placements[occurrence.id]`. An explicit occurrence's component is named `<product> [@id]`.
+    With `groups` (occurrence id -> group name), each occurrence goes under an unplaced group product of that
+    name below the top, the groups in the order their first occurrence comes; placements stay in the top's frame.
 
     A definition has no location of its own: the placement belongs on the component. The writer raises
     MotionError for a located definition, because its validation properties would vanish."""
@@ -1311,6 +1320,18 @@ def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Par
     top = tool.NewShape()
     _set_name(top, top_name)
     labels: dict[str, Any] = {}
+    parents: dict[str, Any] = {}
+
+    def parent_of(occurrence: Any) -> Any:
+        if groups is None:
+            return top
+        name = groups[occurrence.id]
+        if name not in parents:
+            parents[name] = tool.NewShape()
+            _set_name(parents[name], name)
+            _set_name(tool.AddComponent(top, parents[name], TopLoc_Location()), name)
+        return parents[name]
+
     for occurrence in occurrences:
         part = definitions[occurrence.pn]
         if occurrence.pn not in labels:
@@ -1319,7 +1340,8 @@ def write_assembly_step(path: Path, top_name: str, definitions: Mapping[str, Par
                                   f"definition and put the placement on the component")
             labels[occurrence.pn] = _add_shape(tool, part.shape)
             _set_name(labels[occurrence.pn], part.name)
-        component = tool.AddComponent(top, labels[occurrence.pn], TopLoc_Location(to_trsf(placements[occurrence.id])))
+        component = tool.AddComponent(parent_of(occurrence), labels[occurrence.pn],
+                                      TopLoc_Location(to_trsf(placements[occurrence.id])))
         tag = component_name(part, occurrence)
         if tag is not None:
             _set_name(component, tag)

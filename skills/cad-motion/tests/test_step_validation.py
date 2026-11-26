@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import shutil
@@ -47,6 +48,12 @@ class StepValidationTests(unittest.TestCase):
 
     def write(self, name: str, *mode: str) -> str:
         return self.run_probe(name, *mode)[0].read_text(encoding="utf-8")
+
+    def test_the_reader_reports_an_unnumbered_leaf_and_passes_unnumbered_groups(self) -> None:
+        proc = subprocess.run(["uv", "run", "--quiet", "--script", str(HERE / "fixtures" / "unnumbered_probe.py"),
+                               str(self.root / "unnumbered.step")], capture_output=True, text=True, check=False, timeout=900)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        self.assertEqual(json.loads(proc.stdout), {"components": ["TST-0001 Base", "TST-0002 Pin"], "unnumbered": ["Body001"]})
 
     def values(self, text: str) -> tuple[float, float, list[float]]:
         volume, area, centre = VOLUME.search(text), AREA.search(text), CENTRE.search(text)

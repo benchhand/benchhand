@@ -598,6 +598,7 @@ TST_RECORD_OBLIGATIONS = (
     'cad.glb_step_agreement@TST-0001',
     'cad.glb_step_agreement@TST-0002',
     'cad.glb_step_agreement@TST-0004',
+    'cad.product_exports@product',
     'cad.readback@TST-0001',
     'cad.readback@TST-0002',
     'cad.readback@TST-0004',
@@ -656,6 +657,15 @@ TST_RECORD_OBLIGATIONS = (
 class RequiredChecks(unittest.TestCase):
     def obligations(self, documents: dict[str, Any]) -> dict[str, Any]:
         return {o.id: o for o in mi.required_checks(mi.normalize_record(documents))}
+
+    def test_a_catalogue_only_product_owes_its_product_exports(self) -> None:
+        bearing = fx.part("TST-0003", "Bearing", process="purchased", make_buy="buy", procurement={"mode": "catalog"},
+                          part_intent=fx.intent(route=[fx.operation("buy", "purchased")]))
+        owed = self.obligations(fx.record(parts=[bearing]))
+        self.assertEqual([ident for ident in owed if ident.startswith("cad.")], ["cad.product_exports@product"])
+        product = owed["cad.product_exports@product"]
+        self.assertEqual((product.family, dict(product.subject), product.level, product.stage),
+                         ("cad.product_exports", {"product": True}, "cad_valid", "layout"))
 
     def test_existing_equipment_carries_no_obligation_of_its_own(self) -> None:
         documents = fx.record(parts=[fx.part("TST-0001"), fx.existing_part("TST-0009")],

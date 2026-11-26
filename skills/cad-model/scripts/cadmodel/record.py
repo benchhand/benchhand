@@ -50,6 +50,11 @@ def load_yaml_loader() -> Any:
     return _load("cad_record_yaml_loader", YAML_LOADER_SCRIPT)
 
 
+def load_sourcing() -> Any:
+    """cad-record `sourcing.py` under `cad_record_sourcing`: which parts are delivered, and each part's export group."""
+    return _load("cad_record_sourcing", RECORD_SCRIPTS / "sourcing.py")
+
+
 def load_validate() -> Any:
     """cad-record `validate.py` under `cad_record_validate`, loaded on first call. `run` consults it for the
     project-start profile only: a gate that decides refuse or allow and changes no output byte. cad-motion

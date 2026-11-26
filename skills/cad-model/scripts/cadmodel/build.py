@@ -464,6 +464,16 @@ def totals(metrics: Mapping[str, Any], placed: Mapping[str, Any], quantity: Mapp
             "occurrences_without_density": sorted(oid for oid, o in placed.items() if metrics[o["PN"]]["mass_g"] is None)}
 
 
+def product_totals(metrics: Mapping[str, Any], placed: Mapping[str, Any], delivered: Iterable[str]) -> dict[str, Any]:
+    """`totals` over the delivered occurrences (cad-record sourcing.delivered) and their PNs only, with the
+    occurrences of existing equipment named under `existing_occurrences`."""
+    shipped = {oid: placed[oid] for oid in delivered}
+    pns = {occurrence["PN"] for occurrence in shipped.values()}
+    quantity = {pn: sum(1 for o in shipped.values() if o["PN"] == pn) for pn in sorted(pns)}
+    return {**totals({pn: m for pn, m in metrics.items() if pn in pns}, shipped, quantity),
+            "existing_occurrences": [oid for oid in placed if oid not in shipped]}
+
+
 def write_json(path: Path, data: Any) -> None:
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
@@ -611,10 +621,26 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
                        "findings": [finding(pn, "manufacture", manufacture.failure_message(row), "ManufactureError")
                                     for pn, row in unmade.items()]}
         top = f"{pose.product_id(hw)} {label}"
+        sourcing = record.load_sourcing()
+        try:
+            group_of_pn = {pn: sourcing.group(snapshot.parts.get(pn) or {"PN": pn})
+                           for pn in {*parts, *(chain.pn(oid) for oid in chain.ids)}}
+        except sourcing.SourcingError as error:
+            raise UsageError(f"hw/parts: {error}") from error
+        delivered = [oid for oid in chain.ids if sourcing.delivered(snapshot.parts.get(chain.pn(oid)) or {})]
         pose.write_assembly_step(work / "assembly.step", top, parts, [chain.inventory.get(i) for i in chain.ids],
                                  transforms)
+        # the new product exports are grouped in the STEP too; assembly.step keeps its flat tree, whose component
+        # paths its readers rely on (pose.read_assembly_step), until they resolve occurrences by name
+        grouped = sorted(delivered, key=lambda oid: sourcing.GROUPS.index(group_of_pn[chain.pn(oid)]))
+        pose.write_assembly_step(work / sourcing.PRODUCT_STEP, top, parts, [chain.inventory.get(i) for i in grouped],
+                                 transforms, {oid: group_of_pn[chain.pn(oid)] for oid in delivered})
         mark = time.perf_counter()
         glb_info = mesh.write_glb(work / "assembly.step", work / "assembly.glb")
+        mesh.write_glb(work / sourcing.PRODUCT_STEP, work / sourcing.PRODUCT_GLB)
+        node_groups = {name: group_of_pn[chain.pn(oid)]
+                       for oid, name in mesh.instance_names(chain, {pn: by_pn[pn].product for pn in parts}).items()}
+        mesh.group_glb(work / "assembly.glb", node_groups)  # product.glb takes its groups from product.step
         mapping = mesh.part_map(work / "assembly.glb", chain, {pn: by_pn[pn].product for pn in parts})
         timings["glb_s"] = round(time.perf_counter() - mark, 3)
         write_json(work / "part-map.json", {"schema_version": SCHEMA_VERSION, **mapping})
@@ -631,7 +657,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
             "mass_source": "material_profiles",
             "parts": metrics,
             "occurrences": placed,
-            "totals": totals(metrics, placed, quantity),
+            "totals": product_totals(metrics, placed, delivered),
         })
         features = {pn: built[pn][1]["drawing_features"] for pn in sorted(parts)
                     if built[pn][1]["drawing_features"] is not None}
@@ -668,6 +694,7 @@ def run(hw: Path, label: str, kernel: str, attach: Iterable[str]) -> tuple[int, 
                                    for j in chain.joints), key=lambda entry: (entry["pair"], entry["joint"])),
             "ground": chain.root,
             "glb": glb_info,
+            "product": {"step": sourcing.PRODUCT_STEP, "glb": sourcing.PRODUCT_GLB, "occurrences": delivered},
             "tools": {"orchestrator": orchestrator_tools(),  # a kernel whose parts were all reused did not start
                       **{k: dict(results[k]["tools"] if k in results else runtimes[k]["tools"]) for k in groups}},
             "parts": {pn: {
@@ -749,6 +776,9 @@ def latest_pointer(label: str, manifest: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("drawing_features", "manufacturing_features"):
         if manifest.get(key):
             latest[key] = f"{rel}/{manifest[key]}"
+    if manifest.get("product"):
+        latest["product_step"] = f"{rel}/{manifest['product']['step']}"
+        latest["product_glb"] = f"{rel}/{manifest['product']['glb']}"
     made = {pn: f"{rel}/{entry['path']}" for pn, entry in sorted((manifest.get("manufacturing") or {}).items())
             if entry.get("path")}
     if made:

@@ -57,6 +57,7 @@ import drawing_contract  # noqa: E402
 import drawing_document  # noqa: E402
 import freecad_runtime  # noqa: E402
 import sheet_export  # noqa: E402
+from shared_module import load_shared  # noqa: E402
 from assembly_check import DIRECTIONS, AssemblyPlan, SheetPlan
 from drawing_document import ComposedSheet, CompositionError, CoverageReport, SheetMetadata
 from assembly_sheet import BalloonTarget, MeasuredView
@@ -64,6 +65,7 @@ from freecad_views import ViewGeometry  # noqa: E402
 
 JOB_SCRIPT = Path(__file__).resolve().with_name("assembly_techdraw_job.py")
 SCRIPTS = JOB_SCRIPT.parent
+SOURCING_PATH = SCRIPTS.parents[1] / "cad-record" / "scripts" / "sourcing.py"
 
 
 class Failure(Exception):
@@ -91,7 +93,7 @@ def allowed_sizes(product: Mapping[str, Any]) -> tuple[str, ...]:
 def view_spec(request: assembly_check.ViewRequest, sheet: SheetPlan) -> dict[str, Any]:
     direction, x_direction = DIRECTIONS[request.direction]
     return {"id": request.id, "scene": request.kind, "direction": list(direction), "x_direction": list(x_direction),
-            "occurrences": list(sheet.occurrences)}
+            "occurrences": list(sheet.occurrences), "reference": list(sheet.reference)}
 
 
 def techdraw_job(geometry: Any, offsets: Mapping[str, Sequence[float]], mode: str,
@@ -151,6 +153,7 @@ def evidence(regime: str, plan: AssemblyPlan, sheet: SheetPlan, views: Mapping[s
         "items": {str(row.item): {"PN": row.pn, "qty": row.qty, "occurrences": list(sheet.item_occurrences[row.item])}
                   for row in sheet.rows},
         "bom": {row.pn: dict(plan.bom[row.pn]) for row in sheet.rows},
+        "reference": list(sheet.reference),
         "views": {vid: {"balloons": vid in balloon_views, "bounds": list(view.sheet_bounds()),
                         "anchors": {oid: list(p) for oid, p in anchors.get(vid, {}).items()}}
                   for vid, view in views.items()},
@@ -194,7 +197,9 @@ def read_inputs(args: argparse.Namespace, work: Path, context: drawing_contract.
         geometry = assembly_geometry.read_assembly(hw, context.assembly_step, work / "definitions")
     except assembly_geometry.GeometryError as exc:
         raise fail(exc.code, str(exc), 1) from None
-    plan, findings = assembly_check.reconcile(intent, geometry, context.bom, context.interfaces)
+    sourcing = load_shared("cad_record_sourcing", SOURCING_PATH)
+    existing = {pn for pn, part in context.parts.items() if not sourcing.delivered(part.record)}
+    plan, findings = assembly_check.reconcile(intent, geometry, context.bom, context.interfaces, existing)
     if plan is None:
         raise Failure(findings, 1)
     regime = context.product["regime"]
@@ -310,7 +315,8 @@ def build(args: argparse.Namespace, freecadcmd: Path, work: Path, context: drawi
     findings = [finding for _, _, sheet_findings in composed_rows for finding in sheet_findings]
     plan = inputs.plan
     rows += [{"kind": "assembly_operation", "operation": op.operation.id, "type": op.operation.kind,
-              "interface": op.operation.interface, "items": [op.part_item, op.into_item],
+              "interface": op.operation.interface, "items": [item for item in (op.part_item, op.into_item) if item is not None],
+              **({"existing": op.into_occurrence} if op.into_item is None else {}),
               "acceptance": op.operation.acceptance,
               "measured": measured["acceptance"][op.operation.id] if op.measurable else {
                   "status": "not_measured", "reason": "the model cannot show this acceptance; its record and inspection "

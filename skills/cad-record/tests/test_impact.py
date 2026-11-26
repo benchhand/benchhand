@@ -176,6 +176,17 @@ class Variants(unittest.TestCase):
                 self.assertNotIn("cad.readback@TST-0001", result.stale_obligations)
                 self.assertNotIn("export.3mf@TST-0001", result.stale_obligations)
 
+    def test_moving_a_delivered_occurrence_stales_the_product_exports(self) -> None:
+        """product.step and product.glb place every delivered occurrence where the record does, so a placement-only edit
+        leaves their verdict stale, though no part's model or interface changed."""
+        self.placed_bracket()
+
+        def move(docs: dict[str, Any]) -> None:
+            docs["assembly.yaml"]["occurrences"][0]["placement"] = {"translation_mm": [5, 0, 0]}
+
+        result = self.compare(move)
+        self.assertEqual(result.stale_obligations.get("cad.product_exports@product"), ("occurrences",))
+
     def test_a_heat_set_host_named_apart_from_the_interface_endpoints_stales_its_declared_dimension_on_a_model_change(self) -> None:
         """The interface's endpoints are descriptive words, so only the heat-set pair names the host: as a bare PN or as
         an occurrence the inventory resolves. A new host model must make the declared dimension stale."""
@@ -618,8 +629,9 @@ class PurchaseMountingStaleness(unittest.TestCase):
     def test_only_an_occurrence_placed_bought_part_and_the_made_parts_carry_the_occurrences_domain(self) -> None:
         prints = impact.subject_fingerprints(normalized(self.documents()))
         self.assertEqual(sorted(key for key, domains in prints.items() if "occurrences" in domains),
-                         ["TST-0103", "TST-0104", "TST-0105"],
-                         "the bought ring placed as occurrences, and each made part: its agreement reads its placements")
+                         ["TST-0103", "TST-0104", "TST-0105", "product"],
+                         "the bought ring placed as occurrences, each made part (its agreement reads its placements) and "
+                         "the product (its exports place every delivered occurrence)")
 
     def test_a_non_part_subject_carries_no_opt_in_domain_whatever_its_name(self) -> None:
         """The synthetic domain stands for any later opt-in domain: only a part carries one."""

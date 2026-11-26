@@ -108,6 +108,8 @@ FAMILY_DOMAINS: tuple[tuple[str, frozenset[str]], ...] = (
     # The `occurrences` domain of an interface that declares a heat set: all of interfaces.yaml, all of assembly.yaml and
     # every part's geometry, since the host is a reference the inventory resolves.
     ("cad.declared_dimensions", frozenset({"occurrences"})),
+    # The product exports read every delivered occurrence and its part's geometry, as the agreement does.
+    ("cad.product_exports", frozenset({"geometry", "occurrences"})),
     ("route.", _JUDGED | {"process", "route", "capability", "setup", "orientation", "finish", "material", "condition"}),
     ("process.", _JUDGED | {"geometry", "process", "route", "capability", "setup", "orientation", "finish", "material",
                            "condition"}),
@@ -476,6 +478,9 @@ class _Record:
         heat_sets = self.heat_set_inputs(key) if key in self.interfaces else None
         if heat_sets is not None:
             combined["occurrences"] = heat_sets
+        if key == "product":  # cad.product_exports places every delivered occurrence where the record does
+            combined["occurrences"] = {"assembly": plain(self.record.assembly_document),
+                                       "sourcing": {pn: (part or {}).get("make_buy") for pn, part in sorted(self.parts.items())}}
         return combined
 
 

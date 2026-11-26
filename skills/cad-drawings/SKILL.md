@@ -43,6 +43,7 @@ LOAD references/assembly-drawings.md before writing the `drawing` block of `asse
 
 1. Run `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-drawings/scripts/assembly_drawing.py hw --version vN|latest [--output-dir .cad-work/...] [--replace] [--jobs N]`.
    A passing default assembly package publishes as the immutable `hw/drawings/vN/assembly/` bundle. A matching recipe is reused; a changed recipe is refused unless `--replace`, which retains the prior bundle under `.cad-work/replaced/`.
+   Existing equipment (`make_buy: existing`) gets no item, balloon or BOM row, so list no item for it. It can still be an operation's `into`. Every view draws it with thin phantom lines (ISO 128-2 type 05) that never hide a delivered part.
 2. Re-check a published package with `uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-drawings/scripts/assembly_check.py <hw/drawings/vN/assembly>`. SIGINT/SIGTERM terminates every active FreeCAD process group.
 
 ## Install FreeCAD

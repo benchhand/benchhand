@@ -55,7 +55,11 @@ class ViewGeometry:
     visible: tuple[str, ...]                    # SVG path data, local millimetres
     hidden: tuple[str, ...]
     circles: tuple[Circle, ...]
-    bounds: tuple[float, float, float, float]   # local (x0, y0, x1, y1) of both layers
+    bounds: tuple[float, float, float, float]   # local (x0, y0, x1, y1) of every layer
+    # existing equipment drawn as reference (an assembly view): visible paths of a view of its own, and the local shift
+    # that puts them in this view's frame
+    reference: tuple[str, ...] = ()
+    reference_offset: tuple[float, float] = (0.0, 0.0)
 
     def sheet_bounds(self) -> tuple[float, float, float, float]:
         cx, cy = self.centre_mm
@@ -67,7 +71,9 @@ class ViewGeometry:
                 "scale": self.scale, "rotation_deg": self.rotation_deg, "direction": list(self.direction),
                 "x_direction": list(self.x_direction), "visible": list(self.visible), "hidden": list(self.hidden),
                 "circles": [{"centre": list(c.centre), "radius": c.radius, "layer": c.layer} for c in self.circles],
-                "bounds": list(self.bounds)}
+                "bounds": list(self.bounds),
+                **({"reference": list(self.reference), "reference_offset": list(self.reference_offset)}
+                   if self.reference else {})}
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ViewGeometry:
@@ -81,7 +87,9 @@ class ViewGeometry:
                 hidden=tuple(str(p) for p in data["hidden"]),
                 circles=tuple(Circle(_floats(c["centre"], 2), float(c["radius"]), str(c["layer"]))
                               for c in data["circles"]),
-                bounds=_floats(data["bounds"], 4))
+                bounds=_floats(data["bounds"], 4),
+                reference=tuple(str(p) for p in data.get("reference", ())),
+                reference_offset=_floats(data.get("reference_offset", (0.0, 0.0)), 2))
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"not a serialised view: {exc}") from exc
         _check(geometry)

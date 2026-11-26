@@ -10,7 +10,8 @@ manifest at its recorded placement, interference covers every occurrence pair (t
 one PN included), each clearance requirement of the version's interfaces.yaml holds on its pair,
 connectivity welds occurrences, the check judges the GLB node of each occurrence watertight alone and against the
 shape and placement in the assembly STEP (`glb_step_agreement`, cadmodel.agreement), and a heat-set hole diameter
-the record states must be a bore of its host (`declared_dimensions`). A check that lacks the data to judge is
+the record states must be a bore of its host (`declared_dimensions`). product.step and product.glb hold exactly the
+delivered occurrences of the in-context assembly.step, placed and named as there (`product_exports`). A check that lacks the data to judge is
 `unknown` and listed under `abstentions`. That result does not block, and no reader takes it for a pass. A version
 1 version (written before occurrences) reads as one occurrence per PN. Every file must match the
 manifest inventory (`artifact_integrity`), and the manufacturing outputs of each custom-made part
@@ -42,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import math
+import struct
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -51,7 +53,7 @@ from typing import Any, Iterable, Mapping, cast
 
 from cadmodel import agreement, build, manufacture, mesh, occ, orientation, stepfile
 from cadmodel.motion import load_incremental, load_mesh_bound, load_pair_measure, load_pair_policy, load_pose
-from cadmodel.record import load_intent, load_layout, load_yaml_loader, read_folder
+from cadmodel.record import load_intent, load_layout, load_sourcing, load_yaml_loader, read_folder
 from cadmodel.stepfile import AP242, READBACK_REL
 
 Pair = tuple[str, str]
@@ -180,6 +182,158 @@ def step_readback(folder: Path, manifest: dict[str, Any], parts: dict[str, Any],
             "components": len(step.components), "unbound_components": unbound, "missing_occurrences": missing,
             "tolerance_rel": READBACK_REL, "placement_tolerance_mm": PLACEMENT_MM, "parts": rows,
             "occurrences": placed_rows}
+
+
+def delivered_occurrences(scene: Iterable[Any], records: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    """Occurrence id -> PN of every component of the in-context scene that belongs to the delivered product, as the
+    frozen part records decide (cad-record sourcing.delivered); a PN without a record counts as delivered."""
+    sourcing = load_sourcing()
+    return {(c.occurrence or c.pn): c.pn for c in scene if sourcing.delivered(records.get(c.pn) or {})}
+
+
+def _glb_indices(values: Any, count: int, where: str, malformed: list[str]) -> list[int]:
+    """The node indices of `values` that name one of `count` nodes; why the others do not, added to `malformed`."""
+    if not isinstance(values, list):
+        malformed.append(f"{where} is not a list of node indices")
+        return []
+    good = [v for v in values if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < count]
+    if len(good) != len(values):
+        malformed.append(f"{where} names nodes that do not exist: {[v for v in values if v not in good]}")
+    return good
+
+
+def _glb_tree(gltf: Mapping[str, Any]) -> tuple[list[Mapping[str, Any]], list[int], list[str]]:
+    """The GLB's nodes, the root indices of its scene and why its node tree is malformed (no roots then)."""
+    nodes, scenes, index = gltf.get("nodes", []), gltf.get("scenes", []), gltf.get("scene", 0)
+    if not isinstance(nodes, list) or not all(isinstance(node, Mapping) for node in nodes):
+        return [], [], ["nodes is not a list of node objects"]
+    scene_count = len(scenes) if isinstance(scenes, list) else 0
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < scene_count \
+            or not isinstance(scenes[index], Mapping):
+        return nodes, [], [f"scene {index!r} is not one of its {scene_count} scenes"]
+    malformed: list[str] = []
+    return nodes, _glb_indices(scenes[index].get("nodes", []), len(nodes), f"scene {index} nodes", malformed), malformed
+
+
+def _glb_occurrence_nodes(gltf: Mapping[str, Any],
+                          owner: Mapping[str, str]) -> tuple[dict[str, list[bool]], list[str], list[str]]:
+    """Walking every node reachable from the GLB's scene: per occurrence of `owner` (node name -> occurrence id)
+    whether each node named for it, at any depth, carries a mesh in its subtree; the mesh nodes outside every
+    occurrence node; and why the node tree is malformed (a bad scene, root or child index), whose bad entries the
+    walk skips; a node the scene reaches more than once, through a repeated reference or a cycle, is malformed too.
+    A node's mesh counts for the occurrence above it only down to the next occurrence node, which owns its own."""
+    nodes, roots, malformed = _glb_tree(gltf)
+    found: dict[str, list[bool]] = {oid: [] for oid in owner.values()}
+    extra: list[str] = []
+    visited: set[int] = set()
+
+    def children(index: int) -> list[int]:
+        return _glb_indices(nodes[index].get("children", []), len(nodes), f"node {index} children", malformed)
+
+    def has_mesh(index: int, seen: set[int]) -> bool:
+        seen.add(index)
+        return "mesh" in nodes[index] or any(has_mesh(child, seen) for child in children(index)
+                                             if child not in seen and nodes[child].get("name", "") not in owner)
+
+    def walk(index: int, inside: bool) -> None:
+        if index in visited:
+            malformed.append(f"node {index} is reached more than once from the scene")
+            return
+        visited.add(index)
+        name = nodes[index].get("name", "")
+        if name in owner:
+            found[owner[name]].append(has_mesh(index, set()))
+        elif "mesh" in nodes[index] and not inside:
+            extra.append(name or f"node {index}")
+        for child in children(index):
+            walk(child, inside or name in owner)
+
+    for root in roots:
+        walk(root, False)
+    return found, extra, sorted(set(malformed))
+
+
+def product_subset(expected: Mapping[str, str], existing: set[str], scene: Iterable[Any],
+                   scene_definitions: Mapping[str, tuple[str, float]], shipped: Iterable[Any],
+                   shipped_definitions: Mapping[str, tuple[str, float]], text_pns: set[str], gltf: Mapping[str, Any],
+                   listed: Iterable[str], *, unnumbered: Iterable[str] = ()) -> dict[str, Any]:
+    """product.step (`shipped` components, `shipped_definitions` PN -> (name, volume), `text_pns` the PNs its PRODUCT
+    entities name) and product.glb (`gltf`) against `expected`, the delivered occurrences of the in-context scene
+    (`scene` components, `scene_definitions`). Components match by occurrence name, never by tree path. Each expected
+    occurrence ships once, with the PN, definition and placement the scene gives it, as exactly one reachable GLB node
+    with a mesh; nothing else ships (no `unnumbered` leaf product either), no name leads with an `existing` PN, and the
+    manifest's `listed` occurrences are the expected ones."""
+    pose = load_pose()
+    by_id = {(c.occurrence or c.pn): c for c in scene}
+    components = list(shipped)
+    found: dict[str, Any] = {}
+    unexpected: list[str] = []
+    for component in components:
+        oid = component.occurrence or component.pn
+        if oid not in expected or oid in found:
+            unexpected.append(component.name)
+            continue
+        reference = by_id[oid]
+        error_mm = max(abs(a - b) for a, b in zip(component.location.trans, reference.location.trans))
+        error_rot = max(abs(a - b) for ra, rb in zip(component.location.rot, reference.location.rot) for a, b in zip(ra, rb))
+        name, volume = shipped_definitions[component.pn]
+        want_name, want_volume = scene_definitions[expected[oid]]
+        found[oid] = {"PN": component.pn, "placement_error_mm": error_mm, "rotation_error": error_rot,
+                      "same_definition": component.pn == expected[oid] and name == want_name
+                      and _rel(volume, want_volume) <= READBACK_REL}
+        found[oid]["ok"] = error_mm <= PLACEMENT_MM and error_rot <= pose.PLACEMENT_TOL_ROT and found[oid]["same_definition"]
+    nodes, extra, malformed = _glb_occurrence_nodes(gltf, {by_id[oid].name: oid for oid in expected})
+    names = [node.get("name", "") for node in gltf.get("nodes", []) if isinstance(node, Mapping)] \
+        if isinstance(gltf.get("nodes", []), list) else []
+    result = {"occurrences": found, "unexpected_components": unexpected,
+              "missing_occurrences": sorted(set(expected) - set(found)),
+              "manifest_mismatch": sorted(set(expected) ^ set(listed)),
+              "existing_in_step": sorted((text_pns | {c.pn for c in components}) & existing),
+              "existing_in_glb": sorted({pn for name in names for pn in existing if name.startswith(pn)}),
+              "glb_missing_nodes": sorted(oid for oid, meshes in nodes.items() if not any(meshes)),
+              "glb_duplicate_nodes": sorted(oid for oid, meshes in nodes.items() if len(meshes) > 1),
+              "glb_extra_nodes": sorted(extra), "glb_malformed": malformed, "unnumbered_leaves": sorted(unnumbered)}
+    ok = all(not value for key, value in result.items() if key != "occurrences") and all(
+        row["ok"] for row in found.values())
+    return {"status": _status(ok), "blocking": True, **result}
+
+
+def product_exports(folder: Path, manifest: Mapping[str, Any], step: Any,
+                    records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """The product exports at the exact paths release.py ships (cad-record sourcing PRODUCT_STEP, PRODUCT_GLB)
+    against the delivered occurrences of the in-context assembly.step, which the frozen part `records` decide
+    (`delivered_occurrences`, `product_subset`). Skipped only when neither file is sealed or present; a missing one, a
+    manifest without its `product` block or naming other files, and an export that cannot be read all fail."""
+    pose, sourcing = load_pose(), load_sourcing()
+    sealed = manifest.get("files") or {}
+    names = (sourcing.PRODUCT_STEP, sourcing.PRODUCT_GLB)
+    if not any(name in sealed or (folder / name).is_file() for name in names):
+        return {"status": "skipped", "blocking": False, "reason": "the version predates product.step and product.glb"}
+    block = manifest.get("product")
+    problems = {"missing_exports": sorted(name for name in names if not (folder / name).is_file()),
+                "manifest_product_missing": not isinstance(block, Mapping),
+                "manifest_names_other_files": isinstance(block, Mapping)
+                and (block.get("step"), block.get("glb")) != names}
+    listed = block.get("occurrences") or [] if isinstance(block, Mapping) else []
+    expected = delivered_occurrences(step.components, records)
+    if problems["missing_exports"]:
+        return {"status": "fail", "blocking": True, **problems, "missing_occurrences": sorted(expected)}
+    existing = {pn for pn, record in records.items() if not sourcing.delivered(record)}
+    try:
+        shipped = pose.read_assembly_step(folder / sourcing.PRODUCT_STEP)
+        gltf = mesh.gltf_json(folder / sourcing.PRODUCT_GLB)
+    except (pose.MotionError, occ.GeometryError, OSError, ValueError, struct.error) as error:
+        return {"status": "fail", "blocking": True, **problems, "unreadable": str(error)}
+    text = (folder / sourcing.PRODUCT_STEP).read_text(encoding="utf-8", errors="replace")
+
+    def facts(definitions: Mapping[str, Any]) -> dict[str, tuple[str, float]]:
+        return {pn: (part.name, occ.volume(part.shape)) for pn, part in definitions.items()}
+
+    result = product_subset(expected, existing, step.components, facts(step.definitions), shipped.components,
+                            facts(shipped.definitions), sourcing.step_pns(text), gltf, listed,
+                            unnumbered=shipped.unnumbered)
+    failed = result["status"] == "fail" or problems["manifest_product_missing"] or problems["manifest_names_other_files"]
+    return {**result, **problems, "status": _status(not failed)}
 
 
 def brep_validity(parts: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
@@ -840,7 +994,8 @@ READBACK_FAMILY = "cad.readback"
 EXPORT_FAMILY = "export.3mf"  # judged by the same sealed-version check, so published in the same packet
 AGREEMENT_FAMILY = "cad.glb_step_agreement"  # glb_step_agreement, per made part over its occurrences
 DIMENSION_FAMILY = "cad.declared_dimensions"  # declared_dimensions, per heat-set declaration of an interface
-READBACK_FAMILIES = (READBACK_FAMILY, EXPORT_FAMILY, AGREEMENT_FAMILY, DIMENSION_FAMILY)
+PRODUCT_EXPORTS_FAMILY = "cad.product_exports"  # product_exports, once per product (manufacturing_intent)
+READBACK_FAMILIES = (READBACK_FAMILY, EXPORT_FAMILY, AGREEMENT_FAMILY, DIMENSION_FAMILY, PRODUCT_EXPORTS_FAMILY)
 READBACK_SUBJECT = "cad"  # hw/checks/<V>/cad/: this check's required-check packet
 READBACK_PRODUCER = "cad-model check"
 READBACK_METHOD = ("cad-model check of the sealed version: kernel and STEP read-back B-rep validity, the STEP read-back's "
@@ -860,6 +1015,10 @@ DIMENSION_METHOD = ("cad-model check of the sealed version: the hole_d a heat-se
                     "against the bore diameters the version's metrics.json records for the host")
 DIMENSION_COVERAGE = "the declared hole diameter against the host's recorded bores only: depth and position are not checked"
 SEALED_FILES_CHANGED = "the version's sealed files no longer match its manifest (artifact_integrity)"
+PRODUCT_EXPORTS_METHOD = ("cad-model check product_exports: product.step and product.glb against the delivered "
+                          "occurrences of the sealed assembly.step, which the frozen part records decide")
+PRODUCT_EXPORTS_COVERAGE = ("the occurrences, PNs, definitions and placements of product.step and the reachable mesh nodes "
+                            "of product.glb; not the meshes' shape, which glb_step_agreement judges on assembly.glb")
 
 
 def _oracle_outcome(obligation: Any, failed: list[str], unknown: list[str], method: str, coverage: str) -> dict[str, Any]:
@@ -928,12 +1087,27 @@ def _export_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any
     return outcome
 
 
+def _product_exports_outcome(obligation: Any, checks: Mapping[str, Any]) -> dict[str, Any]:
+    """The cad.product_exports outcome: the product_exports row decides; a version without product exports owes
+    none (not_applicable), and sealed files that changed fail it."""
+    row = checks.get("product_exports") or {}
+    if row.get("status") == "skipped" and checks["artifact_integrity"]["status"] != "fail":
+        return {"obligation": obligation.id, "outcome": "not_applicable", "level": obligation.level,
+                "method": PRODUCT_EXPORTS_METHOD, "coverage": PRODUCT_EXPORTS_COVERAGE,
+                "uncertainty": row.get("reason") or "the version has no product exports"}
+    failed = [SEALED_FILES_CHANGED] if checks["artifact_integrity"]["status"] == "fail" else []
+    if row.get("status") == "fail":
+        failed.append("product.step or product.glb does not hold exactly the delivered product (product_exports)")
+    unknown = [] if row.get("status") in ("pass", "fail") else [f"product_exports is {row.get('status') or 'missing'}"]
+    return _oracle_outcome(obligation, failed, unknown, PRODUCT_EXPORTS_METHOD, PRODUCT_EXPORTS_COVERAGE)
+
+
 def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> list[dict[str, Any]]:
     """One cad.readback outcome per expected obligation (manufacturing_intent Obligations, PN[.COMP]) from
     this check's rows: fail when the B-rep is invalid, the STEP read-back differs, the sealed files changed
     or a manufacturing state, identity, STEP or binding check fails; unknown while one of them is missing
     or not passed (a part with no manufacturing output, a legacy unbound identity); else pass. The export.3mf,
-    cad.glb_step_agreement and cad.declared_dimensions obligations take their own rows. `occurrences` maps each
+    cad.glb_step_agreement, cad.declared_dimensions and cad.product_exports obligations take their own rows. `occurrences` maps each
     occurrence id of the version to its PN."""
     brep, readback = checks["brep_validity"]["parts"], checks["step_readback"]["parts"]
     made = checks["manufacturing"]["parts"]
@@ -947,6 +1121,9 @@ def readback_outcomes(expected: Sequence[Any], checks: Mapping[str, Any], occurr
             continue
         if obligation.family == DIMENSION_FAMILY:
             rows.append(_dimension_outcome(obligation, checks))
+            continue
+        if obligation.family == PRODUCT_EXPORTS_FAMILY:
+            rows.append(_product_exports_outcome(obligation, checks))
             continue
         pn, component = obligation.subject["PN"], obligation.subject.get("component")
         failed: list[str] = []
@@ -1024,19 +1201,18 @@ def _code_shas() -> Any:
     return _script("cad_motion_code_shas", SKILLS / "cad-motion" / "scripts" / "code_shas.py")
 
 
-def publish_readback(hw: Path, label: str, folder: Path, snapshot: Path | None,
+def publish_readback(hw: Path, label: str, folder: Path, snapshot: Any,
                      checks: Mapping[str, Any], occurrences: Mapping[str, str]) -> dict[str, Any] | None:
     """Publish the cad.readback packet of a record version 2 version to hw/checks/<V>/cad/ (bundle.checks,
     the one place cad-record evidence.py reads producer packets) and return {bundle, reused, result,
-    complete}; None for a version without a snapshot. `occurrences` maps each occurrence id to its PN. The packet is
+    complete}; None for a version without a snapshot. `snapshot` is its record snapshot as build.read_snapshot parsed it. `occurrences` maps each occurrence id to its PN. The packet is
     recomputed by every check and replaces the one an earlier check sealed when it differs, so a changed
     verdict is never hidden behind a reused bundle. A changed-only check's packet therefore reads unknown for the
     agreement of each occurrence it left out, until a full check publishes again."""
     if snapshot is None:
         return None
-    found, _ = build.read_snapshot(read_folder(snapshot))
     intent = load_intent()
-    record = found.intent
+    record = snapshot.intent
     expected = [o for o in intent.required_checks(record) if o.family in READBACK_FAMILIES]
     packets = _script("cad_record_check_packet", SKILLS / "cad-record" / "scripts" / "check_packet.py")
     layout = load_layout()
@@ -1101,6 +1277,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
     # Declarations, margins, fit and process come from the record the version was built from.
     snapshot = folder / "record" if (folder / "record").is_dir() else None
     record = snapshot or hw
+    frozen = build.read_snapshot(read_folder(snapshot))[0] if snapshot is not None else None  # parsed once, shared
     assembly = pose.load_assembly(record, record)
     declared = declared_press_fits(record, assembly)
     heat_sets = declared_heat_sets(record, assembly)
@@ -1160,6 +1337,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                                                  set(occurrences) - in_scope),
         "declared_dimensions": declared_dimensions(
             heat_sets, {oid: o.pn for oid, o in occurrences.items()}, build.read_json(folder / "metrics.json")["parts"]),
+        "product_exports": product_exports(folder, manifest, step, frozen.parts if frozen is not None else {}),
         "artifact_integrity": artifact_integrity(folder),
         "manufacturing": manufacturing,
     }
@@ -1179,7 +1357,7 @@ def check(hw: Path, label: str, named: list[tuple[str, str]] | None, allowed: It
                             "kernel_evaluations": counters.kernel_evaluations, "exact_hits": counters.exact_hits,
                             "decision_hits": counters.decision_hits, "bucket_hits": counters.bucket_hits,
                             "cleared": dict(counters.cleared), "reevaluations": counters.reevaluations}}
-    packet = publish_readback(hw, label, folder, snapshot, checks, occurrence_pns)
+    packet = publish_readback(hw, label, folder, frozen, checks, occurrence_pns)
     if packet is not None:
         result["packet"] = packet  # the cad.readback required-check packet (record version 2)
     return (1 if blocking else 0), result

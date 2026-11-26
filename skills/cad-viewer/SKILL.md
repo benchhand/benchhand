@@ -53,7 +53,10 @@ Session identity:
    update the selects. When a version cannot load, such as a missing part STEP, the error shows
    under its select and the slot keeps its model. Command output reports `versions.<A|B>.selected`
    (`latest` or vN) beside `label`, and `latest` (the vN latest.json names).
-4. `parts hide|iso|ghost|reset [PN|subassembly]` does what the panel buttons do.
+4. `parts hide|iso|ghost|reset [PN|subassembly|made|purchased|existing]` does what the panel buttons do.
+   The tree groups every part under a top-level sourcing group, from its make_buy:
+   `made`, `purchased`, `existing`. An assembly.yaml subassembly nests inside the group of each of its
+   members. Hiding `purchased` hides all bought parts at once. A subassembly may not use one of these names.
 5. `animate --joint J-00x --from V --to V [--at 0..1]` -> keyframes from cad-motion's chain.
    A value outside the joint's assembly.yaml [min, max], or one that puts a coupled joint outside
    its limits, exits 1 with `joint_limit` findings and pushes nothing. `--at` holds one pose for a

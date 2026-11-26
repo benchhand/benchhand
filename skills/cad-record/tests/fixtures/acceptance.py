@@ -87,13 +87,15 @@ def release_ready(hw: Path, service_class: str = "appearance_concept", **use: An
     """Make a migrated record's manufacturing intent explicit and final-ready: a confirmed use case,
     resolved questions, each made part's functions, synthetic material profile (printed for an additive route,
     bulk stock otherwise) and route on a capability profile per process that approves it (service and critical
-    surfaces not applicable), catalogue buys purchased, every interface non-critical."""
+    surfaces not applicable), catalogue buys purchased, every interface non-critical. Existing equipment is left as it is."""
     hw = Path(hw)
     edit_yaml(hw / "product.yaml", lambda data: data.update(use_case=confirmed_use_case(service_class, **use)))
     edit_yaml(hw / "requirements.yaml", resolve_questions)
     materials: dict[str, str] = {}  # process kind -> its material profile id
     for path in sorted((hw / "parts").glob("*/part.yaml")):
         part = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if part.get("make_buy") == "existing":
+            continue  # existing equipment has no intent
         mode = (part.get("procurement") or {}).get("mode")
         catalogue = part.get("make_buy") == "buy" and mode != "made_to_drawing"
         if catalogue:
@@ -129,7 +131,7 @@ def confirm_selection(hw: Path, decision: str = DECISION) -> str:
     one candidate covering every part as recorded (each made part's material profile and route, each catalogue
     item bought), with an authored, sourced evaluation passing every mandatory requirement, confirmed final by
     `decision` on the current selection input digest. A design freeze and a release need a confirmed selection
-    covering every made part (an unrecorded one blocks like any unknown). Returns the digest. Every value is
+    covering every made part (an unrecorded one blocks like any unknown); existing equipment is never a candidate. Returns the digest. Every value is
     synthetic."""
     scenarios = selection_scenarios()
     documents, problems = mi.read_documents(Path(hw))
@@ -137,7 +139,7 @@ def confirm_selection(hw: Path, decision: str = DECISION) -> str:
     must = [r["id"] for r in documents["requirements.yaml"]["requirements"] if r.get("priority") == "must"]
     parts = []
     for rel, part in sorted(documents.items()):
-        if not rel.startswith("parts/"):
+        if not rel.startswith("parts/") or part.get("make_buy") == "existing":
             continue
         if part.get("make_buy") == "buy" and (part.get("procurement") or {}).get("mode") != "made_to_drawing":
             parts.append({"PN": part["PN"], "material_profile": fx.not_applicable("catalogue item: its rating governs"),

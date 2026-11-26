@@ -351,6 +351,15 @@ def acceptance_text(acceptance: str | None, names: Sequence[str], measured: Mapp
     return None
 
 
+def _named(item: int | None, name: str) -> str:
+    """An end of an operation or joint: its item, or existing equipment, which has none, by its product name."""
+    return f"item {item}" if item is not None else f"{name} (existing)"
+
+
+def _into(op: ResolvedOperation) -> str:
+    return _named(op.into_item, op.into_name)
+
+
 def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: str) -> str:
     """One assembly note: what goes where, which way, how it is known to be seated, and the interface data.
 
@@ -367,10 +376,10 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
     until = acceptance_text(operation.acceptance, operation.features, measured, regime)
     data = None
     if operation.kind == "press_fit":
-        action = words(f"Press item {op.part_item} into item {op.into_item}")
+        action = words(f"Press item {op.part_item} into {_into(op)}")
         data = words("fit ") + str(limit["fit"])
     elif operation.kind == "heat_set":
-        action = words(f"Heat-set item {op.part_item} into item {op.into_item}")
+        action = words(f"Heat-set item {op.part_item} into {_into(op)}")
         lower, upper = limit.get("hole_tol", (0.0, 0.0))
         tolerance = f" ±{_number(upper)}" if lower == -upper and upper else (
             f" {lower:+g}/{upper:+g}" if lower or upper else "")
@@ -378,14 +387,14 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
         if "depth_min" in limit:
             data += words(f", depth min {_number(limit['depth_min'])}")
     elif operation.kind == "retaining_ring":
-        action = words(f"Fit ring item {op.part_item} onto item {op.into_item}")
+        action = words(f"Fit ring item {op.part_item} onto {_into(op)}")
         data = str(limit["ring"])
         if "groove_d" in limit and "groove_w" in limit:
             data += words(", groove ") + f"⌀{limit['groove_d']} x {limit['groove_w']}"
     else:
-        verbs = {"insert": "Insert item {p} into item {i}", "fasten": "Fasten item {p} into item {i}",
-                 "join": "Join item {p} to item {i}", "close": "Close item {i} with item {p}"}
-        action = words(verbs[operation.kind].format(p=op.part_item, i=op.into_item))
+        verbs = {"insert": "Insert item {p} into {i}", "fasten": "Fasten item {p} into {i}",
+                 "join": "Join item {p} to {i}", "close": "Close {i} with item {p}"}
+        action = words(verbs[operation.kind].format(p=op.part_item, i=_into(op)))
     text = action
     if op.direction is not None:
         text += words(" along ") + direction_text(op.direction)
@@ -396,7 +405,8 @@ def operation_note(op: ResolvedOperation, measured: Mapping[str, Any], regime: s
     text += f" ({operation.interface})." if operation.interface else "."
     if op.travel is not None:
         unit = "°" if op.travel.kind == "revolute" else " mm"
-        text += (words(f" Then check that item {op.travel.child_item} moves freely on item {op.travel.parent_item} from ")
+        text += (words(f" Then check that {_named(op.travel.child_item, op.travel.child_name)} moves freely on "
+                       f"{_named(op.travel.parent_item, op.travel.parent_name)} from ")
                  + f"{_number(op.travel.low)}{unit}" + words(" to ") + f"{_number(op.travel.high)}{unit} "
                  + f"({op.travel.joint}).")
     return text

@@ -105,6 +105,32 @@ class RollUpTests(unittest.TestCase):
         result = bom.roll_up([top], {"PIN-0001": {}})
         self.assertEqual([(r["level"], r["PN"], r["qty"]) for r in result["rows"]], [("0", "ASM-0001", "1"), ("1", "PIN-0001", "5")])
 
+    def test_existing_equipment_has_no_row_and_its_children_keep_theirs(self) -> None:
+        pin = bom.Node("PIN-0001", False)
+        mount = bom.Node("EXT-0001 Mount head", True, [(pin, 2)])
+        shaft = bom.Node("EXT-0002 Shaft", False)
+        top = bom.Node("ASM-0001", True, [(mount, 1), (shaft, 1)])
+        parts = {"PIN-0001": {"make_buy": "buy"}, "EXT-0001": {"make_buy": "existing"},
+                 "EXT-0002": {"make_buy": "existing"}}
+        result = bom.roll_up([top], parts)
+        self.assertEqual([(r["level"], r["PN"], r["qty"]) for r in result["rows"]], [("0", "ASM-0001", "1"), ("1", "PIN-0001", "2")])
+        self.assertEqual(result["total_qty"], {"ASM-0001": 1, "PIN-0001": 2})
+
+    def test_existing_equipment_at_the_root_has_no_row(self) -> None:
+        pin = bom.Node("PIN-0001", False)
+        mount = bom.Node("EXT-0001 Mount head", True, [(pin, 2)])
+        shaft = bom.Node("EXT-0002 Shaft", False)
+        parts = {"PIN-0001": {"make_buy": "buy"}, "EXT-0001": {"make_buy": "existing"},
+                 "EXT-0002": {"make_buy": "existing"}}
+        result = bom.roll_up([mount, shaft], parts)
+        self.assertEqual([(r["level"], r["PN"], r["qty"]) for r in result["rows"]], [("1", "PIN-0001", "2")])
+        self.assertEqual((result["total_qty"], result["missing_in_step"]), ({"PIN-0001": 2}, []))
+
+    def test_existing_equipment_absent_from_the_step_is_not_missing(self) -> None:
+        top = bom.Node("ASM-0001", True, [(bom.Node("PIN-0001", False), 1)])
+        result = bom.roll_up([top], {"PIN-0001": {"make_buy": "buy"}, "EXT-0001": {"make_buy": "existing"}})
+        self.assertEqual(result["missing_in_step"], [])
+
     def test_unnumbered_leaf_is_reported(self) -> None:
         top = bom.Node("ASM-0001", True, [(bom.Node("Body001", False), 1)])
         self.assertEqual(bom.roll_up([top], {})["unidentified"], ["Body001"])

@@ -32,6 +32,10 @@ TRIGGER
    - Leave out `manufacture` and `intent`: it is not built.
    - Join it to a product part with an interface.
    - Name it only as an assembly operation's `into`, never its `part`.
+   - Record a reference body the same way, such as a harness bundle stub kept for clearance.
+   - Name the stub as the harness-routing operation's `into`.
+
+   Existing equipment stays in `assembly.step`, `assembly.glb` and every fit, sweep, collision and stack check. cad-model and cad-bom leave it out of `product.step`, `product.glb`, the BOM and the mass totals. A release ships `definition/product.step`, puts the in-context `assembly.step` under `context/`, and lists each interface with existing equipment under `mates_with`. One predicate decides this: `sourcing.delivered` in `scripts/sourcing.py`. Renders draw existing equipment as a ghost unless its `render` says otherwise.
 4. Build record-derived guides after `vN` exists:
 
    ```sh

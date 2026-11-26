@@ -27,13 +27,14 @@ def main(argv: list[str]) -> dict[str, object]:
     code_shas = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = code_shas   # the module check.py loads under this name
     spec.loader.exec_module(code_shas)
-    from cadmodel import check, record
+    from cadmodel import build, check, record
 
     layout = record.load_layout()
     if argv[1:2] == ["publish"]:
         hw, label, result = Path(argv[2]), argv[3], json.loads(Path(argv[4]).read_text(encoding="utf-8"))
         folder = hw / "versions" / label
-        published = check.publish_readback(hw, label, folder, folder / "record", result["checks"], result["occurrences"])
+        snapshot = build.read_snapshot(record.read_folder(folder / "record"))[0]  # parsed as check parses it
+        published = check.publish_readback(hw, label, folder, snapshot, result["checks"], result["occurrences"])
         assert published is not None, "a record version 2 version publishes a readback packet"
         manifest = json.loads((hw / "checks" / label / "cad" / "manifest.json").read_text(encoding="utf-8"))
         return {"reused": published["reused"], "recipe_sha256": manifest["recipe_sha256"]}

@@ -266,8 +266,10 @@ class Travel:
     kind: str            # "revolute" (degrees) or "prismatic" (mm)
     low: float
     high: float
-    parent_item: int
-    child_item: int
+    parent_item: int | None  # None when the end is existing equipment, which has no item; its `_name` says which
+    child_item: int | None
+    parent_name: str = ""
+    child_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -276,10 +278,11 @@ class ResolvedOperation:
     part_occurrence: str
     into_occurrence: str
     part_item: int
-    into_item: int
+    into_item: int | None                           # None when `into` is existing equipment, which has no item
     limit: Mapping[str, Any]                       # the interface limit entry that specifies the joint; {} when none applies
     travel: Travel | None                           # the verify_joint check, when declared
     direction: Vec | None                           # unit installation direction in the assembly frame
+    into_name: str = ""                             # the product name of an existing `into`, which the note names
 
     @property
     def measurable(self) -> bool:
@@ -338,10 +341,11 @@ class SheetPlan:
     number: int
     scope: str                                      # "top" or a subassembly id
     heading: str | None                             # the subassembly title, None for the top sheet
-    occurrences: tuple[str, ...]                    # occurrence ids drawn on this sheet
+    occurrences: tuple[str, ...]                    # occurrence ids drawn on this sheet, existing equipment aside
     rows: tuple[PartsRow, ...]
     item_occurrences: Mapping[int, tuple[str, ...]]  # item -> its occurrences inside the sheet scope
     operations: tuple[ResolvedOperation, ...]
+    reference: tuple[str, ...] = ()                 # existing equipment in scope: drawn as reference, never ballooned
 
 
 @dataclass(frozen=True)
@@ -407,6 +411,7 @@ class _Binding:
 
     geometry: Any
     findings: list[dict[str, Any]] = field(default_factory=list)
+    existing: frozenset[str] = frozenset()  # PNs of existing equipment: geometry and operation targets, never items
 
     def __post_init__(self) -> None:
         self.occurrences = {o.occurrence_id: o for o in self.geometry.occurrences}
@@ -440,6 +445,11 @@ def _bind_items(binding: _Binding, intent: Intent, bom: Mapping[str, Mapping[str
         if entry.item in items:
             findings.append(finding("invalid_drawing_intent", f"{where}: item {entry.item} is declared twice"))
             continue
+        if entry.pn in binding.existing:
+            findings.append(finding("invalid_drawing_intent", f"{where}: {entry.pn} is existing equipment, which the "
+                                    "product does not deliver: it has no parts-list item, balloon or bom.csv row",
+                                    item=entry.item))
+            continue
         if any(pn == entry.pn for pn, _ in items.values()):
             findings.append(finding("invalid_drawing_intent", f"{where}: {entry.pn} already has an item; one row per PN",
                                     item=entry.item))
@@ -461,28 +471,44 @@ def _bind_items(binding: _Binding, intent: Intent, bom: Mapping[str, Mapping[str
                                         f"{occurrences[oid].ref} belongs to items {item_of[oid]} and {entry.item}"))
             item_of[oid] = entry.item
         items[entry.item] = (entry.pn, ids)
-        row = bom.get(entry.pn)
-        if row is None:
-            findings.append(finding("bom_geometry_mismatch", f"item {entry.item}: {entry.pn} has no bom.csv row",
-                                    item=entry.item))
-        elif entry.pn not in bom_children and (row["qty"] != counts.get(entry.pn, 0) or len(ids) != counts.get(entry.pn, 0)):
-            findings.append(finding("bom_geometry_mismatch",
-                                    f"item {entry.item}: {entry.pn} has bom.csv quantity {row['qty']}, "
-                                    f"{counts.get(entry.pn, 0)} occurrences in the assembly STEP and {len(ids)} in the item",
-                                    item=entry.item))
+        findings.extend(_bom_row_findings(entry, ids, bom, bom_children, counts))
     return items, item_of
+
+
+def _bom_row_findings(entry: Any, ids: Sequence[str], bom: Mapping[str, Mapping[str, Any]], bom_children: set[str],
+                      counts: Mapping[str, int]) -> list[dict[str, Any]]:
+    """An item's bom.csv row: present, and with the quantity of the occurrences placed and listed."""
+    row = bom.get(entry.pn)
+    if row is None:
+        return [finding("bom_geometry_mismatch", f"item {entry.item}: {entry.pn} has no bom.csv row", item=entry.item)]
+    if entry.pn not in bom_children and (row["qty"] != counts.get(entry.pn, 0) or len(ids) != counts.get(entry.pn, 0)):
+        return [finding("bom_geometry_mismatch", f"item {entry.item}: {entry.pn} has bom.csv quantity {row['qty']}, "
+                        f"{counts.get(entry.pn, 0)} occurrences in the assembly STEP and {len(ids)} in the item",
+                        item=entry.item)]
+    return []
 
 
 def _check_coverage(binding: _Binding, item_of: Mapping[str, int], bom: Mapping[str, Mapping[str, Any]],
                     bom_children: set[str]) -> None:
-    """Findings for occurrences without an item and bom.csv rows the STEP does not place."""
+    """Findings for delivered occurrences without an item and bom.csv rows the STEP does not place."""
     for o in binding.geometry.occurrences:
-        if o.occurrence_id not in item_of:
+        if o.occurrence_id not in item_of and o.pn not in binding.existing:
             binding.findings.append(finding("assembly_item_unidentified",
                                             f"occurrence {o.ref} ({o.pn}) has no parts-list item"))
     for pn in sorted(set(bom) - set(binding.counts) - bom_children):
         binding.findings.append(finding("bom_geometry_mismatch",
                                         f"bom.csv lists {pn}, which the assembly STEP does not place"))
+
+
+def _endpoint(binding: _Binding, item_of: Mapping[str, int], oid: str) -> tuple[int | None, str] | None:
+    """A joint end as (its item, "") or, for existing equipment, which has no item, (None, its product name); None for
+    an occurrence that is neither."""
+    if oid in item_of:
+        return item_of[oid], ""
+    occurrence = binding.occurrences.get(oid)
+    if occurrence is not None and occurrence.pn in binding.existing:
+        return None, occurrence.product
+    return None
 
 
 def _resolve_operations(binding: _Binding, intent: Intent, interfaces: Sequence[Mapping[str, Any]],
@@ -498,6 +524,10 @@ def _resolve_operations(binding: _Binding, intent: Intent, interfaces: Sequence[
             continue
         if part == into:
             findings.append(finding("assembly_instruction_incomplete", f"{where}: part and into are both {operation.part}"))
+            continue
+        if occurrences[part].pn in binding.existing:
+            findings.append(finding("assembly_instruction_incomplete", f"{where}: {operation.part} is existing equipment; "
+                                    "an operation installs a part into it, never installs it", operation=operation.id))
             continue
         interface = by_interface.get(operation.interface) if operation.interface is not None else None
         if operation.interface is not None and interface is None:
@@ -521,15 +551,22 @@ def _resolve_operations(binding: _Binding, intent: Intent, interfaces: Sequence[
                 findings.append(finding("assembly_instruction_incomplete", f"{where}: verify_joint "
                                                                            f"{operation.verify_joint} is not a movable joint"))
                 continue
-            if joint["parent"] not in item_of or joint["child"] not in item_of:
+            joint_ends = [_endpoint(binding, item_of, joint[side]) for side in ("parent", "child")]
+            if None in joint_ends:
+                findings.append(finding("assembly_instruction_incomplete", f"{where}: verify_joint "
+                                        f"{operation.verify_joint} joins an occurrence with no item that is not existing "
+                                        "equipment", operation=operation.id))
                 continue
+            parent, child = joint_ends
+            assert parent is not None and child is not None  # the None check above
             travel = Travel(joint=joint["id"], kind=joint["type"], low=float(joint["min"]), high=float(joint["max"]),
-                            parent_item=item_of[joint["parent"]], child_item=item_of[joint["child"]])
-        if part not in item_of or into not in item_of:
+                            parent_item=parent[0], child_item=child[0], parent_name=parent[1], child_name=child[1])
+        onto_existing = occurrences[into].pn in binding.existing
+        if part not in item_of or (into not in item_of and not onto_existing):
             continue
         direction = None if operation.direction is None else rotate(occurrences[into].rotation, operation.direction)
-        resolved_ops.append(ResolvedOperation(operation, part, into, item_of[part], item_of[into], limit, travel,
-                                              direction))
+        resolved_ops.append(ResolvedOperation(operation, part, into, item_of[part], item_of.get(into), limit, travel,
+                                              direction, occurrences[into].product if onto_existing else ""))
     return resolved_ops
 
 
@@ -539,6 +576,7 @@ def _plan_sheets(binding: _Binding, intent: Intent, items: Mapping[int, tuple[st
     geometry = binding.geometry
     sheets: list[SheetPlan] = []
     scopes = [(TOP, None, tuple(o.occurrence_id for o in geometry.occurrences))]
+    pn_of = {o.occurrence_id: o.pn for o in geometry.occurrences}
     for group_id in intent.subassembly_sheets:
         group = geometry.groups.get(group_id)
         if group is None:
@@ -559,15 +597,20 @@ def _plan_sheets(binding: _Binding, intent: Intent, items: Mapping[int, tuple[st
             rows.append(PartsRow(item=item, pn=pn, rev=fields["rev"], qty=len(mine), title=fields["title"],
                                  material=fields["material"], designation=fields["designation"]))
         operations = tuple(op for op in resolved_ops if {op.part_occurrence, op.into_occurrence} <= in_scope)
-        sheets.append(SheetPlan(number=number, scope=scope, heading=heading, occurrences=tuple(members),
-                                rows=tuple(rows), item_occurrences=per_item, operations=operations))
+        sheets.append(SheetPlan(number=number, scope=scope, heading=heading,
+                                occurrences=tuple(oid for oid in members if pn_of[oid] not in binding.existing),
+                                rows=tuple(rows), item_occurrences=per_item, operations=operations,
+                                reference=tuple(oid for oid in members if pn_of[oid] in binding.existing)))
     return sheets
 
 
 def reconcile(intent: Intent, geometry: Any, bom_rows: Sequence[Mapping[str, str]],
-              interfaces: Sequence[Mapping[str, Any]]) -> tuple[AssemblyPlan | None, list[dict[str, Any]]]:
-    """Bind the intent to the version's occurrences, BOM and interfaces; findings for every disagreement."""
-    binding = _Binding(geometry)
+              interfaces: Sequence[Mapping[str, Any]],
+              existing: Iterable[str] = ()) -> tuple[AssemblyPlan | None, list[dict[str, Any]]]:
+    """Bind the intent to the version's occurrences, BOM and interfaces; findings for every disagreement. The
+    `existing` PNs (existing equipment, cad-record sourcing.delivered) stay geometry and operation targets, drawn as
+    reference: they get no item, balloon or bom.csv row."""
+    binding = _Binding(geometry, existing=frozenset(existing))
     bom_rows = list(bom_rows)
     bom = bom_rollup(bom_rows)
     bom_children = {row["PN"] for index, row in enumerate(bom_rows[:-1])

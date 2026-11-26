@@ -155,6 +155,57 @@ class Reconcile(unittest.TestCase):
         plan, findings = reconcile(intent, geometry(), rows, [])
         self.assertIsNotNone(plan)
         self.assertNotIn("bom_geometry_mismatch", codes(findings))
+
+    MOUNT = "EXT-0101"  # existing equipment the base mounts onto: in the STEP, outside the BOM and the parts list
+
+    def with_mount(self) -> AssemblyGeometry:
+        base = geometry()
+        return AssemblyGeometry(occurrences=(*base.occurrences, occurrence(self.MOUNT, self.MOUNT)),
+                                definitions={}, groups=base.groups, joints=base.joints)
+
+    def test_existing_equipment_needs_no_item_and_no_bom_row_and_stays_on_the_sheet_as_reference(self) -> None:
+        mount_base = {"id": "mount_base", "kind": "insert", "part": BASE, "into": self.MOUNT, "direction": [0, 0, -1],
+                      "acceptance": {"kind": "seated", "features": ["base_bottom", "mount_top"]}}
+        intent = read_intent(intent_record(operations=[*intent_record()["operations"], mount_base]))
+        plan, findings = reconcile(intent, self.with_mount(), BOM, INTERFACES, existing={self.MOUNT})
+        self.assertEqual(findings, [])
+        top = plan.sheets[0]
+        self.assertEqual((self.MOUNT in top.occurrences, top.reference), (False, (self.MOUNT,)))
+        self.assertEqual([row.pn for row in top.rows], [BASE, PIN])
+        into_mount = next(op for op in top.operations if op.operation.id == "mount_base")
+        self.assertEqual((into_mount.into_occurrence, into_mount.into_item, into_mount.into_name),
+                         (self.MOUNT, None, f"{self.MOUNT} part"))
+        self.assertEqual(assembly_sheet.operation_note(into_mount, {}, "iso"),
+                         f"Insert item 1 into {self.MOUNT} part (existing) along -Z until its base bottom seats against "
+                         "the mount top.")
+
+    def test_an_operation_whose_verified_joint_ends_on_existing_equipment_is_kept_with_its_travel(self) -> None:
+        base = self.with_mount()
+        joints = {**base.joints, "J-002": {"id": "J-002", "type": "revolute", "parent": self.MOUNT, "child": BASE,
+                                           "min": -5.0, "max": 30.0}}
+        geometry = AssemblyGeometry(occurrences=base.occurrences, definitions={}, groups=base.groups, joints=joints)
+        mount_base = {"id": "mount_base", "kind": "insert", "part": BASE, "into": self.MOUNT, "direction": [0, 0, -1],
+                      "acceptance": {"kind": "seated", "features": ["base_bottom", "mount_top"]}, "verify_joint": "J-002"}
+        intent = read_intent(intent_record(operations=[*intent_record()["operations"], mount_base]))
+        plan, findings = reconcile(intent, geometry, BOM, INTERFACES, existing={self.MOUNT})
+        self.assertEqual(findings, [])
+        kept = [op for op in plan.sheets[0].operations if op.operation.id == "mount_base"]
+        self.assertEqual(len(kept), 1, "the operation, its acceptance and its travel check stay on the sheet")
+        travel = kept[0].travel
+        self.assertEqual((travel.parent_item, travel.parent_name, travel.child_item), (None, f"{self.MOUNT} part", 1))
+        self.assertTrue(assembly_sheet.operation_note(kept[0], {}, "iso").endswith(
+            f"Then check that item 1 moves freely on {self.MOUNT} part (existing) from -5° to 30° (J-002)."))
+
+    def test_existing_equipment_without_the_existing_set_is_still_unidentified(self) -> None:
+        _, findings = reconcile(read_intent(intent_record()), self.with_mount(), BOM, INTERFACES)
+        self.assertEqual(codes(findings), ["assembly_item_unidentified"])
+
+    def test_a_parts_list_item_for_existing_equipment_is_refused(self) -> None:
+        items = [*intent_record()["drawing"]["items"], {"item": 3, "PN": self.MOUNT}]
+        _, findings = reconcile(read_intent(intent_record(items=items)), self.with_mount(), BOM, INTERFACES,
+                                existing={self.MOUNT})
+        self.assertIn("invalid_drawing_intent", codes(findings))
+        self.assertTrue(any("existing equipment" in f["message"] for f in findings), findings)
     def test_rejected_package_sheet_lookup_uses_number_not_position(self) -> None:
         from pathlib import Path
         import json

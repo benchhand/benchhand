@@ -20,7 +20,7 @@ Usage (run viewer through cad-flow's shared environment):
     uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py compare A B --hw HW [--session NAME]
     uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py gallery HW [--session NAME]
     uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py mode single|split [--session NAME]
-    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py parts ACTION [PN|GROUP] [--session NAME]
+    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py parts ACTION [PN|GROUP|made|purchased|existing] [--session NAME]
     uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py animate (--joint ID --from VALUE --to VALUE | --case CASE) [--session NAME]
     uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py studio [OPTIONS] [--session NAME]
     uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-viewer/scripts/viewer.py capture --view VIEW --out PNG [--session NAME]
@@ -121,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     parts = sub.add_parser("parts", help="hide, isolate, ghost the rest, or reset, as the panel buttons do")
     add_session(parts)
     parts.add_argument("action", choices=("hide", "iso", "ghost", "reset"))
-    parts.add_argument("target", nargs="?", help="PN or subassembly id (hide and iso)")
+    parts.add_argument("target", nargs="?", help="PN, subassembly id, or sourcing group made|purchased|existing (hide and iso)")
 
     animate = sub.add_parser("animate", help="animate one joint within its assembly.yaml limits, or a motion plan case")
     add_session(animate)
@@ -185,7 +185,7 @@ def request_body(args: argparse.Namespace) -> tuple[str, str, dict[str, Any]]:
         return "POST", "/api/mode", {"mode": args.mode, "active": args.active}
     if args.command == "parts":
         if args.action in ("hide", "iso") and not args.target:
-            raise ViewerError(f"parts {args.action} needs a PN or subassembly id")
+            raise ViewerError(f"parts {args.action} needs a PN, subassembly id or sourcing group")
         return "POST", "/api/parts", {"action": args.action, "target": args.target}
     if args.command == "animate":
         if args.case is not None:

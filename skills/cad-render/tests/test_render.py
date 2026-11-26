@@ -1011,6 +1011,13 @@ class PartRenderState(unittest.TestCase):
         self.assertEqual(render.render_states(by_pn, records, hide=["P-1"], ghost=["@c"], show=[]),
                          (["a", "b"], ["c"]))
 
+    def test_existing_equipment_without_a_render_value_is_ghosted_unless_overridden(self) -> None:
+        by_pn = {"a": "P-1", "b": "P-2", "c": "P-3"}
+        records = {"P-1": {"make_buy": "make"}, "P-2": {"make_buy": "existing"},
+                   "P-3": {"make_buy": "existing", "render": "shown"}}
+        self.assertEqual(render.render_states(by_pn, records, hide=[], ghost=[], show=[]), ([], ["b"]))
+        self.assertEqual(render.render_states(by_pn, records, hide=[], ghost=[], show=["P-2"]), ([], []))
+
     def test_an_unknown_id_is_an_error_naming_it(self) -> None:
         self.write()
         for flag in ("hide", "ghost", "show"):

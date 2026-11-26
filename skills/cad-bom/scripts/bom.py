@@ -30,6 +30,9 @@ assembly by the product they instance, and writes an indented BOM:
 
 An assembly product whose name carries no part number is a phantom grouping:
 its children roll up into the nearest numbered ancestor with multiplied qty.
+A product whose part.yaml says make_buy: existing is equipment the product mounts onto
+(cad-record sourcing.delivered): it gets no row, its children roll up as a phantom's do, and
+its part.yaml is never reported missing from the STEP.
 An assembly product needs no part.yaml; a leaf part does. OCP and PyYAML are
 imported inside the readers so `roll_up` stays importable by plain unit tests.
 
@@ -56,29 +59,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 LAYOUT_PATH = Path(__file__).resolve().parents[2] / "cad-record" / "scripts" / "layout.py"
-_SPEC = importlib.util.spec_from_file_location("cad_record_layout", LAYOUT_PATH)
-if _SPEC is None or _SPEC.loader is None:
-    raise ImportError(f"{LAYOUT_PATH} not found")
-LAYOUT = sys.modules.get("cad_record_layout")
-if LAYOUT is None:
-    LAYOUT = importlib.util.module_from_spec(_SPEC)
-    sys.modules["cad_record_layout"] = LAYOUT
-    _SPEC.loader.exec_module(LAYOUT)
 YAML_LOADER_PATH = LAYOUT_PATH.with_name("yaml_loader.py")
 COMMODITY_PATH = LAYOUT_PATH.with_name("commodity_identity.py")
 
 
-def yaml_loader() -> Any:
-    """cad-record's shared YAML reader under `cad_record_yaml_loader`, loaded on first use: it needs PyYAML."""
-    module = sys.modules.get("cad_record_yaml_loader")
+def _cad_record(name: str, path: Path) -> Any:
+    """A cad-record module under `name`, loaded once per process."""
+    module = sys.modules.get(name)
     if module is None:
-        spec = importlib.util.spec_from_file_location("cad_record_yaml_loader", YAML_LOADER_PATH)
+        spec = importlib.util.spec_from_file_location(name, path)
         if spec is None or spec.loader is None:
-            raise ImportError(f"{YAML_LOADER_PATH} not found")
+            raise ImportError(f"{path} not found")
         module = importlib.util.module_from_spec(spec)
-        sys.modules["cad_record_yaml_loader"] = module
+        sys.modules[name] = module
         spec.loader.exec_module(module)
     return module
+
+
+LAYOUT = _cad_record("cad_record_layout", LAYOUT_PATH)
+SOURCING = _cad_record("cad_record_sourcing", LAYOUT_PATH.with_name("sourcing.py"))
+
+
+def yaml_loader() -> Any:
+    """cad-record's shared YAML reader under `cad_record_yaml_loader`, loaded on first use: it needs PyYAML."""
+    return _cad_record("cad_record_yaml_loader", YAML_LOADER_PATH)
 
 def commodity_identity() -> Any:
     """cad-record's commodity_identity.py under its shared name: which designations identify a commodity item."""
@@ -243,11 +247,18 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
     missing_part_yaml: set[str] = set()
     unidentified: set[str] = set()
 
+    def outside(node: Node) -> bool:
+        """Existing equipment (cad-record sourcing.delivered): in the STEP for fit checks, never a BOM row."""
+        return node.pn is not None and node.pn in parts and not SOURCING.delivered(parts[node.pn])
+
     def numbered_children(node: Node, factor: int) -> list[tuple[Node, int]]:
-        """Children of `node`, with phantom assemblies expanded in place."""
+        """Children of `node`, with phantom assemblies and existing equipment expanded in place."""
         merged: dict[int, list[Any]] = {}
         for child, qty in node.children:
-            if child.pn is None and child.is_assembly:
+            if outside(child):
+                in_step.add(child.pn)  # type: ignore[arg-type]  # outside() saw a PN
+                expanded = numbered_children(child, factor * qty)
+            elif child.pn is None and child.is_assembly:
                 expanded = numbered_children(child, factor * qty)
             else:
                 expanded = [(child, factor * qty)]
@@ -284,7 +295,9 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
             emit(child, level + 1, count, qty * multiplier)
 
     for root in roots:
-        if root.pn is None and root.is_assembly:  # unnumbered top assembly: its children stay at level 1
+        if outside(root):  # existing equipment at the top: no row, its children stay at level 1
+            in_step.add(root.pn)  # type: ignore[arg-type]  # outside() saw a PN
+        if outside(root) or (root.pn is None and root.is_assembly):  # unnumbered top assembly: children at level 1
             for child, count in numbered_children(root, 1):
                 emit(child, 1, count, 1)
         else:
@@ -294,7 +307,7 @@ def roll_up(roots: list[Node], parts: dict[str, dict[str, Any]]) -> dict[str, An
         "rows": rows,
         "total_qty": dict(sorted(totals.items())),
         "missing_part_yaml": sorted(missing_part_yaml),
-        "missing_in_step": sorted(set(parts) - in_step),
+        "missing_in_step": sorted(pn for pn in set(parts) - in_step if SOURCING.delivered(parts[pn])),
         "unidentified": sorted(unidentified),
     }
 

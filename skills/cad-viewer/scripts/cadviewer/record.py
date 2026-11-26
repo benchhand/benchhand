@@ -42,6 +42,20 @@ def _layout() -> Any:
 
 
 @functools.cache
+def _sourcing() -> Any:
+    """cad-record's sourcing mapping (make_buy -> made, purchased, existing), the one shared definition."""
+    name = "cad_record_sourcing"
+    if name not in sys.modules:
+        path = LAYOUT_PY.with_name("sourcing.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ViewerError(f"cannot load {path}")
+        sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sys.modules[name])
+    return sys.modules[name]
+
+
+@functools.cache
 def _emit() -> Any:
     """cad-record's output emitter, which reads the tool-result envelope of a cad-model check file."""
     name = "cad_record_emit"
@@ -86,16 +100,17 @@ class Part:
     material: str
     process: str
     colour: str
-    group: str | None  # subassembly id, or None for a top-level part
-    path: str  # OCP viewer tree path
+    group: str | None  # subassembly id, or None for a part outside every subassembly
+    path: str  # OCP viewer tree path: /<product>/<sourcing group>[/<subassembly>]/<node>
+    sourcing: str  # top-level sourcing group: one of sourcing.GROUPS
 
 
 @dataclass(frozen=True)
 class Group:
-    id: str
+    id: str  # a subassembly id or a sourcing group name
     title: str
     parts: tuple[str, ...]  # occurrence ids
-    path: str
+    path: str  # a subassembly's first path, in the first sourcing group that holds members of it
 
 
 @dataclass(frozen=True)
@@ -108,6 +123,7 @@ class Version:
     record_dir: Path
     parts: tuple[Part, ...]
     groups: tuple[Group, ...]
+    sourcing_groups: tuple[Group, ...]  # non-empty groups of sourcing.GROUPS, in that order
     metrics: dict[str, Any]
     manifest: dict[str, Any]
 
@@ -126,8 +142,8 @@ class Version:
         raise ViewerError(f"{self.label}: no part {target}; parts: {[p.ref for p in self.parts]}")
 
     def targets(self, target: str) -> tuple[str, ...]:
-        """Occurrence ids named by a subassembly id (all its members) or one occurrence (`part`)."""
-        for group in self.groups:
+        """Occurrence ids named by a sourcing group or subassembly id (all its members) or one occurrence."""
+        for group in (*self.sourcing_groups, *self.groups):
             if group.id == target:
                 return group.parts
         return (self.part(target).id,)
@@ -220,6 +236,17 @@ def load_groups(hw: Path) -> list[tuple[str, str]]:
             if isinstance(sub, dict) and isinstance(sub.get("id"), str)]
 
 
+def _sourcing_group(record_dir: Path, pn: str) -> str:
+    """The sourcing group of part `pn`, from its record's make_buy through cad-record's shared mapping."""
+    path = record_dir / "parts" / pn / "part.yaml"
+    data = read_yaml(path) if path.is_file() else None
+    sourcing = _sourcing()
+    try:
+        return sourcing.group(data if isinstance(data, dict) else {"PN": pn})
+    except sourcing.SourcingError as error:
+        raise ViewerError(f"{path}: {error}") from error
+
+
 def load_version(hw: Path, version: str = "latest") -> Version:
     hw = hw.resolve()
     label, folder, record_dir = version_files(hw, version)
@@ -234,11 +261,21 @@ def load_version(hw: Path, version: str = "latest") -> Version:
     except reader.VersionError as error:
         raise ViewerError(f"{label}: {error}") from error
     product_id = str(manifest.get("product_id") or "assembly")
+    sourcing = _sourcing()
+    taken = [gid for gid, _title in load_groups(record_dir) if gid in sourcing.GROUPS]
+    if taken:
+        raise ViewerError(f"{label}: assembly.yaml subassembly {taken[0]!r} has the name of a sourcing group; "
+                          f"rename it (sourcing groups: {', '.join(sourcing.GROUPS)})")
+    sourced = {oid: _sourcing_group(record_dir, occurrences[oid].pn) for oid in occurrences}
     groups = []
     for gid, title in load_groups(record_dir):
         members = tuple(oid for oid in sorted(occurrences) if occurrences[oid].group == gid)
         if members:
-            groups.append(Group(gid, title, members, f"/{product_id}/{gid}"))
+            first = min((sourced[oid] for oid in members), key=sourcing.GROUPS.index)
+            groups.append(Group(gid, title, members, f"/{product_id}/{first}/{gid}"))
+    sourcing_groups = tuple(
+        Group(name, name, members, f"/{product_id}/{name}") for name in sourcing.GROUPS
+        if (members := tuple(oid for oid in sorted(occurrences) if sourced[oid] == name)))
     parts = []
     for oid in sorted(occurrences):
         built = occurrences[oid]
@@ -250,12 +287,13 @@ def load_version(hw: Path, version: str = "latest") -> Version:
         finish = str(record.get("finish") or "")
         group = built.group if any(g.id == built.group for g in groups) else None
         node = products[pn] if built.ref == pn else f"{products[pn]} [{built.ref}]"
-        path = f"/{product_id}/{group}/{node}" if group else f"/{product_id}/{node}"
+        top = f"/{product_id}/{sourced[oid]}"
+        path = f"{top}/{group}/{node}" if group else f"{top}/{node}"
         title = str(record.get("title") or products[pn][len(pn):].strip())
         parts.append(Part(oid, pn, built.ref, node, title, material, process,
-                          colour_for(material, finish), group, path))
+                          colour_for(material, finish), group, path, sourced[oid]))
     return Version(hw, label, product_id, folder / "parts", files, record_dir, tuple(parts), tuple(groups),
-                   read_json(files["metrics"]), manifest)
+                   sourcing_groups, read_json(files["metrics"]), manifest)
 
 
 # --------------------------------------------------------------------------- version list
@@ -492,6 +530,7 @@ def panel_model(version: Version, check: dict[str, Any] | None) -> dict[str, Any
     return {
         "label": version.label, "product_id": version.product_id, "hw": str(version.hw),
         "groups": [{"id": g.id, "title": g.title, "parts": list(g.parts), "path": g.path} for g in version.groups],
+        "sourcing_groups": [{"id": g.id, "parts": list(g.parts), "path": g.path} for g in version.sourcing_groups],
         "parts": parts,
         "totals": {"volume_mm3": _finite(totals.get("volume_mm3")), "mass_g": _finite(totals.get("mass_g")),
                    "parts_without_density": totals.get("parts_without_density") or [],

@@ -58,6 +58,8 @@ FRAME_WIDTH = 0.7         # ISO 5457 frame line
 OUTLINE_WIDTH = 0.5       # ISO 128-2 line group 0.5: visible outlines
 THIN_WIDTH = 0.25         # hidden lines, table and title-block rules, symbol centre lines
 HIDDEN_DASH = "3 0.75"    # ISO 128-2 line type 02 for a 0.25 mm line: 12d dash, 3d gap
+# ISO 128-2 line type 05, outlines of adjacent parts, for a 0.25 mm line: 24d dash, 3d gaps, two 0.5d dots
+PHANTOM_DASH = "6 0.75 0.125 0.75 0.125 0.75"
 CENTRING_MARK_INSIDE = 5.0
 FRAME_CLEARANCE = 1.0     # between the frame or title block and anything placed in the drawing area
 TITLE_BLOCK_WIDTH = 180.0
@@ -568,6 +570,13 @@ def _view_group(view: ViewGeometry) -> ET.Element:
     cx, cy = view.centre_mm
     group = _element("g", {"id": f"view-{view.view_id}", "class": "view", "data-role": view.role,
                            "transform": f"translate({cx:.4f} {cy:.4f})"})
+    if view.reference:  # existing equipment: thin phantom lines under the product's own layers
+        dx, dy = view.reference_offset
+        layer_group = _element("g", {"class": "reference", "fill": "none", "stroke": "#000", "stroke-linecap": "round",
+                                     "stroke-linejoin": "round", "stroke-width": THIN_WIDTH,
+                                     "stroke-dasharray": PHANTOM_DASH, "transform": f"translate({dx:.4f} {dy:.4f})"})
+        layer_group.extend(_element("path", {"d": d}) for d in view.reference)
+        group.append(layer_group)
     for layer, paths, attributes in (
             ("visible", view.visible, {"stroke-width": OUTLINE_WIDTH}),
             ("hidden", view.hidden, {"stroke-width": THIN_WIDTH, "stroke-dasharray": HIDDEN_DASH})):
