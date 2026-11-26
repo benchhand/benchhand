@@ -14,6 +14,7 @@ Standard library only: the cad-design, cad-bom and cad-record scripts load it by
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -112,7 +113,7 @@ def size_problem(standard: str, size: str) -> str | None:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
 Issue = tuple[str, str]  # (the designation field, why it is wrong)

@@ -25,7 +25,7 @@ TRIGGER
    `missing_part_yaml` → create the part.yaml or rename the product;
    `missing_in_step` → remove the stale part or add it to the model;
    `unidentified` → give the leaf product a PN;
-   `invalid_designation` → each item names the PN, the `purchase.designation.<field>` and the reason (a blank field, a size that embeds the length, a length that is not a positive number, a property class the YAML reads as a number): correct that field in the part.yaml, quoting `"8.8"`. The row stays in the BOM with its designation column empty until the field is valid.
+   `invalid_designation` → each item names the PN, the `purchase.designation.<field>` and the reason (a blank field, a size that embeds the length, a length that is not a finite positive number, a property class the YAML reads as a number): correct that field in the part.yaml, quoting `"8.8"`. The row stays in the BOM with its designation column empty until the field is valid.
 4. Rerun until exit 0, then COMMIT records the bom.csv change with the stage.
    Without `--version`, the current `hw/parts` records are reconciled; with it, BOM metadata and reconciliation use the selected version's snapshot, not current records.
 
