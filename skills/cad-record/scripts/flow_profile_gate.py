@@ -228,8 +228,9 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
         found.append(Problem("flow/profile/decision", f"flow.profile cites {decision}, which {why}",
                              "only the user's explicit approval records the answers: record them again with a new DR-###"))
     applicability = fdm_applicability(product, parts)
-    return found + list(applicability.malformed) + asked_problems(profile, fdm=applicability.asks,
-                                                                  unresolved=applicability.unresolved)
+    return (found + list(applicability.malformed)
+            + asked_problems(profile, fdm=applicability.asks, unresolved=applicability.unresolved)
+            + list(applicability.unresolved))
 
 
 def applicable_fields(profile: Mapping[str, Any], *, fdm: bool) -> list[str]:

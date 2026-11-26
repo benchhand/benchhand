@@ -383,6 +383,7 @@ class BareYaml(unittest.TestCase):
         """product.yaml at release with `key: <word>` written bare, read by the repo's loader."""
         product = fx.product(stage="release")
         product["flow"]["profile"] = fx.flow_profile()
+        product["manufacturing"] = {"processes": ["fdm"]}  # a resolved plan: an unresolved one blocks by itself
         if key == "enabled":
             product["flow"]["profile"]["fea"] = {"enabled": True, "mode": "accurate"} if word == "on" else {"enabled": False}
         text = yaml.safe_dump(product, sort_keys=False)
