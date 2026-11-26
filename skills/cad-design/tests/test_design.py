@@ -456,6 +456,10 @@ JOINT_GEOMETRY_PARTS = {
     # A 30 m pad tilted 0.005 degrees, its centre 15 m off; 0.0209 mm above the deck at x = 0, 1.3 mm at its centre.
     "TST-0624": (FDM_MADE, "cq.Workplane().box(30000, 10, 6).rotate((0, 0, 0), (0, 1, 0), 0.005)"
                            f".translate((14990, 0, {5.0209 - 14990 * math.sin(math.radians(0.005)) + 3 * math.cos(math.radians(0.005))!r}))"),
+    "TST-0625": (FDM_MADE, "cq.Workplane().box(250, 250, 10)"),  # a deck, top at z = 5
+    "TST-0626": (FDM_MADE, "cq.Workplane().circle(100).circle(90).extrude(6).translate((0, 0, 5))"),  # a ring: inner r 90
+    # A V6-like head: a 36 mm plate whose Ø26 bore opening is centred on the origin's projection, 13 mm from the contact.
+    "TST-0627": (FDM_MADE, "cq.Workplane().box(36, 36, 6).faces('>Z').workplane().hole(26).translate((0, 0, 8))"),
 }
 JOINT_GEOMETRY_ASSEMBLY = """\
 occurrences:
@@ -496,6 +500,8 @@ joints:
 - {id: J-628, type: revolute, parent: TST-0602, child: TST-0622, axis: [0, 0, 1], origin: [0, 0, 0], min: -10, max: 10, nominal: 0}
 - {id: J-629, type: fixed, parent: TST-0605, child: TST-0623, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
 - {id: J-630, type: fixed, parent: TST-0605, child: TST-0624, axis: [1, 0, 0], origin: [0, 0, 0], min: 0, max: 0, nominal: 0}
+- {id: J-632, type: fixed, parent: TST-0625, child: TST-0626, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
+- {id: J-633, type: fixed, parent: TST-0605, child: TST-0627, axis: [1, 0, 0], origin: [0, 0, -50], min: 0, max: 0, nominal: 0}
 """
 
 
@@ -684,6 +690,20 @@ class JointGeometryTests(unittest.TestCase):
         contact = missing["TST-0608"]["contact"]
         self.assertEqual((contact["locator"], contact["locator_mm"]), ("mount", 0.0))
         self.assertAlmostEqual(contact["datum_mm"], 480.0, places=6)
+
+    def test_an_opening_wider_than_the_allowance_needs_a_mount_point(self) -> None:
+        """The origin projects to the centre of a ring with a 90 mm inner radius: inside its outline, but 90 mm from the
+        contact, past the 20 mm opening allowance."""
+        self.assertEqual(self.missing("J-632"), {})
+        finding = self.unknown("J-632")["TST-0626"]
+        self.assertIn("mount.point", finding["remedy"])
+        self.assertAlmostEqual(finding["contact"]["opening_mm"], 90.0, places=4)
+
+    def test_a_bore_sized_opening_like_a_v6_head_passes(self) -> None:
+        self.assertEqual((self.missing("J-633"), self.unknown("J-633")), ({}, {}))
+        contact = self.found("J-633")["TST-0627"]
+        self.assertEqual((contact["locator"], contact["locator_mm"]), ("projection", 0.0))
+        self.assertAlmostEqual(contact["opening_mm"], 13.0, places=4)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is required to build the CAD shape fixtures")
