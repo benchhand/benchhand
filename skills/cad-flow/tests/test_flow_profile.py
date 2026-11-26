@@ -215,6 +215,35 @@ class Record(unittest.TestCase):
                          ["| motion | auto | stated |"])
         self.assertIn("| processes.fdm.supports | allowed | not applicable |", record)
 
+    def test_an_answer_or_default_for_a_skipped_question_is_refused_and_nothing_is_written(self) -> None:
+        for name, manufacturing, given, named in (
+                ("every default on a cnc plan", "[cnc]", ("--accept-default", *OPTIONS), "--orientation"),
+                ("an answer on a cnc plan", "[cnc]", ("--supports", "free", "--accept-default", *OPTIONS[:5]), "--supports"),
+                ("a clearance default after declining print-in-place", "[fdm]",
+                 ("--print-in-place", "no", "--accept-default", *[o for o in OPTIONS if o != "print-in-place"]),
+                 "--pip-clearance-xy")):
+            with self.subTest(name):
+                product = PRODUCT + f"manufacturing:\n  processes: {manufacturing}\n"
+                self.product.write_text(product, encoding="utf-8")
+                result = run("record", "--hw", str(self.hw), "--decision", "DR-001", *given)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(named, result.stderr)
+                self.assertIn("does not apply", result.stderr)
+                self.assertEqual(self.product.read_text(encoding="utf-8"), product)
+                self.assertFalse((self.hw / "decisions").exists())
+
+    def test_the_cnc_profile_still_asks_the_fdm_questions_when_a_part_becomes_fdm_after_a_refused_extra_default(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS).returncode, 1)
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general).returncode, 0)
+        part = self.hw / "parts" / "PRT-0001" / "part.yaml"
+        part.parent.mkdir(parents=True)
+        part.write_text("PN: PRT-0001\nprocess: fdm\n", encoding="utf-8")
+        changed = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual(changed.returncode, 1, changed.stdout)
+        self.assertEqual(len(json.loads(changed.stdout)["problems"]), 9)
+
     def test_declining_print_in_place_records_its_clearance_questions_as_not_applicable(self) -> None:
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
         rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
