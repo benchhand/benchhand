@@ -590,7 +590,9 @@ def _scoped_fields(hw: Path) -> list[str]:
         raise ProfileFindings([gate.Problem("product.yaml", str(error), "correct product.yaml")]) from error
     parts = read_parts(hw)
     _require_applicability(product, parts)
-    fields: list[str] = gate.question_fields(product, parts)
+    # Print-in-place is offered here whatever an earlier answer said: the user may opt in now, and `record` then
+    # requires both clearances, so they stay listed as follow-ups to that answer.
+    fields: list[str] = gate.question_fields(product, parts, {})
     return fields
 
 
@@ -600,6 +602,10 @@ def _shown_questions(fields: set[str]) -> list[tuple[str, str]]:
     shown = []
     for text, records in QUESTIONS:
         kept = [token for token in records.split(", ") if option_field.get(token.split()[0]) in fields]
+        follow_ups = [token for token in kept if token.startswith("--pip-")]
+        if follow_ups:
+            kept = [token for token in kept if token not in follow_ups]
+            kept[-1:] = [f"{kept[-1]}; if the answer is offer, also {', '.join(follow_ups)}"]
         if kept:
             shown.append((text, ", ".join(kept)))
     return shown
