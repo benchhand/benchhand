@@ -191,6 +191,31 @@ class Record(unittest.TestCase):
         self.assertIn("manufacturing.processes", result.stderr)
         self.assertIn("Would you like hinges", run("questions", "--hw", str(self.hw)).stdout)
 
+    def test_the_questions_a_cnc_project_skips_are_recorded_as_not_applicable_with_a_reason(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general).returncode, 0)
+        asked = self.profile()["asked"]
+        for field in QUESTION_FIELDS[5:]:
+            self.assertEqual(asked[field]["status"], "not_applicable", field)
+            self.assertEqual(asked[field]["decision"], "DR-001")
+            self.assertIn("no FDM process is planned", asked[field]["reason"])
+        record = next((self.hw / "decisions").glob("DR-001-*.md")).read_text(encoding="utf-8")
+        self.assertEqual([line for line in record.splitlines() if line.endswith("| stated |")],
+                         ["| motion | auto | stated |"])
+        self.assertIn("| processes.fdm.supports | allowed | not applicable |", record)
+
+    def test_declining_print_in_place_records_its_clearance_questions_as_not_applicable(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--print-in-place", "no", "--accept-default", *rest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        asked = self.profile()["asked"]
+        self.assertEqual(asked["processes/fdm/print_in_place"], "user")
+        for field in QUESTION_FIELDS[14:]:
+            self.assertEqual(asked[field]["status"], "not_applicable", field)
+            self.assertIn("print-in-place is declined", asked[field]["reason"])
+
     def test_a_project_that_plans_fdm_still_needs_every_answer(self) -> None:
         self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])

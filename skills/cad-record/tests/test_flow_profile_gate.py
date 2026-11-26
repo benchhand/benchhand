@@ -39,6 +39,7 @@ QUESTION_FIELDS = (
 
 
 UNKNOWN_ROUTE = {"status": "unknown", "reason": "not planned yet"}
+NOT_APPLICABLE = {"status": "not_applicable", "reason": "no FDM process is planned", "decision": "DR-001"}
 
 
 def approved(_decision: str) -> None:
@@ -277,6 +278,32 @@ class Gate(unittest.TestCase):
         product["manufacturing"] = {"processes": "fdm"}
         _stage, found = gate_module.gate(product, self.parts, approved)
         self.assertEqual([(item.code, item.path) for item in found], [("flow.applicability", "manufacturing/processes")])
+
+    def test_a_not_applicable_disposition_is_no_answer_and_the_gate_asks_when_the_question_applies_again(self) -> None:
+        fdm_fields = QUESTION_FIELDS[5:]
+        asked = {field: ("user" if field not in fdm_fields else NOT_APPLICABLE) for field in QUESTION_FIELDS}
+        profile = fx.flow_profile(asked=asked)
+        self.assertEqual(profile_errors(profile), [])
+        cnc, fdm = {"A": {"process": "cnc"}}, {"A": {"process": "fdm"}}
+        self.assertEqual(gate_module.gate(self.with_profile(profile, "parts"), cnc, approved)[1], [])
+        found = gate_module.gate(self.with_profile(profile, "parts"), fdm, approved)[1]
+        self.assertEqual([item.path for item in found], [f"flow/profile/asked/{field}" for field in fdm_fields])
+        self.assertIn("applies", found[0].message)
+
+    def test_a_not_applicable_disposition_needs_its_reason(self) -> None:
+        profile = fx.flow_profile()
+        profile["asked"]["processes/fdm/orientation"] = {"status": "not_applicable"}
+        self.assertNotEqual(profile_errors(profile), [])
+
+    def test_the_question_plan_names_why_each_skipped_question_is_skipped(self) -> None:
+        cnc = gate_module.question_plan({"manufacturing": {"processes": ["cnc"]}}, {})
+        self.assertEqual(cnc.fields, list(QUESTION_FIELDS[:5]))
+        self.assertEqual(list(cnc.skipped), list(QUESTION_FIELDS[5:]))
+        self.assertTrue(all("no FDM process is planned" in reason for reason in cnc.skipped.values()), cnc.skipped)
+        declined = gate_module.question_plan({"manufacturing": {"processes": ["fdm"]}}, {},
+                                             {"processes": {"fdm": {"print_in_place": False}}})
+        self.assertEqual(list(declined.skipped), list(QUESTION_FIELDS[14:]))
+        self.assertTrue(all("print-in-place is declined" in reason for reason in declined.skipped.values()), declined.skipped)
 
     def test_an_unresolved_applicability_asks_the_fdm_questions_and_names_the_field(self) -> None:
         profile = fx.flow_profile()
