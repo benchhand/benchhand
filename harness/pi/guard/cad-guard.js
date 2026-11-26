@@ -15,6 +15,13 @@
 // A `tool_call` hook blocks `bash` and `powershell` outright, and blocks `write` or `edit`
 // unless the real path lies inside the project's `.cad-work/` and outside the installed
 // skills and this folder. It fails closed: a path it cannot resolve is blocked.
+//
+// The hook runs before pi normalises the path and opens it, so a link swapped in between, or a
+// Unicode space that pi turns into a plain one, can still redirect the write. The extension
+// therefore replaces pi's `write` and `edit` tools with the same tools over operations that
+// confine the mutation itself (`confinedWriteFile`): each directory part below `.cad-work/` is
+// checked with lstat, the file is opened with O_NOFOLLOW, and content is written only after the
+// held descriptor is shown to be the file now at a real path inside `.cad-work/`.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -27,6 +34,8 @@ const WORK_DIR = ".cad-work";
 const SHELL_TOOLS = new Set(["bash", "powershell"]);
 const WRITE_TOOLS = new Set(["write", "edit"]);
 const OUTPUT_TAIL = 32 * 1024;
+// The characters pi's path handling turns into a plain space before it opens a path.
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 // Environment names the child keeps from the parent. The model sets none of them.
 const ENV_KEEP = [
   "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
@@ -100,7 +109,7 @@ function missing(target) {
  * makes the path unresolvable, because the write would follow it to a place no check has seen.
  */
 function realTarget(raw, cwd) {
-  const text = raw.startsWith("@") ? raw.slice(1) : raw;
+  const text = (raw.startsWith("@") ? raw.slice(1) : raw).replace(UNICODE_SPACES, " ");
   if (text === "" || text.startsWith("~") || text.includes("\0") || text.split(/[\\/]/).includes("..")) return null;
   let current = path.resolve(cwd, text);
   const tail = [];
@@ -113,6 +122,111 @@ function realTarget(raw, cwd) {
     tail.unshift(path.basename(current));
     current = parent;
   }
+}
+
+function refuse(target, why) {
+  return new Error(`CAD agents write only inside the project's ${WORK_DIR}/: ${target} ${why}`);
+}
+
+/** The project's real root and the parts of `abs` below it, which must start with `.cad-work`. */
+function workParts(abs, cwd, least) {
+  if (typeof abs !== "string" || !path.isAbsolute(abs)) throw refuse(String(abs), "is not an absolute path");
+  const project = realpath(cwd);
+  if (project === null) throw refuse(abs, "has no resolvable project root");
+  const target = path.resolve(abs);
+  for (const base of [path.resolve(cwd), project]) {
+    const rel = path.relative(base, target);
+    if (rel === "" || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) continue;
+    const parts = rel.split(path.sep);
+    if (parts[0] === WORK_DIR && parts.length >= least) return { project, parts };
+  }
+  throw refuse(target, `is outside ${path.join(project, WORK_DIR)}`);
+}
+
+/** Walk `parts` below `project`, creating missing directories; a link or a non-directory part is refused. */
+function walkDirs(project, parts) {
+  let dir = project;
+  for (const part of parts) {
+    const next = path.join(dir, part);
+    let stat = fs.lstatSync(next, { throwIfNoEntry: false });
+    if (stat === undefined) {
+      try {
+        fs.mkdirSync(next);
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+      }
+      stat = fs.lstatSync(next);
+    }
+    if (!stat.isDirectory()) throw refuse(next, "is a link or not a directory");
+    dir = next;
+  }
+  return dir;
+}
+
+/** Create `dir` and its parents inside `.cad-work/`, refusing a link on the way. */
+export function confinedMkdir(dir, { cwd }) {
+  const { project, parts } = workParts(dir, cwd, 1);
+  walkDirs(project, parts);
+}
+
+/**
+ * Write `content` to `abs` inside `.cad-work/`, or throw. Nothing is written until the open
+ * descriptor is shown to be a lone regular file now found at a real path inside `.cad-work/`,
+ * outside the protected folders. A file this call created and then refused is removed again.
+ * `beforeOpen` runs between the directory checks and the open; tests swap links there.
+ */
+export function confinedWriteFile(abs, content, { cwd, skills = skillsDir(), guardDir = GUARD_DIR, beforeOpen } = {}) {
+  const { project, parts } = workParts(abs, cwd, 2);
+  const file = path.join(walkDirs(project, parts.slice(0, -1)), parts.at(-1));
+  beforeOpen?.();
+  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+  let created = false;
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow, 0o666);
+    created = true;
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw refuse(file, `cannot be opened: ${error?.code ?? error}`);
+    try {
+      fd = fs.openSync(file, fs.constants.O_WRONLY | noFollow);
+    } catch (second) {
+      throw refuse(file, `cannot be opened without following a link: ${second?.code ?? second}`);
+    }
+  }
+  try {
+    const held = fs.fstatSync(fd);
+    const real = realpath(file);
+    const work = realpath(path.join(project, WORK_DIR));
+    const there = real === null ? undefined : fs.statSync(real, { throwIfNoEntry: false });
+    const protectedHit = [skills, guardDir].some((dir) => real !== null && inside(real, realpath(dir) ?? path.resolve(dir)));
+    const sound = held.isFile() && held.nlink === 1 && real !== null && work !== null && there !== undefined
+      && held.ino === there.ino && held.dev === there.dev && inside(path.dirname(real), work) && !protectedHit;
+    if (!sound) {
+      if (created && real !== null && there !== undefined && held.ino === there.ino && held.dev === there.dev) fs.unlinkSync(real);
+      throw refuse(file, "does not resolve to a plain file inside it");
+    }
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, content, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** pi's `write` operations over the confined mutation. */
+export function writeOperations(context) {
+  return {
+    mkdir: async (dir) => confinedMkdir(dir, context),
+    writeFile: async (abs, content) => confinedWriteFile(abs, content, context),
+  };
+}
+
+/** pi's `edit` operations: reads stay open, the write is confined. */
+export function editOperations(context) {
+  return {
+    readFile: (abs) => fs.promises.readFile(abs),
+    access: (abs) => fs.promises.access(abs, fs.constants.R_OK | fs.constants.W_OK),
+    writeFile: async (abs, content) => confinedWriteFile(abs, content, context),
+  };
 }
 
 /** Null when a write or edit of `raw` is allowed, else the reason it is blocked. */
@@ -163,12 +277,70 @@ function run(argv, { cwd, env, signal }) {
   });
 }
 
+/** Replacements for pi's `write` and `edit` that run pi's own tools over the confined operations. */
+function confinedTools(loadPi, skills, guardDir) {
+  const run = (create, operations) => async (id, params, signal, onUpdate, ctx) => {
+    const pi = await loadPi();
+    const context = { cwd: ctx.cwd, skills, guardDir };
+    return pi[create](ctx.cwd, { operations: operations(context) }).execute(id, params, signal, onUpdate, ctx);
+  };
+  return [
+    {
+      name: "write",
+      label: "write",
+      description: `Write content to a file inside the project's ${WORK_DIR}/. Creates the file, replaces it if it exists, and creates parent directories. Any other path is refused.`,
+      promptSnippet: `Create or overwrite files in ${WORK_DIR}/`,
+      promptGuidelines: ["Use write only for new files or complete rewrites."],
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: `Path to the file to write, inside ${WORK_DIR}/ (relative or absolute)` },
+          content: { type: "string", description: "Content to write to the file" },
+        },
+        required: ["path", "content"],
+        additionalProperties: false,
+      },
+      execute: run("createWriteToolDefinition", writeOperations),
+    },
+    {
+      name: "edit",
+      label: "edit",
+      description: `Edit a file inside the project's ${WORK_DIR}/ with exact text replacements. Any other path is refused.`,
+      promptSnippet: "Make precise file edits with exact text replacement",
+      promptGuidelines: ["Use edit for targeted changes. Each edits[].oldText must exactly and uniquely match the original file."],
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: `Path to the file to edit, inside ${WORK_DIR}/ (relative or absolute)` },
+          edits: {
+            type: "array",
+            description: "One or more targeted replacements, each matched against the original file",
+            items: {
+              type: "object",
+              properties: {
+                oldText: { type: "string", description: "Exact text to replace; it must match once in the original file" },
+                newText: { type: "string", description: "The replacement text" },
+              },
+              required: ["oldText", "newText"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["path", "edits"],
+        additionalProperties: false,
+      },
+      execute: run("createEditToolDefinition", editOperations),
+    },
+  ];
+}
+
 /** The pi extension factory for one CAD agent and its launchers. */
-export function cadGuard(agent, launchers, { guardDir = GUARD_DIR } = {}) {
+export function cadGuard(agent, launchers, { guardDir = GUARD_DIR, loadPi = () => import("@earendil-works/pi-coding-agent") } = {}) {
   const allowed = Object.freeze([...launchers]);
   const skills = skillsDir(guardDir);
   return function extension(pi) {
     pi.on("tool_call", async (event, ctx) => toolCallDecision(event, { cwd: ctx.cwd, skills, guardDir }));
+    for (const tool of confinedTools(loadPi, skills, guardDir)) pi.registerTool(tool);
     pi.registerTool({
       name: "cad_run",
       label: "CAD run",

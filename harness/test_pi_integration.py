@@ -157,6 +157,20 @@ class PiSubagentTests(unittest.TestCase):
         self.assertEqual((self.project / ".cad-work/u1/kept.txt").read_text(encoding="utf-8"), "ok")
         self.assertTrue((scope / "cad-guard/cad-guard.js").is_file())
 
+    def test_edit_changes_a_scratch_file_and_refuses_a_record_file(self) -> None:
+        # The guard replaces pi's edit tool, so its wiring is checked under the real tool.
+        self.install("--user")
+        (self.project / ".cad-work/u1/note.md").write_text("one two\n", encoding="utf-8")
+        (self.project / "hw/product.yaml").write_text("one two\n", encoding="utf-8")
+        change = {"edits": [{"oldText": "two", "newText": "2"}]}
+        entries = self.run_pi([{"name": "edit", "arguments": {"path": ".cad-work/u1/note.md", **change}},
+                               {"name": "edit", "arguments": {"path": "hw/product.yaml", **change}}])
+        scratch, record = self.child_results(entries)
+        self.assertFalse(scratch["isError"], self.output)
+        self.assertEqual((self.project / ".cad-work/u1/note.md").read_text(encoding="utf-8"), "one 2\n")
+        self.assertTrue(record["isError"], self.output)
+        self.assertEqual((self.project / "hw/product.yaml").read_text(encoding="utf-8"), "one two\n")
+
     def test_a_child_whose_guard_is_missing_runs_nothing(self) -> None:
         scope = self.install("--user")
         shutil.rmtree(scope / "cad-guard")

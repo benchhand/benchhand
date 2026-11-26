@@ -79,7 +79,7 @@ pi has no per-command shell permissions, so the CAD agents get no shell. Each ag
 
 - adds a `cad_run` tool that runs only the skill scripts named in the agent's source, through `cad-flow/scripts/run.py` and `uv run --script`, with no shell.
 - blocks `bash`.
-- blocks `edit` and `write` outside the project's `.cad-work/`, and inside the installed skills or the extension itself.
+- blocks `edit` and `write` outside the project's `.cad-work/`, and inside the installed skills or the extension itself. It replaces pi's two tools with the same tools over confined file operations, so the check holds when a link changes after the hook or pi turns a Unicode space into a plain one. Each directory below `.cad-work/` must be a real directory, and the file is opened without following a link.
 
 `cad_run` is not a sandbox. It limits which launchers an agent can start. It does not limit what a launcher does: the BOM launcher can overwrite the shared BOM, and a scratch build runs agent-written Python with your permissions. Use an OS sandbox or container for a hard boundary. Tracked in benchhand-3eq.
 
