@@ -141,6 +141,22 @@ class PiSubagentTests(unittest.TestCase):
     def test_project_scope_child_runs_only_cad_run_and_writes_only_scratch(self) -> None:
         self.assert_confined_child(self.install("--project", str(self.project)), "--approve")
 
+    def test_a_unicode_space_in_a_path_cannot_reach_a_link_out_of_scratch(self) -> None:
+        # pi turns U+00A0 into a plain space before it opens the path, so "a<NBSP>b" is the linked directory "a b".
+        scope = self.install("--user")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.project / ".cad-work/u1/a b").symlink_to(outside)
+        calls = [{"name": "write", "arguments": {"path": ".cad-work/u1/a\u00a0b/escaped.txt", "content": "evil"}},
+                 {"name": "write", "arguments": {"path": ".cad-work/u1/kept.txt", "content": "ok"}}]
+        entries = self.run_pi(calls)
+        escaped, kept = self.child_results(entries)
+        self.assertTrue(escaped["isError"], self.output)
+        self.assertEqual(list(outside.iterdir()), [], self.output)
+        self.assertFalse(kept["isError"], kept)
+        self.assertEqual((self.project / ".cad-work/u1/kept.txt").read_text(encoding="utf-8"), "ok")
+        self.assertTrue((scope / "cad-guard/cad-guard.js").is_file())
+
     def test_a_child_whose_guard_is_missing_runs_nothing(self) -> None:
         scope = self.install("--user")
         shutil.rmtree(scope / "cad-guard")
