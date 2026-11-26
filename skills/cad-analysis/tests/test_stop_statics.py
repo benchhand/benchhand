@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from stop_statics import STOP_ARM_EPSILON_MM, Patch, reaction  # noqa: E402
+from stop_statics import STOP_ARM_EPSILON_MM, Patch, axial_reaction, reaction  # noqa: E402
 
 # A 30 N handle load 80 mm from the pivot is a moment of 2400 N*mm. The expected figures below are worked
 # by hand from M / arm: a strip with arms 7..13 mm (the latched stop) and one with arms 0..7 mm (the open stop).
@@ -85,6 +85,21 @@ class RecordedLoad(unittest.TestCase):
             with self.subTest(recorded=recorded):
                 result = reaction(30.0, 80.0, Patch.strip(7.0, 13.0), recorded_n=recorded)
                 self.assertEqual((result.status, result.outcome), ("bounded", "pass"))
+
+
+class AxialReaction(unittest.TestCase):
+    def test_a_prismatic_stop_reacts_the_axial_load_with_no_moment(self) -> None:
+        result = axial_reaction(24.0)
+        self.assertEqual((result.status, result.outcome, result.design_n, result.moment_n_mm), ("bounded", "pass", 24.0, 0.0))
+
+    def test_a_recorded_figure_below_the_axial_load_is_understated(self) -> None:
+        for recorded, outcome in ((23.9, "fail"), (24.0, "pass"), (30.0, "pass")):
+            with self.subTest(recorded=recorded):
+                self.assertEqual(axial_reaction(24.0, recorded_n=recorded).outcome, outcome)
+
+    def test_a_negative_axial_load_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            axial_reaction(-1.0)
 
 
 class Inputs(unittest.TestCase):

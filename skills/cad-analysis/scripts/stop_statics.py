@@ -90,3 +90,16 @@ def reaction(force_n: float, load_arm_mm: float, patch: Patch, recorded_n: float
     return result(BOUNDED, "pass", "info", design,
                   f"design reaction {design:.4g} N (M {moment:.4g} N*mm over the smallest arm {patch.min_arm:.4g} mm); "
                   f"the pivot carries {design + force_n:.4g} N")
+
+
+def axial_reaction(axial_n: float, recorded_n: float | None = None) -> Reaction:
+    """The reaction of a prismatic stop: the load component along the slide axis that presses the stop, judged
+    against the recorded contact load `recorded_n` when there is one. A slide has no pivot axis, so there is no arm,
+    no moment and no spread over the contact: statics fixes the reaction."""
+    if not (math.isfinite(axial_n) and axial_n >= 0):
+        raise ValueError(f"axial load {axial_n} N must be finite and not negative")
+    if recorded_n is not None and recorded_n < axial_n * (1.0 - RECORDED_TOLERANCE):
+        return Reaction(UNDERSTATED, "fail", "major", 0.0, axial_n, axial_n, None, None, None,
+                        f"the recorded contact load {recorded_n:.4g} N is below the axial reaction {axial_n:.4g} N")
+    return Reaction(BOUNDED, "pass", "info", 0.0, axial_n, axial_n, None, None, None,
+                    f"axial reaction {axial_n:.4g} N (the load component along the slide axis)")
