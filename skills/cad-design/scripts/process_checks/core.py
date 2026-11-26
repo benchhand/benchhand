@@ -305,6 +305,7 @@ class Limit:
     calibrated: Calibrated
     resolved: Any = None  # guidelines.Resolved; None when no catalog was given or the operation has no capability profile
     base_mm: float | None = None  # the profile's line width, else its nozzle diameter; None when it states neither
+    state: str = ""  # what the profile's calibration_state says (Context.state_phrase), quoted on a guideline pass
 
     @property
     def status(self) -> str:
@@ -824,7 +825,7 @@ class Context:
         self.consulted.append(found)
         if found not in self.resolutions:
             self.resolutions.append(found)
-        return Limit(characteristic, side, cal, found, context.base_mm)
+        return Limit(characteristic, side, cal, found, context.base_mm, self.state_phrase())
 
     @property
     def service_class(self) -> str | None:
@@ -837,6 +838,8 @@ class Context:
         class (a calibration only tightens). An unknown limit is UNKNOWN (its callers report why)."""
         if limit.status == "unknown":
             return UNKNOWN, _noted(coverage, "limit unknown")
+        if limit.status == "guideline" and limit.state:
+            return PASS, _noted(coverage, limit.state)
         return PASS, coverage
 
     def capability_gate(self, kinds: Iterable[str] | None = None) -> Result | None:
