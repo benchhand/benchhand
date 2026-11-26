@@ -559,15 +559,20 @@ class Context:
         ident = self.material_id
         return self.record.materials.get(ident) if ident else None
 
-    def stock_material_id(self) -> str | None:
-        """The stock profile the operation's setup names, else the component's material profile."""
-        stock = ((self.op.setup or {}).get("stock") or {}) if self.op is not None else {}
+    def stock_material_id(self, op: Any | None = None) -> str | None:
+        """The stock profile the setup of `op` (default: this operation) names, else the component's material profile."""
+        op = op or self.op
+        stock = ((op.setup or {}).get("stock") or {}) if op is not None else {}
         named = stock.get("material_profile")
         return named if isinstance(named, str) else self.material_id
 
     @property
     def profile(self) -> Any | None:
-        capability = self.op.capability if self.op is not None else None
+        return self.profile_of(self.op)
+
+    def profile_of(self, op: Any | None) -> Any | None:
+        """The capability profile `op` names, or None when it names none or the record does not hold it."""
+        capability = op.capability if op is not None else None
         return self.record.capabilities.get(capability) if isinstance(capability, str) else None
 
     @property
@@ -645,22 +650,30 @@ class Context:
             return Calibrated("calibrated", characteristic, found.calibration.limits, (), found.calibration)
         return Calibrated(found.status, characteristic, None, tuple(found.reasons))
 
-    def governing(self, characteristic: str, *, profile: Any | None = None, orientation: str | None = None,
-                  feature: str | None = None, size: float | None = None) -> Calibrated:
+    def governing(self, characteristic: str, *, profile: Any | None = None, op: Any | None = None,
+                  orientation: str | None = None, feature: str | None = None, size: float | None = None) -> Calibrated:
         """The value a check judges `characteristic` against: its calibration (`calibrated`), else the guideline interval
         for the profile (this operation's unless `profile` names another) and material, for a feature of `size` mm (status
-        guideline), else unknown with every reason. Calibration is never required: a guideline value governs until one
-        exists (benchhand-c7q.30)."""
-        cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature, size=size)
+        guideline), else unknown with every reason. With `op`, another operation of the route (the one that produced the
+        feature), its own profile and stock material govern, and with no machine recorded its process and material scope
+        the guideline. Calibration is never required: a guideline value governs until one exists (benchhand-c7q.30)."""
+        if op is None:
+            cal = self.calibrated(characteristic, profile=profile, orientation=orientation, feature=feature, size=size)
+        elif (profile := profile or self.profile_of(op)) is None:
+            cal = Calibrated("unknown", characteristic, None, (f"{self.label}: {op.id} records no capability profile",))
+        else:
+            cal = self.calibrated(characteristic, profile=profile, material=self.stock_material_id(op), orientation=orientation,
+                                  feature=feature, size=size)
         if cal.known:
             return cal
-        return self.guideline_value(characteristic, cal, profile=profile, orientation=orientation, feature=feature, size=size)
+        return self.guideline_value(characteristic, cal, profile=profile, op=op, orientation=orientation, feature=feature,
+                                    size=size)
 
-    def guideline_value(self, characteristic: str, instead: Calibrated, *, profile: Any | None = None,
+    def guideline_value(self, characteristic: str, instead: Calibrated, *, profile: Any | None = None, op: Any | None = None,
                         orientation: str | None = None, feature: str | None = None, size: float | None = None) -> Calibrated:
         """The guideline interval of `characteristic` (status guideline) in place of `instead`, a calibration that is
         missing or that the check rejected; else `instead` with the guideline's reasons added."""
-        context = self.guideline_context(profile)
+        context = self.guideline_context(profile, op=op)
         if context is None:
             return instead
         found = guidelines().resolve_guidelines(self.catalog, context, characteristic, orientation=orientation, feature=feature,
@@ -707,18 +720,19 @@ class Context:
                 and guidelines().machine_optional(op.kind, self.part.provider_of(op.provider), self.service_class,
                                                   self.calibration))
 
-    def guideline_context(self, profile: Any | None = None) -> Any | None:
-        """The guideline scope (guidelines.Context) of a capability profile (this operation's unless `profile` names
-        another) and material, or None without a catalog, a profile or a process in guidelines().GUIDELINE_PROCESSES.
-        An FDM operation with no machine recorded gets the scope of its process and material alone."""
-        profile = profile or self.profile
-        op = self.op
-        if self.catalog is not None and profile is None and op is not None and self.guidelines_without_machine():
-            material_id = self.stock_material_id()
+    def guideline_context(self, profile: Any | None = None, *, op: Any | None = None) -> Any | None:
+        """The guideline scope (guidelines.Context) of a capability profile (this operation's, or that of `op`, unless
+        `profile` names another) and its stock material, or None without a catalog, a profile or a process in
+        guidelines().GUIDELINE_PROCESSES. An FDM operation with no machine recorded gets the scope of its process and
+        material alone."""
+        op = op or self.op
+        profile = profile or self.profile_of(op)
+        if self.catalog is not None and profile is None and op is not None and self.guidelines_without_machine(op):
+            material_id = self.stock_material_id(op)
             return guidelines().context_without_machine(op.kind, self.record.materials.get(material_id) if material_id else None)
         if self.catalog is None or profile is None or profile.process not in guidelines().GUIDELINE_PROCESSES:
             return None
-        material_id = self.stock_material_id()
+        material_id = self.stock_material_id(op)
         return guidelines().context_for(profile, self.record.materials.get(material_id) if material_id else None)
 
     def limit(self, characteristic: str, side: str, *, orientation: str | None = None) -> Limit:
