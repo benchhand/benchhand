@@ -619,30 +619,7 @@ def interference(geometry: dict[Pair, dict[str, Any]], named: Iterable[Pair] | N
                  "allowed": pair in effective_allowed,
                  "ok": not hit or (g["method"] == "exact" and pair in effective_allowed)}
         rows["joint_pairs" if pair in joint_pairs else "pairs"].append(entry)
-    declared_fit_findings = []
-    compliant = []
-    for item in [*declarations, *locating]:
-        if item["classification"] == "invalid":  # reported whatever the selection when no pair can be read
-            if item["pair"] is None or tuple(item["pair"]) in selected:
-                declared_fit_findings.append({**item, "type": "fit_invalid"})
-            continue
-        pair = tuple(item["pair"])
-        if pair not in selected:
-            continue
-        if not load_pair_policy().overlap_allowed(item):
-            continue
-        measurement = geometry.get(cast(Pair, pair))
-        if "compliance" in item:
-            row, finding = _compliant_fit(item, measurement, threshold)
-            compliant.append(row)
-            if finding is not None:
-                declared_fit_findings.append(finding)
-            continue
-        if measurement is not None and measurement["interference_mm3"] is not None \
-                and measurement["interference_mm3"] <= threshold \
-                and (item.get("limits") or {}).get("max_clearance_mm", -1) < 0:
-            declared_fit_findings.append({**item, "type": "declared_fit_not_realized", **measurement,
-                                          "threshold_mm3": threshold})
+    declared_fit_findings, compliant = _declared_fit_outcomes([*declarations, *locating], selected, geometry, threshold)
     every = rows["pairs"] + rows["joint_pairs"]
     measured_rows = [e for e in every if e["clearance_mm"] is not None]
     smallest = None if changed else min(measured_rows, key=lambda e: e["clearance_mm"], default=None)
@@ -663,6 +640,34 @@ RIGID_PRESS_FIT_NOT_APPLICABLE = {
     "reason": "the interference is designed deformation of the compliant part (crush ribs): rigid press-fit stress, "
               "press force and seat qualification do not apply; retention follows the joint's own source"}
 COMPLIANT_OVERLAP_TOLERANCE_MM = 1e-3  # the sampled diametral overlap of a measured pair, against its stated maximum
+
+
+def _declared_fit_outcomes(fits: Iterable[dict[str, Any]], selected: Iterable[Any], geometry: Mapping[Pair, Any],
+                           threshold: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(the declared-fit findings, the compliant-fit coverage rows) of the selected pairs' press and locating fits:
+    an invalid fit is a `fit_invalid` finding (whatever the selection when its pair cannot be read), a compliant fit
+    is judged by `_compliant_fit`, and a rigid interference fit whose model shares no volume is not realized."""
+    selected = set(selected)
+    findings: list[dict[str, Any]] = []
+    compliant: list[dict[str, Any]] = []
+    for item in fits:
+        if item["classification"] == "invalid":
+            if item["pair"] is None or tuple(item["pair"]) in selected:
+                findings.append({**item, "type": "fit_invalid"})
+            continue
+        pair = tuple(item["pair"])
+        if pair not in selected or not load_pair_policy().overlap_allowed(item):
+            continue
+        measurement = geometry.get(cast(Pair, pair))
+        if "compliance" in item:
+            row, finding = _compliant_fit(item, measurement, threshold)
+            compliant.append(row)
+            findings.extend([] if finding is None else [finding])
+        elif measurement is not None and measurement["interference_mm3"] is not None \
+                and measurement["interference_mm3"] <= threshold \
+                and (item.get("limits") or {}).get("max_clearance_mm", -1) < 0:
+            findings.append({**item, "type": "declared_fit_not_realized", **measurement, "threshold_mm3": threshold})
+    return findings, compliant
 
 
 def _compliant_fit(item: Mapping[str, Any], measurement: Mapping[str, Any] | None,
