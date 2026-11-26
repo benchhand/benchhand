@@ -163,6 +163,10 @@ class ProfileError(Exception):
     """A record this script cannot read or edit; nothing was written."""
 
 
+class FlowFinding(ProfileError):
+    """A field in product.yaml blocks recording the profile."""
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -257,6 +261,37 @@ def _dump(block: Mapping[str, Any], indent: int) -> str:
     text = yaml.dump(_quoted(dict(block)), Dumper=_Dumper, sort_keys=False, default_flow_style=False, allow_unicode=True,
                      width=4096)
     return "".join(" " * indent + line if line.strip() else line for line in text.splitlines(keepends=True))
+
+
+def _flow_node(text: str) -> tuple[Any, Any]:
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(root, yaml.MappingNode):
+        raise FlowFinding("product.yaml: expected a mapping with a flow field")
+    matches = [(key, value) for key, value in root.value if isinstance(key, yaml.ScalarNode) and key.value == "flow"]
+    if len(matches) > 1:
+        raise FlowFinding("flow: duplicate key")
+    return matches[0] if matches else (None, None)
+
+
+def _require_flow_keys(node: Any) -> None:
+    if not isinstance(node, yaml.MappingNode):
+        raise FlowFinding("flow: expected a mapping")
+    seen: set[str] = set()
+    for key, _ in node.value:
+        if not isinstance(key, yaml.ScalarNode):
+            raise FlowFinding("flow: expected scalar keys")
+        if key.value in seen:
+            raise FlowFinding(f"flow.{key.value}: duplicate key")
+        seen.add(key.value)
+
+
+def _require_flow_shape(flow: Mapping[str, Any]) -> None:
+    validate = load_validate()
+    validator = validate.schema_registry.document_validator(validate.SCHEMAS, "product.schema.json", formats=True)
+    for problem in validator.iter_errors({"flow": flow}):
+        if problem.absolute_path and problem.absolute_path[0] == "flow":
+            field = ".".join(map(str, problem.absolute_path))
+            raise FlowFinding(f"{field}: {problem.message}")
 
 
 def _with_inline_flow(text: str, flow: Mapping[str, Any]) -> str | None:
@@ -419,14 +454,18 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         raise ProfileError(f"cannot read {path}: {error}") from error
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
-    product = read_product(hw)
-    if not isinstance(product, Mapping) or not isinstance(product.get("flow", {}), Mapping):
-        raise ProfileError(f"{path} is not a mapping with a flow mapping")
+    try:
+        _, node = _flow_node(text)
+        _require_flow_keys(node)
+        product = yaml_loader.safe_load(text)
+    except (yaml.YAMLError, ValueError) as error:
+        raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
     profile = answered_profile(decision, answers, accepted)
     if invalid := gate.shape_problems(profile):
         raise ProfileError(gate.refusal(invalid))
     expected = copy.deepcopy(dict(product))
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
+    _require_flow_shape(expected["flow"])
     try:
         after = with_profile(text, expected["flow"])
         edited = yaml_loader.safe_load(after)
@@ -496,6 +535,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(record(args.hw, args.decision, answers, accepted), indent=2))
             return 0
         stage, found = check(args.hw, args.stage)
+    except FlowFinding as error:
+        print(f"flow_profile.py {args.command}: {error}", file=sys.stderr)
+        return 1
     except ProfileError as error:
         print(f"flow_profile.py {args.command}: {error}", file=sys.stderr)
         return 2
