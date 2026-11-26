@@ -412,7 +412,8 @@ def _fea_solvers_check(command: Path, environ: Mapping[str, str], enabled: bool 
     Without FEA in the flow profile the probe does not run: the solvers are not needed yet."""
     if not enabled:
         return _check("fea-solvers", "FEA solvers (ccx, Gmsh)", "info",
-                      "FEA is not enabled; it will need ccx and Gmsh if enabled later.", "")
+                      "FEA is not enabled; it will need ccx and Gmsh if enabled later.", "",
+                      required=False)
     started = time.monotonic()
     print("[preflight] fea-solvers: checking...", file=sys.stderr, flush=True)
     labels = {"calculix": "CalculiX ccx", "gmsh": "Gmsh"}
