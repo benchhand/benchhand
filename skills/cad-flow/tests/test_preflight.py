@@ -630,7 +630,7 @@ class FEASolverCheckTests(unittest.TestCase):
     def test_without_fea_a_missing_solver_is_info_and_nothing_is_probed(self) -> None:
         check = self.solver_check({"return_value": {**self.PROBED, "calculix": {"error": "ccx not found"}}},
                                   enabled=False)
-        self.assertEqual(check.status, "info")
+        self.assertEqual((check.status, check.required), ("info", False))
         self.assertIn("FEA is not enabled", check.detail)
         self.assertIn("ccx and Gmsh", check.detail)
 
