@@ -413,7 +413,8 @@ class RecheckHookTests(unittest.TestCase):
 
     def restage_decision(self, decision: str) -> None:
         """The index: the decision at status `decision`, stamped again."""
-        write_test_decision(self.root / "hw", "DR-001", status=decision, date=DAY, gate=LAYOUT_GATE)
+        write_test_decision(self.root / "hw", "DR-001", status=decision, date=DAY, gate=LAYOUT_GATE,
+                            gate_build=LAYOUT_BUILD)
         self.git("add", "hw")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
 
@@ -439,7 +440,7 @@ class RecheckHookTests(unittest.TestCase):
         self.git("add", "hw/extra.txt")
         self.assertEqual(self.stamp_gate("layout").returncode, 0)
         write_test_decision(self.root / "hw", "DR-001", status="accepted", date=DAY,
-                            gate=LAYOUT_GATE)  # in the work tree, not staged
+                            gate=LAYOUT_GATE, gate_build=LAYOUT_BUILD)  # in the work tree, not staged
         self.refused_gate(self.verify())
         self.refused_gate(self.run_python(STAMP, "--verify", "--committed", cwd=self.root))
 

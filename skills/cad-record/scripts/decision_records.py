@@ -5,8 +5,8 @@
 """Decision records in the MADR 4.0.0 layout: `DR-###-slug.md`, with a generated `index.md` beside them.
 
 A record is a Markdown file with YAML front matter (`status` and `date`, and optional `decision-makers`,
-`consulted` and `informed`, `superseded-by`, and `gate: {from: <stage>, to: <stage>}`, which marks the record as the
-gate decision of that stage advance) and the MADR sections: the `# title`, `## Context and Problem Statement`,
+`consulted` and `informed`, `superseded-by`, and `gate` with `from` and `to` stages. A gate can also carry the
+`version` and `version_manifest_sha256` pair.) The MADR sections are the `# title`, `## Context and Problem Statement`,
 `## Decision Drivers`, `## Considered Options`, `## Decision Outcome` (`Chosen option: "X", because Y.`
 with `### Consequences` and `### Confirmation`), `## Pros and Cons of the Options` and `## More Information`.
 MADR 4.0.0: https://adr.github.io/madr/
