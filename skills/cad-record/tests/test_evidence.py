@@ -755,6 +755,43 @@ class ScopeBeforeRelease(unittest.TestCase):
         self.assertEqual(data["statuses"][READBACK]["scope"]["disposition"], "required")
 
 
+class StampTimeScope(unittest.TestCase):
+    """What cad-recheck's require_evidence recomputes when it stamps: packet_problems, then packet_blocking, the
+    obligation gate under the staged record's own scope. Only a class whose rules leave strength out of scope stamps
+    an unknown strength analysis; an unknown or unlisted class owes everything."""
+
+    DIGEST = "c" * 64
+
+    def stamped(self, docs: dict[str, Any]) -> tuple[list[str], list[str]]:
+        """The problems and blocking findings of the ANALYSIS packet of `docs` with strength left unknown."""
+        record = normalized(joint_ready(docs))
+        shown = [o for o in mi.required_checks(record) if o.id != STRENGTH]
+        selection_sha256 = evidence.selection.input_digest(docs)
+        data = assess(record, packet(record, obligations=shown), selection_sha256=selection_sha256).packet("analysis",
+                                                                                                           self.DIGEST)
+        return (evidence.packet_problems(data, record=record, record_sha256=self.DIGEST, stage="analysis"),
+                evidence.packet_blocking(data, record=record, stage="analysis", selection_sha256=selection_sha256))
+
+    @staticmethod
+    def with_class(fact: dict[str, Any]) -> dict[str, Any]:
+        docs = documents("production")
+        docs["product.yaml"]["use_case"]["service_class"] = fact
+        return docs
+
+    def test_a_fit_prototype_stamps_with_strength_unknown(self) -> None:
+        self.assertEqual(self.stamped(documents("fit_assembly")), ([], []))
+
+    def test_every_other_class_refuses_to_stamp_unknown_strength(self) -> None:
+        cases = {"production": documents("production"), "safety_critical": documents("safety_critical"),
+                 "missing": self.with_class(fx.unknown("TST: the service class is not chosen")),
+                 "invalid": self.with_class(fx.known("tst_hobby"))}
+        for label, docs in cases.items():
+            with self.subTest(service_class=label):
+                problems, blocking = self.stamped(docs)
+                self.assertEqual(problems, [])
+                self.assertTrue(any(item.startswith(f"{STRENGTH}: ") for item in blocking), blocking)
+
+
 class NotAssessedIsNoPhysicalTest(unittest.TestCase):
     """D37 covers the tool's own checks, not a test the record requires the user to perform: a producer's not_assessed on a
     physically_validated obligation never stands in for it."""
