@@ -28,6 +28,8 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
+import golden_rows  # noqa: E402
 import completeness  # noqa: E402
 import drawing  # noqa: E402
 import drawing_document  # noqa: E402
@@ -324,6 +326,14 @@ class PinDrawingGate(unittest.TestCase):
         except json.JSONDecodeError as exc:
             raise AssertionError(f"drawing CLI returned no JSON (exit {proc.returncode}): {proc.stderr[-3000:]}") from exc
         return proc.returncode, result
+
+    def test_the_drawn_rows_of_the_lamp_parts_keep_their_golden(self) -> None:
+        """The frame-aligned drawings of the pin and the elbow link stay as they are (design T8)."""
+        for pn in ("LMP-0005", "LMP-0002"):
+            with self.subTest(pn=pn):
+                code, result = self.draw("v1", f"golden-{pn}", pn)
+                self.assertEqual((code, result["status"]), (0, "pass"), result.get("findings"))
+                golden_rows.check(self, f"lamp_{pn}", result)
 
     def test_default_output_publishes_and_reuses_the_bundle(self) -> None:
         code, result = self.draw("v1", "unused", output=False)
