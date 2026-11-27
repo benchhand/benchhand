@@ -800,6 +800,30 @@ class Sync(ScratchCase):
                 self.assertEqual((code, report["finding"]), (2, "unreadable-directory"), report)
         self.assertEqual(tree(self.hw), before)
 
+    def test_a_malformed_or_misshapen_baseline_is_a_named_finding_with_exit_1(self) -> None:
+        work = Path(self.init("unit-a", "PRT-0001")["scratch_hw"]).parent
+        good = json.loads((work / "baseline.json").read_text(encoding="utf-8"))
+        digest = "a" * 64
+        variants = {
+            "not json": "{ nope",
+            "a list": "[]",
+            "no hw": {k: v for k, v in good.items() if k != "hw"},
+            "parts is a string": {**good, "parts": "PRT-0001"},
+            "an empty PN": {**good, "parts": [""]},
+            "a PN that is a path": {**good, "parts": ["../x"]},
+            "files is a list": {**good, "files": []},
+            "a digest that is not a string": {**good, "files": {"product.yaml": 5}},
+            "a digest that is not sha256": {**good, "files": {"product.yaml": "short"}},
+            "a path that climbs out": {**good, "files": {"../escape": digest}},
+            "an absolute path": {**good, "files": {"/etc/passwd": digest}},
+        }
+        for label, content in variants.items():
+            (work / "baseline.json").write_text(content if isinstance(content, str) else json.dumps(content), encoding="utf-8")
+            for command in ("sync", "deliver"):
+                with self.subTest(baseline=label, command=command):
+                    code, report = self.scratch(command, "--hw", "hw", "--unit", "unit-a")
+                    self.assertEqual((code, report["status"], report["finding"]), (1, "error", "baseline-invalid"), report)
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
