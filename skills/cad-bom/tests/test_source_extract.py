@@ -239,6 +239,26 @@ class ExtractTests(unittest.TestCase):
         _, table = run(*self.args(HTML, "--find", "dk"))
         self.assertNotIn("column_order", table)
 
+    def test_a_name_that_is_not_one_plain_file_name_is_unsafe_and_writes_nothing(self) -> None:
+        elsewhere = Path(self._tmp.name) / "elsewhere"
+        elsewhere.mkdir()
+        names = ["nested/page.html", "../page.html", "../../outside.html", "..", ".", "/abs/page.html",
+                 " padded.html", "line\nbreak.html", "dir\\page.html", ".hidden.html"]
+        for name in names:
+            with self.subTest(name=name):
+                code, result = run(*self.args(HTML, "--name", name))
+                self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["unsafe_name"]))
+        self.assertEqual(list(elsewhere.iterdir()), [])
+        self.assertEqual(sorted(p.name for p in Path(self._tmp.name).iterdir()), ["elsewhere"])
+
+    def test_a_symlinked_project_root_is_refused(self) -> None:
+        real = Path(self._tmp.name) / "real_hw"
+        real.mkdir()
+        self.hw.symlink_to(real, target_is_directory=True)
+        code, result = run(*self.args(HTML))
+        self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["symlink_refused"]))
+        self.assertEqual(list(real.iterdir()), [])
+
     def test_bad_arguments_exit_2(self) -> None:
         for argv in (["lower-1", str(HTML)], ["PIN-0001"], ["PIN-0001", str(HTML), "--bogus"]):
             with self.subTest(argv=argv):
