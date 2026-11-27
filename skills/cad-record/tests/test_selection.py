@@ -792,9 +792,10 @@ class ComparisonOutput(unittest.TestCase):
         self.assertEqual((decision["parts"], decision["recommendation"]["primary"]), (["TST-0201", "TST-0202"], "machined_bracket"))
         self.assertEqual(report["coverage"], {"made": ["TST-0201", "TST-0202"], "unselected": ["TST-0202"]})
 
-    def test_coverage_follows_the_confirmed_primary_not_the_ranking_winner(self) -> None:
-        """The ranking winner printed_cover also makes the clip TST-0302, but selection.yaml confirms machined_cover, which
-        names only TST-0301. The confirmed choice decides coverage, so the clip is unselected."""
+    @staticmethod
+    def machined_cover_confirmed() -> dict[str, Any]:
+        """The ranking winner printed_cover also makes the clip TST-0302, but selection.yaml confirms machined_cover,
+        which names only TST-0301."""
         documents = scenarios.qualified_polymer_cover()
         documents["parts/TST-0302/part.yaml"] = scenarios.made_part("TST-0302", "Clip", "fdm", "tst_polymer_c_printed", "tst_printer")
         selection_candidate(documents, "printed_cover")["parts"].append(
@@ -804,9 +805,21 @@ class ComparisonOutput(unittest.TestCase):
         recorded["assessment"]["decision"] = "DR-001"
         recorded["recommendation"] = {"status": "final", "primary": "machined_cover", "reasons": ["TST: the user prefers metal"],
                                       "limits": ["TST: none recorded"], "what_would_change": ["TST: nothing recorded"]}
-        report = assess(self, documents)
+        return documents
+
+    def test_coverage_follows_the_confirmed_primary_not_the_ranking_winner(self) -> None:
+        """The confirmed choice decides coverage, so the clip is unselected."""
+        report = assess(self, self.machined_cover_confirmed())
         self.assertEqual(only_decision(report)["recommendation"]["primary"], "printed_cover")
         self.assertEqual(report["coverage"], {"made": ["TST-0301", "TST-0302"], "unselected": ["TST-0302"]})
+
+    def test_a_made_part_the_confirmed_primary_leaves_unselected_is_named_and_exits_1(self) -> None:
+        report = assess(self, self.machined_cover_confirmed())
+        self.assertNotEqual(report["status"], "final_ready")
+        self.assertEqual(selection.exit_status(report), 1)
+        (unselected,) = findings(report, "selection.part_unselected")
+        self.assertEqual(unselected["subject"], {"PN": "TST-0302"})
+        self.assertIn("TST-0302", unselected["remedy"])
 
     def test_every_material_property_has_one_comparison_group(self) -> None:
         grouped = [name for _, names in selection.PROPERTY_GROUPS for name in names]
