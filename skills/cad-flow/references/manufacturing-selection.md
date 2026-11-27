@@ -44,7 +44,11 @@ An optical or transparency requirement is a hard constraint. Opaque routes canno
 
 Capability profiles describe supplied equipment, stock, operators, tools, suppliers and calibrated/demonstrated limits. They do not set product requirements or prove compliance. Nominal resolution, build volume and drawing tolerance labels do not verify dimensional capability. Material-family guidance does not establish a grade property or allowable. Density does not provide strength. Do not transfer values between materials.
 
-A material approval counts only for the operation, thickness and coating it states. List `cut` in the operations of a cutting approval. In a candidate route, state the stock thickness and coating of each cutting step (`stock.thickness`, `stock.coating`, with `none` for uncoated stock). Selection checks both against the approval. An unstated thickness or coating leaves the approval unknown. A stock coating that differs from the approval's leaves it unknown too.
+A material approval counts only for the operation, thickness and coating it states. List `cut` in the operations of a cutting approval. In a candidate route, state the stock thickness and coating of each cutting step (`stock.thickness`, `stock.coating`, with `none` for uncoated stock). Selection checks both against the approval. An unstated thickness or coating leaves the approval unknown. A stock coating that differs from the approval's leaves it unknown too, and a blank coating name counts as unstated.
+
+A candidate whose declared stock differs from the stock the record's cut uses describes another route. Its recommendation proposes recording that stock through the approval gate.
+
+When the chosen candidates leave a made part uncovered, selection is not final. It names each such part as `selection.part_unselected` and exits 1.
 
 ## SPECIFY and record
 
