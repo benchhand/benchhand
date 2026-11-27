@@ -712,11 +712,12 @@ class Sync(ScratchCase):
                 stream.write("# second lead edit\n")
             return result
 
-        before = tree(scratch_hw.parent)
+        baseline = scratch_hw.parent / "baseline.json"
+        before, baseline_before = tree(scratch_hw), baseline.read_bytes()
         with mock.patch.object(module, "lead_snapshot", snapshot), self.assertRaises(module.UsageError) as raised:
             module.sync(self.hw.resolve(), "unit-a")
         self.assertEqual(raised.exception.finding, "lead-changed-during-read")
-        self.assertEqual(tree(scratch_hw.parent), before)
+        self.assertEqual((tree(scratch_hw), baseline.read_bytes()), (before, baseline_before))
 
     def test_a_half_applied_sync_is_a_named_finding_and_the_baseline_matches_what_was_installed(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])

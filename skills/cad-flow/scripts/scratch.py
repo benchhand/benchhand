@@ -70,6 +70,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -79,7 +80,7 @@ import secrets
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -134,6 +135,14 @@ BUNDLE_ROOTS = frozenset(layout.bundle_kinds())
 
 class UsageError(Exception):
     """Bad arguments or missing workspace; exit 2 and make no delivery writes."""
+
+
+class Finding(UsageError):
+    """A refusal with a stable name, printed as `finding` in the JSON, so a caller can act on it."""
+
+    def __init__(self, finding: str, message: str, code: int = 2) -> None:
+        super().__init__(message)
+        self.finding, self.code = finding, code
 
 
 def workspace(hw: Path, unit: str) -> Path:
@@ -249,6 +258,29 @@ def load_baseline(work: Path, work_fd: int | None = None) -> dict[str, Any]:
             os.close(fd)
 
 
+@contextlib.contextmanager
+def workspace_lock(work_fd: int) -> Iterator[None]:
+    """One sync or deliver at a time per workspace: an exclusive flock on workspace.lock in the workspace."""
+    fd = os.open("workspace.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=work_fd)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Finding("workspace-busy", "another sync or deliver holds this workspace's lock; run it again when that finishes") from None
+        yield
+    finally:
+        os.close(fd)
+
+
+def pending_sync(work_fd: int) -> bool:
+    """Whether a sync began and never finished: sync.pending is written before its first change and removed after its baseline."""
+    try:
+        os.stat("sync.pending", dir_fd=work_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def write_baseline(work_fd: int, baseline: dict[str, Any]) -> None:
     write_file(work_fd, "baseline.json", (json.dumps(baseline, indent=2) + "\n").encode("utf-8"))
 
@@ -318,7 +350,7 @@ def refuse_staged_delivery(hw: Path) -> None:
     parts = hw / "parts"
     staged = sorted(path.name for path in parts.iterdir() if STAGED_DELIVERY.match(path.name)) if parts.is_dir() else []
     if staged:
-        raise UsageError(f"delivery in progress: {', '.join(staged)} in {parts}; run sync again when it finishes")
+        raise Finding("delivery-in-progress", f"delivery in progress: {', '.join(staged)} in {parts}; run sync again when it finishes")
 
 
 def lead_snapshot(hw: Path) -> dict[str, str]:
@@ -328,17 +360,18 @@ def lead_snapshot(hw: Path) -> dict[str, str]:
     first = delivery_tree(hw)[0]
     refuse_staged_delivery(hw)
     if delivery_tree(hw)[0] != first:
-        raise UsageError(f"{hw} changed while sync read it; run sync again when the lead's edits are done")
+        raise Finding("lead-changed-during-read", f"{hw} changed while sync read it; run sync again when the lead's edits are done")
     return first
 
 
-def copy_bytes(source: Path, dir_fd: int, name: str) -> str:
-    """Install the lead's `source` as `name` in the open scratch directory and return the sha256 of the
-    bytes actually written."""
+def stage_lead_file(source: Path, expected: str) -> tuple[bytes, int]:
+    """The bytes and mode of one lead file, read before sync changes anything; a file that no longer
+    hashes to its snapshot digest refuses the sync."""
     with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
         data, mode = stream.read(), os.fstat(stream.fileno()).st_mode & 0o777
-    write_file(dir_fd, name, data, mode)
-    return hashlib.sha256(data).hexdigest()
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise Finding("lead-changed-during-read", f"{source} changed after sync read it; run sync again when the lead's edits are done")
+    return data, mode
 
 
 def drop_collisions(plan: list[str], present: set[str], lead: dict[str, str], conflicts: list[str]) -> list[str]:
@@ -378,14 +411,12 @@ def remove_synced(scratch_fd: int, path: str) -> None:
             os.close(above)
 
 
-def install_synced(hw: Path, scratch_fd: int, path: str, lead_digest: str, mine_digest: str | None) -> str:
-    """Put the lead's file in the scratch copy unless it already matches; return the digest of what is there."""
-    if mine_digest == lead_digest:
-        return lead_digest
+def install_synced(scratch_fd: int, path: str, staged: tuple[bytes, int]) -> None:
+    """Put one staged lead file in the scratch copy."""
     names = path.split("/")
     parent = descend(scratch_fd, names[:-1], create=True)
     try:
-        return copy_bytes(hw / path, parent, names[-1])
+        write_file(parent, names[-1], *staged)
     finally:
         os.close(parent)
 
@@ -404,46 +435,66 @@ def sync(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
 
 
 def sync_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
-    baseline = load_baseline(work, work_fd)
-    if Path(baseline["hw"]) != hw:
-        raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
-    scratch_hw = work / "hw"
-    scratch_fd = descend(work_fd, ["hw"])
+    with workspace_lock(work_fd):
+        baseline = load_baseline(work, work_fd)
+        if Path(baseline["hw"]) != hw:
+            raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
+        scratch_hw = work / "hw"
+        scratch_fd = descend(work_fd, ["hw"])
+        try:
+            report = apply_sync(hw, unit, scratch_hw, scratch_fd, work_fd, baseline)
+        finally:
+            os.close(scratch_fd)
+    return (1 if report["conflicts"] else 0), report
+
+
+def apply_sync(hw: Path, unit: str, scratch_hw: Path, scratch_fd: int, work_fd: int,
+               baseline: dict[str, Any]) -> dict[str, Any]:
+    own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
+    base: dict[str, str] = baseline["files"]
+    lead, mine = lead_snapshot(hw), delivery_tree(scratch_hw)[0]
+    added: list[str] = []
+    modified: list[str] = []
+    removed: list[str] = []
+    conflicts: list[str] = []
+    plan: list[str] = []
+    seeded = seed_store(hw, scratch_hw)  # refuses a linked cache directory before anything else is written
+    for path in sorted(set(lead) | set(base)):
+        if lead.get(path) == base.get(path):
+            continue
+        if path.startswith(own) or (mine.get(path) != base.get(path) and mine.get(path) != lead.get(path)):
+            conflicts.append(path)
+            continue
+        plan.append(path)
+    plan = drop_collisions(plan, set(mine), lead, conflicts)
+    staged = {path: stage_lead_file(hw / path, lead[path]) for path in plan
+              if path in lead and mine.get(path) != lead[path]}  # every source is read before the first change
+    write_file(work_fd, "sync.pending", json.dumps({"plan": plan}).encode("utf-8"))
+    done: list[str] = []
     try:
-        own = tuple(f"parts/{pn}/" for pn in baseline["parts"])
-        base: dict[str, str] = baseline["files"]
-        lead, mine = lead_snapshot(hw), delivery_tree(scratch_hw)[0]
-        added: list[str] = []
-        modified: list[str] = []
-        removed: list[str] = []
-        conflicts: list[str] = []
-        plan: list[str] = []
-        seeded = seed_store(hw, scratch_hw)  # refuses a linked cache directory before anything else is written
-        for path in sorted(set(lead) | set(base)):
-            if lead.get(path) == base.get(path):
-                continue
-            if path.startswith(own) or (mine.get(path) != base.get(path) and mine.get(path) != lead.get(path)):
-                conflicts.append(path)
-                continue
-            plan.append(path)
-        plan = drop_collisions(plan, set(mine), lead, conflicts)
         for path in plan:
             if path not in lead:
                 remove_synced(scratch_fd, path)
                 removed.append(path)
                 base.pop(path, None)
             else:
+                if path in staged:
+                    install_synced(scratch_fd, path, staged[path])
                 (modified if path in base else added).append(path)
-                base[path] = install_synced(hw, scratch_fd, path, lead[path], mine.get(path))
-        write_baseline(work_fd, baseline)
-    finally:
-        os.close(scratch_fd)
+                base[path] = lead[path]
+            done.append(path)
+    except OSError as error:
+        write_baseline(work_fd, baseline)  # the baseline then matches what was changed, so deliver proposes nothing extra
+        os.unlink("sync.pending", dir_fd=work_fd)
+        raise Finding("sync-half-applied", f"sync changed {len(done)} of {len(plan)} paths ({', '.join(done) or 'none'}) and stopped at {path}: {error}; the baseline records the changed paths; fix the cause and run sync again") from error
+    write_baseline(work_fd, baseline)
+    os.unlink("sync.pending", dir_fd=work_fd)
     report = {"status": "conflict" if conflicts else "synced", "unit": unit, "scratch_hw": str(scratch_hw),
               "added": added, "modified": modified, "removed": removed, "conflicts": sorted(conflicts),
               "seeded_store_files": seeded}
     if conflicts:
         report["note"] = "left these as they are: the unit and the lead both changed them, or the lead changed a part the unit owns"
-    return (1 if conflicts else 0), report
+    return report
 
 
 def run_tool(argv: list[str], log: Path) -> tuple[int, dict[str, Any] | None]:
@@ -609,6 +660,13 @@ def deliver(hw: Path, unit: str) -> tuple[int, dict[str, Any]]:
 
 
 def deliver_workspace(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
+    with workspace_lock(work_fd):
+        if pending_sync(work_fd):
+            raise Finding("sync-interrupted", f"a sync of {work} did not finish, so its baseline may lag the files; run sync again before deliver")
+        return deliver_locked(hw, unit, work, work_fd)
+
+
+def deliver_locked(hw: Path, unit: str, work: Path, work_fd: int) -> tuple[int, dict[str, Any]]:
     baseline = load_baseline(work, work_fd)
     if Path(baseline["hw"]) != hw:
         raise UsageError(f"{work} was initialised from {baseline['hw']}, not {hw}")
@@ -689,6 +747,9 @@ def main(argv: list[str] | None = None) -> int:
             code, report = sync(hw, args.unit)
         else:
             code, report = deliver(hw, args.unit)
+    except Finding as error:
+        print(json.dumps({"status": "error", "finding": error.finding, "error": str(error)}))
+        return error.code
     except (UsageError, OSError, ValueError) as error:
         print(json.dumps({"status": "error", "error": str(error)}))
         return 2
