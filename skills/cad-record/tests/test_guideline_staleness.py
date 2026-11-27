@@ -155,6 +155,25 @@ class Staleness(unittest.TestCase):
         put(self.project, "pla", guideline("fdm.material.pla", 1.5, material_family=["pla"]))
         self.assertEqual(status(), "stale")
 
+    def service_class(self, value: str) -> None:
+        path = self.hw / "product.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["use_case"]["service_class"] = fx.known(value)
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    def test_reclassifying_the_use_case_stales_the_ream_and_stack_packets_of_a_part_with_no_machine(self) -> None:
+        """Whether the shipped guidelines stand in for the missing machine depends on the service class, so reclassifying
+        functional_demo as safety_critical after a build makes the ream allowance and stack checks stale (the impact the
+        evidence gate takes as stale_since_build for their producer packets)."""
+        self.machine_free()
+        self.service_class("functional_demo")
+        built = self.built()
+        self.service_class("safety_critical")
+        stale = impact.compare(built, self.record(), since="v1").stale_obligations
+        for ident in ("process.reaming.allowance@TST-0001/ream", "interface.stack@IF-001"):
+            with self.subTest(ident):
+                self.assertIn(ident, stale)
+
     def test_editing_an_applicable_set_changes_the_source_fingerprint_and_no_other_domain(self) -> None:
         put(self.project, "generic", guideline("fdm.generic", 0.8))
         before = impact.subject_fingerprints(self.record())["TST-0001"]
