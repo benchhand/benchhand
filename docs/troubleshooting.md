@@ -14,7 +14,7 @@ FEA needs `ccx` and `gmsh`. Preflight looks through FreeCAD, then next to `freec
 |---|---|---|
 | `preflight.py` | 0 | Every required check passed. |
 | `preflight.py` | 1 | A required check failed. Read the report and fix it. |
-| `preflight.py --status` | 0, 1 | The last warm-up passed or failed a required check. Exit 1 also reports a failing FEA setting or solver check of the current project when no usable warm-up is recorded. |
+| `preflight.py --status` | 0, 1 | Exit 0 needs a passing warm-up and passing FEA checks of the current project. Exit 1 means the warm-up failed a required check, or the current project's FEA setting or solver check fails. A cached warm-up that passed still exits 1 for a failing project, and so does a missing warm-up. |
 | `preflight.py --status` | 2 | No warm-up is recorded, or it died. Warm in the foreground. |
 | `preflight.py --status` | 3 | The warm-up is still running. Run `--status` again, or add `--wait SECONDS`. |
 
@@ -56,7 +56,12 @@ Run `preflight.py --warm`. It installs Chromium through Playwright and warms the
 
 ## A printer check is not assessed
 
-A printer (FDM or resin) check that has neither an applicable guideline value nor a usable calibration is `not_assessed` with the reason `no_guideline`. It is a minor finding that blocks no gate and is never a pass. `CAD_CALIBRATION` controls FDM calibration only and is off for release, so a recorded FDM calibration does not clear it. Add a guideline value with a cited source. A test coupon printed and inspected on the target printer is a separate physical check. Record it as evidence if you want a gate to count it.
+A printer (FDM or resin) check that has neither an applicable guideline value nor a usable calibration is `not_assessed` with the reason `no_guideline`. It is a minor finding that blocks no gate and is never a pass.
+
+- FDM: add a guideline value with a cited source. `CAD_CALIBRATION` is off for release, so a recorded FDM calibration does not clear it.
+- Resin: the shipped guideline sets cover FDM only, so a guideline value cannot clear it. A recorded resin calibration in the capability profile counts under either `CAD_CALIBRATION` setting.
+
+A test coupon printed and inspected on the target printer is a separate physical check. It is gate evidence only when you record it as evidence.
 
 ## A script's output is not JSON
 

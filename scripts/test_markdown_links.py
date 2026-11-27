@@ -12,11 +12,15 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATED = {"schemas.md"}  # gen_api.py output; regex patterns in it look like links
 DOCS = [ROOT / "README.md", *(p for p in sorted((ROOT / "docs").glob("*.md")) if p.name not in GENERATED)]
 LINK = re.compile(r"""!?\[[^\]]*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)""")
+DESTINATION = r"""\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)"""
+# A link whose label holds an image: `[![alt](img.png)](page.md)`. LINK and REFERENCE find the image itself.
+IMAGE_LINK = re.compile(r"\[[^\[\]]*!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])[^\[\]]*\]" + DESTINATION)
 REFERENCE = re.compile(r"!?\[[^\]]+\]\[([^\]]+)\]")
 DEFINITION = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s*(<[^>]*>|\S+)")
 CODE_SPAN = re.compile(r"`[^`]*`")
@@ -66,14 +70,16 @@ def slug(heading: str) -> str:
 
 def anchors(path: Path) -> set[str]:
     """The heading anchors of `path`. A repeated heading gets `-1`, `-2` and so on, as GitHub numbers it."""
-    seen: dict[str, int] = {}
-    found = set()
+    counts: dict[str, int] = {}
+    found: set[str] = set()
     for line in prose_lines(path, strip_code=False):
         if match := re.match(r"#{1,6}\s+(.*)", line):
             base = slug(match.group(1))
-            count = seen.get(base, 0)
-            seen[base] = count + 1
-            found.add(base if count == 0 else f"{base}-{count}")
+            anchor = base
+            while anchor in found:  # every emitted slug is reserved, a heading named `x-1` included
+                counts[base] = counts.get(base, 0) + 1
+                anchor = f"{base}-{counts[base]}"
+            found.add(anchor)
     return found
 
 
@@ -85,6 +91,7 @@ def targets(doc: Path) -> list[str]:
     found = [unwrap(m.group(2)) for line in lines if (m := DEFINITION.match(line))]
     for line in lines:
         found.extend(unwrap(target) for target in LINK.findall(line))
+        found.extend(unwrap(target) for target in IMAGE_LINK.findall(line))
         found.extend(f"[{ident}]" for ident in REFERENCE.findall(line) if ident.lower() not in defined)
     return found
 
@@ -95,6 +102,7 @@ def problems(doc: Path, root: Path) -> list[str]:
         if re.match(r"[a-z][a-z0-9+.-]*:", target):
             continue
         name, _, fragment = target.partition("#")
+        name, fragment = unquote(name), unquote(fragment)
         path = doc if not name else (doc.parent / name).resolve()
         if not exists_exact(path, root.resolve()):
             found.append(f"{doc.relative_to(root)}: {target} does not exist")
@@ -143,6 +151,25 @@ class MarkdownLinkTests(unittest.TestCase):
         text = "![alt](gone.png) ![ok](real.png) [link](gone.md) ![ref][r]\n\n[r]: gone2.png\n"
         self.assertEqual(self.check({"real.png": "x\n"}, text), [
             "doc.md: gone.md does not exist", "doc.md: gone.png does not exist", "doc.md: gone2.png does not exist"])
+
+    def test_decodes_percent_encoding_in_the_path_and_the_fragment(self) -> None:
+        files = {"has space.md": "# My Heading\n", "real.md": "x\n"}
+        text = ("[a](has%20space.md#my-heading) [b](has%20space.md#my%2Dheading) [c](<has space.md>) "
+                "[d](gone%20too.md) [e](real.md#no%20such)\n")
+        self.assertEqual(self.check(files, text), [
+            "doc.md: gone%20too.md does not exist", "doc.md: real.md#no%20such has no such heading"])
+
+    def test_checks_the_link_around_an_image_as_well_as_the_image(self) -> None:
+        files = {"real.png": "x\n", "real.md": "x\n"}
+        text = ("[![ok](real.png)](real.md) [![bad link](real.png)](gone.md) [![bad image](gone.png)](real.md)\n"
+                "[![ref][i]](gone2.md)\n\n[i]: real.png\n")
+        self.assertEqual(self.check(files, text), [
+            "doc.md: gone.md does not exist", "doc.md: gone.png does not exist", "doc.md: gone2.md does not exist"])
+
+    def test_reserves_every_slug_it_emits_when_headings_collide(self) -> None:
+        files = {"real.md": "# X\n\n# X\n\n# X-1\n\n# X\n"}
+        text = "[a](real.md#x) [b](real.md#x-1) [c](real.md#x-1-1) [d](real.md#x-2) [e](real.md#x-3)\n"
+        self.assertEqual(self.check(files, text), ["doc.md: real.md#x-3 has no such heading"])
 
     def test_code_spans_separate_bracketed_phrases(self) -> None:
         text = "[first] `code` [second] and [a]`x`[b]\n"

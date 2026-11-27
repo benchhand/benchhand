@@ -73,7 +73,7 @@ Results for an evidence obligation (`skills/cad-record/scripts/evidence.py`, `RE
 - Before LAYOUT, an unresolved due obligation is a warning. From LAYOUT on it is an error.
 - `not_assessed` is an info finding at a gate (`gate.not_assessed`). It blocks nothing and never counts as a pass. A printer (FDM or resin) check with neither an applicable guideline value nor a usable calibration is `not_assessed` with the reason `no_guideline`.
 - A physical test (`physically_validated`) may stay `planned` until the release.
-- At the release, only obligations in the release scope of the service class must be resolved. An out-of-scope obligation stays open and unclaimed, and a failure there does not block it.
+- At the release, the gate skips obligations that the release scope of the service class leaves out. It requires every in-scope obligation to be resolved, and a failure in an obligation left out does not block it. The release assessment (`ReleaseAssessment`) still lists every obligation whose result is not `pass` or `not_applicable` as open, waived and out-of-scope ones included.
 - Separately, an unresolved critical finding blocks the design freeze and the release, whatever the scope of its obligation (`finding.critical`, `Evidence.gate` in `evidence.py`).
 - At the release, a waiver resolves an obligation, with two limits. A `safety_critical` release takes no waiver. A waived physical test makes the release an unvalidated trial, and `appearance_concept`, `production` and `safety_critical` refuse that (`SERVICE_POLICY` in `skills/cad-record/scripts/project_scope.py`). `production` and `safety_critical` therefore need the physical test.
 
