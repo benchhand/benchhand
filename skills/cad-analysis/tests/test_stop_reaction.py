@@ -124,6 +124,18 @@ class EvidenceSchemaTests(unittest.TestCase):
         self.assertEqual([error.message for error in evidence_validator().iter_errors(detail)], [])
 
 
+class PacketJsonTests(unittest.TestCase):
+    """The backstop under every check: a number that is not finite never reaches a file or stdout. Kernel-free."""
+
+    def test_infinity_and_nan_are_a_packet_error_and_never_text(self) -> None:
+        for value in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(value=value), self.assertRaises(stop_reaction.check_packet.PacketError):
+                stop_reaction.check_packet.dumps({"detail": {"bound_n": value}})
+
+    def test_a_finite_packet_is_indented_json_with_a_final_newline(self) -> None:
+        self.assertEqual(stop_reaction.check_packet.dumps({"a": [1.5]}), '{\n  "a": [\n    1.5\n  ]\n}\n')
+
+
 class DeclaredDataTests(unittest.TestCase):
     """The recipe names the data that decides the verdict as well as the code (#128, #140). Kernel-free."""
 

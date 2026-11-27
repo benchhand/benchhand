@@ -622,9 +622,21 @@ def stop_reactions(pivot: Pivot, stops: Sequence[Mapping[str, Any]], loads: Sequ
     return {state["label"]: statics.reaction(force, state["reach"], state["patch"], recorded) for state in stops}
 
 
+def non_finite_limits(reactions: Mapping[str, statics.Reaction]) -> list[str]:
+    """The limits whose reaction holds a number that is not finite: a load too large to bound overflows to infinity."""
+    return [label for label, result in reactions.items()
+            if any(isinstance(value, float) and not math.isfinite(value) for value in dataclasses.astuple(result))]
+
+
 def judge_stops(if_id: str, stops: Sequence[Mapping[str, Any]], reactions: Mapping[str, statics.Reaction],
                 recorded: float | None, detail: dict[str, Any]) -> Assessment:
-    """The reaction at each stop against the recorded contact load, and the worst outcome."""
+    """The reaction at each stop against the recorded contact load, and the worst outcome. A bound that is not finite
+    is unknown: it is no figure to judge a rating against, and Infinity is not JSON."""
+    overflowed = non_finite_limits(reactions)
+    if overflowed:
+        reason = (f"{if_id}: the reaction bound at the {' and '.join(overflowed)} limit is not finite (the load is too large "
+                  "to bound), so the stop is not assessed")
+        return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
     detail["recorded_contact_load_n"] = recorded
     for state in stops:
         detail["ends"][state["label"]]["reaction"] = reaction_report(reactions[state["label"]])
@@ -762,8 +774,7 @@ def main(argv: list[str] | None = None) -> int:
                   "code": code_shas.closure(Path(__file__), VERDICT_DATA)}
         output, status = check_packet.emit(LAYOUT, args.hw, version, SUBJECT, PRODUCER, result, detail, "stop-reaction.json",
                                            recipe, out=args.out, replace=args.replace, record_version=intent.RECORD_VERSION)
-        json.dump(output, sys.stdout, indent=2)
-        sys.stdout.write("\n")
+        sys.stdout.write(check_packet.dumps(output))
         if status != "pass":
             print(f"stop_reaction: {status}", file=sys.stderr)
         return 0 if status in ("pass", "not_assessed") else 1  # D37: a packet that assessed nothing blocks nothing
