@@ -335,7 +335,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         try:
-            self.wfile.write(f"retry: {RECONNECT_MS}\n\n".encode())
+            if self.command != "HEAD":
+                self.wfile.write(f"retry: {RECONNECT_MS}\n\n".encode())
             self.wfile.flush()
         except CLIENT_DISCONNECTS:
             pass
