@@ -323,8 +323,13 @@ def patch_of(contact: Sequence[tuple[Any, Vec]], origin: Vec, axis: Vec, sign: f
 def load_frame(chain: Any, ident: str, application: Mapping[str, Any] | None) -> tuple[str | None, str]:
     """(the occurrence id whose model frame states load `ident`'s direction, "") or (None, "") for the assembly frame,
     or (None, why) when the frame its application names cannot be resolved. The schema states a direction in the
-    model frame of the part `application` names, else in the assembly frame."""
-    pn, occurrence = (application or {}).get("PN"), (application or {}).get("occurrence")
+    model frame of the part `application` names, else in the assembly frame: only an omitted application takes that
+    default, and one that is present but not a subject (a scalar, an empty object) leaves the frame unknown."""
+    if application is None:
+        return None, ""
+    if not isinstance(application, Mapping) or not application:
+        return None, f"load {ident} has an application that is not a subject, so the frame of its direction is not known"
+    pn, occurrence = application.get("PN"), application.get("occurrence")
     if pn is None and occurrence is None:
         return None, ""
     try:
