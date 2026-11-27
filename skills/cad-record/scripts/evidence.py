@@ -949,12 +949,19 @@ def _entry_targets(entry: Mapping[str, Any], record: Any, expected: Sequence[Any
     return [o.id for o in expected if o.requirement == requirement and o.family in (f"requirement.{level}", f"policy.{level}")]
 
 
-def _region_problem(subject: Mapping[str, Any], obligation: Any) -> tuple[str, str] | None:
+def _region_problem(subject: Mapping[str, Any], obligation: Any, expected: Mapping[str, Any]) -> tuple[str, str] | None:
     """(code, why) when ledger evidence of `subject` is not evidence of `obligation`'s own surface region: it measured
-    another region (evidence.subject), or it names none while the obligation is about one region of a feature that
-    another surface may share (evidence.subject_ambiguous). The anchor of an id holds no region, so it cannot tell."""
+    another region (evidence.subject), it names none while the obligation is about one region of a feature that
+    another surface may share, or another surface of the feature shares that region (both evidence.subject_ambiguous:
+    the region cannot tell the surfaces apart). The anchor of an id holds no region, so it cannot tell."""
     wanted, stated = obligation.subject.get("region"), subject.get("region")
     if stated == wanted:
+        siblings = sorted(o.id for o in expected.values() if o.family == obligation.family and o.subject.get("region") == wanted
+                          and mi.obligation_base(o.id) == mi.obligation_base(obligation.id))
+        if len(siblings) > 1:
+            return ("evidence.subject_ambiguous", f"{', '.join(siblings)} share "
+                    + (f"region {wanted}" if wanted else "no region") + ", so the evidence cannot tell their surfaces apart; "
+                    "give each surface its own region and record the region the evidence measured")
         return None
     if stated is None:
         return ("evidence.subject_ambiguous", f"the evidence names no region, so it may be of another surface than "
@@ -983,7 +990,7 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
                                 f"{obligation.id} is about {_anchor(obligation.id)}: evidence covers its own subject only",
                                 obligation=obligation.id))
         return "unknown", (f"{ident} is about another subject",), findings
-    region = _region_problem(subject, obligation) if entry.get("obligation") and obligation is not None else None
+    region = _region_problem(subject, obligation, expected) if entry.get("obligation") and obligation is not None else None
     if region is not None and obligation is not None:
         findings.append(Finding(region[0], path, f"{ident}: {region[1]}", obligation=obligation.id))
         return "unknown", (region[1],), findings
