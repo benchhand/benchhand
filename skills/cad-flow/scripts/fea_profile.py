@@ -54,7 +54,7 @@ def read(cwd: Path) -> tuple[bool, str | None]:
     path = hw / "product.yaml"
     try:
         path.stat()
-    except (FileNotFoundError, NotADirectoryError):  # only a file that is not there is absent configuration
+    except FileNotFoundError:  # only a file that is not there is absent configuration
         return False, None
     except OSError as error:
         return False, f"{path}: cannot read: {error}"
