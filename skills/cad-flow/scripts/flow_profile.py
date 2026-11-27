@@ -517,10 +517,12 @@ def _flow_edit_target(text: str, path: Path) -> tuple[Any, Any]:
 
 def _load_yaml(text: str, path: Path, what: str) -> Any:
     """yaml_loader.safe_load of `text`, or a FlowFinding naming `path`: the loader raises YAMLError for a bad
-    document, ValueError for a value it cannot build (2026-02-30, !!int abc) and KeyError for a bad !!bool."""
+    document, ValueError for a value it cannot build (2026-02-30, !!int abc), KeyError for a bad !!bool,
+    AttributeError for !!timestamp garbage and IndexError for !!int "". PyYAML's constructors let these escape
+    unwrapped, so the catch is wide, but only around the load call."""
     try:
         return yaml_loader.safe_load(text)
-    except (yaml.YAMLError, ValueError, KeyError) as error:
+    except (yaml.YAMLError, ValueError, KeyError, AttributeError, IndexError) as error:
         raise FlowFinding(f"{what} {path}: {error}") from error
 
 

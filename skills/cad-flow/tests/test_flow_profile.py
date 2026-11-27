@@ -452,7 +452,9 @@ class Record(unittest.TestCase):
     def test_record_on_a_product_with_a_value_the_loader_rejects_exits_1_with_the_named_finding(self) -> None:
         for name, text in (("an impossible date", "released: 2026-02-30\n"), ("an impossible timestamp",
                            "released: 2026-01-01 25:00:00\n"), ("a bad integer", "count: !!int abc\n"),
-                           ("a bad boolean", "flag: !!bool maybe\n")):
+                           ("a bad boolean", "flag: !!bool maybe\n"),
+                           ("a malformed tagged timestamp", "released: !!timestamp garbage\n"),
+                           ("an empty tagged integer", 'count: !!int ""\n')):
             with self.subTest(name):
                 self.product.write_text(PRODUCT + text, encoding="utf-8")
                 err = io.StringIO()
