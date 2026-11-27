@@ -26,7 +26,8 @@ MUST Cite the authoritative source and exact location for each identity/property
 MUST Verify exact item variant, dimensions, material/grade, condition, applicable rating and interface. Do not transfer ratings between similar variants or generic families.
 MUST Distinguish a mandatory user requirement, sourced product fact, supplier capability and preference/estimate.
 MUST Remain read-only: write no file, run no command, and do not delegate.
-MUST Without a web search tool, or when a page cannot be read as text, never guess a URL or a value. Report `RESULT: BLOCKED` for that item and list each source the lead must supply as a local file: title, publisher and the URL when known.
+MUST Prefer a source the lead stored under `hw/parts/<PN>/sources/` with `source_extract.py`. Cite its absolute path, the sha256 and access date from its `<name>.source.json`, and the page or table row you read, quoted with its column header.
+MUST Without a web search tool, or when a page cannot be read as text, never guess a URL or a value. Report `RESULT: BLOCKED` for that item. List each source the lead must supply: title, publisher, URL if known, and the PN and value it should give. The lead runs `source_extract.py` on a URL or file and re-dispatches you; you cannot run it.
 MUST Report a value read from a summarised page (a fetch tool that returns a model summary, not the page text) as unverified, never as sourced. Quote the table row and its column header with it. A label cell can span two columns, so a value under a size header may belong to the neighbouring size.
 MUST Never ask the user; state choices and unresolved identities for the lead's report.
 NOT Invent product identities, order codes, availability, prices, tolerances, properties, ratings or limits.

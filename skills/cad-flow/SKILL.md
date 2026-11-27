@@ -79,7 +79,9 @@ TRIGGER
 | CRITIQUE | reviewer | `cad-mech-reviewer`, `cad-dfm-reviewer` | RECONCILE |
 | ECO, post-freeze change | affected part, then affected case | `cad-part-designer`, `cad-analyst` | As L3, then as L4 |
 
-GROUND, INTENT, SPECIFY, L1 LAYOUT, BOM, RELEASE, and every gate stay with you. Keep a unit list and each unit's state in your plan. When one of 3 running writer units returns, start the next unit. Merge each unit on its final report. A report that says background work is still running is partial: the unit is not done, so merge nothing from it. If the harness cannot run subagents in parallel, run the same briefs in sequence. <!-- TODO(stage-machine): work.py ready lists the units to dispatch and work.py stale lists expired leases. -->
+GROUND, INTENT, SPECIFY, L1 LAYOUT, BOM, RELEASE, and every gate stay with you. Keep a unit list and each unit's state in your plan. When one of 3 running writer units returns, start the next unit. Merge each unit on its final report. A report that says background work is still running is partial: the unit is not done, so merge nothing from it. If the harness cannot run subagents in parallel, run the same briefs in sequence. Researchers cannot run commands and may have no search. Run `cad-bom/scripts/source_extract.py` for the sources they need and cite the stored files in the next brief; with no search tool yourself, never scrape search engines: list the sources you need for the user and leave the value an assumption or unknown. LOAD `references/flow.md` "Sources a researcher cannot read".
+
+<!-- TODO(stage-machine): work.py ready lists the units to dispatch and work.py stale lists expired leases. -->
 
 ## Rules
 
