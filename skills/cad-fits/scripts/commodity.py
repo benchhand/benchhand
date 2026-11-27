@@ -12,7 +12,7 @@ Usage: uv run --script commodity.py DESIGNATION
 
 DESIGNATION is a standard or family and a thread size, such as "ISO 4762 M4",
 "ISO 4032 M5", "ISO 8734 6" or "heat_set_insert M3"; a trailing length ("ISO 4762 M4x20")
-is accepted and echoed back. Standards: ISO 4762, ISO 7380-1, ISO 4032, ISO 7089, ISO 8734.
+is accepted and echoed back. Standards: ISO 4762, ISO 7380-1, ISO 4032, ISO 7089, ISO 8734, DIN 653 (M3 to M8).
 Sizes: M2 to M8 (dowel diameters 2 to 8). Provenance in ../data/README.md.
 
 stdout: JSON with the item, its named dimensions in mm and, for a threaded size, the pitch,

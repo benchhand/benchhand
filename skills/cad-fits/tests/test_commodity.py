@@ -35,8 +35,31 @@ class CommodityTests(unittest.TestCase):
         found = commodity.lookup("heat_set_insert M3")
         self.assertEqual(found["dimensions"], {"length": 5.7, "outside_diameter": 4.6, "recommended_hole": 4.0})
 
+    def test_knurled_thumb_screw_rows_as_printed_in_din_653(self) -> None:
+        # Typed from https://fasteners.eu/standards/din/653 (columns M3, (M3,5), M4, M5, M6, M8 of the dk, k and ds rows),
+        # cross-checked against boltport.com/standards/din-653 and engineeringhardware.com; read 2026-11-27.
+        fields = ("head_diameter_nominal", "head_diameter_max", "head_diameter_min", "head_height_max",
+                  "head_height_min", "shank_diameter_max", "shank_diameter_min")
+        printed = {
+            "M3": (12, 12.35, 11.65, 2.5, 2.25, 3, 2.86),
+            "M3.5": (14, 14.35, 13.65, 3, 2.75, 3.5, 3.32),
+            "M4": (16, 16.35, 15.65, 3.5, 3.2, 4, 3.82),
+            "M5": (20, 20.42, 19.58, 4, 3.7, 5, 4.82),
+            "M6": (24, 24.42, 23.58, 5, 4.7, 6, 5.82),
+            "M8": (30, 30.42, 29.58, 6, 5.7, 8, 7.78),
+        }
+        for size, values in printed.items():
+            with self.subTest(size=size):
+                self.assertEqual(commodity.lookup(f"DIN 653 {size}")["dimensions"], dict(zip(fields, values, strict=True)))
+
+    def test_knurled_thumb_screw_m4_head_is_16_not_the_m35_value(self) -> None:
+        found = commodity.lookup("DIN 653 M4x12")
+        self.assertEqual(found["dimensions"]["head_diameter_nominal"], 16)
+        self.assertEqual(found["length"], 12.0)
+        self.assertEqual(found["thread"]["pitch"], 0.7)
+
     def test_unknown_designation_or_size_is_refused(self) -> None:
-        for text in ("ISO 9999 M4", "ISO 4762 M12", "ISO 7380-1 M2", "bolt"):
+        for text in ("ISO 9999 M4", "ISO 4762 M12", "ISO 7380-1 M2", "bolt", "DIN 653 M12", "DIN 653 M3.6"):
             with self.subTest(text=text), self.assertRaises(commodity.CommodityError):
                 commodity.lookup(text)
 
