@@ -44,7 +44,7 @@ Run `preflight.py --warm`. It installs Chromium through Playwright and warms the
 
   `--hw` limits the list to the questions that apply to the project: the five general ones, plus the FDM ones when an FDM process is planned or a part uses it. The two clearance questions apply only when print-in-place is offered. Without `--hw` the command lists every question. `record` exits 2 and records nothing unless each question that applies is answered or its option is listed in `--accept-default`. It exits 1 and records nothing when you give an option for a question that does not apply. `--hw` and `--decision` are required.
 
-  A project with no FDM process answers the five general questions only:
+  A project that the record rules out of FDM answers the five general questions only. That needs a declared plan without FDM, or parts whose routes are all known and none uses FDM. With no declared plan and no parts, or with a part whose route is unknown, FDM is not ruled out and the FDM questions are asked too:
 
   ```sh
   uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" record --hw hw --decision DR-004 \

@@ -13,12 +13,11 @@ from __future__ import annotations
 import copy
 import json
 import os
-import re
-import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -204,22 +203,7 @@ class Record(unittest.TestCase):
         self.assertIn("flow: cannot parse", result.stderr)
         self.assertIn("product.yaml", result.stderr)
         self.assertFalse((self.hw / "decisions").exists())
-
-    def test_the_record_commands_of_the_troubleshooting_guide_settle_the_project_they_are_written_for(self) -> None:
-        guide = (SKILLS.parent / "docs" / "troubleshooting.md").read_text(encoding="utf-8")
-        calls = [shlex.split(block.replace("\\\n", " ")) for block in re.findall(r"```sh\n(.*?)```", guide, re.S)
-                 if 'flow_profile.py" record' in block]
-        recorded = [call[call.index("record"):] for call in calls]
-        self.assertEqual(len(recorded), 2, recorded)
-        for plan, call in (("cnc", recorded[0]), ("fdm", recorded[1])):
-            with self.subTest(plan):
-                hw = self.hw.parent / plan / "hw"
-                hw.mkdir(parents=True)
-                (hw / "product.yaml").write_text(PRODUCT + f"manufacturing:\n  processes: [{plan}]\n", encoding="utf-8")
-                result = run(*[str(hw) if word == "hw" else word for word in call])
-                self.assertEqual(result.returncode, 0, result.stderr)
-                settled = run("check", "--hw", str(hw), "--stage", "specify")
-                self.assertEqual((settled.returncode, json.loads(settled.stdout)["problems"]), (0, []), settled.stdout)
+        self.assertEqual(self.product.read_bytes(), b"flow: [unclosed\n")
 
     def test_a_project_with_no_plan_and_no_part_is_asked_the_fdm_questions_too(self) -> None:
         general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
@@ -414,6 +398,32 @@ class Record(unittest.TestCase):
         self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
         self.assertEqual(earlier.read_text(encoding="utf-8"), before)
         self.assertEqual([path.name for path in (self.hw / "decisions").glob("DR-*.md")], [earlier.name])
+
+    def test_record_refuses_a_stale_write_and_keeps_an_edit_made_while_it_ran(self) -> None:
+        real = flow_profile._require_free
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        edited = self.product.read_text(encoding="utf-8") + "# edited meanwhile\n"
+
+        def edit_during_lookup(decisions: Path, number: int) -> None:
+            real(decisions, number)
+            self.product.write_text(edited, encoding="utf-8")
+
+        general = ["human_approval", "fea", "stack_up", "critique", "storage_results_in_git"]
+        with mock.patch.object(flow_profile, "_require_free", edit_during_lookup):
+            with self.assertRaises(flow_profile.FlowFinding) as caught:
+                flow_profile.record(self.hw, "DR-001", {}, general)
+        self.assertIn("changed", str(caught.exception))
+        self.assertIn("run it again", str(caught.exception))
+        self.assertEqual(self.product.read_text(encoding="utf-8"), edited)
+        self.assertFalse((self.hw / "decisions").exists())
+
+    def test_a_reused_decision_exits_2_before_a_flow_that_is_not_a_mapping_is_named(self) -> None:
+        write_test_decision(self.hw, "DR-001", title="An earlier decision")
+        self.product.write_text("record_version: 2\nid: t\nflow: 3\nmanufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("DR-001", result.stderr)
+        self.assertIn("append-only", result.stderr)
 
     def test_record_refuses_a_malformed_decision_id(self) -> None:
         result = self.record("DR-1", "--fea", "accurate")

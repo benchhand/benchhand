@@ -505,6 +505,27 @@ def _require_free(decisions: Path, number: int) -> None:
         raise ProfileError(f"{decisions / taken[number].file_name} exists; decisions are append-only, so cite a new DR-###")
 
 
+def _flow_edit_target(text: str, path: Path) -> tuple[Any, Any]:
+    """The `flow` key and node of `text`, or a FlowFinding naming `path` when its structure cannot be edited."""
+    try:
+        key, node = _flow_node(text)
+        _require_flow_keys(node)
+    except (yaml.YAMLError, ValueError) as error:
+        raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
+    return key, node
+
+
+def _require_unchanged(path: Path, snapshot: str) -> None:
+    """`path` still holds the `snapshot` that the answers were checked against; else nothing is written."""
+    try:
+        current = path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ProfileError(f"cannot read {path}: {error}") from error
+    if current != snapshot:
+        raise FlowFinding(f"flow.profile: {path} changed while the answers were checked; nothing was written. "
+                          "Check the change, then run it again")
+
+
 def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = (),
            today: date | None = None) -> dict[str, Any]:
     """Write `answers` (profile field: value) and the defaults of the `accepted` fields as flow.profile citing
@@ -522,10 +543,8 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
     try:  # one read: the applicability below and the edit further on judge this same text
-        key, node = _flow_node(text)
-        _require_flow_keys(node)
         product = yaml_loader.safe_load(text)
-    except (yaml.YAMLError, ValueError) as error:
+    except yaml.YAMLError as error:
         raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
     parts = read_parts(hw)
     applicability = _require_applicability(product, parts)
@@ -535,6 +554,7 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     decisions = hw / "decisions"
     number = int(decision.removeprefix("DR-"))
     _require_free(decisions, number)
+    key, node = _flow_edit_target(text, path)
     profile = answered_profile(decision, answers, accepted, plan.skipped)
     if invalid := gate.shape_problems(profile):
         raise ProfileError(gate.refusal(invalid))
@@ -548,6 +568,7 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         raise FlowFinding(f"flow.profile: cannot edit {path}: {error}") from error
     if edited != expected:
         raise FlowFinding(f"flow.profile: the edit would change other data in {path}")
+    _require_unchanged(path, raw)
     try:
         _replace(path, after, newline)
     except OSError as error:
