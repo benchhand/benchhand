@@ -554,6 +554,17 @@ class FailedBindings(unittest.TestCase):
             with self.subTest(opening_faces=order):
                 self.assert_v_cut_refused(self.v_cut_with_two_opening_faces(tilted, order))
 
+    def test_a_v_cut_opening_with_a_narrow_tilted_lip_beside_a_broad_face_is_refused_whatever_the_face_order(self) -> None:
+        """The lip is 0.05 mm wide, so it stays on the broad face's plane; the broad face is 0.05 mm off the lip's."""
+        corners = [(50.0, -30.0, 10.0), (50.05, -30.0, 10.00005), (50.05, 30.0, 10.00005), (50.0, 30.0, 10.0)]
+        edges = tuple(Edge(None, (corners[k], corners[(k + 1) % 4])) for k in range(4))
+        lip = Face(1, "plane", 3.0, (50.0, -30.0, 10.0, 50.05, 30.0, 10.00005), edges, (), point=(50.025, 0.0, 10.000025),
+                   normal=(-0.001, 0.0, 1.0))
+        self.assertTrue(fg.parallel(lip.normal, (0.0, 0.0, 1.0)))
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(opening_faces=order):
+                self.assert_v_cut_refused(self.v_cut_with_two_opening_faces(lip, order))
+
     def test_an_axis_distance_between_a_bound_cylinder_and_a_bound_plane_is_named(self) -> None:
         features = {"bed": ResolvedFeature("bed", "plane_face", (0,)), "pin": ResolvedFeature("pin", "shaft", (1,))}
         part = self.part(features={"bed": {}, "pin": {}}, dimensions=[
