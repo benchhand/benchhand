@@ -383,6 +383,19 @@ class RecheckHookTests(unittest.TestCase):
         self.assertIn("version_manifest_sha256:", result.stderr)
         self.assertIn("hw/versions/v1/manifest.json", result.stderr)
 
+    def test_reopening_refuses_the_old_decision_even_when_the_build_is_unchanged(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        self.assertEqual(self.stamp_gate("layout", timestamp="2026-11-26T10:00:00Z").returncode, 0)
+        result = self.verify()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("gate.attempt:", result.stderr)
+
     def test_worktree_only_manifest_cannot_authorize_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted")
         self.git("rm", "--cached", "hw/versions/v1/manifest.json")
