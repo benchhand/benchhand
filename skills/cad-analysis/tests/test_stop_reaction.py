@@ -24,7 +24,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
@@ -134,8 +134,11 @@ class StopGeometryTests(unittest.TestCase):
 
     def run_stop(self, name: str, contact_load: float | None = None, joint: dict | None = None,
                  kind: str = "other", gap: float | None = None, limits: dict | None = None, variant: str = "",
-                 **record: Any) -> tuple[int, dict]:
-        hw = fx.write_record(self.root / name / "hw", documents(contact_load, joint, kind, limits, **record))
+                 mutate: Callable[[dict], None] | None = None, **record: Any) -> tuple[int, dict]:
+        docs = documents(contact_load, joint, kind, limits, **record)
+        if mutate is not None:
+            mutate(docs)
+        hw = fx.write_record(self.root / name / "hw", docs)
         geometry = self.root / "geometry" if gap is None and not variant else self.built(gap or 0.0, variant)
         proc = subprocess.run(["uv", "run", "--quiet", "--script", str(SCRIPT), "--hw", str(hw), "--parts-dir",
                                str(geometry / "parts")], capture_output=True, text=True, timeout=1800, check=False)
@@ -415,6 +418,46 @@ class StopGeometryTests(unittest.TestCase):
         reaction = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]["reaction"]
         self.assertAlmostEqual(reaction["design_reaction_n"], 30.0, places=9)
         self.assertEqual((code, result["result"], result["findings"]), (0, "pass", []))
+
+    @staticmethod
+    def turned_lever(docs: dict) -> None:
+        """The lever as one occurrence turned 180 deg about X. Its box is symmetric about X, so the posed lever is the
+        modelled one, but the part frame's +Z is the assembly's -Z."""
+        docs["assembly.yaml"]["joints"][0]["child"] = "@lever"
+        docs["assembly.yaml"]["subassemblies"] = [{"id": "main", "title": "Main", "parts": ["TST-0301"], "occurrences": ["@lever"]}]
+        docs["assembly.yaml"]["occurrences"] = [{"id": "lever", "PN": "TST-0302",
+                                                 "placement": {"rotation": {"axis": [1, 0, 0], "angle_deg": 180}}}]
+        docs["parts/TST-0302/part.yaml"]["model_frame"] = "part_local"
+
+    def test_a_part_frame_direction_is_rotated_into_the_assembly_frame(self) -> None:
+        # By hand: a 30 N load along the lever's own +Z, with the lever turned 180 deg about X, acts along the
+        # assembly's -Z, which presses the lower stop with 30 N. Read as an assembly direction it points up and
+        # presses the lower stop with 0 N, so a stated frame must be applied.
+        part_frame = [{"direction": [0, 0, 1], "application": {"PN": "TST-0302"}}] * 2
+        code, result = self.run_stop("slide-part-frame", joint=self.SLIDE, variant="disk", mutate=self.turned_lever,
+                                     load_overrides=part_frame)
+        reaction = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]["reaction"]
+        self.assertAlmostEqual(reaction["design_reaction_n"], 30.0, places=9)
+        self.assertEqual((code, result["result"]), (0, "pass"))
+
+    def test_a_part_frame_that_names_several_occurrences_is_a_named_unknown(self) -> None:
+        def twin_levers(docs: dict) -> None:
+            docs["assembly.yaml"]["joints"][0]["child"] = "@lever-a"
+            docs["assembly.yaml"]["joints"].append({"id": "J-002", "type": "fixed", "parent": "TST-0301", "child": "@lever-b",
+                                                    "axis": [0, 0, 1], "origin": [0, 20, 0], "min": 0, "max": 0, "nominal": 0})
+            docs["assembly.yaml"]["subassemblies"] = [{"id": "main", "title": "Main", "parts": ["TST-0301"],
+                                                       "occurrences": ["@lever-a", "@lever-b"]}]
+            docs["assembly.yaml"]["occurrences"] = [{"id": "lever-a", "PN": "TST-0302"},
+                                                    {"id": "lever-b", "PN": "TST-0302", "placement": {"translation_mm": [0, 20, 0]}}]
+            docs["parts/TST-0302/part.yaml"]["model_frame"] = "part_local"
+            docs["interfaces.yaml"]["interfaces"][0]["from"] = "@lever-a"
+        part_frame = [{"direction": [0, 0, -1], "application": {"PN": "TST-0302"}}] * 2
+        code, result = self.run_stop("slide-two-levers", joint=self.SLIDE, variant="disk", mutate=twin_levers,
+                                     load_overrides=part_frame)
+        [row] = result["outcomes"]
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertRegex(row["uncertainty"], "frame.*ambiguous|ambiguous.*frame")
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
     def test_a_prismatic_stop_with_unknown_loads_is_unknown_never_pass(self) -> None:
         code, result = self.run_stop("slide-unknown", joint=self.SLIDE, variant="disk", loads="unknown")
