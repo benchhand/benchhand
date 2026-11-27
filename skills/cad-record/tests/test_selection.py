@@ -534,6 +534,29 @@ class JustifiedAlternatives(unittest.TestCase):
         self.assertEqual([outcome for outcome, _ in outcomes], ["pass", "unknown"])
         self.assertIn("5 mm lies outside", outcomes[1][1])
 
+    def test_a_candidate_whose_stock_conflicts_with_the_recorded_cut_is_another_route(self) -> None:
+        """The record cuts TST-0501 from 5 mm stock coated with TST zinc, on the candidate's own route kinds and material.
+        sheet_frame declares 3 mm uncoated stock, which the approval covers. It describes another route than the record's,
+        so it never matches it: the recommendation proposes recording the declared stock through the approval gate."""
+        documents = scenarios.plate_frame_options()
+        steps = selection_candidate(documents, "sheet_frame")["parts"][0]["route"]
+        part = scenarios.made_part("TST-0501", "Frame", "laser", "tst_metal_q_sheet", "tst_laser")
+        part["intent"]["route"] = [fx.operation("cut", "laser", "tst_laser", setup={"stock": {
+            "thickness": fx.known(fx.quantity(5)), "coating": fx.known("TST zinc")}})] + [
+            fx.operation(f"step_{index}", step["kind"], step.get("capability")) for index, step in enumerate(steps[1:], 1)]
+        documents["parts/TST-0501/part.yaml"] = part
+        recorded = documents["manufacturing/selection.yaml"]
+        recorded["candidates"] = [c for c in recorded["candidates"] if c["id"] == "sheet_frame"]
+        report = assess(self, documents)
+        sheet = candidate(report, "sheet_frame")
+        self.assertEqual(sheet["recorded_route"], {"TST-0501": False})
+        recommendation = only_decision(report)["recommendation"]
+        self.assertEqual(recommendation["primary"], "sheet_frame")
+        changes = [c for c in recommendation.get("proposed_changes", ()) if c.startswith("TST-0501")]
+        self.assertEqual(len(changes), 1, recommendation.get("proposed_changes"))
+        for named in ("stock", "5 mm", "TST zinc", "3 mm", "none"):
+            self.assertIn(named, changes[0])
+
     def test_no_feasible_candidate_names_the_route_families_not_yet_considered(self) -> None:
         documents = scenarios.plate_frame_options()
         documents["manufacturing/selection.yaml"]["candidates"] = documents["manufacturing/selection.yaml"]["candidates"][:1]
