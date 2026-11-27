@@ -175,6 +175,31 @@ def _checked_build(root: Path, committed: bool, checks: dict[str, Any]) -> tuple
     return version, digest
 
 
+def _prior_attempt_decisions(root: Path, previous: str, advanced: str) -> set[str]:
+    """Decision IDs already present before the most recent return to the approved stage."""
+    if git("rev-parse", "--is-shallow-repository", cwd=root).strip() == b"true":
+        raise GateFinding("gate.attempt: stage history is shallow; fetch full history before verifying the advance")
+    history = git("log", "--first-parent", "--format=%H", "--", "hw/product.yaml", cwd=root).decode().splitlines()
+    order: list[str] = validate.stages()
+    entered = None
+    for commit in history:
+        try:
+            product = yaml_loader.safe_load(git("show", f"{commit}:./hw/product.yaml", cwd=root).decode("utf-8"))
+        except (RuntimeError, UnicodeError, yaml.YAMLError) as error:
+            raise GateFinding(f"gate.attempt: cannot read flow.stage at {commit}") from error
+        flow = product.get("flow") if isinstance(product, dict) else None
+        stage = flow.get("stage") if isinstance(flow, dict) else None
+        if stage not in order:
+            continue
+        if order.index(stage) <= order.index(previous):
+            entered = commit
+        elif entered is not None and order.index(stage) >= order.index(advanced):
+            paths = git("ls-tree", "-r", "--name-only", "-z", f"{entered}^1", "--", "hw/decisions/", cwd=root)
+            return {Path(path).name[:6] for path in paths.decode(errors="surrogateescape").split("\0")
+                    if Path(path).name.startswith("DR-") and path.endswith(".md")}
+    return set()
+
+
 def require_gate_decision(root: Path, committed: bool, previous: str, advanced: str,
                           stamp: dict[str, Any], checks: dict[str, Any]) -> None:
     """Require an unsuperseded decision for this transition and the build checked by the evidence packet."""
@@ -197,6 +222,11 @@ def require_gate_decision(root: Path, committed: bool, previous: str, advanced: 
         raise GateFinding("version: the recheck stamp does not match its evidence packet")
     version, digest = _checked_build(root, committed, checks)
     _matching_gate_date(candidates, version, digest, stamped_on)
+    prior_ids = _prior_attempt_decisions(root, previous, advanced)
+    current = [r for r in candidates if r.id not in prior_ids and r.gate_build == (version, digest)
+               and r.date <= stamped_on]
+    if not current:
+        raise GateFinding("gate.attempt: record a new decision for the reopened stage; its earlier approval cannot be reused")
 
 
 def staged_inputs(root: Path, committed: bool = False) -> dict[str, bytes]:

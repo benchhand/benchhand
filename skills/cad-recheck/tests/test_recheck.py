@@ -395,6 +395,25 @@ class RecheckHookTests(unittest.TestCase):
         result = self.verify()
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("gate.attempt:", result.stderr)
+        self.git("commit", "-qm", "advance again with the stale decision")
+        committed = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        self.assertEqual(committed.returncode, 1, committed.stderr)
+        self.assertIn("gate.attempt:", committed.stderr)
+
+    def test_reopening_accepts_a_new_decision_for_the_same_build(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        write_test_decision(self.root / "hw", "DR-002", status="accepted", date=DAY, gate=LAYOUT_GATE,
+                            gate_build=LAYOUT_BUILD)
+        self.git("add", "hw/decisions")
+        self.assertEqual(self.stamp_gate("layout", timestamp="2026-11-20T00:01:00Z").returncode, 0)
+        self.git("commit", "-qm", "advance again with a new decision")
+        result = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_worktree_only_manifest_cannot_authorize_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted")
