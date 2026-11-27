@@ -289,7 +289,9 @@ class WarmRecordTests(unittest.TestCase):
         self.path = preflight.warm_record_path(self.environ)
 
     def report(self, status: str) -> dict:
-        return preflight.Report((preflight.Check("cadquery", "cadquery", status, True, "d", "fix it"),)).as_json()
+        checks = tuple(preflight.Check(name, name, status if name == "cadquery" else "pass", True, "d", "fix it")
+                       for name in preflight.WARM_IDS)
+        return preflight.Report(checks).as_json()
 
     def test_the_record_is_keyed_by_this_plugin_copy_under_the_cache_home(self) -> None:
         self.assertTrue(self.path.is_relative_to(Path(self.environ["XDG_CACHE_HOME"]) / "cad-flow" / "warm"))
@@ -576,7 +578,8 @@ class FEASolverCheckTests(unittest.TestCase):
               "calculix": {"path": "/b/bin/ccx", "version": "2.23", "source": "FreeCAD's lookup"},
               "gmsh": {"path": "/b/bin/gmsh", "version": "4.15.0", "source": "FreeCAD's lookup"}}
 
-    def solver_check(self, probe: dict) -> preflight.Check:
+    def solver_check(self, probe: dict, enabled: bool = True) -> preflight.Check:
+        fea = preflight.FeaSetting(enabled)
         with tempfile.TemporaryDirectory(prefix="cad-preflight-fea-") as directory:
             command = Path(directory) / "freecadcmd"
             command.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -585,8 +588,11 @@ class FEASolverCheckTests(unittest.TestCase):
                     patch.object(preflight.freecad_runtime, "techdraw_templates",
                                  return_value=(directory, frozenset(preflight.EXPECTED_TEMPLATES))), \
                     patch.object(preflight.fea_solvers, "probe", **probe) as probed, patch("sys.stderr"):
-                checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""})
-        self.assertEqual(probed.call_args.args[0], command)
+                checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""}, fea=fea)
+        if enabled:
+            self.assertEqual(probed.call_args.args[0], command)
+        else:
+            probed.assert_not_called()
         return next(check for check in checks if check.id == "fea-solvers")
 
     def test_templates_listed_inside_freecad_pass_after_its_mount_is_gone(self) -> None:
@@ -622,6 +628,417 @@ class FEASolverCheckTests(unittest.TestCase):
         check = self.solver_check({"side_effect": preflight.fea_solvers.ProbeError("wrote no result marker")})
         self.assertEqual(check.status, "fail")
         self.assertIn("wrote no result marker", check.detail)
+
+    def test_without_fea_a_missing_solver_is_info_and_nothing_is_probed(self) -> None:
+        check = self.solver_check({"return_value": {**self.PROBED, "calculix": {"error": "ccx not found"}}},
+                                  enabled=False)
+        self.assertEqual((check.status, check.required), ("info", False))
+        self.assertIn("FEA is not enabled", check.detail)
+        self.assertIn("ccx and Gmsh", check.detail)
+
+    def test_with_fea_a_missing_solver_fails(self) -> None:
+        check = self.solver_check({"return_value": {**self.PROBED, "gmsh": {"error": "gmsh not found"}}},
+                                  enabled=True)
+        self.assertEqual((check.status, check.required), ("fail", True))
+
+
+class InfoStatusTests(unittest.TestCase):
+    def test_the_report_schema_rejects_negative_counts_and_durations(self) -> None:
+        import jsonschema
+
+        schema = json.loads((SCRIPT.parents[2] / "cad-record" / "schemas" / "preflight-report.schema.json")
+                            .read_text(encoding="utf-8"))
+        validator = jsonschema.Draft202012Validator(schema)
+        report = preflight.Report((preflight.Check("uv", "uv", "pass", True, "d", "", 0.5),)).as_json()
+        validator.validate(report)
+        for mutate in (lambda r: r["counts"].__setitem__("pass", -1), lambda r: r["counts"].__setitem__("fail", -1),
+                       lambda r: r["counts"].__setitem__("warn", -1),
+                       lambda r: r["checks"][0].__setitem__("elapsed_s", -0.1)):
+            broken = json.loads(json.dumps(report))
+            mutate(broken)
+            with self.assertRaises(jsonschema.ValidationError):
+                validator.validate(broken)
+
+    def test_the_json_report_with_every_status_matches_its_schema(self) -> None:
+        import jsonschema
+
+        schema = json.loads((SCRIPT.parents[2] / "cad-record" / "schemas" / "preflight-report.schema.json")
+                            .read_text(encoding="utf-8"))
+        report = preflight.Report(tuple(
+            preflight.Check(status, status, status, status != "info", "detail", "fix", 0.5)
+            for status in ("pass", "fail", "warn", "info")))
+        jsonschema.Draft202012Validator(schema).validate(report.as_json())
+        bogus = report.as_json()
+        bogus["checks"][0]["status"] = "skipped"
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(schema).validate(bogus)
+    def test_an_info_check_is_not_counted_and_does_not_fail_the_report(self) -> None:
+        report = preflight.Report((
+            preflight.Check("uv", "uv", "pass", True, "uv", ""),
+            preflight.Check("fea-solvers", "FEA", "info", True, "not enabled", ""),
+        ))
+        self.assertEqual(report.exit_code, 0)
+        self.assertEqual(report.counts, {"pass": 1, "fail": 0, "warn": 0})
+
+    def test_run_checks_continues_past_an_info_check(self) -> None:
+        cad_checks = [preflight.Check("fea-solvers", "FEA", "info", True, "not enabled", "")]
+        ran = []
+        ok = preflight.Check("uv", "uv", "pass", True, "", "")
+        with patch.object(preflight, "_uv_check", side_effect=lambda env: (ran.append("uv") or ok, None)), \
+                patch.object(preflight, "_vendor_check", return_value=ok), \
+                patch.object(preflight, "_harness_check", return_value=ok), patch("sys.stderr"):
+            report = preflight.run_checks({"HOME": "/nowhere"}, Path("/p"), Path("/nowhere"), "codex",
+                                          cad_checks=cad_checks)
+        self.assertEqual(ran, ["uv"])
+        self.assertGreater(len(report.checks), 1)
+
+
+class StandaloneRunChecksFEATests(unittest.TestCase):
+    """The public run_checks path, with the project's own product.yaml choosing FEA."""
+
+    def run_in_project(self, product: str | None) -> preflight.Report:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-run-") as directory:
+            root = Path(directory)
+            command = root / "freecadcmd"
+            command.write_text("#!/bin/sh\n", encoding="utf-8")
+            command.chmod(0o755)
+            if product is not None:
+                (root / "hw").mkdir()
+                (root / "hw" / "product.yaml").write_text(product, encoding="utf-8")
+            missing = {**FEASolverCheckTests.PROBED, "calculix": {"error": "ccx not found: $CCX is unset"}}
+            with patch.object(preflight, "cad_tool_version", return_value=("1.1.4", "FreeCAD 1.1.4")), \
+                    patch.object(preflight.freecad_runtime, "techdraw_templates",
+                                 return_value=(directory, frozenset(preflight.EXPECTED_TEMPLATES))), \
+                    patch.object(preflight.fea_solvers, "probe", return_value=missing), \
+                    patch.object(preflight, "_uv_check", return_value=(
+                        preflight.Check("uv", "uv", "pass", True, "", ""), None)), \
+                    patch.object(preflight, "_vendor_check", return_value=preflight.Check(
+                        "three-vendor-cache", "v", "pass", True, "", "")), \
+                    patch("sys.stderr"):
+                return preflight.run_checks({"FREECADCMD": str(command), "PATH": "", "HOME": directory},
+                                            cwd=root, home=root, harness="codex")
+
+    def test_a_missing_solver_fails_the_run_when_the_project_enables_fea(self) -> None:
+        report = self.run_in_project("flow:\n  profile:\n    fea:\n      enabled: true\n")
+        solver = next(check for check in report.checks if check.id == "fea-solvers")
+        self.assertEqual((solver.status, solver.required), ("fail", True))
+        self.assertIn("ccx not found", solver.detail)
+        self.assertEqual(report.exit_code, 1)
+
+    def test_a_malformed_profile_fails_by_name_through_run_checks(self) -> None:
+        for text in ("- a\n- b\n", "flow: [a]\n", "flow:\n", "flow:\n  profile:\n",
+                     "flow:\n  profile: null\n", "flow:\n  profile:\n    fea:\n", "flow:\n  profile:\n    fea: []\n",
+                     "when: 2026-13-45\n"):
+            with self.subTest(text=text):
+                report = self.run_in_project(text)
+                named = [check for check in report.checks if check.id == "fea-profile"]
+                self.assertEqual([(c.status, c.required) for c in named], [("fail", True)])
+                self.assertIn("product.yaml", named[0].detail)
+                self.assertEqual(report.exit_code, 1)
+
+    def test_a_null_document_and_an_unreadable_folder_are_not_absent_configuration(self) -> None:
+        for text in ("null\n", "~\n", ""):
+            with self.subTest(text=text):
+                named = [c for c in self.run_in_project(text).checks if c.id == "fea-profile"]
+                self.assertEqual([c.status for c in named], ["fail"])
+                self.assertIn("product.yaml", named[0].detail)
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-denied-") as directory:
+            hw = Path(directory) / "hw"
+            hw.mkdir()
+            (hw / "product.yaml").write_text("name: widget\n", encoding="utf-8")
+            hw.chmod(0)
+            try:
+                setting = preflight.project_fea(Path(directory))
+            finally:
+                hw.chmod(0o755)
+        self.assertFalse(setting.enabled)
+        self.assertIn("product.yaml", setting.invalid or "")
+
+    def test_hw_that_is_a_file_is_a_finding_not_absent_configuration(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-hwfile-") as directory:
+            (Path(directory) / "hw").write_text("not a folder\n", encoding="utf-8")
+            setting = preflight.project_fea(Path(directory))
+        self.assertFalse(setting.enabled)
+        self.assertIn("product.yaml", setting.invalid or "")
+
+    def test_absent_keys_are_not_malformed(self) -> None:
+        for text in (None, "name: widget\n", "flow:\n  stage: ground\n", "flow:\n  profile:\n    other: 1\n"):
+            with self.subTest(text=text):
+                report = self.run_in_project(text)
+                self.assertFalse([check for check in report.checks if check.id == "fea-profile"])
+
+    def test_an_invalid_profile_is_named_when_freecad_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-nofc-") as directory:
+            root = Path(directory)
+            (root / "hw").mkdir()
+            (root / "hw" / "product.yaml").write_text("flow: [a]\n", encoding="utf-8")
+            with patch("sys.stderr"):
+                report = preflight.run_checks({"FREECADCMD": str(root / "missing"), "PATH": "", "HOME": directory},
+                                              cwd=root, home=root, harness="codex")
+        by_id = {check.id: check.status for check in report.checks}
+        self.assertEqual(by_id["freecad-command"], "fail")
+        self.assertEqual(by_id["fea-profile"], "fail")
+
+    def test_the_same_missing_solver_is_info_when_the_project_has_no_fea(self) -> None:
+        report = self.run_in_project(None)
+        solver = next(check for check in report.checks if check.id == "fea-solvers")
+        self.assertEqual((solver.status, solver.required), ("info", False))
+        self.assertGreater(len(report.checks), 3)
+
+
+class FEASettingTests(unittest.TestCase):
+    def setting(self, text: str | bytes | None, as_directory: bool = False) -> preflight.FeaSetting:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-profile-") as directory:
+            root = Path(directory)
+            if as_directory:
+                (root / "hw" / "product.yaml").mkdir(parents=True)
+            elif text is not None:
+                (root / "hw").mkdir()
+                product = root / "hw" / "product.yaml"
+                product.write_bytes(text if isinstance(text, bytes) else text.encode("utf-8"))
+            result = preflight.project_fea(root)
+            if result.invalid:
+                self.assertIn(str(root / "hw" / "product.yaml"), result.invalid)
+            return result
+
+    def test_missing_configuration_is_off_and_valid(self) -> None:
+        for text in (None, "name: widget\n", "flow:\n  stage: ground\n", "flow:\n  profile:\n    other: 1\n",
+                     "flow:\n  profile:\n    fea:\n      enabled: false\n"):
+            with self.subTest(text=text):
+                self.assertEqual(self.setting(text), preflight.FeaSetting(False, None))
+
+    def test_boolean_true_enables_fea(self) -> None:
+        text = "flow:\n  profile:\n    fea:\n      enabled: true\n      mode: fast\n"
+        self.assertEqual(self.setting(text), preflight.FeaSetting(True, None))
+
+    def test_invalid_configuration_is_named_with_its_path_and_cause(self) -> None:
+        for text, cause in (
+            ('flow:\n  profile:\n    fea:\n      enabled: "true"\n', "boolean"),
+            ("flow:\n  profile:\n    fea: on-demand\n", "fea"),
+            ("flow:\n  profile:\n    fea:\n      mode: fast\n", "enabled"),
+            ("flow:\n  profile: [a, b]\n", "profile"),
+            ("flow: [unclosed\n", "cannot read"),
+            (b"flow: \xff\xfe\n", "cannot read"),
+        ):
+            with self.subTest(text=text):
+                result = self.setting(text)
+                self.assertFalse(result.enabled)
+                self.assertIsNotNone(result.invalid)
+                self.assertIn(cause, result.invalid)
+
+    def test_an_unreadable_product_is_invalid(self) -> None:
+        result = self.setting(None, as_directory=True)
+        self.assertFalse(result.enabled)
+        self.assertIn("cannot read", result.invalid)
+
+    def test_the_setting_agrees_with_the_cad_record_gate(self) -> None:
+        path = SCRIPT.parents[2] / "cad-record" / "scripts" / "flow_profile_gate.py"
+        gate_spec = importlib.util.spec_from_file_location("test_gate_agreement", path)
+        assert gate_spec is not None and gate_spec.loader is not None
+        gate = importlib.util.module_from_spec(gate_spec)
+        sys.modules[gate_spec.name] = gate
+        gate_spec.loader.exec_module(gate)
+        for enabled in (True, False):
+            text = f"flow:\n  profile:\n    fea:\n      enabled: {str(enabled).lower()}\n"
+            product = __import__("yaml").safe_load(text)
+            self.assertEqual(gate.fea_setting(gate.profile_of(product))[0], enabled)
+            self.assertEqual(self.setting(text).enabled, enabled)
+
+
+class WarmWorkerWithoutPyYAMLTests(unittest.TestCase):
+    """The detached warm-up runs on the base interpreter, which may have no PyYAML."""
+
+    def test_the_warm_up_runs_without_pyyaml_and_reads_no_project(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-noyaml-") as directory:
+            root = Path(directory)
+            (root / "hw").mkdir()
+            (root / "hw" / "product.yaml").write_text("flow:\n  profile:\n    fea:\n      enabled: true\n",
+                                                      encoding="utf-8")
+            code = ("import runpy, sys; sys.modules['yaml'] = None; "
+                    f"sys.argv = ['preflight.py', '--warm']; runpy.run_path({str(SCRIPT)!r}, run_name='__main__')")
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", code], cwd=root, capture_output=True, text=True, check=False,
+                env={"FREECADCMD": str(root / "missing"), "PATH": "", "HOME": directory,
+                     "XDG_CACHE_HOME": directory})
+        self.assertNotIn("ImportError", result.stderr)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)  # FreeCAD is missing: a report, not a crash
+        self.assertIn("FreeCAD", result.stdout)
+
+
+class WarmStatusPerProjectTests(unittest.TestCase):
+    """The warm-up is shared by every project of this plugin copy; solver readiness is the project's."""
+
+    COMPLETE = ("freecad-command", "freecad-version", "techdraw-templates", "uv",
+                *(runtime.id for runtime in preflight.RUNTIMES), preflight.CHROMIUM.id, "three-vendor-cache")
+
+    def finished_record(self, directory: str, checks: tuple | None = None) -> dict:
+        environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+        checks = checks if checks is not None else tuple(
+            preflight.Check(identifier, identifier, "pass", True, "ok", "") for identifier in self.COMPLETE)
+        preflight._write_record(preflight.warm_record_path(environ), {
+            "state": "finished", "pid": 1, "started_at": "t0", "finished_at": "t1",
+            "report": preflight.Report(checks).as_json()})
+        return environ
+
+    def status(self, product: str | None, checks: tuple | None = None, record: bool = True) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-status-") as directory:
+            environ = self.finished_record(directory, checks) if record else {
+                "XDG_CACHE_HOME": directory, "HOME": directory}
+            project = Path(directory) / "project"
+            project.mkdir()
+            if product is not None:
+                (project / "hw").mkdir()
+                (project / "hw" / "product.yaml").write_text(product, encoding="utf-8")
+            missing = {**FEASolverCheckTests.PROBED, "calculix": {"error": "ccx not found: $CCX is unset"}}
+            command = Path(directory) / "freecadcmd"
+            command.write_text("#!/bin/sh\n", encoding="utf-8")
+            command.chmod(0o755)
+            with patch.object(preflight.fea_solvers, "probe", return_value=missing), patch("sys.stderr"):
+                return preflight.warm_status({**environ, "FREECADCMD": str(command), "PATH": ""}, cwd=project)
+
+    def test_a_warm_up_taken_with_fea_off_does_not_pass_a_project_that_enables_fea(self) -> None:
+        code, text = self.status("flow:\n  profile:\n    fea:\n      enabled: true\n")
+        self.assertEqual(code, 1, text)
+        self.assertIn("ccx not found", text)
+
+    def test_the_same_warm_up_passes_a_project_without_fea(self) -> None:
+        code, text = self.status(None)
+        self.assertEqual(code, 0, text)
+        self.assertIn("FEA is not enabled", text)
+
+    def test_an_older_warm_up_that_stopped_at_missing_solvers_is_not_a_pass(self) -> None:
+        # Before this change the fea-solvers failure ended the warm-up before uv, the runtimes, Chromium and the
+        # vendor cache were checked. Without its failure the record is not a full warm-up.
+        old = (*(preflight.Check(i, i, "pass", True, "ok", "") for i in
+                 ("freecad-command", "freecad-version", "techdraw-templates")),
+               preflight.Check("fea-solvers", "FEA solvers", "fail", True, "ccx not found", "install"))
+        code, text = self.status(None, checks=old)
+        self.assertEqual(code, preflight.EXIT_NO_WARM, text)
+        self.assertIn("incomplete", text)
+        self.assertIn("--warm", text)
+
+    def test_a_recorded_required_failure_still_exits_1(self) -> None:
+        failed = tuple(preflight.Check(i, i, "fail" if i == "uv" else "pass", True, "d", "fix")
+                       for i in self.COMPLETE)
+        self.assertEqual(self.status(None, checks=failed)[0], 1)
+
+    def test_an_invalid_profile_is_reported_when_no_warm_up_is_recorded(self) -> None:
+        code, text = self.status("flow:\n  profile:\n    fea:\n      enabled: maybe\n", record=False)
+        self.assertEqual(code, 1, text)
+        self.assertIn("flow.profile.fea", text)
+        self.assertIn("No warm-up is recorded", text)
+
+    def test_a_running_warm_up_does_not_hide_an_invalid_profile(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-running-") as directory:
+            environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+            preflight._write_record(preflight.warm_record_path(environ),
+                                    {"state": "running", "pid": os.getpid(), "started_at": "t0"})
+            project = Path(directory) / "project"
+            (project / "hw").mkdir(parents=True)
+            (project / "hw" / "product.yaml").write_text("flow: [a]\n", encoding="utf-8")
+            code, text = preflight.warm_status(environ, wait_s=0.1, cwd=project)
+            self.assertEqual(code, 1, text)
+            self.assertIn("flow", text)
+            (project / "hw" / "product.yaml").write_text("name: widget\n", encoding="utf-8")
+            self.assertEqual(preflight.warm_status(environ, wait_s=0.1, cwd=project)[0], preflight.EXIT_RUNNING)
+
+    def test_a_profile_repaired_between_two_reads_still_reports_the_first_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-race-") as directory:
+            environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+            preflight._write_record(preflight.warm_record_path(environ),
+                                    {"state": "running", "pid": os.getpid(), "started_at": "t0"})
+            broken = preflight.FeaSetting(False, f"{directory}/hw/product.yaml: flow.profile must be a mapping")
+            reads = [broken, preflight.FeaSetting(False, None), preflight.FeaSetting(False, None)]
+            with patch.object(preflight, "project_fea", side_effect=reads):
+                code, text = preflight.warm_status(environ, wait_s=0.1, cwd=Path(directory))
+        self.assertEqual(code, 1, text)
+        self.assertIn("flow.profile must be a mapping", text)
+
+    def test_info_is_no_evidence_for_a_mandatory_warm_up_check(self) -> None:
+        checks = tuple(preflight.Check(i, i, "info" if i == "uv" else "pass", i != "uv", "d", "")
+                       for i in self.COMPLETE)
+        code, text = self.status(None, checks=checks)
+        self.assertEqual(code, preflight.EXIT_NO_WARM, text)
+        self.assertIn("uv", text)
+
+    def test_a_cached_row_with_a_wrong_field_type_is_unreadable(self) -> None:
+        good = preflight.Report(tuple(preflight.Check(i, i, "pass", True, "ok", "") for i in self.COMPLETE)).as_json()["checks"]
+        for field, value in (("required", "no"), ("required", 0), ("elapsed_s", "1.5"), ("elapsed_s", -1),
+                             ("elapsed_s", True), ("detail", 5), ("id", ""), ("extra", 1)):
+            rows = [*good[:-1], {**good[-1], field: value}]
+            with self.subTest(field=field, value=value), tempfile.TemporaryDirectory(prefix="cad-preflight-bad-") as directory:
+                environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+                preflight._write_record(preflight.warm_record_path(environ), {
+                    "state": "finished", "pid": 1, "started_at": "t0", "finished_at": "t1",
+                    "report": {"checks": rows}})
+                project = Path(directory) / "project"
+                project.mkdir()
+                code, text = preflight.warm_status(environ, cwd=project)
+                self.assertEqual(code, preflight.EXIT_NO_WARM, text)
+                self.assertIn("unreadable", text)
+
+    def test_a_failed_mandatory_check_marked_optional_still_fails_the_status(self) -> None:
+        checks = tuple(preflight.Check(i, i, "fail" if i == "uv" else "pass", i != "uv", "d", "fix")
+                       for i in self.COMPLETE)
+        self.assertEqual(self.status(None, checks=checks)[0], 1)
+
+    def test_a_malformed_record_is_not_a_warm_up(self) -> None:
+        good = [asdict_check for asdict_check in preflight.Report(tuple(
+            preflight.Check(i, i, "pass", True, "ok", "") for i in self.COMPLETE)).as_json()["checks"]]
+        for rows in ([*good[:-1], "uv"], [*good[:-1], {"id": "uv"}], [*good[:-1], {**good[-1], "status": "bogus"}],
+                     "not a list"):
+            with self.subTest(rows=str(rows)[:40]), tempfile.TemporaryDirectory(prefix="cad-preflight-bad-") as directory:
+                environ = {"XDG_CACHE_HOME": directory, "HOME": directory}
+                preflight._write_record(preflight.warm_record_path(environ), {
+                    "state": "finished", "pid": 1, "started_at": "t0", "finished_at": "t1",
+                    "report": {"checks": rows}})
+                project = Path(directory) / "project"
+                project.mkdir()
+                code, text = preflight.warm_status(environ, cwd=project)
+                self.assertEqual(code, preflight.EXIT_NO_WARM, text)
+                self.assertIn("unreadable", text)
+
+    def test_no_warm_up_and_a_valid_profile_still_exits_2(self) -> None:
+        self.assertEqual(self.status(None, record=False)[0], preflight.EXIT_NO_WARM)
+
+    def test_an_invalid_profile_fails_the_status_by_name(self) -> None:
+        code, text = self.status("flow:\n  profile:\n    fea:\n      enabled: maybe\n")
+        self.assertEqual(code, 1, text)
+        self.assertIn("flow.profile.fea", text)
+
+
+class FEAProfileCheckTests(unittest.TestCase):
+    def test_an_invalid_profile_fails_by_name_and_nothing_is_probed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-fea-") as directory:
+            command = Path(directory) / "freecadcmd"
+            command.write_text("#!/bin/sh\n", encoding="utf-8")
+            command.chmod(0o755)
+            invalid = preflight.FeaSetting(False, "/p/hw/product.yaml: flow.profile.fea.enabled must be a boolean")
+            with patch.object(preflight, "cad_tool_version", return_value=("1.1.4", "FreeCAD 1.1.4")), \
+                    patch.object(preflight.freecad_runtime, "techdraw_templates",
+                                 return_value=(directory, frozenset(preflight.EXPECTED_TEMPLATES))), \
+                    patch.object(preflight.fea_solvers, "probe") as probed, patch("sys.stderr"):
+                checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""}, fea=invalid)
+        probed.assert_not_called()
+        named = next(check for check in checks if check.id == "fea-profile")
+        self.assertEqual((named.status, named.required), ("fail", True))
+        self.assertIn("/p/hw/product.yaml", named.detail)
+        self.assertIn("must be a boolean", named.detail)
+        self.assertEqual(preflight.Report(tuple(checks)).exit_code, 1)
+
+    def test_the_warm_up_reads_no_project_and_adds_no_fea_check(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-preflight-fea-") as directory:
+            command = Path(directory) / "freecadcmd"
+            command.write_text("#!/bin/sh\n", encoding="utf-8")
+            command.chmod(0o755)
+            with patch.object(preflight, "cad_tool_version", return_value=("1.1.4", "FreeCAD 1.1.4")), \
+                    patch.object(preflight.freecad_runtime, "techdraw_templates",
+                                 return_value=(directory, frozenset(preflight.EXPECTED_TEMPLATES))), \
+                    patch.object(preflight.fea_solvers, "probe") as probed, patch("sys.stderr"):
+                checks = preflight._timed_freecad_checks({"FREECADCMD": str(command), "PATH": ""}, fea=None)
+        probed.assert_not_called()
+        self.assertFalse([check for check in checks if check.id.startswith("fea-")])
 
 
 if __name__ == "__main__":

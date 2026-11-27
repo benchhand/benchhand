@@ -6,7 +6,9 @@
 
 # /// script
 # requires-python = ">=3.12,<3.15"
-# dependencies = []
+# dependencies = [
+#   "pyyaml>=6.0",
+# ]
 # ///
 """Check the CAD plugin's required local tools and optional harness installation.
 
@@ -110,6 +112,10 @@ CHROMIUM = Runtime("playwright-chromium", SKILLS / "cad-render" / "scripts" / "r
                    "playwright")
 
 
+# An info check reports a fact; it is neither counted nor a failure.
+PASSING = frozenset({"pass", "info"})
+
+
 @dataclass(frozen=True)
 class Check:
     """One named check and the action that resolves a failure or warning."""
@@ -123,7 +129,7 @@ class Check:
     elapsed_s: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.status not in {"pass", "fail", "warn"}:
+        if self.status not in {"pass", "fail", "warn", "info"}:
             raise ValueError(f"invalid check status: {self.status}")
 
 
@@ -138,7 +144,7 @@ class Report:
 
     @property
     def exit_code(self) -> int:
-        return int(any(check.required and check.status != "pass" for check in self.checks))
+        return int(any(check.required and check.status not in PASSING for check in self.checks))
 
     @property
     def summary(self) -> str:
@@ -332,7 +338,36 @@ def cad_tool_version(command: Path, environ: Mapping[str, str]) -> tuple[str | N
     return version, output.strip() or f"freecadcmd exited {result.returncode}."
 
 
-def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) -> list[Check]:
+@dataclass(frozen=True)
+class FeaSetting:
+    """What the project's flow profile says about FEA. `invalid` names the file and the cause when the
+    configuration is there but cannot be read or has the wrong shape; it is not the same as FEA off."""
+
+    enabled: bool = False
+    invalid: str | None = None
+
+
+def load_fea_profile() -> Any:
+    """fea_profile.py, imported when a project is read. The import is lazy on purpose: fea_profile.py loads
+    flow_profile.py (PyYAML), and the cad-model runners reach this file only for the FreeCAD lookup, so
+    scripts/test_script_dependencies.py lists this load in OPTIONAL_LOADS."""
+    import fea_profile
+    return fea_profile
+
+
+def project_fea(cwd: Path) -> FeaSetting:
+    """The FEA setting of the project at `cwd`, read by fea_profile.py (cad-record's YAML reader and gate
+    accessor). Only a run that reads a project needs PyYAML."""
+    try:
+        return FeaSetting(*load_fea_profile().read(cwd))
+    except (ImportError, ValueError, OSError) as error:
+        return FeaSetting(False, f"{cwd / 'hw' / 'product.yaml'}: cannot read the FEA setting: {error}")
+
+
+def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None,
+                          fea: FeaSetting | None = FeaSetting()) -> list[Check]:
+    """The FreeCAD checks. `fea` is the project's setting; None leaves the project-specific FEA checks out
+    (the shared warm-up reads no project)."""
     tool = CAD_TOOL
     checks: list[Check] = []
     started = time.monotonic()
@@ -365,6 +400,8 @@ def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) 
                                  "" if version == tool.required_version else fix),
                           elapsed_s=time.monotonic() - started))
     if not found:
+        if fea is not None and fea.invalid:  # the project's own mistake, whatever FreeCAD does
+            checks.extend(_fea_checks(None, environ, fea))
         return checks
 
     started = time.monotonic()
@@ -379,8 +416,23 @@ def _timed_freecad_checks(environ: Mapping[str, str], home: Path | None = None) 
     checks.append(replace(_check("techdraw-templates", "TechDraw templates", "pass" if okay else "fail", detail,
                                  "" if okay else template_fix), elapsed_s=time.monotonic() - started))
     print(f"[preflight] techdraw-templates: {checks[-1].status} ({checks[-1].elapsed_s:.1f}s)", file=sys.stderr, flush=True)
-    checks.append(_fea_solvers_check(command, environ))
+    if fea is not None:
+        checks.extend(_fea_checks(command, environ, fea))
     return checks
+
+
+def _fea_checks(command: Path | None, environ: Mapping[str, str], fea: FeaSetting) -> list[Check]:
+    """The FEA checks of one project: an invalid profile fails by name, FEA off is info, FEA on probes."""
+    if fea.invalid:
+        return [_check("fea-profile", "FEA flow profile", "fail", fea.invalid,
+                       "Set flow.profile.fea.enabled in hw/product.yaml to true or false, or repair the file.")]
+    if not fea.enabled:
+        return [_check("fea-solvers", "FEA solvers (ccx, Gmsh)", "info",
+                       "FEA is not enabled; it will need ccx and Gmsh if enabled later.", "", required=False)]
+    if command is None:
+        return [_check("fea-solvers", "FEA solvers (ccx, Gmsh)", "fail", "FreeCAD command unavailable.",
+                       f"Install {CAD_TOOL.name} {CAD_TOOL.required_version}; it ships ccx and gmsh.")]
+    return [_fea_solvers_check(command, environ)]
 
 
 def _fea_solvers_check(command: Path, environ: Mapping[str, str]) -> Check:
@@ -516,8 +568,11 @@ def run_checks(environ: Mapping[str, str] | None = None, cwd: Path | None = None
     env = os.environ if environ is None else environ
     workdir = cwd or Path.cwd()
     home_dir = home or Path(env.get("HOME", str(Path.home())))
-    checks = list(cad_checks if cad_checks is not None else _timed_freecad_checks(env, home_dir))
-    if any(check.status != "pass" for check in checks):
+    if cad_checks is None:
+        # A warm-up is shared by every project of this plugin copy, so it reads none.
+        cad_checks = _timed_freecad_checks(env, home_dir, None if warm else project_fea(workdir))
+    checks = list(cad_checks)
+    if any(check.status not in PASSING for check in checks):
         return Report(tuple(checks))
     uv_check, uv = _run_uv_check(env)
     checks.append(uv_check)
@@ -620,25 +675,94 @@ def start_background(environ: Mapping[str, str] | None = None, harness: str | No
     return {"started": False, "pid": child.pid, "record": str(path), "log": str(log), "error": error}
 
 
-def warm_status(environ: Mapping[str, str] | None = None, wait_s: float = 0.0) -> tuple[int, str]:
+PROJECT_CHECKS = frozenset({"fea-profile", "fea-solvers"})
+# What a complete warm-up records, besides the harness checks: the checks run in order and the run stops at a
+# required failure, so a record that lacks one of these and holds no other failure is not a warm-up.
+WARM_IDS = ("freecad-command", "freecad-version", "techdraw-templates", "uv",
+            *(runtime.id for runtime in RUNTIMES), CHROMIUM.id, "three-vendor-cache")
+
+
+def project_checks(environ: Mapping[str, str], cwd: Path) -> list[Check]:
+    """The checks that depend on the project at `cwd`, not on this plugin copy: the FEA setting and, when the
+    project enables FEA, the solvers. The warm-up record holds none of them."""
+    fea = project_fea(cwd)
+    command = find_freecadcmd(environ) if fea.enabled and not fea.invalid else None
+    return _fea_checks(command, environ, fea)
+
+
+def _recorded_checks(record: Mapping[str, Any]) -> list[Check] | None:
+    """The checks of a finished warm-up record, or None when its shape is not a report of Check rows."""
+    report = record.get("report")
+    rows = report.get("checks") if isinstance(report, dict) else None
+    if not isinstance(rows, list) or not all(_valid_row(row) for row in rows):
+        return None
+    return [Check(**row) for row in rows]
+
+
+def _valid_row(row: Any) -> bool:
+    """Whether `row` is a check of the preflight-report contract (preflight-report.schema.json): exactly its
+    fields, each of its type, a known status and a non-negative duration. Check itself validates no types."""
+    text = ("id", "name", "detail", "fix")
+    if not isinstance(row, dict) or set(row) != {*text, "status", "required", "elapsed_s"}:
+        return False
+    elapsed = row["elapsed_s"]
+    return (all(isinstance(row[key], str) for key in text) and bool(row["id"]) and bool(row["name"])
+            and row["status"] in ("pass", "fail", "warn", "info") and isinstance(row["required"], bool)
+            and isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) and elapsed >= 0)
+
+
+def _without_warm_up(code: int, text: str, environ: Mapping[str, str], cwd: Path) -> tuple[int, str]:
+    """`code` and `text` for a status with no usable warm-up. A failing project setting is the user's to fix
+    now, whatever the warm-up state: it is reported, with exit 1, ahead of the missing warm-up."""
+    failures = [check for check in project_checks(environ, cwd) if check.required and check.status not in PASSING]
+    if not failures:
+        return code, text
+    return 1, render_text(Report(tuple(failures))) + "\n" + text
+
+
+def warm_status(environ: Mapping[str, str] | None = None, wait_s: float = 0.0,
+                cwd: Path | None = None) -> tuple[int, str]:
     """Exit code and text for the last warm-up of this plugin copy, waiting up to `wait_s` for a
-    running one: 0 passed, 1 a required check failed, EXIT_NO_WARM none or it died, EXIT_RUNNING."""
+    running one: 0 passed, 1 a required check failed, EXIT_NO_WARM none or it died, EXIT_RUNNING.
+    A finished warm-up is joined with the FEA checks of the project at `cwd` (default: the current folder)."""
     env = os.environ if environ is None else environ
+    project = cwd or Path.cwd()
     path = warm_record_path(env)
     log = path.with_suffix(".log")
     deadline = time.monotonic() + max(wait_s, 0.0)
     while True:
         record = _read_record(path)
         if record is None:
-            return EXIT_NO_WARM, (f"No warm-up is recorded for {CAD_ROOT} ({path}). "
-                                  "Run `preflight.py --warm` in the foreground.")
+            return _without_warm_up(EXIT_NO_WARM, (f"No warm-up is recorded for {CAD_ROOT} ({path}). "
+                                                   "Run `preflight.py --warm` in the foreground."), env, project)
         if record.get("state") == "finished":
-            report = Report(tuple(Check(**check) for check in record["report"]["checks"]))
+            rows = _recorded_checks(record)
+            if rows is None:
+                return _without_warm_up(EXIT_NO_WARM, (
+                    f"The warm-up record {path} is unreadable: its report is not a list of checks. "
+                    "Run `preflight.py --warm` in the foreground."), env, project)
+            # A mandatory warm-up check is required whatever the cached flag says.
+            recorded = [replace(check, required=True) if check.id in WARM_IDS else check
+                        for check in rows if check.id not in PROJECT_CHECKS]
+            # Only a pass or a fail is a result: an info check (or none) is no evidence that the check ran.
+            ran = {check.id for check in recorded if check.status in ("pass", "fail")}
+            missing = [name for name in WARM_IDS if name not in ran]
+            if missing and not any(check.required and check.status not in PASSING for check in recorded):
+                return _without_warm_up(EXIT_NO_WARM, (
+                    f"The warm-up finished at {record.get('finished_at')} is incomplete: it has no result for "
+                    f"{', '.join(missing)}. Run `preflight.py --warm` in the foreground."), env, project)
+            report = Report(tuple(recorded + project_checks(env, project)))
             return report.exit_code, (f"Warm-up finished at {record.get('finished_at')} "
                                       f"(started {record.get('started_at')}).\n{render_text(report)}")
         if not _alive(record.get("pid")):
-            return EXIT_NO_WARM, (f"The warm-up started at {record.get('started_at')} (pid {record.get('pid')}) "
-                                  f"stopped without a report; see {log}. Run `preflight.py --warm` in the foreground.")
+            return _without_warm_up(EXIT_NO_WARM, (
+                f"The warm-up started at {record.get('started_at')} (pid {record.get('pid')}) "
+                f"stopped without a report; see {log}. Run `preflight.py --warm` in the foreground."), env, project)
+        fea = project_fea(project)
+        if fea.invalid:  # the project's own mistake: reported now, from this read, not after the worker finishes
+            failure = Report(tuple(_fea_checks(None, env, fea)))
+            return 1, render_text(failure) + (f"\nThe warm-up started at {record.get('started_at')} "
+                                              f"(pid {record['pid']}) is still running; progress is in {log}.")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return EXIT_RUNNING, (f"The warm-up started at {record.get('started_at')} (pid {record['pid']}) is still "
