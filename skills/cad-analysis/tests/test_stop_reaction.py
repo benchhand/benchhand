@@ -591,6 +591,19 @@ class StopGeometryTests(unittest.TestCase):
                 self.assertIn("not finite", row["uncertainty"])
                 self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
+    def test_a_recorded_rating_that_is_not_a_finite_force_is_a_named_unknown_with_exit_1(self) -> None:
+        no_value = {key: value for key, value in fx.known(fx.quantity(20.0, "N")).items() if key != "value"}
+        cases = (("overflows", fx.known(fx.quantity(1e308, "kN"))),
+                 ("bogus-unit", fx.known({"value": 20, "units": "bogus"})),
+                 ("no-value", no_value))
+        for name, rating in cases:
+            with self.subTest(rating=name):
+                code, result = self.run_stop(f"rating-{name}", contact_load=rating, variant="disk3")
+                [row] = result["outcomes"]
+                self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+                self.assertIn("contact load", row["uncertainty"])
+                self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
     def test_a_part_frame_direction_is_rotated_into_the_assembly_frame(self) -> None:
         # By hand: a 30 N load along the lever's own +Z, with the lever turned 180 deg about X, acts along the
         # assembly's -Z, which presses the lower stop with 30 N. Read as an assembly direction it points up and
