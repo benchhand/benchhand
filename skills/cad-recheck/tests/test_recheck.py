@@ -559,16 +559,16 @@ class RecheckHookTests(unittest.TestCase):
         self.provisional_gate("parts", decision=None)
         (self.root / ".gitignore").write_text("/hw/versions/\n", encoding="utf-8")
         self.git("add", ".gitignore")
-        product_path = self.root / "hw/product.yaml"
-        product = json.loads(product_path.read_text(encoding="utf-8"))
-        product["flow"]["frozen"] = {"version": "v1"}
-        product_path.write_text(json.dumps(product), encoding="utf-8")
-        self.git("add", "hw/product.yaml")
         artifact = b"STEP fixture\n"
         (self.root / "hw/versions/v1/assembly.step").write_bytes(artifact)
         digest = self.stage_manifest("v1", json.dumps({"label": "v1", "files": {
             "assembly.step": hashlib.sha256(artifact).hexdigest(),
         }}))
+        product_path = self.root / "hw/product.yaml"
+        product = json.loads(product_path.read_text(encoding="utf-8"))
+        product["flow"]["frozen"] = {"version": "v1", "manifest_sha256": digest, "decision": "DR-001"}
+        product_path.write_text(json.dumps(product), encoding="utf-8")
+        self.git("add", "hw/product.yaml")
         write_test_decision(self.root / "hw", "DR-001", status="accepted", date=DAY, gate=LAYOUT_GATE,
                             gate_build=("v1", digest))
         self.git("add", "hw/decisions")
