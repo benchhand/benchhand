@@ -431,5 +431,21 @@ class ProcessRuleTests(unittest.TestCase):
                 self.assertNotRegex(text, r"\b(flow\.py|work\.py)\b|evidence\.py run [^`]*--scope (?!commit\b|full\b)")
 
 
+class PartDesignerLauncherTests(unittest.TestCase):
+    PROFILES = ("agents/cad-part-designer.md", "harness/claude/agents/cad-part-designer.md",
+                "harness/opencode/agents/cad-part-designer.md", "harness/codex/agents/cad-part-designer.toml",
+                "harness/kiro/agents/cad-part-designer.json")
+
+    def test_every_scratch_command_runs_through_the_launcher_the_shell_rules_allow(self) -> None:
+        """The profile's shell rules allow `uv run --script <run.py> cad-flow/scripts/scratch.py <command>` and nothing else."""
+        command = r"scratch\.py (?:init|build|deliver|sync)\b"
+        launched = r"run\.py\W+cad-flow/scripts/" + command
+        for name in self.PROFILES:
+            text = (CAD / name).read_text(encoding="utf-8")
+            with self.subTest(profile=name):
+                self.assertEqual(len(re.findall(launched, text)), len(re.findall(command, text)))
+                self.assertGreaterEqual(len(re.findall(r"scratch\.py sync\b", text)), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
