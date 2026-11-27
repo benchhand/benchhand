@@ -244,6 +244,29 @@ def read_file(dir_fd: int, name: str) -> bytes:
         return stream.read()
 
 
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def baseline_problems(data: Any) -> list[str]:
+    """What is wrong with a parsed baseline.json, empty when it has the shape init writes: hw and unit
+    strings, `parts` a list of PNs, `files` a map from a relative POSIX path to a sha256."""
+    if not isinstance(data, dict):
+        return ["it is not a JSON object"]
+    problems = [f"{key} is not a string" for key in ("hw", "unit") if not isinstance(data.get(key), str)]
+    parts, files = data.get("parts"), data.get("files")
+    if not isinstance(parts, list) or not all(isinstance(pn, str) and PN.match(pn) for pn in parts):
+        problems.append(f"parts is not a list of PNs matching {PN.pattern}")
+    if not isinstance(files, dict):
+        return [*problems, "files is not an object"]
+    for path, digest in files.items():
+        relative = PurePosixPath(path)
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts or str(relative) != path:
+            problems.append(f"files has the path {path!r}, which is not relative and canonical")
+        if not isinstance(digest, str) or not SHA256.match(digest):
+            problems.append(f"files[{path!r}] is not a sha256")
+    return problems[:5]
+
+
 def load_baseline(work: Path, work_fd: int | None = None) -> dict[str, Any]:
     owned = work_fd is None
     fd = open_dir(work) if work_fd is None else work_fd
@@ -252,10 +275,16 @@ def load_baseline(work: Path, work_fd: int | None = None) -> dict[str, Any]:
             raw = read_file(fd, "baseline.json")
         except FileNotFoundError:
             raise UsageError(f"{work} has no baseline.json; run `scratch.py init` first") from None
-        return cast(dict[str, Any], json.loads(raw.decode("utf-8")))
     finally:
         if owned:
             os.close(fd)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError as error:
+        raise Finding("baseline-invalid", f"{work}/baseline.json is not valid JSON ({error}); run `scratch.py init --reset`", 1) from error
+    if problems := baseline_problems(data):
+        raise Finding("baseline-invalid", f"{work}/baseline.json is wrong: {'; '.join(problems)}; run `scratch.py init --reset`", 1)
+    return cast(dict[str, Any], data)
 
 
 @contextlib.contextmanager
