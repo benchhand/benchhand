@@ -1422,7 +1422,25 @@ def assess(record: Any, *, problems: Sequence[Any] | None = None, input_sha256: 
         statuses.append("blocked")
     report["status"] = ("blocked" if "blocked" in statuses else "conditional" if "conditional" in statuses else "final_ready")
     report["coverage"] = _coverage(record, report["decisions"])
+    if report["status"] == "final_ready" and _unselected_findings(findings, report["coverage"]):
+        report["status"] = "conditional"
     return report
+
+
+def _unselected_findings(findings: _Findings, coverage: Mapping[str, Any]) -> bool:
+    """A finding for each made part that no chosen candidate covers: its material and process are not chosen, so the
+    selection is not final. True when one is found."""
+    for pn in coverage["unselected"]:
+        findings.add("selection.part_unselected", pn, {"PN": pn}, "major", "unknown",
+                     measured=_unknown(f"no chosen candidate names {pn}"),
+                     criterion={"property": "coverage", "operator": "equals", "value": "chosen",
+                                "source": _policy_source("every made part has a chosen material and process")},
+                     method="made parts against the chosen candidate of each decision",
+                     uncertainty=f"only an alternative, or no candidate, names {pn}",
+                     consequence=f"{pn} has no chosen material or process, so the selection cannot be final",
+                     remedy=f"confirm a primary that names {pn}, or add {pn} to the confirmed primary through the approval "
+                            "gate", inputs=_INPUTS)
+    return bool(coverage["unselected"])
 
 
 def _coverage(record: Any, decisions: Sequence[Mapping[str, Any]]) -> dict[str, list[str]]:

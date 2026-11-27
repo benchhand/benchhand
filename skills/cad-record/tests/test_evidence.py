@@ -1088,14 +1088,15 @@ class SelectionGate(unittest.TestCase):
     def test_a_made_part_no_candidate_covers_is_exploration_until_the_freeze_and_then_blocks(self) -> None:
         """A freeze and a release need a confirmed selection for every made part (decision 1): a made part no
         candidate names has an unknown material and process choice, a warning while exploring and an error from
-        the design freeze, even beside a confirmed final choice for the others. A catalogue buy needs none."""
+        the design freeze, even beside a confirmed final choice for the others. Selection itself names the part, so it
+        is not final_ready. A catalogue buy needs none."""
         docs = scenarios.qualified_polymer_cover()
         docs["parts/TST-0302/part.yaml"] = scenarios.made_part("TST-0302", "TST bezel", "fdm", "tst_polymer_c_printed",
                                                                "tst_printer")
         docs["parts/TST-0303/part.yaml"] = fx.part("TST-0303", "TST screw", process="purchased", make_buy="buy")
         docs, digest = recorded(docs, primary="printed_cover")
         report = evidence.selection.assess(selected(docs), input_sha256=digest)
-        self.assertEqual((report["status"], report["coverage"]), ("final_ready", {"made": ["TST-0301", "TST-0302"],
+        self.assertEqual((report["status"], report["coverage"]), ("conditional", {"made": ["TST-0301", "TST-0302"],
                                                                                   "unselected": ["TST-0302"]}))
         for stage, severity in (("intent", "warning"), ("detail", "warning"), ("design_freeze", "error"), ("release", "error")):
             found = self.gate(docs, digest, stage)

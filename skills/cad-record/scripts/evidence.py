@@ -612,12 +612,16 @@ def selection_gate(report: Mapping[str, Any], stage: str, *, approved: bool | No
         findings.append(Finding("gate.selection_approval", SELECTION_PATH,
                                 f"the selection is confirmed by {assessment.get('decision')}, which is missing or is not "
                                 "the user's approval"))
+    unselected = (report.get("coverage") or {}).get("unselected") or ()
     if status != "not_assessed":  # with no candidates at all, the not_assessed finding below says it once
-        for pn in (report.get("coverage") or {}).get("unselected") or ():
+        for pn in unselected:
             findings.append(Finding("gate.selection", SELECTION_PATH,
                                     f"{pn} is a made part no selection candidate covers, so its material and process choice "
                                     "is unknown" + (": a design freeze needs a confirmed selection for every made part" if final
                                                     else "; exploration may continue"), graded))
+    decisions = report.get("decisions") or ()
+    if status == "conditional" and unselected and decisions and all(d.get("final_allowed") for d in decisions):
+        status = "final_ready"  # selection.part_unselected alone holds it back, and the lines above name each part
     if status == "final_ready" and confirmed:
         return findings
     refused = sorted({reason for decision in report.get("decisions") or () for reason in decision.get("refused_because") or ()})
