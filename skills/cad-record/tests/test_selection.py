@@ -462,6 +462,8 @@ class JustifiedAlternatives(unittest.TestCase):
             "stock thickness not stated": lambda d: cut(d).pop("stock", None),
             "stock coating not stated": lambda d: cut(d)["stock"].pop("coating"),
             "approved for another coating": lambda d: cut(d)["stock"].update(coating=fx.known("TST protective film")),
+            "blank coatings on both": lambda d: (approval(d).update(coating=fx.known("  ")),
+                                                 cut(d)["stock"].update(coating=fx.known(" \t"))),
         }
         for case, change in cases.items():
             with self.subTest(case):
