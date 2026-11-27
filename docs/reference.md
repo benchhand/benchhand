@@ -15,7 +15,7 @@ Only the string `1` turns a boolean flag on, as for `CAD_REQUIRE_FREECAD`.
 | `CAD_REQUIRE_FREECAD` | off | `1` makes a FreeCAD-gated test fail instead of skip. CI sets it. | `docs/engineering.md` |
 | `CAD_MODEL_BUILD_JOBS` | `min(cpus // 2, 4)`, at least 1 | Parallel part-build workers for `cad_model.py`, capped by the part count. Integer division. An empty or whitespace-only value counts as unset. Any other value that is not a positive integer is an error. | `skills/cad-model/scripts/cadmodel/runner.py` |
 | `CAD_RENDER_RASTER_THREADS` | unset | `1` starts Chromium with `--num-raster-threads=1`. | `skills/cad-render/scripts/render.py` |
-| `CAD_CALIBRATION` | off | Printer calibration. See [Feature flags](engineering.md#feature-flags). | `skills/cad-record/scripts/guidelines.py` |
+| `CAD_CALIBRATION` | off | Printer calibration, off for release: a recorded FDM calibration is ignored and the guideline values govern. Set it to `1` only to let a recorded calibration tighten them. See [Feature flags](engineering.md#feature-flags). | `skills/cad-record/scripts/guidelines.py` |
 | `CAD_FEA_METALS_NEAR_SUPPORT` | off | Form stand-in for metal ductility near a support. See [Feature flags](engineering.md#feature-flags). | `skills/cad-analysis/scripts/fea_conditions.py` |
 | `SOURCE_DATE_EPOCH` | 315532800 (1980-01-01 UTC) | Date stamped in drawing PDFs, never the clock. | `skills/cad-drawings/scripts/sheet_export.py` |
 | `CAD_VIEWER_SESSION` | state file under `XDG_STATE_HOME` | Overrides the viewer session-file path. | `skills/cad-viewer/scripts/cadviewer/session.py` |
@@ -71,14 +71,14 @@ Results for an evidence obligation (`skills/cad-record/scripts/evidence.py`, `RE
 - A known `fail` blocks at a stage gate whenever it is known, due or not.
 - An obligation is due at its own stage. From the design freeze on, every obligation is due.
 - Before LAYOUT, an unresolved due obligation is a warning. From LAYOUT on it is an error.
-- `not_assessed` is an info finding at a gate. It blocks nothing and never counts as a pass.
+- `not_assessed` is an info finding at a gate (`gate.not_assessed`). It blocks nothing and never counts as a pass. A printer (FDM or resin) check with no guideline value and no calibration is `not_assessed` with the reason `no_guideline`.
 - A physical test (`physically_validated`) may stay `planned` until the release.
 - At the release, only obligations in the release scope of the service class count. A failure outside that scope does not block it.
-- At the release, a waiver resolves an obligation, with two limits. A `safety_critical` release takes no waiver. A waived physical test makes the release an unvalidated trial, and `production` and `safety_critical` refuse that. Both classes therefore need the physical test.
+- At the release, a waiver resolves an obligation, with two limits. A `safety_critical` release takes no waiver. A waived physical test makes the release an unvalidated trial, and `appearance_concept`, `production` and `safety_critical` refuse that (`SERVICE_POLICY` in `skills/cad-record/scripts/project_scope.py`). `production` and `safety_critical` therefore need the physical test.
 
 ## Gate decision key
 
-A gate decision in `hw/decisions/DR-###-slug.md` carries `gate: {from: <stage>, to: <stage>}` in its front matter, for example `gate: {from: layout, to: parts}`. `stamp.py --verify` accepts a stamp one stage behind `flow.stage` only when a `proposed` or `accepted` decision with that key and no `superseded-by` exists. Its date must be on or after the stamp's UTC day. A record without the key, or with another transition, is not that gate (`skills/cad-recheck/SKILL.md`).
+A gate decision in `hw/decisions/DR-###-slug.md` carries `gate: {from: <stage>, to: <stage>}` in its front matter, for example `gate: {from: layout, to: parts}`. `stamp.py --verify` accepts a stamp one stage behind `flow.stage` only when a `proposed` or `accepted` decision with that key and no `superseded-by` exists. Its `gate.version` and `gate.version_manifest_sha256` must match the evidence packet. Its date, in UTC, may precede the stamp's UTC day but must not follow it. A record without the key, or with another transition, is not that gate (`skills/cad-recheck/SKILL.md`).
 
 ## Agent roles
 
@@ -87,7 +87,7 @@ Sources are in `agents/`. The harness profiles are generated from them.
 | Agent | Role |
 |---|---|
 | `cad-concept-designer` | Drafts one L0 concept variant as a checked three.js scene. Never edits `hw/`. |
-| `cad-part-designer` | Designs one unit's parts in a scratch copy and delivers only its own part directories. |
+| `cad-part-designer` | Designs one unit's parts in a scratch copy (`scratch.py init`, `build`, `sync`, `deliver`) and delivers only its own part directories. |
 | `cad-analyst` | Runs one L4 analysis case, read-only on `hw/`, and proposes verification rows. |
 | `cad-sourcing-researcher` | Verifies purchased-part identity, ratings and supplier evidence. Read-only. |
 | `cad-dfm-reviewer` | Challenges declared manufacturing routes with scoped evidence. Read-only. |

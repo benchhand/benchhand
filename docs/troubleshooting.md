@@ -53,6 +53,10 @@ Run `preflight.py --warm`. It installs Chromium through Playwright and warms the
   Answer an option instead of accepting its default with its flag, such as `--supports free`. An option is never both answered and accepted. `record --help` lists the values. `flow_profile.py check --hw hw` reports what still blocks.
 - A record that is not version 2 is refused.
 
+## A printer check is not assessed
+
+A printer check with no guideline value for the feature is `not_assessed` with the reason `no_guideline`. It is a minor finding that blocks no gate and is never a pass. Calibration is off for release (`CAD_CALIBRATION`), so do not calibrate to clear it: add a guideline value with a cited source, or print a test coupon on the target printer and judge the part against it.
+
 ## A script's output is not JSON
 
 A producer prints a short summary on a terminal. Pass `--json` or set `CAD_OUTPUT=json` when a script parses stdout.
