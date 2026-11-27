@@ -46,6 +46,7 @@ SERVE_PY = SKILL / "scripts" / "serve.py"
 RENDER_PY = SKILL.parent / "cad-render" / "scripts" / "render.py"
 PRESS_SAVE = Path(__file__).resolve().parent / "fixtures" / "press_save.py"
 DRIVE_VISIBILITY = Path(__file__).resolve().parent / "fixtures" / "drive_visibility.py"
+DRIVE_OFFLINE = Path(__file__).resolve().parent / "fixtures" / "drive_offline.py"
 
 def project_for_scene(temp: Path, scene_path: Path) -> Path:
     """Make a minimal project whose layout owns this concept scene and part."""
@@ -626,6 +627,41 @@ class ViewerVisibilityInBrowser(unittest.TestCase):
         self.assertTrue({"base-plate", "upper-arm"} <= set(capture["hidden_nodes"]["short-reach"]), capture)
 
 
+class ViewerOfflineInBrowser(unittest.TestCase):
+    """A tab whose server is gone for good goes offline within the reconnect budget, not "Reconnecting" forever."""
+
+    BUDGET_S = 12  # the viewer gives up after five failed reconnects, about five seconds at the 1 s retry delay
+
+    def setUp(self) -> None:
+        require_browser(self)
+
+    def test_a_tab_whose_server_stops_for_good_goes_offline_within_the_budget(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-concept-offline-") as tmp:
+            project = project_for_scene(Path(tmp), EXAMPLE)
+            scene_dir = project / "hw" / "concept"
+            proc = subprocess.Popen(
+                [sys.executable, str(SERVE_PY), "--scene-dir", str(scene_dir), "--project-root", str(project),
+                 "--port", "0", "--idle-timeout", "0"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            assert proc.stdout
+            try:
+                url = json.loads(proc.stdout.readline())["url"]
+                driver = subprocess.run(
+                    scriptenv.python_command(RENDER_PY, str(DRIVE_OFFLINE), url, str(proc.pid), str(self.BUDGET_S)),
+                    capture_output=True, text=True, timeout=600)
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+                proc.stdout.close()
+        self.assertEqual(driver.returncode, 0, driver.stdout[-3000:] + driver.stderr[-3000:])
+        report = json.loads(driver.stdout)
+        self.assertEqual(report["before"], "Live")
+        self.assertEqual(
+            (report["state"], report["text"]), ("offline", "Offline"),
+            f"the Live indicator still read {report['text']!r} {report['elapsed_s']} s after the server stopped for good")
+        self.assertLess(report["elapsed_s"], self.BUDGET_S)
+
+
 class ServerVendor(unittest.TestCase):
     def test_vendor_routes_serve_preseeded_pinned_module_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -890,6 +926,30 @@ class ServerTimeout(InProcessServer):
         self.assertIn(b" 200 ", head.split(b"\r\n")[0], reply)
         self.assertIn(b"text/event-stream", head)
         self.assertEqual(body.strip(), b"retry: 1000")
+
+    def test_head_on_a_refused_events_request_sends_the_headers_and_no_body(self) -> None:
+        real = serve.SceneWatcher.client_connected
+
+        def stop_commits_first(watcher: serve.SceneWatcher) -> bool:
+            watcher.closing = True
+            return real(watcher)
+
+        with patch.object(serve.SceneWatcher, "client_connected", stop_commits_first):
+            self.start_server(None)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            with socket.create_connection((host, int(port)), timeout=2) as sock:
+                sock.settimeout(2)
+                sock.sendall(f"HEAD /events HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
+                reply = b""
+                try:
+                    while chunk := sock.recv(4096):
+                        reply += chunk
+                except TimeoutError:
+                    self.fail(f"the HEAD answer never ended: {reply!r}")
+        head, _, body = reply.partition(b"\r\n\r\n")
+        self.assertIn(b" 200 ", head.split(b"\r\n")[0], reply)
+        self.assertIn(b"text/event-stream", head)
+        self.assertEqual(body, b"")
 
     def test_zero_disables_idle_expiry(self) -> None:
         self.start_server(None)
