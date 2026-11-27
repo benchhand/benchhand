@@ -968,6 +968,20 @@ class StampedPacket(unittest.TestCase):
         self.assertIn(INSPECTION, changed)
         self.assertIn("regenerate the evidence packet", changed)
 
+    def test_malformed_expected_checks_are_refused_with_a_named_problem(self) -> None:
+        """A packet whose expected checks repeat an id, carry an id that is not text, or are not a list is refused as
+        evidence.expected_invalid before any comparison: no crash, and no duplicate collapsed into one check."""
+        expected = list(self.packet["expected"])
+        cases = {"duplicate id": [*expected, expected[0]],
+                 "list-valued id": [{**expected[0], "id": [expected[0]["id"]]}, *expected[1:]],
+                 "not a list": {"id": expected[0]["id"]}}
+        for case, malformed in cases.items():
+            with self.subTest(case):
+                packet = {**self.packet, "expected": malformed}
+                problems = evidence.packet_problems(packet, record=self.record, record_sha256=self.digest, stage="concept")
+                (invalid,) = [p for p in problems if p.startswith("evidence.expected_invalid:")]
+                self.assertIn("regenerate the evidence packet", invalid)
+
     def test_a_packet_flagged_passing_cannot_hide_a_due_unknown(self) -> None:
         forged = copy.deepcopy(assess(self.record).packet("parts", self.digest))
         forged["gate"] = {"stage": "parts", "passed": True, "findings": []}
