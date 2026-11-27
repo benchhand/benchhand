@@ -50,6 +50,10 @@ TRIGGER
   buy row with its PNs and total quantity.
 - Availability means a named supplier or commodity (any supplier). No lead time is required.
 
+## Reading a source for a part
+
+The lead runs `uv run --script "$CAD_SKILLS/cad-bom/scripts/source_extract.py" <PN> <URL or file> [--hw hw] [--find <text>]` for a datasheet or standards page that a sourcing researcher needs. It stores the file in `hw/parts/<PN>/sources/` with `<name>.source.json` (origin, sha256, access date), reads PDF text per page and HTML tables as full grids (colspan and rowspan expanded), and with `--find` prints each matching row with the column header above every cell. Record the sha256 where `part.yaml` cites the file. Exit 1 names a finding (`http_403`, `http_404`, `http_429`, `network_error`, `file_not_found`, `unreadable_file`, `unsupported_type`, `no_text_layer`, `name_conflict`, `no_match`); exit 2 is bad arguments. This is a read aid, not a roll-up check: it never changes `bom.csv`.
+
 ## Rules
 
 MUST Treat exit 1 as a check failure that blocks the stage gate.
