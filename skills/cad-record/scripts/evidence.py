@@ -1390,9 +1390,10 @@ _OBLIGATION_GATE_CODES = frozenset({"gate.fail", "gate.stale", "gate.unresolved"
 # The packet problem of a packet whose expected checks are not the ones the record now implies.
 EXPECTED_CHANGED = "evidence.expected_changed"
 # The families only the record decides: an intent.* obligation (the use case, an unknown input, an obligation id
-# collision) resolves when the record changes, never from a ledger entry. assembly.joint is record-derived too, but
-# accepted joint evidence (a retention test) may still resolve it.
-_DECIDED_FROM_RECORD = ("intent.",)
+# collision) or an assembly.joint resolves when the record changes, never from a ledger entry. A joint passes only when
+# assembly_operations finds every joint fact (retention, edge distance, host temperature) sourced and suitable, so a
+# generic ledger pass never stands in for a fact the record leaves unknown.
+_DECIDED_FROM_RECORD = impact.RECORD_FAMILIES
 
 
 def expected_change(recorded: Any, expected: Sequence[Any]) -> str:

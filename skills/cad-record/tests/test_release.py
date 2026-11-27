@@ -152,14 +152,15 @@ def frozen_lamp(hw: Path, *, before_build: Callable[[Path], None] | None = None,
                 label: str = "v1", older: tuple[str, ...] = (), service_class: str = "appearance_concept",
                 ledger: Callable[[Path, Any, list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
                 anchor: bool = True, packet: Callable[[dict[str, Any]], None] | None = None,
-                stated: dict[str, str] | None = None, product_step: str | None = None) -> None:
+                stated: dict[str, str] | None = None, product_step: str | None = None, sourced_joints: bool = False) -> None:
     """The lamp example migrated to record version 2 and reconciled for release (released revisions, a
     confirmed `service_class` use case and explicit routes, every software check of `label` passed by a
     sealed producer packet, verification passed with accepted ledger evidence), built as `label`, frozen at
     it with its acceptance digest (unless not `anchor`), every required bundle published, and DR-005
     approving it. Each `older` version is built first, with a check and a render bundle of its own;
     `ledger` may rewrite the accepted entries before the freeze, `packet` the producer packet before it is sealed and
-    `stated` the verification.csv result of a requirement (default pass); `product_step` is passed to build_version."""
+    `stated` the verification.csv result of a requirement (default pass); `product_step` is passed to build_version;
+    `sourced_joints` records the joint facts that resolve every assembly.joint (source_joints)."""
     fx.migrated_copy(LAMP, hw)
     for part in sorted((hw / "parts").glob("*/part.yaml")):
         edit_yaml(part, lambda data: data.update(rev="A"))
@@ -169,6 +170,8 @@ def frozen_lamp(hw: Path, *, before_build: Callable[[Path], None] | None = None,
     if before_build:
         before_build(hw)
     acceptance.release_ready(hw, service_class)
+    if sourced_joints:
+        source_joints(hw)
     if not yaml.safe_load((hw / "manufacturing" / "selection.yaml").read_text(encoding="utf-8")).get("candidates"):
         acceptance.confirm_selection(hw)  # a freeze and a release need the confirmed material and process selection
     for old in older:
@@ -1219,7 +1222,7 @@ class Repair(ReleaseCase):
     def test_a_repair_judges_a_waiver_on_the_release_date(self) -> None:
         sealing, later = (datetime(2026, 2, 27, 12, tzinfo=timezone.utc), datetime(2026, 4, 1, 12, tzinfo=timezone.utc))
         with fixed_today(sealing.date()):  # the waivers hold until 2026-03-01
-            hw = self.project(service_class="fit_assembly", ledger=waive_fdm_trials_until("2026-03-01"))
+            hw = self.project(service_class="fit_assembly", ledger=waive_fdm_trials_until("2026-03-01"), sourced_joints=True)
             code, report = self.release(hw, now=sealing)
         self.assertEqual(code, 0, report.get("findings"))
         sealed = tree(hw / "releases" / "A")
@@ -1339,23 +1342,44 @@ class Repair(ReleaseCase):
 
 
 def waive_fdm_trials(hw: Path, record: Any, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The accepted entries plus an approved, scoped trial waiver (DR-006) for every FDM part's print trial, and
-    accepted joint evidence (a TST retention test) for every assembly.joint obligation: a fit-assembly release
-    resolves the joints, which assembly_operations judges unknown from this record's unsourced heat-set facts."""
+    """The accepted entries plus an approved, scoped trial waiver (DR-006) for every FDM part's print trial. A
+    fit-assembly release also needs its joints resolved: build the project with sourced_joints (source_joints)."""
     acceptance.decision(hw, "DR-006")
-    configuration = entries[0]["configuration"]
     for obligation in acceptance.mi.required_checks(record):
         subject = dict(obligation.subject)
         if obligation.family == "process.fdm.trial":
             entries.append(acceptance.entry(record, f"EV-{len(entries) + 1:03d}", subject, "physically_validated", "waived",
                                             obligation=obligation.id,
                                             waiver=acceptance.waiver(subject, "DR-006", obligation=obligation.id)))
-        elif obligation.family == "assembly.joint":
-            entries.append(acceptance.entry(record, f"EV-{len(entries) + 1:03d}", subject, obligation.level,
-                                            obligation=obligation.id, version=configuration["version"],
-                                            manifest_sha256=configuration["manifest_sha256"],
-                                            geometry=impact.current_geometry(hw), artifacts=["hw/docs/inspection.md"], hw=hw))
     return entries
+
+
+def source_joints(hw: Path) -> None:
+    """The lamp's joint facts in the record, so assembly_operations passes every assembly.joint: a sourced retention
+    test for each joining operation, an edge distance within a sourced minimum for each heat-set insert, a known
+    use-case temperature and a datasheet service temperature limit above it for each host material profile."""
+    tested = fx.known("TST pull-out test", "measured", sources=[fx.source("test", "TST pull-out")])
+    edge = {"criterion": fx.criterion("edge_distance", ">=", 1.5, "mm", source=fx.source("standard", "TST insert edge distance")),
+            "distance": fx.known(fx.quantity(3))}
+
+    def operations(data: dict[str, Any]) -> None:
+        for op in data.get("operations") or ():
+            if op["kind"] in ("heat_set", "press_fit", "retaining_ring"):
+                op["retention"] = tested
+            if op["kind"] == "heat_set":
+                op["edge_distance"] = edge
+
+    def limits(data: dict[str, Any]) -> None:
+        for profile in data["profiles"]:
+            printed = {"orientation": fx.known("XY")} if profile.get("form") == "printed" else {}
+            profile.setdefault("properties", []).append(fx.material_property(
+                "max_service_temperature", 60, "deg_C", basis="supplier_typical",
+                sources=[fx.source("datasheet", "TST datasheet")], **printed))
+
+    edit_yaml(hw / "product.yaml", lambda data: data["use_case"]["environment"].update(
+        temperature=fx.known(fx.quantity(lower=10, upper=40, units="deg_C"))))
+    edit_yaml(hw / "assembly.yaml", operations)
+    edit_yaml(hw / "manufacturing" / "materials.yaml", limits)
 
 
 def on_thread(name: str, real: Callable[..., Any], before: Callable[[], Any]) -> Callable[..., Any]:
@@ -1520,7 +1544,7 @@ class Acceptance(ReleaseCase):
     def test_an_untested_fit_prototype_refuses_and_approved_waivers_make_it_an_unvalidated_trial(self) -> None:
         hw = self.project(service_class="fit_assembly")
         self.refused_with(hw, "release.acceptance", "process.fdm.trial@LMP-0001/make is unknown")
-        hw = self.project(service_class="fit_assembly", ledger=waive_fdm_trials)
+        hw = self.project(service_class="fit_assembly", ledger=waive_fdm_trials, sourced_joints=True)
         code, report = self.release(hw)
         self.assertEqual(code, 0, report.get("findings"))
         manifest = json.loads((hw / "releases" / "A" / "manifest.json").read_text(encoding="utf-8"))
@@ -1531,7 +1555,7 @@ class Acceptance(ReleaseCase):
         self.assertNotIn("physically_validated", manifest["acceptance"]["claims"]["REQ-001"])
 
     def test_a_production_release_is_never_a_waived_trial(self) -> None:
-        hw = self.project(service_class="production", ledger=waive_fdm_trials)
+        hw = self.project(service_class="production", ledger=waive_fdm_trials, sourced_joints=True)
         self.refused_with(hw, "release.acceptance", "release.trial_not_permitted")
 
     def test_a_sealed_package_is_verified_and_any_other_manifest_version_is_refused(self) -> None:
