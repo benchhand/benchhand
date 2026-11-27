@@ -3141,13 +3141,16 @@ class GuidelineWithoutCalibrationTests(Checks):
 
     REAM = "process.reaming.allowance@TST-0101/ream"
 
-    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", machine: bool = True) -> Any:
+    def reamed(self, allowance: float, *, catalog: Any, service: str = "functional_demo", machine: bool = True,
+               stock: Any = None) -> Any:
         """TST-0101 printed with `allowance` mm of stock on its bore, then reamed to size. Without `machine` the print
-        names no capability profile."""
+        names no capability profile; with `stock` the print's setup.stock.material_profile is that value."""
         documents = guided(service=service, calibrations=(CONTACT,))
         intent = documents["parts/TST-0101/part.yaml"]["intent"]
         if not machine:
             intent["route"][0]["capability"] = FX.unknown("no machine recorded")
+        if stock is not None:
+            intent["route"][0]["setup"] = {"stock": {"material_profile": stock}}
         intent["route"][0]["allowances"] = [{"feature": "bore", "amount": mm(allowance), "purpose": "finish",
                                              "source": FX.source("user")}]
         intent["route"].append(FX.operation("ream", "reaming", "tst_reamer", targets=[{"feature": "bore"}]))
@@ -3172,6 +3175,14 @@ class GuidelineWithoutCalibrationTests(Checks):
             with self.subTest(allowance=allowance), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "0"}):
                 result = self.reamed(allowance, catalog=SHIPPED, machine=False)
                 self.assertEqual(self.outcome(result, self.REAM), expected, self.codes(result, self.REAM))
+
+    def test_a_ream_allowance_after_a_print_whose_stock_is_unknown_stays_unknown(self) -> None:
+        """Stock the print records as unknown is not the part's material: no deviation of the print can be looked up, so
+        the allowance is unknown, never passed on the part material's guideline, with or without a machine."""
+        for machine in (True, False):
+            with self.subTest(machine=machine), mock.patch.dict("os.environ", {GL.CALIBRATION_FLAG: "0"}):
+                result = self.reamed(0.6, catalog=SHIPPED, machine=machine, stock=FX.unknown("stock not identified"))
+                self.assertEqual(self.outcome(result, self.REAM), "unknown", self.codes(result, self.REAM))
 
     def test_a_ream_allowance_after_printing_with_no_deviation_value_is_a_non_blocking_advisory(self) -> None:
         result = self.reamed(0.6, catalog=None)
