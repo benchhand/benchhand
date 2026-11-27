@@ -655,6 +655,81 @@ class StopGeometryTests(unittest.TestCase):
         self.assertRegex(row["uncertainty"], "frame.*ambiguous|ambiguous.*frame")
         self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
 
+    def test_a_contact_met_only_along_the_normal_is_no_stop_for_a_slide(self) -> None:
+        # By hand: two 45 deg faces 0.10 mm apart along their normal overlap by 0.05 mm across it. The plate slides along
+        # +Z, so it meets the block's plane after 0.10 / cos 45 deg = 0.1414 mm, which moves it 0.1414 sin 45 deg = 0.10 mm
+        # across the face: the 0.05 mm overlap is gone, and the contact blocks nothing.
+        code, result = self.run_stop("slide-chamfer-gap", joint=self.SLIDE, variant="chamfergap")
+        [row] = result["outcomes"]
+        end = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]
+        self.assertFalse(end["blocks_travel"])
+        self.assertEqual((code, row["outcome"]), (1, "unknown"))
+        self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
+    def test_an_application_with_no_recognised_subject_is_a_named_unknown(self) -> None:
+        # `application` is a subject: it names the product, a part, an interface or an assembly operation. {"note": ..}
+        # names none, so the frame of the direction is unknown, not the assembly frame. Product and interface subjects
+        # state the assembly frame: the 30 N load along -z presses the lower stop with 30 N.
+        for name, application in (("unrecognised-key", {"note": "lever"}), ("product-not-true", {"product": False}),
+                                  ("interface-not-text", {"interface": 5})):
+            with self.subTest(application=name):
+                code, result = self.run_stop(f"slide-app-{name}", joint=self.SLIDE, variant="disk",
+                                             load_overrides=[{"application": application}] * 2)
+                [row] = result["outcomes"]
+                self.assertEqual((code, row["outcome"]), (1, "unknown"))
+                self.assertIn("application", row["uncertainty"])
+                self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+        for name, application in (("product", {"product": True}), ("interface", {"interface": "IF-006"})):
+            with self.subTest(application=name):
+                code, result = self.run_stop(f"slide-app-{name}", joint=self.SLIDE, variant="disk",
+                                             load_overrides=[{"application": application}] * 2)
+                reaction = result["detail"]["interfaces"]["IF-006"]["ends"]["min"]["reaction"]
+                self.assertAlmostEqual(reaction["design_reaction_n"], 30.0, places=9)
+                self.assertEqual((code, result["result"]), (0, "pass"))
+
+    def test_a_recorded_rating_that_is_a_scalar_is_a_named_unknown_with_exit_1(self) -> None:
+        # A recorded load that is a number, or a known one whose value is a number, is no fact and no quantity: it is
+        # neither ignored nor a crash.
+        def set_rating(rating: Any) -> Callable[[dict], None]:
+            def mutate(docs: dict) -> None:
+                docs["interfaces.yaml"]["interfaces"][0]["functional"]["contact"]["load"] = rating
+            return mutate
+
+        for name, rating in (("scalar", 20), ("scalar-value", {"status": "known", "value": 20})):
+            with self.subTest(rating=name):
+                code, result = self.run_stop(f"rating-{name}", contact_load=20.0, variant="disk3", mutate=set_rating(rating))
+                [row] = result["outcomes"]
+                self.assertEqual((code, result["result"], row["outcome"]), (1, "unknown", "unknown"))
+                self.assertIn("contact load", row["uncertainty"])
+                self.assertEqual([f["code"] for f in result["findings"]], ["engineering.stop_reaction_unknown"])
+
+    def test_one_limit_that_overflows_keeps_the_verdict_of_the_other(self) -> None:
+        # By hand, the slide has a 60 deg stop at each end (cos 0.5). A 1e308 N load along -z gives the lower stop
+        # 1e308 / 0.5 = 2e308, which overflows: that limit is unresolved. A 12 N load along +z gives the upper stop
+        # 12 / 0.5 = 24 N, which a 20 N rating fails: that verdict stands, and the lower stop's own unknown is reported.
+        loads = [{"magnitude": fx.known(fx.quantity(1e308, "N")), "direction": [0, 0, -1]},
+                 {"magnitude": fx.known(fx.quantity(12.0, "N")), "direction": [0, 0, 1]}]
+        code, result = self.run_stop("slide-one-overflow", joint=self.SLIDE, variant="mate60cap", contact_load=20.0,
+                                     load_overrides=loads)
+        ends = result["detail"]["interfaces"]["IF-006"]["ends"]
+        self.assertAlmostEqual(ends["max"]["reaction"]["design_reaction_n"], 24.0, places=6)
+        self.assertNotIn("reaction", ends["min"])
+        self.assertEqual((code, result["result"]), (1, "fail"))
+        codes = sorted(f["code"] for f in result["findings"])
+        self.assertEqual(codes, ["engineering.stop_reaction_understated", "engineering.stop_reaction_unknown"])
+        unknown = next(f for f in result["findings"] if f["code"] == "engineering.stop_reaction_unknown")
+        self.assertIn("min limit", unknown["uncertainty"])
+        self.assertIn("not finite", unknown["uncertainty"])
+
+    def test_the_remedy_names_the_face_normal_force_bound_not_the_axial_component(self) -> None:
+        # By hand: a 45 deg face reacts 30 / cos 45 deg = 42.43 N of normal force for a 30 N axial component, so a 40 N
+        # rating fails and recording the 30 N axial force would leave the stop undersized.
+        _, result = self.run_stop("slide-remedy-45", joint=self.SLIDE, variant="mate45", contact_load=40.0)
+        [finding] = result["findings"]
+        self.assertIn("face-normal force bound", finding["remedy"])
+        self.assertIn("42.43 N", finding["remedy"])
+        self.assertNotIn("record the axial reaction", finding["remedy"])
+
     def test_a_prismatic_stop_with_unknown_loads_is_unknown_never_pass(self) -> None:
         code, result = self.run_stop("slide-unknown", joint=self.SLIDE, variant="disk", loads="unknown")
         [row] = result["outcomes"]

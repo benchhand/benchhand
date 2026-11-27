@@ -35,6 +35,12 @@ VARIANT changes one thing:
          (z 0..10), both turned about the origin, so the plate's underside and the block's top face share one plane
          whose normal is N degrees off the +Z slide axis. A plate sliding along +Z rests on the block at 0 and leaves
          it by N cos degrees of travel. mate2 is a 2 deg stop, mate3 a 3 deg draft, mate45 a 45 deg chamfer.
+  chamfergap a 45 deg slide stop that the plate meets only if it is projected along the face normal: the block (x -10..10,
+         z -10..0) and a plate (x -30..-9.95, z 0.10..10.10), both turned 45 deg about -Y like mate45. The faces are 0.10 mm
+         apart along their normal and overlap by 0.05 mm across it. Sliding along +Z to meet the block's plane moves the
+         plate 0.10 / cos 45 deg = 0.1414 mm, which is 0.10 mm across the face, so the 0.05 mm overlap is gone.
+  mate60cap mate60 with a block above the plate whose underside is parallel to the plate's top face, 2.5 mm off it (x -10..10,
+         z 12.5..22.5, turned 60 deg), so a 5 mm slide meets it: the slide has a 60 deg stop at each end.
   endstop a slide along +X with an end stop 0.05 mm from the lever's tip at 5 mm of travel: the default latched block
          (x 7..13, top face at z -3) is a rail under the lever at both limits, and a block (x 85.05..90, y -4..4,
          z -8..10) is the end face the lever meets at 5 mm, 0.05 mm short (within the 0.15 mm tolerance).
@@ -151,6 +157,11 @@ def sphere_into_cylinder() -> dict[str, object]:
 
 def slide_shapes(variant: str) -> dict[str, object] | None:
     """The parts of a slide variant (mateN, endstop), or None for any other variant."""
+    if variant == "chamfergap":
+        return {"TST-0301": turned(box(-10, -4, -10, 10, 4, 0), 45.0), "TST-0302": turned(box(-30, -4, 0.10, -9.95, 4, 10.10), 45.0)}
+    if variant == "mate60cap":
+        return {"TST-0301": turned(fused(box(-10, -4, -10, 10, 4, 0), box(-10, -4, 12.5, 10, 4, 22.5)), 60.0),
+                "TST-0302": turned(box(-10, -4, 0, 10, 4, 10), 60.0)}
     if variant.startswith("mate"):
         degrees = float(variant[4:])
         return {"TST-0301": turned(box(-10, -4, -10, 10, 4, 0), degrees), "TST-0302": turned(box(-10, -4, 0, 10, 4, 10), degrees)}
