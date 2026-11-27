@@ -547,6 +547,27 @@ class GeometricAccessTests(unittest.TestCase):
                                  and f["obligation"] == "assembly.access@op:hold-screw"]
                     self.assertIn(f"tool {key!r} collides with TST-0105", blocked["consequence"])
 
+    def test_a_positioned_special_tool_on_a_hold_keeps_it_unknown_beside_a_clear_key(self) -> None:
+        """The screw is held with a 3 mm hex key, which clears the bracket hole (as above), and a bearing puller placed
+        on the screw head. No shipped envelope or cited solid gives the puller's clearance, whether its envelope is
+        missing or recorded as unknown, so the hold is unknown and the finding names the puller, not a pass."""
+        items = operations("blocked_socket.yaml", self.socket_sha)
+        valid = reordered(items, "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
+        puller = {"tool": "bearing puller", "approach": [0, 0, -1], "contact": [20, 0, 27]}
+        for label, special in (("missing", puller), ("unknown", {**puller, "envelope": fx.unknown("no supplier CAD")})):
+            with self.subTest(envelope=label):
+                held = {"id": "hold-screw", "kind": "hold", "part": "TST-0104", "fixture": "bench vice",
+                        "orientation": [0, 0, 1], "duration": fx.known(fx.quantity(10, "min")),
+                        "tool_access": [{"tool": "3 mm hex key", "approach": [0, 0, -1], "contact": [20, 0, 27]}, special]}
+                code, result, stderr = self.run_access(self.project(f"hold-puller-{label}", [*valid, held]),
+                                                       *self.parts_args())
+                self.assert_schema_valid(result)
+                row = next(r for r in result["outcomes"] if r["obligation"] == "assembly.access@op:hold-screw")
+                self.assertEqual((code, row["outcome"]), (1, "unknown"), stderr)
+                [finding] = [f for f in result["findings"] if f["obligation"] == "assembly.access@op:hold-screw"]
+                self.assertEqual(finding["code"], "assembly.access_unknown")
+                self.assertIn("tool 'bearing puller'", finding["uncertainty"])
+
     def test_a_blocked_cited_tool_after_an_uncited_one_is_the_tool_blamed(self) -> None:
         items = operations("blocked_socket.yaml", self.socket_sha)
         valid = reordered(items, "seat-bearing", "fit-cover", "fasten-cover", "mount-bracket")
