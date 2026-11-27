@@ -250,14 +250,15 @@ UNKNOWN_CLASS = "unknown"
 # unknown service class owes every rule and also blocks the release by itself (release.service_class).
 # test_project_scope.py runs the real gates against these words, so a gate change that leaves them stale fails there.
 _REASONS: Mapping[str, str] = types.MappingProxyType({
-    "required": "blocks once due; blocks at release until resolved",
+    "required": "blocks once due, with the exceptions above; blocks at release until resolved",
     "check_before_use": "a physical check the release may close as checked before use",
     "advisory": "runs and shows a finding, never blocks and never passes",
-    OUT_OF_SCOPE: "not owed at release; blocks once due before the release",
+    OUT_OF_SCOPE: "not owed at release; before it, blocks once due, with the exceptions above",
 })
-_GATE_NOTE = ("The first rule that matches an obligation decides it. From LAYOUT on, a due check that is unresolved "
-              "blocks; before LAYOUT it only warns. A planned physical check may stay planned until the release. "
-              "A check not assessed blocks nothing at any gate. The release skips an out-of-scope rule.")
+_GATE_NOTE = ("The first rule that matches an obligation decides it. Exceptions: a due check that is unresolved blocks "
+              "from LAYOUT on, but before LAYOUT only a known failure blocks and any other unresolved check warns. "
+              "A check not assessed is informational at every gate: it blocks nothing and is no pass. A planned "
+              "physical check may stay planned until the release. The release skips an out-of-scope rule.")
 _UNKNOWN_NOTE = "Release: an unknown service class blocks the release by itself, whatever else is resolved."
 
 

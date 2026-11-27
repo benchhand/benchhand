@@ -14,6 +14,7 @@ schema evidence level and every service class, with `unknown` for an unrecorded 
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -241,7 +242,7 @@ class RulesCommandTests(unittest.TestCase):
                     self.assertEqual({f.severity for f in self.gate(service_class, obligation, "unknown", stage)},
                                      {expected})
         text = run_rules("--class", "unknown").stdout
-        self.assertIn("From LAYOUT on, a due check that is unresolved blocks; before LAYOUT it only warns", text)
+        self.assertIn("a due check that is unresolved blocks from LAYOUT on, but before LAYOUT only a known failure blocks", text)
 
     def test_a_planned_physical_check_clears_the_gates_before_the_release_and_not_the_release(self) -> None:
         physical = next(o for o in self.obligations("production") if o["level"] == "physically_validated")
@@ -261,21 +262,40 @@ class RulesCommandTests(unittest.TestCase):
                     for stage in ("analysis", "release"):
                         self.assertFalse([f for f in self.gate(service_class, obligation, "not_assessed", stage)
                                           if f.severity == "error"])
-            self.assertIn("A check not assessed blocks nothing at any gate", run_rules("--class", service_class).stdout)
+            self.assertIn("A check not assessed is informational at every gate", run_rules("--class", service_class).stdout)
 
     def test_an_unknown_class_blocks_the_release_by_itself_and_the_output_says_so(self) -> None:
-        """Release eligibility, apart from scope: with every obligation resolved the class still blocks."""
+        """Release eligibility, apart from scope: on one assessment whose every obligation is resolved, the release of
+        an unknown class still has a blocking finding, and a known class has none for the class."""
         for service_class in self.CLASSES:
-            obligations = self.obligations(service_class)
-            resolved = evidence.obligation_gate(obligations, {o["id"]: "pass" for o in obligations}, "release",
-                                                None if service_class == "unknown" else service_class)
-            blocks = any(f.code == "release.service_class" for f in evidence.assess(
-                record(None if service_class == "unknown" else service_class)).release().findings)
+            assessment = evidence.assess(record(None if service_class == "unknown" else service_class))
+            resolved = dataclasses.replace(assessment, statuses={
+                ident: dataclasses.replace(status, result="pass") for ident, status in assessment.statuses.items()})
+            blocking = {f.code for f in resolved.release().blocking}
             with self.subTest(service_class=service_class):
-                self.assertEqual(resolved, [])
-                self.assertEqual(blocks, service_class == "unknown")
-                self.assertEqual("an unknown service class blocks the release by itself" in
-                                 run_rules("--class", service_class).stdout, blocks)
+                self.assertNotIn("gate.unresolved", blocking)
+                self.assertEqual("release.service_class" in blocking, service_class == "unknown")
+                self.assertEqual("An unknown service class blocks the release by itself".lower()
+                                 in run_rules("--class", service_class).stdout.lower(), service_class == "unknown")
+
+    def test_a_known_failure_blocks_before_layout_and_not_assessed_is_informational_at_every_stage(self) -> None:
+        """Exceptions in the header: before LAYOUT a known failure still errors, and not_assessed is an info finding,
+        never an error and never a pass."""
+        for service_class in self.CLASSES:
+            for obligation in self.obligations(service_class):
+                stage = obligation["stage"]
+                if stage == "release":
+                    continue
+                with self.subTest(service_class=service_class, obligation=obligation["id"]):
+                    self.assertEqual([f.severity for f in self.gate(service_class, obligation, "fail", stage)],
+                                     ["error"])
+                    self.assertEqual([(f.code, f.severity) for f in
+                                      self.gate(service_class, obligation, "not_assessed", stage)],
+                                     [("gate.not_assessed", "info")])
+        self.assertNotIn("not_assessed", evidence.RESOLVED)
+        header = run_rules("--class", "production").stdout
+        self.assertIn("before LAYOUT only a known failure blocks and any other unresolved check warns", header)
+        self.assertIn("A check not assessed is informational at every gate", header)
 
     def test_the_first_matching_rule_decides_is_printed(self) -> None:
         self.assertIn("The first rule that matches an obligation decides it", run_rules("--class", "production").stdout)
