@@ -318,9 +318,10 @@ def applied_force(record: Any, interface: Any) -> tuple[float | None, list[dict[
         if newtons is None:
             return None, read, why
         direction = by_id[ident].direction
-        if direction is None:
+        size = math.sqrt(dot(direction, direction)) if direction is not None else 0.0
+        if direction is None or not math.isfinite(size) or size <= 0.0:
             return None, read, f"load {ident} has no valid direction"
-        read.append({"load": ident, "newtons": newtons, "direction": list(direction)})
+        read.append({"load": ident, "newtons": newtons, "direction": list(scale(direction, 1.0 / size))})
     return max(row["newtons"] for row in read), read, ""
 
 
