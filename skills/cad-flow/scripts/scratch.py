@@ -599,7 +599,11 @@ def _anchor_pn(obligation: str) -> str | None:
 def delivery_tree(root: Path) -> tuple[dict[str, str], set[str]]:
     files, directories = {}, set()
     skipped = skips(root)
-    for current, dirnames, filenames in os.walk(root, followlinks=False):
+
+    def unreadable(error: OSError) -> None:
+        raise Finding("unreadable-directory", f"cannot read directory {error.filename}: {error.strerror}; nothing was changed")
+
+    for current, dirnames, filenames in os.walk(root, followlinks=False, onerror=unreadable):
         directory = Path(current)
         ignored = skipped(current, dirnames)
         for name in list(dirnames):
