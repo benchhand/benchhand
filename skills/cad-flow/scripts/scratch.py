@@ -484,9 +484,18 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
         raise UsageError(f"--part needs one or more PNs matching {PN.pattern}; got {bad or 'none'}")
     work = workspace(hw, unit)
     if work.exists() and not reset:
-        baseline = load_baseline(work)
+        work_fd = open_dir(work)
+        try:
+            if not exists_at(work_fd, "baseline.json"):
+                raise UsageError(f"{work} has no baseline.json; run `scratch.py init` first")
+            with workspace_lock(work_fd):
+                warnings = recover_staging(work_fd)  # never hand back a tree a killed sync left unsettled
+                baseline = load_baseline(work, work_fd)
+        finally:
+            os.close(work_fd)
         return 0, {"status": "exists", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
-                   "parts": baseline["parts"], "note": "kept the existing workspace; --reset replaces it"}
+                   "parts": baseline["parts"], "warnings": warnings,
+                   "note": "kept the existing workspace; --reset replaces it"}
     shutil.rmtree(work, ignore_errors=True)
     work.parent.mkdir(parents=True, exist_ok=True)
     gitignore = work.parent / ".gitignore"
@@ -503,6 +512,7 @@ def init(hw: Path, unit: str, parts: list[str], reset: bool) -> tuple[int, dict[
             (work / "hw" / "parts" / pn).mkdir(parents=True, exist_ok=True)
     baseline = {"unit": unit, "hw": str(hw), "parts": sorted(set(parts)), "files": tree_hashes(work / "hw")}
     (work / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    (work / "workspace.lock").touch()  # made here, so taking the lock later never changes the workspace
     return 0, {"status": "created", "unit": unit, "workspace": str(work), "scratch_hw": str(work / "hw"),
                "parts": baseline["parts"], "files": len(baseline["files"]), "seeded_store_files": seeded}
 
@@ -749,7 +759,22 @@ def next_label(scratch_hw: Path) -> str:
 
 def build(hw: Path, unit: str, kernel: str, fidelity: str,
           attach: tuple[str, ...] | list[str] = ()) -> tuple[int, dict[str, Any]]:
+    """Build under workspace.lock, after settling any swap a killed sync left, so a build never reads the
+    new hw/ with the old baseline and a sync or deliver cannot run while it writes to the scratch hw/."""
     work = workspace(hw, unit)
+    work_fd = open_dir(work)
+    try:
+        with workspace_lock(work_fd):
+            warnings = recover_staging(work_fd)
+            code, report = build_locked(hw, unit, work, kernel, fidelity, attach)
+            report["warnings"] = warnings
+            return code, report
+    finally:
+        os.close(work_fd)
+
+
+def build_locked(hw: Path, unit: str, work: Path, kernel: str, fidelity: str,
+                 attach: tuple[str, ...] | list[str]) -> tuple[int, dict[str, Any]]:
     baseline = load_baseline(work)
     own = set(baseline["parts"])
     scratch_hw = work / "hw"
