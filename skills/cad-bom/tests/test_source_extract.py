@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -243,6 +244,20 @@ class ExtractTests(unittest.TestCase):
                 self.assertEqual(run(*argv)[0], 2)
 
 
+class ChainingTests(unittest.TestCase):
+    """A finding keeps the original error as its cause while the command line prints only the short detail."""
+
+    def test_findings_chain_the_error_that_caused_them(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(extract.Finding) as missing:
+                extract.read_source(str(Path(tmp) / "absent.pdf"))
+            self.assertIsInstance(missing.exception.__cause__, FileNotFoundError)
+        with self.assertRaises(extract.Finding) as broken:
+            extract.pdf_pages(b"%PDF-1.4 truncated")
+        self.assertIsNotNone(broken.exception.__cause__)
+        self.assertEqual(broken.exception.code, "unreadable_file")
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/short":
@@ -293,6 +308,12 @@ class FetchTests(unittest.TestCase):
     def test_unreachable_host_is_a_network_finding(self) -> None:
         code, result = run("PIN-0001", "http://127.0.0.1:1/x.html", "--hw", str(self.hw))
         self.assertEqual((code, [f["code"] for f in result["findings"]]), (1, ["network_error"]))
+
+    def test_an_http_error_finding_chains_the_http_error(self) -> None:
+        with self.assertRaises(extract.Finding) as caught:
+            extract.fetch(self.base + "/missing")
+        self.assertEqual(caught.exception.code, "http_404")
+        self.assertIsInstance(caught.exception.__cause__, urllib.error.HTTPError)
 
     def test_a_truncated_response_is_a_transfer_finding_and_stores_nothing(self) -> None:
         code, result = run("PIN-0001", self.base + "/short", "--hw", str(self.hw))
