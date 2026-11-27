@@ -495,6 +495,25 @@ class StaleEvidence(unittest.TestCase):
                 refused = {f.code for f in result.findings if f.obligation == outer}
                 self.assertEqual(refused & {"evidence.subject", "evidence.subject_ambiguous"}, {code} - {None})
 
+    def test_evidence_that_cannot_tell_two_surfaces_apart_passes_neither(self) -> None:
+        """Two critical surfaces of one feature that share a region (or both leave it out) cannot be told apart by
+        region-equal evidence: each inspection is refused as evidence.subject_ambiguous, and neither obligation passes."""
+        for case, regions in {"shared region": ("outer", "outer"), "no region": (None, None)}.items():
+            with self.subTest(case):
+                docs = copy.deepcopy(self.docs)
+                docs["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
+                    {"id": f"seal_{name}", "feature": "seal_groove", **({"region": region} if region else {}), "role": "seal",
+                     "dimension_state": "after_finish"} for name, region in zip(("a", "b"), regions)]
+                base = normalized(docs)
+                ids = ["feature.inspection@TST-0001#seal_groove", "feature.inspection@TST-0001#seal_groove~seal_b"]
+                entries = [acceptance.entry(base, f"EV-00{number}", {"PN": "TST-0001", "feature": "seal_groove",
+                                                                     **({"region": regions[0]} if regions[0] else {})},
+                                            "physically_validated", obligation=ident, version="v1", manifest_sha256=V1)
+                           for number, ident in enumerate(ids, start=2)]
+                result = assess(normalized(docs, entries))
+                self.assertEqual([result.statuses[ident].result for ident in ids], ["unknown", "unknown"])
+                self.assertEqual({f.obligation for f in result.findings if f.code == "evidence.subject_ambiguous"}, set(ids))
+
     def test_a_producer_outcome_whose_inputs_changed_since_the_build_is_stale(self) -> None:
         result = assess(self.base, packet(self.base), stale_since_build={SUPPORT: ("material",)})
         self.assertEqual((result.statuses[SUPPORT].result, result.statuses[READBACK].result), ("stale", "pass"))
