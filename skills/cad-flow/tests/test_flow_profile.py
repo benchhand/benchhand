@@ -273,13 +273,68 @@ class Record(unittest.TestCase):
         self.assertIn("[DR-001]", listing)
         self.assertIn("[DR-002]", listing)
 
-    def test_record_refuses_a_flow_it_cannot_edit_as_text(self) -> None:
-        text = PRODUCT.replace("flow:\n  stage: intent\n  recheck_from: intent\n", "flow: {stage: intent, recheck_from: intent}\n")
+    def test_record_accepts_a_flow_style_mapping_and_preserves_other_product_data(self) -> None:
+        for decision, mapping in (
+            ("DR-001", 'flow: {stage: intent, recheck_from: intent} # keep this comment\n'),
+            ("DR-002", '"flow": {stage: intent,\n  recheck_from: intent, profile: {decision: DR-001}} # keep this comment\n'),
+        ):
+            with self.subTest(mapping=mapping):
+                text = PRODUCT.replace("flow:\n  stage: intent\n  recheck_from: intent\n", mapping)
+                self.product.write_text(text, encoding="utf-8")
+                result = self.record(decision, "--fea", "accurate")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                after = self.product.read_text(encoding="utf-8")
+                data = yaml_loader.safe_load(after)
+                self.assertEqual(data["flow"].pop("profile")["decision"], decision)
+                self.assertEqual(data, yaml_loader.safe_load(PRODUCT))
+                self.assertIn(" # keep this comment\nunits: mm\n", after)
+
+    def test_flow_mapping_can_start_on_the_line_after_its_key(self) -> None:
+        self.product.write_text("id: sample\nflow:\n  {stage: intent, recheck_from: intent}\nunits: mm\n", encoding="utf-8")
+        result = self.record()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.profile()["decision"], "DR-001")
+
+    def test_replacing_an_inline_profile_preserves_internal_comments_and_cross_boundary_aliases(self) -> None:
+        text = ('id: tst-product\nflow: {stage: &stage intent, # keep stage context\n'
+                '  recheck_from: intent, profile: {decision: DR-009}}\nunits: mm\nlabel: *stage\n')
         self.product.write_text(text, encoding="utf-8")
-        result = self.record("DR-001", "--fea", "accurate")
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(self.product.read_text(encoding="utf-8"), text)
-        self.assertFalse((self.hw / "decisions").exists())
+        result = self.record()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = self.product.read_text(encoding="utf-8")
+        self.assertIn('stage: &stage intent, # keep stage context\n  recheck_from: intent', after)
+        self.assertIn('label: *stage\n', after)
+        self.assertEqual(self.profile()["decision"], "DR-001")
+
+    def test_record_reports_the_field_in_an_invalid_flow_without_writing(self) -> None:
+        for number, (flow, field) in enumerate((("{stage: intent, stage: parts, recheck_from: intent}", "flow.stage"),
+                            ("{stage: 3, recheck_from: intent}", "flow.stage"),
+                            ("{stage: intent, recheck_from: false}", "flow.recheck_from"),
+                            ("[intent]", "flow"),
+                            ("{stage: intent, recheck_from: intent, frozen: {version: v1, version: v2, "
+                             f"decision: DR-009, manifest_sha256: '{'a' * 64}'}}}}", "flow.frozen.version")), start=1):
+            with self.subTest(flow=flow):
+                original = f"id: tst-product\nflow: {flow}\nunits: mm\n"
+                self.product.write_text(original, encoding="utf-8")
+                result = self.record(f"DR-{number:03d}")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(field + ":", result.stderr)
+                self.assertEqual(self.product.read_text(encoding="utf-8"), original)
+                self.assertFalse((self.hw / "decisions").exists())
+
+    def test_replacing_a_profile_keeps_unchanged_anchors_used_outside_flow(self) -> None:
+        text = ('id: tst-product\nflow: {stage: intent, recheck_from: intent, '
+                'profile: {decision: DR-009, motion: &motion "auto", '
+                'fea: {enabled: true, mode: &mode "accurate"}}}\n'
+                'motion_label: *motion\nmode_label: *mode\n')
+        self.product.write_text(text, encoding="utf-8")
+        result = self.record()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = self.product.read_text(encoding="utf-8")
+        self.assertIn('motion: &motion "auto"', after)
+        self.assertIn('mode: &mode "accurate"', after)
+        self.assertTrue(after.endswith('motion_label: *motion\nmode_label: *mode\n'))
+        self.assertEqual(self.profile()["decision"], "DR-001")
 
 
 class Check(unittest.TestCase):

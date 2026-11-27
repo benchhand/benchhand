@@ -24,7 +24,13 @@ TRIGGER
    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --stage <stage> --checks .cad-work/recheck/evidence.json [--passed]
    ```
 
-   Stamp at the stage of the gate just passed. After a provisional gate writes its decision and advances `flow.stage`, rerun `evidence.py check --stage <gate stage>`. `product.yaml` is a record input, so the check refuses an earlier packet. `--verify` accepts a stamp at `flow.stage` or the stage just before it, never below `flow.recheck_from`. A stamp one stage behind also needs a `proposed` or `accepted` decision record in `hw/decisions` for that gate, with no `superseded-by`, whose front matter says `gate: {from: <stamped stage>, to: <flow.stage>}` (for example `gate: {from: layout, to: parts}`). A record without that key, or with another transition, the flow profile among them, is not that gate. Its date must be on or after the stamp's UTC day, so date every gate decision with the UTC calendar date.
+   Stamp at the stage of the gate just passed. After a provisional gate writes its decision and advances `flow.stage`, rerun `evidence.py check --stage <gate stage>`. `product.yaml` is a record input, so the check refuses an earlier packet. `--verify` accepts a stamp at `flow.stage` or the stage just before it, never below `flow.recheck_from`.
+
+   A stamp one stage behind needs an unsuperseded `proposed` or `accepted` decision in `hw/decisions`. The decision's `gate.from` and `gate.to` must match the transition. Its `gate.version` and `gate.version_manifest_sha256` must match the evidence packet. Date the decision in UTC. It can precede the stamp's UTC date, but cannot follow it.
+
+   Stage `hw/versions/vN/manifest.json` for that advance. If generated results are ignored, force-add only the manifest. Verification hashes the manifest from the index, or from HEAD with `--committed`. It refuses a missing manifest or one whose digest differs from the packet.
+
+   After reopening a stage, commit the return to that stage and record a new decision for the next advance. Do not reuse a decision from before the reopen, even for the same build. Use a full Git history to verify an advance in CI.
 
    The evidence input MUST be the JSON packet that `evidence.py check` writes, or an `evidence.py run` report. A run report stamps with its `packet`. A run that stopped holds no packet, so it cannot stamp. A `cad_model.py check` result is never evidence. Include `--passed` only when every blocking obligation passes, and omit it for a failed gate. A record that is not version 2 cannot be stamped.
 4. Stage the design changes and `hw/.cad/recheck.json`.
@@ -35,7 +41,7 @@ TRIGGER
    uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" cad-recheck/scripts/stamp.py --verify
    ```
 
-   Exit 0 permits the commit; exit 2 means do not commit. Fix stderr's reason, restamp, and verify again. Exit 0 means that the commit stages no `hw/` change, the stamp matches the staged `hw/` tree, or the staged stage is below `flow.recheck_from`.
+   Exit 0 permits the commit. Every nonzero result blocks it. Fix the reported problem and verify again. Exit 0 means that the commit stages no `hw/` change, the stamp matches the staged `hw/` tree, or the staged stage is below `flow.recheck_from`.
 
 `stamp.py` reads `hw/` at the git root by default.
 

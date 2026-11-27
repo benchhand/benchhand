@@ -16,8 +16,7 @@ record     writes the answers to hw/product.yaml flow.profile, citing --decision
            as an accepted MADR record under hw/decisions/. The lead asks each question showing its default.
            Every question is an option the user answered (--fea off) or a default the user accepted
            (--accept-default fea); the profile's `asked` map records which. A question neither answered
-           nor accepted refuses the record. product.yaml is edited as text, so its comments and layout
-           survive: the edit must parse to exactly the intended data, and the file is replaced in one rename.
+           nor accepted refuses the record. The edit must parse to the intended data before the file is replaced.
 check      reports what blocks at --stage (default: product.yaml flow.stage): a missing profile or decision
            from SPECIFY on, a value the schema rejects, and a start question with no `asked` answer.
 
@@ -164,6 +163,10 @@ class ProfileError(Exception):
     """A record this script cannot read or edit; nothing was written."""
 
 
+class FlowFinding(ProfileError):
+    """A field in product.yaml blocks recording the profile."""
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -260,17 +263,115 @@ def _dump(block: Mapping[str, Any], indent: int) -> str:
     return "".join(" " * indent + line if line.strip() else line for line in text.splitlines(keepends=True))
 
 
-def with_profile(text: str, profile: Mapping[str, Any]) -> str:
-    """`text` (product.yaml, \\n newlines) with flow.profile set to `profile`: an earlier profile block
-    removed and the new one placed last in the block-style flow mapping, which is added when absent.
-    Raises ProfileError for a flow this textual edit cannot place."""
+def _flow_node(text: str) -> tuple[Any, Any]:
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(root, yaml.MappingNode):
+        raise FlowFinding("product.yaml: expected a mapping with a flow field")
+    matches = [(key, value) for key, value in root.value if isinstance(key, yaml.ScalarNode) and key.value == "flow"]
+    if len(matches) > 1:
+        raise FlowFinding("flow: duplicate key")
+    return matches[0] if matches else (None, None)
+
+
+def _require_flow_keys(node: Any) -> None:
+    if not isinstance(node, yaml.MappingNode) or node.tag != "tag:yaml.org,2002:map":
+        raise FlowFinding("flow: expected a mapping")
+    _unique_keys(node, "flow", set())
+
+
+def _unique_keys(node: Any, path: str, parents: set[int]) -> None:
+    if id(node) in parents:
+        raise FlowFinding(f"{path}: recursive alias")
+    if isinstance(node, yaml.MappingNode):
+        seen: set[str] = set()
+        for key, value in node.value:
+            if not isinstance(key, yaml.ScalarNode):
+                raise FlowFinding(f"{path}: expected scalar keys")
+            field = f"{path}.{key.value}"
+            if key.value in seen:
+                raise FlowFinding(f"{field}: duplicate key")
+            seen.add(key.value)
+            _unique_keys(value, field, parents | {id(node)})
+    elif isinstance(node, yaml.SequenceNode):
+        for index, value in enumerate(node.value):
+            _unique_keys(value, f"{path}.{index}", parents | {id(node)})
+
+
+def _require_flow_shape(flow: Mapping[str, Any]) -> None:
+    validate = load_validate()
+    validator = validate.schema_registry.document_validator(validate.SCHEMAS, "product.schema.json", formats=True)
+    for problem in validator.iter_errors({"flow": flow}):
+        if problem.absolute_path and problem.absolute_path[0] == "flow":
+            field = ".".join(map(str, problem.absolute_path))
+            raise FlowFinding(f"{field}: {problem.message}")
+
+
+def _with_inline_flow(text: str, node: Any, profile: Mapping[str, Any], old_profile: Any) -> str:
+    """Splice the profile into an inline flow without rewriting its siblings."""
+    rendered: str = yaml.dump(_quoted(profile), Dumper=_Dumper, sort_keys=False, default_flow_style=True,
+                              allow_unicode=True, width=4096)
+    return _splice_inline_profile(text, node, rendered.rstrip("\n"), old_profile, profile)
+
+
+def _mapping_nodes(node: Any) -> dict[str, Any]:
+    return {key.value: value for key, value in node.value} if isinstance(node, yaml.MappingNode) else {}
+
+
+def _retained_anchors(old: Any, new: Any, before: Any, after: Any,
+                      anchors: Mapping[int, str]) -> Iterable[tuple[int, str]]:
+    anchor = anchors.get(old.start_mark.index)
+    if anchor is not None and type(before) is type(after) and before == after:
+        yield new.start_mark.index, anchor
+    if isinstance(before, Mapping) and isinstance(after, Mapping):
+        old_fields = _mapping_nodes(old)
+        for key, value in _mapping_nodes(new).items():
+            if key in old_fields and key in before and key in after:
+                yield from _retained_anchors(old_fields[key], value, before[key], after[key], anchors)
+
+
+def _preserve_profile_anchors(text: str, old: Any, rendered: str, before: Any, after: Any) -> str:
+    start, end = old.start_mark.index, old.end_mark.index
+    anchors = {token.start_mark.index: f"&{token.value} " for token in yaml.scan(text, Loader=yaml.SafeLoader)
+               if isinstance(token, yaml.AnchorToken) and start <= token.start_mark.index < end}
+    if anchors:
+        new = yaml.compose(rendered, Loader=yaml.SafeLoader)
+        # Aliases in the old node graph can visit the same anchor at more than one field.
+        unique: dict[str, int] = {}
+        for index, anchor in _retained_anchors(old, new, before, after, anchors):
+            unique.setdefault(anchor, index)
+        for anchor, index in sorted(unique.items(), key=lambda item: item[1], reverse=True):
+            rendered = rendered[:index] + anchor + rendered[index:]
+    return rendered
+
+
+def _splice_inline_profile(text: str, node: Any, rendered: str, before: Any, after: Any) -> str:
+    for key, value in node.value:
+        if isinstance(key, yaml.ScalarNode) and key.value == "profile":
+            start, end = value.start_mark.index, value.end_mark.index
+            if start < key.end_mark.index:
+                tokens = yaml.scan(text, Loader=yaml.SafeLoader)
+                alias = next(token for token in tokens if isinstance(token, yaml.AliasToken)
+                             and token.start_mark.index >= key.end_mark.index)
+                start, end = alias.start_mark.index, alias.end_mark.index
+            else:
+                rendered = _preserve_profile_anchors(text, value, rendered, before, after)
+            return text[:start] + rendered + text[end:]
+    tokens = yaml.scan(text, Loader=yaml.SafeLoader)
+    opening = next(token for token in tokens if isinstance(token, yaml.FlowMappingStartToken)
+                   and token.start_mark.index >= node.start_mark.index)
+    at = opening.end_mark.index
+    separator = ", " if node.value else ""
+    return text[:at] + f"profile: {rendered}{separator}" + text[at:]
+
+
+def with_profile(text: str, key: Any, node: Any, profile: Mapping[str, Any], old_profile: Any) -> str:
+    """Set `flow.profile` using the parsed mapping's style."""
+    if node.start_mark.index < key.end_mark.index:
+        raise FlowFinding("flow: edit the mapping directly, not through an alias")
+    if node.flow_style:
+        return _with_inline_flow(text, node, profile, old_profile)
     lines = text.splitlines(keepends=True)
-    start = next((i for i, line in enumerate(lines) if re.match(r"^flow:\s*(#.*)?$", line)), None)
-    if start is None:
-        if any(re.match(r"^flow\s*:", line) for line in lines):
-            raise ProfileError("product.yaml flow is not a block-style mapping; write it as one, then record again")
-        prefix = text if not text or text.endswith("\n") else text + "\n"
-        return prefix + "flow:\n" + _dump({"profile": profile}, 2)
+    start = key.start_mark.line
     end = next((i for i in range(start + 1, len(lines)) if _content(lines[i]) and _indent_of(lines[i]) == 0), len(lines))
     children = [line for line in lines[start + 1:end] if _content(line)]
     column = _indent_of(children[0]) if children else 2
@@ -386,17 +487,25 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
         raise ProfileError(f"cannot read {path}: {error}") from error
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
-    product = read_product(hw)
-    if not isinstance(product, Mapping) or not isinstance(product.get("flow", {}), Mapping):
-        raise ProfileError(f"{path} is not a mapping with a flow mapping")
+    try:
+        key, node = _flow_node(text)
+        _require_flow_keys(node)
+        product = yaml_loader.safe_load(text)
+    except (yaml.YAMLError, ValueError) as error:
+        raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
     profile = answered_profile(decision, answers, accepted)
     if invalid := gate.shape_problems(profile):
         raise ProfileError(gate.refusal(invalid))
-    after = with_profile(text, profile)
     expected = copy.deepcopy(dict(product))
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
-    if yaml_loader.safe_load(after) != expected:
-        raise ProfileError(f"{path}: the textual edit would not give the intended data; simplify its flow block")
+    _require_flow_shape(expected["flow"])
+    try:
+        after = with_profile(text, key, node, profile, product["flow"].get("profile"))
+        edited = yaml_loader.safe_load(after)
+    except yaml.YAMLError as error:
+        raise FlowFinding(f"flow.profile: cannot edit {path}: {error}") from error
+    if edited != expected:
+        raise FlowFinding(f"flow.profile: the edit would change other data in {path}")
     try:
         _replace(path, after, newline)
     except OSError as error:
@@ -459,6 +568,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(record(args.hw, args.decision, answers, accepted), indent=2))
             return 0
         stage, found = check(args.hw, args.stage)
+    except FlowFinding as error:
+        print(f"flow_profile.py {args.command}: {error}", file=sys.stderr)
+        return 1
     except ProfileError as error:
         print(f"flow_profile.py {args.command}: {error}", file=sys.stderr)
         return 2

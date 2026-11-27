@@ -5,8 +5,8 @@
 """Decision records in the MADR 4.0.0 layout: `DR-###-slug.md`, with a generated `index.md` beside them.
 
 A record is a Markdown file with YAML front matter (`status` and `date`, and optional `decision-makers`,
-`consulted` and `informed`, `superseded-by`, and `gate: {from: <stage>, to: <stage>}`, which marks the record as the
-gate decision of that stage advance) and the MADR sections: the `# title`, `## Context and Problem Statement`,
+`consulted` and `informed`, `superseded-by`, and `gate` with `from` and `to` stages. A gate can also carry the
+`version` and `version_manifest_sha256` pair.) The MADR sections are the `# title`, `## Context and Problem Statement`,
 `## Decision Drivers`, `## Considered Options`, `## Decision Outcome` (`Chosen option: "X", because Y.`
 with `### Consequences` and `### Confirmation`), `## Pros and Cons of the Options` and `## More Information`.
 MADR 4.0.0: https://adr.github.io/madr/
@@ -90,6 +90,7 @@ class DecisionRecord:
     more_information: str | None = None
     superseded_by: tuple[str, ...] = ()
     gate: tuple[str, str] | None = None
+    gate_build: tuple[str, str] | None = None
 
     @property
     def id(self) -> str:
@@ -151,6 +152,14 @@ def _check_supersession(record: DecisionRecord) -> None:
 
 def _check_gate(record: DecisionRecord) -> None:
     """`gate` is None or the (from, to) pair of known workflow stages that this record approves the advance between."""
+    if record.gate_build is not None:
+        if record.gate is None or not isinstance(record.gate_build, tuple) or len(record.gate_build) != 2:
+            raise DecisionRecordError("gate_build requires a gate, a version and its manifest SHA-256")
+        version, digest = record.gate_build
+        if not isinstance(version, str) or not re.fullmatch(r"v[0-9]+", version):
+            raise DecisionRecordError("gate.version must be a version label, such as v1")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise DecisionRecordError("gate.version_manifest_sha256 must be a lowercase SHA-256 digest")
     if record.gate is None:
         return
     known = _stage_list()
@@ -334,10 +343,15 @@ def _gate(front: dict[str, Any]) -> tuple[str, str] | None:
     if "gate" not in front:
         return None
     value = front["gate"]
-    if not isinstance(value, dict) or set(value) != {"from", "to"}:
-        raise DecisionRecordError("gate must be a mapping with exactly the keys from and to, as in "
-                                  "`gate: {from: layout, to: parts}`")
+    if not isinstance(value, dict) or set(value) not in ({"from", "to"},
+                                                         {"from", "to", "version", "version_manifest_sha256"}):
+        raise DecisionRecordError("gate must specify from and to, and may specify version and version_manifest_sha256 together")
     return (value["from"], value["to"])
+
+
+def _gate_build(front: dict[str, Any]) -> tuple[str, str] | None:
+    gate = front.get("gate")
+    return (gate["version"], gate["version_manifest_sha256"]) if isinstance(gate, dict) and "version" in gate else None
 
 
 def parse_record(number: int, slug: str, text: str) -> DecisionRecord:
@@ -354,6 +368,7 @@ def parse_record(number: int, slug: str, text: str) -> DecisionRecord:
         number=number, slug=slug, title=title, status=front["status"], date=front["date"],
         decision_makers=_names(front, "decision-makers"), consulted=_names(front, "consulted"),
         informed=_names(front, "informed"), superseded_by=_names(front, "superseded-by"), gate=_gate(front),
+        gate_build=_gate_build(front),
         context=sections[CONTEXT],
         drivers=_bullets(DRIVERS, sections[DRIVERS]) if DRIVERS in sections else (),
         options=_bullets(OPTIONS, sections[OPTIONS]), chosen=match.group(1), justification=match.group(2),
@@ -432,6 +447,8 @@ def _front_matter(record: DecisionRecord) -> dict[str, Any]:
         front["superseded-by"] = list(record.superseded_by)
     if record.gate:
         front["gate"] = {"from": record.gate[0], "to": record.gate[1]}
+        if record.gate_build:
+            front["gate"].update(zip(("version", "version_manifest_sha256"), record.gate_build, strict=True))
     return front
 
 
@@ -487,7 +504,8 @@ def write_decision(directory: Path, *, title: str, status: str, date: datetime.d
                    drivers: tuple[str, ...] = (), consequences: str | None = None,
                    confirmation: str | None = None, pros_and_cons: str | None = None,
                    more_information: str | None = None, superseded_by: tuple[str, ...] = (),
-                   gate: tuple[str, str] | None = None, number: int | None = None) -> Path:
+                   gate: tuple[str, str] | None = None, gate_build: tuple[str, str] | None = None,
+                   number: int | None = None) -> Path:
     """Write `DR-###-slug.md` into `directory`, regenerate its index and return the record's path.
 
     The number is the next free one unless `number` names a free one. The function renders the input and
@@ -503,7 +521,7 @@ def write_decision(directory: Path, *, title: str, status: str, date: datetime.d
         decision_makers=decision_makers, consulted=consulted, informed=informed, context=context,
         drivers=drivers, options=options, chosen=chosen, justification=justification,
         consequences=consequences, confirmation=confirmation, pros_and_cons=pros_and_cons,
-        more_information=more_information, superseded_by=superseded_by, gate=gate)
+        more_information=more_information, superseded_by=superseded_by, gate=gate, gate_build=gate_build)
     _check(record)
     for ident in superseded_by:
         if not any(r.id == ident for r in existing):
