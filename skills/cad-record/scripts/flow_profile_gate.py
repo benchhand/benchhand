@@ -180,27 +180,63 @@ class FdmApplicability:
         return self.state != NO
 
 
+def _bad(path: str, message: str, action: str) -> Problem:
+    return Problem(path, message, action, APPLICABILITY)
+
+
+def _plan_problem(manufacturing: Any) -> Problem | None:
+    """The finding for a manufacturing block or plan that does not fit its schema, else None."""
+    if not isinstance(manufacturing, Mapping):
+        return _bad("manufacturing", "manufacturing is not a mapping", "write manufacturing as a mapping with processes")
+    if "processes" not in manufacturing:
+        return None
+    plan = manufacturing["processes"]
+    wrong = [item for item in plan if not isinstance(item, str) or item not in PROCESSES] if isinstance(plan, list) else []
+    if not isinstance(plan, list) or not plan or wrong or len(set(map(str, plan))) != len(plan):
+        named = f" (not a process name: {', '.join(repr(item) for item in wrong)})" if wrong else ""
+        return _bad("manufacturing/processes", f"manufacturing.processes is not a non-empty list of unique process "
+                    f"names{named}", f"write the planned processes as a list of {', '.join(sorted(PROCESSES))}")
+    return None
+
+
+def _part_problem(number: str, part: Any) -> Problem | None:
+    """The finding for a part record whose process, intent or route does not fit its schema, else None."""
+    if not isinstance(part, Mapping):
+        return _bad(f"parts/{number}/part.yaml", f"parts/{number}/part.yaml is not a readable part record",
+                    f"correct parts/{number}/part.yaml")
+    process = part.get("process")
+    if "process" in part and (not isinstance(process, str) or process not in PROCESSES):
+        return _bad(f"parts/{number}/process", f"{number} process is not a process name", f"correct {number} process")
+    if "intent" not in part:
+        return None
+    intent = part["intent"]
+    if not isinstance(intent, Mapping):
+        return _bad(f"parts/{number}/intent", f"{number} intent is not a mapping", f"correct {number} intent")
+    route = intent.get("route")
+    fits = ((isinstance(route, list) and route and all(isinstance(op, Mapping) and isinstance(op.get("kind"), str) for op in route))
+            or (isinstance(route, Mapping) and route.get("status") == "unknown") or "route" not in intent)
+    if not fits:
+        return _bad(f"parts/{number}/intent/route", f"{number} intent.route is not a route of operations or an unknown fact",
+                    f"correct {number} intent.route")
+    return None
+
+
 def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicability:
     """FDM is planned at INTENT (manufacturing.processes), as a part's process, or as an operation of a part's
     route. It is ruled out only by a declared plan without it or by parts whose routes are all known; no plan
-    and no part, or a part whose route is unknown, leaves it unknown. `parts` are the parsed part records by PN."""
-    manufacturing = _mapping(_mapping(product).get("manufacturing"))
-    declared, plan = "processes" in manufacturing, manufacturing.get("processes")
-    malformed = []
-    unknown = [item for item in plan if not isinstance(item, str) or item not in PROCESSES] if isinstance(plan, list) else []
-    if declared and (not isinstance(plan, list) or not plan or unknown):
-        named = f" (not a process name: {', '.join(repr(item) for item in unknown)})" if unknown else ""
-        malformed.append(Problem("manufacturing/processes",
-                                 f"manufacturing.processes is not a non-empty list of process names{named}",
-                                 f"write the planned processes as a list of {', '.join(sorted(PROCESSES))}", APPLICABILITY))
-    for number, part in parts.items():
-        if not isinstance(part, Mapping):
-            malformed.append(Problem(f"parts/{number}/part.yaml", f"parts/{number}/part.yaml is not a readable part record",
-                                     f"correct parts/{number}/part.yaml", APPLICABILITY))
+    and no part, or a part whose route is unknown, leaves it unknown. An input that does not fit its schema
+    (a plan with an unknown or repeated process, a manufacturing block, process, intent or route of the wrong
+    shape) is `malformed`: it names the field and leaves FDM unknown, never ruled out. `parts` are the parsed
+    part records by PN."""
+    declared = isinstance(product, Mapping) and "manufacturing" in product
+    manufacturing = _mapping(product).get("manufacturing") if declared else {}
+    malformed = [item for item in (_plan_problem(manufacturing) if declared else None,
+                                   *(_part_problem(number, part) for number, part in parts.items())) if item is not None]
+    plan = _mapping(manufacturing).get("processes")
     if (isinstance(plan, list) and "fdm" in plan) or any(_uses_fdm(_mapping(part)) for part in parts.values()):
         return FdmApplicability(YES, malformed=tuple(malformed))
     unresolved = []
-    if not declared and not parts:
+    if "processes" not in _mapping(manufacturing) and not parts:
         unresolved.append(Problem("manufacturing/processes", "manufacturing.processes is not declared and no part record "
                                   "exists, so FDM cannot be ruled out", "declare manufacturing.processes at INTENT",
                                   APPLICABILITY))
@@ -220,12 +256,13 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
     profile whose cited decision does not approve, and every applicable start question with no `asked` answer.
     The FDM questions apply while the product plans FDM, the PIP clearance while print-in-place is not declined."""
     at = stage_index(stage if stage is not None else _mapping(_mapping(product).get("flow")).get("stage"))
+    applicability = fdm_applicability(product, parts)
     if at < STAGES.index(PROFILE_DUE):
-        return []
+        return list(applicability.malformed)  # the applicability inputs are checked at every stage; the profile from SPECIFY on
     profile = profile_of(product)
     if not isinstance(profile, Mapping):
         return [Problem("flow/profile", "flow.profile is missing: the project-start questions are not recorded", ASK),
-                *fdm_applicability(product, parts).malformed]
+                *applicability.malformed]
     found = []
     decision = profile.get("decision")
     if not isinstance(decision, str):
@@ -234,7 +271,6 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
     elif (why := approval(decision)) is not None:
         found.append(Problem("flow/profile/decision", f"flow.profile cites {decision}, which {why}",
                              "only the user's explicit approval records the answers: record them again with a new DR-###"))
-    applicability = fdm_applicability(product, parts)
     return (found + list(applicability.malformed)
             + asked_problems(profile, fdm=applicability.asks, unresolved=applicability.unresolved)
             + list(applicability.unresolved))
