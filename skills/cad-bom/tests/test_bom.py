@@ -209,6 +209,7 @@ class RollUpTests(unittest.TestCase):
             "FST-0006": {**self.SCREW, "standard": " ", "length": 10**400},  # beyond float range, standard invalid too
             "FST-0007": {"kind": "family_designation", "family": ["heat_set_insert"]},  # YAML list: unhashable
             "FST-0008": "ISO 4762 M4x20",  # a supplied scalar, not a mapping
+            "FST-0009": None,  # an explicit YAML null: the schema allows only an object
             "FST-0004": self.SCREW,
         }
         status, summary, rows = self.main_for(records)
@@ -219,11 +220,11 @@ class RollUpTests(unittest.TestCase):
                           ("FST-0003", "purchase.designation.length"), ("FST-0003", "purchase.designation.property_class"),
                           ("FST-0005", "purchase.designation.length"), ("FST-0006", "purchase.designation.standard"),
                           ("FST-0006", "purchase.designation.length"), ("FST-0007", "purchase.designation.family"),
-                          ("FST-0008", "purchase.designation")])
+                          ("FST-0008", "purchase.designation"), ("FST-0009", "purchase.designation")])
         self.assertTrue(all(f["reason"] for f in summary["invalid_designation"]))
         self.assertEqual({pn: row["designation"] for pn, row in rows.items()},
                          {"FST-0001": "", "FST-0002": "", "FST-0003": "", "FST-0005": "", "FST-0006": "",
-                          "FST-0007": "", "FST-0008": "",
+                          "FST-0007": "", "FST-0008": "", "FST-0009": "",
                           "FST-0004": "ISO 4762 M4x20, 8.8, A2"})
         self.assertEqual((summary["missing_part_yaml"], summary["missing_in_step"], summary["unidentified"]), ([], [], []))
 

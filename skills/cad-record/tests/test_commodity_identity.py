@@ -94,9 +94,29 @@ class Eligibility(unittest.TestCase):
                 issues = ci.part_designation_issues(purchase(designation=value))
                 self.assertEqual([field for field, _ in issues], [""])
                 self.assertIn("mapping", issues[0][1])
-        for name, record in {"omitted": purchase(), "null": purchase(designation=None), "no route": {}}.items():
+        for name, record in {"omitted": purchase(), "no route": {}}.items():
             with self.subTest(name):
                 self.assertEqual(ci.part_designation_issues(record), [])
+
+    def test_an_explicit_null_designation_is_an_issue_because_the_schema_allows_only_an_object(self) -> None:
+        record = {"intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": None}}]}}
+        issues = ci.part_designation_issues(record)
+        self.assertEqual([field for field, _ in issues], [""])
+        self.assertIn("NoneType", issues[0][1])
+
+    def test_a_value_too_large_to_render_is_reported_by_type_without_raising(self) -> None:
+        huge = 10**5000  # beyond Python's integer-to-text limit
+        record = {"intent": {"route": [{"id": "buy", "kind": "purchased", "purchase": {"designation": huge}}]}}
+        for name, issues in {
+            "a scalar designation": ci.part_designation_issues(record),
+            "a family": ci.designation_issues({**INSERT, "family": [huge]}),
+            "a kind": ci.designation_issues({**SCREW, "kind": huge}),
+            "a property class": ci.designation_issues({**SCREW, "property_class": huge}),
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(len(issues), 1)
+                self.assertIn("list" if name == "a family" else "int", issues[0][1])
+                self.assertLess(len(issues[0][1]), 300)
 
     def test_an_eligible_designation_has_no_issue(self) -> None:
         for designation in (SCREW, NUT, INSERT):
