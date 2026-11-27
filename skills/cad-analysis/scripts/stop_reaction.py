@@ -433,14 +433,25 @@ def recorded_load_n(interface: Any) -> tuple[float | None, str]:
     return float(upper), ""
 
 
-def judging_inputs(record: Any, interface: Any, chain: Any, pivot: Pivot) -> tuple[float | None, list[dict[str, Any]], float | None, str]:
-    """(the peak force, the loads read, the recorded rating, why the stop cannot be judged): a force that is not known, or a
+@dataclass(frozen=True)
+class Judging:
+    """What a stop is judged on: the peak force, the loads read and the recorded rating (None when none is known)."""
+
+    force: float
+    loads: list[dict[str, Any]]
+    recorded: float | None
+
+
+def judging_inputs(record: Any, interface: Any, chain: Any, pivot: Pivot) -> tuple[Judging | None, list[dict[str, Any]], str]:
+    """(what the stop is judged on, the loads read, "") or (None, the loads read, why not): a force that is not known, or a
     rating that is not a finite force, leaves the stop unjudged."""
     force, loads, why = applied_force(record, interface, chain if pivot.joint.type == "prismatic" else None)
     if force is None:
-        return None, loads, None, why
+        return None, loads, why
     recorded, why = recorded_load_n(interface)
-    return force, loads, recorded, why
+    if why:
+        return None, loads, why
+    return Judging(force, loads, recorded), loads, ""
 
 
 def contact_tolerance(interface: Any) -> tuple[float, str]:
@@ -604,12 +615,13 @@ def assess_interface(if_id: str, record: Any, interface: Any, chain: Any, defini
     stops = [state for state in stops if state["label"] not in unusable]  # a slide's other limits keep their own verdicts
     if unusable:
         detail["unresolved_limits"] = {label: f"{if_id}: at the {why}" for label, why in unusable.items()}
-    force, loads, recorded, why = judging_inputs(record, interface, chain, pivot)
-    if why:
+    judging, loads, why = judging_inputs(record, interface, chain, pivot)
+    if judging is None:
         reason = f"{if_id} is a stop at the {' and '.join(state['label'] for state in stops)} limit of {pivot.joint.id}, but {why}"
         return Assessment(if_id, "unknown", [reason], {}, {"outcome": "unknown", "reason": reason, **detail})
-    detail.update(loads=loads, peak_force_n=force)
-    return judge_stops(if_id, stops, stop_reactions(pivot, stops, loads, force, recorded), recorded, detail)
+    detail.update(loads=judging.loads, peak_force_n=judging.force)
+    reactions = stop_reactions(pivot, stops, judging.loads, judging.force, judging.recorded)
+    return judge_stops(if_id, stops, reactions, judging.recorded, detail)
 
 
 def end_detail(state: Mapping[str, Any], pivot: Pivot) -> dict[str, Any]:
