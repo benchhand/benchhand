@@ -298,6 +298,16 @@ class _Record:
                                                     if isinstance(c, Mapping)]
         return [name for name in names if isinstance(name, str)]
 
+    def machine_free_service(self, route: list[Mapping[str, Any]]) -> dict[str, Any]:
+        """The use case's service class, when an operation of a guideline process names no machine: it decides whether the
+        shipped guidelines stand in for the machine (guidelines.machine_optional), so the process, route and interface
+        checks that read the capability depend on it. Empty otherwise, so a part with its machines recorded keeps its
+        fingerprint."""
+        if not any(not isinstance(op.get("capability"), str) and op.get("kind") in guidelines.GUIDELINE_PROCESSES
+                   for op in route):
+            return {}
+        return {"service_class": _get(self.use_case, "service_class")}
+
     def part_values(self, pn: str) -> dict[str, Any]:
         part, intent, route = self.parts.get(pn), self.intent(pn), self.route(pn)
         if part is None:
@@ -326,7 +336,8 @@ class _Record:
                         "procurement": _get(part, "procurement", "mode"), "kinds": [op.get("kind") for op in route],
                         "route": None if route else intent.get("route")},
             "route": [_without(op, "setup", "orientation", "supports", "post_processing", "allowances") for op in route],
-            "capability": {"profiles": capabilities, "facts": capability_facts},
+            "capability": {"profiles": capabilities, "facts": capability_facts,
+                           **self.machine_free_service(route)},
             "setup": [{"id": op.get("id"), "setup": op.get("setup")} for op in route],
             "orientation": [{"id": op.get("id"), "orientation": op.get("orientation"), "supports": op.get("supports")}
                             for op in route],
