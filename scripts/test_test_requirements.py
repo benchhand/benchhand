@@ -7,8 +7,7 @@
 A `--with <pkg>==<ver>` in ci.yml is a second copy of a pin, and dev run scripts drift from it.
 The only pins that may stay inline belong to a tool that runs in its own pinned environment.
 
-Three files exist on purpose. `harness/test-requirements-min.txt` (PyYAML, plus markdown-it-py for the link guard
-`scripts/test_markdown_links.py`) serves the steps that
+Three files exist on purpose. `harness/test-requirements-min.txt` (PyYAML only) serves the steps that
 run host scripts declaring PyYAML or nothing (`install.py`, `generate.py`, `docs_only.py`,
 `ci_shards.py`): extra packages on the path there could hide a missing declaration.
 `harness/test-requirements-freecad.txt` (PyYAML and jsonschema) serves the FreeCAD Python 3.11
@@ -40,7 +39,7 @@ REQUIREMENT_FILES = (FULL, MIN, FREECAD)
 # actionlint and typecheck.py take their pins from `uvx`, a download or a --script lock.
 TOOL_PINS: frozenset[str] = frozenset()
 # The importable module of a pin whose distribution name differs from it.
-MODULES = {"pyyaml": "yaml", "markdown-it-py": "markdown_it"}
+MODULES = {"pyyaml": "yaml"}
 VERSION_OPERATOR = re.compile(r"[<>=!~]")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2$", re.M | re.S)
 IMPORT = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_]\w*)", re.M)
@@ -277,8 +276,8 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(unpinned_lines(self.minimal), [])
         self.assertEqual(unpinned_lines(self.freecad), [])
 
-    def test_the_minimal_file_is_pyyaml_and_the_markdown_parser_alone(self) -> None:
-        self.assertEqual(sorted(pins(self.minimal)), ["markdown-it-py", "pyyaml"])
+    def test_the_minimal_file_is_pyyaml_alone(self) -> None:
+        self.assertEqual(list(pins(self.minimal)), ["pyyaml"])
 
     def test_the_freecad_file_is_pyyaml_and_jsonschema_alone(self) -> None:
         self.assertEqual(sorted(pins(self.freecad)), ["jsonschema", "pyyaml"])

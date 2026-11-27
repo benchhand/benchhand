@@ -14,7 +14,7 @@ FEA needs `ccx` and `gmsh`. Preflight looks through FreeCAD, then next to `freec
 |---|---|---|
 | `preflight.py` | 0 | Every required check passed. |
 | `preflight.py` | 1 | A required check failed. Read the report and fix it. |
-| `preflight.py --status` | 0, 1 | The last warm-up passed or failed a required check. |
+| `preflight.py --status` | 0, 1 | The last warm-up passed or failed a required check. Exit 1 also reports a failing FEA setting or solver check of the current project when no usable warm-up is recorded. |
 | `preflight.py --status` | 2 | No warm-up is recorded, or it died. Warm in the foreground. |
 | `preflight.py --status` | 3 | The warm-up is still running. Run `--status` again, or add `--wait SECONDS`. |
 
@@ -35,6 +35,7 @@ Run `preflight.py --warm`. It installs Chromium through Playwright and warms the
 ## A build is refused
 
 - Exit 2 from `cad_model.py run` or `stamp.py --verify` means no result. Read the stderr reason, fix it and run again. For `stamp.py`, do not commit.
+- `stamp.py` exits 1 when it refuses on a named gate finding, such as a gate decision that does not match the stamp's evidence packet or a stamp that fails its date rule. The stderr line names it. Fix the decision or the stamp and run it again; do not commit either.
 - A missing or unapproved `flow.profile` blocks from SPECIFY on. Get the user's approval first: `record` writes the decision as `accepted` at once, so run it only after the user has answered. Show the user the questions:
 
   ```sh
@@ -55,7 +56,7 @@ Run `preflight.py --warm`. It installs Chromium through Playwright and warms the
 
 ## A printer check is not assessed
 
-A printer check with no guideline value for the feature is `not_assessed` with the reason `no_guideline`. It is a minor finding that blocks no gate and is never a pass. Calibration is off for release (`CAD_CALIBRATION`), so do not calibrate to clear it: add a guideline value with a cited source, or print a test coupon on the target printer and judge the part against it.
+A printer (FDM or resin) check that has neither an applicable guideline value nor a usable calibration is `not_assessed` with the reason `no_guideline`. It is a minor finding that blocks no gate and is never a pass. `CAD_CALIBRATION` controls FDM calibration only and is off for release, so a recorded FDM calibration does not clear it. Add a guideline value with a cited source. A test coupon printed and inspected on the target printer is a separate physical check. Record it as evidence if you want a gate to count it.
 
 ## A script's output is not JSON
 

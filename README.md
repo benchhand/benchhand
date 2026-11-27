@@ -38,7 +38,7 @@ This standalone project supports Claude Code, OpenAI Codex CLI, OpenCode, and Ki
      ```
 
      Choose `claude`, `codex`, `opencode`, `kiro` or `all`. Run the installer from the project that you want to design in, or pass `--project DIR`. If you cloned elsewhere, set `BENCHHAND` to that path.
-   - Codex keeps the copy installer: the Codex CLI has no plugin install command, so registering the marketplace is not an install. pi installs as a package, with no copy route (`install.py` has no `pi` harness); see the command after the installer options.
+   - Codex keeps the copy installer as the verified route. Codex CLI 0.171 also has `codex plugin add`, but this guide has not verified installing Benchhand that way. pi installs as a package, with no copy route (`install.py` has no `pi` harness); see the command after the installer options.
 3. Start the flow in the project and describe the product:
    - Claude Code plugin: `/benchhand:cad-flow`.
    - Installer route: `/cad-flow` in Claude Code, OpenCode and Kiro (V3), or `$cad-flow` in Codex.
