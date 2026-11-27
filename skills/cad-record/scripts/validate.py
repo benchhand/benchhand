@@ -72,6 +72,8 @@ BOM_COLUMNS = ["level", "PN", "rev", "qty", "title", "material", "process", "mak
 # Appended procurement columns, generated from part.yaml `procurement`; a BOM carries all or none of them.
 BOM_PROCUREMENT_COLUMNS = ["unit", "designation", "manufacturer", "manufacturer_part_number",
                            "supplier_part_number", "specification_ref", "specification_rev"]
+BOM_REGENERATION = ('; regenerate bom.csv with uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" '
+                    'cad-bom/scripts/bom.py ASSEMBLY.step --hw hw')
 CSV_COLUMNS = {
     "bom.csv": (BOM_COLUMNS, BOM_COLUMNS + BOM_PROCUREMENT_COLUMNS),
     "verification.csv": (["requirement_id", "method", "criteria", "result", "evidence"],),
@@ -1145,7 +1147,8 @@ def validate_project(project_dir: Path, today: date | None = None) -> list[dict[
             for field, part_value in procurement_cells(part).items():
                 bom_value = row.get(field) or None
                 if bom_value != part_value:
-                    findings.append(finding(row_path, f"{field} {bom_value!r} does not match {part_file} ({part_value!r})"))
+                    findings.append(finding(row_path, f"{field} {bom_value!r} does not match {part_file} ({part_value!r})"
+                                            + (BOM_REGENERATION if field in ("specification_ref", "specification_rev") else "")))
 
     previous_level: int | None = None
     for index, level in enumerate(bom_levels, start=2):

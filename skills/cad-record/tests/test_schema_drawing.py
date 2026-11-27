@@ -311,13 +311,14 @@ class DrawingRecordAdditions(unittest.TestCase):
         self.run_cases(cases, lambda: self.parts["TST-0002"])
 
     def test_specification_copy_outside_its_sources_folder_is_misplaced(self) -> None:
-        self.parts["TST-0002"]["procurement"]["specification"]["artifact"] = "specs/dp.pdf"
-        (self.hw / "specs").mkdir(parents=True)
-        (self.hw / "specs" / "dp.pdf").write_bytes(DATASHEET)
+        artifact = "manufacturing/sources/dp.pdf"
+        self.parts["TST-0002"]["procurement"]["specification"]["artifact"] = artifact
+        (self.hw / artifact).parent.mkdir(parents=True)
+        (self.hw / artifact).write_bytes(DATASHEET)
         code, findings = self.validate()
         self.assertEqual(code, 0, findings)  # a layout finding is a warning before design_freeze
-        self.assertIn(f"{self.hw / 'specs' / 'dp.pdf'}: hw/specs/dp.pdf is procurement evidence for TST-0002 "
-                      "outside its sources/ folder", findings)
+        self.assertIn(f"{self.hw / artifact}: hw/{artifact} is procurement evidence for TST-0002 "
+                      "outside hw/parts/TST-0002/sources/", findings)
 
     def test_url_specification_without_a_frozen_copy_validates(self) -> None:
         procurement = self.parts["TST-0002"]["procurement"]
@@ -400,6 +401,21 @@ class DrawingRecordAdditions(unittest.TestCase):
             with self.subTest(name):
                 self.bom_edit = edit
                 self.assert_rejected(expected)
+
+    def test_bom_specification_mismatch_suggests_regeneration(self) -> None:
+        def stale_specification(rows: list[dict[str, str]]) -> None:
+            rows[1].update(specification_ref="old sheet", specification_rev="old rev")
+
+        self.bom_edit = stale_specification
+        code, findings = self.validate()
+        self.assertEqual(code, 1, findings)
+        for field, stale in (("specification_ref", "old sheet"), ("specification_rev", "old rev")):
+            with self.subTest(field=field):
+                self.assertTrue(any(line.startswith(f"{self.hw / 'bom.csv'}:3: {field} {stale!r} does not match ")
+                                    and line.endswith('; regenerate bom.csv with uv run --script '
+                                                      '"$CAD_SKILLS/cad-flow/scripts/run.py" '
+                                                      'cad-bom/scripts/bom.py ASSEMBLY.step --hw hw')
+                                    for line in findings), findings)
 
     def run_cases(self, cases: dict[str, tuple[Callable[[dict], None], str]], target: Callable[[], dict]) -> None:
         """Apply each edit to a fresh copy of the valid record; the BOM is regenerated from the edited parts."""
