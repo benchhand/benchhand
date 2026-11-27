@@ -306,16 +306,19 @@ class PolymerAcceptedWithEvidence(unittest.TestCase):
     def test_the_machine_is_required_for_an_outsourced_or_a_safety_critical_fdm_route(self) -> None:
         """The no-machine exception covers only a route whose equipment evidence is optional: a supplier's capability and a
         safety-critical service need a capability profile whatever the flag says. A step that states no provider is
-        outsourced when the part is recorded as bought to its drawing."""
+        outsourced when the part is recorded as bought to its drawing. An unknown service class could be safety_critical."""
         outsourced = self.with_unknown_capability("printed_cover")
         selection_candidate(outsourced, "printed_cover")["parts"][0]["route"][0]["provider"] = "outsourced"
         critical = self.with_unknown_capability("printed_cover")
         critical["product.yaml"]["use_case"]["service_class"] = fx.known("safety_critical")
+        unassessed = self.with_unknown_capability("printed_cover")
+        unassessed["product.yaml"]["use_case"]["service_class"] = fx.unknown("service class not assessed")
         bought = self.with_unknown_capability("printed_cover")
         del selection_candidate(bought, "printed_cover")["parts"][0]["route"][0]["provider"]
         bought["parts/TST-0301/part.yaml"].update(make_buy="buy", procurement={"mode": "made_to_drawing"},
                                                   supplier="TST print bureau")
-        for name, documents in (("outsourced", outsourced), ("safety_critical", critical), ("made_to_drawing", bought)):
+        for name, documents in (("outsourced", outsourced), ("safety_critical", critical), ("made_to_drawing", bought),
+                                ("unknown service class", unassessed)):
             with self.subTest(name):
                 report = self.assessed(documents, None)
                 printed = candidate(report, "printed_cover")

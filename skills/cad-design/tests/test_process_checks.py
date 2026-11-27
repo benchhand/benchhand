@@ -2471,11 +2471,11 @@ class CalibrationFlagTests(Checks):
                 self.assertEqual(self.outcome(self.judged(data, True), obligation), "pass")
 
     def unprofiled(self, data: dict[str, Any], flag: bool) -> Any:
-        """An FDM part whose route names no capability: no machine is recorded."""
+        """An FDM part whose route names no capability: no machine is recorded, in the functional_demo service class."""
         route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
                               supports={"strategy": "none"})]
         documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
-                              product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+                              product_data=FX.product(FX.use_case(service_class=known("functional_demo"))), decisions=("DR-001", "DR-002"))
         result = pc.assess(load(self, documents), geometry("TST-0101", data), today=TODAY, catalog=SHIPPED, calibration=flag)
         self.assertEqual(packet_errors(result.packet({"version_manifest": "0" * 64})), [])
         return result
@@ -2504,17 +2504,20 @@ class CalibrationFlagTests(Checks):
     def test_off_an_outsourced_or_safety_critical_fdm_route_with_no_machine_still_needs_the_capability(self) -> None:
         """The guideline fallback covers only a route whose machine is optional evidence: a supplier's capability and a
         safety-critical service need a capability profile, so the route and the check stay unknown. An operation that
-        states no provider is outsourced when the part is recorded as bought to its drawing."""
+        states no provider is outsourced when the part is recorded as bought to its drawing. An unknown service class could
+        be safety_critical, so it needs the profile too."""
         bought = {"make_buy": "buy", "procurement": {"mode": "made_to_drawing"}, "supplier": "TST print bureau"}
-        for name, provider, service, sourcing in (("outsourced", "outsourced", None, {}),
-                                                  ("safety_critical", None, "safety_critical", {}),
-                                                  ("made_to_drawing", None, None, bought)):
+        demo, unassessed = known("functional_demo"), FX.unknown("service class not assessed")
+        for name, provider, service, sourcing in (("outsourced", "outsourced", demo, {}),
+                                                  ("safety_critical", None, known("safety_critical"), {}),
+                                                  ("made_to_drawing", None, demo, bought),
+                                                  ("unknown service class", None, unassessed, {})):
             with self.subTest(name):
                 route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
                                       supports={"strategy": "none"}, **({"provider": provider} if provider else {}))]
                 if provider:
                     route[0]["supplier"] = "TST supplier"
-                use = FX.use_case(**({"service_class": known(service)} if service else {}))
+                use = FX.use_case(service_class=service)
                 documents = FX.record(parts=[part("TST-0101", route, process="fdm", **sourcing)], capabilities=[],
                                       materials=materials(), product_data=FX.product(use), decisions=("DR-001", "DR-002"))
                 result = pc.assess(load(self, documents), geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED,
@@ -2548,7 +2551,7 @@ class CalibrationFlagTests(Checks):
         route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
                               supports={"strategy": "none"})]
         documents = FX.record(parts=[part("TST-0101", route, process="fdm", material=None)], capabilities=[],
-                              materials=materials(), product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+                              materials=materials(), product_data=FX.product(FX.use_case(service_class=known("functional_demo"))), decisions=("DR-001", "DR-002"))
         result = pc.assess(load(self, documents), geometry("TST-0101", walled(3.0)), today=TODAY, catalog=SHIPPED, calibration=False)
         self.assertEqual(self.outcome(result, "process.fdm.orientation@TST-0101/print"), "unknown")
 
@@ -2684,7 +2687,7 @@ class CalibrationRemedyTests(Checks):
         route = [FX.operation("print", "fdm", output_state="printed", orientation=copy.deepcopy(APPROVED),
                               supports={"strategy": "none"})]
         documents = FX.record(parts=[part("TST-0101", route, process="fdm")], capabilities=[], materials=materials(),
-                              product_data=FX.product(FX.use_case()), decisions=("DR-001", "DR-002"))
+                              product_data=FX.product(FX.use_case(service_class=known("functional_demo"))), decisions=("DR-001", "DR-002"))
         on = self.remedy(self.assess_off(documents, None, flag=True), "process.fdm.capability_unknown")
         self.assertEqual(on, "record the capability profile of the actual machine, operator or supplier, with its calibrations")
         self.assertNotIn("process.fdm.capability_unknown", self.codes(self.assess_off(documents, None, flag=False)))
