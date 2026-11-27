@@ -612,16 +612,8 @@ def selection_gate(report: Mapping[str, Any], stage: str, *, approved: bool | No
         findings.append(Finding("gate.selection_approval", SELECTION_PATH,
                                 f"the selection is confirmed by {assessment.get('decision')}, which is missing or is not "
                                 "the user's approval"))
-    unselected = (report.get("coverage") or {}).get("unselected") or ()
-    if status != "not_assessed":  # with no candidates at all, the not_assessed finding below says it once
-        for pn in unselected:
-            findings.append(Finding("gate.selection", SELECTION_PATH,
-                                    f"{pn} is a made part no selection candidate covers, so its material and process choice "
-                                    "is unknown" + (": a design freeze needs a confirmed selection for every made part" if final
-                                                    else "; exploration may continue"), graded))
-    decisions = report.get("decisions") or ()
-    if status == "conditional" and unselected and decisions and all(d.get("final_allowed") for d in decisions):
-        status = "final_ready"  # selection.part_unselected alone holds it back, and the lines above name each part
+    unselected, status = _unselected_gate(report, status, final, graded)
+    findings += unselected
     if status == "final_ready" and confirmed:
         return findings
     refused = sorted({reason for decision in report.get("decisions") or () for reason in decision.get("refused_because") or ()})
@@ -635,6 +627,22 @@ def selection_gate(report: Mapping[str, Any], stage: str, *, approved: bool | No
                             reason + (": a design freeze needs the confirmed final choice" if final
                                       else "; exploration may continue, but no final choice is made"), graded))
     return findings
+
+
+def _unselected_gate(report: Mapping[str, Any], status: Any, final: bool, graded: str) -> tuple[list[Finding], Any]:
+    """(a gate.selection finding per made part no chosen candidate covers, the status to judge the rest by). When the
+    report is conditional only because of those parts (selection.part_unselected, every decision final_allowed), the
+    rest is judged as final_ready, so each part is named once and not again as an open choice."""
+    unselected = (report.get("coverage") or {}).get("unselected") or ()
+    found = [] if status == "not_assessed" else [  # with no candidates at all, the not_assessed finding says it once
+        Finding("gate.selection", SELECTION_PATH,
+                f"{pn} is a made part no selection candidate covers, so its material and process choice is unknown"
+                + (": a design freeze needs a confirmed selection for every made part" if final
+                   else "; exploration may continue"), graded) for pn in unselected]
+    decisions = report.get("decisions") or ()
+    if status == "conditional" and unselected and decisions and all(d.get("final_allowed") for d in decisions):
+        status = "final_ready"
+    return found, status
 
 
 def selection_summary(report: Mapping[str, Any], approved: bool | None) -> dict[str, Any]:
@@ -976,7 +984,7 @@ def _entry(entry: Mapping[str, Any], record: Any, expected: Mapping[str, Any], v
                                 obligation=obligation.id))
         return "unknown", (f"{ident} is about another subject",), findings
     region = _region_problem(subject, obligation) if entry.get("obligation") and obligation is not None else None
-    if region is not None:
+    if region is not None and obligation is not None:
         findings.append(Finding(region[0], path, f"{ident}: {region[1]}", obligation=obligation.id))
         return "unknown", (region[1],), findings
     if result in ("planned", "unknown"):
@@ -1428,7 +1436,8 @@ def _expected_invalid(recorded: Any) -> str:
     bad = [index for index, ident in enumerate(ids) if not isinstance(ident, str) or not ident]
     if bad:
         return f"hold entries without a text id (positions {', '.join(map(str, bad[:5]))})"
-    repeated = sorted({ident for ident in ids if ids.count(ident) > 1})
+    texts = [str(ident) for ident in ids]
+    repeated = sorted({ident for ident in texts if texts.count(ident) > 1})
     if repeated:
         return f"repeat the id(s) {', '.join(repeated[:5])}"
     return ""
