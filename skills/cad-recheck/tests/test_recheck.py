@@ -16,14 +16,17 @@ from __future__ import annotations
 import os
 import json
 import hashlib
+import io
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from datetime import date
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -424,6 +427,29 @@ class RecheckHookTests(unittest.TestCase):
         self.git("commit", "-qm", "advance again with a new decision")
         result = self.run_python(STAMP, "--verify", "--committed", cwd=self.root)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_reopening_blocks_when_git_cannot_read_the_earlier_advance(self) -> None:
+        self.provisional_gate("parts", decision="accepted")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        self.git("commit", "-qm", "advance to parts")
+        previous = self.git("rev-parse", "HEAD").stdout.strip()
+        self.stage_product("layout", "ground")
+        self.git("commit", "-qm", "reopen layout")
+        self.stage_product("parts", "ground")
+        self.assertEqual(self.stamp_gate("layout").returncode, 0)
+        real_git = stamp_module.git
+
+        def git(*args: str, cwd: Path) -> bytes:
+            if args == ("show", f"{previous}:./hw/product.yaml"):
+                raise RuntimeError("cannot read object")
+            return real_git(*args, cwd=cwd)
+
+        stderr = io.StringIO()
+        with patch.object(stamp_module, "git", side_effect=git), patch.object(sys, "argv", [str(STAMP), "--verify", "--hw", str(self.root / "hw")]), redirect_stderr(stderr):
+            code = stamp_module.main()
+        self.assertEqual(code, 1, stderr.getvalue())
+        self.assertIn("gate.attempt:", stderr.getvalue())
+        self.assertIn(previous, stderr.getvalue())
 
     def test_worktree_only_manifest_cannot_authorize_the_advance(self) -> None:
         self.provisional_gate("parts", decision="accepted")
