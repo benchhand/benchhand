@@ -110,7 +110,13 @@ LAYOUT = (
     "compares references/layout.md with layout.py's output; docs_only keeps that one file out"
     " of the safe set"
 )
+
+LAUNCH = (
+    "reads skills/cad-concept/SKILL.md for its serve.py launch command and runs it against a temp scene directory;"
+    " docs_only keeps that one file out of the safe set"
+)
 ALLOWED = [
+    Allow('skills/cad-concept/tests/test_concept.py', 'skill_launch_args', 'SKILL.md', LAUNCH),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'din-spec-3105-1-checklist.md', HW),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests', 'index.md', HW),
     Allow('skills/cad-design/tests/test_mfg_corpus.py', 'DocLeakTests.documents.capture', 'docs', HW),

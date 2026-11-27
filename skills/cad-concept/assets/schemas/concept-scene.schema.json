@@ -93,6 +93,10 @@
       "required": ["kind", "id", "label", "children"],
       "properties": {
         "kind": { "const": "group" },
+        "visible": {
+          "type": "boolean",
+          "description": "false hides the node and its children when the viewer opens. Default: true. The viewer can toggle it."
+        },
         "id": { "$ref": "#/$defs/id" },
         "label": { "type": "string", "minLength": 1, "maxLength": 40 },
         "children": {
@@ -109,6 +113,10 @@
       "required": ["kind", "id", "label", "shape"],
       "properties": {
         "kind": { "const": "part" },
+        "visible": {
+          "type": "boolean",
+          "description": "false hides the node and its children when the viewer opens. Default: true. The viewer can toggle it."
+        },
         "id": { "$ref": "#/$defs/id" },
         "label": { "type": "string", "minLength": 1, "maxLength": 40 },
         "shape": { "$ref": "#/$defs/shape" },

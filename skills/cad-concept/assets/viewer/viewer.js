@@ -30,6 +30,7 @@ const ui = {
   shot: byId("screenshot"),
   fit: byId("fit-view"),
   shotResult: byId("shot-result"),
+  nodes: byId("node-list"),
   partLabels: byId("toggle-part-labels"),
   groupLabels: byId("toggle-group-labels"),
 };
@@ -57,6 +58,9 @@ const accentColor = new THREE.Color(token("--color-accent"));
 
 const state = {
   file: null,
+  loadedFile: null,
+  loadedSha: null,
+  loadSeq: 0,
   scene: null,
   content: null,
   grid: null,
@@ -64,6 +68,9 @@ const state = {
   labels: [],
   selected: null,
   framed: false,
+  // The viewer's own show/hide choices, keyed `file/variant/node`; they win over the scene's `visible`
+  // and survive a live reload.
+  visibility: new Map(),
 };
 
 // --- scene build ------------------------------------------------------------
@@ -107,7 +114,7 @@ function applyTransform(object, node) {
   object.rotation.set(rx * DEG, ry * DEG, rz * DEG, "XYZ");
 }
 
-function buildVariant(def, index) {
+function buildVariant(def, index, file) {
   const root = new THREE.Group();
   root.name = `variant:${def.id}`;
   const nodes = new Map();
@@ -118,6 +125,8 @@ function buildVariant(def, index) {
       node.kind === "part" ? makePart(node, palette[meshes.length % palette.length]) : new THREE.Group();
     if (node.kind === "part") meshes.push(object);
     applyTransform(object, node);
+    // The variant root stands for the variant itself: `visible` does not apply to it (concept.py check rejects it).
+    object.visible = parentId === null ? true : state.visibility.get(visibilityKey(file, def.id, node.id)) ?? node.visible !== false;
     object.userData.variantId = def.id;
     object.userData.nodeId = node.id;
     parentObject.add(object);
@@ -128,6 +137,14 @@ function buildVariant(def, index) {
   for (const joint of def.joints ?? []) attachJoint(def.id, joint, nodes);
   return { def, index, root, nodes, meshes, box: new THREE.Box3() };
 }
+
+// An object is shown only while it and every ancestor are visible.
+function shownInTree(object) {
+  for (let o = object; o; o = o.parent) if (!o.visible) return false;
+  return true;
+}
+
+const visibilityKey = (file, variantId, nodeId) => `${file}/${variantId}/${nodeId}`;
 
 function attachJoint(variantId, def, nodes) {
   const where = `variant ${variantId}, joint "${def.id}"`;
@@ -160,10 +177,10 @@ function validateScene(scene) {
   }
 }
 
-function buildScene(scene) {
+function buildScene(scene, file) {
   validateScene(scene);
   const content = new THREE.Group();
-  const variants = scene.variants.map((def, index) => buildVariant(def, index));
+  const variants = scene.variants.map((def, index) => buildVariant(def, index, file));
   // Lay out side by side along X at their authored nominal joint configurations.
   const sizes = variants.map((v) => new THREE.Box3().setFromObject(v.root));
   const widest = Math.max(...sizes.map((b) => b.max.x - b.min.x));
@@ -197,14 +214,15 @@ const partBox = new THREE.Box3();
 function makeLabels(variants) {
   ui.labels.replaceChildren();
   const labels = [];
-  const add = (kind, text, variant, anchor) => {
+  const add = (kind, text, variant, anchor, node = null) => {
     const el = document.createElement("span");
     el.className = "label";
     el.dataset.kind = kind;
     el.dataset.variant = variant.def.id;
     el.textContent = text;
+    if (node) el.dataset.node = node.def.id;
     ui.labels.append(el);
-    labels.push({ kind, el, variant, anchor, x: 0, y: 0, shown: false, w: 0, h: 0 });
+    labels.push({ kind, el, variant, anchor, node, x: 0, y: 0, shown: false, w: 0, h: 0 });
   };
   for (const variant of variants) {
     add("variant", variant.def.label, variant, (out) => {
@@ -220,9 +238,9 @@ function makeLabels(variants) {
         add("part", node.def.label, variant, (out) => {
           partBox.setFromObject(node.object);
           return out.set((partBox.min.x + partBox.max.x) / 2, partBox.min.y, (partBox.min.z + partBox.max.z) / 2);
-        });
+        }, node);
       } else {
-        add("group", node.def.label, variant, (out) => node.object.getWorldPosition(out));
+        add("group", node.def.label, variant, (out) => node.object.getWorldPosition(out), node);
       }
     }
   }
@@ -235,6 +253,7 @@ function makeLabels(variants) {
 
 function labelVisible(label) {
   if (label.kind === "variant") return true;
+  if (!shownInTree(label.node.object)) return false;
   // Dimmed variants keep their group labels; part labels belong to the selected variant.
   if (label.kind === "part") return ui.partLabels.checked && label.variant.def.id === state.selected;
   return ui.groupLabels.checked;
@@ -353,10 +372,37 @@ function selectVariant(id) {
     label.el.dataset.dim = String(!on);
     label.el.dataset.variantSelected = String(on);
   }
+  renderNodeList(variant);
   for (const button of ui.variants.querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.variant === variant.def.id));
   }
   requestRender();
+}
+
+// One checkbox per node of the selected variant, indented by depth.
+function renderNodeList(variant) {
+  const depthOf = (node) => (node.parentId === null ? 0 : 1 + depthOf(variant.nodes.get(node.parentId)));
+  const items = [];
+  for (const [id, node] of variant.nodes) {
+    if (node.parentId === null) continue; // the root group is the variant itself
+    const item = document.createElement("li");
+    const label = document.createElement("label");
+    label.className = "toggle";
+    label.style.paddingInlineStart = `${(depthOf(node) - 1) * 12}px`;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = node.object.visible;
+    box.dataset.node = id;
+    box.addEventListener("change", () => {
+      node.object.visible = box.checked;
+      state.visibility.set(visibilityKey(state.loadedFile, variant.def.id, id), box.checked);
+      requestRender();
+    });
+    label.append(box, ` ${node.def.label}`);
+    item.append(label);
+    items.push(item);
+  }
+  ui.nodes.replaceChildren(...items);
 }
 
 function renderVariantList(scene) {
@@ -404,7 +450,10 @@ ui.canvas.addEventListener("pointerup", (event) => {
     -((event.clientY - rect.top) / rect.height) * 2 + 1,
   );
   raycaster.setFromCamera(ndc, camera);
-  const hit = raycaster.intersectObjects(state.variants.flatMap((variant) => variant.meshes), false)[0];
+  const shown = state.variants.flatMap((variant) =>
+    variant.meshes.filter(shownInTree),
+  );
+  const hit = raycaster.intersectObjects(shown, false)[0];
   if (hit) selectVariant(hit.object.userData.variantId);
 });
 
@@ -426,15 +475,26 @@ function showOverlay(kind, title, body) {
   ui.overlayBody.textContent = body;
 }
 
-async function fetchJson(url) {
+async function fetchText(url) {
   const response = await fetch(url, { cache: "no-store" });
   const text = await response.text();
   if (!response.ok) throw new SceneError(`${url}: HTTP ${response.status} ${text.slice(0, 200)}`);
+  return text;
+}
+
+function parseJson(url, text) {
   try {
     return JSON.parse(text);
   } catch (error) {
     throw new SceneError(`${url} is not valid JSON: ${error.message}`);
   }
+}
+
+const fetchJson = async (url) => parseJson(url, await fetchText(url));
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function listScenes() {
@@ -460,19 +520,28 @@ function disposeContent() {
   state.grid?.geometry.dispose();
 }
 
-async function loadScene({ reason }) {
-  const scene = await fetchJson(`/scenes/${encodeURIComponent(state.file)}`);
-  const built = buildScene(scene);
+// Every load takes a sequence number; a response that is no longer the newest is dropped before it touches
+// any state, so a slow older load can never bind the controls or Save to the wrong file.
+async function loadScene({ reason, seq, file }) {
+  const text = await fetchText(`/scenes/${encodeURIComponent(file)}`);
+  if (seq !== state.loadSeq) return;
+  const scene = parseJson(file, text);
+  const sha = await sha256Hex(text);
+  if (seq !== state.loadSeq) return;
+  const built = buildScene(scene, file);
   disposeContent();
   state.scene = scene;
+  // What the controls and Save show, with the digest of the very bytes that built it.
+  state.loadedFile = file;
+  state.loadedSha = sha;
   state.content = built.content;
   state.variants = built.variants;
   state.grid = makeGrid(built.content);
   world.add(state.content, state.grid);
   state.labels = makeLabels(state.variants);
   ui.title.textContent = scene.title;
-  ui.file.textContent = state.file;
-  ui.select.value = state.file;
+  ui.file.textContent = file;
+  ui.select.value = file;
   ui.overlay.hidden = true;
   ui.notice.hidden = true;
   renderVariantList(scene);
@@ -484,11 +553,12 @@ async function loadScene({ reason }) {
   }
   setControlsEnabled(true);
   const time = new Date().toLocaleTimeString();
-  setStatus(`${reason} ${state.file} · ${state.variants.length} variants · ${time}`);
-  window.dispatchEvent(new CustomEvent("cad-concept:loaded", { detail: { file: state.file, reason } }));
+  setStatus(`${reason} ${file} · ${state.variants.length} variants · ${time}`);
+  window.dispatchEvent(new CustomEvent("cad-concept:loaded", { detail: { file, reason } }));
 }
 
 async function load(reason) {
+  let mine = null; // this call's sequence number, once it has one
   try {
     if (!state.file) {
       const scenes = await listScenes();
@@ -501,9 +571,12 @@ async function load(reason) {
         return;
       }
     }
+    const seq = ++state.loadSeq;
+    mine = seq;
     setStatus(`Loading ${state.file}…`, "loading");
-    await loadScene({ reason });
+    await loadScene({ reason, seq, file: state.file });
   } catch (error) {
+    if (mine !== null && mine !== state.loadSeq) return; // a newer load owns the screen
     const message = error instanceof SceneError ? error.message : String(error?.stack ?? error);
     if (state.content) {
       ui.notice.hidden = false;
@@ -518,15 +591,27 @@ async function load(reason) {
   }
 }
 
+// A stream that has been failing this long with no `hello` is treated as gone for good: the browser's own retry
+// never stops, so without a limit a tab whose server is down reads "Reconnecting" forever. A time budget, not an
+// error count: browsers differ in how many error events a refused reconnect fires.
+const RECONNECT_BUDGET_MS = 8000;
+
 function connectLive() {
   const events = new EventSource("/events");
+  let giveUp = null;
   events.addEventListener("hello", () => {
+    clearTimeout(giveUp);
+    giveUp = null;
     ui.live.dataset.state = "live";
     ui.live.textContent = "Live";
   });
   events.addEventListener("error", () => {
     ui.live.dataset.state = "offline";
     ui.live.textContent = "Reconnecting";
+    giveUp ??= setTimeout(() => {
+      events.close();
+      ui.live.textContent = "Offline";
+    }, RECONNECT_BUDGET_MS);
   });
   events.addEventListener("change", (event) => {
     const { files } = JSON.parse(event.data);
@@ -566,27 +651,42 @@ function compositeScreenshot() {
   return out.toDataURL("image/png");
 }
 
+function hiddenNodes() {
+  // Every rendered variant is in the PNG, so every variant's visibility is part of the capture key.
+  return Object.fromEntries(
+    state.variants.map((variant) => [
+      variant.def.id,
+      [...variant.nodes].filter(([, node]) => !shownInTree(node.object)).map(([id]) => id).sort(),
+    ]),
+  );
+}
+
 async function saveScreenshot() {
   ui.shot.setAttribute("aria-busy", "true");
   ui.shot.disabled = true;
   ui.shotResult.dataset.kind = "info";
   ui.shotResult.textContent = "Saving…";
   try {
+    // One synchronous snapshot of the scene on screen: file, digest, visibility, camera and PNG all come from
+    // the same loaded scene, and nothing awaits in between, so a load or a toggle cannot split them.
+    const file = state.loadedFile;
+    const variant = state.selected;
     const capture = {
-      scene: state.file,
-      scene_sha256: await fetch(`/scenes/${encodeURIComponent(state.file)}`, { cache: "no-store" })
-        .then((response) => response.arrayBuffer())
-        .then((bytes) => crypto.subtle.digest("SHA-256", bytes))
-        .then((digest) => Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")),
-      variant: state.selected,
+      scene: file,
+      scene_sha256: state.loadedSha,
+      variant,
+      // Effective visibility is part of what the picture shows, so it is part of the capture key:
+      // two saves of one scene that differ only by a toggle are two bundles, not a conflict.
+      hidden_nodes: hiddenNodes(),
       camera: { position: controls.object.position.toArray(), quaternion: controls.object.quaternion.toArray(), zoom: controls.object.zoom },
       viewport: { width: ui.canvas.width, height: ui.canvas.height, device_pixel_ratio: window.devicePixelRatio },
       labels: { parts: ui.partLabels.checked, groups: ui.groupLabels.checked },
     };
+    const png = compositeScreenshot();
     const response = await fetch("/api/screenshot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scene: state.file, variant: state.selected, capture, png: compositeScreenshot() }),
+      body: JSON.stringify({ scene: file, variant, capture, png }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
@@ -624,10 +724,21 @@ window.cadConcept = {
   get file() {
     return state.file;
   },
+  get loadedFile() {
+    return state.loadedFile;
+  },
   get selected() {
     return state.selected;
   },
   select: selectVariant,
+  // Client-pixel centre of a node's bounds, so a driver can click on it.
+  screenPoint(variantId, nodeId) {
+    const node = state.variants.find((v) => v.def.id === variantId).nodes.get(nodeId);
+    partBox.setFromObject(node.object).getCenter(tmp);
+    tmp.project(camera);
+    const rect = ui.canvas.getBoundingClientRect();
+    return [rect.left + ((tmp.x + 1) / 2) * rect.width, rect.top + ((1 - tmp.y) / 2) * rect.height];
+  },
   screenshot: compositeScreenshot,
   save: saveScreenshot,
 };

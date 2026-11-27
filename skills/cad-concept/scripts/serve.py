@@ -41,7 +41,9 @@ import ipaddress
 import json
 import os
 import re
+import select
 import signal
+import socket
 import sys
 import threading
 import time
@@ -83,6 +85,9 @@ CONTENT_TYPES = {
 MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 HEARTBEAT_S = 15.0
+NOTIFY_TIMEOUT_S = 1.0
+RECONNECT_MS = 1000  # the retry delay an /events client is told to wait while the server stops
+CLIENT_DISCONNECTS = (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)
 LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
 
 
@@ -144,6 +149,7 @@ class SceneWatcher(threading.Thread):
         self.last_change: list[str] = []
         self.last_activity = time.monotonic()
         self.live_clients = 0
+        self.closing = False  # the idle stop is committed: new /events clients are refused
         self.ready = threading.Event()  # set once the first snapshot is taken: later edits are changes
         self._halt = threading.Event()
 
@@ -151,10 +157,22 @@ class SceneWatcher(threading.Thread):
         with self.cond:
             self.last_activity = time.monotonic()
 
-    def client_connected(self) -> None:
+    def client_connected(self) -> bool:
+        """Count a live client; False once the idle stop is committed, so the caller refuses it."""
         with self.cond:
+            if self.closing:
+                return False
             self.live_clients += 1
             self.cond.notify_all()
+            return True
+
+    def commit_idle_stop(self, seconds: float) -> bool:
+        """Decide the idle stop under the lock that counts clients: after True, no client is ever counted."""
+        with self.cond:
+            if self.stopped or self.live_clients or time.monotonic() - self.last_activity < seconds:
+                return False
+            self.closing = True
+            return True
 
     def client_disconnected(self) -> None:
         with self.cond:
@@ -304,9 +322,30 @@ class Handler(BaseHTTPRequestHandler):
         ctype = CONTENT_TYPES.get(file.suffix, "application/octet-stream")
         self._send(HTTPStatus.OK, file.read_bytes(), ctype)
 
+    def _retry_later(self) -> None:
+        """Answer an /events request that arrived as the idle stop committed.
+
+        EventSource treats any non-200 answer as terminal and never reconnects. A 200 event stream that carries a
+        retry delay and then ends makes it reconnect, until the server is gone and the connection fails.
+        """
+        self.close_connection = True
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            if self.command != "HEAD":
+                self.wfile.write(f"retry: {RECONNECT_MS}\n\n".encode())
+            self.wfile.flush()
+        except CLIENT_DISCONNECTS:
+            pass
+
     def _events(self) -> None:
         watcher = self.watcher
-        watcher.client_connected()
+        if not watcher.client_connected():
+            self._retry_later()
+            return
         try:
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream")
@@ -389,15 +428,63 @@ class Handler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.CREATED, {"ok": True, "path": str(path), "reused": published.reused})
 
 
+class QuietServer(ThreadingHTTPServer):
+    """A browser tab that closes mid-response is routine: no traceback for a client disconnect.
+
+    ConnectionRefusedError is also a ConnectionError but is not a client disconnect, so it stays reported.
+    """
+
+    def handle_error(self, request: socket.socket | tuple[bytes, socket.socket],
+                     client_address: tuple[str | bytes | bytearray, int]) -> None:
+        if isinstance(sys.exc_info()[1], CLIENT_DISCONNECTS):
+            return
+        super().handle_error(request, client_address)
+
+
+def announce(event: dict[str, object]) -> None:
+    """Best-effort stdout line, bounded by NOTIFY_TIMEOUT_S: a reader that is gone or stuck never delays shutdown.
+
+    Where stdout has a descriptor, the line goes out with one `os.write` once `select` says the pipe has room
+    (a line is below PIPE_BUF, so it is written whole or not at all). A plain `print` would block on a full pipe.
+    """
+    line = (json.dumps(event) + "\n").encode()
+    try:
+        fd = sys.stdout.fileno()
+    except (AttributeError, ValueError, OSError):  # io.UnsupportedOperation is an OSError: stdout is not a file
+        print(line.decode(), end="", flush=True)
+        return
+    try:
+        if select.select([], [fd], [], NOTIFY_TIMEOUT_S)[1]:
+            os.write(fd, line)
+    except OSError:
+        pass
+
+
 def default_cache_dir() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base) / "cad-concept" / "vendor"
 
 
-def run(argv: list[str], *, idle_timeout_s: float | None = None,
-        ready_callback: Callable[[dict[str, object]], None] | None = None,
-        install_signals: bool = True,
-        shutdown_callback: Callable[[Callable[[int, object], None]], None] | None = None) -> int:
+def stop_when_idle(watcher: SceneWatcher, timeout_s: float, idle_stopped: threading.Event,
+                   shutdown: Callable[[int, object], None]) -> None:
+    """Wait for the idle timeout, then commit the stop under the client lock and shut the server down."""
+    while True:
+        with watcher.cond:
+            while not watcher.stopped:
+                remaining = timeout_s - (time.monotonic() - watcher.last_activity)
+                if watcher.live_clients == 0 and remaining <= 0:
+                    break
+                watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
+            if watcher.stopped:
+                return
+        if not watcher.commit_idle_stop(timeout_s):
+            continue  # a client arrived between the wait and the commit
+        idle_stopped.set()
+        shutdown(signal.SIGTERM, None)  # stops accepting first; the notice follows, in run()
+        return
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="serve.py", description=__doc__.splitlines()[0])
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT,
                         help="project root that contains hw/ (defaults to the skill checkout root)")
@@ -410,6 +497,14 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
                         help="allow a non-loopback --host: every client on that network can then reach the server")
     parser.add_argument("--poll", type=float, default=0.3, help="scene poll interval, seconds")
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir(), help="pinned module cache")
+    return parser
+
+
+def run(argv: list[str], *, idle_timeout_s: float | None = None,
+        ready_callback: Callable[[dict[str, object]], None] | None = None,
+        install_signals: bool = True,
+        shutdown_callback: Callable[[Callable[[int, object], None]], None] | None = None) -> int:
+    parser = build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -448,7 +543,7 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
         },
     )
     try:
-        httpd = ThreadingHTTPServer((args.host, args.port), handler)
+        httpd = QuietServer((args.host, args.port), handler)
     except OSError as exc:
         print(f"serve.py: cannot listen on {args.host}:{args.port}: {exc}", file=sys.stderr)
         return 2
@@ -472,25 +567,16 @@ def run(argv: list[str], *, idle_timeout_s: float | None = None,
     print(json.dumps(ready), flush=True)
     if ready_callback:
         ready_callback(ready)
+    idle_stopped = threading.Event()
     if timeout_s > 0:
-        def stop_when_idle() -> None:
-            while True:
-                with watcher.cond:
-                    while not watcher.stopped:
-                        remaining = timeout_s - (time.monotonic() - watcher.last_activity)
-                        if watcher.live_clients == 0 and remaining <= 0:
-                            break
-                        watcher.cond.wait(max(0.01, min(0.2, remaining if watcher.live_clients == 0 else 0.2)))
-                    if watcher.stopped:
-                        return
-                shutdown(signal.SIGTERM, None)
-                return
-
-        threading.Thread(target=stop_when_idle, daemon=True, name="idle-timeout").start()
+        threading.Thread(target=stop_when_idle, args=(watcher, timeout_s, idle_stopped, shutdown),
+                         daemon=True, name="idle-timeout").start()
     try:
         httpd.serve_forever(poll_interval=0.2)
     finally:
-        httpd.server_close()
+        httpd.server_close()  # the listening socket is closed before anyone is told the server stopped
+    if idle_stopped.is_set():
+        announce({"event": "stopped", "reason": "idle", "url": ready["url"]})
     return 0
 
 

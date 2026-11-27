@@ -122,6 +122,8 @@ jobs:
       UV_PYTHON_PREFERENCE: only-managed
       # Every shard installs FreeCAD, so a FreeCAD test that cannot find it fails instead of skipping.
       CAD_REQUIRE_FREECAD: "1"
+      # Every shard that runs a browser test fails instead of skipping when Chromium is missing.
+      CAD_REQUIRE_BROWSER: "1"
       # "<shard> <test file> [<selector>...]", read by scripts/ci_shards.py. A file named here runs
       # only in its shards; the rest shard runs every other test file. A selector (a test class or
       # Class.test_name) moves those tests to its shard; the file's entry without selectors keeps the rest.
@@ -228,6 +230,13 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           ~/.local/bin/freecadcmd --version | tee version.txt
           grep -q 'FreeCAD 1\.1\.4' version.txt
+
+      - name: Playwright Chromium
+        # preflight --chromium-only installs and launches Chromium through cad-render's pinned Playwright, the
+        # environment the browser tests run in, and probes nothing else (no FreeCAD, no runtimes). The rest shard
+        # runs the cad-concept browser tests, which CAD_REQUIRE_BROWSER makes fail, not skip, when it is missing.
+        if: env.SKIP != 'true' && matrix.shard == 'rest'
+        run: uv run --script skills/cad-flow/scripts/preflight.py --chromium-only
 
       - name: Skill tests
         if: env.SKIP != 'true'

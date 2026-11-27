@@ -15,11 +15,16 @@ Playwright Chromium are installed.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import os
+import re
+import shlex
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -40,6 +45,8 @@ CONCEPT_PY = SKILL / "scripts" / "concept.py"
 SERVE_PY = SKILL / "scripts" / "serve.py"
 RENDER_PY = SKILL.parent / "cad-render" / "scripts" / "render.py"
 PRESS_SAVE = Path(__file__).resolve().parent / "fixtures" / "press_save.py"
+DRIVE_VISIBILITY = Path(__file__).resolve().parent / "fixtures" / "drive_visibility.py"
+DRIVE_OFFLINE = Path(__file__).resolve().parent / "fixtures" / "drive_offline.py"
 
 def project_for_scene(temp: Path, scene_path: Path) -> Path:
     """Make a minimal project whose layout owns this concept scene and part."""
@@ -107,6 +114,14 @@ class SemanticChecks(unittest.TestCase):
         self.assertIn("nominal 90 is outside", joined)
         self.assertIn("axis is zero-length", joined)
         self.assertIn("duplicate node id 'base-plate'", joined)
+
+    def test_a_hidden_variant_root_is_an_error(self) -> None:
+        scene = example()
+        root_id = scene["variants"][1]["root"]["id"]
+        scene["variants"][1]["root"]["visible"] = False
+        self.assertIn(f"variants.long-reach: root '{root_id}' cannot be hidden", "\n".join(concept.semantic_errors(scene)))
+        scene["variants"][1]["root"]["visible"] = True
+        self.assertEqual(concept.semantic_errors(scene), [])
 
     def test_scene_level_errors(self) -> None:
         scene = example()
@@ -237,6 +252,23 @@ class SchemaCli(unittest.TestCase):
 
     def test_unreadable_scene_is_a_usage_error(self) -> None:
         self.assertEqual(self.run_cli("check", "/nonexistent/x.scene.json").returncode, 2)
+
+    def test_visible_flag_is_a_boolean_on_parts_and_groups(self) -> None:
+        def check(visible: object) -> int:
+            scene = example()
+            root = scene["variants"][0]["root"]
+            self.assertEqual(root["children"][0]["kind"], "group")
+            self.assertEqual(root["children"][0]["children"][0]["kind"], "part")
+            root["children"][0]["visible"] = visible
+            root["children"][0]["children"][0]["visible"] = visible
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "v.scene.json"
+                path.write_text(json.dumps(scene), encoding="utf-8")
+                return self.run_cli("check", str(path)).returncode
+        self.assertEqual(check(False), 0)
+        self.assertEqual(check(True), 0)
+        self.assertEqual(check("no"), 1)
+
 
 
 class ServerUnits(unittest.TestCase):
@@ -436,9 +468,22 @@ def png_size(data: bytes) -> tuple[int, int]:
     return width, height
 
 
-@unittest.skipUnless(shutil.which("uv") and chromium_installed(), "needs uv and Playwright Chromium")
+REQUIRE_BROWSER = "CAD_REQUIRE_BROWSER"  # "1" (set in CI) turns a missing browser into a failure, not a skip
+
+
+def require_browser(case: unittest.TestCase) -> None:
+    if shutil.which("uv") and chromium_installed():
+        return
+    if os.environ.get(REQUIRE_BROWSER) == "1":
+        case.fail(f"{REQUIRE_BROWSER}=1 but uv or Playwright Chromium is missing")
+    case.skipTest("needs uv and Playwright Chromium")
+
+
 class ViewerSaveInBrowser(unittest.TestCase):
     """serve.py with the pinned three.js cache preflight --warm fills; Save pressed in headless Chromium."""
+
+    def setUp(self) -> None:
+        require_browser(self)
 
     def test_save_button_publishes_the_selected_variant_as_a_content_bound_bundle(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cad-concept-save-") as tmp:
@@ -484,6 +529,138 @@ class ViewerSaveInBrowser(unittest.TestCase):
             checked = subprocess.run([sys.executable, str(validator), str(project)],
                                      capture_output=True, text=True, timeout=60)
             self.assertEqual(result_payload(checked.stdout), {"ok": True, "findings": []}, checked.stderr)
+
+class ViewerVisibilityInBrowser(unittest.TestCase):
+    """Authored and toggled node visibility in headless Chromium: list, labels, picking, saves, live reload."""
+
+    HIDDEN_BY_AUTHORING = {"lower-arm", "lower-link", "upper-arm", "upper-link", "head", "shade", "bulb"}
+
+    def setUp(self) -> None:
+        require_browser(self)
+
+    def run_driver(self) -> tuple[subprocess.CompletedProcess[str], str, dict | None]:
+        """Serve a lamp scene with a hidden group, run the browser driver, and read the saved capture."""
+        scene = example()
+        base = scene["variants"][0]["root"]["children"][0]
+        lower_arm = next(node for node in base["children"] if node["id"] == "lower-arm")
+        lower_arm["visible"] = False
+        with tempfile.TemporaryDirectory(prefix="cad-concept-visibility-") as tmp:
+            scene_path = Path(tmp) / "lamp-arm.scene.json"
+            scene_path.write_text(json.dumps(scene), encoding="utf-8")
+            project = project_for_scene(Path(tmp), scene_path)
+            scene_dir = project / "hw" / "concept"
+            valid_other = Path(tmp) / "valid-other.json"
+            valid_other.write_text(EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+            # Listed from the start but not a scene yet: the driver switches to it, sees the failure, then fixes it.
+            (scene_dir / "other.scene.json").write_text("{}", encoding="utf-8")
+            proc = subprocess.Popen(
+                [sys.executable, str(SERVE_PY), "--scene-dir", str(scene_dir), "--project-root", str(project),
+                 "--port", "0", "--idle-timeout", "0", "--poll", "0.1"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            assert proc.stdout
+            try:
+                url = json.loads(proc.stdout.readline())["url"]
+                driver = subprocess.run(
+                    scriptenv.python_command(RENDER_PY, str(DRIVE_VISIBILITY), url,
+                                             str(scene_dir / "lamp-arm.scene.json"), str(valid_other)),
+                    capture_output=True, text=True, timeout=600)
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+                proc.stdout.close()
+            # Read the saved bundle while the temporary project still exists.
+            lamp_sha = hashlib.sha256((scene_dir / "lamp-arm.scene.json").read_bytes()).hexdigest()
+            report = json.loads(driver.stdout) if driver.returncode == 0 else {}
+            saved_capture = None
+            if "save_during_switch" in report:
+                saved = Path(report["save_during_switch"].removeprefix("Saved "))
+                saved_capture = json.loads((saved.parent / "manifest.json").read_text(encoding="utf-8"))["recipe"]["capture"]
+        return driver, lamp_sha, saved_capture
+
+    def assert_authored_visibility_and_picking(self, report: dict) -> None:
+        # Authored `visible: false` on a group unticks only that node, and its subtree shows no labels.
+        self.assertEqual({k for k, on in report["authored_checked"].items() if not on}, {"lower-arm"})
+        self.assertFalse(self.HIDDEN_BY_AUTHORING & set(report["authored_labels"]), report["authored_labels"])
+        self.assertTrue({"base", "base-plate", "shoulder-mount"} & set(report["authored_labels"]), report)
+        # A hidden descendant cannot be picked; once shown, the same point selects its variant.
+        self.assertEqual(report["hidden_pick"], "long-reach")
+        self.assertEqual(report["shown_pick"], "short-reach")
+        # Toggling shows the group and its descendants' labels again.
+        self.assertTrue(report["toggled_checked"]["lower-arm"])
+        self.assertTrue({"lower-arm", "lower-link", "upper-arm", "upper-link"} & set(report["toggled_labels"]), report)
+
+    def assert_saves_follow_visibility(self, report: dict) -> None:
+        # Save, toggle, save: the capture binds the visible nodes, so the second save is a new bundle, not a 409.
+        self.assertTrue(report["save_hidden"].startswith("Saved "), report["save_hidden"])
+        self.assertTrue(report["save_shown"].startswith("Saved "), report["save_shown"])
+        self.assertNotEqual(report["save_hidden"], report["save_shown"])
+        # The PNG shows every variant, so hiding something in another variant is a new capture too.
+        self.assertTrue(report["save_other_variant"].startswith("Saved "), report["save_other_variant"])
+        self.assertNotIn(report["save_other_variant"], (report["save_hidden"], report["save_shown"]))
+
+    def assert_toggles_follow_the_loaded_file(self, report: dict) -> None:
+        # A live reload keeps the viewer's own toggles over the file's flags.
+        self.assertTrue(report["reloaded_checked"]["lower-arm"])
+        self.assertFalse(report["reloaded_checked"]["upper-arm"])
+        # After a failed switch to another file, the toggles still belong to the file on screen: a file
+        # with the same node ids starts from its own state, and the first file keeps its override.
+        self.assertFalse(report["failed_switch_checked"]["base-plate"])
+        self.assertTrue(report["other_checked"]["base-plate"])
+        self.assertFalse(report["back_checked"]["base-plate"])
+        # A slow older load that lands last is dropped: the newer file stays on screen and bound.
+        self.assertEqual(report["stale_title"], "Reloaded lamp")
+        self.assertEqual(report["stale_loaded_file"], "lamp-arm.scene.json")
+        self.assertEqual(report["stale_select"], "lamp-arm.scene.json")
+
+    def test_visibility_drives_the_list_labels_picking_saves_and_survives_a_reload(self) -> None:
+        driver, lamp_sha, capture = self.run_driver()
+        self.assertEqual(driver.returncode, 0, driver.stdout[-3000:] + driver.stderr[-3000:])
+        report = json.loads(driver.stdout)
+        self.assertEqual(report["errors"], [])
+        self.assert_authored_visibility_and_picking(report)
+        self.assert_saves_follow_visibility(report)
+        self.assert_toggles_follow_the_loaded_file(report)
+        # A scene switch while a save is in flight: the bundle is the first scene's, whole.
+        self.assertTrue(report["save_during_switch"].startswith("Saved "), report["save_during_switch"])
+        self.assertEqual(capture["scene"], "lamp-arm.scene.json")
+        self.assertEqual(capture["scene_sha256"], lamp_sha)
+        self.assertTrue({"base-plate", "upper-arm"} <= set(capture["hidden_nodes"]["short-reach"]), capture)
+
+
+class ViewerOfflineInBrowser(unittest.TestCase):
+    """A tab whose server is gone for good goes offline within the reconnect budget, not "Reconnecting" forever."""
+
+    BUDGET_S = 12  # the viewer gives up after RECONNECT_BUDGET_MS (8 s) of failed reconnects
+
+    def setUp(self) -> None:
+        require_browser(self)
+
+    def test_a_tab_whose_server_stops_for_good_goes_offline_within_the_budget(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-concept-offline-") as tmp:
+            project = project_for_scene(Path(tmp), EXAMPLE)
+            scene_dir = project / "hw" / "concept"
+            proc = subprocess.Popen(
+                [sys.executable, str(SERVE_PY), "--scene-dir", str(scene_dir), "--project-root", str(project),
+                 "--port", "0", "--idle-timeout", "0"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            assert proc.stdout
+            try:
+                url = json.loads(proc.stdout.readline())["url"]
+                driver = subprocess.run(
+                    scriptenv.python_command(RENDER_PY, str(DRIVE_OFFLINE), url, str(proc.pid), str(self.BUDGET_S)),
+                    capture_output=True, text=True, timeout=600)
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+                proc.stdout.close()
+        self.assertEqual(driver.returncode, 0, driver.stdout[-3000:] + driver.stderr[-3000:])
+        report = json.loads(driver.stdout)
+        self.assertEqual(report["before"], "Live")
+        self.assertEqual(
+            (report["state"], report["text"]), ("offline", "Offline"),
+            f"the Live indicator still read {report['text']!r} {report['elapsed_s']} s after the server stopped for good")
+        self.assertLess(report["elapsed_s"], self.BUDGET_S)
+
 
 class ServerVendor(unittest.TestCase):
     def test_vendor_routes_serve_preseeded_pinned_module_without_network(self) -> None:
@@ -548,7 +725,25 @@ class ServerVendor(unittest.TestCase):
                 thread.join(timeout=2)
                 serve.VIEWER_DIR = original_viewer_dir
 
-class ServerTimeout(unittest.TestCase):
+class ServerNoise(unittest.TestCase):
+    def handle(self, exc: BaseException) -> str:
+        server = serve.QuietServer.__new__(serve.QuietServer)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            try:
+                raise exc
+            except BaseException:
+                server.handle_error(None, ("127.0.0.1", 1))
+        return err.getvalue()
+
+    def test_a_refused_connection_and_other_errors_are_still_reported(self) -> None:
+        for exc in (ConnectionRefusedError(), ValueError("boom")):
+            self.assertIn(type(exc).__name__, self.handle(exc))
+
+
+class InProcessServer(unittest.TestCase):
+    """Runs serve.run in a thread, as the idle and noise tests need."""
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
@@ -557,6 +752,7 @@ class ServerTimeout(unittest.TestCase):
         self.url = ""
         self._server_done = None
         self._server_thread = None
+        self.on_ready = None
 
     def tearDown(self) -> None:
         self.stop_server()
@@ -574,6 +770,8 @@ class ServerTimeout(unittest.TestCase):
         def ready(info: dict[str, object]) -> None:
             self.ready = info
             self.url = str(info["url"])
+            if self.on_ready:
+                self.on_ready(info)
         def request_shutdown(stop) -> None:
             self._shutdown = stop
 
@@ -592,6 +790,24 @@ class ServerTimeout(unittest.TestCase):
         self._server_thread.start()
         self.assertTrue(wait_until(lambda: self.ready is not None, 2), "server did not announce ready")
 
+
+class ServerResetNoise(InProcessServer):
+    def test_a_client_that_resets_mid_request_leaves_no_traceback_and_the_server_keeps_serving(self) -> None:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.start_server(None)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            for _ in range(3):
+                with socket.create_connection((host, int(port)), timeout=5) as sock:
+                    sock.sendall(b"GET /api/scenes HTTP/1.1\r\nHost: ")  # an unfinished request, then RST
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            time.sleep(0.5)
+            with urllib.request.urlopen(self.url + "api/scenes", timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+        self.assertNotIn("Traceback", err.getvalue())
+
+
+class ServerTimeout(InProcessServer):
     def test_idle_expiry_uses_seconds_level_timeout(self) -> None:
         started = time.monotonic()
         self.start_server(0.4)
@@ -607,6 +823,133 @@ class ServerTimeout(unittest.TestCase):
         self.assertFalse(self._server_done.is_set(), "connected SSE client must keep the server alive")
         resp.close()
         self.assertTrue(self._server_done.wait(2), "server did not expire after SSE disconnect")
+
+    def test_idle_expiry_announces_the_stop_on_stdout(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.start_server(0.3)
+            self.assertTrue(self._server_done.wait(2))
+        lines = [json.loads(line) for line in out.getvalue().splitlines()]
+        self.assertEqual(lines[-1], {"event": "stopped", "reason": "idle", "url": self.url})
+
+    def test_a_full_stdout_pipe_does_not_keep_the_server_from_exiting(self) -> None:
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(lambda: os.close(read_fd) if read_fd >= 0 else None)
+        pipe_out = os.fdopen(write_fd, "w", encoding="utf-8")
+        self.addCleanup(lambda: pipe_out.close() if not pipe_out.closed else None)
+
+        def fill_pipe(_info: dict[str, object]) -> None:
+            # Runs after the ready line, before the idle timer: nobody reads, so the pipe fills.
+            os.set_blocking(write_fd, False)
+            try:
+                while True:
+                    os.write(write_fd, b"x" * 4096)
+            except BlockingIOError:
+                pass
+            finally:
+                os.set_blocking(write_fd, True)
+
+        self.on_ready = fill_pipe
+        with contextlib.redirect_stdout(pipe_out):
+            self.start_server(0.3)
+            exited = self._server_done.wait(5)
+            os.close(read_fd)  # releases a write that is stuck, so a failure does not leak a hung thread
+            read_fd = -1
+        self.assertTrue(exited, "a stdout nobody reads kept the server running after its idle timeout")
+
+    def test_a_reconnect_after_the_idle_stop_meets_a_closed_listener_before_the_stop_notice_finishes(self) -> None:
+        read_fd, write_fd = os.pipe()
+        pipe_out = os.fdopen(write_fd, "w", encoding="utf-8")
+        self.addCleanup(lambda: os.close(read_fd) if read_fd >= 0 else None)
+        self.addCleanup(lambda: pipe_out.close() if not pipe_out.closed else None)
+
+        def fill_pipe(_info: dict[str, object]) -> None:
+            os.set_blocking(write_fd, False)
+            try:
+                while True:
+                    os.write(write_fd, b"x" * 4096)
+            except BlockingIOError:
+                pass
+            finally:
+                os.set_blocking(write_fd, True)
+
+        self.on_ready = fill_pipe
+        refused_after = None
+        with contextlib.redirect_stdout(pipe_out):
+            self.start_server(0.3)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            started = time.monotonic()
+            deadline = started + 4
+            # Poll with bare connects (no request, so no activity) until the listener refuses: that is what an
+            # EventSource reconnect meets once the server has stopped accepting. The deadline is checked on
+            # every iteration, so a listener that never closes fails the test instead of hanging it.
+            while time.monotonic() < deadline:
+                try:
+                    socket.create_connection((host, int(port)), timeout=0.2).close()
+                except ConnectionRefusedError:
+                    refused_after = time.monotonic() - started
+                    break
+                except OSError:
+                    pass
+                time.sleep(0.02)
+            still_blocked_on_stdout = not self._server_done.is_set()
+            os.close(read_fd)  # releases a notice that is stuck, so a failure does not leak a hung thread
+            read_fd = -1
+        self.assertIsNotNone(
+            refused_after, "reconnect never met a closed listener: the server kept accepting 4 s after its idle stop")
+        self.assertTrue(
+            still_blocked_on_stdout,
+            "the server only stopped accepting after its stop notice finished: it must stop accepting first")
+
+    def test_an_events_request_that_loses_the_race_with_the_idle_stop_gets_a_stream_the_client_retries(self) -> None:
+        # EventSource treats a non-200 answer as terminal and never reconnects, so a refused /events must be a
+        # 200 event stream that carries a retry delay and ends: the browser then reconnects until the server is gone.
+        real = serve.SceneWatcher.client_connected
+
+        def stop_commits_first(watcher: serve.SceneWatcher) -> bool:
+            watcher.closing = True  # the idle stop commits between this request's accept and its count
+            return real(watcher)
+
+        with patch.object(serve.SceneWatcher, "client_connected", stop_commits_first):
+            self.start_server(None)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            with socket.create_connection((host, int(port)), timeout=2) as sock:
+                sock.settimeout(2)
+                sock.sendall(f"GET /events HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
+                reply = b""
+                try:
+                    while chunk := sock.recv(4096):
+                        reply += chunk
+                except TimeoutError:
+                    self.fail(f"the refused /events stream never ended: {reply!r}")
+        head, _, body = reply.partition(b"\r\n\r\n")
+        self.assertIn(b" 200 ", head.split(b"\r\n")[0], reply)
+        self.assertIn(b"text/event-stream", head)
+        self.assertEqual(body.strip(), b"retry: 1000")
+
+    def test_head_on_a_refused_events_request_sends_the_headers_and_no_body(self) -> None:
+        real = serve.SceneWatcher.client_connected
+
+        def stop_commits_first(watcher: serve.SceneWatcher) -> bool:
+            watcher.closing = True
+            return real(watcher)
+
+        with patch.object(serve.SceneWatcher, "client_connected", stop_commits_first):
+            self.start_server(None)
+            host, port = self.url.removeprefix("http://").rstrip("/").split(":")
+            with socket.create_connection((host, int(port)), timeout=2) as sock:
+                sock.settimeout(2)
+                sock.sendall(f"HEAD /events HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
+                reply = b""
+                try:
+                    while chunk := sock.recv(4096):
+                        reply += chunk
+                except TimeoutError:
+                    self.fail(f"the HEAD answer never ended: {reply!r}")
+        head, _, body = reply.partition(b"\r\n\r\n")
+        self.assertIn(b" 200 ", head.split(b"\r\n")[0], reply)
+        self.assertIn(b"text/event-stream", head)
+        self.assertEqual(body, b"")
 
     def test_zero_disables_idle_expiry(self) -> None:
         self.start_server(None)
@@ -641,6 +984,41 @@ def wait_until(predicate, timeout: float) -> bool:
             return True
         time.sleep(0.01)
     return predicate()
+
+def skill_launch_args() -> list[str]:
+    """The serve.py arguments of the managed launch command SKILL.md tells the lead to run."""
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    match = re.search(r"^\s*uv run --script \S+ cad-concept/scripts/serve\.py (.+)$", text, re.M)
+    assert match, "no serve.py launch command in the skill"
+    return shlex.split(match.group(1))
+
+
+class ServerLaunchWorkflow(unittest.TestCase):
+    def test_the_skill_launch_command_gives_the_same_url_and_no_idle_exit_across_restarts(self) -> None:
+        args = skill_launch_args()
+        # The documented values, asserted as written; the run below swaps the port for a free one.
+        self.assertEqual(args[args.index("--port") + 1], "8765")
+        self.assertEqual(args[args.index("--idle-timeout") + 1], "0")
+        with socket.socket() as probe:  # the documented port may be taken on this host: swap in a free one
+            probe.bind(("127.0.0.1", 0))
+            free = probe.getsockname()[1]
+        args[args.index("--port") + 1] = str(free)
+        readies = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as tmp:
+                launch = [a if a != "hw/concept" else tmp for a in args]
+                launch = [a if a != "." else tmp for a in launch]
+                proc = subprocess.Popen([sys.executable, str(SERVE_PY), *launch, "--cache-dir", str(Path(tmp) / "c")],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                try:
+                    readies.append(json.loads(proc.stdout.readline()))
+                finally:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                    proc.stdout.close()
+        self.assertEqual([r["url"] for r in readies], [f"http://127.0.0.1:{free}/"] * 2)
+        self.assertEqual([r["idle_timeout_min"] for r in readies], [0, 0])
+
 
 class ServerUsage(unittest.TestCase):
     def test_missing_scene_dir_is_a_usage_error(self) -> None:

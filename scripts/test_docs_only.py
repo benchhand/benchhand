@@ -110,6 +110,18 @@ class SkipTests(unittest.TestCase):
 
 
 class DecideTests(unittest.TestCase):
+    def test_a_pull_request_changing_only_the_concept_skill_md_runs_the_shards(self) -> None:
+        # test_concept.py runs the launch command that this file documents.
+        self.assertFalse(
+            docs_only.decide(
+                "pull_request", "b", "h", lambda b, h: edits("skills/cad-concept/SKILL.md")
+            )
+        )
+        self.assertTrue(
+            docs_only.decide(
+                "pull_request", "b", "h", lambda b, h: edits("skills/cad-flow/SKILL.md")
+            )
+        )
     def test_a_pull_request_of_safe_paths_skips(self) -> None:
         self.assertTrue(
             docs_only.decide("pull_request", "b", "h", lambda b, h: edits("docs/a.md"))
