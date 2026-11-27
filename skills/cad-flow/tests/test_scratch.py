@@ -840,6 +840,44 @@ class Sync(ScratchCase):
         self.assertEqual(tree(outside), before)
         self.assertEqual(list((cache / "objects").glob("*")) if (cache / "objects").exists() else [], [])
 
+    def scratch_state(self, scratch_hw: Path) -> dict[str, str]:
+        """The whole workspace except the lock file, so a refusal can prove it changed nothing."""
+        return {path: digest for path, digest in tree(scratch_hw.parent).items() if path != "workspace.lock"}
+
+    def test_a_linked_cache_leaf_is_refused_before_any_write(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        outside = self.outside()
+        leaf = scratch_hw / ".cad" / "cache" / "objects" / ("e" * 64)
+        leaf.parent.mkdir(parents=True)
+        leaf.symlink_to(outside / "dangling")  # exists() is false for it, so a link over it used to be skipped silently
+        stored = [f".cad/cache/objects/{'e' * 64}", f".cad/cache/records/{'f' * 64}.json"]
+        for rel in stored:
+            (self.hw / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.hw / rel).write_text("lead\n", encoding="utf-8")
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        before, outside_before = self.scratch_state(scratch_hw), tree(outside)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("symlink", report["error"])
+        self.assertEqual((self.scratch_state(scratch_hw), tree(outside)), (before, outside_before))
+
+    def test_a_linked_ancestor_of_the_leads_cache_is_refused_before_any_write(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        outside = self.outside()
+        stored = outside / "cache" / "objects" / ("a" * 64)
+        stored.parent.mkdir(parents=True)
+        stored.write_text("elsewhere\n", encoding="utf-8")
+        (self.hw / ".cad").mkdir()
+        (self.hw / ".cad" / "cache").symlink_to(outside / "cache")  # below the skipped .cad/, so only seeding meets it
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        before = self.scratch_state(scratch_hw)
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (2, "error"), report)
+        self.assertIn("symlink", report["error"])
+        self.assertEqual(self.scratch_state(scratch_hw), before)
+
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
         record = self.hw / "parts" / "PRT-0001" / "part.yaml"
