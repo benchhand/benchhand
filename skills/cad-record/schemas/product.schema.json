@@ -112,7 +112,7 @@
       ]
     },
     "profile": {
-      "description": "The user's answers to the project-start questions (cad-flow flow_profile.py questions), recorded at INTENT with the decision that holds them. Each question has a default the user is shown; asked records, per question, whether the user answered (user) or accepted the default (asked-accepted-default). A number is the user's design limit; calibrated stays unknown until a calibration exists; off means not assessed. A two-state answer is a boolean; a word answer is a string, written quoted, since YAML reads a bare on, off, yes or no as a boolean",
+      "description": "The user's answers to the project-start questions (cad-flow flow_profile.py questions), recorded at INTENT with the decision that holds them. Each question has a default the user is shown; asked records, per question, whether the user answered (user), accepted the default (asked-accepted-default) or the question does not apply to this project (a not_applicable fact with its reason). A number is the user's design limit; calibrated stays unknown until a calibration exists; off means not assessed. A two-state answer is a boolean; a word answer is a string, written quoted, since YAML reads a bare on, off, yes or no as a boolean",
       "type": "object", "additionalProperties": false,
       "required": ["human_approval", "fea", "stack_up", "critique", "motion", "storage_results_in_git", "processes"],
       "properties": {
@@ -125,7 +125,9 @@
         "storage_results_in_git": {"type": "boolean", "default": false},
         "asked": {
           "description": "How each project-start question was settled, keyed by its field path below flow.profile (fea, stack_up, processes/fdm/orientation, processes/fdm/pip_clearance_mm/xy, ...). cad-record flow_profile_gate.py QUESTION_FIELDS lists the keys; its gate reports a missing one",
-          "type": "object", "additionalProperties": {"enum": ["user", "asked-accepted-default"]}
+          "type": "object",
+          "additionalProperties": {"oneOf": [{"enum": ["user", "asked-accepted-default"]},
+                                             {"description": "A question that does not apply to this project: its reason and the decision that records it. It counts as no answer: if the question applies later, the gate reports it unasked", "$ref": "manufacturing.schema.json#/$defs/fact_not_applicable"}]}
         },
         "processes": {
           "type": "object", "additionalProperties": false,

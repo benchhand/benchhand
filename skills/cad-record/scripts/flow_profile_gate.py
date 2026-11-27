@@ -51,6 +51,8 @@ STAGES: tuple[str, ...] = tuple(schema_registry.schema(SCHEMAS, "product.schema.
 # The profile and its decision are due once the INTENT gate has passed. A build is L1 LAYOUT work or later.
 PROFILE_DUE = "specify"
 BUILD_STAGE = "layout"
+# The process names a manufacturing.processes entry may take (manufacturing.schema.json $defs/primary_process).
+PROCESSES: frozenset[str] = frozenset(schema_registry.schema(SCHEMAS, "manufacturing.schema.json")["$defs"]["primary_process"]["enum"])
 FDM = "processes/fdm/"
 PIP_CLEARANCE = "processes/fdm/pip_clearance_mm/"
 # The ISO/ASTM 52900 category of each flow.profile process (product.schema.json $defs/iso_52900_category);
@@ -79,7 +81,7 @@ WORD_FIELDS = ("human_approval", "stack_up", "critique", "motion", "processes/fd
                "processes/fdm/overhang_deg", "processes/fdm/bridge_mm", "processes/fdm/min_wall_mm",
                "processes/fdm/min_feature_mm", "processes/fdm/warp", "processes/fdm/pip_clearance_mm/xy",
                "processes/fdm/pip_clearance_mm/z")
-ASK = ("ask the user the project-start questions (flow_profile.py questions), each with its default, and record the "
+ASK = ("ask the user the project-start questions (flow_profile.py questions --hw hw), each with its default, and record the "
        "answers with flow_profile.py record --decision DR-###")
 # Settings whose off or light turns a check off; safety_critical service and regulated rigor refuse them, and
 # fea disabled. cosmetic_faces false declares no cosmetic face and turns no check off.
@@ -158,13 +160,101 @@ def _uses_fdm(part: Mapping[str, Any]) -> bool:
     return part.get("process") == "fdm" or any(op.get("kind") == "fdm" for op in _route(part))
 
 
-def plans_fdm(product: Any, parts: Mapping[str, Any]) -> bool:
-    """Whether the product plans FDM: at INTENT (manufacturing.processes), as a part's process, or as an
-    operation of a part's route. `parts` are the parsed part records by PN."""
-    processes = _mapping(_mapping(product).get("manufacturing")).get("processes")
-    if isinstance(processes, list) and "fdm" in processes:
-        return True
-    return any(_uses_fdm(_mapping(part)) for part in parts.values())
+YES, NO, UNKNOWN = "yes", "no", "unknown"
+APPLICABILITY = "flow.applicability"
+
+
+@dataclass(frozen=True)
+class FdmApplicability:
+    """Whether the FDM start questions apply: yes (FDM is planned), no (the record rules FDM out) or unknown
+    (it does not yet). `unresolved` names each field that leaves it unknown; `malformed` names each record
+    that cannot be read as a plan or a part, which also leaves it unknown and blocks."""
+
+    state: str
+    unresolved: tuple[Problem, ...] = ()
+    malformed: tuple[Problem, ...] = ()
+
+    @property
+    def asks(self) -> bool:
+        """The FDM questions are asked unless the record rules FDM out: unknown is never not applicable."""
+        return self.state != NO
+
+
+ROUTE_REF = "https://srobroek.com/cad/schemas/part.schema.json#/$defs/intent/properties/route"
+
+
+def _route_validator() -> Any:
+    """The part schema's own validator for intent.route: the single definition of a route."""
+    return schema_registry.ref_validator(SCHEMAS, ROUTE_REF)
+
+
+def _bad(path: str, message: str, action: str) -> Problem:
+    return Problem(path, message, action, APPLICABILITY)
+
+
+def _plan_problem(manufacturing: Any) -> Problem | None:
+    """The finding for a manufacturing block or plan that does not fit its schema, else None."""
+    if not isinstance(manufacturing, Mapping):
+        return _bad("manufacturing", "manufacturing is not a mapping", "write manufacturing as a mapping with processes")
+    if "processes" not in manufacturing:
+        return None
+    plan = manufacturing["processes"]
+    wrong = [item for item in plan if not isinstance(item, str) or item not in PROCESSES] if isinstance(plan, list) else []
+    if not isinstance(plan, list) or not plan or wrong or len(set(map(str, plan))) != len(plan):
+        named = f" (not a process name: {', '.join(repr(item) for item in wrong)})" if wrong else ""
+        return _bad("manufacturing/processes", f"manufacturing.processes is not a non-empty list of unique process "
+                    f"names{named}", f"write the planned processes as a list of {', '.join(sorted(PROCESSES))}")
+    return None
+
+
+def _part_problem(number: str, part: Any) -> Problem | None:
+    """The finding for a part record whose process, intent or route does not fit its schema, else None."""
+    if not isinstance(part, Mapping):
+        return _bad(f"parts/{number}/part.yaml", f"parts/{number}/part.yaml is not a readable part record",
+                    f"correct parts/{number}/part.yaml")
+    process = part.get("process")
+    if "process" in part and (not isinstance(process, str) or process not in PROCESSES):
+        return _bad(f"parts/{number}/process", f"{number} process is not a process name", f"correct {number} process")
+    if "intent" not in part:
+        return None
+    intent = part["intent"]
+    if not isinstance(intent, Mapping):
+        return _bad(f"parts/{number}/intent", f"{number} intent is not a mapping", f"correct {number} intent")
+    if "route" in intent:
+        errors = sorted(_route_validator().iter_errors(intent["route"]), key=lambda error: [str(p) for p in error.absolute_path])
+        if errors:
+            where = "/".join(str(step) for step in errors[0].absolute_path)
+            return _bad(f"parts/{number}/intent/route", f"{number} intent.route does not fit the part schema"
+                        f"{' at ' + where if where else ''}: {errors[0].message[:120]}", f"correct {number} intent.route")
+    return None
+
+
+def fdm_applicability(product: Any, parts: Mapping[str, Any]) -> FdmApplicability:
+    """FDM is planned at INTENT (manufacturing.processes), as a part's process, or as an operation of a part's
+    route. It is ruled out only by a declared plan without it or by parts whose routes are all known; no plan
+    and no part, or a part whose route is unknown, leaves it unknown. An input that does not fit its schema
+    (a plan with an unknown or repeated process, a manufacturing block, process, intent or route of the wrong
+    shape) is `malformed`: it names the field and leaves FDM unknown, never ruled out. `parts` are the parsed
+    part records by PN."""
+    declared = isinstance(product, Mapping) and "manufacturing" in product
+    manufacturing = _mapping(product).get("manufacturing") if declared else {}
+    malformed = [item for item in (_plan_problem(manufacturing) if declared else None,
+                                   *(_part_problem(number, part) for number, part in parts.items())) if item is not None]
+    plan = _mapping(manufacturing).get("processes")
+    if (isinstance(plan, list) and "fdm" in plan) or any(_uses_fdm(_mapping(part)) for part in parts.values()):
+        return FdmApplicability(YES, malformed=tuple(malformed))
+    unresolved = []
+    if "processes" not in _mapping(manufacturing) and not parts:
+        unresolved.append(Problem("manufacturing/processes", "manufacturing.processes is not declared and no part record "
+                                  "exists, so FDM cannot be ruled out", "declare manufacturing.processes at INTENT",
+                                  APPLICABILITY))
+    for number, part in parts.items():
+        route = _mapping(_mapping(part).get("intent")).get("route")
+        if _part_problem(number, part) is None and isinstance(route, Mapping) and route.get("status") == "unknown":
+            unresolved.append(Problem(f"parts/{number}/intent/route", f"{number} intent.route is unknown, so FDM cannot "
+                                      "be ruled out", f"plan the route of {number}, or declare manufacturing.processes",
+                                      APPLICABILITY))
+    return FdmApplicability(UNKNOWN if unresolved or malformed else NO, tuple(unresolved), tuple(malformed))
 
 
 # --- the gate -------------------------------------------------------------------------------------------------------
@@ -174,11 +264,13 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
     profile whose cited decision does not approve, and every applicable start question with no `asked` answer.
     The FDM questions apply while the product plans FDM, the PIP clearance while print-in-place is not declined."""
     at = stage_index(stage if stage is not None else _mapping(_mapping(product).get("flow")).get("stage"))
+    applicability = fdm_applicability(product, parts)
     if at < STAGES.index(PROFILE_DUE):
-        return []
+        return list(applicability.malformed)  # the applicability inputs are checked at every stage; the profile from SPECIFY on
     profile = profile_of(product)
     if not isinstance(profile, Mapping):
-        return [Problem("flow/profile", "flow.profile is missing: the project-start questions are not recorded", ASK)]
+        return [Problem("flow/profile", "flow.profile is missing: the project-start questions are not recorded", ASK),
+                *applicability.malformed]
     found = []
     decision = profile.get("decision")
     if not isinstance(decision, str):
@@ -187,21 +279,64 @@ def problems(product: Any, parts: Mapping[str, Any], approval: Approval, stage: 
     elif (why := approval(decision)) is not None:
         found.append(Problem("flow/profile/decision", f"flow.profile cites {decision}, which {why}",
                              "only the user's explicit approval records the answers: record them again with a new DR-###"))
-    return found + asked_problems(profile, fdm=plans_fdm(product, parts))
+    return (found + list(applicability.malformed)
+            + asked_problems(profile, fdm=applicability.asks, unresolved=applicability.unresolved)
+            + list(applicability.unresolved))
 
 
-def asked_problems(profile: Mapping[str, Any], *, fdm: bool) -> list[Problem]:
-    """Every applicable start question needs an `asked` answer; one marked as the accepted default must hold it."""
-    asked = _mapping(profile.get("asked"))
+def applicable_fields(profile: Mapping[str, Any], *, fdm: bool) -> list[str]:
+    """The start questions that apply, in question order: the FDM ones while `fdm`, the PIP clearance ones
+    while the profile does not decline print-in-place."""
     pip = value_at(profile, "processes/fdm/print_in_place") is not False
+    return [field for field in QUESTION_FIELDS
+            if not ((field.startswith(FDM) and not fdm) or (field.startswith(PIP_CLEARANCE) and not pip))]
+
+
+@dataclass(frozen=True)
+class QuestionPlan:
+    """The start questions that apply (`fields`, in question order) and, for each one that does not, why
+    (`skipped`: field to reason). A skipped question is recorded as not applicable, never as an answer."""
+
+    fields: list[str]
+    skipped: dict[str, str]
+
+
+def question_plan(product: Any, parts: Mapping[str, Any], profile: Any = None) -> QuestionPlan:
+    """The one rule for which start questions apply, shared by asking, recording and validating, with the
+    reason each skipped one is skipped. `profile` holds the answers so far (default: product.yaml
+    flow.profile); one that does not decline print-in-place keeps its clearance questions."""
+    chosen = _mapping(profile if profile is not None else profile_of(product))
+    asks = fdm_applicability(product, parts).asks
+    fields = applicable_fields(chosen, fdm=asks)
+    plan = _mapping(_mapping(product).get("manufacturing")).get("processes")
+    basis = f"manufacturing.processes is {plan}" if isinstance(plan, list) else "no part record uses FDM"
+    skipped = {field: (f"no FDM process is planned: {basis}" if not asks else
+                       "print-in-place is declined: processes.fdm.print_in_place is false")
+               for field in QUESTION_FIELDS if field not in fields}
+    return QuestionPlan(fields, skipped)
+
+
+def question_fields(product: Any, parts: Mapping[str, Any], profile: Any = None) -> list[str]:
+    """The one rule for which start questions apply, shared by asking, recording and validating. `profile`
+    holds the answers so far (default: product.yaml flow.profile); one that does not decline print-in-place
+    keeps its clearance questions."""
+    return question_plan(product, parts, profile).fields
+
+
+def asked_problems(profile: Mapping[str, Any], *, fdm: bool, unresolved: Iterable[Problem] = ()) -> list[Problem]:
+    """Every applicable start question needs an `asked` answer; one marked as the accepted default must hold it.
+    `unresolved` are the fields that left FDM unknown: an FDM question asked for that reason says so."""
+    asked = _mapping(profile.get("asked"))
+    why = ", ".join(item.path for item in unresolved)
     found = []
-    for field in QUESTION_FIELDS:
-        if (field.startswith(FDM) and not fdm) or (field.startswith(PIP_CLEARANCE) and not pip):
-            continue
+    for field in applicable_fields(profile, fdm=fdm):
         how = asked.get(field)
         path = f"flow/profile/asked/{field}"
         if how not in PROVENANCE:
-            found.append(Problem(path, f"{field.replace('/', '.')} was not asked",
+            note = f" (FDM applicability is unresolved at {why})" if why and field.startswith(FDM) else ""
+            applies = (f" was recorded as not applicable ({how.get('reason')}) but applies now"
+                       if isinstance(how, Mapping) and how.get("status") == "not_applicable" else " was not asked")
+            found.append(Problem(path, f"{field.replace('/', '.')}{applies}{note}",
                                  "ask the user that project-start question, showing its default, and record the answers again"))
         elif how == ACCEPTED_DEFAULT and value_at(profile, field) != DEFAULTS[field]:
             found.append(Problem(path, f"{field.replace('/', '.')} is recorded as the accepted default but is "

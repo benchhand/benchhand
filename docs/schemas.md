@@ -23,7 +23,7 @@ schema-sha256 e7a1d4d1233184f1320a1f23f538e0980207f30c9292fa791fe05c0cee538c06 s
 schema-sha256 6e8a1ce8fc3a59e27de5cb60203fbfb12a2f7f6d47e990ec5a91a45954657f77 skills/cad-record/schemas/motion-plan.schema.json
 schema-sha256 7e31ffb8d6a6abc67e890d6b0543f581a9aa8e23af0d24fbffbbb8a0a1fe79c9 skills/cad-record/schemas/part.schema.json
 schema-sha256 a925c74c84c3c9b3ef53579fdb4d41f295eef9af85ea8646996db71d5db66b36 skills/cad-record/schemas/preflight-report.schema.json
-schema-sha256 08d4f6a58e7628b93cea7349042d511eedd77f0311a3894173c092ff0302ccdf skills/cad-record/schemas/product.schema.json
+schema-sha256 1ec25097f8c2802056f7d44d0ad27f8d60a8561192d0c73d54457898c000de9f skills/cad-record/schemas/product.schema.json
 schema-sha256 1f824e1afee20c599bd4408606a4584208e22bcc56f626d561604a235c402f3f skills/cad-record/schemas/release-manifest.schema.json
 schema-sha256 173e076e1267b6b089748f80132cf474a0dfa8ca8dd88a85369e9e0574aa6a54 skills/cad-record/schemas/requirements.schema.json
 schema-sha256 3f66dcd1ef22b8b40aa94f0c95919cf0f90b6b848bb0e36bffb772fa506292c1 skills/cad-record/schemas/stackup.schema.json
@@ -6261,7 +6261,7 @@ Alias of `ManufacturingPrimaryProcess`
 
 Source: `/$defs/profile`
 
-The user's answers to the project-start questions (cad-flow flow_profile.py questions), recorded at INTENT with the decision that holds them. Each question has a default the user is shown; asked records, per question, whether the user answered (user) or accepted the default (asked-accepted-default). A number is the user's design limit; calibrated stays unknown until a calibration exists; off means not assessed. A two-state answer is a boolean; a word answer is a string, written quoted, since YAML reads a bare on, off, yes or no as a boolean
+The user's answers to the project-start questions (cad-flow flow_profile.py questions), recorded at INTENT with the decision that holds them. Each question has a default the user is shown; asked records, per question, whether the user answered (user), accepted the default (asked-accepted-default) or the question does not apply to this project (a not_applicable fact with its reason). A number is the user's design limit; calibrated stays unknown until a calibration exists; off means not assessed. A two-state answer is a boolean; a word answer is a string, written quoted, since YAML reads a bare on, off, yes or no as a boolean
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -6272,7 +6272,7 @@ The user's answers to the project-start questions (cad-flow flow_profile.py ques
 | `critique` | `Literal["full", "light", "off"]` | yes | `"full"` | light: both reviewers at the L2 light-review scope, rerun on the analysed version |
 | `motion` | `Literal["auto"]` | yes | `"auto"` | auto: on once a joint moves; stated to the user, never asked |
 | `storage_results_in_git` | `bool` | yes | `false` |  |
-| `asked` | `Mapping[str, Literal["user", "asked-accepted-default"]]` | no |  | How each project-start question was settled, keyed by its field path below flow.profile (fea, stack_up, processes/fdm/orientation, processes/fdm/pip_clearance_mm/xy, ...). cad-record flow_profile_gate.py QUESTION_FIELDS lists the keys; its gate reports a missing one |
+| `asked` | `Mapping[str, Literal["user", "asked-accepted-default"] \| ManufacturingFactNotApplicable]` | no |  | How each project-start question was settled, keyed by its field path below flow.profile (fea, stack_up, processes/fdm/orientation, processes/fdm/pip_clearance_mm/xy, ...). cad-record flow_profile_gate.py QUESTION_FIELDS lists the keys; its gate reports a missing one |
 | `processes` | `ProductProfileProcesses` | yes |  |  |
 
 Constraints not expressed by the type:

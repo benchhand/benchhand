@@ -39,17 +39,28 @@ Run `preflight.py --warm`. It installs Chromium through Playwright and warms the
 - A missing or unapproved `flow.profile` blocks from SPECIFY on. Get the user's approval first: `record` writes the decision as `accepted` at once, so run it only after the user has answered. Show the user the questions:
 
   ```sh
-  uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" questions
+  uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" questions --hw hw
   ```
 
-  `record` exits 2 and records nothing unless every one of its 16 options is answered or listed in `--accept-default`, FDM options included, whatever the parts are. `--hw` and `--decision` are required. This call answers the five general questions and accepts the default of the other eleven:
+  `--hw` limits the list to the questions that apply to the project: the five general ones, plus the FDM ones when an FDM process is planned or a part uses it. The two clearance questions apply only when print-in-place is offered. Without `--hw` the command lists every question. `record` exits 2 and records nothing unless each question that applies is answered or its option is listed in `--accept-default`. It exits 1 and records nothing when you give an option for a question that does not apply. `--hw` and `--decision` are required.
+
+  A project that the record rules out of FDM answers the five general questions only. That needs a declared plan without FDM, or parts whose routes are all known and none uses FDM. With no declared plan and no parts, or with a part whose route is unknown, FDM is not ruled out and the FDM questions are asked too:
+
+  ```sh
+  uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" record --hw hw --decision DR-004 \
+    --human-approval all --fea off --stack-up auto --critique full --results-in-git no
+  ```
+
+  An FDM project also accepts the defaults of the FDM questions. The default declines print-in-place, so the clearance options are left out:
 
   ```sh
   uv run --script "$CAD_SKILLS/cad-flow/scripts/flow_profile.py" record --hw hw --decision DR-004 \
     --human-approval all --fea off --stack-up auto --critique full --results-in-git no \
     --accept-default orientation supports overhang-deg bridge-mm min-wall-mm min-feature-mm \
-      warp cosmetic-faces print-in-place pip-clearance-xy pip-clearance-z
+      warp cosmetic-faces print-in-place
   ```
+
+  To offer print-in-place, answer it with `--print-in-place offer`, drop `print-in-place` from `--accept-default` and add `pip-clearance-xy pip-clearance-z` to it.
 
   Answer an option instead of accepting its default with its flag, such as `--supports free`. An option is never both answered and accepted. `record --help` lists the values. `flow_profile.py check --hw hw` reports what still blocks.
 - A record that is not version 2 is refused.

@@ -53,7 +53,12 @@ def add_flow_profile(hw: Path, *, decision: str | None = None, status: str = "ac
     path = Path(hw) / "product.yaml"
     text = path.read_text(encoding="utf-8")
     product = yaml.safe_load(text) or {}
-    product.setdefault("flow", {})["profile"] = fixtures.flow_profile(decision, **changes)
+    profile = fixtures.flow_profile(decision, **changes)
+    product.setdefault("flow", {})["profile"] = profile
+    if "fdm" in profile.get("processes", {}):
+        # A profile that answers the FDM questions settles a project that plans FDM: with no plan and a part whose
+        # route is unknown, the gate reports FDM applicability unresolved and blocks.
+        product.setdefault("manufacturing", {}).setdefault("processes", ["fdm"])
     # a product written as JSON (a YAML flow mapping) stays JSON, for tests that read it back with json.loads
     path.write_text(json.dumps(product, indent=1) + "\n" if text.lstrip().startswith("{")
                     else yaml.safe_dump(product, sort_keys=False), encoding="utf-8")

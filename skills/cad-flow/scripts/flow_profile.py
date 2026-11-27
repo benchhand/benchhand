@@ -11,12 +11,13 @@
 """The flow profile: the project-start questions, the record of their answers, and the check on it.
 
 questions  prints the questions the lead relays to the user verbatim at GROUND, and the motion sweep,
-           which is stated to the user and never asked.
+           which is stated to the user and never asked. --hw limits them to the ones that apply to that work tree.
 record     writes the answers to hw/product.yaml flow.profile, citing --decision, and writes that decision
            as an accepted MADR record under hw/decisions/. The lead asks each question showing its default.
            Every question is an option the user answered (--fea off) or a default the user accepted
            (--accept-default fea); the profile's `asked` map records which. A question neither answered
-           nor accepted refuses the record. The edit must parse to the intended data before the file is replaced.
+           nor accepted refuses the record; only the questions that apply count (gate.question_fields). The edit
+           must parse to the intended data before the file is replaced.
 check      reports what blocks at --stage (default: product.yaml flow.stage): a missing profile or decision
            from SPECIFY on, a value the schema rejects, and a start question with no `asked` answer.
 
@@ -167,6 +168,14 @@ class FlowFinding(ProfileError):
     """A field in product.yaml blocks recording the profile."""
 
 
+class ProfileFindings(ProfileError):
+    """Findings that name the record field or file that blocks the command (exit 1); nothing was written."""
+
+    def __init__(self, found: Iterable[Any]) -> None:
+        self.found = list(found)
+        super().__init__(gate.refusal(self.found))
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -182,14 +191,14 @@ def read_product(hw: Path) -> Any:
 
 
 def read_parts(hw: Path) -> dict[str, Any]:
-    """The part records under hw/parts/<PN>/part.yaml by PN. A part record that does not parse counts as no
-    part here; validate.py reports it."""
+    """The part records under hw/parts/<PN>/part.yaml by PN; one that does not parse is None, which the gate
+    reports as a malformed part record and never counts as a part that rules FDM out."""
     parts: dict[str, Any] = {}
     for path in sorted((Path(hw) / "parts").glob("*/part.yaml")):
         try:
             parts[path.parent.name] = yaml_loader.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, yaml.YAMLError):
-            continue
+            parts[path.parent.name] = None
     return parts
 
 
@@ -215,9 +224,11 @@ def defaulted_profile(decision: str) -> dict[str, Any]:
     return profile
 
 
-def answered_profile(decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = ()) -> dict[str, Any]:
+def answered_profile(decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = (),
+                     skipped: Mapping[str, str] | None = None) -> dict[str, Any]:
     """defaulted_profile with each answer (profile field: value) set, and `asked` saying who settled each
-    question: the user for an answer, the user accepting the default for a field in `accepted`."""
+    question: the user for an answer, the user accepting the default for a field in `accepted`, and for each
+    field in `skipped` (field: reason) a not_applicable disposition citing `decision`, which counts as no answer."""
     profile = defaulted_profile(decision)
     for field, value in answers.items():
         *parents, key = field.split("/")
@@ -225,7 +236,9 @@ def answered_profile(decision: str, answers: Mapping[str, Any], accepted: Iterab
         for parent in parents:
             target = target[parent]
         target[key] = value
-    how = {**{field: ACCEPTED_DEFAULT for field in accepted}, **{field: USER for field in answers}}
+    not_applicable = {field: {"status": "not_applicable", "reason": reason, "decision": decision}
+                      for field, reason in (skipped or {}).items()}
+    how = {**not_applicable, **{field: ACCEPTED_DEFAULT for field in accepted}, **{field: USER for field in answers}}
     profile["asked"] = {field: how[field] for field in gate.QUESTION_FIELDS if field in how}
     return profile
 
@@ -399,6 +412,7 @@ def answers_table(profile: Mapping[str, Any]) -> str:
         word = json.dumps(value) if isinstance(value, bool) else str(value)
         parts = path.split("/")
         how = next((asked[key] for key in ("/".join(parts[:n]) for n in range(len(parts), 0, -1)) if key in asked), "stated")
+        how = "not applicable" if isinstance(how, Mapping) else how
         return [f"| {path.replace('/', '.')} | {word} | {how} |"]
 
     answers = [row for key, value in profile.items() if key not in ("decision", "asked") for row in rows(value, key)]
@@ -425,7 +439,8 @@ def write_profile_decision(decisions: Path, number: int, profile: Mapping[str, A
     context = ("The user answered the project-start questions (cad-flow `flow_profile.py questions`) at INTENT. "
                "`product.yaml` `flow.profile` records the answers. The lead showed the user each question with its "
                f"default: `{USER}` marks an answer the user gave, `{ACCEPTED_DEFAULT}` a default the user accepted, and "
-               "`stated` the motion sweep, which runs once a joint moves and is never asked.")
+               "`not_applicable` a question that does not apply to this project, and `stated` the motion sweep, which runs once "
+               "a joint moves and is never asked.")
     partial = decisions / f"DR-{number:03d}-{decision_records.slugify('Flow profile')}.md"
     existed = partial.exists()
     try:
@@ -447,14 +462,37 @@ def _restore(path: Path, original: str) -> None:
         raise ProfileError(f"cannot restore {path} after a failed record: {error}") from error
 
 
-def _require_settled(answers: Mapping[str, Any], accepted: list[str]) -> None:
-    """Every start question is answered or its default accepted, and none is both."""
+def _require_applicability(product: Any, parts: Mapping[str, Any]) -> Any:
+    """gate.fdm_applicability, raising ProfileFindings for a plan or part record that cannot be read."""
+    found = gate.fdm_applicability(product, parts)
+    if found.malformed:
+        raise ProfileFindings(found.malformed)
+    return found
+
+
+def _require_not_given(answers: Mapping[str, Any], accepted: Iterable[str], skipped: Mapping[str, str]) -> None:
+    """No answer or accepted default is given for a skipped question: it is recorded as not applicable, so
+    that it is asked again if it applies later. Raises ProfileFindings naming each such option."""
+    options = {field: option for option, field, _parse, _metavar in OPTIONS}
+    given = [field for field in options if field in skipped and (field in answers or field in accepted)]
+    if given:
+        raise ProfileFindings(gate.Problem(f"flow/profile/asked/{field}", f"{options[field]} was given, but "
+                                           f"{field.replace('/', '.')} does not apply: {skipped[field]}",
+                                           f"drop {options[field]}; the question is recorded as not applicable")
+                              for field in given)
+
+
+def _require_settled(answers: Mapping[str, Any], accepted: list[str], applicable: Iterable[str],
+                     unresolved: Iterable[Any] = ()) -> None:
+    """Every applicable start question is answered or its default accepted, and none is both."""
     options = {field: option for option, field, _parse, _metavar in OPTIONS}
     if both := [options[field] for field in accepted if field in answers]:
         raise ProfileError(f"{', '.join(both)} answered and also accepted as the default; give one")
-    if unasked := [option for field, option in options.items() if field not in answers and field not in accepted]:
+    if unasked := [options[field] for field in applicable if field not in answers and field not in accepted]:
+        why = "; ".join(item.message for item in unresolved)
+        note = f" ({why}, so the FDM questions are asked)" if why and any("fdm" in field for field in applicable) else ""
         raise ProfileError(f"ask the user {', '.join(unasked)} and answer it, or accept its default with --accept-default; "
-                           "nothing was recorded")
+                           f"nothing was recorded{note}")
 
 
 def _require_free(decisions: Path, number: int) -> None:
@@ -467,6 +505,41 @@ def _require_free(decisions: Path, number: int) -> None:
         raise ProfileError(f"{decisions / taken[number].file_name} exists; decisions are append-only, so cite a new DR-###")
 
 
+def _flow_edit_target(text: str, path: Path) -> tuple[Any, Any]:
+    """The `flow` key and node of `text`, or a FlowFinding naming `path` when its structure cannot be edited."""
+    try:
+        key, node = _flow_node(text)
+        _require_flow_keys(node)
+    except (yaml.YAMLError, ValueError) as error:
+        raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
+    return key, node
+
+
+def _load_yaml(text: str, path: Path, what: str) -> Any:
+    """yaml_loader.safe_load of `text`, or a FlowFinding naming `path`: the loader raises YAMLError for a bad
+    document, ValueError for a value it cannot build (2026-02-30, !!int abc), KeyError for a bad !!bool,
+    AttributeError for !!timestamp garbage and IndexError for !!int "". PyYAML's constructors let these escape
+    unwrapped, so the catch is wide, but only around the load call."""
+    try:
+        return yaml_loader.safe_load(text)
+    except (yaml.YAMLError, ValueError, KeyError, AttributeError, IndexError) as error:
+        raise FlowFinding(f"{what} {path}: {error}") from error
+
+
+def _require_unchanged(path: Path, snapshot: bytes) -> None:
+    """`path` still holds the `snapshot` bytes that the answers were checked against; else nothing is written.
+    A file that vanished is a changed one; any other read error is its own."""
+    try:
+        current = path.read_bytes()
+    except FileNotFoundError:
+        current = None
+    except OSError as error:
+        raise ProfileError(f"cannot read {path}: {error}") from error
+    if current != snapshot:
+        raise FlowFinding(f"flow.profile: {path} changed while the answers were checked; nothing was written. "
+                          "Check the change, then run it again")
+
+
 def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterable[str] = (),
            today: date | None = None) -> dict[str, Any]:
     """Write `answers` (profile field: value) and the defaults of the `accepted` fields as flow.profile citing
@@ -476,36 +549,35 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
     accepted = list(accepted)
     if DECISION.fullmatch(decision) is None:
         raise ProfileError(f"--decision {decision!r} is not DR-###")
-    _require_settled(answers, accepted)
-    decisions = hw / "decisions"
-    number = int(decision.removeprefix("DR-"))
-    _require_free(decisions, number)
     path = hw / "product.yaml"
     try:
-        raw = path.read_bytes().decode("utf-8")
+        snapshot = path.read_bytes()
+        raw = snapshot.decode("utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise ProfileError(f"cannot read {path}: {error}") from error
     newline = "\r\n" if "\r\n" in raw else "\n"
     text = raw.replace("\r\n", "\n")
-    try:
-        key, node = _flow_node(text)
-        _require_flow_keys(node)
-        product = yaml_loader.safe_load(text)
-    except (yaml.YAMLError, ValueError) as error:
-        raise FlowFinding(f"flow: cannot parse {path}: {error}") from error
-    profile = answered_profile(decision, answers, accepted)
+    product = _load_yaml(text, path, "flow: cannot parse")  # one read: applicability and the edit judge this text
+    parts = read_parts(hw)
+    applicability = _require_applicability(product, parts)
+    plan = gate.question_plan(product, parts, answered_profile(decision, answers))
+    _require_settled(answers, accepted, plan.fields, applicability.unresolved)
+    _require_not_given(answers, accepted, plan.skipped)
+    decisions = hw / "decisions"
+    number = int(decision.removeprefix("DR-"))
+    _require_free(decisions, number)
+    key, node = _flow_edit_target(text, path)
+    profile = answered_profile(decision, answers, accepted, plan.skipped)
     if invalid := gate.shape_problems(profile):
         raise ProfileError(gate.refusal(invalid))
     expected = copy.deepcopy(dict(product))
     expected["flow"] = {**expected.get("flow", {}), "profile": profile}
     _require_flow_shape(expected["flow"])
-    try:
-        after = with_profile(text, key, node, profile, product["flow"].get("profile"))
-        edited = yaml_loader.safe_load(after)
-    except yaml.YAMLError as error:
-        raise FlowFinding(f"flow.profile: cannot edit {path}: {error}") from error
+    after = with_profile(text, key, node, profile, product["flow"].get("profile"))
+    edited = _load_yaml(after, path, "flow.profile: cannot edit")
     if edited != expected:
         raise FlowFinding(f"flow.profile: the edit would change other data in {path}")
+    _require_unchanged(path, snapshot)
     try:
         _replace(path, after, newline)
     except OSError as error:
@@ -523,7 +595,8 @@ def record(hw: Path, decision: str, answers: Mapping[str, Any], accepted: Iterab
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     sub = root.add_subparsers(dest="command", required=True)
-    sub.add_parser("questions", help="print the project-start questions to relay verbatim")
+    ask = sub.add_parser("questions", help="print the project-start questions to relay verbatim")
+    ask.add_argument("--hw", type=Path, help="print only the questions that apply to this design record directory (hw/)")
     rec = sub.add_parser("record", help="record the user's answers as flow.profile and its decision")
     rec.add_argument("--hw", type=Path, required=True, help="the design record directory (hw/)")
     rec.add_argument("--decision", required=True, help="the new DR-### that records the answers")
@@ -539,15 +612,49 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def print_questions() -> None:
+def _scoped_fields(hw: Path) -> list[str]:
+    """The start questions that apply to the work tree `hw`; ProfileFindings when its records cannot say."""
+    try:
+        product = read_product(hw)
+    except ProfileError as error:
+        raise ProfileFindings([gate.Problem("product.yaml", str(error), "correct product.yaml")]) from error
+    parts = read_parts(hw)
+    _require_applicability(product, parts)
+    # Print-in-place is offered here whatever an earlier answer said: the user may opt in now, and `record` then
+    # requires both clearances, so they stay listed as follow-ups to that answer.
+    fields: list[str] = gate.question_fields(product, parts, {})
+    return fields
+
+
+def _shown_questions(fields: set[str]) -> list[tuple[str, str]]:
+    """The questions with an applicable answer, each listing only the options whose field applies one by one."""
+    option_field = {option: field for option, field, _parse, _metavar in OPTIONS}
+    shown = []
+    for text, records in QUESTIONS:
+        kept = [token for token in records.split(", ") if option_field.get(token.split()[0]) in fields]
+        follow_ups = [token for token in kept if token.startswith("--pip-")]
+        if follow_ups:
+            kept = [token for token in kept if token not in follow_ups]
+            kept[-1:] = [f"{kept[-1]}; if the answer is offer, also {', '.join(follow_ups)}"]
+        if kept:
+            shown.append((text, ", ".join(kept)))
+    return shown
+
+
+def print_questions(hw: Path | None = None) -> None:
+    """The questions to relay; with `hw`, only those that apply to that work tree."""
+    fields = set(gate.QUESTION_FIELDS if hw is None else _scoped_fields(hw))
+    shown = _shown_questions(fields)
     print("Ask the user these questions verbatim, then record the answers with flow_profile.py record.\n")
-    for number, (text, _records) in enumerate(QUESTIONS, start=1):
+    for number, (text, _records) in enumerate(shown, start=1):
         print(f"{number}. {text}")
     print(f"\n{MOTION_STATEMENT}\n{MACHINE_STATEMENT}\n\nEach answer records as:")
-    for number, (_text, records) in enumerate(QUESTIONS, start=1):
+    for number, (_text, records) in enumerate(shown, start=1):
         print(f"  {number}: {records}")
     print("\nDefaults, shown with each question:")
     for field, value in gate.DEFAULTS.items():
+        if field in gate.QUESTION_FIELDS and field not in fields:
+            continue
         print(f"  {field.replace('/', '.')}: {json.dumps(value)}")
     print("Show the user each question with its default. Record an answer as its option, or a")
     print("default the user accepts with --accept-default <options>. A listed question neither answered nor accepted refuses")
@@ -558,7 +665,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "questions":
-            print_questions()
+            print_questions(args.hw)
             return 0
         if args.command == "record":
             answers = {field: getattr(args, field) for _option, field, _parse, _metavar in OPTIONS
@@ -568,7 +675,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(record(args.hw, args.decision, answers, accepted), indent=2))
             return 0
         stage, found = check(args.hw, args.stage)
-    except FlowFinding as error:
+    except (FlowFinding, ProfileFindings) as error:
         print(f"flow_profile.py {args.command}: {error}", file=sys.stderr)
         return 1
     except ProfileError as error:

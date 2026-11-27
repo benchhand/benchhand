@@ -191,6 +191,9 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+_FDM_STATES: dict[str, bool | None] = {profile_gate.YES: True, profile_gate.NO: False, profile_gate.UNKNOWN: None}
+
+
 @dataclass(frozen=True)
 class ProjectProfile:
     """product.yaml flow.profile, typed through flow_profile_gate's readers."""
@@ -199,7 +202,7 @@ class ProjectProfile:
     fea: tuple[bool | None, str | None]  # (enabled, mode), flow_profile_gate.fea_setting
     stack_up: str | None
     critique: str | None
-    fdm_planned: bool
+    fdm_planned: bool | None  # True: FDM planned; False: ruled out; None: unresolved, never read as False
     pip: bool | None  # processes.fdm.print_in_place
 
     @classmethod
@@ -211,7 +214,7 @@ class ProjectProfile:
         pip = profile_gate.value_at(profile, "processes/fdm/print_in_place")
         return cls(_text(profile.get("human_approval")), profile_gate.fea_setting(profile),
                    _text(profile.get("stack_up")), _text(profile.get("critique")),
-                   bool(profile_gate.plans_fdm(product, parts)), pip if isinstance(pip, bool) else None)
+                   _FDM_STATES[profile_gate.fdm_applicability(product, parts).state], pip if isinstance(pip, bool) else None)
 
 
 @dataclass(frozen=True)

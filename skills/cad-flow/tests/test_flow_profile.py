@@ -10,13 +10,16 @@ blocks. The gate itself (cad-record flow_profile_gate.py) has its own tests."""
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +29,7 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "scripts" / "flow_profile.py"
 SKILLS = HERE.parents[1]
 sys.path.insert(0, str(SKILLS.parent / "scripts"))
-from decision_fixture import write_test_decision  # noqa: E402 - the path to scripts/ is put on sys.path just above
+from decision_fixture import decision_path, write_test_decision  # noqa: E402 - the path to scripts/ is put on sys.path just above
 from modload import load_module  # noqa: E402 - the path to scripts/ is put on sys.path just above
 
 flow_profile = load_module("cad_flow_profile", SCRIPT)
@@ -115,7 +118,9 @@ class Record(unittest.TestCase):
     def record(self, decision: str = "DR-001", *answers: str) -> subprocess.CompletedProcess[str]:
         """The user answers the options in `answers` (option, value pairs) and accepts the default of every other."""
         given = {answers[i].removeprefix("--") for i in range(0, len(answers), 2)}
-        accepted = [name for name in OPTIONS if name not in given]
+        # The clearance questions are asked only once print-in-place is offered; a default for them is refused.
+        asked = OPTIONS if "offer" in answers else OPTIONS[:14]
+        accepted = [name for name in asked if name not in given]
         return run("record", "--hw", str(self.hw), "--decision", decision, *answers, "--accept-default", *accepted)
 
     def profile(self) -> Any:
@@ -142,8 +147,174 @@ class Record(unittest.TestCase):
         self.assertEqual((data["flow"]["stage"], data["flow"]["recheck_from"]), ("intent", "intent"))
         self.assertIn("# a comment the profile record keeps\n", self.product.read_text(encoding="utf-8"))
 
+    def test_a_cnc_project_records_with_its_five_answers_and_a_part_that_becomes_fdm_brings_the_questions_back(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settled = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual((settled.returncode, json.loads(settled.stdout)["problems"]), (0, []), settled.stdout)
+        part = self.hw / "parts" / "PRT-0001" / "part.yaml"
+        part.parent.mkdir(parents=True)
+        part.write_text("PN: PRT-0001\nprocess: fdm\n", encoding="utf-8")
+        changed = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual(changed.returncode, 1, changed.stdout)
+        missing = {item["path"] for item in json.loads(changed.stdout)["problems"]}
+        self.assertEqual(missing, {f"flow/profile/asked/{field}" for field in QUESTION_FIELDS[5:14]})
+
+    def test_a_malformed_plan_or_an_unreadable_part_exits_1_naming_the_field_or_file_and_records_nothing(self) -> None:
+        part = self.hw / "parts" / "PRT-0001" / "part.yaml"
+        part.parent.mkdir(parents=True)
+        for name, product, part_text, named in (
+                ("a plan that is a word", PRODUCT + "manufacturing:\n  processes: fdm\n", "process: cnc\n",
+                 "manufacturing/processes"),
+                ("a process name that does not exist", PRODUCT + "manufacturing:\n  processes: [fmd]\n", "process: cnc\n",
+                 "manufacturing/processes"),
+                ("an explicit null", PRODUCT + "manufacturing:\n  processes:\n", "process: cnc\n", "manufacturing/processes"),
+                ("a part that does not parse", PRODUCT + "manufacturing:\n  processes: [cnc]\n", "process: [cnc\n",
+                 "parts/PRT-0001/part.yaml")):
+            with self.subTest(name):
+                self.product.write_text(product, encoding="utf-8")
+                part.write_text(part_text, encoding="utf-8")
+                recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS)
+                self.assertEqual(recorded.returncode, 1, recorded.stderr)
+                self.assertIn(named, recorded.stderr)
+                self.assertEqual(self.product.read_text(encoding="utf-8"), product)
+                self.assertFalse((self.hw / "decisions").exists())
+                asked = run("questions", "--hw", str(self.hw))
+                self.assertEqual(asked.returncode, 1, asked.stderr)
+                self.assertIn(named, asked.stderr)
+
+    def test_check_names_a_malformed_plan_while_no_profile_is_recorded(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fmd]\n", encoding="utf-8")
+        result = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual([item["path"] for item in json.loads(result.stdout)["problems"]],
+                         ["flow/profile", "manufacturing/processes"])
+
+    def test_questions_for_a_product_that_does_not_parse_exits_1_naming_the_file(self) -> None:
+        self.product.write_text("flow: [unclosed\n", encoding="utf-8")
+        result = run("questions", "--hw", str(self.hw))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("product.yaml", result.stderr)
+
+    def test_record_on_a_product_that_does_not_parse_exits_1_with_the_named_finding_and_records_nothing(self) -> None:
+        self.product.write_text("flow: [unclosed\n", encoding="utf-8")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("flow: cannot parse", result.stderr)
+        self.assertIn("product.yaml", result.stderr)
+        self.assertFalse((self.hw / "decisions").exists())
+        self.assertEqual(self.product.read_bytes(), b"flow: [unclosed\n")
+
+    def test_a_project_with_no_plan_and_no_part_is_asked_the_fdm_questions_too(self) -> None:
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("--supports", result.stderr)
+        self.assertIn("manufacturing.processes", result.stderr)
+        self.assertIn("Would you like hinges", run("questions", "--hw", str(self.hw)).stdout)
+
+    def test_the_questions_a_cnc_project_skips_are_recorded_as_not_applicable_with_a_reason(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general).returncode, 0)
+        asked = self.profile()["asked"]
+        for field in QUESTION_FIELDS[5:]:
+            self.assertEqual(asked[field]["status"], "not_applicable", field)
+            self.assertEqual(asked[field]["decision"], "DR-001")
+            self.assertIn("no FDM process is planned", asked[field]["reason"])
+        record = decision_path(self.hw, "DR-001").read_text(encoding="utf-8")
+        self.assertEqual([line for line in record.splitlines() if line.endswith("| stated |")],
+                         ["| motion | auto | stated |"])
+        self.assertIn("| processes.fdm.supports | allowed | not applicable |", record)
+
+    def test_an_answer_or_default_for_a_skipped_question_is_refused_and_nothing_is_written(self) -> None:
+        for name, manufacturing, given, named in (
+                ("every default on a cnc plan", "[cnc]", ("--accept-default", *OPTIONS), "--orientation"),
+                ("an answer on a cnc plan", "[cnc]", ("--supports", "free", "--accept-default", *OPTIONS[:5]), "--supports"),
+                ("a clearance default after declining print-in-place", "[fdm]",
+                 ("--print-in-place", "no", "--accept-default", *[o for o in OPTIONS if o != "print-in-place"]),
+                 "--pip-clearance-xy")):
+            with self.subTest(name):
+                product = PRODUCT + f"manufacturing:\n  processes: {manufacturing}\n"
+                self.product.write_text(product, encoding="utf-8")
+                result = run("record", "--hw", str(self.hw), "--decision", "DR-001", *given)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(named, result.stderr)
+                self.assertIn("does not apply", result.stderr)
+                self.assertEqual(self.product.read_text(encoding="utf-8"), product)
+                self.assertFalse((self.hw / "decisions").exists())
+
+    def test_the_cnc_profile_still_asks_the_fdm_questions_when_a_part_becomes_fdm_after_a_refused_extra_default(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS).returncode, 1)
+        general = ("human-approval", "fea", "stack-up", "critique", "results-in-git")
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *general).returncode, 0)
+        part = self.hw / "parts" / "PRT-0001" / "part.yaml"
+        part.parent.mkdir(parents=True)
+        part.write_text("PN: PRT-0001\nprocess: fdm\n", encoding="utf-8")
+        changed = run("check", "--hw", str(self.hw), "--stage", "specify")
+        self.assertEqual(changed.returncode, 1, changed.stdout)
+        self.assertEqual(len(json.loads(changed.stdout)["problems"]), 9)
+
+    def test_declining_print_in_place_records_its_clearance_questions_as_not_applicable(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--print-in-place", "no", "--accept-default", *rest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        asked = self.profile()["asked"]
+        self.assertEqual(asked["processes/fdm/print_in_place"], "user")
+        for field in QUESTION_FIELDS[14:]:
+            self.assertEqual(asked[field]["status"], "not_applicable", field)
+            self.assertIn("print-in-place is declined", asked[field]["reason"])
+
+    def test_the_scoped_questions_list_the_clearance_options_as_follow_ups_to_the_print_in_place_answer(self) -> None:
+        follow_up = "--print-in-place; if the answer is offer, also --pip-clearance-xy, --pip-clearance-z"
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        self.assertIn(follow_up, run("questions", "--hw", str(self.hw)).stdout)
+        rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
+        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--print-in-place", "no", "--accept-default", *rest)
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        # A saved decline does not hide them: record still requires both when the user now offers print-in-place.
+        self.assertIn(follow_up, run("questions", "--hw", str(self.hw)).stdout)
+        offered = run("record", "--hw", str(self.hw), "--decision", "DR-002", "--print-in-place", "offer", "--accept-default", *rest)
+        self.assertEqual(offered.returncode, 2)
+        self.assertIn("--pip-clearance-xy", offered.stderr)
+
+    def test_the_scoped_questions_of_a_cnc_plan_list_no_clearance_option(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        self.assertNotIn("--pip-clearance", run("questions", "--hw", str(self.hw)).stdout)
+
+    def test_a_project_that_plans_fdm_still_needs_every_answer(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--supports", result.stderr)
+        self.assertNotIn("--human-approval", result.stderr)
+        self.assertNotIn("--pip-clearance", result.stderr)  # print-in-place defaults to declined
+
+    def test_declining_print_in_place_drops_its_clearance_questions_and_offering_keeps_them(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        rest = [name for name in OPTIONS[:14] if name != "print-in-place"]
+        declined = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--print-in-place", "no", "--accept-default", *rest)
+        self.assertEqual(declined.returncode, 0, declined.stderr)
+        offered = run("record", "--hw", str(self.hw), "--decision", "DR-002", "--print-in-place", "offer", "--accept-default", *rest)
+        self.assertEqual(offered.returncode, 2)
+        self.assertIn("--pip-clearance-xy", offered.stderr)
+
+    def test_questions_for_a_work_tree_list_only_the_questions_that_apply(self) -> None:
+        self.assertIn("Would you like hinges", run("questions").stdout)
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        result = run("questions", "--hw", str(self.hw))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Would you like hinges", result.stdout)
+        self.assertNotIn("overhang", result.stdout)
+        self.assertIn("Should generated results", result.stdout)
+
     def test_accepting_every_default_records_the_conservative_defaults(self) -> None:
-        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS).returncode, 0)
+        self.assertEqual(run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default",
+                        *OPTIONS[:14]).returncode, 0)
         profile = self.profile()
         self.assertEqual({k: v for k, v in profile.items() if k != "asked"}, {
             "decision": "DR-001", "human_approval": "all", "fea": {"enabled": True, "mode": "accurate"}, "stack_up": "auto",
@@ -152,7 +323,9 @@ class Record(unittest.TestCase):
                                   "bridge_mm": "calibrated", "min_wall_mm": "calibrated", "min_feature_mm": "calibrated",
                                   "warp": "calibrated", "cosmetic_faces": False, "print_in_place": False,
                                   "pip_clearance_mm": {"xy": "calibrated", "z": "calibrated"}}}})
-        self.assertEqual(set(profile["asked"].values()), {"asked-accepted-default"})
+        asked = profile["asked"]
+        self.assertEqual({asked[field] for field in QUESTION_FIELDS[:14]}, {"asked-accepted-default"})
+        self.assertEqual({asked[field]["status"] for field in QUESTION_FIELDS[14:]}, {"not_applicable"})
 
     def test_a_declined_machine_offer_is_never_asked_again_and_blocks_nothing(self) -> None:
         """GROUND made the offer and the user declined: no capability profile exists. Recording every start answer and
@@ -165,13 +338,15 @@ class Record(unittest.TestCase):
         self.assertFalse((self.hw / "manufacturing").exists())
 
     def test_record_refuses_a_question_neither_answered_nor_accepted_and_writes_nothing(self) -> None:
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [fdm]\n", encoding="utf-8")
+        before = self.product.read_text(encoding="utf-8")
         result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--fea", "off", "--accept-default",
-                     *[name for name in OPTIONS if name not in ("fea", "stack-up", "warp")])
+                     *[name for name in OPTIONS[:14] if name not in ("fea", "stack-up", "warp")])
         self.assertEqual(result.returncode, 2)
         self.assertIn("--stack-up", result.stderr)
         self.assertIn("--warp", result.stderr)
         self.assertNotIn("--critique", result.stderr)
-        self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
+        self.assertEqual(self.product.read_text(encoding="utf-8"), before)
         self.assertFalse((self.hw / "decisions").exists())
 
     def test_record_refuses_an_option_both_answered_and_accepted(self) -> None:
@@ -225,6 +400,79 @@ class Record(unittest.TestCase):
         self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT)
         self.assertEqual(earlier.read_text(encoding="utf-8"), before)
         self.assertEqual([path.name for path in (self.hw / "decisions").glob("DR-*.md")], [earlier.name])
+
+    def record_through_main(self, between: Any) -> tuple[int, str]:
+        """`main record` of the five general answers as DR-002, with `between` run once the decision reader has listed
+        the existing decisions: the point where another writer can change product.yaml. Returns (exit code, stderr)."""
+        write_test_decision(self.hw, "DR-001", title="An earlier decision")
+        self.product.write_text(PRODUCT + "manufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        real = flow_profile.decision_records.read_decisions
+
+        def read_then_change(directory: Path) -> Any:
+            found = real(directory)
+            between()
+            return found
+
+        err = io.StringIO()
+        argv = ["record", "--hw", str(self.hw), "--decision", "DR-002", "--accept-default", *OPTIONS[:5]]
+        with mock.patch.object(flow_profile.decision_records, "read_decisions", read_then_change), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            code = flow_profile.main(argv)
+        self.assertEqual(list((self.hw / "decisions").glob("DR-002-*")), [])
+        return code, err.getvalue()
+
+    def test_record_refuses_a_stale_write_and_keeps_an_edit_made_while_it_ran(self) -> None:
+        edited = PRODUCT + "manufacturing:\n  processes: [cnc]\n# edited meanwhile\n"
+        code, stderr = self.record_through_main(lambda: self.product.write_text(edited, encoding="utf-8"))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("changed", stderr)
+        self.assertIn("run it again", stderr)
+        self.assertEqual(self.product.read_text(encoding="utf-8"), edited)
+
+    def test_record_refuses_a_stale_write_when_the_edit_leaves_invalid_utf8(self) -> None:
+        code, stderr = self.record_through_main(lambda: self.product.write_bytes(b"id: \xff\xfe\n"))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("changed", stderr)
+        self.assertEqual(self.product.read_bytes(), b"id: \xff\xfe\n")
+
+    def test_record_refuses_a_stale_write_when_the_file_vanishes(self) -> None:
+        code, stderr = self.record_through_main(self.product.unlink)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("changed", stderr)
+        self.assertFalse(self.product.exists())
+
+    @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "a file mode does not stop root")
+    def test_record_keeps_a_genuine_read_error_distinct_from_a_stale_write(self) -> None:
+        before = self.product.stat().st_mode
+        self.addCleanup(self.product.chmod, before)
+        code, stderr = self.record_through_main(lambda: self.product.chmod(0))
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("cannot read", stderr)
+
+    def test_record_on_a_product_with_a_value_the_loader_rejects_exits_1_with_the_named_finding(self) -> None:
+        for name, text in (("an impossible date", "released: 2026-02-30\n"), ("an impossible timestamp",
+                           "released: 2026-01-01 25:00:00\n"), ("a bad integer", "count: !!int abc\n"),
+                           ("a bad boolean", "flag: !!bool maybe\n"),
+                           ("a malformed tagged timestamp", "released: !!timestamp garbage\n"),
+                           ("an empty tagged integer", 'count: !!int ""\n')):
+            with self.subTest(name):
+                self.product.write_text(PRODUCT + text, encoding="utf-8")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    code = flow_profile.main(["record", "--hw", str(self.hw), "--decision", "DR-001",
+                                              "--accept-default", *OPTIONS[:5]])
+                self.assertEqual(code, 1, err.getvalue())
+                self.assertIn("flow: cannot parse", err.getvalue())
+                self.assertEqual(self.product.read_text(encoding="utf-8"), PRODUCT + text)
+                self.assertFalse((self.hw / "decisions").exists())
+
+    def test_a_reused_decision_exits_2_before_a_flow_that_is_not_a_mapping_is_named(self) -> None:
+        write_test_decision(self.hw, "DR-001", title="An earlier decision")
+        self.product.write_text("record_version: 2\nid: t\nflow: 3\nmanufacturing:\n  processes: [cnc]\n", encoding="utf-8")
+        result = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:5])
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("DR-001", result.stderr)
+        self.assertIn("append-only", result.stderr)
 
     def test_record_refuses_a_malformed_decision_id(self) -> None:
         result = self.record("DR-1", "--fea", "accurate")
@@ -374,7 +622,7 @@ class Check(unittest.TestCase):
         part = copy.deepcopy(self.documents["parts/TST-0001/part.yaml"])
         part["process"] = process
         if process != "fdm":
-            part["intent"]["route"] = []  # the fixture's route prints the part
+            part["intent"]["route"] = [{"id": "mill", "kind": "cnc", "capability": {"status": "unknown", "reason": "no profile yet"}}]  # the fixture's route prints the part
         target = self.hw / "parts" / "TST-0001" / "part.yaml"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(yaml.safe_dump(part, sort_keys=False), encoding="utf-8")
@@ -407,10 +655,19 @@ class Check(unittest.TestCase):
         self.assertIn("has status proposed", report["problems"][0]["message"])
 
     def test_a_profile_recorded_by_the_record_command_passes_its_own_check(self) -> None:
-        (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify"), encoding="utf-8")
-        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS)
+        # The plan is declared: a product with no plan and no part leaves FDM unresolved, which blocks (next test).
+        (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify") + "manufacturing:\n  processes: [fdm]\n",
+                                              encoding="utf-8")
+        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:14])
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         self.assertEqual(self.check(), (0, {"ok": True, "stage": "specify", "problems": []}))
+
+    def test_a_complete_profile_blocks_at_specify_while_no_plan_and_no_part_leave_fdm_unresolved(self) -> None:
+        (self.hw / "product.yaml").write_text(PRODUCT.replace("intent", "specify"), encoding="utf-8")
+        recorded = run("record", "--hw", str(self.hw), "--decision", "DR-001", "--accept-default", *OPTIONS[:14])
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        exit_code, report = self.check()
+        self.assertEqual((exit_code, [p["path"] for p in report["problems"]]), (1, ["manufacturing/processes"]))
 
     def test_the_fdm_questions_follow_the_part_records_in_the_work_tree(self) -> None:
         profile = fx.flow_profile("DR-007")
