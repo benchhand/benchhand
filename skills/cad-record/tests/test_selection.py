@@ -618,8 +618,9 @@ class ExistingEquipmentIsNotSelected(unittest.TestCase):
             "status": "conditional", "primary": ["mount_only"], "reasons": ["TST: x"], "limits": ["TST: y"],
             "what_would_change": ["TST: z"]}
         report = selection.assess(mi.normalize_record(documents))
-        self.assertEqual((report["status"], [f["code"] for f in report["findings"]]),
-                         ("not_assessed", ["selection.not_assessed"]))
+        # each made part the record holds is named too (selection.part_unselected): nothing covers it
+        self.assertEqual((report["status"], sorted({f["code"] for f in report["findings"]})),
+                         ("not_assessed", ["selection.not_assessed", "selection.part_unselected"]))
 
     def test_a_stale_profile_on_an_existing_equipment_row_is_ignored(self) -> None:
         documents = scenarios.wear_shaft_options()
@@ -946,6 +947,34 @@ class ReviewedRegressionsThroughTheCli(unittest.TestCase):
         self.assertEqual(len(changes), 1, changes)
         for named in ("stock thickness 3 mm (now unknown)", "stock coating none (now unknown)", "approval gate"):
             self.assertIn(named, changes[0])
+
+    def test_a_recorded_cut_whose_stock_fields_are_absent_is_not_the_route_a_candidate_proposes(self) -> None:
+        """The record's cut states no stock thickness or coating at all. That is no different from an unknown: the
+        candidate's declared stock is a proposal through the approval gate, never the recorded route."""
+        documents = scenarios.plate_frame_options()
+        steps = selection_candidate(documents, "sheet_frame")["parts"][0]["route"]
+        part = scenarios.made_part("TST-0501", "Frame", "laser", "tst_metal_q_sheet", "tst_laser")
+        part["intent"]["route"] = [fx.operation("cut", "laser", "tst_laser", setup={"stock": {"grade": fx.known("TST sheet")}})] + [
+            fx.operation(f"step_{index}", step["kind"], step.get("capability")) for index, step in enumerate(steps[1:], 1)]
+        documents["parts/TST-0501/part.yaml"] = part
+        recorded = documents["manufacturing/selection.yaml"]
+        recorded["candidates"] = [c for c in recorded["candidates"] if c["id"] == "sheet_frame"]
+        _, report = self.cli(documents)
+        self.assertEqual(candidate(report, "sheet_frame")["recorded_route"], {"TST-0501": False})
+        changes = [c for c in only_decision(report)["recommendation"].get("proposed_changes", ()) if c.startswith("TST-0501")]
+        self.assertEqual(len(changes), 1, changes)
+        for named in ("stock thickness 3 mm (now unknown)", "stock coating none (now unknown)", "approval gate"):
+            self.assertIn(named, changes[0])
+
+    def test_every_made_part_is_named_unselected_when_no_candidate_is_recorded(self) -> None:
+        """With no candidate at all nothing covers any made part: the early return still names each of them."""
+        documents = scenarios.plate_frame_options()
+        documents["manufacturing/selection.yaml"]["candidates"] = []
+        report = selection.assess(mi.normalize_record(documents))  # the schema refuses an empty list, a bare record reads
+        self.assertEqual(len(findings(report, "selection.not_assessed")), 1)
+        named = sorted(f["subject"]["PN"] for f in findings(report, "selection.part_unselected"))
+        self.assertTrue(named)
+        self.assertEqual(named, sorted(report["coverage"]["unselected"]))
 
     def test_an_unselected_made_part_is_named_whatever_else_holds_the_report_back(self) -> None:
         """The confirmed primary leaves the clip TST-0302 unselected. An unknown load magnitude already blocks the

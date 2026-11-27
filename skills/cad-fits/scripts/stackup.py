@@ -1421,17 +1421,15 @@ def _publish_versioned(args: argparse.Namespace, stack_path: Path, stack: dict[s
         raise StackError("--out is only allowed for standalone scratch output")
     options: dict[str, Any] = {"result_decimals": RESULT_DECIMALS, "intent_version": INTENT_VERSION, "case": case,
                                "method": (stack.get("requirement") or {}).get("method", "worst_case"),
-                               "basis_revision": BASIS_REVISION}
+                               "basis_revision": BASIS_REVISION,
+                               # the obligation this run binds to the measured surface: a bundle that judged another
+                               # one is another recipe, so --replace recovers it
+                               "obligations": sorted(str(row["obligation"]) for row in result.get("obligations") or ())}
     recipe = {"source_yaml_sha256": hashlib.sha256(stack_path.read_bytes()).hexdigest(), "options": options,
               **GUIDELINES.calibration_recipe(calibration)}  # sealed on or off: another setting never reuses a bundle
     reused = LAYOUT.reusable(args.hw, "bundle.analysis", params, recipe, replace=args.replace)
     if reused is not None:
         cached = json.loads((reused / "results.json").read_text(encoding="utf-8"))
-        stale = sorted({row.get("obligation") for row in cached.get("obligations") or ()}
-                       ^ {row["obligation"] for row in result.get("obligations") or ()}, key=str)
-        if stale:  # a cached outcome that no longer binds to the surface this run measures is never published again
-            raise StackError(f"the reused bundle judged {', '.join(map(str, stale))}, which is not the obligation "
-                             "this run binds to the measured surface; rerun with --replace")
         result = cached
         result["bundle"] = str(reused)
         result["reused"] = True

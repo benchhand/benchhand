@@ -1310,9 +1310,10 @@ class StackupCliTests(unittest.TestCase):
             self.assertIn("stack.obligation_ambiguous", codes(result))
             self.assertIsNone(result["check_bundle"])
 
-    def test_a_cached_outcome_that_binds_another_surface_is_refused(self) -> None:
+    def test_a_cached_outcome_that_binds_another_surface_is_refused_then_replaced(self) -> None:
         """A bundle of the current recipe whose outcome names the plain feature.fit, where this run measures no single
-        surface, is not published again: the CLI exits 2 and publishes no check."""
+        surface, is not reused: the CLI exits 2 and publishes no check, and the --replace it names recovers (the obligation binding is
+        sealed in the recipe, so the stale bundle no longer matches)."""
         documents = closing_gap_documents()
         documents["parts/TST-0001/part.yaml"]["intent"]["critical_surfaces"] += [
             {"id": f"seal_{side}", "feature": "seal_groove", "region": side, "role": "seal", "dimension_state": "assembled"}
@@ -1331,8 +1332,13 @@ class StackupCliTests(unittest.TestCase):
             before = sorted(path.name for path in check.parent.iterdir())
             rerun = subprocess.run(args, capture_output=True, text=True, check=False, timeout=300)
             self.assertEqual(rerun.returncode, 2, rerun.stdout[-300:])
-            self.assertIn("not the obligation this run binds to the measured surface", rerun.stderr)
+            self.assertIn("--replace", rerun.stderr)
             self.assertEqual(before, sorted(path.name for path in check.parent.iterdir()))
+            replaced = subprocess.run([*args, "--replace"], capture_output=True, text=True, check=False, timeout=300)
+            self.assertEqual(replaced.returncode, 1, replaced.stderr)
+            result = json.loads(replaced.stdout)
+            self.assertFalse(result["reused"])
+            self.assertIn("stack.obligation_ambiguous", codes(result))
 
     def test_rerun_reuses_bundle_and_recipe_change_requires_replace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

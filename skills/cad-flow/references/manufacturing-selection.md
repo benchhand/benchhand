@@ -46,7 +46,7 @@ Capability profiles describe supplied equipment, stock, operators, tools, suppli
 
 A material approval counts only for the operation, thickness and coating it states. List `cut` in the operations of a cutting approval. In a candidate route, state the stock thickness and coating of each cutting step (`stock.thickness`, `stock.coating`, with `none` for uncoated stock). Selection checks both against the approval. An unstated thickness or coating leaves the approval unknown. A stock coating that differs from the approval's leaves it unknown too, and a blank coating name counts as unstated.
 
-A candidate whose declared stock differs from the stock the record's cut uses describes another route. A stock the record leaves unknown differs too: the candidate's stock is a proposal, never the recorded route. Its recommendation proposes recording that stock through the approval gate.
+A candidate whose declared stock differs from the stock the record's cut uses describes another route. A stock the record leaves unknown or unstated differs too: the candidate's stock is a proposal, never the recorded route. Its recommendation proposes recording that stock through the approval gate.
 
 When the chosen candidates leave a made part uncovered, selection is not final. It names each such part as `selection.part_unselected` and exits 1, whatever else holds the report back.
 
