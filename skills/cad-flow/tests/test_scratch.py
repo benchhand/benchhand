@@ -21,6 +21,7 @@ import importlib.util
 import io
 import json
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -951,6 +952,32 @@ class Sync(ScratchCase):
         self.assertTrue((work / "hw" / "parts" / "PRT-0001" / "part.yaml").is_file())
         self.assertFalse((work / "sync-cafef00d").exists())
         self.assertEqual(tree(self.hw), before)
+
+    def test_a_read_only_directory_keeps_its_mode_through_a_sync_and_the_next_command_works(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        read_only = scratch_hw / "manufacturing"
+        read_only.chmod(0o555)
+        self.addCleanup(read_only.chmod, 0o755)
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        code, report = self.sync("unit-a")
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        self.assertEqual(stat.S_IMODE(read_only.stat().st_mode), 0o555)
+        self.assertEqual(list(scratch_hw.parent.glob("sync-*")), [])
+        self.deliver_and_expect_no_proposal("unit-a")
+
+    def test_a_cleanup_failure_after_the_swap_is_a_warning_and_the_next_command_removes_the_stage(self) -> None:
+        scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
+        with (self.hw / "interfaces.yaml").open("a", encoding="utf-8") as stream:
+            stream.write("# lead edit\n")
+        module = load_scratch()
+        with mock.patch.object(module, "discard_stage", side_effect=OSError(errno.EACCES, "cannot remove")):
+            code, report = module.sync(self.hw.resolve(), "unit-a")
+        self.assertEqual((code, report["status"]), (0, "synced"), report)
+        self.assertTrue(report["warnings"], report)
+        self.assertEqual(len(list(scratch_hw.parent.glob("sync-*"))), 1)
+        self.deliver_and_expect_no_proposal("unit-a")  # settles the committed stage and moves on
+        self.assertEqual(list(scratch_hw.parent.glob("sync-*")), [])
 
     def test_a_part_the_unit_owns_is_never_synced(self) -> None:
         scratch_hw = Path(self.init("unit-a", "PRT-0001")["scratch_hw"])
